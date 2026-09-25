@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax.ml import ML_INSUFFICIENT_DATA, ML_NONCONVERGED, MLBatch, SparseFeatures
 from phydrax.ml.outliers import (
     CovarianceOutlierModel,
@@ -40,22 +41,22 @@ def _recipes_and_models():
         (
             CovarianceOutlierRecipe(contamination=0.25, shrinkage=0.1),
             CovarianceOutlierModel,
-            "conditional",
+            GradientLevel.CONDITIONAL,
         ),
         (
             EllipticEnvelopeRecipe(contamination=0.25, iterations=3, tolerance=1e6),
             EllipticEnvelopeModel,
-            "conditional",
+            GradientLevel.CONDITIONAL,
         ),
         (
             KernelDensityOutlierRecipe(bandwidth=0.8, contamination=0.25),
             KernelDensityOutlierModel,
-            "smooth",
+            GradientLevel.SMOOTH,
         ),
         (
             RobustNoveltyRecipe(contamination=0.25, iterations=3, tolerance=1e6),
             RobustNoveltyModel,
-            "conditional",
+            GradientLevel.CONDITIONAL,
         ),
     ]
 
@@ -86,13 +87,14 @@ def test_continuous_outlier_models_have_score_prediction_membership_and_frozen_e
     assert jnp.allclose(result.diagnostics.threshold, model.threshold)
     assert result.diagnostics.score_minimum <= result.diagnostics.threshold
     assert result.diagnostics.threshold <= result.diagnostics.score_maximum
-    assert result.gradient_contract.prediction_inputs == "smooth"
-    assert result.gradient_contract.prediction_parameters == "smooth"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_targets == "none"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == hyper_gradient
-    assert "predict" in result.gradient_contract.nondifferentiable_outputs
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_TARGETS) is GradientLevel.NONE
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is hyper_gradient
+    assert "predict" in contract.nondifferentiable_outputs
 
 
 def test_outlier_case_sample_feature_target_axes_masks_and_statistical_weight_policy():

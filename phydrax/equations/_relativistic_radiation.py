@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._physical import RelativityScaleContract
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
 from ._hyperbolic_systems import AbstractAdmissibleSystem
@@ -77,7 +78,7 @@ class GRGrayM1ClosureEvaluation(StrictModule):
     system_id: str = eqx.field(static=True)
 
 
-class GRGrayM1RadiationSystem(AbstractAdmissibleSystem):
+class GRGrayM1RadiationSystem(AbstractAdmissibleSystem, NonTrainableState):
     """Gray M1 transport and stress energy in a 3+1 frame.
 
     The local moment state is ``(E, F_x, F_y, F_z)``. Metric-aware methods

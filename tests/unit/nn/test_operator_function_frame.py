@@ -11,7 +11,6 @@ import pytest
 
 import phydrax as phx
 from phydrax._model import AbstractArrayModel, FrozenModel
-from phydrax._trainable import partition_trainable
 from phydrax.nn.operator.architectures.conditioning._function_frame import (
     FUNCTION_PROJECTION_INSUFFICIENT_SUPPORT,
     FUNCTION_PROJECTION_INVALID_MEASURE,
@@ -687,7 +686,7 @@ def test_frozen_reconstructor_removes_frame_and_map_arrays_from_training_partiti
         target_frame=target,
     ).frozen()
 
-    parameters, _ = partition_trainable(model)
+    parameters, _model_state, _ = phx.partition_parameters(model)
 
     assert isinstance(model.sources[0].frame.basis_model, FrozenModel)
     assert isinstance(model.target_frame.basis_model, FrozenModel)

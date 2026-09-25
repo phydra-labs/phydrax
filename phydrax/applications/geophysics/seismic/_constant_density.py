@@ -28,6 +28,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ...._differentiation import DerivativeContract, DerivativeSurface
 from ...._fingerprint import canonical_fingerprint
 from ...._numerics._checkpointed_scan import (
     checkpointed_scan,
@@ -36,7 +37,6 @@ from ...._numerics._checkpointed_scan import (
 )
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....artifacts import DifferentiationContract
 from ....ein import contract
 from ....series import SampledSeries, SeriesSupport
 from .._evidence import GeophysicalCapabilityEvidence, GeophysicalResourceEstimate
@@ -220,13 +220,12 @@ class ConstantDensityAcousticPlan(StrictModule, NonTrainableState):
                 "no-attenuation",
                 "damping-is-not-cpml",
             ),
-            differentiation=DifferentiationContract(
-                upstream_physical_parameters=True,
-                stored_values=True,
-                query_coordinates=False,
-                local_parameters=True,
-                stochastic_realization=False,
-                higher_order=True,
+            differentiation=DerivativeContract.smooth(
+                (
+                    DerivativeSurface.MODEL_PARAMETER,
+                    DerivativeSurface.PHYSICAL_PARAMETER,
+                    DerivativeSurface.STORED_VALUES,
+                )
             ),
         )
 

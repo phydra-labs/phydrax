@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from .._trainable import parameter_field
 
 
 class LinearGaussianParameters(NamedTuple):
@@ -99,11 +100,14 @@ def discretize_linear_gaussian(
 
 
 class LinearGaussianParameterization(StrictModule):
-    """One interval-parameter source shared by transition sampling and inference."""
+    """One interval-parameter source shared by transition sampling and inference.
 
-    transition: ParameterValue
-    offset: ParameterValue
-    covariance: ParameterValue
+    Array-valued `transition`, `offset`, and `covariance` are PARAMETER.
+    """
+
+    transition: ParameterValue = parameter_field()
+    offset: ParameterValue = parameter_field()
+    covariance: ParameterValue = parameter_field()
     state_shape: tuple[int, ...] = eqx.field(static=True)
     parameterization_id: str = eqx.field(static=True)
     resolved_method: str = eqx.field(static=True)
@@ -169,12 +173,13 @@ class LinearGaussianDynamics(StrictModule):
     :math:`dX_t = (A X_t + b)dt + LdW_t`. ``dispersion`` is the factor ``L``,
     not an already-squared covariance. Calling the object follows the standard
     dynamics contract ``(time, state, args) -> state-shaped array``; ``parameters``
-    returns the exact affine Gaussian transition over an interval.
+    returns the exact affine Gaussian transition over an interval. The
+    coefficients `drift_matrix`, `offset`, and `dispersion` are PARAMETER.
     """
 
-    drift_matrix: Array
-    offset: Array
-    dispersion: Array
+    drift_matrix: Array = parameter_field()
+    offset: Array = parameter_field()
+    dispersion: Array = parameter_field()
     state_shape: tuple[int, ...] = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
     process_id: str = eqx.field(static=True)

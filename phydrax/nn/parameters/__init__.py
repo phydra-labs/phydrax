@@ -1,5 +1,6 @@
 """Parameter transformations and explicit model-PyTree selection."""
 
+from ..._model import register_artifact_value
 from ._low_rank import (
     adapt_low_rank,
     contains_low_rank_updates,
@@ -77,3 +78,15 @@ __all__ = [
     "read_low_rank_adapter",
     "save_low_rank_adapter",
 ]
+
+for _artifact_name in __all__:
+    _artifact_value = globals()[_artifact_name]
+    if isinstance(_artifact_value, type) and _artifact_value.__module__.startswith(
+        "phydrax.nn.parameters."
+    ):
+        register_artifact_value(
+            f"phydrax.nn.parameter:{_artifact_name}",
+            _artifact_value,
+        )
+
+del _artifact_name, _artifact_value

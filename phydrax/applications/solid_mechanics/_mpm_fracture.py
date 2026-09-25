@@ -57,7 +57,10 @@ class MPMPhaseFieldParameters(StrictModule, NonTrainableState):
         self.residual_stiffness = values[2]
 
 
-class PhaseFieldNeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
+class PhaseFieldNeoHookeanMPMConstitutivePlan(
+    AbstractImplicitMPMConstitutivePlan,
+    NonTrainableState,
+):
     """Spectral tension/compression split with particle damage/history state."""
 
     dimension: int = eqx.field(static=True)

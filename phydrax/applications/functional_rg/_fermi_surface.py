@@ -346,9 +346,6 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
         internal_second = internal_second[None, None, :, :]
         internal_spin_first = internal_spin_first[:, :, None, None]
         internal_spin_second = internal_spin_second[:, :, None, None]
-        equal_internal_spin = (internal_spin_first == internal_spin_second).astype(
-            values.dtype
-        )
         pp_kernel = pp_loop[None, None, :, :]
         ph_kernel = ph_loop[None, None, :, :]
 
@@ -389,7 +386,6 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
                     internal_second,
                 )
                 * pp_kernel
-                * equal_internal_spin
                 * gamma(
                     internal_spin_first,
                     internal_first,
@@ -413,7 +409,6 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
                     internal_second,
                 )
                 * ph_kernel
-                * equal_internal_spin
                 * gamma(
                     internal_spin_second,
                     internal_second,
@@ -437,7 +432,6 @@ class PreparedFermiSurfacePatchRG(StrictModule, NonTrainableState):
                     fourth,
                 )
                 * ph_kernel
-                * equal_internal_spin
                 * gamma(
                     internal_spin_second,
                     internal_second,

@@ -20,6 +20,7 @@ from benchmarks._runtime import (
     measure_synchronized,
 )
 
+
 def _problem(horizon: int, seed: int, /):
     generator = np.random.Generator(np.random.PCG64(seed))
     dynamics = 0.95 + 0.02 * generator.standard_normal((horizon, 1, 1))
@@ -57,7 +58,7 @@ def _measure(operation, warmup: int, repeats: int, /):
     }
 
 
-def _certificate(problem, result, /):
+def _certificate(problem, result, qp_results, /):
     states = np.asarray(result.states)
     controls = np.asarray(result.controls)
     predicted = (
@@ -98,9 +99,9 @@ def _certificate(problem, result, /):
         "bound_violation": max(lower_violation, upper_violation),
         "tolerance": tolerance,
         "provider_maximum_kkt_residual": float(
-            max(np.asarray(item.kkt_residual_norm) for item in result.qp_results)
+            max(np.asarray(item.kkt_residual_norm) for item in qp_results)
         ),
-        "iterations": [int(np.asarray(item.iterations)) for item in result.qp_results],
+        "iterations": [int(np.asarray(item.iterations)) for item in qp_results],
     }
 
 
@@ -126,9 +127,7 @@ def run_control_horizon_campaign(
         row_seed = seed + horizon
         phase_timings: dict[str, Any] = {}
         problem, sample = measure_synchronized(lambda: _problem(horizon, row_seed))
-        phase_timings["setup"] = DurationDistribution(
-            (sample,)
-        ).to_milliseconds_dict()
+        phase_timings["setup"] = DurationDistribution((sample,)).to_milliseconds_dict()
         prediction = min(16, horizon)
         policy = phx.optim.ConvexSolvePolicy(
             phx.optim.DensePrimalDualQP(max_kkt_dimension=max(512, 8 * horizon)),
@@ -181,13 +180,13 @@ def run_control_horizon_campaign(
         warm, warm_timing = _measure(warm_operation, warmup, repeats)
         sparse_solution, sparse_timing = _measure(sparse_operation, warmup, repeats)
         cold_certificate, cold_verification = measure_synchronized(
-            lambda: _certificate(problem, cold)
+            lambda: _certificate(problem, cold, cold.qp_results)
         )
         warm_certificate, warm_verification = measure_synchronized(
-            lambda: _certificate(problem, warm)
+            lambda: _certificate(problem, warm, warm.qp_results)
         )
         sparse_certificate, sparse_verification = measure_synchronized(
-            lambda: _certificate(problem, sparse_solution)
+            lambda: _certificate(problem, sparse_solution, (sparse_solution.qp_result,))
         )
         phase_timings["verification"] = DurationDistribution(
             (cold_verification, warm_verification, sparse_verification)

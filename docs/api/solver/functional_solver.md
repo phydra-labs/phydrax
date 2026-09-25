@@ -27,15 +27,21 @@ time-window behavior is covered by
     - Certified exact PDE trial fields reject generic hard enforcement because its
       correction need not preserve their solution space. Fit their boundary conditions
       with residual terms.
-    - `partition_functions()` exposes the trainable/non-trainable state split used
-      by `solve(...)`.
+    - `partition_functions()` returns the `(parameters, model_state, fixed)` role
+      lanes of `functions` (see [array roles](../phydrax.md#array-roles-and-lanes));
+      `trainable_functions()` returns the parameters lane. `solve(...)` trains only
+      declared PARAMETER leaves, never trains FIXED leaves, and carries
+      MODEL_STATE unchanged. Undeclared inexact leaves raise `ValueError` naming
+      `FunctionalSolver.solve` and each path before training; an explicit
+      `parameter_subspace` is itself the parameter declaration.
     - `solve(...)` accepts standard and line-search Optax transformations,
       Phydrax-native [`soap(...)`](../optim.md#stateful-orthogonal-adaptive-preconditioning-soap),
       native scalar, least-squares, composite least-squares, Riemannian, and
       distribution-evolution methods, plus `phydrax.optim.kfac(...)`. Native
-      methods receive the same partitioned Equinox parameter tree returned by
-      `partition_functions()`. Population methods requiring a finite
-      search-space contract remain owned by `DesignConstraintSystem.search(...)`.
+      methods receive the parameters lane returned by `partition_functions()`.
+      KFAC and `solve_linear_trial_space(...)` require an empty MODEL_STATE lane.
+      Population methods requiring a finite search-space contract remain owned by
+      `DesignConstraintSystem.search(...)`.
     - `solve_linear_trial_space(...)` assembles directly bound
       `LinearTrefftzField` coefficients against fixed quadratic residual
       realizations, audits residual affinity, and routes the least-squares system
@@ -63,13 +69,22 @@ time-window behavior is covered by
       retaining the authored physical objective. `loss(...)` never changes meaning.
     - Stateful or causal training with best-model selection requires independent
       fixed `evaluation_terms` and `FunctionalSelectionPolicy`.
-    - Accepted-update checkpoints retain current and best fields, optimizer state,
-      previous pseudo-time fields, adaptive coefficients, collocation state, PRNG
-      state, and progress. `resume=True` rejects mismatched plan or
-      discretization identities.
+    - Every optimizer route runs through Phydrax's internal training kernel:
+      each step is one attempt that is accepted, rejected with only the
+      optimizer's declared state committed (for example damping or KFAC
+      curvature), or rolled back when nonfinite. More than 64 consecutive
+      rejections raise `TrainingRejectionBudgetError`. Randomness is addressed
+      by named site, attempt cursor, and microstep.
+    - Accepted-update checkpoints retain the kernel state (parameters,
+      optimizer state, targets, root key, cursors, role/objective/rule
+      identities), current and best fields, previous pseudo-time fields,
+      adaptive coefficients, collocation state, and progress. `resume=True`
+      rejects mismatched plan, discretization, role, objective, or update-rule
+      identities; pre-kernel checkpoints fail closed.
     - `FunctionalShardingPolicy` maps named native sample axes to a caller-owned
-      JAX mesh. Global numerator/support reductions are used instead of averaging
-      local means.
+      JAX mesh. Placement follows array roles: parameter and model-state lanes are
+      replicated, and fixed data shards its named sample axes. Global
+      numerator/support reductions are used instead of averaging local means.
     - A constitutive energy that is defined only for admissible states can use
       `IntegralFunctional(source=..., nonfinite_integrand="propagate")` with a
       tested Optax line search such as `optax.lbfgs`. The default remains strict.
@@ -183,8 +198,8 @@ loss_after = solver.loss(key=jr.key(2))
 `loss(...)` evaluates the sum of every term and model-attached loss at the
 current parameters. `ansatz_functions()` returns the fields after exact
 transforms, so all terms observe the same enforced field mapping.
-`partition_functions()` exposes the trainable/non-trainable state split used by
-`solve(...)`, and `save_onnx("u", ...)` exports one ansatz field.
+`partition_functions()` returns the role lanes used by `solve(...)`, and
+`save_onnx("u", ...)` exports one ansatz field.
 
 ## Experimental contraction precision
 
@@ -194,7 +209,7 @@ training loss, term diagnostics, data metrics, and final objective settling.
 This experiment is deliberately restricted to standard Optax transformations;
 line-search ExtraArgs transforms, native iterative/least-squares methods, KFAC,
 Riemannian methods, and distribution evolution are rejected rather than
-receiving a partial policy. Trainable inexact leaves must share one dtype.
+receiving a partial policy. Parameter leaves must share one dtype.
 
 The returned solver retains the policy and a content-addressed precision
 evidence envelope. Its functional discretization records include that evidence

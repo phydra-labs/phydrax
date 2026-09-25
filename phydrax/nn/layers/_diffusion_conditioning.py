@@ -12,9 +12,10 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from phydrax._strict import StrictModule
+from phydrax._trainable import NonTrainableState, ParameterOwner
 
 
-class SinusoidalTimeEmbedding(StrictModule):
+class SinusoidalTimeEmbedding(StrictModule, NonTrainableState):
     """Fixed log-spaced sine/cosine embedding for scalar diffusion time."""
 
     frequencies: Array
@@ -40,7 +41,7 @@ class SinusoidalTimeEmbedding(StrictModule):
         return jnp.concatenate((jnp.sin(phase), jnp.cos(phase)), axis=-1)
 
 
-class TimeConditionedVectorModel(StrictModule):
+class TimeConditionedVectorModel(StrictModule, ParameterOwner):
     """Adapt a vector model to a state/time score callable by feature concatenation."""
 
     model: Any

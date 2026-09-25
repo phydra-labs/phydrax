@@ -14,11 +14,15 @@ from jax.flatten_util import ravel_pytree
 from jaxtyping import Array
 
 from .._strict import StrictModule
-from ._particle import ParticleFilterResult
+from ._particle import _parameter_lane, ParticleFilterResult
 
 
 class StateSpaceModelScore(StrictModule):
-    """Differentiable prior, transition, and observation score PyTrees."""
+    """Prior, transition, and observation scores over their PARAMETER leaves.
+
+    Each score keeps its component's structure with `None` in place of FIXED and
+    MODEL_STATE leaves.
+    """
 
     prior: Any
     transition: Any
@@ -26,7 +30,11 @@ class StateSpaceModelScore(StrictModule):
 
 
 class ParticleGenealogicalScoreResult(StrictModule):
-    """Complete-model `O(TN)` Fisher score propagated through realized ancestry."""
+    """Complete-model `O(TN)` Fisher score propagated through realized ancestry.
+
+    Only PARAMETER leaves are scored; `parameter_paths` lists them in
+    `flat_score` order (prior, then transition, then observation).
+    """
 
     score: StateSpaceModelScore
     flat_score: Array
@@ -43,48 +51,12 @@ class ParticleGenealogicalScoreResult(StrictModule):
     input_id: str | None = eqx.field(static=True)
 
 
-def _filtered_ravel(tree: Any, /):
-    return ravel_pytree(eqx.filter(tree, eqx.is_inexact_array))
-
-
-def _prior_gradient(prior, particle):
-    return eqx.filter_grad(lambda current: jnp.sum(current.log_prob(particle)))(prior)
-
-
-def _transition_gradient(
-    transition,
-    next_state,
-    previous_state,
-    start_time,
-    end_time,
-    context,
-):
-    return eqx.filter_grad(
-        lambda current: jnp.asarray(
-            current.log_prob(
-                next_state,
-                previous_state,
-                start_time,
-                end_time,
-                context,
-            )
-        ).reshape(())
-    )(transition)
-
-
-def _observation_gradient(
-    observation,
-    value,
-    state,
-    time,
-    mask,
-    context,
-):
-    return eqx.filter_grad(
-        lambda current: jnp.asarray(
-            current.log_prob(value, state, time, mask, context)
-        ).reshape(())
-    )(observation)
+def _gradient(constants: Any, objective: Any, parameters: Any, /) -> Array:
+    """Flat gradient of `objective(component)` over the component's PARAMETER lane."""
+    gradient = jax.grad(
+        lambda values: jnp.asarray(objective(eqx.combine(values, constants))).reshape(())
+    )(parameters)
+    return ravel_pytree(gradient)[0]
 
 
 def particle_genealogical_score(
@@ -133,38 +105,34 @@ def particle_genealogical_score(
         (case_count, num_steps) + observation_shape
     )
 
-    prior_template = _prior_gradient(problem.model.prior, initial_particles[0, 0])
-    first_context = problem.step_context(0, 0)
-    transition_template = _transition_gradient(
-        problem.model.transition,
-        predicted[0, 0, 0],
-        initial_particles[0, 0],
-        initial_times[0],
-        times[0, 0],
-        first_context,
+    prior_parameters, prior_constants, _ = _parameter_lane(
+        problem.model.prior, "particle_genealogical_score prior"
     )
-    observation_template = _observation_gradient(
-        problem.model.observation,
-        observations[0, 0],
-        predicted[0, 0, 0],
-        times[0, 0],
-        observation_masks[0, 0],
-        first_context,
+    transition_parameters, transition_constants, _ = _parameter_lane(
+        problem.model.transition, "particle_genealogical_score transition"
     )
-    prior_reference, unravel_prior = _filtered_ravel(prior_template)
-    transition_reference, unravel_transition = _filtered_ravel(transition_template)
-    observation_reference, unravel_observation = _filtered_ravel(observation_template)
+    observation_parameters, observation_constants, _ = _parameter_lane(
+        problem.model.observation, "particle_genealogical_score observation"
+    )
+    prior_reference, unravel_prior = ravel_pytree(prior_parameters)
+    transition_reference, unravel_transition = ravel_pytree(transition_parameters)
+    observation_reference, unravel_observation = ravel_pytree(observation_parameters)
     prior_size = prior_reference.size
     transition_size = transition_reference.size
     observation_size = observation_reference.size
     parameter_size = prior_size + transition_size + observation_size
     if parameter_size < 1:
-        raise ValueError("The stored state-space model has no differentiable parameters.")
+        raise ValueError(
+            "particle_genealogical_score: the stored state-space model has no "
+            "PARAMETER leaves."
+        )
 
     def prior_vector(particle):
-        gradient = _prior_gradient(problem.model.prior, particle)
-        vector, _ = _filtered_ravel(gradient)
-        return vector
+        return _gradient(
+            prior_constants,
+            lambda prior: jnp.sum(prior.log_prob(particle)),
+            prior_parameters,
+        )
 
     initial_scores = []
     for case_index in range(case_count):
@@ -209,29 +177,33 @@ def particle_genealogical_score(
                 previous_state = previous_particles[particle_index]
 
                 def active_score(_):
-                    transition_gradient = _transition_gradient(
-                        problem.model.transition,
-                        next_state,
-                        previous_state,
-                        start_time,
-                        end_time,
-                        context,
+                    transition_vector = _gradient(
+                        transition_constants,
+                        lambda transition: transition.log_prob(
+                            next_state,
+                            previous_state,
+                            start_time,
+                            end_time,
+                            context,
+                        ),
+                        transition_parameters,
                     )
-                    observation_gradient = _observation_gradient(
-                        problem.model.observation,
-                        observations[case_index, step_index],
-                        next_state,
-                        end_time,
-                        observation_masks[case_index, step_index],
-                        context,
+                    observation_vector = _gradient(
+                        observation_constants,
+                        lambda observation: observation.log_prob(
+                            observations[case_index, step_index],
+                            next_state,
+                            end_time,
+                            observation_masks[case_index, step_index],
+                            context,
+                        ),
+                        observation_parameters,
                     )
-                    transition_vector, _ = _filtered_ravel(transition_gradient)
-                    observation_vector, _ = _filtered_ravel(observation_gradient)
                     return jnp.concatenate(
                         (
-                            jnp.zeros((prior_size,), dtype=transition_vector.dtype),
-                            transition_vector,
-                            observation_vector,
+                            jnp.zeros((prior_size,), dtype=cumulative.dtype),
+                            transition_vector.astype(cumulative.dtype),
+                            observation_vector.astype(cumulative.dtype),
                         )
                     )
 

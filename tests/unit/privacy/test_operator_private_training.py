@@ -110,11 +110,17 @@ def _privacy(iterations: int = 2):
 
 
 def _fit(dataset, privacy, *, steps, checkpoint_path=None, resume=False, key_seed=7):
+    task = _task()
+    output_port = task.field_by_name["output"].value_port()
     return phx.nn.operator.training.fit_operator(
         _LinearOperator(),
         dataset,
-        task=_task(),
+        task=task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+        output_ports={"output": output_port},
+        port_mapping=phx.PortMapping(
+            outputs=((output_port.port_id, output_port.port_id),)
+        ),
         steps=steps,
         privacy=privacy,
         include_model_losses=False,

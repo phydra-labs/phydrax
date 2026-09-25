@@ -83,10 +83,12 @@ from ._graduation import (
 )
 from ._higher_order import VectorHalley
 from ._implicit import (
+    implicit_fixed_point_result,
     implicit_root,
     implicit_root_result,
     ImplicitRootDerivativePolicy,
 )
+from ._initial_state import select_initial_state
 from ._lagged import LaggedLinearSolveUpdate
 from ._linearization import (
     JacobianMode,
@@ -374,6 +376,8 @@ __all__ = [
     "RootPolyalgorithm",
     "implicit_root",
     "implicit_root_result",
+    "implicit_fixed_point_result",
+    "select_initial_state",
     "batched_small_root",
     "pooled_small_root",
     "left_precondition",

@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -41,19 +42,19 @@ class StokesDirichletResult3D(StrictModule):
     ``assembly_report``; no continuum accuracy is claimed.
     """
 
-    force_density: Array
-    prescribed_velocity: Array
+    force_density: Array = fixed_field()
+    prescribed_velocity: Array = fixed_field()
     potential: StokesLayerPotential3D
-    linear_result: LinearSolveResult
+    linear_result: LinearSolveResult = fixed_field()
     assembly_report: StokesSingleLayerDP0AssemblyReport3D
     nullspace: StokesNullspaceMetadata3D
     contract: StokesBoundaryContract3D = eqx.field(static=True)
-    boundary_flux: Array
-    flux_compatibility_multiplier: Array
-    density_gauge_residual: Array
-    boundary_residual_norm: Array
-    finite: Array
-    valid: Array
+    boundary_flux: Array = fixed_field()
+    flux_compatibility_multiplier: Array = fixed_field()
+    density_gauge_residual: Array = fixed_field()
+    boundary_residual_norm: Array = fixed_field()
+    finite: Array = fixed_field()
+    valid: Array = fixed_field()
     formulation: str = eqx.field(static=True)
 
 

@@ -6,6 +6,7 @@ Composable model transforms that add structure or change output interpretation.
     Key notes:
 
     - `EquinoxModel` / `EquinoxStructuredModel` adapt arbitrary Equinox/JAX callables into Phydrax models by attaching `in_size` / `out_size`.
+    - `FunctionalJAXAdapter` adapts a stateful functional JAX model with explicit parameter and model-state lanes.
     - `RaggedSeriesModel` adapts encoders for `RaggedSeriesDatasetDomain` payloads.
     - `ComplexOutputModel` packs/unpacks real/imag parts into complex outputs.
     - `Sequential` chains models so outputs of stage `i` feed stage `i+1`.
@@ -14,6 +15,40 @@ Composable model transforms that add structure or change output interpretation.
 
 Use these wrappers when you already have an `equinox.Module` (or any JAX callable) and
 want it to participate in Phydrax's solver/training APIs.
+
+Both wrappers are `phydrax.ParameterOwner`s: every inexact array of the wrapped module
+is a PARAMETER (see [array roles](../phydrax.md#array-roles-and-lanes)). A raw
+`equinox.Module` placed directly in a training tree has no declared role, so training
+entries such as `FunctionalSolver.solve` and `fit_operator` reject its arrays with a
+`ValueError` naming each path; wrap it in `EquinoxModel`, or declare its fields with
+`phydrax.parameter_field` / `phydrax.fixed_field`. Modules holding
+`eqx.nn.StateIndex` state are rejected with `TypeError` ("stateful Equinox modules are
+not supported"), and the message names `FunctionalJAXAdapter`.
+
+## Stateful functional models
+
+`FunctionalJAXAdapter(apply, parameters, model_state, in_size=..., out_size=...,
+inference=...)` holds `parameters` as PARAMETER and `model_state` as MODEL_STATE.
+`apply(parameters, model_state, input, key, *, inference)` returns `(output,
+next_model_state)` with the next state congruent to the current one; it is the
+functional form of Haiku `transform_with_state`, Flax `apply(..., mutable=...)`,
+and Equinox `make_with_state` models, none of which Phydrax depends on. The
+`inference` flag is explicit and switched by `phydrax.nn.layers.inference_mode`.
+Calling the adapter evaluates the output and never advances the state;
+`transition(x, key=...)` returns the output with the adapter holding the proposed
+next state. Inside a training-kernel objective, return
+`phydrax.partition_parameters(proposed)[1]` as the next model state: the kernel
+commits it only with an accepted update and keeps the committed state on
+rejection. The execution tier is `"functional-jax"` with `stateful=True`.
+
+::: phydrax.nn.models.FunctionalJAXAdapter
+    options:
+        members:
+            - __init__
+            - __call__
+            - transition
+
+## Equinox value layouts
 
 `layout="value"` (default for `EquinoxModel`) treats `in_size/out_size` as the **value shape**
 of a single (unbatched) sample. Inputs are flattened to a vector, the wrapped module is called,

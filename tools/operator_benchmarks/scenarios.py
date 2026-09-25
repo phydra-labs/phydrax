@@ -271,6 +271,9 @@ class OperatorBenchmarkScenario:
     conservation_source_key: str | None = None
     symmetry: OperatorSymmetrySpec | None = None
     task: OperatorTask | None = None
+    # Input consumed by single-source architectures and geometry gates. Batch inputs
+    # are canonically ordered mappings, so multi-input scenarios must name it.
+    primary_source_key: str | None = None
 
     def __post_init__(self):
         if not self.name:
@@ -295,6 +298,19 @@ class OperatorBenchmarkScenario:
             OperatorTargetBatch.from_arrays(
                 {"output": self.train_target}, self.train_batch
             ).validate(self.train_batch)
+        split_batches = (
+            self.train_batch,
+            *(evaluation.batch for evaluation in self.evaluations),
+            *(() if self.validation is None else (self.validation.batch,)),
+        )
+        if self.primary_source_key is None:
+            if len(self.train_batch.inputs) != 1:
+                raise ValueError("Multi-input scenarios must declare primary_source_key.")
+            object.__setattr__(
+                self, "primary_source_key", next(iter(self.train_batch.inputs))
+            )
+        if any(self.primary_source_key not in batch.inputs for batch in split_batches):
+            raise ValueError("primary_source_key must name an input on every split.")
         task = self.task
         if task is not None:
             expected_targets = {field.name for field in task.target_fields}
@@ -2225,6 +2241,7 @@ def multi_input_diffusion_scenario(
         tuple(evaluations),
         seed=int(seed),
         case_ids=case_ids,
+        primary_source_key="initial",
         provenance=_generated_provenance("multi_input_diffusion_scenario"),
         dimensional_parameters=(
             OperatorParameterRange(
@@ -3101,6 +3118,7 @@ def deformed_elliptic_scenario(
         ),
         seed=int(seed),
         case_ids=case_ids,
+        primary_source_key="forcing",
         provenance=_generated_provenance("deformed_elliptic_scenario"),
         dimensional_parameters=(
             OperatorParameterRange("domain_length", 1.0, 1.0, "L"),
@@ -3490,6 +3508,7 @@ def conservative_ring_transport_scenario(
         ),
         seed=int(seed),
         case_ids=case_ids,
+        primary_source_key="density",
         provenance=_generated_provenance("conservative_ring_transport_scenario"),
         dimensional_parameters=(
             OperatorParameterRange(
@@ -4921,6 +4940,22 @@ def split_operator_scenario(
             )
         else:
             evaluations.append(evaluation)
+    # Square-group partners are produced only downstream of this split: training
+    # augmentation acts on the train population and equivariance audits act on
+    # split evaluation batches. A population already carrying group copies was
+    # transformed before its realizations were partitioned.
+    symmetry_provenance = ()
+    if scenario.symmetry is not None:
+        transformed_pre_split = any(
+            key == "training_augmentation" and value in ("p4", "p4m")
+            for key, value in scenario.metadata
+        )
+        symmetry_provenance = (
+            (
+                "transforms_generated_post_split",
+                "false" if transformed_pre_split else "true",
+            ),
+        )
     return replace(
         scenario,
         train_batch=scenario.train_batch.take(train_indices),
@@ -4934,7 +4969,8 @@ def split_operator_scenario(
             ("train_cases", str(train_count)),
             ("validation_cases", str(validation_count)),
             ("test_cases", str(len(test_indices))),
-        ),
+        )
+        + symmetry_provenance,
     )
 
 

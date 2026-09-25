@@ -14,6 +14,7 @@ from jaxtyping import Array, PRNGKeyArray
 
 from .._fingerprint import canonical_fingerprint
 from .._identity import strict_module_payload
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ml import AbstractRecipe, FeatureSchema, MLBatch, TargetSchema
@@ -240,9 +241,7 @@ def fit_cross_fitted_nuisance(
     )
     split_result = plan.split_plan.split(split_batch, key=key)
     n_samples = problem.dataset.n_samples
-    outcome_active = jnp.full(
-        (n_samples,), jnp.nan, dtype=jnp.result_type(outcome, jnp.float64)
-    )
+    outcome_active = jnp.full((n_samples,), jnp.nan, dtype=inexact_result_type(outcome))
     outcome_reference = jnp.full_like(outcome_active, jnp.nan)
     propensity_active = jnp.full_like(outcome_active, jnp.nan)
     propensity_reference = jnp.full_like(outcome_active, jnp.nan)

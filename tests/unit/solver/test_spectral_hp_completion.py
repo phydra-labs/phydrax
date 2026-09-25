@@ -111,7 +111,12 @@ def test_adaptive_high_order_io_and_mesh_import(tmp_path):
     phx.discretization.fem.write_adaptive_vtk(vtk, epoch)
     phx.discretization.fem.write_adaptive_xdmf(xdmf, epoch)
     phx.discretization.fem.write_hp_forest(forest, epoch)
-    assert "UNSTRUCTURED_GRID" in vtk.read_text()
+    exported = phx.discretization.fem.read_finite_element_mesh(vtk).mesh
+    assert exported.blocks[0].cell_kind == epoch.mesh.blocks[0].cell_kind
+    np.testing.assert_allclose(
+        np.asarray(exported.coordinates),
+        np.asarray(epoch.mesh.coordinates),
+    )
     assert "Quadrilateral" in xdmf.read_text()
     assert epoch.epoch_id in forest.read_text()
 

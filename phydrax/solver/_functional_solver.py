@@ -16,19 +16,22 @@ from jaxtyping import Array, Key
 
 from phydrax.domain import DomainFunction
 
+from .._differentiation import ComponentAuthority, RegularityPolicy
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._iteration import IterationSession
-from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+from .._model import TRIAL_SPACE_CERTIFICATE_KEY
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm, AbstractScalarTerm
+from .._trainable import partition_parameters, require_parameter_roles
 from .._training import (
     DelayedTargetPolicy,
     EvaluationParametersFn,
     ExponentialMovingAverageTargetPolicy,
 )
+from ..conditions._base import AbstractResidualCondition
 from ..discretization import (
     DiscretizationBundle,
     DiscretizationKey,
@@ -43,6 +46,10 @@ from ..nn.parameters._low_rank import (
     contains_low_rank_updates,
     validate_low_rank_subspace,
 )
+from ..operators.differential._requests import (
+    DerivativeRequest,
+    trace_derivative_requests,
+)
 from ..optim._evolution_strategy import AbstractDistributionEvolutionMethod
 from ..optim._kfac._config import KFAC
 from ..optim._mirror_descent import AbstractMirrorOptimizer
@@ -56,6 +63,9 @@ from ._functional_objective import (
 )
 from ._functional_precision import FunctionalPrecisionPolicy
 from ._functional_training import FunctionalTrainingPlan, FunctionalTrainingState
+
+
+EXPLORATORY_REGULARITY_POLICY = RegularityPolicy(allow_undeclared=True)
 
 
 def _has_signed_randomized_objective(
@@ -93,14 +103,7 @@ def _functional_discretization_bundle(
     trial_records = []
     trial_key_ids = []
     for name, function in functions.items():
-        certificate_values = tuple(
-            function.metadata[name]
-            for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
-            if name in function.metadata
-        )
-        if len(certificate_values) > 1:
-            raise ValueError("Trial function carries multiple construction certificates.")
-        certificate = certificate_values[0] if certificate_values else None
+        certificate = function.metadata.get(TRIAL_SPACE_CERTIFICATE_KEY)
         if certificate is not None and not isinstance(certificate, TrialSpaceCertificate):
             raise TypeError("Trial-space certificate metadata has an invalid value.")
         key = DiscretizationKey(
@@ -183,11 +186,42 @@ def _functional_discretization_bundle(
     return DiscretizationBundle(records)
 
 
+def _admitted_training_derivatives(
+    functions: Mapping[str, DomainFunction],
+    terms: Sequence[AbstractScalarTerm],
+    policy: RegularityPolicy,
+    /,
+) -> tuple[DerivativeRequest, ...]:
+    requests = []
+    for term in terms:
+        condition = getattr(term, "condition", None)
+        if isinstance(condition, AbstractResidualCondition):
+            requests.extend(
+                trace_derivative_requests(
+                    condition.residual,
+                    functions,
+                    authority=ComponentAuthority.SURROGATE,
+                    policy=policy,
+                )
+            )
+    return tuple(dict.fromkeys(requests))
+
+
 class FunctionalSolver(StrictModule):
     """Optimize one ordered collection of real scalar terms over named fields.
 
     Penalties and signed objectives share the same term contract. A precompiled
     `EnforcementProgram`, when supplied, is applied before every term evaluation.
+
+    Functional training is exploratory surrogate training: every value derivative
+    a training residual requests is admitted at construction, before any batch is
+    traced, with `SURROGATE` authority under `regularity_policy`. The default
+    policy is the frontend's declared exploratory policy
+    `RegularityPolicy(allow_undeclared=True)`: fields whose regularity is
+    undeclared train with a recorded `"regularity-undeclared"` condition, while
+    almost-everywhere derivatives require `allow_almost_everywhere=True` and
+    proven degeneracy is always rejected. `derivative_requests` records the
+    admitted requests.
     """
 
     functions: frozendict[str, DomainFunction]
@@ -197,6 +231,7 @@ class FunctionalSolver(StrictModule):
     precision: FunctionalPrecisionPolicy | None
     precision_evidence: PrecisionEvidenceEnvelope | None
     training_state: FunctionalTrainingState | None
+    regularity_policy: RegularityPolicy
 
     def __init__(
         self,
@@ -206,8 +241,11 @@ class FunctionalSolver(StrictModule):
         evaluation_terms: AbstractScalarTerm | Sequence[AbstractScalarTerm] = (),
         enforcement: EnforcementProgram | None = None,
         collocation_key: Key[Array, ""] = DOC_KEY0,
+        regularity_policy: RegularityPolicy = EXPLORATORY_REGULARITY_POLICY,
     ):
         """Create a solver from fields, scalar terms, and optional enforcement."""
+        if not isinstance(regularity_policy, RegularityPolicy):
+            raise TypeError("regularity_policy must be a RegularityPolicy.")
         self.functions = frozendict(functions)
         self.objective = _FunctionalObjective(
             terms=terms,
@@ -222,6 +260,11 @@ class FunctionalSolver(StrictModule):
         self.discretization_bundle = _functional_discretization_bundle(
             self.functions,
             self.objective.terms + self.objective.evaluation_terms,
+        )
+        self.regularity_policy = regularity_policy
+        # Admission runs before any batch is traced; rejected derivatives raise here.
+        _admitted_training_derivatives(
+            self.ansatz_functions(), self.objective.terms, regularity_policy
         )
 
     @property
@@ -243,6 +286,17 @@ class FunctionalSolver(StrictModule):
     def collocation(self) -> tuple[Any | None, ...]:
         """Return the population aligned with each training term."""
         return self.objective.populations
+
+    @property
+    def derivative_requests(self) -> tuple[DerivativeRequest, ...]:
+        """Return the admitted value-derivative requests of the training terms.
+
+        Each request carries its `SURROGATE`-authority regularity admission under
+        `regularity_policy`, including the conditions it was admitted with.
+        """
+        return _admitted_training_derivatives(
+            self.ansatz_functions(), self.objective.terms, self.regularity_policy
+        )
 
     def _with_collocation(
         self,
@@ -304,6 +358,9 @@ class FunctionalSolver(StrictModule):
     ) -> "FunctionalSolver":
         objective = self.objective.append_training_terms(terms, key=key)
         updated = eqx.tree_at(lambda solver: solver.objective, self, objective)
+        _admitted_training_derivatives(
+            updated.ansatz_functions(), objective.terms, updated.regularity_policy
+        )
         updated = eqx.tree_at(
             lambda solver: solver.discretization_bundle,
             updated,
@@ -369,16 +426,18 @@ class FunctionalSolver(StrictModule):
 
         return save_onnx(self[var], path, **kwargs)
 
-    def partition_functions(self) -> tuple[Any, Any]:
-        """Return `(trainable, non_trainable)` function PyTrees used by `solve()`."""
-        from .._trainable import partition_trainable
+    def partition_functions(self) -> tuple[Any, Any, Any]:
+        """Return the `(parameters, model_state, fixed)` role lanes of `functions`.
 
-        return partition_trainable(self.functions)
+        The lanes follow `phydrax.partition_parameters`; undeclared inexact leaves
+        raise `ValueError`. `phydrax.combine_parameters` recombines them.
+        """
+        return partition_parameters(self.functions)
 
     def trainable_functions(self) -> Any:
-        """Return the trainable function PyTree used as optimizer/evolution state."""
-        trainable, _non_trainable = self.partition_functions()
-        return trainable
+        """Return the PARAMETER lane used as optimizer/evolution state."""
+        parameters, _model_state, _fixed = self.partition_functions()
+        return parameters
 
     def loss(
         self,
@@ -403,24 +462,6 @@ class FunctionalSolver(StrictModule):
         )
         with precision_context:
             return evaluate_prepared_objective(prepared, self.functions).total
-
-    def update_kernel(
-        self,
-        optim: optax.GradientTransformation | optax.GradientTransformationExtraArgs,
-        parameter_subspace: ParameterSubspace,
-        /,
-        *,
-        jit: bool = True,
-    ):
-        """Prepare a reusable exact-subspace functional update kernel."""
-        from ._functional_update_kernel import FunctionalUpdateKernel
-
-        return FunctionalUpdateKernel.from_subspace(
-            self,
-            optim,
-            parameter_subspace,
-            jit=jit,
-        )
 
     def solve(
         self,
@@ -458,9 +499,12 @@ class FunctionalSolver(StrictModule):
     ) -> "FunctionalSolver":
         """Run the training loop and return an updated solver.
 
-        The optimization updates trainable inexact-array leaves of `self.functions`.
-        Domains and fixed observed-data state are kept non-trainable. An explicit
-        `parameter_subspace` restricts supported Optax runs to exact selected leaves.
+        The optimization updates the declared PARAMETER leaves of `self.functions`
+        (see `phydrax.resolve_array_roles`). FIXED leaves, including domains and
+        observed data, are never trained, and MODEL_STATE leaves are carried
+        unchanged. Undeclared inexact leaves raise `ValueError` before training.
+        An explicit `parameter_subspace` is itself the parameter declaration and
+        restricts supported Optax runs to exact selected leaves.
 
         - Standard and extra-argument Optax transformations are accepted.
         - `phydrax.optim.kfac(...)` configurations are accepted and receive frozen
@@ -531,6 +575,7 @@ class FunctionalSolver(StrictModule):
         if num_iter == 0:
             return self
         if parameter_subspace is None:
+            require_parameter_roles(self.functions, context="FunctionalSolver.solve")
             parameter_paths: tuple[str, ...] | None = None
             parameter_shapes: tuple[tuple[int, ...], ...] = ()
             parameter_alias_groups: tuple[tuple[str, ...], ...] = ()
@@ -565,10 +610,9 @@ class FunctionalSolver(StrictModule):
         ):
             raise ValueError("In-memory functional training-plan identity mismatch.")
         if bool(resume) and self.training_state is not None:
+            stored_targets = self.training_state.kernel_state.targets
             stored_target_policy = (
-                None
-                if self.training_state.target_state is None
-                else self.training_state.target_state.policy
+                None if stored_targets is None else stored_targets.policy
             )
             if stored_target_policy != target_policy:
                 raise ValueError("In-memory functional target-policy identity mismatch.")

@@ -21,6 +21,8 @@ from .._trainable import NonTrainableState
 
 
 BoundaryTarget = Callable[[Array, Array, Array, Array, Any], ArrayLike]
+# Conservation-law source `(time, state, coordinates, args) -> source density`.
+SourceFunction = Callable[[Array, Array, Array, Any], ArrayLike]
 
 
 def _canonical_ale_identity(value: object, name: str, /) -> str:

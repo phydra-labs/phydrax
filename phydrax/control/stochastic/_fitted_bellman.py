@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import DiscreteStepContext
 from ...linalg import (
@@ -102,7 +103,7 @@ def _path_weights(
         weights.dtype, jnp.complexfloating
     ):
         raise TypeError(f"{owner} must be a real numeric array.")
-    weights = weights.astype(jnp.result_type(weights, paths.states, jnp.float64))
+    weights = weights.astype(inexact_result_type(weights, paths.states))
     if bool(jnp.any(~jnp.isfinite(weights))) or bool(jnp.any(weights < 0.0)):
         raise ValueError(f"{owner} must be finite and nonnegative.")
     return weights
@@ -460,7 +461,7 @@ def _regression_step(
     Array,
     Array,
 ]:
-    dtype = jnp.result_type(design, target, weights, jnp.float64)
+    dtype = inexact_result_type(design, target, weights)
     safe_weight = jnp.where(mask, weights, 0.0).astype(dtype)
     total_weight = jnp.sum(safe_weight)
     normalized_weight = safe_weight / jnp.where(total_weight > 0.0, total_weight, 1.0)
@@ -608,12 +609,11 @@ def evaluate_fitted_bellman(prepared: FittedBellmanPrepared, /) -> FittedBellman
     train_count = training.path_count
     holdout_count = holdout.path_count
     feature_count = problem.num_features
-    dtype = jnp.result_type(
+    dtype = inexact_result_type(
         prepared.training_features,
         prepared.holdout_features,
         training.stage_costs,
         holdout.stage_costs,
-        jnp.float64,
     )
 
     coefficients = jnp.full((nodes, feature_count), jnp.nan, dtype=dtype)

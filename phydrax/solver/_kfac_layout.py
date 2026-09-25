@@ -14,7 +14,7 @@ import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import PyTree
 
-from phydrax._trainable import partition_trainable
+from phydrax._trainable import partition_parameters
 from phydrax.domain import ConcatenatedModelEvaluator, DomainFunction
 
 from .._model import KFACAffineBlock, KFACLayoutProvider
@@ -22,10 +22,12 @@ from ..optim._kfac._blocks import initialize_block_state
 from ..optim._kfac._config import KFAC
 from ..optim._kfac._types import (
     AffineBlockSpec,
+    KFACMetrics,
     KFACState,
     ParameterLayout,
     UncoveredBlockSpec,
 )
+from ._functional_run import require_empty_model_state
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,14 +43,24 @@ class KFACPlan:
         flat, _ = ravel_pytree(parameters)
         if flat.size != self.layout.parameter_count:
             raise ValueError("KFAC parameter structure changed after plan construction.")
+        count = jnp.asarray(0, dtype=jnp.int32)
+        real = jnp.zeros((), dtype=self.dtype)
         return KFACState(
-            step=jnp.asarray(0, dtype=jnp.int32),
+            step=count,
             curvature=initialize_block_state(
                 self.layout,
                 num_terms=self.num_terms,
                 dtype=self.dtype,
             ),
-            factor_updates=jnp.asarray(0, dtype=jnp.int32),
+            factor_updates=count,
+            metrics=KFACMetrics(
+                cg_iterations_max=count,
+                cg_relative_residual_max=real,
+                quadratic_update_norm=real,
+                accepted_step_size=real,
+                line_search_steps=count,
+                candidate_value=real,
+            ),
         )
 
 
@@ -107,13 +119,18 @@ def validate_model_coverage(
     functions: Mapping[str, DomainFunction],
     /,
 ) -> tuple[tuple[str, tuple[KFACAffineBlock, ...]], ...]:
-    """Validate and return explicitly declared affine blocks covered by KFAC."""
+    """Validate and return explicitly declared affine blocks covered by KFAC.
+
+    KFAC curvature covers PARAMETER leaves only; a field with MODEL_STATE leaves
+    raises `ValueError`.
+    """
 
     layouts: list[tuple[str, tuple[KFACAffineBlock, ...]]] = []
     seen_parameter_ids: set[int] = set()
     for field_name, function in functions.items():
         evaluator = function.func
-        trainable_function, _ = partition_trainable(function)
+        require_empty_model_state(function, context=f"KFAC field {field_name!r}")
+        trainable_function, _, _ = partition_parameters(function)
         trainable_leaves = tuple(jax.tree_util.tree_leaves(trainable_function))
         if not isinstance(evaluator, ConcatenatedModelEvaluator):
             if trainable_leaves and any(
@@ -171,16 +188,21 @@ def validate_model_coverage(
     return tuple(layouts)
 
 
-def _flat_leaf_slices(params: PyTree[Any], /) -> tuple[dict[int, tuple[int, ...]], int]:
+def _flat_leaf_slices(
+    params: PyTree[Any], /
+) -> tuple[dict[int, tuple[int, ...]], frozenset[int], int]:
     leaves = jax.tree_util.tree_leaves(params)
     offset = 0
     slices: dict[int, tuple[int, ...]] = {}
+    complex_indices: set[int] = set()
     for leaf in leaves:
         array = jnp.asarray(leaf)
         size = array.size
         slices[id(leaf)] = tuple(range(offset, offset + size))
+        if jnp.iscomplexobj(array):
+            complex_indices.update(slices[id(leaf)])
         offset += size
-    return slices, offset
+    return slices, frozenset(complex_indices), offset
 
 
 def discover_parameter_layout(
@@ -199,7 +221,7 @@ def discover_parameter_layout(
         raise ValueError("uncovered must be either 'error' or 'diagonal'.")
 
     layouts = validate_model_coverage(functions)
-    leaf_slices, parameter_count = _flat_leaf_slices(params)
+    leaf_slices, complex_indices, parameter_count = _flat_leaf_slices(params)
     covered: set[int] = set()
     blocks: list[AffineBlockSpec] = []
     for field_name, affine_blocks in layouts:
@@ -262,6 +284,15 @@ def discover_parameter_layout(
     remaining = tuple(index for index in range(parameter_count) if index not in covered)
     uncovered_block: UncoveredBlockSpec | None = None
     if remaining:
+        # Uncovered curvature is assembled in real coordinates (J^T J and its
+        # diagonal); complex scalars need a declared complex-cartesian block.
+        complex_remaining = complex_indices.intersection(remaining)
+        if complex_remaining:
+            raise ValueError(
+                "KFAC uncovered curvature requires real trainable parameters; "
+                f"{len(complex_remaining)} complex scalars lie outside declared "
+                "complex-cartesian affine blocks."
+            )
         if len(remaining) <= int(exact_block_max_size):
             approximation: Literal["exact", "diagonal"] = "exact"
         elif uncovered == "diagonal":

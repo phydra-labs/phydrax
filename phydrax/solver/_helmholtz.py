@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..integration import AdaptiveQuadraturePlan
 from ..linalg import (
     DenseLinearOperator,
@@ -33,14 +34,14 @@ from ..operators.integral.layer_potential._quadrature2d import (
 class ExteriorHelmholtzDirichletResult2D(StrictModule):
     """Solved outgoing Brakhage--Werner density and combined field."""
 
-    density: Array
+    density: Array = fixed_field()
     potential: HelmholtzCombinedField2D
-    linear_result: LinearSolveResult
+    linear_result: LinearSolveResult = fixed_field()
     assembly_report: BoundaryOperatorAssemblyReport
     discretization: object
-    coupling: float
-    boundary_residual_norm: Array
-    valid: Array
+    coupling: float = fixed_field()
+    boundary_residual_norm: Array = fixed_field()
+    valid: Array = fixed_field()
 
     def __init__(
         self,

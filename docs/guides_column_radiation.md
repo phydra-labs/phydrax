@@ -105,10 +105,11 @@ omit it while retaining its contribution to total layer mass: either would
 misclassify its opacity.
 
 `ColumnOpticalProperties` is immutable native `NonTrainableState`, containing
-explicit reference-tagged numeric coefficients. Native `partition_trainable`
-keeps this object fixed. `ColumnRadiationPlan` is not a `NonTrainableState`:
-its three scale vectors, surface albedo, and surface emissivity are ordinary
-trainable JAX array leaves. Each scale accepts a scalar or a four-species vector
+explicit reference-tagged numeric coefficients; every array below it is FIXED.
+`ColumnRadiationPlan` holds it in a `fixed_field` and declares its three scale
+vectors, surface albedo, and surface emissivity with `parameter_field`, so these
+calibration arrays form the PARAMETER lane of `phydrax.partition_parameters` and
+train in native trainers. Each scale accepts a scalar or a four-species vector
 and is stored as a four-species array. Scales multiply the corresponding fixed
 mass coefficients; zero disables the corresponding interaction without a
 special alternate solver. Surface albedo/emissivity may have broadcast batch

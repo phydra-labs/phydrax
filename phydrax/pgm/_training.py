@@ -132,8 +132,23 @@ def contrastive_divergence_loss(
     stop_sample_gradient: bool = True,
 ) -> tuple[Array, FactorGraphTrainingDiagnostics]:
     """Return the standard positive/negative phase score-difference objective."""
-    positive = pack_assignments(graph, positive_assignments)
-    negative = pack_assignments(graph, negative_assignments)
+    return _packed_contrastive_divergence_loss(
+        graph,
+        pack_assignments(graph, positive_assignments),
+        pack_assignments(graph, negative_assignments),
+        stop_sample_gradient=stop_sample_gradient,
+    )
+
+
+def _packed_contrastive_divergence_loss(
+    graph: DiscreteFactorGraph,
+    positive: Array,
+    negative: Array,
+    /,
+    *,
+    stop_sample_gradient: bool = True,
+) -> tuple[Array, FactorGraphTrainingDiagnostics]:
+    """Traceable score-difference objective of already packed assignments."""
     if positive.ndim == 1:
         positive = positive[None, :]
     if negative.ndim == 1:

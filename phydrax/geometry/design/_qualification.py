@@ -8,8 +8,8 @@ import math
 from dataclasses import dataclass, field
 from enum import Enum
 
+from ..._differentiation import DerivativeContract
 from ..._fingerprint import canonical_fingerprint
-from ...artifacts import DifferentiationContract
 
 
 class DerivativeTier(str, Enum):
@@ -160,19 +160,13 @@ class DesignQualificationEvidence:
         }
         object.__setattr__(self, "evidence_id", canonical_fingerprint(payload))
 
-    def coarse_contract_allows(self, contract: DifferentiationContract, /) -> bool:
+    def coarse_contract_allows(self, contract: DerivativeContract, /) -> bool:
         """Check only the necessary coarse capability; this never replaces evidence."""
-        if not isinstance(contract, DifferentiationContract):
-            raise TypeError("contract must be a DifferentiationContract.")
+        if not isinstance(contract, DerivativeContract):
+            raise TypeError("contract must be a DerivativeContract.")
         if not self.tier.is_derivative:
             return True
-        return bool(
-            contract.upstream_physical_parameters
-            or contract.stored_values
-            or contract.query_coordinates
-            or contract.local_parameters
-            or contract.stochastic_realization
-        )
+        return bool(contract.supported_surfaces)
 
 
 def _nonnegative(value: float | None, name: str, /) -> float | None:

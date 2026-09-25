@@ -8,6 +8,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
+from phydrax import (
+    ArrayRole,
+    fixed_field,
+    ParameterOwner,
+    partition_parameters,
+    require_parameter_roles,
+    StrictModule,
+)
+from phydrax.closure_data import conservative_face_numeric_revision
 from phydrax.closure_data._alignment import (
     conservative_prolong,
     conservative_restrict,
@@ -431,8 +441,8 @@ def test_normalizer_statistics_and_provenance_are_train_only():
 def test_binding_rejects_schema_mismatch_and_inserts_face_correction():
     schema = _schema()
 
-    def correction(system, left, right, baseline, axis, args):
-        del system, baseline, axis
+    def correction(system, left, right, baseline, context, args):
+        del system, baseline, context
         return args * (right - left)
 
     binding = LearnedClosureBindingPlan(
@@ -444,22 +454,80 @@ def test_binding_rejects_schema_mismatch_and_inserts_face_correction():
         model_artifact_id="model",
         normalizer_provenance_id="normalizer",
     )
-    plan = binding.bind_conservative_faces(schema)
-    left = jnp.arange(5.0)
+    revision = conservative_face_numeric_revision(binding)
+    plan = binding.bind_conservative_faces(schema, revision)
+    left = jnp.arange(10.0).reshape((2, 5))
     right = left + 1.0
-    baseline = jnp.full((5,), 2.0)
-    result = plan.apply(
-        SimpleNamespace(component_names=schema.component_names),
-        left,
-        right,
-        baseline,
-        0,
-        0.25,
+    baseline = jnp.full((2, 5), 2.0)
+    system = SimpleNamespace(component_names=schema.component_names, dimension=1)
+    context = phx.discretization.FaceFluxContext(
+        jnp.ones((2, 1)), jnp.ones(2), geometry_id="faces"
     )
+    result = plan.apply(system, left, right, baseline, context, 0.25)
     np.testing.assert_allclose(result, 2.25)
+    assert jax.tree.leaves(phx.partition_parameters(plan)[0]) == []
     other = FlowStateSchema(("rho",), ("kg/m^3",), (1.0,), density_name="rho")
     with pytest.raises(ValueError, match="schema identity"):
-        binding.bind_conservative_faces(other)
+        binding.bind_conservative_faces(other, revision)
+    with pytest.raises(ValueError, match="Numeric revision"):
+        binding.bind_conservative_faces(schema, phx.NumericRevision("other", {}))
+
+
+class _FaceJumpCorrection(StrictModule, ParameterOwner):
+    scale: jax.Array
+
+    def __call__(self, system, left, right, baseline, context, args=None):
+        del system, baseline, context, args
+        return self.scale * (right - left)
+
+
+def test_trainable_face_binding_exposes_only_predictor_parameters_in_fv_method():
+    schema = _schema()
+    artifact = LearnedClosureBindingPlan(
+        _FaceJumpCorrection(jnp.asarray(0.25)),
+        deployment_kind="conservative_face",
+        schema_id=schema.schema_id,
+        input_component_names=schema.component_names,
+        output_component_names=schema.component_names,
+        model_artifact_id="face-model",
+        normalizer_provenance_id="normalizer",
+    )
+    revision = conservative_face_numeric_revision(artifact)
+    trainable = artifact.as_trainable_binding()
+    assert conservative_face_numeric_revision(trainable) == revision
+
+    def method(binding):
+        return phx.discretization.FiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+            closure=binding.bind_conservative_faces(schema, revision),
+        )
+
+    frozen_method = method(artifact)
+    trainable_method = method(trainable)
+    assert frozen_method.closure.closure_id == trainable_method.closure.closure_id
+    frozen_resolution = require_parameter_roles(frozen_method, context="frozen face")
+    assert ArrayRole.PARAMETER not in frozen_resolution.roles
+    assert not jax.tree_util.tree_leaves(partition_parameters(frozen_method)[0])
+    (scale,) = jax.tree_util.tree_leaves(partition_parameters(trainable_method)[0])
+    assert scale is trainable.predictor.scale
+
+    left = jnp.arange(10.0).reshape((2, 5))
+    system = SimpleNamespace(component_names=schema.component_names, dimension=1)
+    context = phx.discretization.FaceFluxContext(
+        jnp.ones((2, 1)), jnp.ones(2), geometry_id="faces"
+    )
+
+    def correction(candidate):
+        return jnp.sum(
+            candidate.closure.apply(
+                system, left, left + 1.0, jnp.zeros_like(left), context
+            )
+        )
+
+    gradient = eqx.filter_grad(correction)(trainable_method)
+    assert float(gradient.closure.correction.predictor.scale) == 10.0
+    assert float(artifact.predictor.scale) == 0.25
 
 
 def _spectral_contract():
@@ -528,3 +596,71 @@ def test_spectral_nonfinite_prediction_returns_explicit_typed_fallback_artifact(
     assert int(result.fallback.reason_code) == 1
     assert result.fallback.fallback_kind == "zero_spectral_drift"
     assert not bool(result.evidence.valid)
+
+
+class _SpectralDamping(StrictModule, ParameterOwner):
+    rate: jax.Array
+
+    def __call__(self, value, args=None):
+        del args
+        return -self.rate * value
+
+
+def _damping_binding(schema, predictor):
+    return LearnedClosureBindingPlan(
+        predictor,
+        deployment_kind="spectral_drift",
+        schema_id=schema.schema_id,
+        input_component_names=("u", "v"),
+        output_component_names=("u", "v"),
+        model_artifact_id="damping-model",
+        normalizer_provenance_id="normalizer",
+    )
+
+
+def test_frozen_spectral_binding_cannot_train_but_its_trainable_binding_does():
+    _, projector, coordinates, dealiasing, state, schema = _spectral_contract()
+    artifact = _damping_binding(schema, _SpectralDamping(jnp.asarray(0.1)))
+    frozen_hook = artifact.bind_spectral_drift(schema, projector, coordinates, dealiasing)
+
+    resolution = require_parameter_roles(frozen_hook, context="frozen closure hook")
+    assert ArrayRole.PARAMETER not in resolution.roles
+    assert not jax.tree_util.tree_leaves(partition_parameters(frozen_hook)[0])
+
+    trainable = artifact.as_trainable_binding()
+    assert trainable.binding_id == artifact.binding_id
+    hook = trainable.bind_spectral_drift(schema, projector, coordinates, dealiasing)
+    assert hook.hook_id == frozen_hook.hook_id
+    (rate,) = jax.tree_util.tree_leaves(partition_parameters(hook)[0])
+    assert float(rate) == 0.1
+
+    def mismatch(candidate):
+        drift = candidate.apply(state).drift
+        return jnp.sum(jnp.abs(drift + 0.5 * state) ** 2)
+
+    gradient = eqx.filter_grad(mismatch)(hook)
+    assert float(gradient.binding.predictor.rate) < 0.0
+    assert float(artifact.predictor.rate) == 0.1
+
+
+class _FixedSpectralDamping(StrictModule, ParameterOwner):
+    rate: jax.Array = fixed_field()
+
+    def __call__(self, value, args=None):
+        del args
+        return -self.rate * value
+
+
+def test_trainable_closure_binding_requires_a_visible_trainable_predictor():
+    schema = _spectral_contract()[-1]
+    with pytest.raises(ValueError, match="no PARAMETER leaf"):
+        _damping_binding(schema, lambda value, args: -0.1 * value).as_trainable_binding()
+    with pytest.raises(ValueError, match="no PARAMETER leaf"):
+        _damping_binding(
+            schema, _FixedSpectralDamping(jnp.asarray(0.1))
+        ).as_trainable_binding()
+    network = phx.nn.models.MLP(
+        in_size=2, out_size=2, width_size=4, depth=1, key=jax.random.key(0)
+    )
+    frozen = _damping_binding(schema, phx.uq.FrozenModel(network))
+    assert frozen.as_trainable_binding().predictor is network

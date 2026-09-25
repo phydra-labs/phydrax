@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState, ParameterOwner
 from .._keys import EvalKey
 
 
@@ -51,7 +52,7 @@ def _move_sequence_axis(tree: Any, source: int, destination: int, /) -> Any:
     return jax.tree.map(lambda value: jnp.moveaxis(value, source, destination), tree)
 
 
-class RecurrentBatch(StrictModule):
+class RecurrentBatch(StrictModule, NonTrainableState):
     """Canonical packed sequence inputs with validity and reset semantics.
 
     Every input leaf begins with ``case_shape + (sequence_length,)``. ``valid``,
@@ -162,7 +163,7 @@ class RecurrentBatch(StrictModule):
         self.time_direction = time_direction
 
 
-class RecurrentTimeContext(StrictModule):
+class RecurrentTimeContext(StrictModule, NonTrainableState):
     """Last valid physical node carried between recurrent chunks."""
 
     time: Array
@@ -207,7 +208,7 @@ class RecurrentResult(StrictModule):
     final_context: RecurrentTimeContext | None = None
 
 
-class AbstractRecurrentCell(StrictModule):
+class AbstractRecurrentCell(StrictModule, ParameterOwner):
     """Stateful step contract consumed by :func:`run_recurrent`."""
 
     @abstractmethod
@@ -259,7 +260,7 @@ class AbstractRecurrentOutputCell(AbstractRecurrentCell):
         raise NotImplementedError
 
 
-class AbstractAssociativeRecurrence(StrictModule):
+class AbstractAssociativeRecurrence(StrictModule, ParameterOwner):
     """Declared associative summary algebra for parallel recurrent prefixes."""
 
     @abstractmethod

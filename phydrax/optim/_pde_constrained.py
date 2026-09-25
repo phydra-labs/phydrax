@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,
@@ -959,7 +960,7 @@ def _state_design_line_search(
 ):
     """Backtrack over fully solved states without exposing rejected trials."""
 
-    scalar_dtype = jnp.result_type(value, directional_derivative, jnp.float64)
+    scalar_dtype = inexact_result_type(value, directional_derivative)
     initial_rate = jnp.asarray(policy.initial_rate, dtype=scalar_dtype)
     minimum_rate = jnp.asarray(policy.minimum_rate, dtype=scalar_dtype)
     contraction = jnp.asarray(policy.contraction, dtype=scalar_dtype)

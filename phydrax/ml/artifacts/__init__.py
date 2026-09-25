@@ -1,6 +1,7 @@
 """Portable, checksum-validated native ML model artifacts."""
 
 from ._portable import (
+    executable_identity,
     load_ml_model,
     MLArtifact,
     MLArtifactManifest,
@@ -10,6 +11,7 @@ from ._portable import (
 
 
 __all__ = [
+    "executable_identity",
     "load_ml_model",
     "MLArtifact",
     "MLArtifactManifest",

@@ -9,15 +9,25 @@ import json
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import asdict
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 from ...._doc import DOC_KEY0
+from ...._external_runtime import _require_execution
 from ...._frozendict import frozendict
+from ...._model._component import ExecutionCapabilities
+from ...._model._ports import (
+    ModelPorts,
+    PortBindingEvidence,
+    PortMapping,
+    resolve_port_mapping,
+    ValuePort,
+)
 from ...._strict import StrictModule
+from ...._trainable import fixed_field, NonTrainableState
 from ..._keys import EvalKey, split_eval_key
 from ..capabilities import ConfiguredOperatorContract, OperatorTrainingEvidence
 from ..data import (
@@ -28,6 +38,7 @@ from ..data import (
     OperatorTargetBatch,
 )
 from ..engine import AbstractOperatorModel
+from ..field import OperatorFieldSpec
 from ..sharding import (
     OperatorShardingPolicy,
     shard_operator_batch,
@@ -125,28 +136,117 @@ def nondimensionalize_targets(
     )
 
 
+OperatorOutputRoutes: TypeAlias = tuple[tuple[str, OperatorFieldSpec], ...]
+"""`(model output name, task target field)` pairs bound by port ID, in task target order."""
+
+
+def bind_operator_outputs(
+    model: AbstractOperatorModel,
+    task: OperatorTask,
+    output_ports: Mapping[str, ValuePort] | None,
+    port_mapping: PortMapping | None,
+    /,
+) -> tuple[frozendict[str, ValuePort], PortBindingEvidence]:
+    """Bind every named model output to one task target field through explicit ports.
+
+    Operator outputs carry no intrinsic field identity, so `output_ports` declares
+    the `ValuePort` of each named model output. The outputs of `port_mapping` bind
+    each declared port ID to the `OperatorFieldSpec.value_port()` ID of one task
+    target field; `resolve_port_mapping` checks every pair and records aspects a
+    side leaves undeclared. Every model output and task target is bound exactly
+    once, and each bound output contract must equal its target's output spec.
+    """
+    if output_ports is None or port_mapping is None:
+        raise ValueError(
+            "Task-bound operators require explicit output_ports and a port_mapping "
+            "binding every model output port to a task target field port."
+        )
+    if not isinstance(output_ports, Mapping) or any(
+        not isinstance(name, str) or not isinstance(port, ValuePort)
+        for name, port in output_ports.items()
+    ):
+        raise TypeError("output_ports must map model output names to ValuePort values.")
+    if not isinstance(port_mapping, PortMapping):
+        raise TypeError("port_mapping must be a PortMapping.")
+    declared = model.operator_output_specs
+    if set(output_ports) != set(declared):
+        raise ValueError(
+            "output_ports must declare every model output exactly; "
+            f"expected {tuple(declared)!r}, got {tuple(output_ports)!r}."
+        )
+    targets = task.target_fields
+    target_ports = tuple(field.value_port() for field in targets)
+    evidence = resolve_port_mapping(
+        ModelPorts(inputs=(), outputs=tuple(output_ports[name] for name in declared)),
+        ModelPorts(inputs=(), outputs=target_ports),
+        port_mapping,
+    )
+    bound_targets = {owner for _, owner in evidence.outputs}
+    unbound = [
+        field.name
+        for field, port in zip(targets, target_ports, strict=True)
+        if port.port_id not in bound_targets
+    ]
+    if unbound:
+        raise ValueError(f"port_mapping leaves task target fields {unbound} unbound.")
+    ports = frozendict(output_ports)
+    for name, target in _operator_output_routes(task, ports, evidence):
+        assert target.output_spec is not None
+        if declared[name].to_dict() != target.output_spec.to_dict():
+            raise ValueError(
+                f"Model output {name!r} contract disagrees with task target "
+                f"{target.name!r}."
+            )
+    return ports, evidence
+
+
+def _operator_output_routes(
+    task: OperatorTask,
+    output_ports: Mapping[str, ValuePort],
+    port_binding: PortBindingEvidence,
+    /,
+) -> OperatorOutputRoutes:
+    """Route model outputs to task targets by the bound port IDs, never by name."""
+    name_by_port = {port.port_id: name for name, port in output_ports.items()}
+    model_by_owner = {owner: model for model, owner in port_binding.outputs}
+    return tuple(
+        (name_by_port[model_by_owner[field.value_port().port_id]], field)
+        for field in task.target_fields
+    )
+
+
+def _port_binding_record(
+    output_ports: Mapping[str, ValuePort],
+    port_binding: PortBindingEvidence,
+    /,
+) -> dict[str, Any]:
+    """Canonical port-ID record of one operator output binding."""
+    return {
+        "output_ports": {name: port.port_id for name, port in output_ports.items()},
+        "binding": port_binding.binding_fingerprint,
+    }
+
+
 def physicalize_prediction(
     prediction: OperatorPrediction,
     physical_batch: OperatorBatch,
     task: OperatorTask,
-    output_field_map: Mapping[str, str],
+    routes: OperatorOutputRoutes,
     normalization: OperatorNormalizationPolicy | None,
     /,
 ) -> OperatorPrediction:
     """Map model-named execution output into task-named physical output."""
-    if set(prediction.fields) != set(output_field_map):
+    expected = tuple(name for name, _ in routes)
+    if set(prediction.fields) != set(expected):
         raise ValueError(
-            "Model prediction fields do not match the output field map; "
-            f"expected {tuple(output_field_map)!r}, got {tuple(prediction.fields)!r}."
+            "Model prediction fields do not match the bound model outputs; "
+            f"expected {expected!r}, got {tuple(prediction.fields)!r}."
         )
-    model_name_by_target = {
-        target_name: model_name for model_name, target_name in output_field_map.items()
-    }
     fields: dict[str, OperatorFieldBatch] = {}
-    for target in task.target_fields:
+    for model_name, target in routes:
         assert target.output_spec is not None
         assert target.query_name is not None
-        raw_field = prediction.field(model_name_by_target[target.name])
+        raw_field = prediction.field(model_name)
         if raw_field.query_name != target.query_name:
             raise ValueError(
                 f"Model output {target.name!r} is bound to query "
@@ -190,20 +290,18 @@ def executionize_prediction(
     template: OperatorPrediction,
     execution_batch: OperatorBatch,
     task: OperatorTask,
-    output_field_map: Mapping[str, str],
+    routes: OperatorOutputRoutes,
     normalization: OperatorNormalizationPolicy | None,
     /,
 ) -> OperatorPrediction:
     """Map task-named physical output back into model execution coordinates."""
     task.validate_prediction(prediction)
     fields: dict[str, OperatorFieldBatch] = {}
-    by_name = task.field_by_name
-    for model_name, target_name in output_field_map.items():
-        target = by_name[target_name]
+    for model_name, target in routes:
         output_spec = target.output_spec
         if output_spec is None:
-            raise ValueError(f"Task output field {target_name!r} has no output spec.")
-        physical_field = prediction.field(target_name)
+            raise ValueError(f"Task output field {target.name!r} has no output spec.")
+        physical_field = prediction.field(target.name)
         template_field = template.field(model_name)
         if (
             output_spec.classification is not None
@@ -214,9 +312,9 @@ def executionize_prediction(
             )
         values = target.nondimensionalize(physical_field.values)
         if normalization is not None and output_spec.classification is None:
-            if target_name not in normalization.targets:
-                raise KeyError(f"Missing normalizer for target field {target_name!r}.")
-            values = normalization.targets[target_name].normalize(values)
+            if target.name not in normalization.targets:
+                raise KeyError(f"Missing normalizer for target field {target.name!r}.")
+            values = normalization.targets[target.name].normalize(values)
         query = execution_batch.query(template_field.query_name)
         mask = query.mask_array(case_shape=execution_batch.case_shape)
         trailing = (1,) * (values.ndim - mask.ndim)
@@ -297,7 +395,7 @@ def _evaluate_operator_step(
     execution_batch: OperatorBatch,
     physical_batch: OperatorBatch,
     task: OperatorTask,
-    output_field_map: Mapping[str, str],
+    routes: OperatorOutputRoutes,
     output_pipeline: OperatorOutputPipeline | None,
     normalization: OperatorNormalizationPolicy | None,
     dtype_policy: OperatorDTypePolicy,
@@ -324,7 +422,7 @@ def _evaluate_operator_step(
         raw_prediction,
         physical_batch,
         task,
-        output_field_map,
+        routes,
         normalization,
     )
     if output_pipeline is not None:
@@ -339,13 +437,13 @@ def _evaluate_operator_step(
         raw_prediction,
         execution_batch,
         task,
-        output_field_map,
+        routes,
         normalization,
     )
     return execution_prediction, physical_prediction
 
 
-class PreparedOperatorInput(StrictModule):
+class PreparedOperatorInput(StrictModule, NonTrainableState):
     """Physical and execution batches prepared for exactly one execution plan."""
 
     physical_batch: OperatorBatch
@@ -366,15 +464,29 @@ class PreparedOperatorInput(StrictModule):
 
 
 class OperatorExecutionPlan(StrictModule):
-    """Prepared runtime decisions and lowered callable for one trained operator."""
+    """Prepared runtime decisions and lowered callable for one trained operator.
+
+    The plan is a neutral container: ``execution_model`` keeps its own roles while
+    the task and normalization statistics are FIXED. ``output_ports`` declares the
+    port of each named model output and ``port_binding`` records their audited
+    binding to task target field ports; model outputs are routed to task targets
+    by those port IDs.
+
+    ``execution`` holds the model's declared `ExecutionCapabilities`, consulted
+    before casting, preparation, and dispatch: the ``"compiled"`` strategy
+    requires ``jit``, and every prediction is admitted against them before the
+    model is invoked.
+    """
 
     execution_model: AbstractOperatorModel
-    task: OperatorTask
+    task: OperatorTask = fixed_field()
     contract: ConfiguredOperatorContract
-    output_field_map: frozendict[str, str]
+    execution: ExecutionCapabilities
+    output_ports: frozendict[str, ValuePort]
+    port_binding: PortBindingEvidence
     fixed_query_fingerprints: frozendict[str, str]
     output_pipeline: OperatorOutputPipeline | None
-    normalization: OperatorNormalizationPolicy | None
+    normalization: OperatorNormalizationPolicy | None = fixed_field()
     dtype_policy: OperatorDTypePolicy
     precision_evidence: OperatorPrecisionEvidence
     training_evidence: OperatorTrainingEvidence
@@ -398,7 +510,8 @@ class OperatorExecutionPlan(StrictModule):
         /,
         *,
         training_evidence: OperatorTrainingEvidence,
-        output_field_map: Mapping[str, str] | None = None,
+        output_ports: Mapping[str, ValuePort] | None = None,
+        port_mapping: PortMapping | None = None,
         fixed_query_fingerprints: Mapping[str, str] | None = None,
         output_pipeline: OperatorOutputPipeline | None = None,
         normalization: OperatorNormalizationPolicy | None = None,
@@ -432,49 +545,19 @@ class OperatorExecutionPlan(StrictModule):
             raise ValueError("compilation_strategy must be 'eager' or 'compiled'.")
         if padding_policy != "explicit_mask":
             raise ValueError("padding_policy must be 'explicit_mask'.")
+        execution = execution_model.model_execution_contract().execution
+        if compilation_strategy == "compiled" and not execution.jit:
+            raise ValueError(
+                f"The compiled strategy requires jit; the {execution.tier!r} "
+                "execution model does not support it."
+            )
 
         cast_model = policy.cast_model(execution_model)
         contract = cast_model.operator_contract
-        targets = task.target_fields
-        declared = cast_model.operator_output_specs
-        target_names = tuple(field.name for field in targets)
-        if output_field_map is None:
-            resolved_output_field_map = {
-                name: name for name in declared if name in target_names
-            }
-        else:
-            resolved_output_field_map = {
-                str(model_name): str(target_name)
-                for model_name, target_name in output_field_map.items()
-            }
-        if set(resolved_output_field_map) != set(declared):
-            raise ValueError(
-                "output_field_map must name every model output exactly; "
-                f"expected {tuple(declared)!r}, got "
-                f"{tuple(resolved_output_field_map)!r}."
-            )
-        if len(set(resolved_output_field_map.values())) != len(
-            resolved_output_field_map
-        ) or set(resolved_output_field_map.values()) != set(target_names):
-            raise ValueError(
-                "output_field_map must map bijectively onto the task target fields; "
-                f"expected {target_names!r}, got "
-                f"{tuple(resolved_output_field_map.values())!r}."
-            )
-        model_name_by_target = {
-            target_name: model_name
-            for model_name, target_name in resolved_output_field_map.items()
-        }
-        declared_specs = tuple(
-            declared[model_name_by_target[field.name]] for field in targets
+        target_names = tuple(field.name for field in task.target_fields)
+        output_ports_, port_binding = bind_operator_outputs(
+            cast_model, task, output_ports, port_mapping
         )
-        for target, model_spec in zip(targets, declared_specs, strict=True):
-            target_spec = target.output_spec
-            assert target_spec is not None
-            if model_spec.to_dict() != target_spec.to_dict():
-                raise ValueError(
-                    f"Model output contract for {target.name!r} disagrees with the task."
-                )
         if output_pipeline is not None:
             unknown_pipeline_fields = {
                 transform.field_name
@@ -508,7 +591,9 @@ class OperatorExecutionPlan(StrictModule):
         self.execution_model = cast_model
         self.task = task
         self.contract = contract
-        self.output_field_map = frozendict(resolved_output_field_map)
+        self.execution = execution
+        self.output_ports = output_ports_
+        self.port_binding = port_binding
         self.fixed_query_fingerprints = frozendict(resolved_fixed_queries)
         self.output_pipeline = output_pipeline
         self.normalization = normalization
@@ -529,11 +614,18 @@ class OperatorExecutionPlan(StrictModule):
         return self.task.fingerprint
 
     @property
+    def output_routes(self) -> OperatorOutputRoutes:
+        """`(model output name, task target field)` pairs bound by port ID."""
+        return _operator_output_routes(self.task, self.output_ports, self.port_binding)
+
+    @property
     def contract_fingerprint(self) -> str:
         return _canonical_hash(
             {
                 "operator_contract": operator_contract_fingerprint(self.contract),
-                "output_field_map": dict(self.output_field_map),
+                "port_binding": _port_binding_record(
+                    self.output_ports, self.port_binding
+                ),
                 "fixed_query_fingerprints": dict(self.fixed_query_fingerprints),
                 "output_pipeline": (
                     None
@@ -701,12 +793,13 @@ class OperatorExecutionPlan(StrictModule):
             raise ValueError(
                 "Prepared operator input belongs to a different runtime contract."
             )
+        _require_execution(self.execution, prepared, key)
         _, prediction = _evaluate_operator_step(
             self.execution_model,
             prepared.execution_batch,
             prepared.physical_batch,
             self.task,
-            self.output_field_map,
+            self.output_routes,
             self.output_pipeline,
             self.normalization,
             self.dtype_policy,
@@ -729,8 +822,10 @@ class OperatorExecutionPlan(StrictModule):
 __all__ = [
     "OperatorCompilationStrategy",
     "OperatorExecutionPlan",
+    "OperatorOutputRoutes",
     "OperatorPaddingPolicy",
     "PreparedOperatorInput",
+    "bind_operator_outputs",
     "executionize_prediction",
     "nondimensionalize_batch",
     "nondimensionalize_targets",

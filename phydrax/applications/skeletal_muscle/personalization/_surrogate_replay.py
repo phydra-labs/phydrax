@@ -15,8 +15,9 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...._precision import inexact_result_type
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from ...._trainable import fixed_field, NonTrainableState
 from ....control import (
     AbstractControlParameterization,
     ControlProblem,
@@ -77,7 +78,7 @@ class SkeletalSurrogateReplayPlan(StrictModule):
     source_problem: ControlProblem
     parameterization: AbstractControlParameterization
     observation_operator: SkeletalReplayObservationOperator
-    valid_mask: Array
+    valid_mask: Array = fixed_field()
     surrogate_id: str = eqx.field(static=True)
     quantity_id: str = eqx.field(static=True)
     absolute_tolerance: float = eqx.field(static=True)
@@ -171,7 +172,7 @@ class SkeletalSurrogateReplayPlan(StrictModule):
             surrogate_input.dtype, jnp.complexfloating
         ):
             raise TypeError("Exact replay and surrogate predictions must be real-valued.")
-        comparison_dtype = jnp.result_type(exact_input, surrogate_input, jnp.float64)
+        comparison_dtype = inexact_result_type(exact_input, surrogate_input)
         exact = exact_input.astype(comparison_dtype)
         surrogate = surrogate_input.astype(comparison_dtype)
         if exact.shape != self.valid_mask.shape or surrogate.shape != exact.shape:

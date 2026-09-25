@@ -479,16 +479,19 @@ def test_tiny_kernel_amplitude_is_solved_in_relative_scale():
 
 
 def test_standardized_differences_handle_huge_opposite_and_equal_points():
+    # A location beyond 1/eps scales has no faithful reference transport.
+    with pytest.raises(ValueError, match="round-trip"):
+        phx.domain.ProbabilityDomain(phx.uq.Normal(1.0e308, 1.0e-200), label="z")
     probability = phx.domain.ProbabilityDomain(
-        phx.uq.Normal(1.0e308, 1.0e-200),
+        phx.uq.Normal(0.0, 1.0e-200),
         label="z",
     )
-    target = phx.integration.expectation(probability, target_id="extreme-location")
+    target = phx.integration.expectation(probability, target_id="extreme-scale")
     kernel_mean = phx.integration.GaussianKernelMean(
         target,
         phx.kernels.SquaredExponentialKernel(length_scale=1.0e-200),
     )
-    location = jnp.asarray([1.0e308])
+    location = jnp.asarray([0.0])
     at_location = kernel_mean.mean(location)[0]
     expected = 2.0**-0.5
     assert jnp.isfinite(at_location)
@@ -498,6 +501,7 @@ def test_standardized_differences_handle_huge_opposite_and_equal_points():
     assert jnp.isfinite(kernel_mean.mean(next_point)[0])
 
     opposite_points = jnp.asarray([1.0e308, -1.0e308])
+    assert jnp.array_equal(kernel_mean.mean(opposite_points), jnp.zeros((2,)))
     matrix = kernel_mean.matrix(opposite_points, opposite_points)
     assert jnp.all(jnp.isfinite(matrix))
     assert jnp.array_equal(jnp.diag(matrix), jnp.ones((2,)))

@@ -383,6 +383,73 @@ def test_one_observation_fisher_score_counts_initial_transition_once():
     assert jnp.any(jnp.abs(fisher.information) > 1e-6)
 
 
+class _ScaledRandomWalk(phx.stochastic.AbstractTransitionKernel):
+    """`x' = coefficient * x + noise_scale * N(0, 1)` with a FIXED noise scale."""
+
+    coefficient: jax.Array = phx.parameter_field()
+    noise_scale: jax.Array = phx.fixed_field()
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    process_id: str = eqx.field(static=True)
+    approximation_id: str = eqx.field(static=True)
+    has_log_density: bool = eqx.field(static=True)
+
+    def __init__(self, coefficient, noise_scale):
+        self.coefficient = jnp.asarray(coefficient)
+        self.noise_scale = jnp.asarray(noise_scale)
+        self.state_shape = (1,)
+        self.process_id = "scaled-random-walk"
+        self.approximation_id = "exact"
+        self.has_log_density = True
+
+    def sample(self, key, state, t0, t1, context, /):
+        del t0, t1, context
+        values = self.coefficient * state + self.noise_scale * jr.normal(
+            key, jnp.shape(state), dtype=state.dtype
+        )
+        valid = jnp.all(jnp.isfinite(values), axis=-1)
+        return phx.stochastic.TransitionSample(
+            values=values,
+            valid=valid,
+            status=jnp.where(valid, 0, 1).astype(jnp.int32),
+            process_id=self.process_id,
+            approximation_id=self.approximation_id,
+        )
+
+    def log_prob(self, next_state, state, t0, t1, context, /):
+        del t0, t1, context
+        residual = (next_state - self.coefficient * state) / self.noise_scale
+        return jnp.sum(
+            -0.5 * residual**2 - jnp.log(self.noise_scale) - 0.5 * jnp.log(2.0 * jnp.pi),
+            axis=-1,
+        )
+
+
+def test_particle_fisher_score_excludes_fixed_transition_leaves():
+    problem = _problem()
+    walk = phx.stochastic.StateSpaceModel(
+        problem.model.prior,
+        _ScaledRandomWalk(0.8, 0.5),
+        problem.model.observation,
+        model_id="scaled-walk-model",
+    )
+    result = phx.uq.bootstrap_particle_filter(
+        jr.key(19),
+        phx.stochastic.StateSpaceProblem(
+            walk, problem.observations, initial_time=0.0, problem_id="scaled-walk"
+        ),
+        num_particles=8,
+        resampling_policy="never",
+    )
+    score = phx.uq.particle_fisher_score(phx.uq.particle_backward_smoother(result))
+
+    # The FIXED noise scale is data of the kernel, not a scored parameter.
+    assert score.parameter_paths == (".coefficient",)
+    assert score.parameter_size == 1
+    assert score.transition_score.noise_scale is None
+    assert score.flat_score.shape == (1,)
+    assert jnp.all(jnp.isfinite(score.flat_score))
+
+
 def test_zero_mass_singular_transition_pairs_have_finite_fisher_score():
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),

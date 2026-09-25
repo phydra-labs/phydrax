@@ -10,6 +10,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...control.stochastic._controlled_jump import (
     ControlledJumpPathBatch,
@@ -86,10 +87,10 @@ class ExecutionFeedbackPolicy(StrictModule):
                 raise ValueError(f"{owner} must be finite.")
         if bool(jnp.any(lower > upper)):
             raise ValueError("lower_bounds cannot exceed upper_bounds.")
-        self.gain = matrix.astype(jnp.result_type(matrix, jnp.float64))
-        self.bias = offset.astype(jnp.result_type(offset, jnp.float64))
-        self.lower_bounds = lower.astype(jnp.result_type(lower, jnp.float64))
-        self.upper_bounds = upper.astype(jnp.result_type(upper, jnp.float64))
+        self.gain = matrix.astype(inexact_result_type(matrix))
+        self.bias = offset.astype(inexact_result_type(offset))
+        self.lower_bounds = lower.astype(inexact_result_type(lower))
+        self.upper_bounds = upper.astype(inexact_result_type(upper))
         self.state_size = state_size
         self.action_size = action_size
         self.policy_id = _identifier(policy_id, "policy_id")

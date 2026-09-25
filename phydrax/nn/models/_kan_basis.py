@@ -12,9 +12,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jax import Array
 from jaxtyping import ArrayLike, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._interpolation import (
     bspline_batched_evaluate,
     bspline_evaluate,
@@ -30,7 +32,7 @@ from ..._polynomial._orthogonal import (
     standard_series_value,
 )
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, ParameterOwner
 
 
 EdgeInitialization = Literal["default", "identity"]
@@ -72,6 +74,25 @@ def _validate_edge_arrays(
     return coefficients_, inputs_
 
 
+def _spline_edge_continuity(
+    grid: BSplineGrid | BSplineGridBank | TrainableBSplineGrid | TrainableBSplineGridBank,
+    /,
+) -> int | None:
+    """Continuity order of clipped spline edges on [-1, 1]; `None` if smooth there."""
+    if isinstance(grid, BSplineGridBank):
+        orders = [order for row in grid.grids for order in row.continuity_orders]
+    elif isinstance(grid, TrainableBSplineGridBank):
+        # Trainable spans are bounded below, so interior knots stay simple.
+        orders = [grid.degree - 1] * (grid.num_intervals - 1)
+    else:
+        orders = list(grid.continuity_orders)
+    lower, upper = grid.active_interval
+    if np.any(np.asarray(lower) > -1.0) or np.any(np.asarray(upper) < 1.0):
+        # Clipping to an active interval inside [-1, 1] leaves a kink in the value.
+        orders.append(0)
+    return min(orders, default=None)
+
+
 class AbstractEdgeBasis(StrictModule):
     """Typed numerical contract for one family of scalar KAN edge functions."""
 
@@ -106,6 +127,13 @@ class AbstractEdgeBasis(StrictModule):
     @abstractmethod
     def regularization(self, coefficients: Any) -> Array:
         """Return this basis family's unscaled parameter penalty."""
+
+    def _edge_regularity(self) -> DerivativeRegularity | None:
+        """Regularity of every edge function on the canonical input interval [-1, 1].
+
+        `None` (undeclared) unless the basis family declares it.
+        """
+        return None
 
 
 class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
@@ -147,6 +175,9 @@ class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
     @property
     def degree(self) -> int:
         return self._degree
+
+    def _edge_regularity(self) -> DerivativeRegularity:
+        return DerivativeRegularity.smooth(degree_bound=self.degree)
 
     @property
     def coefficient_count(self) -> int:
@@ -312,6 +343,14 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
     def coefficient_count(self) -> int:
         return self.grid.coefficient_count
 
+    def _edge_regularity(self) -> DerivativeRegularity:
+        continuity = _spline_edge_continuity(self.grid)
+        if continuity is None:
+            return DerivativeRegularity.smooth(degree_bound=self.degree)
+        return DerivativeRegularity.piecewise_polynomial(
+            continuity=continuity, degree_bound=self.degree
+        )
+
     def for_layer(self, in_size: int, out_size: int, /) -> AbstractEdgeBasis:
         del out_size
         if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
@@ -469,7 +508,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         return penalty
 
 
-class RationalBSplineEdgeParameters(StrictModule):
+class RationalBSplineEdgeParameters(StrictModule, ParameterOwner):
     """Trainable control values and bounded log-weights for rational spline edges."""
 
     control_values: Array
@@ -605,6 +644,13 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
     @property
     def coefficient_count(self) -> int:
         return self.grid.coefficient_count
+
+    def _edge_regularity(self) -> DerivativeRegularity:
+        # Quotients of two splines on the same knots over a positive denominator.
+        continuity = _spline_edge_continuity(self.grid)
+        if continuity is None:
+            return DerivativeRegularity.smooth()
+        return DerivativeRegularity.piecewise_smooth(continuity=continuity)
 
     def for_layer(self, in_size: int, out_size: int, /) -> AbstractEdgeBasis:
         del out_size

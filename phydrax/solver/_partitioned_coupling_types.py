@@ -722,7 +722,7 @@ class CouplingSubsystemResult(StrictModule):
         self.auxiliary = auxiliary
 
 
-class AbstractCouplingSubsystem(StrictModule, NonTrainableState):
+class AbstractCouplingSubsystem(StrictModule):
     """Pure prepared subsystem map over one coupling window."""
 
     subsystem_id: eqx.AbstractVar[str]
@@ -743,7 +743,7 @@ class AbstractCouplingSubsystem(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class CallableCouplingSubsystem(AbstractCouplingSubsystem):
+class CallableCouplingSubsystem(AbstractCouplingSubsystem, NonTrainableState):
     """Explicit-ID adapter for one pure participant window callback."""
 
     advance: Any

@@ -3,8 +3,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax._model import AbstractArrayModel
-from phydrax._trainable import partition_trainable
 from phydrax.nn.models import (
     FeatureNormPotential,
     FixedSubspaceOnsagerModel,
@@ -223,7 +223,7 @@ def test_fixed_onsager_subspace_is_excluded_from_trainable_parameters():
             key=jr.key(20),
         ),
     )
-    trainable, _fixed = partition_trainable(model)
+    trainable, _model_state, _fixed = phx.partition_parameters(model)
 
     assert trainable.subspace is None
     assert jax.tree.leaves(trainable.latent_dynamics)

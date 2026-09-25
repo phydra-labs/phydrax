@@ -16,8 +16,16 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    SMOOTH,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._scan import (
     pack_scan_modules,
@@ -29,6 +37,7 @@ from phydrax.nn.layers._dropout import _dropout_probabilities, Dropout
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.architectures.spectral._fno import (
     _activation,
+    _activation_regularity,
     _mode_tuple,
     Activation,
     SpectralConvND,
@@ -263,6 +272,11 @@ class _ProjectedProductFourierMixer(StrictModule):
             output = _dealiased_spectral_resample(output, spatial_shape)
         return output
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Resampling and the Fourier multiplier are linear; the factors multiply.
+        factor = self.projection._value_regularity()
+        return product_regularity((factor,) * self.interaction_order)
+
 
 class _RMSNorm(StrictModule):
     scale: Array
@@ -280,6 +294,9 @@ class _RMSNorm(StrictModule):
             jnp.mean(array * array, axis=-1, keepdims=True) + self.eps
         )
         return array * inverse_rms * self.scale
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return SMOOTH
 
 
 class _HigherOrderFeedForward(StrictModule):
@@ -328,6 +345,13 @@ class _HigherOrderFeedForward(StrictModule):
         hidden = self.hidden_dropout(hidden, key=fold_in_eval_key(key, 0))
         output = self.project(hidden)
         return self.output_dropout(output, key=fold_in_eval_key(key, 1))
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(
+            self.expand._value_regularity(),
+            _activation_regularity(self.activation),
+            self.project._value_regularity(),
+        )
 
 
 class _HigherOrderFNOBlock(StrictModule):
@@ -388,6 +412,19 @@ class _HigherOrderFNOBlock(StrictModule):
             key=fold_in_eval_key(key, 1),
         )
         return hidden + feedforward_update if self.residual else feedforward_update
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        mixer = compose_regularity(
+            self.mixer_norm._value_regularity(), self.spectral._value_regularity()
+        )
+        feedforward = compose_regularity(
+            self.feedforward_norm._value_regularity(),
+            self.feedforward._value_regularity(),
+        )
+        if self.residual:
+            mixer = sum_regularity((AFFINE, mixer))
+            feedforward = sum_regularity((AFFINE, feedforward))
+        return compose_regularity(mixer, feedforward)
 
 
 def _hofno_contract_configuration(model):
@@ -825,6 +862,17 @@ class HOFNO(AbstractOperatorModel):
         values, axes, query_mask = self._prepare_operator_batch(batch)
         output = self._evaluate(values, axes, key=key)
         return self._mask_operator_output(output, query_mask)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        activation = _activation_regularity(self.activation)
+        return compose_regularity(
+            self.lift._value_regularity(),
+            activation,
+            *(block._value_regularity() for block in self.blocks),
+            self.projection_hidden._value_regularity(),
+            activation,
+            self.projection._value_regularity(),
+        )
 
 
 __all__ = ["HOFNO"]

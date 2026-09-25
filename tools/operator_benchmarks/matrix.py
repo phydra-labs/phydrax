@@ -171,6 +171,7 @@ def scenario_checksum(scenario: OperatorBenchmarkScenario, /) -> str:
             "threshold": scenario.domain_support_threshold,
         },
         "conservation_source_key": scenario.conservation_source_key,
+        "primary_source_key": scenario.primary_source_key,
         "symmetry": _symmetry_contract(scenario.symmetry),
         "task_fingerprint": None if scenario.task is None else scenario.task.fingerprint,
         "ladder": scenario.ladder,

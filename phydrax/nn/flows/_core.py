@@ -13,9 +13,10 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 
 
-class AbstractFlowDistribution(StrictModule, abc.ABC):
+class AbstractFlowDistribution(StrictModule, ParameterOwner, abc.ABC):
     """Trainable exact-density distribution with optional conditioning."""
 
     @property
@@ -124,7 +125,7 @@ class NormalFlowDistribution(AbstractFlowDistribution):
         )
 
 
-class AffineCouplingLayer(StrictModule):
+class AffineCouplingLayer(StrictModule, ParameterOwner):
     network: eqx.nn.MLP
     mask: Array
     event_size: int = eqx.field(static=True)

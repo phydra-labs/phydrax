@@ -185,11 +185,12 @@ def qualification() -> dict[str, object]:
     second_key_data = second.scatter(
         jax.random.key_data(second.semantic_keys(root_key, counters))
     )
+    # No learned numeric content is bound into these items.
     checkpoint = ExecutionWorksetCheckpoint(
-        first, vectorized.values, vectorized.next_rng_counters
+        first, vectorized.values, vectorized.next_rng_counters, numeric_revisions=()
     )
     restarted, restarted_counters = restore_execution_workset_checkpoint(
-        first, checkpoint
+        first, checkpoint, numeric_revisions=()
     )
     scatter_error = float(jnp.max(jnp.abs(first.scatter(first.gather(values)) - values)))
     serial_vmap_error = float(jnp.max(jnp.abs(serial.values - vectorized.values)))

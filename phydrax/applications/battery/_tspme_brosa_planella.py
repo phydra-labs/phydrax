@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem
@@ -497,7 +498,7 @@ class BrosaPlanellaTspmeState(StrictModule):
             )
         if jnp.issubdtype(temperature.dtype, jnp.complexfloating):
             raise TypeError("temperature_k must be real-valued.")
-        dtype = jnp.result_type(temperature, spme_state.negative_amount_mol, jnp.float64)
+        dtype = inexact_result_type(temperature, spme_state.negative_amount_mol)
         self.spme_state = Marquis2019SpmeState(
             spme_state.negative_amount_mol.astype(dtype),
             spme_state.positive_amount_mol.astype(dtype),

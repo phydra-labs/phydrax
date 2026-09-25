@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax.ml import ML_INFEASIBLE, MLBatch, SparseFeatures
 from phydrax.ml.linear import (
     PassiveAggressiveClassifierModel,
@@ -127,7 +128,10 @@ def test_sgd_classifier_losses_case_multilabel_probabilities_sparse_and_gradient
         assert model.predict(features).shape == targets.shape
         assert jax.jit(model)(features).shape == targets.shape
         assert jax.vmap(model)(features).shape == targets.shape
-        assert result.gradient_contract.fit_targets == "none"
+        assert (
+            result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+            is GradientLevel.NONE
+        )
         if loss == "logistic":
             assert model.predict_proba(features).shape == (features.shape[0], 2)
         else:
@@ -183,8 +187,11 @@ def test_perceptron_key_determinism_sparse_hard_outputs_and_unrolled_gradients()
     assert jnp.allclose(model.coefficients, second.as_trainable().coefficients)
     assert model(features).shape == targets.shape
     assert model.predict(features).shape == targets.shape
-    assert first.gradient_contract.fit_targets == "none"
-    assert "mistake_updates" in first.gradient_contract.nondifferentiable_outputs
+    assert (
+        first.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.NONE
+    )
+    assert "mistake_updates" in first.derivative_contract.nondifferentiable_outputs
     assert jax.jit(model)(features).shape == targets.shape
     _assert_model_gradients(model, features[0])
     sparse_model = recipe.fit_batch(
@@ -238,7 +245,10 @@ def test_passive_aggressive_regression_and_classification_variants_sparse_and_gr
     assert reg_model(features).shape == scalar_targets.shape
     assert cls_model(features).shape == classification.shape
     assert cls_model.predict(features).shape == classification.shape
-    assert cls_result.gradient_contract.fit_targets == "none"
+    assert (
+        cls_result.derivative_contract.level(DerivativeSurface.FIT_TARGETS)
+        is GradientLevel.NONE
+    )
     assert jax.jit(reg_model)(features).shape == scalar_targets.shape
     assert jax.vmap(cls_model)(features).shape == classification.shape
     _assert_model_gradients(reg_model, features[0])

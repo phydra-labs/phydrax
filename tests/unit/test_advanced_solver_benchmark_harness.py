@@ -273,6 +273,8 @@ def test_public_phydrax_adapter_declares_every_representative_family():
             "optimization.bounded-least-squares",
             "optimization.linear-program",
             "optimization.quadratic-program",
+            "optimization.mixed-integer-linear-program",
+            "optimization.mixed-integer-conic-program",
         }
     )
     assert not adapter.availability("optimization.conic-program").available
@@ -296,6 +298,8 @@ def test_capabilities_cli_emits_all_common_solver_families(capsys):
         "optimization.linear-program",
         "optimization.quadratic-program",
         "optimization.conic-program",
+        "optimization.mixed-integer-linear-program",
+        "optimization.mixed-integer-conic-program",
     }
 
 
@@ -337,7 +341,7 @@ def test_phydrax_nonlinear_adapter_uses_prepared_refresh_lifecycle():
     assert row["timing"]["refresh"]["count"] == 1
     assert row["timing"]["refreshed_solve"]["count"] == 1
     assert row["timing"]["refreshed_verification"]["count"] == 1
-    assert row["refresh"]["symbolic_reused"] is True
+    assert row["refresh"]["symbolic_reused"] is None
     assert row["refresh"]["numeric_refreshed"] is True
     assert row["refresh"]["independently_certified"] is True
     assert row["refresh"]["certificate_converged"] is True
@@ -404,7 +408,7 @@ def test_phydrax_sparse_root_runs_prepared_numeric_refresh_lifecycle():
     assert row["certificate"]["relative_residual"] < 1e-8
     assert row["timing"]["differentiation"]["count"] == 0
     assert row["timing"]["refresh"]["count"] == 1
-    assert row["refresh"]["symbolic_reused"] is True
+    assert row["refresh"]["symbolic_reused"] is None
     assert row["refresh"]["numeric_refreshed"] is True
     assert row["refresh"]["certificate_converged"] is True
     validate_row(row)
@@ -432,7 +436,7 @@ def test_phydrax_program_runs_compiled_prepared_refresh_lifecycle():
     assert row["outcome"]["status"] == "success"
     assert row["timing"]["compilation"]["count"] == 1
     assert row["timing"]["preparation"]["count"] == 1
-    assert row["refresh"]["symbolic_reused"] is True
+    assert row["refresh"]["symbolic_reused"] is None
     assert row["refresh"]["numeric_refreshed"] is True
     assert row["refresh"]["certificate_converged"] is True
     validate_row(row)

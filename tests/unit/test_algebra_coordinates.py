@@ -51,7 +51,7 @@ def test_hermitian_spectral_coordinates_implement_shared_map_without_id_change()
     assert coordinates.evidence.norm_relation == "isometry"
     assert (
         coordinates.coordinate_id
-        == "804eac8f734f64684aab741bd2ed155c539dc9e3d2275f09ea59de6b1edf70ab"
+        == "5cb3e54c0c191bde3770e09bae8f946bb05d7f6cbd58abfabff8fe2c409fd4df"
     )
     assert jnp.allclose(coordinates.from_real_coordinates(real), state, atol=1e-12)
 

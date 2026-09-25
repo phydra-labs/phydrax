@@ -311,7 +311,7 @@ def test_path_ensemble_requires_identity_for_opaque_execution_objects():
         path_count=2,
         dt0=0.01,
         event=event,
-        event_id="path-ensemble-event",
+        event_id="path-ensemble-terminal-event",
     )
     assert first.plan_id == replay.plan_id
     assert first.plan_id != changed.plan_id

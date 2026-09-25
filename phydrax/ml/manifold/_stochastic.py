@@ -13,18 +13,34 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract, ML_NONCONVERGED
+from .._contracts import (
+    AbstractRecipe,
+    FitResult,
+    ML_NONCONVERGED,
+    prediction_fit_contract,
+)
 from .._numerics import pairwise_distances
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
     _euclidean_distances,
     _fit_arrays,
     _fit_status,
+    _HARD_NEIGHBOR_EXTENSION_CONTRACT,
     _prepare_queries,
     _restore_queries,
+    _TRANSDUCTIVE_CONTRACT,
     build_neighbor_graph,
     ManifoldDiagnostics,
 )
@@ -144,11 +160,11 @@ def _optimize_tsne_one(
     return embedding, objective, gradient_norm
 
 
-class TSNEModel(AbstractArrayModel):
+class TSNEModel(AbstractFittedModel):
     """Transductive t-SNE coordinates; no mathematically defined transform is claimed."""
 
     embedding: Array
-    training_features: Array
+    training_features: Array = fixed_field()
     active: Array
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -171,6 +187,9 @@ class TSNEModel(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
         self.in_size = train.shape[-1]
         self.out_size = coordinates.shape[-1]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _TRANSDUCTIVE_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del x, key
@@ -275,14 +294,20 @@ class TSNERecipe(AbstractRecipe):
             method="tsne-exact",
         )
         model = TSNEModel(x, embedding, active, case_shape=batch.case_shape)
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             nondifferentiable_outputs=("valid", "status"),
             conditions=(
                 "fixed explicit initialization key and iteration count",
@@ -296,7 +321,7 @@ class TSNERecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="tsne-exact",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -403,11 +428,11 @@ def _optimize_umap_one(
     return embedding, objective, jnp.linalg.norm(gradient)
 
 
-class FuzzyGraphEmbeddingModel(AbstractArrayModel):
+class FuzzyGraphEmbeddingModel(AbstractFittedModel):
     """UMAP-like embedding with a conditional fuzzy barycentric transform."""
 
-    training_features: Array
-    embedding: Array
+    training_features: Array = fixed_field()
+    embedding: Array = fixed_field()
     active: Array
     n_neighbors: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -433,6 +458,9 @@ class FuzzyGraphEmbeddingModel(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
         self.in_size = train.shape[-1]
         self.out_size = coordinates.shape[-1]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HARD_NEIGHBOR_EXTENSION_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -589,20 +617,21 @@ class FuzzyGraphEmbeddingRecipe(AbstractRecipe):
             n_neighbors=self.n_neighbors,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="conditional",
-            prediction_parameters="conditional",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
-            nondifferentiable_outputs=(
-                "neighbor_indices",
-                "connectivity",
-                "valid",
-                "status",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
             ),
+            route=DerivativeRoute.UNROLLED,
+            nondifferentiable_outputs=("connectivity", "valid", "status"),
             conditions=(
                 "hard k-NN topology is held fixed",
                 "fixed explicit initialization key and iteration count",
@@ -615,7 +644,7 @@ class FuzzyGraphEmbeddingRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="fuzzy-graph-embedding",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

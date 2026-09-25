@@ -148,11 +148,14 @@ def _batch(duration=1.0e-4):
 
 
 def _trained():
+    task = _task()
+    state_port = task.field_by_name["state"].value_port()
     return phx.nn.operator.training.TrainedOperator(
         _model(),
-        _task(),
+        task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "state"},
+        output_ports={"output": state_port},
+        port_mapping=phx.PortMapping(outputs=((state_port.port_id, state_port.port_id),)),
         artifact_id="conditional-affine-workflow",
         provenance={"dataset": "manufactured reversible association"},
     )

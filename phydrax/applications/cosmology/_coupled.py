@@ -16,7 +16,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field
 from ...discretization import PreparedFiniteVolumeDynamics
 from ...solver import ParticleMeshGravityPlan
 from ._background import FLRWBackground
@@ -36,7 +36,7 @@ class ComovingEulerDiagnostics(StrictModule):
     successful: Array
 
 
-class ComovingEulerPlan(StrictModule, NonTrainableState):
+class ComovingEulerPlan(StrictModule):
     """Fixed-substep ideal Euler transport in scale factor with expansion/gravity."""
 
     dynamics: PreparedFiniteVolumeDynamics
@@ -271,13 +271,13 @@ class CosmologicalGasParticleResult(StrictModule):
     successful: Array
 
 
-class CosmologicalGasParticleGravityPlan(StrictModule, NonTrainableState):
+class CosmologicalGasParticleGravityPlan(StrictModule):
     """Transactional adiabatic gas + collisionless-DM epoch with shared PM gravity."""
 
     gas: ComovingEulerPlan
     particles: CosmologicalKDKPlan
     gravity: ParticleMeshGravityPlan
-    scale_factors: Array
+    scale_factors: Array = fixed_field()
     plan_id: str = eqx.field(static=True)
 
     def __init__(

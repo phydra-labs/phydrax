@@ -12,7 +12,16 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model import ModelBinding
+from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
 from ...sparse import RowRelation
 from .._batch import MLBatch
@@ -21,11 +30,29 @@ from .._contracts import (
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._numerics import MetricName, pairwise_distances
 
 
 _BLOCKWISE_BINDING = ModelBinding.blockwise("flat", pass_key=True)
+
+# Out-of-sample extensions over the query's hard k nearest training points jump
+# when that neighbor set changes and are piecewise smooth in between.
+_HARD_NEIGHBOR_EXTENSION_CONTRACT = prediction_fit_contract(
+    value_derivative_contract(DerivativeRegularity.piecewise_smooth(continuity=-1)),
+    route=DerivativeRoute.DIRECT,
+    nondifferentiable_outputs=("neighbor_indices",),
+)
+
+# Transductive embeddings define no out-of-sample map to differentiate.
+_TRANSDUCTIVE_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.NONE),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+    ),
+    route=DerivativeRoute.DIRECT,
+)
 
 
 class NeighborhoodGraph(StrictModule):

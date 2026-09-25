@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -15,12 +16,14 @@ from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
+from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
-from .._trainable import partition_trainable
+from .._trainable import partition_parameters, require_parameter_roles
 from .._training import TrainingProgress
 from ..domain import DomainFunction
 from ..optim._update_alignment import ConflictFreeUpdateStatistics
 from ..sampling.collocation import CausalTimeSlabSchedule
+from ._functional_gradient import ConflictFreeOptaxState
 from ._functional_training import FunctionalTrainingPlan, FunctionalTrainingState
 
 
@@ -187,74 +190,99 @@ class FunctionalTimeWindowResult(StrictModule):
         return self.solvers[index]
 
 
-def _array_leaf_signature(tree: Any, /) -> tuple[tuple[tuple[int, ...], str], ...]:
-    return tuple(
-        (tuple(leaf.shape), str(leaf.dtype))
-        for leaf in jax.tree.leaves(tree)
-        if eqx.is_array(leaf)
+def _congruent(left: Any, right: Any, /) -> bool:
+    return jax.tree.structure(left) == jax.tree.structure(right) and all(
+        (tuple(a.shape), a.dtype) == (tuple(b.shape), b.dtype)
+        for a, b in zip(jax.tree.leaves(left), jax.tree.leaves(right), strict=True)
+        if eqx.is_array(a) and eqx.is_array(b)
     )
+
+
+_WINDOW_ROOT_ADDRESS = SampleAddress("functional-windows", "window", role="root")
 
 
 def _transfer_training_state(
     source: Any,
     target: Any,
     training: FunctionalTrainingPlan,
-    optimizer: Any,
+    index: int,
     /,
-):
+) -> tuple[Any, bool]:
+    """Carry the source window's kernel state into the next window's solver.
+
+    The next window trains the functions its adapter built (parameters and
+    model state), resuming the source's update-rule state, target parameters,
+    and enforcement state; per-run alignment evidence restarts. Its root key is
+    the source key addressed by window index and its cursors restart, so every
+    window draws distinct realizations. When the functions' PARAMETER or
+    MODEL_STATE lanes are not congruent with the source's, the window starts a
+    fresh run instead (`False`).
+    """
     state = source.training_state
     if state is None:
         raise ValueError(
             "Optimizer-state transfer requires a source FunctionalTrainingPlan."
         )
-    source_parameters, _ = partition_trainable(source.functions)
-    target_parameters, _ = partition_trainable(target.functions)
-    initialized_optimizer_state = optimizer.init(target_parameters)
-    parameters_match = jax.tree.structure(source_parameters) == jax.tree.structure(
-        target_parameters
-    ) and _array_leaf_signature(source_parameters) == _array_leaf_signature(
-        target_parameters
-    )
-    optimizer_state_matches = jax.tree.structure(
-        state.optimizer_state
-    ) == jax.tree.structure(initialized_optimizer_state) and _array_leaf_signature(
-        state.optimizer_state
-    ) == _array_leaf_signature(initialized_optimizer_state)
-    optimizer_state = (
-        state.optimizer_state
-        if parameters_match and optimizer_state_matches
-        else initialized_optimizer_state
-    )
-    update_alignment_statistics = (
-        None
-        if training.update_alignment is None
-        else ConflictFreeUpdateStatistics.zeros(
-            jnp.float32
-            if state.update_alignment_statistics is None
-            else state.update_alignment_statistics.correction_norm_sum.dtype
+    parameters, model_state, _ = partition_parameters(target.functions)
+    kernel_state = state.kernel_state
+    if not (
+        _congruent(kernel_state.parameters, parameters)
+        and _congruent(kernel_state.model_state, model_state)
+    ):
+        return target, False
+    rule_state = kernel_state.rule_state
+    if (
+        isinstance(rule_state, ConflictFreeOptaxState)
+        and rule_state.statistics is not None
+    ):
+        # Alignment evidence is per run: each window restarts its statistics.
+        rule_state = ConflictFreeOptaxState(
+            rule_state.optimizer_state,
+            ConflictFreeUpdateStatistics.zeros(
+                rule_state.statistics.correction_norm_sum.dtype
+            ),
+            jax.tree.map(jnp.zeros_like, rule_state.result),
         )
+    zero = jnp.zeros((), dtype=jnp.int32)
+    transferred_kernel_state = dataclasses.replace(
+        kernel_state,
+        parameters=parameters,
+        model_state=model_state,
+        pending_model_state=model_state,
+        rule_state=rule_state,
+        root_key=derive_key(kernel_state.root_key, _WINDOW_ROOT_ADDRESS, index),
+        attempt_cursor=zero,
+        accepted_cursor=zero,
+        microstep=zero,
+        consecutive_rejections=zero,
+        finite_rejections=zero,
+        nonfinite_rejections=zero,
+        accepted_boundary=jnp.asarray(True),
     )
     transferred = FunctionalTrainingState(
         current_functions=target.functions,
         best_functions=target.functions,
         previous_functions=None,
-        optimizer_state=optimizer_state,
-        key=state.key,
+        kernel_state=transferred_kernel_state,
+        kernel_checkpoint_id=state.kernel_checkpoint_id,
+        enforcement_state=state.enforcement_state,
         pseudo_inverse_steps=(),
         term_multipliers=(),
         previous_gradient=None,
-        update_alignment_statistics=update_alignment_statistics,
         progress=TrainingProgress(),
         run_id=training.plan_id,
         gradient_accumulation=state.gradient_accumulation,
         training_seconds=state.training_seconds,
         resumed_from_step=0,
     )
-    return eqx.tree_at(
-        lambda solver: solver.training_state,
-        target,
-        transferred,
-        is_leaf=lambda value: value is None,
+    return (
+        eqx.tree_at(
+            lambda solver: solver.training_state,
+            target,
+            transferred,
+            is_leaf=lambda value: value is None,
+        ),
+        True,
     )
 
 
@@ -286,19 +314,24 @@ def train_functional_time_windows(
             raise ValueError(
                 "Optimizer-state transfer requires a FunctionalTrainingPlan for every window."
             )
+        require_parameter_roles(
+            built.functions,
+            context=f"train_functional_time_windows (window {index})",
+        )
         optimizer = plan.optimizer(index)
+        transferred = False
         if plan.transfer_optimizer_state and index > 0:
-            built = _transfer_training_state(
+            built, transferred = _transfer_training_state(
                 current,
                 built,
                 training,
-                optimizer,
+                index,
             )
         current = built.solve(
             num_iter=plan.steps[index],
             optim=optimizer,
             training=training,
-            resume=plan.transfer_optimizer_state and index > 0,
+            resume=transferred,
         )
         terminal = frozendict(plan.adapter.terminal_fields(current, index, bounds))
         if not terminal or any(

@@ -18,6 +18,7 @@ import phydrax.axes as cx
 from .._frozendict import frozendict
 from .._model import FrozenModel
 from .._strict import StrictModule
+from .._trainable import LaneLayout
 from ..nn._base import _AbstractBaseModel
 from ..nn._keys import EvalKey, split_eval_key
 from ..nn.operator.data import OperatorBatch
@@ -27,11 +28,18 @@ from ._predictive import _sample_validity, PredictiveField, SampleAxis
 
 
 class HomogeneousFunctionEnsemble(StrictModule):
-    """One member-axis-stacked PyTree constructed or validated as homogeneous."""
+    """One PyTree whose declared member-lane leaves carry a leading member axis.
+
+    `layout` declares which leaves are stacked per member; every other leaf is
+    shared by all members. Lanes are independent of array roles, so FIXED data
+    such as per-member normalizers may be mapped while parameters are shared.
+    By default every array leaf carries the member axis.
+    """
 
     model: Any
     num_members: int
     source_dim: str
+    layout: LaneLayout
 
     def __init__(
         self,
@@ -40,20 +48,29 @@ class HomogeneousFunctionEnsemble(StrictModule):
         /,
         *,
         source_dim: str = "__phydra_uq_epistemic",
+        layout: LaneLayout | None = None,
     ):
         count = int(num_members)
         if count <= 0:
             raise ValueError("num_members must be positive.")
         if not isinstance(source_dim, str) or not source_dim:
             raise ValueError("source_dim must be a non-empty string.")
-        for leaf in jax.tree_util.tree_leaves(model):
-            if eqx.is_array(leaf) and (leaf.ndim == 0 or leaf.shape[0] != count):
+        if layout is None:
+            if not any(eqx.is_array(leaf) for leaf in jax.tree_util.tree_leaves(model)):
                 raise ValueError(
-                    f"Every homogeneous ensemble array leaf must have a leading member axis of size {count}."
+                    "A homogeneous ensemble requires at least one member-lane array leaf."
                 )
+            layout = LaneLayout.from_predicate(model, lambda _: True, kind="member")
+        elif not isinstance(layout, LaneLayout) or layout.kind != "member":
+            raise TypeError("layout must be a LaneLayout of kind 'member'.")
+        if layout.lane_size(model) != count:
+            raise ValueError(
+                f"Every homogeneous ensemble member-lane leaf must have a leading member axis of size {count}."
+            )
         self.model = model
         self.num_members = count
         self.source_dim = source_dim
+        self.layout = layout
 
     @classmethod
     def from_factory(
@@ -99,7 +116,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         **kwargs: Any,
     ) -> PredictiveField:
         member_keys = jr.split(key, self.num_members)
-        template_member = _take_member(self.model, 0)
+        template_member = self.layout.take(self.model, 0)
         template = _evaluate_field(
             template_member, points, variable=variable, key=member_keys[0], **kwargs
         )
@@ -115,7 +132,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
 
         data = eqx.filter_vmap(
             evaluate,
-            in_axes=(eqx.if_array(0), 0),
+            in_axes=(self.layout.in_axes(self.model), 0),
         )(self.model, member_keys)
         return _predictive_from_member_data(
             data,
@@ -139,7 +156,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         """Evaluate homogeneous members on one operator source/query batch."""
         if not isinstance(batch, OperatorBatch):
             raise TypeError("batch must be an OperatorBatch.")
-        template_member = _take_member(self.model, 0)
+        template_member = self.layout.take(self.model, 0)
         if not isinstance(template_member, OperatorModel):
             raise TypeError(
                 "Homogeneous operator ensembles require operator-protocol members."
@@ -157,7 +174,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
 
         data = eqx.filter_vmap(
             evaluate,
-            in_axes=(eqx.if_array(0), 0),
+            in_axes=(self.layout.in_axes(self.model), 0),
         )(self.model, member_keys)
         return operator_predictive_from_samples(
             data,
@@ -604,13 +621,6 @@ def _predictive_from_member_data(
         samples,
         (SampleAxis(source_dim, "epistemic"),),
         valid=valid,
-    )
-
-
-def _take_member(tree: Any, index: int) -> Any:
-    return jax.tree_util.tree_map(
-        lambda leaf: leaf[index] if eqx.is_array(leaf) else leaf,
-        tree,
     )
 
 

@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 from scipy.spatial import cKDTree
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation, SparseLinearMap
@@ -345,7 +346,7 @@ def threshold_density(density: ArrayLike, eta: ArrayLike = 0.5, /) -> Array:
         jnp.any(~jnp.isfinite(value) | (value < 0.0) | (value > 1.0)),
         "Density must be finite and lie in [0, 1].",
     )
-    cutoff = jnp.asarray(eta, dtype=jnp.result_type(value, jnp.float64))
+    cutoff = jnp.asarray(eta, dtype=inexact_result_type(value))
     if cutoff.shape != ():
         raise ValueError("eta must be a scalar array.")
     cutoff = eqx.error_if(

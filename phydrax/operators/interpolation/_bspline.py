@@ -21,6 +21,7 @@ from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ..._interpolation import BoundsMode, bspline_evaluate, bspline_stencil, BSplineGrid
 from ..._numerics import solve_weighted_least_squares
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
@@ -454,10 +455,8 @@ def fit_bspline(
         raise ValueError("B-spline fitting requires at least degree + 1 observations.")
 
     permutation = np.argsort(nodes_host, kind="stable")
-    nodes_ = jnp.asarray(
-        nodes_host[permutation], dtype=jnp.result_type(nodes_raw, jnp.float64)
-    )
-    value_dtype = jnp.result_type(values_raw, jnp.float64)
+    nodes_ = jnp.asarray(nodes_host[permutation], dtype=inexact_result_type(nodes_raw))
+    value_dtype = inexact_result_type(values_raw)
     values_ = jnp.asarray(values_raw[permutation], dtype=value_dtype)
     unique_count = np.unique(nodes_host).size
     if plan_.mode == "interpolate" and unique_count != nodes_.size:

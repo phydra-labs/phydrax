@@ -16,7 +16,7 @@ from jaxtyping import Array, Key
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
-from ..._trainable import partition_trainable
+from ..._trainable import require_parameter_roles
 from ...domain import DomainFunction
 from ...linalg import (
     ArraySpace,
@@ -220,6 +220,7 @@ def solve_decomposition_kfac(
                 terms.append(scoped.term)
     if not terms:
         raise ValueError("Selected KFAC block has no incident residual terms.")
+    require_parameter_roles(functions, context="solve_decomposition_kfac")
     local_solver = FunctionalSolver(functions=functions, terms=tuple(terms))
     trained = local_solver.solve(
         num_iter=int(num_iter),
@@ -315,20 +316,20 @@ def matrix_free_gauss_newton_step(
         iteration=0,
         evaluation_kwargs={},
     )
-    full_params, non_trainable = partition_trainable(solver.functions)
+    # The residual is evaluated on complete reconstructed fields: the vector enters
+    # only through `subspace.reconstruct_vector`, which also ties parameter aliases.
+    functions = solver.functions
     residual = prepare_functional_residual(
         prepared,
-        full_params,
-        non_trainable,
+        functions,
+        jax.tree.map(lambda _: None, functions),
         solver.enforcement,
         require_all=True,
     )
     position = subspace.pack()
 
     def roots(vector):
-        functions = subspace.reconstruct_vector(vector)
-        params, _ = partition_trainable(functions)
-        return residual.roots(params)
+        return residual.roots(subspace.reconstruct_vector(vector))
 
     residual_value, transpose = jax.vjp(roots, position)
     right_hand_side = -transpose(residual_value)[0]

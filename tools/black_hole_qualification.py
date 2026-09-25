@@ -685,6 +685,14 @@ def qualify_thermodynamics() -> dict[str, object]:
     )
 
 
+def _flat_capture_margin(affine: Any, point: Any, tangent: Any) -> Any:
+    return point[1] + 0.25
+
+
+def _flat_escape_margin(affine: Any, point: Any, tangent: Any) -> Any:
+    return 0.25 - point[1]
+
+
 def qualify_rays() -> dict[str, object]:
     from phydrax._physical import RelativityScaleContract
     from phydrax.applications.astrophysics._gr_events import GRRayEventCode
@@ -730,8 +738,8 @@ def qualify_rays() -> dict[str, object]:
         metric,
         state,
         jnp.linspace(0.0, 0.5, 5),
-        capture_margin=lambda affine, point, tangent: point[1] + 0.25,
-        escape_margin=lambda affine, point, tangent: 0.25 - point[1],
+        capture_margin=_flat_capture_margin,
+        escape_margin=_flat_escape_margin,
         scale=scale,
         convention=convention,
         coordinate_unit=coordinate_unit,

@@ -262,7 +262,7 @@ class DiskHolomorphicTracePlan(StrictModule, NonTrainableState):
                 "kind": "disk-holomorphic-trace-plan",
                 "geometry": geometry_id,
                 "trace_space": trace_space_id,
-                "frame": frame.linear_frame_certificate().frame_id,
+                "frame": frame.linear_frame_certificate().certificate_id,
             }
         )
 
@@ -337,7 +337,7 @@ class DiskHolomorphicTraceLift(StrictModule, NonTrainableState):
             parameter_coverage="finite-parametric-family",
             linear_in_parameters=False,
             parameter_mode="fixed-real-cartesian-coefficients",
-            construction_dependencies=(frame_certificate.frame_id, field_id),
+            construction_dependencies=(frame_certificate.certificate_id, field_id),
         )
         self._trace_certificate = HolomorphicTraceCertificate(
             evidence_kind="continuous-subspace-exact",

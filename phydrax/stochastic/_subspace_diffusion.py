@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..domain._measure import MeasureKind
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 
@@ -218,7 +219,7 @@ class SubspaceGaussianLaw(AbstractProbabilityLaw):
 class SubspaceGaussianDiffusion(StrictModule):
     """Run one Gaussian score diffusion in coefficients and synthesize ambient events."""
 
-    layout: AffineSubspaceLayout
+    layout: AffineSubspaceLayout = fixed_field()
     coefficient_process: AbstractGaussianDiffusion
     process_id: str = eqx.field(static=True)
 

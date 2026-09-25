@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -19,6 +20,7 @@ from ._mapped import MappedFiniteVolumeDiscretization
 from ._riemann import (
     _NORMAL_ALE_CONTRACT,
     _normal_ale_inputs,
+    AbstractArbitraryNormalALENumericalFluxPlan,
     AbstractNumericalFluxPlan,
     NumericalFluxResult,
 )
@@ -28,11 +30,14 @@ from ._triangle_fv import TriangleFiniteVolumeDiscretization
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
-class EinfeldtHLLFluxPlan(AbstractNumericalFluxPlan):
+class EinfeldtHLLFluxPlan(
+    AbstractArbitraryNormalALENumericalFluxPlan,
+    NonTrainableState,
+):
     """Monotone HLL fallback with Roe-enlarged Einfeldt signal bounds."""
 
     def __init__(self):
-        self.differentiability = "almost_everywhere"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {"kind": "einfeldt-hll-flux", "normal_ale_contract": _NORMAL_ALE_CONTRACT}
         )
@@ -236,7 +241,7 @@ class StageRatePositivityResult(StrictModule):
     face_blend_factors: tuple[Array, ...]
 
 
-class FluxPositivityPlan(StrictModule, NonTrainableState):
+class FluxPositivityPlan(StrictModule):
     """Conservative global blending against a monotone fallback stage."""
 
     fallback_flux: AbstractNumericalFluxPlan

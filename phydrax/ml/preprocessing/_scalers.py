@@ -10,10 +10,19 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
-from .._contracts import AbstractRecipe, FitResult, GradientContract
-from .._schema import FeatureSchema
+from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
+from .._schema import AbstractFittedModel, FeatureSchema
 from ._common import (
     _align_parameter,
     _check_features,
@@ -26,23 +35,57 @@ from ._common import (
 )
 
 
+# Normalizing by a vector norm is smooth away from the origin and the nonsmooth
+# loci of the norm, and jumps at the origin, which maps to itself.
+_NORM_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.piecewise_smooth(continuity=-1),
+    conditions=("The zero vector maps to itself.",),
+)
+
+
 def _case_binding(case_shape: tuple[int, ...], /) -> ModelBinding:
     if case_shape:
         return ModelBinding.blockwise("flat", pass_key=False)
     return ModelBinding.pointwise("flat", pass_key=False)
 
 
-class _AbstractAffineTransform(AbstractArrayModel):
+class _AbstractAffineTransform(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    center: Array
-    scale: Array
-    output_offset: Array
+    center: Array = fixed_field()
+    scale: Array = fixed_field()
+    output_offset: Array = fixed_field()
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     clip_bounds: tuple[float, float] | None = eqx.field(static=True)
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # An affine map, clipped to a box when clip bounds are set.
+        clipped = self.clip_bounds is not None
+        return DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT,
+                    GradientLevel.ALMOST_EVERYWHERE if clipped else GradientLevel.SMOOTH,
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            regularity=DerivativeRegularity.piecewise_polynomial(
+                continuity=0, degree_bound=1
+            )
+            if clipped
+            else DerivativeRegularity.smooth(degree_bound=1),
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return self.transform(x, key=key)
@@ -172,14 +215,17 @@ class StandardScaler(AbstractRecipe):
         return _fit_result(
             model,
             diagnostics,
-            GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="conditional",
-                fit_targets="none",
-                fit_weights="conditional",
-                fit_hyperparameters="none",
-                fit_mode="direct",
+            prediction_fit_contract(
+                model._prediction_contract(),
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.DIRECT,
                 conditions=("Feature masks and positive-weight support are held fixed.",),
             ),
         )
@@ -278,14 +324,14 @@ class MinMaxScaler(AbstractRecipe):
         return _fit_result(
             model,
             diagnostics,
-            GradientContract(
-                prediction_inputs="almost-everywhere" if self.clip else "smooth",
-                prediction_parameters="smooth",
-                fit_features="almost-everywhere",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="direct",
+            prediction_fit_contract(
+                model._prediction_contract(),
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                ),
+                route=DerivativeRoute.DIRECT,
                 conditions=(
                     "Extremum identities and positive-weight support are held fixed.",
                 ),
@@ -346,14 +392,14 @@ class MaxAbsScaler(AbstractRecipe):
         return _fit_result(
             model,
             diagnostics,
-            GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="almost-everywhere",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="direct",
+            prediction_fit_contract(
+                model._prediction_contract(),
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                ),
+                route=DerivativeRoute.DIRECT,
                 conditions=("Maximum-absolute-value identities are held fixed.",),
             ),
         )
@@ -450,14 +496,9 @@ class RobustScaler(AbstractRecipe):
             constant=constant,
             details=(("quantile_range", self.quantile_range),),
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="none",
-            fit_targets="none",
-            fit_weights="none",
-            fit_hyperparameters="none",
-            fit_mode="stopped",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("median", "interquartile_range"),
             conditions=(
                 "The fitted weighted order statistics are held fixed during apply.",
@@ -466,7 +507,7 @@ class RobustScaler(AbstractRecipe):
         return _fit_result(model, diagnostics, contract)
 
 
-class FittedNormScaler(AbstractArrayModel):
+class FittedNormScaler(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     norm: Literal["l1", "l2", "max"] = eqx.field(static=True)
@@ -481,6 +522,9 @@ class FittedNormScaler(AbstractArrayModel):
         self.norm = norm
         self.input_schema = schema
         self.output_schema = schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _NORM_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -564,16 +608,7 @@ class NormScaler(AbstractRecipe):
             method="norm_scaler",
             details=(("norm", self.norm),),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            GradientContract(
-                prediction_inputs="almost-everywhere",
-                prediction_parameters="none",
-                fit_mode="direct",
-                conditions=("The zero vector maps to itself.",),
-            ),
-        )
+        return _fit_result(model, diagnostics, _NORM_CONTRACT)
 
 
 __all__ = [

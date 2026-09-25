@@ -1768,8 +1768,11 @@ rays; they are not inferred from a provider status.
 
 The native dense method solves with the explicit regularized Hessian
 `Q + regularization * I`; the result audits that equation separately from
-stationarity for the original `Q`. MPAX retains its scaling and first-order
-iteration evidence while Phydrax re-audits the original unscaled program.
+stationarity for the original `Q`. Its interior-point kernel is compiled once per
+static layout (batch shape, dimensions, dtype, termination, regularization, step
+fraction, and warm-start use), so repeated solves at fixed structure reuse it. MPAX
+retains its scaling and first-order iteration evidence while Phydrax re-audits the
+original unscaled program.
 
 ### Prepared lifecycle and warm starts
 
@@ -1812,9 +1815,19 @@ derivatives rather than a selected minimum-norm generalized derivative.
 finite, explicitly centered primal-dual barrier system. It returns the
 finite-barrier solution and never hides its smoothing scale.
 `prepare_qp_sensitivity` retains one prepared linearization with reusable JVP
-and VJP actions and reports whether the solution map is regular. MPAX exposes
+and VJP actions and reports whether the solution map is regular, one `regular`
+flag per batched program case. MPAX exposes
 only explicitly requested algorithmic differentiation: the selected method
 must use `unroll=True` and the differentiation policy must be `"algorithmic"`.
+
+`PreparedQPSensitivity` carries no solver status; pair it with the audited
+`ConvexProgramResult` of the same program. `phydrax.control.prepare_receding_horizon_mpc_sensitivity`
+does exactly that for every receding-horizon window: it composes one
+`prepare_qp_sensitivity` per window through the exact affine state handoffs and
+refuses the complete derivative unless every window is valid, OPTIMAL, and
+`regular`. It admits only dense programs with zero regularization and no warm
+start, and `"barrier-kkt"` there yields the explicitly smoothed window derivative
+at the audited window solution.
 
 ### Results, audits, and certificates
 
@@ -2202,7 +2215,12 @@ mirror, Riemannian, scalar, least-squares, and composite backends reject it
 rather than silently optimizing the complete ambient PyTree.
 
 `OpenEvolutionStrategy` is the native antithetic distribution-search method
-accepted by `FunctionalSolver`. Population methods requiring an explicit finite
+accepted by `FunctionalSolver`. One training step is one accepted generation:
+the population and the proposed mean are scored on one prepared objective
+payload. A generation with no finite member fitness, or with a nonfinite mean,
+mean value, or method state, commits nothing and is retried with a fresh
+population; more than 64 consecutive rejected generations raise
+`TrainingRejectionBudgetError`. Population methods requiring an explicit finite
 search-space contract remain owned by `DesignConstraintSystem.search(...)`.
 Optimistix interoperation remains explicit through `OptimistixMethod`.
 

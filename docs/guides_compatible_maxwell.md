@@ -41,6 +41,13 @@ step at the midpoint. Magnetic current enters the two B half steps at their resp
 times. Charge uses the complete electric forcing, so the same discrete continuity law
 is audited.
 
+A source `envelope(time, args)` replaces the harmonic temporal factor and is part of
+the static source identity. StrictModule envelopes and module-level plain functions
+are content-addressed. Lambdas, closures, nested functions, methods, partials, and
+other callable objects are opaque: pass both `envelope_semantic_id` and
+`envelope_numeric_id`, or construction raises `TypeError`. Both identities enter the
+source identity; only the semantic identity enters the refresh signature.
+
 A one-way mode or Huygens launch uses paired electric and magnetic trace forcing from
 one oriented surface. Production mode ports initially require propagating, lossless,
 nondegenerate modes with finite nonzero signed surface power. The same mode basis and
@@ -74,8 +81,8 @@ complex-128 width even when their zero state is initially real.
 `PreparedCompatibleMaxwell.leapfrog_step`, returns the final state and streaming
 observations, and does not implicitly retain a trajectory. Numeric refresh is allowed
 only when topology, role layout, prepared array/state shapes and dtypes, static
-execution semantics, source callable identity, PML term layout, dtype, and backend
-signature remain unchanged.
+execution semantics, source envelope semantic identity, PML term layout, dtype, and
+backend signature remain unchanged.
 
 ## Harmonic defects
 

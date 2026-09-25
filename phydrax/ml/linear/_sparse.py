@@ -21,7 +21,6 @@ from ._base import (
     iterative_fit,
     parameter_dtype,
     prepare_supervised,
-    unrolled_contract,
 )
 
 
@@ -182,7 +181,7 @@ def _fit_penalized(
             case_shape=prepared.case_shape,
             target_shape=prepared.target_shape,
         ),
-        gradient_contract=unrolled_contract(nonsmooth=True),
+        nonsmooth=True,
     )
 
 

@@ -149,7 +149,7 @@ def test_correlation_dimension_rejects_degenerate_fit_diagnostics():
     )
     result = phx.dynamics.analysis.correlation_dimension(
         data,
-        jnp.asarray([1.1, 1.2, 1.3]),
+        jnp.asarray([1.1, 1.2, 1.3, 1.4]),
         theiler_window=0,
     )
 

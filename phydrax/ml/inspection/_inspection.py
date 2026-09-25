@@ -14,8 +14,18 @@ import jax.random as jr
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array
 
+from ..._differentiation import DerivativeRoute, DerivativeSurface, GradientLevel
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
+from ..._trainable import ArrayRole, require_parameter_roles
+from ...linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    RankPolicy,
+    solve as solve_linear,
+)
 from .._batch import MLBatch
 from .._contracts import FitResult
 
@@ -115,12 +125,26 @@ class RegressionInfluenceDiagnostics(StrictModule):
 
 
 class InfluenceFunctionResult(StrictModule):
+    """Damped empirical influence of each training sample on the fitted parameters.
+
+    Parameter vectors flatten the PARAMETER leaves listed in `parameter_paths`;
+    FIXED statistics and support data of the fitted model are constants.
+    `solve_status`, `relative_residual`, `hessian_rank`, and
+    `condition_estimate` are the native `phydrax.linalg` evidence of the damped
+    Hessian solve; `valid` requires every sample solve to succeed at full rank.
+    """
+
     parameter_influence: Array
     loss_influence: Array
     hessian: Array
     sample_gradients: Array
     evaluation_gradients: Array
+    solve_status: Array
+    relative_residual: Array
+    hessian_rank: Array
+    condition_estimate: Array
     valid: Array
+    parameter_paths: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -129,15 +153,26 @@ class InfluenceFunctionResult(StrictModule):
         hessian: Any,
         sample_gradients: Any,
         evaluation_gradients: Any,
-        valid: Any,
         /,
+        *,
+        solve_status: Any,
+        relative_residual: Any,
+        hessian_rank: Any,
+        condition_estimate: Any,
+        valid: Any,
+        parameter_paths: tuple[str, ...],
     ):
         self.parameter_influence = jnp.asarray(parameter_influence)
         self.loss_influence = jnp.asarray(loss_influence)
         self.hessian = jnp.asarray(hessian)
         self.sample_gradients = jnp.asarray(sample_gradients)
         self.evaluation_gradients = jnp.asarray(evaluation_gradients)
+        self.solve_status = jnp.asarray(solve_status, dtype=jnp.int32)
+        self.relative_residual = jnp.asarray(relative_residual)
+        self.hessian_rank = jnp.asarray(hessian_rank, dtype=jnp.int32)
+        self.condition_estimate = jnp.asarray(condition_estimate)
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.parameter_paths = tuple(parameter_paths)
 
 
 def _validated_weights(batch: MLBatch) -> Array:
@@ -631,21 +666,37 @@ def influence_functions(
     damping: float = 1e-6,
     key: Any = None,
 ) -> InfluenceFunctionResult:
-    """Compute damped empirical influence functions when fit gradients are certified."""
+    """Compute damped empirical influence functions when fit gradients are certified.
+
+    Only the fitted model's PARAMETER leaves are perturbed; FIXED statistics and
+    support data stay constant. The damped Hessian is solved through the native
+    dense SVD solve of `phydrax.linalg` at required full rank, and its status,
+    rank, conditioning, and residual evidence is part of the result.
+    """
     if not isinstance(result, FitResult) or not isinstance(batch, MLBatch):
         raise TypeError("result and batch must use native Phydrax ML types.")
-    contract = result.gradient_contract
-    if contract.fit_mode == "stopped" or contract.fit_targets == "none":
+    contract = result.derivative_contract
+    if (
+        contract.route is DerivativeRoute.STOPPED
+        or contract.level(DerivativeSurface.FIT_TARGETS) is GradientLevel.NONE
+    ):
         raise ValueError(
-            "The fit result's GradientContract does not permit influence functions."
+            "The fit result's derivative contract does not permit influence functions."
         )
     if float(damping) < 0.0:
         raise ValueError("damping must be nonnegative.")
     model = result.as_trainable()
-    dynamic, static = eqx.partition(model, eqx.is_inexact_array)
+    roles = require_parameter_roles(model, context="influence_functions")
+    lane = roles.filter_spec(ArrayRole.PARAMETER)
+    dynamic, static = eqx.partition(model, lane)
+    parameter_paths = tuple(
+        path
+        for path, role in zip(roles.paths, roles.roles, strict=True)
+        if role is ArrayRole.PARAMETER
+    )
+    if not parameter_paths:
+        raise ValueError("influence_functions: the fitted model has no PARAMETER leaves.")
     parameters, unravel = ravel_pytree(dynamic)
-    if parameters.shape[0] == 0:
-        raise ValueError("The fitted model has no inexact array parameters.")
     if jnp.issubdtype(parameters.dtype, jnp.complexfloating):
         raise TypeError(
             "Influence functions require a real parameterization; no implicit Wirtinger convention is selected."
@@ -699,11 +750,18 @@ def influence_functions(
     regularized = hessian + float(damping) * jnp.eye(
         parameters.shape[0], dtype=hessian.dtype
     )
-    solved = jnp.linalg.solve(regularized, sample_gradients.T).T
+    solve_result = solve_linear(
+        LeastSquaresProblem(DenseLinearOperator(regularized)),
+        sample_gradients.T,
+        policy=LinearSolvePolicy(DenseSVD(), rank=RankPolicy(require_full_rank=True)),
+    )
+    solved = solve_result.value.T
     parameter_influence = -solved / normalizer
     loss_influence = -(evaluation_gradients @ solved.T) / normalizer
+    diagnostics = solve_result.diagnostics
     valid = (
         jnp.all(result.valid)
+        & jnp.all(solve_result.successful)
         & jnp.all(jnp.isfinite(hessian))
         & jnp.all(jnp.isfinite(parameter_influence))
         & jnp.all(jnp.isfinite(loss_influence))
@@ -714,7 +772,12 @@ def influence_functions(
         hessian,
         sample_gradients,
         evaluation_gradients,
-        valid,
+        solve_status=solve_result.status,
+        relative_residual=diagnostics.relative_residual,
+        hessian_rank=jnp.min(diagnostics.rank),
+        condition_estimate=jnp.max(diagnostics.condition_estimate),
+        valid=valid,
+        parameter_paths=parameter_paths,
     )
 
 

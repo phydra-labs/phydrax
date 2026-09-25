@@ -12,9 +12,18 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding, ValuePort
 from ..._strict import StrictModule
-from .._schema import FeatureSchema, TargetSchema
+from ..._trainable import fixed_field
+from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 
 
 ObjectiveTransform: TypeAlias = Literal[
@@ -23,6 +32,27 @@ ObjectiveTransform: TypeAlias = Literal[
 
 EnsembleAggregation: TypeAlias = Literal["sum", "weighted_median"]
 TreeInputDType: TypeAlias = Literal["preserve", "float32", "float64"]
+
+# Every represented ensemble is piecewise constant between split thresholds, so
+# its prediction is a discontinuous piecewise polynomial of degree zero.
+_HARD_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(
+            DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+        ),
+    ),
+    route=DerivativeRoute.STOPPED,
+    regularity=DerivativeRegularity(continuity=-1, pieces="polynomial", degree_bound=0),
+    nondifferentiable_outputs=(
+        "split structure",
+        "leaf indices",
+        "decision paths",
+        "class labels",
+    ),
+    conditions=(
+        "Finite values away from represented split thresholds are locally constant.",
+    ),
+)
 
 
 def apply_objective(raw: Array, transform: ObjectiveTransform, /) -> Array:
@@ -315,7 +345,7 @@ class TreeStructureDiagnostics(StrictModule):
         self.capacity_exhausted = jnp.asarray(capacity_exhausted, dtype=jnp.bool_)
 
 
-class TreeEnsemble(AbstractArrayModel):
+class TreeEnsemble(AbstractFittedModel):
     """Frozen, fixed-capacity collection of array-native decision trees.
 
     Child indices are local to a tree. Split kind zero is numeric ``<=``, one is
@@ -327,20 +357,20 @@ class TreeEnsemble(AbstractArrayModel):
     """
 
     feature_index: Array
-    threshold: Array
+    threshold: Array = fixed_field()
     left_child: Array
     right_child: Array
     default_left: Array
     split_kind: Array
-    category_values: Array
+    category_values: Array = fixed_field()
     category_mask: Array
     leaf_value: Array
     node_mask: Array
     leaf_mask: Array
     tree_mask: Array
     tree_weight: Array
-    node_gain: Array
-    node_cover: Array
+    node_gain: Array = fixed_field()
+    node_cover: Array = fixed_field()
     base_score: Array
     feature_schema: FeatureSchema = eqx.field(static=True)
     target_schema: TargetSchema = eqx.field(static=True)
@@ -354,6 +384,12 @@ class TreeEnsemble(AbstractArrayModel):
     capacity_exhausted: Array
 
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HARD_CONTRACT
 
     def __init__(
         self,

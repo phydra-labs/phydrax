@@ -42,6 +42,8 @@ Unavailable or rejected values may contain NaNs and missing errors. Preparation 
 
 Exact field identity is checked, not just shape. Manifold state geometries are rejected: the native Euclidean ensemble transform is not a manifold filter. The callback is `transition(key, state, t0, t1, context)` and returns a same-shape array or a native `TransitionSample`. For a `TransitionSample`, the process identity must equal the declared `model_id`, and validity/status are scalar. The numerical model owns time integration and solver failures. `model_time.unit` is also the callback time unit.
 
+The prepared problem's transition kernel and observation model are `MODEL` component slots of the native state-space model. A learned numerical model is a model component, not an accelerator: it is trusted to define the forecast, so it must be held as a visible callable module (its arrays stay PARAMETER) and identified by `model_id`. A learned observation operator on a native `GaussianObservationModel` uses `phydrax.stochastic.ModelObservationLocation`; the ensemble transform numerics are unchanged.
+
 Every run supplies a `GeophysicalEnsembleLineage`, selecting a label from each of five `GeophysicalEnsembleAxis` objects:
 
 | Axis kind | Meaning |

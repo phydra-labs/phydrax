@@ -16,11 +16,13 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._frozendict import frozendict
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax._uncertainty import UncertaintySource, validate_uncertainty_source
+from phydrax.nn._contracts import model_regularity
 from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn.flows import (
     AbstractFlowDistribution,
@@ -415,6 +417,11 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
             case_shape=batch.case_shape,
             uncertainty_source=self.uncertainty_source,
         )
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # The evaluated value is the deterministic location; flow draws are
+        # only produced by explicit sampling.
+        return model_regularity(self.location_model)
 
 
 def conditional_coupling_flow_operator(

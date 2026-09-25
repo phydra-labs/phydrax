@@ -21,8 +21,8 @@ from .._sampling import design_name
 from .._strict import StrictModule
 from ..domain._structure import PointBatch, PointSampling, SampleLayout
 from ..linalg import (
-    DenseCholesky,
     DenseLinearOperator,
+    DenseLU,
     FailurePolicy,
     LinearSolvePolicy,
     LinearSolveResult,
@@ -304,7 +304,7 @@ class BayesianQuadraturePlan(StrictModule):
         )
         policy = (
             LinearSolvePolicy(
-                DenseCholesky(),
+                DenseLU(),
                 failure=FailurePolicy("status"),
             )
             if solve_policy is None
@@ -312,17 +312,15 @@ class BayesianQuadraturePlan(StrictModule):
         )
         if not isinstance(policy, LinearSolvePolicy):
             raise TypeError("solve_policy must be a LinearSolvePolicy or None.")
-        if not isinstance(policy.method, DenseCholesky):
-            raise TypeError(
-                "Bayesian quadrature accepts only a DenseCholesky solve policy."
-            )
+        if not isinstance(policy.method, DenseLU):
+            raise TypeError("Bayesian quadrature accepts only a DenseLU solve policy.")
         if (
             policy.preconditioning is not None
             or policy.recycling is not None
             or policy.rank.relative_cutoff is not None
         ):
             raise ValueError(
-                "Bayesian quadrature DenseCholesky does not accept preconditioning, recycling, or a rank cutoff."
+                "Bayesian quadrature DenseLU does not accept preconditioning, recycling, or a rank cutoff."
             )
         if policy.failure.mode != "status":
             raise ValueError(
@@ -465,7 +463,7 @@ def materialize_bayesian_quadrature(
         or jnp.dtype(factorization_dtype) not in supported_solve_dtypes
     ):
         raise TypeError(
-            "Bayesian quadrature DenseCholesky requires float32 or float64 solve and "
+            "Bayesian quadrature DenseLU requires float32 or float64 solve and "
             "factorization dtypes; no kernel matrix was allocated."
         )
     entries = solve_design.shape[0] * solve_design.shape[0]
@@ -482,7 +480,7 @@ def materialize_bayesian_quadrature(
         )
         if mismatched_stages:
             raise ValueError(
-                "Bayesian quadrature DenseCholesky precision stages "
+                "Bayesian quadrature DenseLU precision stages "
                 f"{mismatched_stages!r} must match integration accumulation dtype "
                 f"{solve_design.dtype}; no kernel matrix was allocated."
             )
@@ -491,7 +489,7 @@ def materialize_bayesian_quadrature(
             or linear_precision.krylov_dtype is not None
         ):
             raise ValueError(
-                "Bayesian quadrature DenseCholesky has no preconditioner or Krylov "
+                "Bayesian quadrature DenseLU has no preconditioner or Krylov "
                 "precision stage; no kernel matrix was allocated."
             )
         lower_factorization = (
@@ -503,7 +501,7 @@ def materialize_bayesian_quadrature(
             > jnp.dtype(solve_design.dtype).itemsize
         ):
             raise ValueError(
-                "Bayesian quadrature DenseCholesky factorization precision cannot exceed "
+                "Bayesian quadrature DenseLU factorization precision cannot exceed "
                 "the solve dtype; no kernel matrix was allocated."
             )
         if (
@@ -511,7 +509,7 @@ def materialize_bayesian_quadrature(
             or linear_precision.condition_limit is not None
         ) and not lower_factorization:
             raise ValueError(
-                "Bayesian quadrature DenseCholesky refinement requires a lower "
+                "Bayesian quadrature DenseLU refinement requires a lower "
                 "factorization dtype; no kernel matrix was allocated."
             )
     factorization_bytes = entries * jnp.dtype(factorization_dtype).itemsize

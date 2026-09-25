@@ -11,12 +11,12 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
+from ..._differentiation import DerivativeContract, DerivativeSurface
 from ..._exponential_family import PoissonFamily
 from ..._fingerprint import canonical_fingerprint
 from ..._likelihoods import ScalarNaturalExponentialFamilyLikelihood
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract
 from ._observation_status import AstrophysicsObservationStatus
 
 
@@ -30,7 +30,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     checksum: str = eqx.field(static=True)
     license_id: str = eqx.field(static=True)
-    differentiation: DifferentiationContract
+    differentiation: DerivativeContract
     provenance_id: str = eqx.field(static=True)
 
     def __init__(
@@ -41,7 +41,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
         source_id: str,
         checksum: str,
         license_id: str,
-        differentiation: DifferentiationContract | str,
+        differentiation: DerivativeContract,
     ):
         values = tuple(
             str(value).strip()
@@ -49,13 +49,8 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
         )
         if any(not value for value in values):
             raise ValueError("Observation provenance fields must be non-empty.")
-        differentiation_ = (
-            DifferentiationContract.from_label(differentiation)
-            if isinstance(differentiation, str)
-            else differentiation
-        )
-        if not isinstance(differentiation_, DifferentiationContract):
-            raise TypeError("Unknown observation differentiation contract.")
+        if not isinstance(differentiation, DerivativeContract):
+            raise TypeError("differentiation must be a DerivativeContract.")
         (
             self.producer,
             self.producer_version,
@@ -63,7 +58,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
             self.checksum,
             self.license_id,
         ) = values
-        self.differentiation = differentiation_
+        self.differentiation = differentiation
         self.provenance_id = canonical_fingerprint(
             {
                 "kind": "observation-data-provenance",
@@ -72,7 +67,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
                 "source_id": values[2],
                 "checksum": values[3],
                 "license_id": values[4],
-                "differentiation": differentiation_.contract_id,
+                "differentiation": differentiation.contract_id,
             }
         )
 
@@ -84,7 +79,14 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
             source_id=source_id,
             checksum="content-fingerprinted",
             license_id="Phydrax-native",
-            differentiation=DifferentiationContract.native(),
+            differentiation=DerivativeContract.smooth(
+                (
+                    DerivativeSurface.INPUT,
+                    DerivativeSurface.MODEL_PARAMETER,
+                    DerivativeSurface.PHYSICAL_PARAMETER,
+                    DerivativeSurface.STORED_VALUES,
+                )
+            ),
         )
 
 

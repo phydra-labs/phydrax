@@ -1179,7 +1179,8 @@ darcy_program = phx.graph.CochainResidualProgram(
         "mass": zero_form,
     },
     residual_fn=mixed_darcy_residual,
-    identity="cookbook.operator.mixed_darcy",
+    residual_semantic_id="cookbook.operator.mixed_darcy",
+    residual_numeric_id="cookbook.operator.mixed_darcy",
 )
 residual_inputs = {
     "pressure": phx.nn.operator.training.CochainResidualInput("prediction", "pressure"),
@@ -1206,11 +1207,22 @@ targetless = phx.nn.operator.training.OperatorDataset(
     cochain_batch,
     phx.nn.operator.OperatorTargetBatch.from_arrays({}, cochain_batch),
 )
+# The cochain operator emits each target field under that field's name, so its
+# outputs declare the task field ports and bind to them one-to-one.
+cochain_output_ports = {
+    field.name: field.value_port() for field in cochain_task.target_fields
+}
 fit = phx.nn.operator.training.fit_operator(
     cochain_operator,
     targetless,
     task=cochain_task,
     training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+    output_ports=cochain_output_ports,
+    port_mapping=phx.PortMapping(
+        outputs=tuple(
+            (port.port_id, port.port_id) for port in cochain_output_ports.values()
+        )
+    ),
     loss_terms=physics_losses,
     normalization=None,
     batch_size=1,
@@ -1514,10 +1526,13 @@ rollout_loss = phx.nn.operator.training.SupervisedOperatorRolloutLoss(
     target_fields=("state_t1", "state_t2", "state_t3"),
     time_weights=(1.0, 1.0, 1.0),
 )
+state_port = task.field_by_name["state"].value_port()
 fit = phx.nn.operator.training.fit_operator(
     model,
     rollout_dataset,
     task=task,
+    output_ports={"state": state_port},
+    port_mapping=phx.PortMapping(outputs=((state_port.port_id, state_port.port_id),)),
     loss_terms=(rollout_loss,),
     training_evidence=training_evidence,
     rollout_route=route,
@@ -1798,6 +1813,37 @@ task also sets `fixed_geometry=True` on every query; fitting rejects geometry
 changes across cases or batches, and `TrainedOperator` persists and enforces the
 physical geometry fingerprints at inference.
 
+Model outputs reach task target fields only through an explicit port binding;
+names, shapes, and output order are never matched. `output_ports` declares the
+`ValuePort` of every named model output, and the outputs of `port_mapping` bind
+each declared port ID to one task target port `OperatorFieldSpec.value_port()`.
+Semantic identity, components, event shape, representation, and variance must
+agree exactly; dimensions, space, frame, normalization, and semantic axes must
+agree when both sides declare them and are otherwise recorded as unverified in
+`trained_operator.port_binding`. The binding, keyed by port IDs, enters the
+contract fingerprint, the checkpoint contract, and the artifact manifest:
+
+```text
+solution_port = task.field_by_name["solution"].value_port()
+fit_result = phx.nn.operator.training.fit_operator(
+    model,
+    split.train,
+    task=task,
+    training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+    output_ports={"output": solution_port},
+    port_mapping=phx.PortMapping(
+        outputs=((solution_port.port_id, solution_port.port_id),)
+    ),
+)
+assert fit_result.port_binding.dimensions_verified
+```
+
+A `TrainedOperator` declares its task ports (`model_ports()`), so
+`bind_operator_context` selects its query and output field through a
+`port_mapping` against the caller's `owner_ports` (one query input pair and one
+field output pair) and keeps the audited `port_binding`; raw operators select by
+`query_name` and `field_name`.
+
 In task-bound mode `fit_result.trained_operator` is a `TrainedOperator`;
 `prepare` performs host-side contract validation once and `predict_prepared` is
 the compiled hot path. Its prediction is dimensionalized and retains named
@@ -1813,19 +1859,31 @@ defined on normalized execution values. `OperatorLossContext` exposes paired
 execution and physical predictions, batches, and targets.
 
 `gradient_accumulation=K` holds parameters, optimizer state, target parameters,
-and the loss-schedule step fixed while evaluating `K` independently keyed
-microbatches. Case log masses and active masks are merged in the log domain, so
-the result equals the corresponding pooled weighted mean even for uneven final
-batches. The optimizer, validation, callbacks, history, and checkpoints advance
-only after a positive-support window flushes. Case-axis sums, nonlinear
-batch-risk reductions, and scalar custom losses are intentionally rejected when
-`K > 1`; write custom accumulated terms with
-`OperatorLossTerm(case_reduction="per_case")`.
+and the loss-schedule step fixed while evaluating `K` microbatches, each under
+its own attempt-addressed key. Case log masses and active masks are merged in
+the log domain, so the result equals the corresponding pooled weighted mean
+even for uneven final batches. Case-axis sums, nonlinear batch-risk reductions,
+and scalar custom losses are intentionally rejected when `K > 1`; write custom
+accumulated terms with `OperatorLossTerm(case_reduction="per_case")`.
+
+`fit_operator` trains through PhydraX's accepted-update training kernel with
+surrogate authority: the operator loss is one data-fit objective, or one
+unrolled rollout objective when rollout terms are present. Each window closes
+in one attempt with three outcomes. An accepted update commits parameters,
+optimizer state, target parameters, and the accepted-update cursor; only then
+do the loss scale, validation, callbacks, history, and checkpoints advance. A
+window without positive support is skipped and commits nothing. A nonfinite
+loss or gradient rolls every training quantity back and raises
+`FloatingPointError`, and so does a nonfinite optimizer update from finite
+gradients.
 
 Use `OperatorDTypePolicy` for parameter/compute/reduction placement. Gradient
 numerators accumulate in `reduction_dtype` and are cast back to parameter dtype
 at the optimizer boundary. Float16 compute additionally requires an explicit
-`OperatorLossScalePolicy`; any nonfinite microstep discards the pending window.
+`OperatorLossScalePolicy`. Under dynamic scaling a nonfinite window is rolled
+back and discarded, the scale backs off, and training continues with the next
+window; a nonfinite window that persists at the minimum scale still raises
+`FloatingPointError`.
 `OperatorShardingPolicy` shards a named case dimension, pads only physical tail
 capacity, and masks the padding from every reduction.
 
@@ -1912,10 +1970,15 @@ physics_task = phx.nn.operator.OperatorTask(
         query_is_fixed=False,
     ),
 )
+physics_output_port = physics_task.field_by_name["output"].value_port()
 physics_model = phx.nn.operator.training.TrainedOperator(
     physics_base,
     physics_task,
     training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+    output_ports={"output": physics_output_port},
+    port_mapping=phx.PortMapping(
+        outputs=((physics_output_port.port_id, physics_output_port.port_id),)
+    ),
     output_pipeline=output_pipeline,
 )
 physics_prediction = physics_model.predict(measured_batch, key=jr.key(14))
@@ -2004,22 +2067,40 @@ The final chunk is padded and masked internally, so padding contributes neither
 output nor physical measure. Use `NpyPredictionSink` when the assembled output
 must remain off device and outside process memory.
 
-`save_operator_training_checkpoint` persists the model, optimizer and
-gradient-accumulation state, exact PRNG key, normalization, dtype policy,
-semantic fit schema, logical epoch/batch cursor, loader identity, and user
-metadata in the current versioned format. Resume validates the manifest,
-version, state checksum, source content, ordering algorithm, and fit contract
-before case I/O. It then reads the exact next batch once and uses it for the
-first resumed update. A successful save publishes the new manifest atomically
-and prunes superseded state blobs, so periodic validation retains one resumable
-state per trial. Old checkpoint formats are rejected rather than migrated.
+`save_operator_training_checkpoint` persists a model, an optimizer state, and a
+PRNG key for custom loops, together with normalization, dtype policy, semantic
+schema, user metadata, and the model's `ArtifactBindingIdentity`. The model's
+array roles must be declared: its PARAMETER lane is the binding's numeric
+revision, while parameter shapes and dtypes, the dtype policy, and the
+`static_callables` a model holds statically (identified by `callable_payload`,
+so their weights enter the executable signature) form the executable signature.
+Pass the same `static_callables` to `load_operator_training_checkpoint`, which
+recomputes the binding from the restored model and rejects any mismatch.
+`fit_operator` checkpoints are a separate format:
+the training kernel's committed state (parameters, model state, optimizer
+state, target parameters, root key, attempt and accepted-update cursors), its
+role-schema, objective, update-rule, and sharding identities, plus the best
+model, loss scale, logical epoch/batch cursor, loader identity, fit contract,
+and learning curves. FIXED leaves come from the model passed on resume. They
+are published only at accepted-update boundaries. Resume validates the
+manifest, state checksum, kernel identities and structures, source content,
+ordering algorithm, and fit contract before case I/O. It then reads the exact
+next batch once and uses it for the first resumed update. A successful save
+publishes the new manifest atomically and prunes superseded state blobs, so
+periodic validation retains one resumable state per trial. Old checkpoint
+formats are rejected rather than migrated.
 
 `save_operator_artifact` stores the execution model, physical output pipeline and
 fingerprint, fixed-query geometry fingerprints, normalization, dtype, evidence,
-and optional exact-resume state as one verified contract. Portable recipes use
-versioned architecture and value registry identities rather than defining-module
-paths. Only the current canonical representation is accepted; regenerate
-development artifacts when that representation changes.
+the model's `ArtifactBindingIdentity`, and optional exact-resume state as one
+verified contract. The binding's semantics are the task and contract
+fingerprints, architecture or factory identity, structure recipe, role schema,
+and any adapted external checkpoint binding; its numeric revision is the
+PARAMETER lane of the execution model and output pipeline. `load_trained_operator`
+recomputes the binding from the restored model and fails closed on mismatch.
+Portable recipes use versioned architecture and value registry identities rather
+than defining-module paths. Only the current canonical representation is
+accepted; regenerate development artifacts when that representation changes.
 
 ## Generalized Flower transport
 

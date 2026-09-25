@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import jax.numpy as jnp
 
+from ..._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
 from ..._strict import StrictModule
 from ...domain import DomainFunction
 from ...metrix.clifford import (
@@ -99,7 +100,7 @@ def clifford_dirac(
     metadata = {
         key: value
         for key, value in field.metadata.items()
-        if key != "trial_space_certificate"
+        if key not in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
     }
     return DomainFunction(
         domain=field.domain,

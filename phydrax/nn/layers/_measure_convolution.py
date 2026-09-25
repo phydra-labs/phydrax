@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._dependency import AxisDependencyReach, OperatorDependencySupport
 
 
@@ -74,7 +75,7 @@ def _broadcast_sample_field(
     return array
 
 
-class _AbstractMeasureNormalizedConvND(StrictModule):
+class _AbstractMeasureNormalizedConvND(StrictModule, ParameterOwner):
     r"""Channels-last convolution normalized by observed physical measure.
 
     The numerator convolves ``where(source_mask, values, 0) * quadrature`` with

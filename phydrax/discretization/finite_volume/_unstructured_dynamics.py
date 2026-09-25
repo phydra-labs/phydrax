@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -19,19 +19,21 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from .._conservation_boundary import (
     AbstractConservationBoundary,
     ALEBoundaryContext,
     ConstantStateBoundary,
     ExtrapolationBoundary,
     PrescribedStateBoundary,
+    SourceFunction,
 )
 from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
     ConservationStageLedger,
 )
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
+from ._closure import AbstractFaceClosurePlan, FaceFluxContext
 from ._contact_angle import reconstruct_wall_interface_normal
 from ._coupling import (
     PreparedUnstructuredFiniteVolumeCoupling,
@@ -53,14 +55,13 @@ from ._physical_boundaries import (
     SupersonicInflowBoundary,
     SupersonicOutflowBoundary,
 )
-from ._positivity import EinfeldtHLLFluxPlan
 from ._precision import FiniteVolumePrecisionPolicy
 from ._reconstruction import PiecewiseConstantReconstruction
 from ._riemann import (
+    AbstractArbitraryNormalALENumericalFluxPlan,
+    AbstractArbitraryNormalNumericalFluxPlan,
     AbstractNumericalFluxPlan,
-    HLLCFluxPlan,
-    HLLFluxPlan,
-    RusanovFluxPlan,
+    NumericalFluxResult,
 )
 from ._small_cell import ConservativeSmallCellRedistributionPlan
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
@@ -68,7 +69,6 @@ from ._unstructured_overset import PeriodicSlidingCoupling
 from ._unstructured_weno import PreparedUnstructuredWENOZReconstruction
 
 
-SourceFunction = Callable[[Array, Array, Array, Any], ArrayLike]
 PreparedUnstructuredReconstruction = (
     PreparedCellPolynomialReconstruction | PreparedUnstructuredWENOZReconstruction
 )
@@ -119,22 +119,22 @@ class UnstructuredFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         )
 
 
-class UnstructuredFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
-    """Reconstruction and normal numerical flux for unstructured cells."""
+class UnstructuredFiniteVolumeMethodPlan(StrictModule):
+    """Reconstruction, normal numerical flux, and optional face closure."""
 
     reconstruction: PiecewiseConstantReconstruction | PreparedUnstructuredReconstruction
-    interface_solver: RusanovFluxPlan | HLLFluxPlan | HLLCFluxPlan | EinfeldtHLLFluxPlan
+    interface_solver: AbstractArbitraryNormalNumericalFluxPlan
+    closure: AbstractFaceClosurePlan | None
     method_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         reconstruction: PiecewiseConstantReconstruction
         | PreparedUnstructuredReconstruction,
-        interface_solver: RusanovFluxPlan
-        | HLLFluxPlan
-        | HLLCFluxPlan
-        | EinfeldtHLLFluxPlan,
+        interface_solver: AbstractArbitraryNormalNumericalFluxPlan,
         /,
+        *,
+        closure: AbstractFaceClosurePlan | None = None,
     ):
         if not isinstance(
             reconstruction,
@@ -147,11 +147,12 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Unstructured FV reconstruction must be piecewise constant or prepared cell-polynomial."
             )
-        if not isinstance(
-            interface_solver,
-            (RusanovFluxPlan, HLLFluxPlan, HLLCFluxPlan, EinfeldtHLLFluxPlan),
-        ):
-            raise TypeError("Unstructured FV supports Rusanov, HLL, or HLLC flux.")
+        if not isinstance(interface_solver, AbstractArbitraryNormalNumericalFluxPlan):
+            raise TypeError(
+                "Unstructured FV requires an arbitrary-normal numerical flux."
+            )
+        if closure is not None and not isinstance(closure, AbstractFaceClosurePlan):
+            raise TypeError("closure must be an AbstractFaceClosurePlan or None.")
         reconstruction_id = (
             reconstruction.plan_id
             if isinstance(reconstruction, PiecewiseConstantReconstruction)
@@ -159,11 +160,13 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         )
         self.reconstruction = reconstruction
         self.interface_solver = interface_solver
+        self.closure = closure
         self.method_id = canonical_fingerprint(
             {
                 "kind": "unstructured-fv-method",
                 "reconstruction": reconstruction_id,
                 "flux": interface_solver.flux_id,
+                **({} if closure is None else {"closure": closure.closure_id}),
             }
         )
 
@@ -200,13 +203,13 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     boundaries: UnstructuredFiniteVolumeBoundarySet
     coupling: PreparedUnstructuredFiniteVolumeCoupling
     precision: FiniteVolumePrecisionPolicy
-    boundary_face_indices: tuple[Array, ...]
-    stage_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...]
-    stage_boundary_face_indices: tuple[tuple[Array, ...], ...]
-    source_cell_indices: Array
-    overset_rate_block_template: ConservationStageFluxRateBlock | None
-    overset_active_cell_mask: Array
-    overset_effective_cell_volumes: Array
+    boundary_face_indices: tuple[Array, ...] = fixed_field()
+    stage_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...] = fixed_field()
+    stage_boundary_face_indices: tuple[tuple[Array, ...], ...] = fixed_field()
+    source_cell_indices: Array = fixed_field()
+    overset_rate_block_template: ConservationStageFluxRateBlock | None = fixed_field()
+    overset_active_cell_mask: Array = fixed_field()
+    overset_effective_cell_volumes: Array = fixed_field()
     overset_policy_id: str | None = eqx.field(static=True)
     overset_mapping_id: str | None = eqx.field(static=True)
     overset_epoch_id: str | None = eqx.field(static=True)
@@ -249,6 +252,8 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             raise ValueError(
                 "Unstructured FV system dimension/components do not match geometry."
             )
+        if method.closure is not None:
+            method.closure.admit_system(system)
         reconstruction = method.reconstruction
         if (
             isinstance(
@@ -290,9 +295,22 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             ):
                 raise ValueError(
                     "Moving unstructured finite-volume reconstruction requires "
-                    "piecewise constant or stage-refreshable degree-one WLSQ "
-                    f"(coupling={coupling_.prepared_id}, method={method.method_id})."
+                    "piecewise constant or stage-refreshable degree-one/two "
+                    "cell-polynomial or WENO-Z reconstruction "
+                    f"(coupling={coupling_.prepared_id}, method={method.method_id}, "
+                    f"reconstruction={type(reconstruction).__name__})."
                 )
+        if (
+            coupling_.motion is not None or coupling_.overset is not None
+        ) and not isinstance(
+            method.interface_solver, AbstractArbitraryNormalALENumericalFluxPlan
+        ):
+            raise ValueError(
+                "Moving and overset unstructured finite-volume routes require an "
+                "arbitrary-normal ALE numerical flux "
+                f"(coupling={coupling_.prepared_id}, method={method.method_id}, "
+                f"flux={type(method.interface_solver).__name__})."
+            )
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
         source_identifier = None if source_id is None else str(source_id)
@@ -591,6 +609,50 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             source_id=self.source_id,
             precision=self.precision,
             coupling=self.coupling,
+        )
+
+    def _stage_normal_flux(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        grid_normal_velocity: Array,
+        face_measure: Array,
+        active: Array,
+        geometry_id: str,
+        args: Any,
+        /,
+    ) -> NumericalFluxResult:
+        """Stage normal flux with the closure applied at every active site.
+
+        `face_measure` and `active` match the face-site batch; inactive routes
+        carry placeholder geometry in the closure context and no correction.
+        """
+        solver = self.method.interface_solver
+        if isinstance(solver, AbstractArbitraryNormalALENumericalFluxPlan):
+            result = solver.normal_ale_face_flux(
+                self.system, left, right, normal, grid_normal_velocity, args
+            )
+        else:
+            # Preparation admits stationary-only fluxes only without motion or
+            # overset coupling, where every stage grid-normal velocity is zero.
+            result = solver.normal_face_flux(self.system, left, right, normal, args)
+        if self.method.closure is None:
+            return result
+        placeholder = jnp.zeros((normal.shape[-1],), dtype=normal.dtype).at[0].set(1.0)
+        context = FaceFluxContext(
+            jnp.where(active[..., None], normal, placeholder),
+            jnp.where(active, face_measure, jnp.ones((), dtype=face_measure.dtype)),
+            grid_normal_velocity,
+            geometry_id=geometry_id,
+            active=active,
+        )
+        return NumericalFluxResult(
+            self.method.closure.apply(
+                self.system, left, right, result.normal_flux, context, args
+            ),
+            result.max_speed,
+            fallback_activated=result.fallback_activated,
         )
 
     def _stage_route_active(
@@ -1134,12 +1196,15 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 / self.precision.reconstruction(sliding.right_measures)[:, None, None]
             )
 
-        normal_flux = self.method.interface_solver.normal_ale_face_flux(
-            self.system,
+        site_shape = points_array.shape[:-1]
+        normal_flux = self._stage_normal_flux(
             self.precision.flux(receptor_interior),
             self.precision.flux(donor_trace),
             self.precision.flux(normals_array),
             grid_velocity,
+            jnp.broadcast_to(self.precision.flux(face_measures)[:, None], site_shape),
+            jnp.ones(site_shape, dtype=jnp.bool_),
+            metrics.geometry_layout_id,
             args,
         )
         integrated_face_flux = ein.contract(
@@ -1414,12 +1479,21 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         "Moving stage geometry must provide grid-normal velocity."
                     )
                 grid_velocity = jnp.zeros_like(geometry_block.quadrature_weights)
-            result = self.method.interface_solver.normal_ale_face_flux(
-                self.system,
+            site_shape = geometry_block.quadrature_weights.shape
+            route_active = self._stage_route_active(
+                geometry_block.layout, metrics.active_cell_mask
+            )
+            result = self._stage_normal_flux(
                 self.precision.flux(left),
                 self.precision.flux(right),
                 self.precision.flux(normal),
                 self.precision.flux(grid_velocity),
+                jnp.broadcast_to(
+                    self.precision.flux(geometry_block.face_measures)[:, None],
+                    site_shape,
+                ),
+                jnp.broadcast_to(route_active[:, None], site_shape),
+                metrics.geometry_layout_id,
                 args,
             )
             layout = geometry_block.layout
@@ -1850,6 +1924,34 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             right = jnp.where(patch_mask[:, None, None], exterior, right)
         return left, right, normal
 
+    def _static_normal_flux(
+        self, left: Array, right: Array, normal: Array, args: Any, /
+    ) -> tuple[Array, Array]:
+        """Stationary normal flux with the closure applied at every face site."""
+        left_ = self.precision.flux(left)
+        right_ = self.precision.flux(right)
+        normal_ = self.precision.flux(normal)
+        result = self.method.interface_solver.normal_face_flux(
+            self.system, left_, right_, normal_, args
+        )
+        normal_flux = result.normal_flux
+        if self.method.closure is not None:
+            measures = self.discretization.face_measures
+            context = FaceFluxContext(
+                normal_,
+                self.precision.flux(
+                    jnp.broadcast_to(
+                        measures.reshape(measures.shape + (1,) * (normal_.ndim - 2)),
+                        normal_.shape[:-1],
+                    )
+                ),
+                geometry_id=self.discretization.prepared_id,
+            )
+            normal_flux = self.method.closure.apply(
+                self.system, left_, right_, normal_flux, context, args
+            )
+        return normal_flux, result.max_speed
+
     def face_fluxes(
         self, time: Array, state: Array, args: Any = None, /
     ) -> tuple[Array, Array]:
@@ -1867,37 +1969,23 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             ),
         ):
             left, right, normal = self._quadrature_face_states(time, value, args)
-            result = self.method.interface_solver.normal_face_flux(
-                self.system,
-                self.precision.flux(left),
-                self.precision.flux(right),
-                self.precision.flux(normal),
-                args,
-            )
+            normal_flux, max_speed = self._static_normal_flux(left, right, normal, args)
             integrated = jnp.sum(
                 self.precision.reduction(
                     self.discretization.face_quadrature_weights[..., None]
                 )
-                * self.precision.reduction(result.normal_flux),
+                * self.precision.reduction(normal_flux),
                 axis=1,
             )
             average_flux = integrated / self.precision.reduction(
                 self.discretization.face_measures[:, None]
             )
             return self.precision.flux(average_flux), self.precision.decision(
-                jnp.max(result.max_speed, axis=1)
+                jnp.max(max_speed, axis=1)
             )
         left, right, normal = self._centroid_face_states(time, value, args)
-        result = self.method.interface_solver.normal_face_flux(
-            self.system,
-            self.precision.flux(left),
-            self.precision.flux(right),
-            self.precision.flux(normal),
-            args,
-        )
-        return self.precision.flux(result.normal_flux), self.precision.decision(
-            result.max_speed
-        )
+        normal_flux, max_speed = self._static_normal_flux(left, right, normal, args)
+        return self.precision.flux(normal_flux), self.precision.decision(max_speed)
 
     def residual_from_fluxes(self, normal_flux: Array, /) -> Array:
         integrated = self.precision.reduction(normal_flux) * self.precision.reduction(

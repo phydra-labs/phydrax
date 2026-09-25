@@ -537,6 +537,9 @@ def _triangular_pattern(
     )
 
 
+# Symbolic planning reads concrete host patterns. Evaluate it eagerly even
+# when a caller prepares inside an ambient trace such as a guarded cond.
+@jax.ensure_compile_time_eval()
 def prepare_sparse_factorization(
     operator: AbstractSparseLinearOperator,
     policy: SparseFactorizationPolicy | None = None,

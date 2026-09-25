@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from math import prod
 from multiprocessing import get_context
 from numbers import Integral
+from time import perf_counter
 
 import equinox as eqx
 import jax
@@ -206,21 +207,27 @@ class ContractionPlanCache(NonTrainableState):
 
 def _bounded_contract_path_worker(connection, equation, shapes, optimizer) -> None:
     try:
+        # Readiness marks the end of interpreter startup and module import; the
+        # planning deadline covers only the search that follows.
+        connection.send(None)
+        started = perf_counter()
         path, information = oe.contract_path(
             equation,
             *shapes,
             shapes=True,
             optimize=optimizer,
         )
+        elapsed = perf_counter() - started
         connection.send(
             (
                 tuple(tuple(int(index) for index in step) for step in path),
                 int(information.opt_cost),
+                elapsed,
                 None,
             )
         )
     except BaseException as error:
-        connection.send((None, None, f"{type(error).__name__}: {error}"))
+        connection.send((None, None, None, f"{type(error).__name__}: {error}"))
     finally:
         connection.close()
 
@@ -240,20 +247,26 @@ def _bounded_contract_path(
     )
     process.start()
     sender.close()
-    process.join(timeout)
-    if process.is_alive():
-        process.terminate()
+    try:
+        # Blocks until the worker is ready or exits; a worker that dies before
+        # replying closes the pipe and surfaces as EOFError.
+        receiver.recv()
+        if not receiver.poll(timeout):
+            process.terminate()
+            raise TimeoutError("Contraction planning exceeded maximum_planning_seconds.")
+        path, flops, elapsed, error = receiver.recv()
+    except EOFError:
+        process.join()
+        raise RuntimeError(
+            f"Contraction planner worker exited with code {process.exitcode}."
+        ) from None
+    finally:
         process.join()
         receiver.close()
-        raise TimeoutError("Contraction planning exceeded maximum_planning_seconds.")
-    if not receiver.poll():
-        exitcode = process.exitcode
-        receiver.close()
-        raise RuntimeError(f"Contraction planner worker exited with code {exitcode}.")
-    path, flops, error = receiver.recv()
-    receiver.close()
     if error is not None:
         raise RuntimeError(f"Contraction planner failed: {error}")
+    if elapsed > timeout:
+        raise TimeoutError("Contraction planning exceeded maximum_planning_seconds.")
     return path, flops
 
 
@@ -531,13 +544,14 @@ def _execution_evidence(
 ) -> ContractionExecutionEvidence:
     plan = prepared.plan
     finite = jnp.all(jnp.isfinite(output))
+    # prepared_id already binds the host-side numeric version; the traced
+    # numeric_version array is carried as dynamic evidence below.
     replay_id = canonical_fingerprint(
         {
             "kind": "contraction-replay",
             "schedule": plan.schedule.schedule_id,
             "prepared": prepared.prepared_id,
             "operands": prepared.operand_id,
-            "numeric_version": int(prepared.numeric_version),
         }
     )
     return ContractionExecutionEvidence(

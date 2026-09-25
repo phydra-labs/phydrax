@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import TimeGrid
 from ...linalg import (
@@ -270,13 +271,8 @@ def finite_horizon_multiplicative_lq_feedback_nash(
         n,
         m,
     )
-    dtype = jnp.result_type(
-        *deterministic_values,
-        state_noise,
-        control_noise,
-        gamma_raw,
-        noise_offset,
-        jnp.float64,
+    dtype = inexact_result_type(
+        *deterministic_values, state_noise, control_noise, gamma_raw, noise_offset
     )
     (
         a,

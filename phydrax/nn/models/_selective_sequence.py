@@ -12,6 +12,7 @@ from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey, split_eval_key
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._linear_recurrent_unit import _last_valid_array
@@ -25,7 +26,7 @@ from ..layers._selective_sequence import (
 SelectiveReturnMode = Literal["sequence", "final"]
 
 
-class SelectiveSequenceModel(StrictModule):
+class SelectiveSequenceModel(StrictModule, ParameterOwner):
     """Stacked selective state-space sequence model with streaming state."""
 
     blocks: tuple[SelectiveStateSpaceBlock, ...]

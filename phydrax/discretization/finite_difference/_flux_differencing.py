@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
@@ -18,7 +18,8 @@ import phydrax.linalg as la
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
+from .._conservation_boundary import SourceFunction
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -198,7 +199,7 @@ class TensorSBPDiscretization(AbstractPreparedDiscretization):
         return self.derivatives[0].norm_weights
 
 
-class SBPFluxDifferencingMethodPlan(StrictModule, NonTrainableState):
+class SBPFluxDifferencingMethodPlan(StrictModule):
     """Symmetric two-point volume flux with optional entropy diagnostics."""
 
     volume_flux: AbstractSymmetricTwoPointFluxPlan
@@ -281,13 +282,11 @@ class PreparedSBPConservationDynamics(StrictModule):
     system: Any
     discretization: TensorSBPDiscretization
     method: SBPFluxDifferencingMethodPlan
-    source: Callable[[Array, Array, Array, Any], ArrayLike] | None = eqx.field(
-        static=True
-    )
+    source: SourceFunction | None = eqx.field(static=True)
     entropy_pair: Any
-    pair_left: tuple[Array, ...]
-    pair_right: tuple[Array, ...]
-    pair_coefficients: tuple[Array, ...]
+    pair_left: tuple[Array, ...] = fixed_field()
+    pair_right: tuple[Array, ...] = fixed_field()
+    pair_coefficients: tuple[Array, ...] = fixed_field()
     row_sum_bounds: tuple[float, ...] = eqx.field(static=True)
     report: SBPFluxDifferencingReport
     dynamics_id: str = eqx.field(static=True)
@@ -299,7 +298,7 @@ class PreparedSBPConservationDynamics(StrictModule):
         method: SBPFluxDifferencingMethodPlan,
         /,
         *,
-        source: Callable[[Array, Array, Array, Any], ArrayLike] | None = None,
+        source: SourceFunction | None = None,
         entropy_pair: Any = None,
     ):
         if not isinstance(discretization, TensorSBPDiscretization):

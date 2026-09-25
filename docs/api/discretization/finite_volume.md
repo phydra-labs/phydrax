@@ -54,6 +54,18 @@
 
 ## Reconstruction and limiting
 
+`AbstractFaceReconstructionPlan` and `AbstractSlopeLimiter` are neutral
+`DISCRETIZATION` component slots: built-in implementations are fixed analytic
+leaves, and a learned implementation holds its model as a dynamic child.
+
+::: phydrax.discretization.AbstractFaceReconstructionPlan
+
+---
+
+::: phydrax.discretization.AbstractSlopeLimiter
+
+---
+
 ::: phydrax.discretization.PiecewiseConstantReconstruction
 
 ---
@@ -98,6 +110,23 @@
 
 ## Numerical fluxes and waves
 
+`AbstractNumericalFluxPlan` is a neutral `DISCRETIZATION` component slot. Mapped,
+triangle, and unstructured owners admit any `AbstractArbitraryNormalNumericalFluxPlan`;
+moving and overset unstructured owners require
+`AbstractArbitraryNormalALENumericalFluxPlan`.
+
+::: phydrax.discretization.AbstractNumericalFluxPlan
+
+---
+
+::: phydrax.discretization.AbstractArbitraryNormalNumericalFluxPlan
+
+---
+
+::: phydrax.discretization.AbstractArbitraryNormalALENumericalFluxPlan
+
+---
+
 ::: phydrax.discretization.RusanovFluxPlan
 
 ---
@@ -122,6 +151,32 @@
 ---
 
 ::: phydrax.discretization.EntropyStableFluxPlan
+
+## Face closures
+
+A face closure corrects the one shared baseline normal flux of each face and receives
+a `FaceFluxContext` (unit normal, positive face measure, grid-normal velocity,
+Cartesian axis, geometry and frame identity). `SymmetrizedFaceClosure` is the optional
+construction that certifies equal-state consistency and orientation antisymmetry.
+Face-normal-frame closures require `phydrax.equations.AbstractNormalFrameSystem`.
+
+::: phydrax.discretization.AbstractFaceClosurePlan
+
+---
+
+::: phydrax.discretization.ArbitraryNormalFaceClosurePlan
+
+---
+
+::: phydrax.discretization.FaceFluxContext
+
+---
+
+::: phydrax.discretization.SymmetrizedFaceClosure
+
+---
+
+::: phydrax.discretization.SymmetrizedFaceClosureCertificate
 
 
 ---
@@ -601,6 +656,10 @@ inadmissible, all blocks retain their base states.
 ---
 
 ::: phydrax.equations.EulerSystem
+
+---
+
+::: phydrax.equations.AbstractNormalFrameSystem
 ---
 
 ::: phydrax.equations.CompressibleNavierStokesSystem

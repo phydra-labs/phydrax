@@ -220,7 +220,9 @@ class IonizedMixtureThermodynamicsPlan(StrictModule, NonTrainableState):
 
 
 class IonizedMultitemperatureEulerSystem(
-    AbstractAdmissibleSystem, AbstractNormalReflectionSystem
+    AbstractAdmissibleSystem,
+    AbstractNormalReflectionSystem,
+    NonTrainableState,
 ):
     """Ionized Euler transport over the canonical species/mode state layout."""
 

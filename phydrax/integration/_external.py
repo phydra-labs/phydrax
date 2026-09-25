@@ -483,9 +483,9 @@ def _integrate_separable_discrete(
     for axis in batch.axes:
         if axis not in included.named_dims:
             weight = batch.weights_by_axis[axis]
-            included = included * cx.AxisArray(
-                jnp.ones(weight.shape, dtype=jnp.bool_),
-                dims=(axis,),
+            included = cx.outer(
+                included,
+                cx.AxisArray(jnp.ones(weight.shape, dtype=jnp.bool_), dims=(axis,)),
             )
     admissible = cx.AxisArray(jnp.asarray(True), dims=())
     positive = cx.AxisArray(jnp.asarray(True), dims=())
@@ -493,10 +493,13 @@ def _integrate_separable_discrete(
         weight = batch.weights_by_axis[axis]
         weight_data = jnp.asarray(weight.data)
         finite_nonnegative = jnp.isfinite(weight_data) & (weight_data >= 0.0)
-        admissible = admissible * cx.AxisArray(finite_nonnegative, dims=(axis,))
-        positive = positive * cx.AxisArray(
-            finite_nonnegative & (weight_data > 0.0),
-            dims=(axis,),
+        admissible = cx.outer(
+            admissible,
+            cx.AxisArray(finite_nonnegative, dims=(axis,)),
+        )
+        positive = cx.outer(
+            positive,
+            cx.AxisArray(finite_nonnegative & (weight_data > 0.0), dims=(axis,)),
         )
     if batch.coupled_weight is not None:
         coupled = batch.coupled_weight
@@ -520,17 +523,23 @@ def _integrate_separable_discrete(
     for axis in batch.axes:
         if axis not in expanded.named_dims:
             weight = batch.weights_by_axis[axis]
-            expanded = expanded * cx.AxisArray(
-                jnp.ones(weight.shape),
-                dims=(axis,),
+            expanded = cx.outer(
+                expanded,
+                cx.AxisArray(jnp.ones(weight.shape), dims=(axis,)),
             )
-    active_field = active * cx.AxisArray(
-        jnp.ones_like(expanded.data, dtype=jnp.bool_),
-        dims=expanded.dims,
+    active_field = cx.outer(
+        active,
+        cx.AxisArray(
+            jnp.ones_like(expanded.data, dtype=jnp.bool_),
+            dims=expanded.dims,
+        ),
     )
-    expanded_field = expanded * cx.AxisArray(
-        jnp.ones_like(active.data, dtype=expanded.data.dtype),
-        dims=active.dims,
+    expanded_field = cx.outer(
+        expanded,
+        cx.AxisArray(
+            jnp.ones_like(active.data, dtype=expanded.data.dtype),
+            dims=active.dims,
+        ),
     )
     expanded_field = cx.align_to(expanded_field, active_field.layout)
     active_values = jnp.asarray(active_field.data, dtype=jnp.bool_)
@@ -577,7 +586,7 @@ def _integrate_separable_discrete(
             accumulation_dtype=accumulation_dtype,
         )
         mass = sum_over(
-            mass * safe_weight,
+            cx.outer(mass, safe_weight),
             axis,
             accumulation_dtype=accumulation_dtype,
         )

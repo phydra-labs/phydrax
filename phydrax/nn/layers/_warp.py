@@ -14,7 +14,9 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey
 from ._linear import Linear
 from ._warp_geometry import (
@@ -90,7 +92,7 @@ def _sample_regular_grid_linear(
     if any(size < 2 for size in spatial_shape):
         raise ValueError("Every warped spatial axis must contain at least two nodes.")
 
-    coordinate_dtype = jnp.result_type(array.dtype, jnp.float64)
+    coordinate_dtype = inexact_result_type(array.dtype)
     query = jnp.asarray(coordinates, dtype=coordinate_dtype)
     if query.ndim < len(batch_shape) + 2 or query.shape[-1] != spatial_ndim:
         raise ValueError(
@@ -170,7 +172,7 @@ def _sample_regular_grid_linear(
     return output
 
 
-class MultiheadWarp(StrictModule):
+class MultiheadWarp(StrictModule, ParameterOwner):
     """Adaptive multihead pullback on a regular channel-last grid.
 
     Displacements are predicted in domain-normalized coordinates. Periodic axes
@@ -359,7 +361,7 @@ class MultiheadWarp(StrictModule):
             lattice = _normalized_lattice(
                 spatial_shape,
                 self.boundary,
-                dtype=jnp.result_type(displacement.dtype, jnp.float64),
+                dtype=inexact_result_type(displacement.dtype),
             )
         else:
             lattice = normalized_lattice_from_nodes(axis_nodes)

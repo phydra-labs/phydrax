@@ -162,7 +162,7 @@ def test_dance_map_admission_retains_coverage_missingness_and_exclusions(tmp_pat
     assert admission.mapping_category_ids == ("INCLUDED", "LOW_MAPQ")
     assert admission.category_counts == (1, 1)
     assert int(batch.excluded_profile_count) == 1
-    with pytest.raises(ValueError, match="manifest"):
+    with pytest.raises(ValueError, match="Reference artifact size mismatch"):
         record_path = tmp_path / "source-0.mut"
         record_path.write_bytes(record_path.read_bytes() + b"\n")
         import_dance_map_files((record,), requested_use={})

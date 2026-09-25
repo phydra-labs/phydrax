@@ -39,6 +39,12 @@
 
 ::: phydrax.atomistic.sampling.estimate_restrained_free_energy_gradient
 
+`fit_free_energy_model` runs each update as one attempt of the shared training
+kernel with `MODEL` root authority. A training evaluation that is not `valid` (no
+active window or nonfinite predictions) carries no support and is rejected, and a
+nonfinite one rolls back. Neither is committed: training stops with a `FAILURE`
+event, `valid=False`, and the last accepted model.
+
 ::: phydrax.atomistic.sampling.fit_free_energy_model
 
 

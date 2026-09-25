@@ -20,6 +20,8 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.axes as cx
 
+from .._precision import inexact_result_type
+
 
 Value = ArrayLike | cx.AxisArray
 
@@ -294,7 +296,7 @@ def _data_axis(
     if jnp.issubdtype(data.dtype, jnp.complexfloating):
         raise TypeError("values must be real-valued.")
     if not jnp.issubdtype(data.dtype, jnp.floating):
-        data = data.astype(jnp.result_type(jnp.float64))
+        data = data.astype(inexact_result_type())
     if data.shape[position] < 1:
         raise ValueError("values ordering axis must be nonempty.")
     data = eqx.error_if(

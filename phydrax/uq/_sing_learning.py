@@ -7,13 +7,24 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
-import jax.random as jr
 import optax
 from jaxtyping import Array, Key
 
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from .._trainable import combine_parameters
+from .._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    SubspaceTrainingTree,
+    TrainingKernelSpec,
+    TrainingRejectionBudgetError,
+)
+from .._training_objective import _ObjectiveContribution
 from ..nn.parameters import ParameterSubspace
 from ._sing import sing_smoother, SINGResult, SINGState
 from ._sing_transition import sing_objective, SINGTransitionPlan
@@ -80,6 +91,30 @@ class SINGLearningResult(StrictModule):
     bounded_non_claim: str = eqx.field(static=True)
 
 
+_FACTOR_BATCH_ADDRESS = SampleAddress("uq.sing", "factor-batch", role="outer-iteration")
+_FINAL_SMOOTHER_ADDRESS = SampleAddress(
+    "uq.sing", "final-smoother", role="initialization"
+)
+
+
+def _negative_sing_objective(parameters, model_state, fixed, payload, keys):
+    """Held-posterior negative SING objective of the subspace parameters.
+
+    The payload is `(posterior_state, batch, transition_plan, observation_factor)`.
+    """
+    del keys
+    posterior_state, batch, transition_plan, observation_factor = payload
+    tree = combine_parameters(parameters, model_state, fixed)
+    result = sing_objective(
+        tree.model(),
+        posterior_state,
+        transition_plan=transition_plan,
+        observation_factor=observation_factor,
+        batch=batch,
+    )
+    return _ObjectiveContribution(-result.objective, 1.0), model_state, ()
+
+
 def fit_sing(
     problem: Any,
     /,
@@ -95,6 +130,10 @@ def fit_sing(
 
     Gradients are taken only through the fixed transition/support/factor route.
     Selection, support rank, and inducing topology changes require a new call.
+    Every parameter step is one attempt of the shared training kernel (`MODEL`
+    root authority, one data-fit objective) over the subspace selection. A
+    nonfinite parameter step rolls back and ends learning with `valid=False`
+    (`status=1`); the result then holds the last accepted parameters.
     """
     if not isinstance(policy, SINGLearningPolicy):
         raise TypeError("policy must be a SINGLearningPolicy.")
@@ -111,19 +150,38 @@ def fit_sing(
                 "parameter_subspace is required when parameter_steps requests learning."
             )
         position = jnp.zeros((0,), dtype=posterior.elbo.total_elbo.dtype)
-        optimizer_state = None
+        kernel = None
+        training = None
     else:
         if not isinstance(parameter_subspace, ParameterSubspace):
             raise TypeError("parameter_subspace must be ParameterSubspace or None.")
         parameter_subspace.validate_root(problem)
         position = parameter_subspace.pack()
-        optimizer_state = optimizer.init(position)
+        tree = SubspaceTrainingTree.from_subspace(parameter_subspace)
+        kernel = prepare_training_kernel(
+            tree,
+            (
+                KernelObjective(
+                    objective_id="sing-held-posterior-objective",
+                    kind=ObjectiveKind.DATA_FIT,
+                    route=DerivativeRoute.DIRECT,
+                    fn=_negative_sing_objective,
+                ),
+            ),
+            TrainingKernelSpec(
+                OptaxUpdateRule(optimizer, rule_id="sing-caller-optimizer"),
+                context="fit_sing",
+                rejection_budget=0,
+            ),
+            root_authority=ComponentAuthority.MODEL,
+        )
+        training = kernel.init(tree, key)
     objective_values = []
     audits = []
     factor_sampling_state = None
     objective_kind = "elbo"
+    training_failed = False
     for outer in range(policy.max_outer_iterations):
-        outer_key = jr.fold_in(key, outer)
         posterior = sing_smoother(
             current_problem,
             state=posterior.state,
@@ -133,33 +191,28 @@ def fit_sing(
             batch = None
         else:
             batch, factor_sampling_state = policy.factor_source(
-                outer_key,
+                derive_key(key, _FACTOR_BATCH_ADDRESS, outer),
                 outer,
                 factor_sampling_state,
             )
-        if parameter_subspace is not None:
-            frozen_posterior = posterior.state
-
-            def loss(vector):
-                candidate = parameter_subspace.reconstruct_vector(vector)
-                result = sing_objective(
-                    candidate,
-                    frozen_posterior,
-                    transition_plan=policy.transition_plan,
-                    observation_factor=observation_factor,
-                    batch=batch,
-                )
-                return -result.objective
-
+        if kernel is not None:
+            payload = (
+                posterior.state,
+                batch,
+                policy.transition_plan,
+                observation_factor,
+            )
             for _ in range(policy.parameter_steps):
-                _, gradient = jax.value_and_grad(loss)(position)
-                updates, optimizer_state = optimizer.update(
-                    gradient,
-                    optimizer_state,
-                    position,
-                )
-                position = optax.apply_updates(position, updates)
-            current_problem = parameter_subspace.reconstruct_vector(position)
+                try:
+                    training, _ = run_training_attempt(kernel, training, payload)
+                except TrainingRejectionBudgetError:
+                    training_failed = True
+                    break
+            learned = kernel.tree(training)
+            position = parameter_subspace.pack(learned.selected)
+            current_problem = learned.model()
+            if training_failed:
+                break
         represented = sing_objective(
             current_problem,
             posterior.state,
@@ -182,7 +235,7 @@ def fit_sing(
             audits.append(audit.objective)
     posterior = sing_smoother(
         current_problem,
-        key=jr.fold_in(key, policy.max_outer_iterations),
+        key=derive_key(key, _FINAL_SMOOTHER_ADDRESS),
         max_iterations=policy.posterior_steps,
     )
     final_audit = sing_objective(
@@ -192,8 +245,14 @@ def fit_sing(
         observation_factor=observation_factor,
         batch=None,
     )
-    audits[-1] = final_audit.objective
-    objective_values[-1] = final_audit.objective
+    if training_failed:
+        # Learning stopped early: the final audit is a new record of the last
+        # accepted parameters, not a replacement of a completed iteration.
+        audits.append(final_audit.objective)
+        objective_values.append(final_audit.objective)
+    else:
+        audits[-1] = final_audit.objective
+        objective_values[-1] = final_audit.objective
     objective_kind = final_audit.objective_kind
     history = jnp.stack(objective_values)
     full_history = jnp.stack(audits)
@@ -202,6 +261,7 @@ def fit_sing(
         & jnp.all(jnp.isfinite(history))
         & jnp.all(jnp.isfinite(full_history))
         & (full_history.size > 0)
+        & (not training_failed)
     )
     status = jnp.where(valid, 0, 1).astype(jnp.int32)
     transition_evidence = (

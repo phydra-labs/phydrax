@@ -47,6 +47,7 @@ from ._learned_chemistry import (
     LearnedChemicalFeatureSchema,
     LearnedChemicalTransitionPlan,
     LearnedChemicalTransitionResult,
+    TrainableLearnedChemicalTransitionPlan,
 )
 from ._low_mach import (
     LowMachConstraintEvidence,
@@ -138,6 +139,7 @@ __all__ = [
     "LearnedChemicalFeatureSchema",
     "LearnedChemicalTransitionPlan",
     "LearnedChemicalTransitionResult",
+    "TrainableLearnedChemicalTransitionPlan",
     "GasTransportPropertyEvaluation",
     "KineticTheoryGasTransportPlan",
     "LogPolynomialGasTransportPlan",

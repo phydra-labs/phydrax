@@ -50,9 +50,18 @@ def _runtime(
             geometry_plan, motion, mapping_id="vof-moving-grid"
         )
     )
+    # A moving VOF plan binds the runtime's initial serial topology epoch and
+    # the motion geometry family carried by every moved stage metric.
     vof = phx.discretization.UnstructuredVOFPlan(
         discretization,
         gradient,
+        topology_epoch_id=(
+            None
+            if motion_plan is None
+            else phx.discretization.TopologyEpoch(
+                0, discretization.geometry_id, discretization.topology_id, "serial"
+            ).epoch_id
+        ),
         geometry_family_id=(None if motion_plan is None else motion_plan.plan_id),
     )
     phase_change_operator = None

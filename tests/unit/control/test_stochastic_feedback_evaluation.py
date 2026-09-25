@@ -153,11 +153,12 @@ def test_prepared_noise_is_bound_to_exact_physical_grid():
 
 
 def test_realization_replay_ids_and_antithetic_cluster_labels():
-    grid = TimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="wiener-grid")
+    problem = _problem(num_steps=2)
+    grid = problem.time_grid
     realization = WienerRealization.antithetic(
         jr.key(4),
         (1,),
-        support=(0.0, 1.0),
+        support=(0.0, 2.0),
         num_pairs=2,
         coupling_id="wiener:paired",
     )
@@ -169,7 +170,6 @@ def test_realization_replay_ids_and_antithetic_cluster_labels():
         noise_shape=(1,),
         time_grid=grid,
     )
-    problem = _problem(num_steps=2)
     paths = rollout_feedback(
         problem,
         lambda context, state, args: jnp.zeros((1,)),

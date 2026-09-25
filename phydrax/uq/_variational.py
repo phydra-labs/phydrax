@@ -17,15 +17,32 @@ import jax.random as jr
 import optax
 from jaxtyping import Array, PyTree
 
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
+from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from .._trainable import combine_parameters, ParameterOwner
+from .._training_checkpoint import (
+    load_training_checkpoint,
+    read_training_checkpoint_metadata,
+    save_training_checkpoint,
+)
+from .._training_kernel import (
+    build_training_checkpoint,
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingKernelSpec,
+    TrainingRejectionBudgetError,
+)
+from .._training_objective import _ObjectiveContribution
 from ._checkpoint import (
+    _runtime_versions,
     checkpoint_compatibility,
+    CheckpointCompatibilityError,
     CheckpointCorruptionError,
-    pack_array_tree,
-    read_checkpoint_archive,
-    unpack_array_tree,
-    write_checkpoint_archive,
 )
 from ._posterior import PosteriorProblem
 from ._posterior_predictive import (
@@ -35,8 +52,11 @@ from ._posterior_predictive import (
 from ._predictive import PredictiveField
 
 
-_TRAINING_TAG = 0
-_FINAL_SAMPLING_TAG = 1
+_OBJECTIVE_ID = "reverse-kl"
+_CHECKPOINT_FORMAT = "phydrax-uq-variational"
+_FINAL_DRAWS_ADDRESS = SampleAddress(
+    "uq.variational", "final-draws", role="posterior-draws"
+)
 
 
 def _tree_nbytes(tree: Any, /) -> int:
@@ -50,8 +70,12 @@ def _tree_all_finite(tree: Any, /) -> Array:
     return jnp.all(jnp.stack([jnp.all(jnp.isfinite(leaf)) for leaf in leaves]))
 
 
-class AbstractVariationalFamily(StrictModule):
-    """Normalized distribution over unconstrained posterior coordinates."""
+class AbstractVariationalFamily(StrictModule, ParameterOwner):
+    """Normalized distribution over unconstrained posterior coordinates.
+
+    Unannotated inexact array leaves are the variational parameters
+    (`ParameterOwner`); data held by a family is declared with `fixed_field`.
+    """
 
     @property
     @abstractmethod
@@ -332,88 +356,72 @@ class VariationalResult(StrictModule):
         )
 
 
-def _write_variational_checkpoint(
-    destination: Path,
-    *,
-    compatibility,
-    completed: int,
-    family,
-    optimizer_state,
-    recorded_steps,
-    elbo_history,
-    gradient_history,
-    finite_history,
-    duration_seconds: float,
-) -> None:
-    arrays = {
-        "recorded_steps": jnp.asarray(recorded_steps, dtype=jnp.int32),
-        "elbo_history": jnp.asarray(elbo_history),
-        "gradient_history": jnp.asarray(gradient_history),
-        "finite_history": jnp.asarray(finite_history, dtype=jnp.bool_),
-    }
-    state = {
-        "completed_steps": int(completed),
-        "duration_seconds": float(duration_seconds),
-        "family_tree": pack_array_tree("family", family, arrays),
-        "optimizer_tree": pack_array_tree("optimizer", optimizer_state, arrays),
-    }
-    write_checkpoint_archive(
-        destination,
-        kind="variational",
-        compatibility=compatibility,
-        state=state,
-        arrays=arrays,
-    )
+class _ReverseKLObjective(StrictModule):
+    """Reparameterized reverse-KL estimate; the payload is the posterior problem.
+
+    A nonfinite draw, density, or loss makes the numerator nonfinite, so the
+    kernel rolls the attempt back instead of committing it.
+    """
+
+    samples_per_step: int = eqx.field(static=True)
+
+    def __call__(self, parameters, model_state, fixed, problem, keys):
+        family = combine_parameters(parameters, model_state, fixed)
+        positions, log_variational = family.sample_and_log_prob(
+            keys.attempt_key("reparameterization"),
+            sample_shape=(self.samples_per_step,),
+        )
+        log_target = jax.vmap(problem.log_density)(positions)
+        loss = jnp.mean(log_variational - log_target)
+        finite = (
+            jnp.isfinite(loss)
+            & jnp.all(jnp.isfinite(log_variational))
+            & jnp.all(jnp.isfinite(log_target))
+            & _tree_all_finite(positions)
+        )
+        numerator = jnp.where(finite, loss, jnp.full_like(loss, jnp.nan))
+        return _ObjectiveContribution(numerator, 1.0), model_state, loss
 
 
-def _read_variational_checkpoint(
-    source: Path,
-    *,
-    compatibility,
-    family_template,
-    optimizer_template,
-):
-    state, arrays = read_checkpoint_archive(
+_CHECKPOINT_METADATA = frozenset(
+    {"compatibility", "versions", "recorded_count", "history_dtype", "duration_seconds"}
+)
+
+
+def _history_template(count: int, dtype: Any, /) -> dict[str, Array]:
+    return {
+        "recorded_steps": jnp.zeros((count,), dtype=jnp.int32),
+        "elbo": jnp.zeros((count,), dtype=dtype),
+        "gradient_norm": jnp.zeros((count,), dtype=dtype),
+        "finite": jnp.zeros((count,), dtype=jnp.bool_),
+    }
+
+
+def _read_variational_checkpoint(source: Path, kernel, template, /, *, compatibility):
+    metadata = read_training_checkpoint_metadata(source, format=_CHECKPOINT_FORMAT)
+    if set(metadata) != _CHECKPOINT_METADATA:
+        raise CheckpointCorruptionError(
+            "Variational checkpoint metadata must use the current canonical fields."
+        )
+    if metadata["versions"] != _runtime_versions():
+        raise CheckpointCompatibilityError(
+            "Checkpoint PhydraX or BlackJAX version does not match the runtime."
+        )
+    if metadata["compatibility"] != dict(compatibility):
+        raise CheckpointCompatibilityError(
+            "Variational checkpoint does not belong to this problem and run settings."
+        )
+    count = metadata["recorded_count"]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise CheckpointCorruptionError("Variational recorded history count is invalid.")
+    loaded = load_training_checkpoint(
         source,
-        kind="variational",
-        compatibility=compatibility,
+        kernel,
+        template,
+        _history_template(count, jnp.dtype(str(metadata["history_dtype"]))),
+        format=_CHECKPOINT_FORMAT,
     )
-    completed = int(state.get("completed_steps", -1))
-    if completed < 0:
-        raise CheckpointCorruptionError("Variational completed step count is invalid.")
-    family = unpack_array_tree(state["family_tree"], arrays, family_template)
-    optimizer_state = unpack_array_tree(
-        state["optimizer_tree"], arrays, optimizer_template
-    )
-    required = (
-        "recorded_steps",
-        "elbo_history",
-        "gradient_history",
-        "finite_history",
-    )
-    if any(name not in arrays for name in required):
-        raise CheckpointCorruptionError("Variational history arrays are incomplete.")
-    recorded_steps = jnp.asarray(arrays["recorded_steps"], dtype=jnp.int32)
-    elbo_history = jnp.asarray(arrays["elbo_history"])
-    gradient_history = jnp.asarray(arrays["gradient_history"])
-    finite_history = jnp.asarray(arrays["finite_history"], dtype=jnp.bool_)
-    if not (
-        recorded_steps.ndim == 1
-        and elbo_history.shape == recorded_steps.shape
-        and gradient_history.shape == recorded_steps.shape
-        and finite_history.shape == recorded_steps.shape
-    ):
-        raise CheckpointCorruptionError("Variational history shapes are incompatible.")
-    return (
-        completed,
-        family,
-        optimizer_state,
-        list(recorded_steps),
-        list(elbo_history),
-        list(gradient_history),
-        list(finite_history),
-        float(state.get("duration_seconds", 0.0)),
-    )
+    return loaded.restored.state, loaded.extra, float(metadata["duration_seconds"])
 
 
 def fit_variational(
@@ -429,7 +437,16 @@ def fit_variational(
     checkpoint_id: str | None = None,
     resume_from: str | Path | None = None,
 ) -> VariationalResult:
-    """Fit a normalized reverse-KL posterior in unconstrained coordinates."""
+    """Fit a normalized reverse-KL posterior in unconstrained coordinates.
+
+    Every step is one attempt of the shared training kernel (`MODEL` root
+    authority, one data-fit objective, clipped Adam). Reparameterization draws
+    use the attempt-addressed key `SampleAddress("training", "reverse-kl",
+    target=("reparameterization",), role="attempt")` folded with the attempt
+    cursor. A nonfinite step rolls back and raises `FloatingPointError`.
+    Checkpoints are shared kernel checkpoints; files from other layouts fail
+    closed.
+    """
 
     if not isinstance(problem, PosteriorProblem):
         raise TypeError("problem must be a PosteriorProblem.")
@@ -485,119 +502,98 @@ def fit_variational(
         optax.clip_by_global_norm(config_.gradient_clip),
         optax.adam(config_.learning_rate),
     )
-    dynamic_family, static_family = eqx.partition(family_, eqx.is_inexact_array)
-    optimizer_state = optimizer.init(dynamic_family)
+    kernel = prepare_training_kernel(
+        family_,
+        (
+            KernelObjective(
+                objective_id=_OBJECTIVE_ID,
+                kind=ObjectiveKind.DATA_FIT,
+                route=DerivativeRoute.DIRECT,
+                fn=_ReverseKLObjective(config_.samples_per_step),
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(
+                optimizer,
+                rule_id=canonical_fingerprint(
+                    {
+                        "kind": "reverse-kl-clipped-adam",
+                        "gradient_clip": config_.gradient_clip.hex(),
+                        "learning_rate": config_.learning_rate.hex(),
+                    }
+                ),
+            ),
+            context="fit_variational",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.MODEL,
+    )
+    state = kernel.init(family_, key)
     started = perf_counter()
 
-    if resume_from is None:
-        completed = 0
-        recorded_steps: list[Any] = []
-        elbo_history: list[Any] = []
-        gradient_history: list[Any] = []
-        finite_history: list[Any] = []
-        previous_duration = 0.0
-    else:
+    recorded_steps: list[Any] = []
+    elbo_history: list[Any] = []
+    gradient_history: list[Any] = []
+    finite_history: list[Any] = []
+    previous_duration = 0.0
+    if resume_from is not None:
         if compatibility is None:
             raise RuntimeError("Variational resume compatibility was not initialized.")
-        (
-            completed,
-            restored_family,
-            optimizer_state,
-            recorded_steps,
-            elbo_history,
-            gradient_history,
-            finite_history,
-            previous_duration,
-        ) = _read_variational_checkpoint(
-            Path(resume_from),
-            compatibility=compatibility,
-            family_template=family_,
-            optimizer_template=optimizer_state,
+        state, history, previous_duration = _read_variational_checkpoint(
+            Path(resume_from), kernel, state, compatibility=compatibility
         )
-        if completed > config_.num_steps:
-            raise ValueError("Checkpoint exceeds the configured variational steps.")
-        dynamic_family, static_family = eqx.partition(
-            restored_family, eqx.is_inexact_array
-        )
-
-    def loss_function(current_dynamic, step_key):
-        current_family = eqx.combine(current_dynamic, static_family)
-        positions, log_variational = current_family.sample_and_log_prob(
-            step_key,
-            sample_shape=(config_.samples_per_step,),
-        )
-        log_target = jax.vmap(problem.log_density)(positions)
-        loss = jnp.mean(log_variational - log_target)
-        finite = (
-            jnp.isfinite(loss)
-            & jnp.all(jnp.isfinite(log_variational))
-            & jnp.all(jnp.isfinite(log_target))
-            & _tree_all_finite(positions)
-        )
-        return loss, finite
-
-    @eqx.filter_jit
-    def update(current_dynamic, current_optimizer_state, step_key):
-        (loss, finite), gradient = eqx.filter_value_and_grad(
-            loss_function,
-            has_aux=True,
-        )(current_dynamic, step_key)
-        gradient_norm = optax.tree.norm(gradient)
-        updates, next_optimizer_state = optimizer.update(
-            gradient,
-            current_optimizer_state,
-            current_dynamic,
-        )
-        next_dynamic = eqx.apply_updates(current_dynamic, updates)
-        finite = finite & jnp.isfinite(gradient_norm) & _tree_all_finite(next_dynamic)
-        return next_dynamic, next_optimizer_state, loss, gradient_norm, finite
+        recorded_steps = list(history["recorded_steps"])
+        elbo_history = list(history["elbo"])
+        gradient_history = list(history["gradient_norm"])
+        finite_history = list(history["finite"])
+    completed = int(state.accepted_cursor)
+    if completed > config_.num_steps:
+        raise ValueError("Checkpoint exceeds the configured variational steps.")
 
     optimization_started = perf_counter()
     while completed < config_.num_steps:
-        step_key = jr.fold_in(
-            jr.fold_in(key, _TRAINING_TAG),
-            jnp.asarray(completed, dtype=jnp.uint32),
-        )
-        (
-            dynamic_family,
-            optimizer_state,
-            loss,
-            gradient_norm,
-            finite,
-        ) = update(dynamic_family, optimizer_state, step_key)
-        jax.block_until_ready(loss)
-        completed += 1
-        if not bool(finite):
+        try:
+            state, evidence = run_training_attempt(kernel, state, problem)
+        except TrainingRejectionBudgetError as error:
             raise FloatingPointError(
-                f"Variational optimization became nonfinite at step {completed}."
-            )
+                f"Variational optimization became nonfinite at step {completed + 1}; "
+                "the family was rolled back to its last accepted state."
+            ) from error
+        completed += 1
         if completed % config_.record_every == 0 or completed == config_.num_steps:
             recorded_steps.append(jnp.asarray(completed, dtype=jnp.int32))
-            elbo_history.append(-loss)
-            gradient_history.append(gradient_norm)
-            finite_history.append(finite)
+            elbo_history.append(-evidence.diagnostics[0])
+            gradient_history.append(evidence.gradient_norm)
+            finite_history.append(evidence.finite)
         if (
             destination is not None
             and compatibility is not None
             and (completed % checkpoint_interval == 0 or completed == config_.num_steps)
         ):
-            _write_variational_checkpoint(
+            history_dtype = evidence.diagnostics[0].dtype
+            save_training_checkpoint(
                 destination,
-                compatibility=compatibility,
-                completed=completed,
-                family=eqx.combine(dynamic_family, static_family),
-                optimizer_state=optimizer_state,
-                recorded_steps=recorded_steps,
-                elbo_history=elbo_history,
-                gradient_history=gradient_history,
-                finite_history=finite_history,
-                duration_seconds=(previous_duration + perf_counter() - started),
+                build_training_checkpoint(kernel, state),
+                {
+                    "recorded_steps": jnp.asarray(recorded_steps, dtype=jnp.int32),
+                    "elbo": jnp.asarray(elbo_history, dtype=history_dtype),
+                    "gradient_norm": jnp.asarray(gradient_history, dtype=history_dtype),
+                    "finite": jnp.asarray(finite_history, dtype=jnp.bool_),
+                },
+                format=_CHECKPOINT_FORMAT,
+                metadata={
+                    "compatibility": compatibility,
+                    "versions": _runtime_versions(),
+                    "recorded_count": len(recorded_steps),
+                    "history_dtype": jnp.dtype(history_dtype).name,
+                    "duration_seconds": previous_duration + perf_counter() - started,
+                },
             )
     optimization_duration = perf_counter() - optimization_started
-    fitted_family = eqx.combine(dynamic_family, static_family)
+    fitted_family = kernel.tree(state)
     sampling_started = perf_counter()
     unconstrained_samples, log_variational = fitted_family.sample_and_log_prob(
-        jr.fold_in(key, _FINAL_SAMPLING_TAG),
+        derive_key(key, _FINAL_DRAWS_ADDRESS),
         sample_shape=(draws,),
     )
     log_target = jax.vmap(problem.log_density)(unconstrained_samples)

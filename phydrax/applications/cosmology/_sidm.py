@@ -247,7 +247,7 @@ def _select_endpoint_disjoint(
     return jax.lax.fori_loop(0, proposed.size, body, (selected, used))[0]
 
 
-class CosmologicalSIDMPlan(StrictModule, NonTrainableState):
+class CosmologicalSIDMPlan(StrictModule):
     """Rare elastic SIDM split around canonical particle-mesh intervals."""
 
     particle_mesh: CosmologicalParticleMeshPlan

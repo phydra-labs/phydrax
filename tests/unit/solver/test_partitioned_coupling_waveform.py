@@ -218,7 +218,8 @@ def test_fixed_grid_subcycling_adapter_samples_each_substep_endpoint():
     assert bool(result.successful)
     assert int(result.work) == 2
     assert jnp.allclose(result.candidate_state, 1.0)
-    assert jnp.allclose(result.outputs[0].values[:, 0], jnp.asarray([0.0, 0.5, 1.0, 1.0]))
+    assert jnp.allclose(result.outputs[0].values[:, 0], jnp.asarray([0.0, 0.5, 1.0, 0.0]))
+    assert not result.outputs[0].grid.active[-1]
 
 
 def test_fixed_grid_subcycling_stops_work_after_the_first_failed_substep():

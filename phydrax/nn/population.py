@@ -23,6 +23,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
 from .._numerics import solve_weighted_least_squares, WeightedLeastSquaresResult
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..domain import HyperRectangle
@@ -61,7 +62,7 @@ def lif_rate_response(
     safe_excess = jnp.where(firing, excess, 1.0)
     span = neuron.threshold_mV - neuron.reset_mV
     ratio = neuron.leak_conductance_uS * span / safe_excess
-    small = ratio < jnp.sqrt(jnp.finfo(jnp.result_type(ratio, jnp.float64)).eps)
+    small = ratio < jnp.sqrt(jnp.finfo(inexact_result_type(ratio)).eps)
     safe_g = jnp.where(neuron.leak_conductance_uS > 0.0, neuron.leak_conductance_uS, 1.0)
     regular = neuron.capacitance_nF / safe_g * jnp.log1p(ratio)
     small_ratio = jnp.where(small, ratio, 0.0)
@@ -306,7 +307,7 @@ def _sample_measure(
         raise ValueError("mask and weights must have one entry per sample.")
     if jnp.iscomplexobj(raw):
         raise TypeError("Sample weights must be real-valued.")
-    raw = raw.astype(jnp.result_type(raw, jnp.float64))
+    raw = raw.astype(inexact_result_type(raw))
     valid = requested & jnp.isfinite(raw) & (raw > 0.0)
     for value in values:
         valid = valid & jnp.all(jnp.isfinite(value.reshape((count, -1))), axis=-1)
@@ -542,7 +543,7 @@ def filter_population_spikes(
     counts = jnp.asarray(spike_counts)
     if jnp.iscomplexobj(counts):
         raise TypeError("spike_counts must be real-valued.")
-    counts = counts.astype(jnp.result_type(counts, jnp.float64))
+    counts = counts.astype(inexact_result_type(counts))
     if counts.ndim < 2 or counts.shape[-1] < 1:
         raise ValueError("spike_counts must have shape (time, ..., neurons).")
     counts = eqx.error_if(

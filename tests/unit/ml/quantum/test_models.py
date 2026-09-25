@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
-from phydrax._trainable import partition_trainable
+import phydrax as phx
 from phydrax.ml.quantum import (
     data_reuploading_feature_map,
     projected_iqp_feature_map,
@@ -65,7 +65,7 @@ def test_parameter_shift_model_matches_autodiff_primal_and_input_jacobian():
 def test_prepared_circuit_execution_is_not_trainable():
     layout = HilbertRegisterLayout(("q",), (2,))
     model = data_reuploading_feature_map(1, layout, 1, jr.key(3))
-    trainable, _fixed = partition_trainable(model)
+    trainable, _model_state, _fixed = phx.partition_parameters(model)
     leaves = jax.tree.leaves(trainable)
 
     assert len(leaves) == 2

@@ -223,15 +223,17 @@ def select_benchmark_superior_external(
         ):
             reasons.append(f"exceeds parameter-count budget for {regime}")
             complexity_passed = False
-    native_base: dict[tuple[str, str, str], list[OperatorBenchmarkAggregate]] = {}
-    candidate_base: dict[tuple[str, str, str], list[OperatorBenchmarkAggregate]] = {}
+    # Shifted evaluations carry their own names; their baseline is the
+    # in-distribution evidence of the same scenario and split.
+    native_base: dict[tuple[str, str], list[OperatorBenchmarkAggregate]] = {}
+    candidate_base: dict[tuple[str, str], list[OperatorBenchmarkAggregate]] = {}
     for result in native_results:
         if result.shift == "in_distribution":
-            key = (result.scenario, result.evaluation, result.split)
+            key = (result.scenario, result.split)
             native_base.setdefault(key, []).append(result)
     for result in candidate_results:
         if result.shift == "in_distribution":
-            key = (result.scenario, result.evaluation, result.split)
+            key = (result.scenario, result.split)
             candidate_base.setdefault(key, []).append(result)
     for result in candidate_results:
         if result.shift == "in_distribution":
@@ -239,7 +241,7 @@ def select_benchmark_superior_external(
         native_rows = native_by_regime.get(
             (result.scenario, result.evaluation, result.split, result.shift), ()
         )
-        base_key = (result.scenario, result.evaluation, result.split)
+        base_key = (result.scenario, result.split)
         native_baselines = native_base.get(base_key, ())
         candidate_baselines = candidate_base.get(base_key, ())
         if not native_rows or not native_baselines or not candidate_baselines:

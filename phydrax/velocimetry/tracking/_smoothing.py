@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...stochastic import (
@@ -76,7 +77,7 @@ class TrackSmoothingPlan(StrictModule, NonTrainableState):
 def _transition_matrix(start, end, context, /):
     del context
     dt = end - start
-    identity = jnp.eye(3, dtype=jnp.result_type(start, end, jnp.float64))
+    identity = jnp.eye(3, dtype=inexact_result_type(start, end))
     return jnp.eye(6, dtype=identity.dtype).at[:3, 3:].set(dt * identity)
 
 
@@ -84,7 +85,7 @@ def _process_covariance(acceleration_variance: float):
     def covariance(start, end, context, /):
         del context
         dt = end - start
-        identity = jnp.eye(3, dtype=jnp.result_type(start, end, jnp.float64))
+        identity = jnp.eye(3, dtype=inexact_result_type(start, end))
         value = jnp.zeros((6, 6), dtype=identity.dtype)
         value = value.at[:3, :3].set(0.25 * dt**4 * identity)
         value = value.at[:3, 3:].set(0.5 * dt**3 * identity)

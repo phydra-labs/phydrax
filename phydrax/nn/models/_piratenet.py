@@ -10,13 +10,17 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from .._base import _AbstractBaseModel
+from .._contracts import AFFINE, compose_regularity, model_regularity, sum_regularity
 from .._keys import EvalKey, fold_in_eval_key
 from .._utils import _canonical_size, _identity, SizeLike
+from ..activations import activation_regularity
 from ..layers._adaptive_residual import AdaptiveResidual
 from ..layers._linear import Linear
+from ._modified_mlp import _gated_regularity
 
 
 class _PirateBranch(StrictModule):
@@ -64,6 +68,18 @@ class _PirateBranch(StrictModule):
         second = self.layers[1](first, key=fold_in_eval_key(key, 1))
         second = self._gate(second, encoder_u, encoder_v)
         return self.layers[2](second, key=fold_in_eval_key(key, 2))
+
+    def _regularity(
+        self,
+        hidden: DerivativeRegularity | None,
+        encoder_u: DerivativeRegularity | None,
+        encoder_v: DerivativeRegularity | None,
+        /,
+    ) -> DerivativeRegularity | None:
+        first, second, third = (layer._value_regularity() for layer in self.layers)
+        gated = _gated_regularity(compose_regularity(hidden, first), encoder_u, encoder_v)
+        gated = _gated_regularity(compose_regularity(gated, second), encoder_u, encoder_v)
+        return compose_regularity(gated, third)
 
 
 class PirateNet(_AbstractBaseModel):
@@ -180,6 +196,23 @@ class PirateNet(_AbstractBaseModel):
             _identity if final_activation is None else final_activation
         )
         self.width_size = width
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        features = AFFINE if self.embedding is None else model_regularity(self.embedding)
+        hidden, encoder_u, encoder_v = (
+            compose_regularity(features, layer._value_regularity())
+            for layer in (self.lift, self.encoder_u, self.encoder_v)
+        )
+        for block in self.blocks:
+            # x + alpha * (F(x) - x) with a constant alpha: a sum of x and F(x).
+            # AdaptiveResidual stores the branch behind its key adapter.
+            branch = block.branch.func._regularity(hidden, encoder_u, encoder_v)
+            hidden = sum_regularity((hidden, branch))
+        return compose_regularity(
+            hidden,
+            self.projection._value_regularity(),
+            activation_regularity(self.final_activation),
+        )
 
     def __call__(
         self,

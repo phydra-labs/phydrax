@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def _axes():
@@ -147,18 +146,26 @@ def _task():
     )
 
 
+def _solution_binding(task):
+    port = task.field_by_name["solution"].value_port()
+    return {
+        "output_ports": {"output": port},
+        "port_mapping": phx.PortMapping(outputs=((port.port_id, port.port_id),)),
+    }
+
+
 def _trained(model):
     return phx.nn.operator.training.TrainedOperator(
         model,
         _task(),
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task()),
         provenance={"dataset": "function-frame-integration"},
     )
 
 
 def _trainable_arrays(model):
-    parameters, _ = partition_trainable(model)
+    parameters, _, _ = phx.partition_parameters(model)
     return tuple(jax.tree.leaves(parameters))
 
 
@@ -172,7 +179,7 @@ def test_function_frame_reconstructor_trains_through_fit_operator():
         dataset,
         task=_task(),
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task()),
         learning_rate=2e-3,
         steps=1,
         batch_size=2,

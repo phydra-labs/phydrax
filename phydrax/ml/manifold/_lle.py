@@ -13,19 +13,30 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract
+from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
     _euclidean_distances,
     _fit_arrays,
     _fit_status,
+    _HARD_NEIGHBOR_EXTENSION_CONTRACT,
     _prepare_queries,
     _restore_queries,
     _spectral_coordinates,
     _stable_hermitian_eigh,
+    _TRANSDUCTIVE_CONTRACT,
     build_neighbor_graph,
     ManifoldDiagnostics,
 )
@@ -155,11 +166,11 @@ def _lle_alignment_one(
     return embedding, eigenvalues, residual
 
 
-class LocallyLinearEmbeddingModel(AbstractArrayModel):
+class LocallyLinearEmbeddingModel(AbstractFittedModel):
     """Fitted LLE embedding with conditional barycentric out-of-sample extension."""
 
-    training_features: Array
-    training_embedding: Array
+    training_features: Array = fixed_field()
+    training_embedding: Array = fixed_field()
     active: Array
     regularization: float = eqx.field(static=True)
     n_neighbors: int = eqx.field(static=True)
@@ -193,6 +204,13 @@ class LocallyLinearEmbeddingModel(AbstractArrayModel):
         self.transform_supported = variant in ("standard", "modified")
         self.in_size = x.shape[-1]
         self.out_size = embedding.shape[-1]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # Barycentric weights solve a regularized local Gram system of the hard
+        # neighbors; Hessian-LLE and LTSA are transductive.
+        if self.transform_supported:
+            return _HARD_NEIGHBOR_EXTENSION_CONTRACT
+        return _TRANSDUCTIVE_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -341,15 +359,20 @@ class LocallyLinearEmbeddingRecipe(AbstractRecipe):
             variant=self.variant,
             case_shape=batch.case_shape,
         )
-        transform_supported = self.variant in ("standard", "modified")
-        contract = GradientContract(
-            prediction_inputs="conditional" if transform_supported else "none",
-            prediction_parameters="conditional" if transform_supported else "none",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             nondifferentiable_outputs=(
                 "neighbor_indices",
                 "connectivity",
@@ -368,7 +391,7 @@ class LocallyLinearEmbeddingRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method=f"lle-{self.variant}",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

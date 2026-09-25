@@ -292,7 +292,7 @@ def test_scenario_consensus_rejects_incomplete_inner_evaluation_counts():
         inner_method=phx.optim.OptimistixMethod(optx.BFGS(rtol=1e-6, atol=1e-6)),
     )
 
-    with pytest.raises(ValueError, match="diagnostic counts are incomplete"):
+    with pytest.raises(ValueError, match="cannot enforce maximum_evaluations"):
         phx.optim.minimize_stochastic(
             _scenario_problem(sampling=phx.optim.FixedSampling(jnp.array([0.0]))),
             jnp.array([0.0]),

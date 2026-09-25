@@ -64,6 +64,66 @@
 
 ::: phydrax.discretization.FiniteElementPrecisionPolicy
 
+## Field views and point evaluation
+
+Discrete field views are shared by every discretization family; the finite-element
+factory prepares one from native tabulation, oriented DOF routes, and an inverse
+cell map.
+
+::: phydrax.discretization.fem.prepare_finite_element_field_reconstruction
+
+---
+
+::: phydrax.discretization.fem.FiniteElementFieldReconstructionKernel
+
+---
+
+::: phydrax.discretization.fem.prepare_finite_element_point_interpolation
+
+---
+
+::: phydrax.discretization.fem.PreparedFiniteElementPointInterpolation
+
+---
+
+::: phydrax.discretization.PreparedFieldReconstruction
+
+---
+
+::: phydrax.discretization.DiscreteFieldFunctionView
+
+---
+
+::: phydrax.discretization.DiscreteFieldEvaluator
+
+---
+
+::: phydrax.discretization.AbstractFieldReconstructionKernel
+
+---
+
+::: phydrax.discretization.FieldTracePolicy
+
+---
+
+::: phydrax.discretization.FieldSideBinding
+
+---
+
+::: phydrax.discretization.FieldQueryEvidence
+
+---
+
+::: phydrax.discretization.FieldQueryResult
+
+---
+
+::: phydrax.discretization.FieldQueryStatus
+
+---
+
+::: phydrax.discretization.InterpolationTransposeEvidence
+
 ## Fixed-topology mesh motion
 
 `FiniteElementMeshMotionPlan` consumes a fixed-route boundary coordinate provider,
@@ -421,7 +481,29 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 
 ## Materials and local algebra
 
+Integration-site laws implement the `MODEL`-authority slot
+`AbstractConstitutiveModel`; local constitutive roots implement
+`AbstractLocalImplicitMaterial`. `ConstitutiveModel` and `LocalImplicitMaterial`
+are fixed analytic implementations (FIXED wherever they are held).
+`LearnedConstitutiveModel` and `LearnedLocalImplicitMaterial` hold a learned model
+as a trainable child bound to the slot; construction admits only models with first
+input and parameter derivatives, classical `C^1` value regularity, deterministic
+randomness, and a declared precision contract. A learned law's per-site
+`AdmissibilityHeader` marks out-of-support or nonfinite sites (and an unresolved
+learned local root) invalid; such sites keep their primal response while their
+derivatives, including the consistent tangent, are NaN. `MaterialIntegrationPlan`
+is neutral, so a learned law trains through it and implicit mechanics
+differentiates it by the implicit function theorem.
+
+::: phydrax.equations.AbstractConstitutiveModel
+
+---
+
 ::: phydrax.equations.ConstitutiveModel
+
+---
+
+::: phydrax.equations.LearnedConstitutiveModel
 
 ---
 
@@ -434,6 +516,18 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 ---
 
 ::: phydrax.equations.MaterialTransaction
+
+---
+
+::: phydrax.equations.fem.AbstractLocalImplicitMaterial
+
+---
+
+::: phydrax.equations.fem.LocalImplicitMaterial
+
+---
+
+::: phydrax.equations.fem.LearnedLocalImplicitMaterial
 
 ---
 

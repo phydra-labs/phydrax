@@ -4,22 +4,16 @@
 
 from __future__ import annotations
 
-import functools
-import hashlib
-import inspect
-import marshal
 from collections.abc import Callable, Sequence
-from dataclasses import fields, is_dataclass
-from types import ModuleType
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint
+from ..._identity import callable_payload
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import (
@@ -32,134 +26,33 @@ from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
 
-def _stable_value_payload(value: Any, /) -> Any:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, np.generic):
-        return {
-            "numpy_scalar": {
-                "dtype": value.dtype.str,
-                "value": _stable_value_payload(value.item()),
-            }
-        }
-    if isinstance(value, bytes):
-        return {"bytes": value.hex()}
-    if isinstance(value, complex):
-        return {"complex": [value.real, value.imag]}
-    if isinstance(value, (np.ndarray, jax.Array)):
-        return {"array": array_tree_fingerprint(value)}
-    if isinstance(value, (tuple, list)):
-        return [_stable_value_payload(item) for item in value]
-    if isinstance(value, (set, frozenset)):
-        items = [_stable_value_payload(item) for item in value]
-        return {"set": sorted(items, key=canonical_fingerprint)}
-    if isinstance(value, dict):
-        items = [
-            (_stable_value_payload(key), _stable_value_payload(item))
-            for key, item in value.items()
-        ]
-        return {
-            "mapping": sorted(
-                items,
-                key=lambda item: canonical_fingerprint(item[0]),
-            )
-        }
-    if isinstance(value, functools.partial):
-        return {
-            "partial": _callable_payload(value.func),
-            "args": _stable_value_payload(value.args),
-            "keywords": _stable_value_payload(value.keywords),
-        }
-    if inspect.ismethod(value):
-        return {
-            "method": _callable_payload(value.__func__),
-            "self": _stable_value_payload(value.__self__),
-        }
-    if inspect.isfunction(value):
-        return _callable_payload(value)
-    if is_dataclass(value):
-        return {
-            "type": f"{type(value).__module__}.{type(value).__qualname__}",
-            "fields": {
-                field.name: _stable_value_payload(getattr(value, field.name))
-                for field in fields(value)
-            },
-        }
-    raise ValueError(
-        "Event callables with opaque state require a stable_id supplied by the caller."
-    )
-
-
-def _global_value_payload(value: Any, /) -> Any:
-    if isinstance(value, ModuleType):
-        return {"module": value.__name__}
-    if inspect.isfunction(value):
-        return {
-            "function": f"{value.__module__}.{value.__qualname__}",
-            "code": hashlib.sha256(marshal.dumps(value.__code__)).hexdigest(),
-        }
-    if inspect.isbuiltin(value):
-        return {
-            "builtin": f"{value.__module__}.{value.__qualname__}",
-        }
-    if inspect.isclass(value):
-        return {"class": f"{value.__module__}.{value.__qualname__}"}
-    return _stable_value_payload(value)
-
-
-def _callable_payload(value: Callable[..., Any], /) -> dict[str, Any]:
-    if inspect.isfunction(value):
-        closure = (
-            ()
-            if value.__closure__ is None
-            else tuple(cell.cell_contents for cell in value.__closure__)
-        )
-        closure_variables = inspect.getclosurevars(value)
-        return {
-            "kind": "function",
-            "module": value.__module__,
-            "qualname": value.__qualname__,
-            "code": hashlib.sha256(marshal.dumps(value.__code__)).hexdigest(),
-            "defaults": _stable_value_payload(value.__defaults__),
-            "kwdefaults": _stable_value_payload(value.__kwdefaults__),
-            "closure": _stable_value_payload(closure),
-            "globals": {
-                name: _global_value_payload(item)
-                for name, item in sorted(closure_variables.globals.items())
-            },
-        }
-    payload = _stable_value_payload(value)
-    if not isinstance(payload, dict):
-        raise ValueError("Event callable identity could not be represented.")
-    return payload
-
-
-def _event_callable_identity(
-    guard: Callable[..., Any],
-    reset: Callable[..., Any],
-    vector_field_before: Callable[..., Any],
-    vector_field_after: Callable[..., Any],
-    competing_guards: tuple[Callable[..., Any], ...],
-    stable_id: str | None,
+def _callable_identity(
+    value: Callable[..., Any],
+    semantic_id: str | None,
+    numeric_id: str | None,
     /,
-) -> str:
-    if stable_id is not None:
-        identifier = str(stable_id).strip()
-        if not identifier:
-            raise ValueError("stable_id must be non-empty when supplied.")
-        return canonical_fingerprint({"kind": "caller-event-id", "id": identifier})
-    return canonical_fingerprint(
-        {
-            "kind": "astrodynamics-event-callables",
-            "guard": _callable_payload(guard),
-            "reset": _callable_payload(reset),
-            "vector_field_before": _callable_payload(vector_field_before),
-            "vector_field_after": _callable_payload(vector_field_after),
-            "competing_guards": [
-                _callable_payload(candidate) for candidate in competing_guards
-            ],
-        }
-    )
+) -> dict[str, str]:
+    payload = callable_payload(value, semantic_id=semantic_id, numeric_id=numeric_id)
+    return {
+        "semantic": payload["semantic_content_id"],
+        "numeric": payload["numeric_content_id"],
+    }
+
+
+def _competing_guard_ids(
+    ids: Sequence[str] | None,
+    count: int,
+    name: str,
+    /,
+) -> tuple[str | None, ...]:
+    if ids is None:
+        return (None,) * count
+    if isinstance(ids, str):
+        raise TypeError(f"{name} must be a sequence of strings.")
+    values = tuple(ids)
+    if len(values) != count:
+        raise ValueError(f"{name} must align with competing_guards.")
+    return values
 
 
 class AstrodynamicsEventPlan(StrictModule, NonTrainableState):
@@ -185,8 +78,24 @@ class AstrodynamicsEventPlan(StrictModule, NonTrainableState):
         grazing_tolerance: float = 1.0e-10,
         event_tolerance: float = 1.0e-10,
         bisection_iterations: int = 64,
-        stable_id: str | None = None,
+        guard_semantic_id: str | None = None,
+        guard_numeric_id: str | None = None,
+        reset_semantic_id: str | None = None,
+        reset_numeric_id: str | None = None,
+        vector_field_before_semantic_id: str | None = None,
+        vector_field_before_numeric_id: str | None = None,
+        vector_field_after_semantic_id: str | None = None,
+        vector_field_after_numeric_id: str | None = None,
+        competing_guard_semantic_ids: Sequence[str] | None = None,
+        competing_guard_numeric_ids: Sequence[str] | None = None,
     ):
+        """Bind one hybrid event; opaque callables require semantic and numeric IDs.
+
+        StrictModule callables and plain module-level functions are identified by
+        content. Every other callable must be declared through its role's
+        ``*_semantic_id``/``*_numeric_id`` pair (index-aligned sequences for
+        ``competing_guards``); missing identities raise ``TypeError``.
+        """
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
         if isinstance(direction, bool) or not isinstance(direction, int):
@@ -200,13 +109,38 @@ class AstrodynamicsEventPlan(StrictModule, NonTrainableState):
         if not kind:
             raise ValueError("event_kind must be non-empty.")
         competing = tuple(competing_guards)
-        callable_identity = _event_callable_identity(
-            guard,
-            reset,
-            vector_field_before,
-            vector_field_after,
-            competing,
-            stable_id,
+        competing_semantic = _competing_guard_ids(
+            competing_guard_semantic_ids,
+            len(competing),
+            "competing_guard_semantic_ids",
+        )
+        competing_numeric = _competing_guard_ids(
+            competing_guard_numeric_ids,
+            len(competing),
+            "competing_guard_numeric_ids",
+        )
+        callable_identity = canonical_fingerprint(
+            {
+                "kind": "astrodynamics-event-callables",
+                "guard": _callable_identity(guard, guard_semantic_id, guard_numeric_id),
+                "reset": _callable_identity(reset, reset_semantic_id, reset_numeric_id),
+                "vector_field_before": _callable_identity(
+                    vector_field_before,
+                    vector_field_before_semantic_id,
+                    vector_field_before_numeric_id,
+                ),
+                "vector_field_after": _callable_identity(
+                    vector_field_after,
+                    vector_field_after_semantic_id,
+                    vector_field_after_numeric_id,
+                ),
+                "competing_guards": [
+                    _callable_identity(candidate, semantic_id, numeric_id)
+                    for candidate, semantic_id, numeric_id in zip(
+                        competing, competing_semantic, competing_numeric, strict=True
+                    )
+                ],
+            }
         )
         guard_plan = HybridGuardPlan(
             guard,

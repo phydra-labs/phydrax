@@ -12,8 +12,13 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, PyTree
 
+from ..._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from ..._fingerprint import canonical_fingerprint
-from ..._hybrid_sensitivity import HybridSensitivityMode
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dem import DEMDiagnostics
@@ -85,7 +90,7 @@ class DEMTrainableMaterialParameters(StrictModule):
 
 
 class DEMSensitivityPolicy(StrictModule, NonTrainableState):
-    mode: HybridSensitivityMode = eqx.field(static=True)
+    mode: BranchDifferentiationPolicy = eqx.field(static=True)
     activation_margin: float = eqx.field(static=True)
     no_tension_margin: float = eqx.field(static=True)
     friction_margin: float = eqx.field(static=True)
@@ -97,12 +102,13 @@ class DEMSensitivityPolicy(StrictModule, NonTrainableState):
     acceptance_margin: float = eqx.field(static=True)
     neighborhood_margin: float = eqx.field(static=True)
     perturbation_scale: float = eqx.field(static=True)
+    derivative_contract: DerivativeContract
     policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        mode: HybridSensitivityMode = HybridSensitivityMode.SHARP_BRANCHWISE,
+        mode: BranchDifferentiationPolicy = BranchDifferentiationPolicy.BRANCHWISE,
         activation_margin: float = 1.0e-8,
         no_tension_margin: float = 1.0e-8,
         friction_margin: float = 1.0e-8,
@@ -115,8 +121,20 @@ class DEMSensitivityPolicy(StrictModule, NonTrainableState):
         neighborhood_margin: float = 1.0e-8,
         perturbation_scale: float = 1.0e-8,
     ):
-        if not isinstance(mode, HybridSensitivityMode):
-            raise TypeError("mode must be a HybridSensitivityMode.")
+        if not isinstance(mode, BranchDifferentiationPolicy):
+            raise TypeError("mode must be a BranchDifferentiationPolicy.")
+        match mode:
+            case (
+                BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.EVENT_AWARE
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "DEMSensitivityPolicy supports BRANCHWISE, SMOOTH_SURROGATE, "
+                    f"or EVENT_AWARE; got {mode.name}."
+                )
         values = tuple(
             float(value)
             for value in (
@@ -149,6 +167,9 @@ class DEMSensitivityPolicy(StrictModule, NonTrainableState):
             self.perturbation_scale,
         ) = values
         self.mode = mode
+        self.derivative_contract = branch_policy_contract(
+            mode, surfaces=(DerivativeSurface.PHYSICAL_PARAMETER,)
+        )
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "dem-sensitivity-policy",
@@ -180,7 +201,8 @@ class DEMSensitivityResult(StrictModule):
     sensitivity: Any
     certificate: DEMLocalValidityCertificate
     usable: Array
-    mode: HybridSensitivityMode = eqx.field(static=True)
+    derivative_contract: DerivativeContract
+    mode: BranchDifferentiationPolicy = eqx.field(static=True)
 
 
 def dem_local_validity_certificate(
@@ -241,6 +263,18 @@ def _invalid_sensitivity(tree: PyTree[Any], /):
     )
 
 
+def _require_branchwise(policy: DEMSensitivityPolicy, owner: str, /) -> None:
+    if not isinstance(policy, DEMSensitivityPolicy):
+        raise TypeError("policy must be a DEMSensitivityPolicy.")
+    match policy.mode:
+        case BranchDifferentiationPolicy.BRANCHWISE:
+            return
+        case _:
+            raise ValueError(
+                f"{owner} supports only the BRANCHWISE policy; got {policy.mode.name}."
+            )
+
+
 def sharp_branchwise_jvp(
     function: Callable[[PyTree[Any]], PyTree[Any]],
     parameters: PyTree[Any],
@@ -249,8 +283,7 @@ def sharp_branchwise_jvp(
     policy: DEMSensitivityPolicy,
     /,
 ) -> DEMSensitivityResult:
-    if policy.mode is not HybridSensitivityMode.SHARP_BRANCHWISE:
-        raise ValueError("sharp_branchwise_jvp requires sharp_branchwise policy.")
+    _require_branchwise(policy, "sharp_branchwise_jvp")
     primal, tangent = jax.jvp(function, (parameters,), (direction,))
     certificate = dem_local_validity_certificate(diagnostics, policy)
     sensitivity = jax.lax.cond(
@@ -264,6 +297,7 @@ def sharp_branchwise_jvp(
         sensitivity,
         certificate,
         certificate.locally_valid,
+        policy.derivative_contract,
         policy.mode,
     )
 
@@ -276,8 +310,7 @@ def sharp_branchwise_vjp(
     policy: DEMSensitivityPolicy,
     /,
 ) -> DEMSensitivityResult:
-    if policy.mode is not HybridSensitivityMode.SHARP_BRANCHWISE:
-        raise ValueError("sharp_branchwise_vjp requires sharp_branchwise policy.")
+    _require_branchwise(policy, "sharp_branchwise_vjp")
     primal, pullback = jax.vjp(function, parameters)
     sensitivity = pullback(cotangent)[0]
     certificate = dem_local_validity_certificate(diagnostics, policy)
@@ -292,13 +325,13 @@ def sharp_branchwise_vjp(
         sensitivity,
         certificate,
         certificate.locally_valid,
+        policy.derivative_contract,
         policy.mode,
     )
 
 
 __all__ = [
     "DEMLocalValidityCertificate",
-    "HybridSensitivityMode",
     "DEMSensitivityPolicy",
     "DEMSensitivityResult",
     "DEMTrainableMaterialParameters",

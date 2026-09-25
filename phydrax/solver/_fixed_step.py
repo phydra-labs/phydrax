@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
-from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from enum import IntEnum, IntFlag
+from math import prod
+from operator import index
+from typing import Any, ClassVar, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,6 +17,20 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, PyTree
 
+from .._admissibility import (
+    AdmissibilityHeader,
+    AdmissibilityReason,
+    combine_admissibility,
+    DOMAIN_REASON_SHIFT,
+    reason_bits_where,
+)
+from .._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    ComponentAuthority,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._iteration import (
     bind_iteration_scope,
@@ -28,6 +44,16 @@ from .._iteration import (
     IterationRecord,
     update_iteration,
 )
+from .._model import (
+    AbstractArrayModel,
+    AbstractComponentSlot,
+    bind_component,
+    ComponentContract,
+    ModelPorts,
+    PortMapping,
+)
+from .._model._component import bind_positional_component
+from .._model._ports import require_port_shapes
 from .._numerics._checkpointed_scan import (
     AdaptiveReplayPreparationPolicy,
     checkpointed_scan,
@@ -42,9 +68,10 @@ from .._numerics._ssp_runge_kutta import (
     StageTransformResult,
 )
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field, NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import DiscretizationBundle
+from ..lifecycle import commit_candidate, TransactionalCandidate
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
 
 
@@ -110,14 +137,51 @@ def _take_saved_states(states: PyTree[Array], indices: Array, /) -> PyTree[Array
     return jax.tree.map(lambda leaf: leaf[indices], states)
 
 
+def _correction_dtype(state: PyTree[Array], /):
+    return jnp.finfo(_state_dtype(state)).dtype
+
+
+def _validate_transform_admissibility(value: Any, /) -> None:
+    if value is None:
+        return
+    if not isinstance(value, AdmissibilityHeader):
+        raise TypeError(
+            "Fixed-step transform admissibility must be an AdmissibilityHeader or None."
+        )
+    if value.margin.shape != ():
+        raise ValueError("Fixed-step transform admissibility must be scalar.")
+
+
 class AcceptedStepTransformResult(StrictModule):
+    """Transformed fixed-step candidate and its evidence.
+
+    `applied` reports whether the transform acted, `successful` whether it
+    succeeded, and `correction_norm` the size of the change it made.
+    `admissibility` carries the native-check evidence of a learned proposal the
+    transform evaluated (`None` when it evaluates none).
+    """
+
     transformed_state: PyTree[Array]
     applied: Array
     successful: Array
     correction_norm: Array
+    admissibility: AdmissibilityHeader | None = None
 
 
-class AbstractAcceptedStepTransform(StrictModule, NonTrainableState):
+class AbstractAcceptedStepTransform(AbstractComponentSlot):
+    """Slot transforming a fixed-step candidate before the method accepts it.
+
+    Implementations carry `DISCRETIZATION` authority: structural invariants of
+    the transformed step certify them, not a residual. The consuming method
+    validates every result centrally, exactly as SSP stage results are
+    validated: the transformed state preserves the candidate's structure,
+    shapes, and dtypes; `applied` and `successful` are Boolean scalars; the
+    correction norm is a scalar; admissibility evidence is scalar. A failed
+    transform cannot change the candidate.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.DISCRETIZATION
+    slot_semantic_id: ClassVar[str] = "solver.accepted-step-transform"
     transform_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
@@ -133,7 +197,40 @@ class AbstractAcceptedStepTransform(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class IdentityAcceptedStepTransform(AbstractAcceptedStepTransform):
+def _apply_accepted_step_transform(
+    transform: AbstractAcceptedStepTransform,
+    step_index: Array,
+    time: Array,
+    previous_state: PyTree[Array],
+    candidate_state: PyTree[Array],
+    args: Any,
+    /,
+) -> AcceptedStepTransformResult:
+    """Apply `transform` and return its centrally validated result.
+
+    The correction norm is cast to the state's real dtype, and an unsuccessful
+    result carries `candidate_state` unchanged whatever state it proposed.
+    """
+    result = transform.apply(step_index, time, previous_state, candidate_state, args)
+    if not isinstance(result, AcceptedStepTransformResult):
+        raise TypeError(
+            "Accepted-step transforms must return AcceptedStepTransformResult."
+        )
+    _validate_result_state("transformed_state", result.transformed_state, candidate_state)
+    _validate_scalar_result("transform applied", result.applied, boolean=True)
+    _validate_scalar_result("transform successful", result.successful, boolean=True)
+    _validate_scalar_result("transform correction", result.correction_norm)
+    _validate_transform_admissibility(result.admissibility)
+    return AcceptedStepTransformResult(
+        tree_where(result.successful, result.transformed_state, candidate_state),
+        result.applied,
+        result.successful,
+        jnp.asarray(result.correction_norm, dtype=_correction_dtype(candidate_state)),
+        result.admissibility,
+    )
+
+
+class IdentityAcceptedStepTransform(AbstractAcceptedStepTransform, NonTrainableState):
     transform_id: str = "accepted-step-transform:identity"
 
     def apply(
@@ -150,7 +247,7 @@ class IdentityAcceptedStepTransform(AbstractAcceptedStepTransform):
             candidate_state,
             jnp.asarray(False),
             jnp.asarray(True),
-            jnp.zeros((), dtype=_state_dtype(candidate_state)),
+            jnp.zeros((), dtype=_correction_dtype(candidate_state)),
         )
 
 
@@ -182,23 +279,335 @@ class CompositeAcceptedStepTransform(AbstractAcceptedStepTransform):
         state = candidate_state
         applied = jnp.asarray(False)
         successful = jnp.asarray(True)
-        correction = jnp.zeros((), dtype=_state_dtype(candidate_state))
+        correction = jnp.zeros((), dtype=_correction_dtype(candidate_state))
+        headers: list[AdmissibilityHeader] = []
         for transform in self.transforms:
-            result = transform.apply(step_index, time, previous_state, state, args)
-            _validate_result_state("transformed_state", result.transformed_state, state)
-            _validate_scalar_result("transform applied", result.applied, boolean=True)
-            _validate_scalar_result(
-                "transform successful", result.successful, boolean=True
+            result = _apply_accepted_step_transform(
+                transform, step_index, time, previous_state, state, args
             )
-            _validate_scalar_result("transform correction", result.correction_norm)
-            state = tree_where(result.successful, result.transformed_state, state)
+            state = result.transformed_state
             applied = applied | result.applied
             successful = successful & result.successful
             correction = correction + result.correction_norm
-        return AcceptedStepTransformResult(state, applied, successful, correction)
+            if result.admissibility is not None:
+                headers.append(result.admissibility)
+        admissibility = (
+            None
+            if not headers
+            else headers[0]
+            if len(headers) == 1
+            else combine_admissibility(headers, self.transform_id)
+        )
+        return AcceptedStepTransformResult(
+            state, applied, successful, correction, admissibility
+        )
 
 
-class IdentitySSPRKStageTransform(AbstractSSPRKStageTransform):
+class LearnedStepCorrectionReason(IntFlag):
+    """Domain reason bits of a learned step correction rejected by native checks.
+
+    A nonfinite proposal or one outside the declared support sets the common
+    `AdmissibilityReason` bits instead.
+    """
+
+    CONSERVATION = 1 << DOMAIN_REASON_SHIFT
+    LOWER_BOUND = 1 << (DOMAIN_REASON_SHIFT + 1)
+    STABILITY_BOUND = 1 << (DOMAIN_REASON_SHIFT + 2)
+
+
+# Admitting a proposal is a runtime decision; derivatives hold it frozen.
+_CORRECTION_DERIVATIVE_CONTRACT = branch_policy_contract(
+    BranchDifferentiationPolicy.FROZEN_DECISION,
+    surfaces=(DerivativeSurface.PRIMAL_STATE, DerivativeSurface.MODEL_PARAMETER),
+)
+
+
+def _model_size(value: Any, /) -> int:
+    match value:
+        case "scalar":
+            return 1
+        case tuple():
+            return prod(value)
+        case _:
+            return index(value)
+
+
+def _conservation_weights(conserved: Any, size: int, /) -> np.ndarray | None:
+    if conserved is None:
+        return None
+    weights = np.asarray(conserved, dtype=np.float64)
+    if weights.ndim != 2 or weights.shape[0] == 0 or weights.shape[1] != size:
+        raise ValueError("conserved must have shape (invariant_count, state_size).")
+    if not np.all(np.isfinite(weights)):
+        raise ValueError("conserved weights must be finite.")
+    return weights
+
+
+def _lower_bounds(bounds: Any, shape: tuple[int, ...], /) -> np.ndarray | None:
+    if bounds is None:
+        return None
+    values = np.broadcast_to(np.asarray(bounds, dtype=np.float64), shape)
+    if np.any(np.isnan(values)) or np.any(values == np.inf):
+        raise ValueError("lower_bounds must be finite or -inf.")
+    return values
+
+
+def _positive_float(value: Any, name: str, /) -> float:
+    number = float(value)
+    if not np.isfinite(number) or number <= 0.0:
+        raise ValueError(f"{name} must be finite and positive.")
+    return number
+
+
+def _euclidean_norm(value: Array, /) -> Array:
+    return jnp.sqrt(jnp.sum(jnp.square(value)))
+
+
+@final
+class LearnedStepCorrection(AbstractAcceptedStepTransform):
+    """Learned correction of a native fixed-step candidate, admitted natively.
+
+    From the accepted state `y` the native method proposes the coarse candidate
+    `c`. The model maps the flattened pair `(y, c)` (`in_size == 2 n`) to an
+    increment `d` (`out_size == n`), proposing `p = c + d`. Native checks then
+    admit or reject `p` as one transaction:
+
+    - `p` is finite and lies in `support` (default: finite Euclidean states);
+    - each declared conservation invariant (row `w` of `conserved`) satisfies
+      `|w . (p - c)| <= conservation_tolerance * (|w| . |c|)`; the tolerance
+      defaults to the square root of the state dtype's machine epsilon;
+    - `p >= lower_bounds` componentwise (`0` expresses positivity, `-inf`
+      leaves a component unconstrained);
+    - stability bound `||p - c|| <= maximum_relative_correction * ||c - y||`:
+      the correction stays a bounded perturbation of the native increment.
+
+    An admitted proposal is committed. A rejected one leaves `c` unchanged and
+    reports its reason bits (`AdmissibilityReason`,
+    `LearnedStepCorrectionReason`) in the result's admissibility header; the
+    transform never retries and never fails the step, so `c` remains subject to
+    its method's own acceptance. These checks are admissibility conditions, not
+    an accuracy certificate: the native coarse residual or error says nothing
+    about the accuracy of `p`.
+
+    The model is a dynamic child whose parameters train through discrete
+    rollouts (`DISCRETIZATION` authority, rollout objectives, e.g. checkpointed
+    `FixedStepRolloutPlan` scans). Rollout derivatives hold every accept/reject
+    decision frozen (`derivative_contract`); the checks and the reported
+    correction norm are nondifferentiable evidence.
+
+    `ports` declare the scientific identity of the correction's values: the
+    accepted state and the native candidate (two distinct ports, each of event
+    shape `state_shape`) as inputs, and the increment (event shape
+    `state_shape`) as the output. A model declaring ports requires `ports` and
+    an explicit `port_mapping` binding its ordered ports to exactly that owner
+    order (values are packed, never repacked); a model without ports keeps the
+    size checks alone. `component_contract().port_binding` holds the evidence.
+    """
+
+    model: AbstractArrayModel
+    ports: ModelPorts | None
+    port_mapping: PortMapping | None
+    support: AbstractStateGeometry = fixed_field()
+    conserved: Array | None = fixed_field()
+    lower_bounds: Array | None = fixed_field()
+    conservation_tolerance: float | None = eqx.field(static=True)
+    maximum_relative_correction: float = eqx.field(static=True)
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    transform_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        model: AbstractArrayModel,
+        /,
+        *,
+        state_shape: Sequence[int],
+        maximum_relative_correction: float,
+        support: AbstractStateGeometry | None = None,
+        conserved: Any = None,
+        conservation_tolerance: float | None = None,
+        lower_bounds: Any = None,
+        ports: ModelPorts | None = None,
+        port_mapping: PortMapping | None = None,
+    ):
+        if not isinstance(model, AbstractArrayModel):
+            raise TypeError("model must be an AbstractArrayModel.")
+        shape = tuple(index(extent) for extent in state_shape)
+        if any(extent <= 0 for extent in shape):
+            raise ValueError("state_shape extents must be positive.")
+        size = prod(shape)
+        if _model_size(model.in_size) != 2 * size or _model_size(model.out_size) != size:
+            raise ValueError(
+                "LearnedStepCorrection models map 2 * state size features "
+                "(accepted state, native candidate) to one increment per state entry."
+            )
+        support_ = EuclideanStateGeometry() if support is None else support
+        if not isinstance(support_, AbstractStateGeometry):
+            raise TypeError("support must be an AbstractStateGeometry or None.")
+        weights = _conservation_weights(conserved, size)
+        tolerance = (
+            None
+            if conservation_tolerance is None
+            else _positive_float(conservation_tolerance, "conservation_tolerance")
+        )
+        if tolerance is not None and weights is None:
+            raise ValueError("conservation_tolerance requires conserved invariants.")
+        bounds = _lower_bounds(lower_bounds, shape)
+        maximum = _positive_float(
+            maximum_relative_correction, "maximum_relative_correction"
+        )
+        site = "LearnedStepCorrection"
+        owner_ports = require_port_shapes(
+            ports, inputs=(shape, shape), outputs=(shape,), site=site
+        )
+        component = bind_positional_component(
+            model, type(self), owner_ports, port_mapping, site=site
+        ).contract()
+        self.model = model
+        self.ports = owner_ports
+        self.port_mapping = port_mapping
+        self.support = support_
+        self.conserved = None if weights is None else jnp.asarray(weights)
+        self.lower_bounds = None if bounds is None else jnp.asarray(bounds)
+        self.conservation_tolerance = tolerance
+        self.maximum_relative_correction = maximum
+        self.state_shape = shape
+        self.transform_id = canonical_fingerprint(
+            {
+                "kind": "learned-step-correction",
+                "component": component.bound_semantic_id,
+                "ports": None if owner_ports is None else owner_ports.ports_id,
+                "state_shape": list(shape),
+                "support": support_.geometry_id,
+                "conserved": weights,
+                "conservation_tolerance": tolerance,
+                "lower_bounds": bounds,
+                "maximum_relative_correction": maximum,
+                "derivative_contract": _CORRECTION_DERIVATIVE_CONTRACT.contract_id,
+            }
+        )
+
+    @property
+    def derivative_contract(self) -> DerivativeContract:
+        """Frozen-decision derivatives of the committed state."""
+        return _CORRECTION_DERIVATIVE_CONTRACT
+
+    def component_contract(self) -> ComponentContract:
+        """Contract of the model bound to this slot."""
+        return bind_component(
+            self.model,
+            type(self),
+            owner_ports=self.ports,
+            port_mapping=self.port_mapping,
+        ).contract()
+
+    def _states(self, previous_state: Any, candidate_state: Any, /):
+        if not eqx.is_array(previous_state) or not eqx.is_array(candidate_state):
+            raise TypeError("LearnedStepCorrection requires array states.")
+        if candidate_state.shape != self.state_shape:
+            raise ValueError("Fixed-step candidate does not match state_shape.")
+        if (
+            previous_state.shape != candidate_state.shape
+            or previous_state.dtype != candidate_state.dtype
+        ):
+            raise ValueError("Accepted state and candidate must share shape and dtype.")
+        if not jnp.issubdtype(candidate_state.dtype, jnp.floating):
+            raise TypeError("LearnedStepCorrection requires real floating states.")
+        return previous_state, candidate_state
+
+    def _checks(self, previous: Array, native: Array, proposed: Array, /):
+        correction = proposed - native
+        finite = jnp.all(jnp.isfinite(proposed))
+        supported = jnp.asarray(self.support.contains(proposed), dtype=jnp.bool_)
+        stable = _euclidean_norm(correction) <= (
+            self.maximum_relative_correction * _euclidean_norm(native - previous)
+        )
+        conserved = jnp.asarray(True)
+        if self.conserved is not None:
+            tolerance = (
+                np.sqrt(np.finfo(native.dtype).eps)
+                if self.conservation_tolerance is None
+                else self.conservation_tolerance
+            )
+            weights = self.conserved.astype(native.dtype)
+            conserved = jnp.all(
+                jnp.abs(weights @ correction.reshape(-1))
+                <= tolerance * (jnp.abs(weights) @ jnp.abs(native.reshape(-1)))
+            )
+        bounded = (
+            jnp.asarray(True)
+            if self.lower_bounds is None
+            else jnp.all(proposed >= self.lower_bounds.astype(native.dtype))
+        )
+        admitted = finite & supported & conserved & bounded & stable
+        reasons = (
+            reason_bits_where(finite, AdmissibilityReason.NONFINITE)
+            | reason_bits_where(supported, AdmissibilityReason.OUTSIDE_SUPPORT)
+            | reason_bits_where(conserved, LearnedStepCorrectionReason.CONSERVATION)
+            | reason_bits_where(bounded, LearnedStepCorrectionReason.LOWER_BOUND)
+            | reason_bits_where(stable, LearnedStepCorrectionReason.STABILITY_BOUND)
+        )
+        return admitted, reasons
+
+    def propose(
+        self,
+        step_index: Array,
+        previous_state: Array,
+        candidate_state: Array,
+        /,
+    ) -> TransactionalCandidate[Array, AdmissibilityHeader]:
+        """Return the natively checked transaction of one learned correction.
+
+        Its source is the native candidate, its proposal the corrected state,
+        and its evidence the admissibility header; `commit_candidate` commits
+        the proposal only when every check admits it.
+        """
+        previous, native = self._states(previous_state, candidate_state)
+        binding = self.model.input_binding()
+        point = binding.pack_point((previous.reshape(-1), native.reshape(-1)))
+        increment = jnp.asarray(
+            binding.call(self.model, point, key=None, iter_=step_index, kwargs={}),
+            dtype=native.dtype,
+        )
+        if increment.size != native.size:
+            raise ValueError(
+                "LearnedStepCorrection models must return one increment per state entry."
+            )
+        proposed = native + increment.reshape(native.shape)
+        admitted, reasons = self._checks(
+            *jax.lax.stop_gradient((previous, native, proposed))
+        )
+        header = AdmissibilityHeader(
+            jnp.where(admitted, 1.0, -1.0),
+            reasons,
+            self.model.model_execution_contract().evidence_model_id,
+            self.transform_id,
+        )
+        return TransactionalCandidate(
+            native, proposed, header, admitted, self.transform_id
+        )
+
+    def apply(
+        self,
+        step_index: Array,
+        time: Array,
+        previous_state: PyTree[Array],
+        candidate_state: PyTree[Array],
+        args: Any,
+        /,
+    ) -> AcceptedStepTransformResult:
+        del time, args
+        transaction = self.propose(step_index, previous_state, candidate_state)
+        committed = commit_candidate(transaction)
+        return AcceptedStepTransformResult(
+            committed.state,
+            committed.committed,
+            jnp.asarray(True),
+            _euclidean_norm(jax.lax.stop_gradient(committed.state - transaction.source)),
+            committed.evidence,
+        )
+
+
+class IdentitySSPRKStageTransform(AbstractSSPRKStageTransform, NonTrainableState):
     transform_id: str = "ssprk-stage-transform:identity"
 
     def apply(
@@ -218,7 +627,7 @@ class IdentitySSPRKStageTransform(AbstractSSPRKStageTransform):
         )
 
 
-class CallableSSPRKStageTransform(AbstractSSPRKStageTransform):
+class CallableSSPRKStageTransform(AbstractSSPRKStageTransform, NonTrainableState):
     transform: Callable[[int, Array, Array, Any], StageTransformResult] = eqx.field(
         static=True
     )
@@ -248,6 +657,13 @@ class CallableSSPRKStageTransform(AbstractSSPRKStageTransform):
 
 
 class FixedStepResult(StrictModule):
+    """One fixed-step attempt: candidate, accepted state, and step evidence.
+
+    `transform_admissibility` is the scalar native-check evidence of a learned
+    proposal evaluated by the method's accepted-step transform (`None` when the
+    method evaluates none).
+    """
+
     candidate_state: PyTree[Array]
     accepted_state: PyTree[Array]
     successful: Array
@@ -256,6 +672,7 @@ class FixedStepResult(StrictModule):
     work: Array
     transform_applied: Array
     transform_correction_norm: Array
+    transform_admissibility: AdmissibilityHeader | None = None
 
 
 class RobustRetryPolicy(StrictModule, NonTrainableState):
@@ -296,7 +713,7 @@ class RetriedFixedStepResult(StrictModule):
     decision_id: str = eqx.field(static=True)
 
 
-class AbstractFixedStepMethod(StrictModule, NonTrainableState):
+class AbstractFixedStepMethod(StrictModule):
     method_id: eqx.AbstractVar[str]
 
     @property
@@ -430,8 +847,8 @@ class AbstractSSPRKFixedStepMethod(AbstractFixedStepMethod):
     ) -> FixedStepResult:
         advanced = self._advance(time, state, step_size, args)
         candidate = advanced.state
-        transformed = self.transform.apply(
-            step_index, time + step_size, state, candidate, args
+        transformed = _apply_accepted_step_transform(
+            self.transform, step_index, time + step_size, state, candidate, args
         )
         successful = (
             advanced.successful
@@ -448,6 +865,7 @@ class AbstractSSPRKFixedStepMethod(AbstractFixedStepMethod):
             jnp.asarray(self.order, dtype=jnp.int32),
             advanced.applied | transformed.applied,
             jnp.maximum(advanced.correction_norm, transformed.correction_norm),
+            transformed.admissibility,
         )
 
 
@@ -528,12 +946,12 @@ def _enforce_required_step_size(
     return step_size
 
 
-class FixedStepProblem(StrictModule, NonTrainableState):
+class FixedStepProblem(StrictModule):
     method: AbstractFixedStepMethod
-    initial_state: PyTree[Array]
-    args: Any
-    state_geometry: AbstractStateGeometry
-    discretization_bundle: DiscretizationBundle | None
+    initial_state: PyTree[Array] = fixed_field()
+    args: Any = fixed_field()
+    state_geometry: AbstractStateGeometry = fixed_field()
+    discretization_bundle: DiscretizationBundle | None = fixed_field()
     t0: float = eqx.field(static=True)
     t1: float = eqx.field(static=True)
     step_size: float = eqx.field(static=True)
@@ -692,6 +1110,13 @@ def retry_fixed_step(
 
 
 class FixedStepSolution(StrictModule, NonTrainableState):
+    """Saved fixed-step states with per-step evidence.
+
+    Per-step transform evidence has one entry per step; `transform_admissibility`
+    stacks the steps' learned-proposal evidence (`None` when the method
+    evaluates no learned proposal).
+    """
+
     times: Array
     states: PyTree[Array]
     valid: Array
@@ -701,6 +1126,7 @@ class FixedStepSolution(StrictModule, NonTrainableState):
     work: Array
     transform_applied: Array
     transform_correction_norm: Array
+    transform_admissibility: AdmissibilityHeader | None
     iteration_evidence: IterationEvidence | None
     problem_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
@@ -809,6 +1235,7 @@ def _fixed_step_advance(
     _validate_scalar_result("work", result.work)
     _validate_scalar_result("transform_applied", result.transform_applied, boolean=True)
     _validate_scalar_result("transform_correction_norm", result.transform_correction_norm)
+    _validate_transform_admissibility(result.transform_admissibility)
     accepted = tree_where(previous_success, result.accepted_state, state)
     successful = previous_success & result.successful
     payload = (
@@ -818,6 +1245,7 @@ def _fixed_step_advance(
         result.work,
         result.transform_applied,
         result.transform_correction_norm,
+        result.transform_admissibility,
     )
     return (accepted, successful), payload
 
@@ -867,6 +1295,13 @@ def _fixed_step_iteration_record(
 
 
 class FixedStepRolloutResult(StrictModule, NonTrainableState):
+    """Retained fixed-step states with per-step evidence.
+
+    Per-step transform evidence has one entry per step; `transform_admissibility`
+    stacks the steps' learned-proposal evidence (`None` when the method
+    evaluates no learned proposal).
+    """
+
     final_state: PyTree[Array]
     successful: Array
     times: Array
@@ -877,6 +1312,7 @@ class FixedStepRolloutResult(StrictModule, NonTrainableState):
     work: Array
     transform_applied: Array
     transform_correction_norm: Array
+    transform_admissibility: AdmissibilityHeader | None
     iteration_evidence: IterationEvidence | None
     problem_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
@@ -885,13 +1321,13 @@ class FixedStepRolloutResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-class FixedStepRolloutPlan(StrictModule, NonTrainableState):
+class FixedStepRolloutPlan(StrictModule):
     """Fixed-step retention, replay, and transform-safe iteration observation."""
 
     retention: FixedStepRetentionPolicy = eqx.field(static=True)
     checkpoint_stride: int = eqx.field(static=True)
-    replay: FixedStepReplayPolicy
-    iteration: IterationPlan | None
+    replay: FixedStepReplayPolicy = fixed_field()
+    iteration: IterationPlan | None = fixed_field()
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1000,6 +1436,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                     work,
                     transformed,
                     correction,
+                    _,
                 ) = built_in
                 endpoint = (
                     jnp.asarray(problem.t0, dtype=state_dtype)
@@ -1062,6 +1499,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 work,
                 transformed,
                 correction,
+                admissibility,
             ) = payload
             retained_states = _prepend_initial_state(problem.initial_state, states)
             retained_valid = jnp.concatenate((jnp.asarray([True]), valid), axis=0)
@@ -1078,7 +1516,15 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 block_size=self.replay.block_size,
                 schedule=self.replay.schedule,
             )
-            valid, residuals, iterations, work, transformed, correction = payload
+            (
+                valid,
+                residuals,
+                iterations,
+                work,
+                transformed,
+                correction,
+                admissibility,
+            ) = payload
             final_state, final_success = numerical_carry(result_carry)
             retained_states = jax.tree.map(lambda leaf: leaf[None, ...], final_state)
             retained_valid = final_success[None]
@@ -1144,7 +1590,15 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
                 schedule=self.replay.schedule,
             )
             result_carry, retained_states, retained_valid, _ = checkpoint_result
-            valid, residuals, iterations, work, transformed, correction = payload
+            (
+                valid,
+                residuals,
+                iterations,
+                work,
+                transformed,
+                correction,
+                admissibility,
+            ) = payload
             retained_times = jnp.asarray(
                 problem.t0, dtype=step_size.dtype
             ) + step_size * jnp.asarray(saved_indices, dtype=step_size.dtype)
@@ -1207,6 +1661,7 @@ class FixedStepRolloutPlan(StrictModule, NonTrainableState):
             work,
             transformed,
             correction,
+            admissibility,
             iteration_evidence,
             problem.problem_id,
             problem.method.method_id,
@@ -1248,6 +1703,7 @@ def solve_fixed_step(
         rollout.work,
         rollout.transform_applied,
         rollout.transform_correction_norm,
+        rollout.transform_admissibility,
         rollout.iteration_evidence,
         rollout.problem_id,
         rollout.method_id,
@@ -1282,6 +1738,8 @@ __all__ = [
     "FixedStepSolution",
     "IdentityAcceptedStepTransform",
     "IdentitySSPRKStageTransform",
+    "LearnedStepCorrection",
+    "LearnedStepCorrectionReason",
     "SSPRK33FixedStepMethod",
     "SSPRK54FixedStepMethod",
     "StageTransformResult",

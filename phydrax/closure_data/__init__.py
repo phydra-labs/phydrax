@@ -26,6 +26,7 @@ from ._analysis import (
 )
 from ._binding import (
     ClosureDeploymentKind,
+    conservative_face_numeric_revision,
     LearnedClosureBindingPlan,
     LearnedStressBindingPlan,
     LearnedStressEvidence,
@@ -39,6 +40,7 @@ from ._binding import (
     SpectralEnergyPolicy,
     SpectralFallbackArtifact,
     StressEnergyPolicy,
+    TrainableLearnedClosureBinding,
 )
 from ._dataset import (
     ChunkedClosureDatasetManifest,
@@ -146,6 +148,7 @@ __all__ = [
     "ClosureArtifactRepository",
     "ClosureDatasetChunk",
     "ClosureDeploymentKind",
+    "conservative_face_numeric_revision",
     "ClosureField",
     "ClosureQualityReport",
     "bind_trained_stress_operator",
@@ -182,6 +185,7 @@ __all__ = [
     "LearnedEnergyEquilibriumBindingPlan",
     "LearnedEnergyEquilibriumArtifact",
     "LearnedClosureBindingPlan",
+    "TrainableLearnedClosureBinding",
     "LearnedStressBindingPlan",
     "LearnedStressEvidence",
     "LearnedStressFeatureSchema",

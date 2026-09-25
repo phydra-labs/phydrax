@@ -11,6 +11,7 @@ import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._frozendict import frozendict
+from ..._model._ports import PortMapping, ValuePort
 from ...nn.operator import (
     FunctionSamples,
     OperatorBatch,
@@ -405,7 +406,8 @@ class GeophysicalLearningExperiment:
         learning_rate: float = 1e-3,
         batch_size: int | None = None,
         seed: int = 0,
-        output_field_map: Mapping[str, str] | None = None,
+        output_ports: Mapping[str, ValuePort] | None = None,
+        port_mapping: PortMapping | None = None,
         artifact_id: str = "",
         jit: bool = True,
     ) -> OperatorFitResult:
@@ -433,7 +435,8 @@ class GeophysicalLearningExperiment:
             seed=seed,
             normalization="fit",
             normalization_weighting="quadrature",
-            output_field_map=output_field_map,
+            output_ports=output_ports,
+            port_mapping=port_mapping,
             artifact_id=artifact_id,
             jit=jit,
             provenance={
@@ -775,7 +778,10 @@ class NativeGeophysicalForecast:
                 "contract": trained.contract_fingerprint,
                 "normalization": trained.normalization_fingerprint,
                 "weights": array_tree_fingerprint(trained.execution_model),
-                "output_map": dict(trained.output_field_map),
+                "port_binding": trained.port_binding.binding_fingerprint,
+                "output_ports": {
+                    name: port.port_id for name, port in trained.output_ports.items()
+                },
                 "output_pipeline": None
                 if trained.output_pipeline is None
                 else trained.output_pipeline.fingerprint,

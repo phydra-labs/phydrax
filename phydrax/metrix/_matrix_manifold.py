@@ -732,7 +732,10 @@ class AffineInvariantSPDManifold(AbstractGeodesicManifold):
         value = self._point(point, "SPD(n) point")
         step = self._point(tangent_step, "SPD(n) tangent step")
         _same_shape(step, value, "SPD(n) tangent step")
-        factor = _symmetric_square_root(value)
+        # Local coordinates belong to the state geometry's congruence chart; any
+        # other square-root factor makes the retraction differential differ
+        # from the identity at the base point.
+        factor = self.state_geometry._congruence_factor(value)
         local = _symmetric(_inverse_congruence(factor, step))
         return self.state_geometry.retract(value, local)
 
@@ -744,7 +747,7 @@ class AffineInvariantSPDManifold(AbstractGeodesicManifold):
         target = self._point(destination, "SPD(n) destination")
         _same_shape(target, value, "SPD(n) destination")
         local = self.state_geometry.inverse_retract(value, target)
-        factor = _symmetric_square_root(value)
+        factor = self.state_geometry._congruence_factor(value)
         return _symmetric(factor @ local @ _transpose(factor))
 
     def squared_distance(

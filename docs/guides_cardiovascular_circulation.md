@@ -54,10 +54,7 @@ A network rejects unknown endpoints, multiply connected ports, duplicate compone
 Initialization follows plan → prepare → fixed-shape solve → evidence:
 
 ```python
-plan = cv.ConsistentInitializationPlan(
-    maximum_differentiations=2,
-    maximum_tears=32,
-)
+plan = cv.ConsistentInitializationPlan(maximum_differentiations=2)
 prepared = cv.prepare_consistent_initialization(network, plan)
 result = cv.initialize_consistent_state(prepared)
 ```

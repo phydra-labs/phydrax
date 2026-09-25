@@ -739,6 +739,9 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
             (self.cell_count,) + values.shape[1:],
             dtype=values.dtype,
         )
+        if self.facet_cells.shape[0] == 0:
+            # No interior facets: indexing the empty ownership arrays cannot be traced.
+            return result
 
         def route(offset, current):
             facet = self.reduction_order[offset]

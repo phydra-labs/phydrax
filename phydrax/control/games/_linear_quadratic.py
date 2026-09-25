@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import TimeGrid
 from ...linalg import (
@@ -318,7 +319,7 @@ def _game_inputs(
         q_terminal_linear,
         terminal_constant,
     )
-    dtype = jnp.result_type(*values, jnp.float64)
+    dtype = inexact_result_type(*values)
     if jnp.issubdtype(dtype, jnp.complexfloating):
         raise TypeError("Finite-horizon games require real-valued arrays.")
     return (

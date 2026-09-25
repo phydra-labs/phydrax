@@ -16,7 +16,6 @@ from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
 from ..discretization._conservation_ledger import AcceptedConservationIntegralLedger
 from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
 from ._constrained_mhd import (
@@ -146,7 +145,7 @@ class BalanceLawTransportAdvance(StrictModule):
         )
 
 
-class AbstractPreparedBalanceLawTransport(StrictModule, NonTrainableState):
+class AbstractPreparedBalanceLawTransport(StrictModule):
     """Minimal transport contract consumed by the balance-law runtime."""
 
     dynamics: Any

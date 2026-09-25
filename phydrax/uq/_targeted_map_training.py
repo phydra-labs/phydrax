@@ -12,10 +12,20 @@ import jax.numpy as jnp
 import optax
 from jaxtyping import Array, ArrayLike, Key
 
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import combine_parameters, NonTrainableState
 from .._training import TrainingController, TrainingIterationKind, TrainingProgress
+from .._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingKernelSpec,
+    TrainingRejectionBudgetError,
+)
+from .._training_objective import _ObjectiveContribution
 from ._posterior import AbstractBijector
 from ._targeted_free_energy import (
     _evaluate_forward,
@@ -146,6 +156,33 @@ def _effective_samples(work: Array, /) -> Array:
     return jnp.sum(weights) ** 2 / jnp.maximum(jnp.sum(weights * weights), 1.0e-30)
 
 
+_validation_objective = eqx.filter_jit(_objective)
+
+
+class _TargetedMapObjective(StrictModule):
+    """Weighted work objective whose invalid evaluations carry no support.
+
+    The payload is `(problem, source_samples, target_samples)`.
+    """
+
+    policy: TargetedMapTrainingPolicy
+
+    def __call__(self, parameters, model_state, fixed, payload, keys):
+        del keys
+        problem, source, target = payload
+        loss, valid, _, _ = _objective(
+            combine_parameters(parameters, model_state, fixed),
+            problem,
+            source,
+            target,
+            self.policy,
+        )
+        contribution = _ObjectiveContribution(
+            jnp.where(valid, loss, jnp.zeros_like(loss)), valid.astype(loss.dtype)
+        )
+        return contribution, model_state, (loss, valid)
+
+
 def fit_targeted_free_energy_map(
     problem: TargetedFreeEnergyProblem,
     source_samples: ArrayLike,
@@ -158,6 +195,13 @@ def fit_targeted_free_energy_map(
     policy: TargetedMapTrainingPolicy | None = None,
     optimizer: optax.GradientTransformation | None = None,
 ) -> TargetedMapFitResult:
+    """Fit the targeted free-energy map by weighted forward/reverse work.
+
+    Every update is one attempt of the shared training kernel (`MODEL` root
+    authority, one data-fit objective). An invalid or nonfinite training
+    evaluation is rejected, never committed: training stops with a `FAILURE`
+    event and `valid=False`, and the selected map is the last accepted one.
+    """
     if not isinstance(problem, TargetedFreeEnergyProblem):
         raise TypeError("problem must be TargetedFreeEnergyProblem.")
     policy_ = TargetedMapTrainingPolicy() if policy is None else policy
@@ -189,27 +233,41 @@ def fit_targeted_free_energy_map(
     if policy_.reverse_weight > 0.0 and target is None:
         raise ValueError("Positive reverse_weight requires target_samples.")
     current = problem.mapping.bijector
-    optimizer_ = optax.adam(policy_.learning_rate) if optimizer is None else optimizer
-    state = optimizer_.init(eqx.filter(current, eqx.is_inexact_array))
+    if optimizer is None:
+        optimizer_ = optax.adam(policy_.learning_rate)
+        rule_id = canonical_fingerprint(
+            {
+                "kind": "targeted-map-training-adam",
+                "learning_rate": policy_.learning_rate.hex(),
+            }
+        )
+    else:
+        optimizer_ = optimizer
+        rule_id = "targeted-map-training-caller-optimizer"
+    kernel = prepare_training_kernel(
+        current,
+        (
+            KernelObjective(
+                objective_id="targeted-map-work",
+                kind=ObjectiveKind.DATA_FIT,
+                route=DerivativeRoute.DIRECT,
+                fn=_TargetedMapObjective(policy_),
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(optimizer_, rule_id=rule_id),
+            context="fit_targeted_free_energy_map",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.MODEL,
+    )
+    state = kernel.init(current, key)
     controller = TrainingController(
         total_steps=policy_.maximum_steps,
-        key=key,
         algorithm_id="targeted-map-training",
     )
 
-    @eqx.filter_jit
-    def update(bijector, optimizer_state):
-        def loss_fn(candidate):
-            loss, valid, _, _ = _objective(candidate, problem, source, target, policy_)
-            return loss, valid
-
-        (loss, valid), gradient = eqx.filter_value_and_grad(loss_fn, has_aux=True)(
-            bijector
-        )
-        updates, next_state = optimizer_.update(gradient, optimizer_state, bijector)
-        return eqx.apply_updates(bijector, updates), next_state, loss, valid
-
-    initial_loss, valid, _, _ = _objective(
+    initial_loss, valid, _, _ = _validation_objective(
         current, problem, validation_source_, validation_target_, policy_
     )
     controller.select(
@@ -222,10 +280,24 @@ def fit_targeted_free_energy_map(
     training_history: list[Array] = []
     validation_history: list[Array] = []
     for step in range(1, policy_.maximum_steps + 1):
-        current, state, training_loss, step_valid = update(current, state)
+        try:
+            state, evidence = run_training_attempt(
+                kernel, state, (problem, source, target)
+            )
+            accepted = bool(evidence.supported)
+        except TrainingRejectionBudgetError:
+            accepted = False
+        if not accepted:
+            # An invalid evaluation carries no support and a nonfinite one
+            # rolls back: either way the update was rejected, not committed.
+            valid = jnp.asarray(False)
+            controller.emit(TrainingIterationKind.FAILURE, metrics={"step": step})
+            break
+        training_loss, step_valid = evidence.diagnostics[0]
+        current = kernel.tree(state)
         controller.complete_update(step)
         if step % policy_.validation_interval == 0 or step == policy_.maximum_steps:
-            validation_loss, validation_valid, _, _ = _objective(
+            validation_loss, validation_valid, _, _ = _validation_objective(
                 current, problem, validation_source_, validation_target_, policy_
             )
             valid = step_valid & validation_valid

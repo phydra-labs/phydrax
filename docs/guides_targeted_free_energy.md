@@ -26,7 +26,10 @@ anonymous arrays.
 `fit_targeted_free_energy_map` minimizes declared forward and optional reverse mean
 work plus optional displacement regularization. Model selection uses separate
 validation samples. The result reports exact-map validity and forward/reverse
-importance effective sample sizes.
+importance effective sample sizes. Each update is one training-kernel attempt: an
+invalid training evaluation carries no support and a nonfinite one rolls back, so
+neither is committed. Training then stops with `valid=False` and keeps the last
+accepted map.
 
 Hutchinson traces and approximate continuous-flow densities do not satisfy this
 contract. A nonfinite map, potential, log determinant, or inverse round trip fails the

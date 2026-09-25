@@ -34,6 +34,8 @@ from phydrax.nn.layers._warp_geometry import (
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from ....._precision import inexact_result_type
+
 
 FlowerTransitionMode = Literal["learned", "resolution_consistent"]
 FlowerQueryMode = Literal["coincident", "interpolate"]
@@ -983,7 +985,7 @@ class Flower(AbstractOperatorModel):
         /,
     ) -> Array:
         coordinates = normalized_lattice_from_nodes(axis_nodes).astype(
-            jnp.result_type(dtype, jnp.float64)
+            inexact_result_type(dtype)
         )
         return jnp.broadcast_to(coordinates, case_shape + coordinates.shape)
 

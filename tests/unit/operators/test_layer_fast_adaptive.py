@@ -152,7 +152,7 @@ def test_exact_near_local_blocks_and_diagonal_match_prepared_operator():
 
 
 def test_unsupported_3d_fast_capabilities_fail_closed():
-    with pytest.raises(BEMFastCapabilityError, match="No 3D FMM"):
+    with pytest.raises(BEMFastCapabilityError, match="No catalogued 3D fast provider"):
         boundary_fast_provider_capabilities("fmm-3d", ambient_dimension=3)
     with pytest.raises(BEMFastCapabilityError, match="not an accelerator"):
         boundary_fast_provider_capabilities(

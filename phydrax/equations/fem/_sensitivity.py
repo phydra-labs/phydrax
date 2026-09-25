@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,14 +12,10 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.linalg as la
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-
-
-SensitivityDecisionPolicy = Literal[
-    "smooth_discrete", "frozen_branch", "smooth_surrogate", "unsupported"
-]
 
 
 class ConservationSensitivityEvidence(StrictModule, NonTrainableState):
@@ -29,7 +24,7 @@ class ConservationSensitivityEvidence(StrictModule, NonTrainableState):
     first_order_taylor_defect: Array
     second_order_taylor_defect: Array
     valid: Array
-    decision_policy: SensitivityDecisionPolicy = eqx.field(static=True)
+    decision_policy: BranchDifferentiationPolicy = eqx.field(static=True)
     decision_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
@@ -44,17 +39,26 @@ def certify_conservation_sensitivity(
     *,
     args=None,
     epsilon: float = 1.0e-5,
-    decision_policy: SensitivityDecisionPolicy = "smooth_discrete",
+    decision_policy: BranchDifferentiationPolicy = BranchDifferentiationPolicy.SMOOTH,
     decision_id: str = "smooth",
     tolerance: float = 2.0e-4,
 ) -> ConservationSensitivityEvidence:
-    if decision_policy not in (
-        "smooth_discrete",
-        "frozen_branch",
-        "smooth_surrogate",
-        "unsupported",
-    ):
-        raise ValueError("Unknown conservation sensitivity policy.")
+    if not isinstance(decision_policy, BranchDifferentiationPolicy):
+        raise TypeError("decision_policy must be a BranchDifferentiationPolicy.")
+    match decision_policy:
+        case (
+            BranchDifferentiationPolicy.SMOOTH
+            | BranchDifferentiationPolicy.FROZEN_DECISION
+            | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+            | BranchDifferentiationPolicy.UNSUPPORTED
+        ):
+            pass
+        case _:
+            raise ValueError(
+                "certify_conservation_sensitivity supports SMOOTH, "
+                "FROZEN_DECISION, SMOOTH_SURROGATE, or UNSUPPORTED; got "
+                f"{decision_policy.name}."
+            )
     epsilon_ = float(epsilon)
     tolerance_ = float(tolerance)
     if not math.isfinite(epsilon_) or epsilon_ <= 0.0 or tolerance_ <= 0.0:
@@ -78,7 +82,7 @@ def certify_conservation_sensitivity(
     second_taylor = jnp.max(jnp.abs(plus - primal - epsilon_ * jvp))
     scale = jnp.maximum(1.0, jnp.max(jnp.abs(primal)))
     valid = (
-        (decision_policy != "unsupported")
+        (decision_policy is not BranchDifferentiationPolicy.UNSUPPORTED)
         & jnp.all(jnp.isfinite(primal))
         & (jvp_defect <= tolerance_ * scale)
         & (duality <= tolerance_ * scale)
@@ -87,7 +91,7 @@ def certify_conservation_sensitivity(
         {
             "kind": "conservation-sensitivity-evidence",
             "dynamics": dynamics.dynamics_id,
-            "decision_policy": decision_policy,
+            "decision_policy": decision_policy.value,
             "decision_id": str(decision_id),
             "epsilon": epsilon_,
             "tolerance": tolerance_,
@@ -107,6 +111,5 @@ def certify_conservation_sensitivity(
 
 __all__ = [
     "ConservationSensitivityEvidence",
-    "SensitivityDecisionPolicy",
     "certify_conservation_sensitivity",
 ]

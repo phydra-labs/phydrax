@@ -41,10 +41,12 @@ def _negative_entropy_geometry(dimension):
 
 def _solver_and_optimizer():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    target = jnp.asarray([0.8, 0.5, 1.7])
+    target = (0.8, 0.5, 1.7)
     positive = domain.Parameter(
         jnp.asarray([0.3, 1.4, 2.2]),
-        transform=lambda value: jnp.sum(value * jnp.log(value / target) - value + target),
+        transform=lambda value: jnp.sum(
+            value * jnp.log(value / jnp.asarray(target)) - value + jnp.asarray(target)
+        ),
     )
     offset = domain.Parameter(
         jnp.asarray(2.0),

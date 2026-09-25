@@ -13,14 +13,22 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
@@ -29,6 +37,33 @@ from .._contracts import (
 )
 from .._numerics import effective_sample_size, fit_weighted_subspace
 from .._numerics._spectral import _canonicalize_rows
+from .._schema import AbstractFittedModel
+
+
+def _contract(*conditions: str) -> DerivativeContract:
+    # Both encoders are centered affine maps of the input.
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        ),
+        route=DerivativeRoute.UNROLLED,
+        regularity=DerivativeRegularity.smooth(degree_bound=1),
+        conditions=conditions,
+    )
+
+
+_FACTOR_ANALYSIS_CONTRACT = _contract(
+    "factor loading gradients require separated retained eigenspaces",
+    "convergence-masked uniqueness iterations are piecewise smooth",
+)
+_ICA_CONTRACT = _contract(
+    "ICA initialization key is explicit and fixed during differentiation",
+    "whitening gradients require separated retained and discarded spectra",
+    "FastICA fixed-point iterations must converge without component collisions",
+)
 
 
 class LatentDecompositionDiagnostics(StrictModule):
@@ -105,10 +140,10 @@ def _apply_matrix(
     return result.reshape(leading + (matrix.shape[-1],))
 
 
-class FactorAnalysisModel(AbstractArrayModel):
+class FactorAnalysisModel(AbstractFittedModel):
     """Diagonal-noise latent Gaussian factor encoder and affine decoder."""
 
-    mean: Array
+    mean: Array = fixed_field()
     loadings: Array
     noise_variance: Array
     posterior_matrix: Array
@@ -135,6 +170,9 @@ class FactorAnalysisModel(AbstractArrayModel):
         self.in_size = self.mean.shape[-1]
         self.out_size = self.loadings.shape[-1]
         self.case_shape = tuple(self.mean.shape[:-1])
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _FACTOR_ANALYSIS_CONTRACT
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -316,22 +354,14 @@ class FactorAnalysis(AbstractRecipe):
             valid=valid,
             status=status,
             method="principal-axis-factor-analysis",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_weights="conditional",
-                fit_mode="unrolled",
-                conditions=(
-                    "factor loading gradients require separated retained eigenspaces",
-                    "convergence-masked uniqueness iterations are piecewise smooth",
-                ),
-            ),
+            derivative_contract=_FACTOR_ANALYSIS_CONTRACT,
         )
 
 
-class ICAModel(AbstractArrayModel):
+class ICAModel(AbstractFittedModel):
     """Fixed independent-component encoder and affine mixing decoder."""
 
-    mean: Array
+    mean: Array = fixed_field()
     unmixing: Array
     mixing: Array
     in_size: int = eqx.field(static=True)
@@ -363,6 +393,9 @@ class ICAModel(AbstractArrayModel):
         self.in_size = self.mean.shape[-1]
         self.out_size = self.unmixing.shape[-2]
         self.case_shape = tuple(self.mean.shape[:-1])
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _ICA_CONTRACT
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -528,16 +561,7 @@ class ICA(AbstractRecipe):
             valid=valid,
             status=status,
             method="symmetric-fastica",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_weights="conditional",
-                fit_mode="unrolled",
-                conditions=(
-                    "ICA initialization key is explicit and fixed during differentiation",
-                    "whitening gradients require separated retained and discarded spectra",
-                    "FastICA fixed-point iterations must converge without component collisions",
-                ),
-            ),
+            derivative_contract=_ICA_CONTRACT,
         )
 
 

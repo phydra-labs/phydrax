@@ -19,7 +19,7 @@ def _counting_process(*, rate=2.0, process_id="counting"):
 
 def test_deterministic_jump_record_preserves_invalid_saltation_evidence():
     policy = HybridReplayPolicy(1)
-    tape = empty_hybrid_event_tape(policy, jnp.asarray([0.0]), "grazing")
+    tape = empty_hybrid_event_tape(policy, jnp.asarray([0.0]), schedule_id="grazing")
 
     recorded = _record_deterministic_event(
         tape,

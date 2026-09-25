@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import DiscreteStepContext, TimeGrid
 from ...linalg import (
@@ -325,7 +326,7 @@ class CentralizedLQGProblem(StrictModule):
             )
             if value is not None
         )
-        dtype = jnp.result_type(*dtype_inputs, jnp.float64)
+        dtype = inexact_result_type(*dtype_inputs)
         dynamics_bias_ = (
             _zeros(cases + (horizon, state_size), dtype)
             if dynamics_bias is None
@@ -677,13 +678,12 @@ def finite_horizon_centralized_lqg(
 
     cases = problem.case_shape
     state_size = problem.state_size
-    dtype = jnp.result_type(
+    dtype = inexact_result_type(
         problem.dynamics_matrices,
         problem.observation_matrices,
         problem.measurement_covariances,
         problem.initial_belief.mean,
         problem.initial_belief.covariance,
-        jnp.float64,
     )
     initial_mean = jnp.broadcast_to(
         problem.initial_belief.mean.astype(dtype), cases + (state_size,)

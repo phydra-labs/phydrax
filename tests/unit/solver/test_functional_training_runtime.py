@@ -1,3 +1,5 @@
+import json
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,11 +8,11 @@ import optax
 import pytest
 
 import phydrax as phx
-import phydrax.solver._functional_checkpoint as functional_checkpoint
-from phydrax._trainable import partition_trainable
+import phydrax._training_checkpoint as training_checkpoint
+from phydrax._trainable import partition_parameters
 from phydrax._training import DelayedTargetPolicy, TargetParameterState
-from phydrax.solver._functional_checkpoint import load_functional_training_checkpoint
 from phydrax.solver._functional_residual import prepare_functional_residual
+from phydrax.solver._functional_run import partition_functional_parameters
 from phydrax.solver._functional_surrogate import (
     prepare_functional_update,
     PreparedFunctionalUpdate,
@@ -103,11 +105,15 @@ def test_optax_line_search_rejects_nonfinite_gradient_without_committing():
         keep_best=False,
         log_every=0,
         jit=False,
+        training=phx.solver.FunctionalTrainingPlan(),
         _accepted_update_hook=lambda step, _parameters: accepted_steps.append(step),
     )
 
     assert trained.training_state is not None
+    kernel_state = trained.training_state.kernel_state
     assert trained.training_state.progress.update_step == 0
+    assert int(kernel_state.nonfinite_rejections) == 1
+    assert int(kernel_state.accepted_cursor) == 0
     assert accepted_steps == []
     assert jnp.array_equal(
         trained.training_state.current_functions["u"].func(),
@@ -134,7 +140,7 @@ def test_rejected_optimizer_step_preserves_target_and_accepted_progress(
     solver = _rejected_update_solver()
     policy = DelayedTargetPolicy(2)
     initial_target = TargetParameterState.initialize(
-        partition_trainable(solver.functions)[0],
+        partition_parameters(solver.functions)[0],
         policy,
     )
     plan = phx.solver.FunctionalTrainingPlan(
@@ -160,29 +166,42 @@ def test_rejected_optimizer_step_preserves_target_and_accepted_progress(
     state = trained.training_state
     assert state.progress.epoch == 1
     assert state.progress.update_step == 0
-    assert state.target_state is not None
-    assert int(state.target_state.update_count) == 0
-    assert eqx.tree_equal(state.target_state, initial_target)
+    assert int(state.kernel_state.accepted_cursor) == 0
+    assert int(state.kernel_state.attempt_cursor) == 1
+    assert state.kernel_state.targets is not None
+    assert int(state.kernel_state.targets.update_count) == 0
+    assert eqx.tree_equal(state.kernel_state.targets, initial_target)
     assert accepted_steps == []
     assert jnp.array_equal(
         state.current_functions["u"].func(),
         jnp.asarray([0.0]),
     )
-    restored = load_functional_training_checkpoint(
-        tmp_path / "rejected",
-        trained,
-        state,
-        plan,
+    restored = solver.solve(
+        num_iter=1,
+        optim=optimizer,
+        keep_best=False,
+        log_every=0,
+        jit=False,
+        training=plan,
+        target_policy=policy,
+        resume=True,
     )
-    assert restored.state.progress.epoch == 1
-    assert restored.state.progress.update_step == 0
-    assert eqx.tree_equal(restored.state.target_state, initial_target)
+    assert restored.training_state.progress.epoch == 1
+    assert restored.training_state.progress.update_step == 0
+    # Native method states carry not-a-number sentinel metrics.
+    assert jax.tree.all(
+        jax.tree.map(
+            lambda left, right: bool(jnp.array_equal(left, right, equal_nan=True)),
+            eqx.filter(restored.training_state.kernel_state, eqx.is_array),
+            eqx.filter(state.kernel_state, eqx.is_array),
+        )
+    )
 
 
 def test_residual_block_layout_preserves_authored_loss_and_root_partition():
     layout = phx.terms.ResidualBlockLayout(("first", "second"))
     solver = _fixed_interval_solver(blocks=layout)
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     prepared = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -201,7 +220,7 @@ def test_residual_block_layout_preserves_authored_loss_and_root_partition():
 
 def test_prepared_update_separates_equal_physical_and_untransformed_surrogate():
     solver = _fixed_interval_solver()
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     prepared = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -239,13 +258,13 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(
     )
     assert interrupted.training_state is not None
     assert interrupted.training_state.progress.update_step == 1
-    assert interrupted.training_state.target_state is not None
-    assert int(interrupted.training_state.target_state.update_count) == 1
+    targets = interrupted.training_state.kernel_state.targets
+    assert targets is not None
+    assert int(targets.update_count) == 1
 
-    template = interrupted.training_state
     checkpoint_directory = tmp_path / "functional"
     state_path = next(checkpoint_directory.glob("state-*.eqx"))
-    deserialize = functional_checkpoint.eqx.tree_deserialise_leaves
+    deserialize = training_checkpoint.eqx.tree_deserialise_leaves
 
     def replace_path_after_open(state_stream, *args, **kwargs):
         replacement = checkpoint_directory / "replacement.eqx"
@@ -253,16 +272,45 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(
         replacement.replace(state_path)
         return deserialize(state_stream, *args, **kwargs)
 
-    monkeypatch.setattr(
-        functional_checkpoint.eqx,
-        "tree_deserialise_leaves",
-        replace_path_after_open,
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            training_checkpoint.eqx,
+            "tree_deserialise_leaves",
+            replace_path_after_open,
+        )
+        with pytest.raises(ValueError, match="changed during reading"):
+            solver.solve(
+                num_iter=1,
+                optim=optax.sgd(0.05),
+                keep_best=False,
+                log_every=0,
+                training=plan,
+                target_policy=target_policy,
+                resume=True,
+            )
+    # Republish the checkpoint whose file the replacement overwrote.
+    solver.solve(
+        num_iter=1,
+        optim=optax.sgd(0.05),
+        keep_best=False,
+        log_every=0,
+        training=plan,
+        target_policy=target_policy,
     )
-    restored = load_functional_training_checkpoint(
-        tmp_path / "functional", interrupted, template, plan
+    restored = solver.solve(
+        num_iter=1,
+        optim=optax.sgd(0.05),
+        keep_best=False,
+        log_every=0,
+        training=plan,
+        target_policy=target_policy,
+        resume=True,
     )
-    assert restored.state.progress.update_step == 1
-    assert eqx.tree_equal(restored.state.target_state, template.target_state)
+    assert restored.training_state.progress.update_step == 1
+    assert eqx.tree_equal(
+        restored.training_state.kernel_state,
+        interrupted.training_state.kernel_state,
+    )
     incompatible_plan = phx.solver.FunctionalTrainingPlan(
         checkpoint=phx.solver.FunctionalCheckpointPolicy(
             tmp_path / "functional",
@@ -270,26 +318,24 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(
         )
     )
     with pytest.raises(ValueError, match="training-plan identity"):
-        load_functional_training_checkpoint(
-            tmp_path / "functional",
-            interrupted,
-            template,
-            incompatible_plan,
+        solver.solve(
+            num_iter=2,
+            optim=optax.sgd(0.05),
+            keep_best=False,
+            log_every=0,
+            training=incompatible_plan,
+            target_policy=target_policy,
+            resume=True,
         )
-    mismatched_template = eqx.tree_at(
-        lambda state: state.target_state,
-        template,
-        TargetParameterState.initialize(
-            partition_trainable(interrupted.functions)[0],
-            DelayedTargetPolicy(2),
-        ),
-    )
     with pytest.raises(ValueError, match="target-policy identity"):
-        load_functional_training_checkpoint(
-            tmp_path / "functional",
-            interrupted,
-            mismatched_template,
-            plan,
+        solver.solve(
+            num_iter=2,
+            optim=optax.sgd(0.05),
+            keep_best=False,
+            log_every=0,
+            training=plan,
+            target_policy=DelayedTargetPolicy(2),
+            resume=True,
         )
     with pytest.raises(ValueError, match="In-memory functional training-plan"):
         interrupted.solve(
@@ -342,14 +388,14 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(
         target_policy=target_policy,
     )
     assert resumed.training_state.progress.update_step == 2
-    assert int(resumed.training_state.target_state.update_count) == 2
+    assert int(resumed.training_state.kernel_state.targets.update_count) == 2
     assert eqx.tree_equal(
-        resumed.training_state.target_state,
-        uninterrupted.training_state.target_state,
+        resumed.training_state.kernel_state.targets,
+        uninterrupted.training_state.kernel_state.targets,
     )
     assert eqx.tree_equal(
-        disk_resumed.training_state.target_state,
-        uninterrupted.training_state.target_state,
+        disk_resumed.training_state.kernel_state.targets,
+        uninterrupted.training_state.kernel_state.targets,
     )
     assert jnp.allclose(
         resumed.training_state.current_functions["u"].func(),
@@ -360,13 +406,71 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(
         uninterrupted.training_state.current_functions["u"].func(),
     )
     assert eqx.tree_equal(
-        resumed.training_state.update_alignment_statistics,
-        uninterrupted.training_state.update_alignment_statistics,
+        resumed.training_state.kernel_state.rule_state.statistics,
+        uninterrupted.training_state.kernel_state.rule_state.statistics,
     )
     assert eqx.tree_equal(
-        disk_resumed.training_state.update_alignment_statistics,
-        uninterrupted.training_state.update_alignment_statistics,
+        disk_resumed.training_state.kernel_state.rule_state.statistics,
+        uninterrupted.training_state.kernel_state.rule_state.statistics,
     )
+
+
+def test_functional_checkpoint_binding_tracks_parameters_and_fails_closed(tmp_path):
+    solver = _fixed_interval_solver()
+
+    def solve(name, num_iter, *, resume=False):
+        return solver.solve(
+            num_iter=num_iter,
+            optim=optax.sgd(0.05),
+            keep_best=False,
+            log_every=0,
+            training=phx.solver.FunctionalTrainingPlan(
+                checkpoint=phx.solver.FunctionalCheckpointPolicy(
+                    tmp_path / name, every=1
+                )
+            ),
+            resume=resume,
+        )
+
+    def manifest(name):
+        path = tmp_path / name / "manifest.json"
+        return path, json.loads(path.read_text(encoding="utf-8"))
+
+    solve("first", 1)
+    solve("second", 2)
+    first_path, first = manifest("first")
+    _, second = manifest("second")
+    first_binding = first["metadata"]["binding"]
+    second_binding = second["metadata"]["binding"]
+    assert first_binding["numeric_revision_id"] == first["kernel"]["parameter_revision"]
+    assert first_binding["semantic_id"] == second_binding["semantic_id"]
+    assert first_binding["numeric_revision_id"] != second_binding["numeric_revision_id"]
+    assert (
+        first_binding["executable_signature_id"]
+        == second_binding["executable_signature_id"]
+    )
+    assert solve("first", 1, resume=True).training_state.progress.update_step == 1
+
+    swapped = phx.ArtifactBindingIdentity(
+        first_binding["semantic_id"],
+        second_binding["numeric_revision_id"],
+        first_binding["executable_signature_id"],
+    ).to_record()
+    first["metadata"]["binding"] = swapped
+    first_path.write_text(json.dumps(first), encoding="utf-8")
+    with pytest.raises(ValueError, match="binding numeric_revision_id"):
+        solve("first", 1, resume=True)
+
+    first["metadata"]["binding"] = dict(swapped, binding_id="0" * 64)
+    first_path.write_text(json.dumps(first), encoding="utf-8")
+    with pytest.raises(ValueError, match="corrupt"):
+        solve("first", 1, resume=True)
+
+    del first["metadata"]["binding"]
+    first_path.write_text(json.dumps(first), encoding="utf-8")
+    with pytest.raises(ValueError, match="metadata fields are not canonical"):
+        solve("first", 1, resume=True)
+
 
 
 def test_functional_session_cursor_resumes_in_memory(tmp_path):
@@ -461,8 +565,9 @@ def test_standard_optax_gradient_accumulation_preserves_update_semantics():
     assert accumulated.training_state.progress.update_step == 2
     assert accumulated.training_state.progress.microstep == 6
     assert accumulated.training_state.gradient_accumulation == 3
-    assert accumulated.training_state.target_state is not None
-    assert int(accumulated.training_state.target_state.update_count) == 2
+    targets = accumulated.training_state.kernel_state.targets
+    assert targets is not None
+    assert int(targets.update_count) == 2
     assert jnp.allclose(
         standard["u"].func(),
         accumulated["u"].func(),
@@ -811,14 +916,19 @@ def test_target_policy_keep_best_requires_fixed_selection_and_resumes_exactly(
             reference.current_functions,
         )
         assert eqx.tree_equal(candidate.best_functions, reference.best_functions)
-        assert eqx.tree_equal(
-            candidate.optimizer_state,
-            reference.optimizer_state,
+        candidate_kernel = candidate.kernel_state
+        reference_kernel = reference.kernel_state
+        assert eqx.tree_equal(candidate_kernel.rule_state, reference_kernel.rule_state)
+        assert eqx.tree_equal(candidate_kernel.targets, reference_kernel.targets)
+        assert int(candidate_kernel.attempt_cursor) == int(
+            reference_kernel.attempt_cursor
         )
-        assert eqx.tree_equal(candidate.target_state, reference.target_state)
+        assert int(candidate_kernel.accepted_cursor) == int(
+            reference_kernel.accepted_cursor
+        )
         assert jnp.array_equal(
-            jr.key_data(candidate.key),
-            jr.key_data(reference.key),
+            jr.key_data(candidate_kernel.root_key),
+            jr.key_data(reference_kernel.root_key),
         )
 
 
@@ -847,7 +957,7 @@ def test_exact_nonlinear_correction_freezes_base_and_restores_physical_scale():
         epsilon=0.1,
     )
 
-    correction_params, _ = partition_trainable(problem.training_solver.functions)
+    correction_params, _, _ = partition_parameters(problem.training_solver.functions)
     expected = solver.functions["u"].func() + 0.1 * correction.func()
     scaled_loss = problem.training_solver.loss(key=jr.key(9))
     finalized = problem.finalize(problem.training_solver)

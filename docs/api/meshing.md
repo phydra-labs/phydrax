@@ -89,6 +89,8 @@ certification, and topology-transition contracts.
         - MeshCoordinateProposal
         - MeshProposalSafetyPolicy
         - MeshProposalTransaction
+        - AbstractMeshProposer
+        - LearnedMeshProposer
         - project_mesh_proposal
         - prepare_mesh_proposal
 

@@ -17,6 +17,7 @@ from phydrax.domain import BatchEvaluator, PointBatch
 from ...._callable import _ensure_special_kwonly_args
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
+from ...._trainable import ParameterOwner
 from ..._keys import EvalKey, fold_in_eval_key, split_eval_key
 
 
@@ -150,7 +151,7 @@ def _extract_payload(batch: PointBatch, label: str, /) -> RaggedSeriesBatchInput
     )
 
 
-class RaggedSeriesModel(StrictModule, BatchEvaluator):
+class RaggedSeriesModel(StrictModule, BatchEvaluator, ParameterOwner):
     """Wrap a ragged-series encoder as a Phydrax batch-aware `DomainFunction`."""
 
     model: Callable
@@ -189,7 +190,7 @@ class RaggedSeriesModel(StrictModule, BatchEvaluator):
         return cx.AxisArray(y, dims=(axis,) + (None,) * (y.ndim - 1))
 
 
-class MaskedSeriesPoolingModel(StrictModule):
+class MaskedSeriesPoolingModel(StrictModule, ParameterOwner):
     """Encode variable-length series with a pointwise model and masked reduction.
 
     Inactive padded slots are represented by a typed zero branch and never invoke

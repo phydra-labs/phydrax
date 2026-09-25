@@ -25,6 +25,7 @@ from .._iteration import (
     IterationRecord,
     update_iteration,
 )
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ._addressing import derive_key, SampleAddress
 from ._chain import AbstractChainSampleResult
@@ -101,7 +102,7 @@ def _real_scalar(value: Any, /, *, role: str) -> Array:
         raise ValueError(f"{role} must return one scalar; got shape {array.shape}.")
     if jnp.iscomplexobj(array):
         raise TypeError(f"{role} must be real-valued.")
-    return array.astype(jnp.result_type(array, jnp.float64))
+    return array.astype(inexact_result_type(array))
 
 
 def _swap_draw_chain(tree: PyTree[Array], /) -> PyTree[Array]:

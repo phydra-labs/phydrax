@@ -14,20 +14,28 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ValuePort
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
 from .._numerics import effective_sample_size
-from .._schema import TargetSchema
+from .._schema import AbstractFittedModel, TargetSchema
 from ..discriminant._models import _labels_for, _reshape_for_samples
 
 
@@ -64,12 +72,54 @@ class NaiveBayesDiagnostics(StrictModule):
         self.method = str(method)
 
 
-class AbstractNaiveBayesModel(AbstractArrayModel):
+def _contract(
+    regularity: DerivativeRegularity, /, *, inputs: GradientLevel
+) -> DerivativeContract:
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, inputs),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(
+                DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+            ),
+        ),
+        route=DerivativeRoute.DIRECT,
+        regularity=regularity,
+        nondifferentiable_outputs=("predict", "predict_indices"),
+        conditions=(
+            "fixed class vocabulary",
+            "positive class mass",
+            "valid feature domain",
+        ),
+    )
+
+
+# Softmax of a smooth joint log-likelihood (Gaussian quadratic, count-affine).
+_SMOOTH_CONTRACT = _contract(DerivativeRegularity.smooth(), inputs=GradientLevel.SMOOTH)
+# Thresholded binary features: probabilities are constant between thresholds.
+_THRESHOLD_CONTRACT = _contract(
+    DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0),
+    inputs=GradientLevel.NONE,
+)
+# Integer category codes: the feature domain is a lattice, off which calls are NaN.
+_CATEGORY_CONTRACT = _contract(
+    DerivativeRegularity.discontinuous(), inputs=GradientLevel.NONE
+)
+
+
+class AbstractNaiveBayesModel(AbstractFittedModel):
     """Common normalized classification API for native Naive Bayes models."""
 
     labels: eqx.AbstractVar[Array]
-    target_schema: eqx.AbstractVar[TargetSchema]
     case_shape: eqx.AbstractVar[tuple[int, ...]]
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_CONTRACT
 
     @abstractmethod
     def joint_log_likelihood(self, x: Any, /) -> Array:
@@ -99,7 +149,7 @@ class GaussianNaiveBayesModel(AbstractNaiveBayesModel):
     means: Array
     variances: Array
     log_priors: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -144,7 +194,7 @@ class BernoulliNaiveBayesModel(AbstractNaiveBayesModel):
     feature_log_prob: Array
     feature_log_neg_prob: Array
     log_priors: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     threshold: float = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -172,6 +222,9 @@ class BernoulliNaiveBayesModel(AbstractNaiveBayesModel):
         self.in_size = self.feature_log_prob.shape[-1]
         self.out_size = self.feature_log_prob.shape[-2]
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _THRESHOLD_CONTRACT
+
     def joint_log_likelihood(self, x: Any, /) -> Array:
         raw = jnp.asarray(x)
         if jnp.issubdtype(raw.dtype, jnp.complexfloating):
@@ -192,7 +245,7 @@ class BernoulliNaiveBayesModel(AbstractNaiveBayesModel):
 class MultinomialNaiveBayesModel(AbstractNaiveBayesModel):
     feature_log_prob: Array
     log_priors: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     complement: bool = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -241,7 +294,7 @@ class MultinomialNaiveBayesModel(AbstractNaiveBayesModel):
 class CategoricalNaiveBayesModel(AbstractNaiveBayesModel):
     feature_log_prob: Array
     log_priors: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     category_counts: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -266,6 +319,9 @@ class CategoricalNaiveBayesModel(AbstractNaiveBayesModel):
         self.case_shape = tuple(case_shape)
         self.in_size = len(self.category_counts)
         self.out_size = self.feature_log_prob.shape[-3]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _CATEGORY_CONTRACT
 
     def joint_log_likelihood(self, x: Any, /) -> Array:
         raw_values = jnp.asarray(x)
@@ -333,7 +389,7 @@ def _priors(mass: Array, specified: tuple[float, ...]) -> Array:
 
 
 def _result(
-    model: AbstractArrayModel,
+    model: AbstractNaiveBayesModel,
     *,
     batch: MLBatch,
     weight: Array,
@@ -370,30 +426,13 @@ def _result(
         domain_valid=domain_valid,
         method=method,
     )
-    contract = GradientContract(
-        prediction_inputs="almost-everywhere"
-        if method in {"bernoulli-nb", "categorical-nb"}
-        else "smooth",
-        prediction_parameters="smooth",
-        fit_features="conditional",
-        fit_targets="none",
-        fit_weights="conditional",
-        fit_hyperparameters="conditional",
-        fit_mode="direct",
-        nondifferentiable_outputs=("predict", "predict_indices"),
-        conditions=(
-            "fixed class vocabulary",
-            "positive class mass",
-            "valid feature domain",
-        ),
-    )
     return FitResult(
         model,
         diagnostics,
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=contract,
+        derivative_contract=model._prediction_contract(),
     )
 
 

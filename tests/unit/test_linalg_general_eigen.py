@@ -184,7 +184,7 @@ def test_restarted_arnoldi_shift_invert_and_cayley_target_interior_modes():
 
 
 def test_native_arnoldi_finite_mask_tracks_each_nonfinite_recovered_mode():
-    matrix = 1.0e30 * jnp.eye(3)
+    matrix = 1.0e300 * jnp.eye(3)
     problem = GeneralEigenproblem(
         _MatrixFreeOperator(
             matrix,
@@ -194,9 +194,9 @@ def test_native_arnoldi_finite_mask_tracks_each_nonfinite_recovered_mode():
     result = general_eigensolve(
         problem,
         policy=GeneralEigenSolvePolicy(
-            RestartedArnoldi(subspace_dimension=2),
+            RestartedArnoldi(subspace_dimension=3),
             transform=CayleyTransform(1.0),
-            selection=GeneralEigenSelection("largest-magnitude", count=1),
+            selection=GeneralEigenSelection.closest(1.0, 1),
             max_steps=4,
         ),
     )

@@ -21,7 +21,7 @@ class _BasisState(eqx.Module):
 
 
 class _TableState(eqx.Module):
-    parameters: jax.Array
+    parameters: jax.Array = phx.parameter_field()
 
     def __call__(self, configuration):
         index = jnp.where(configuration[0] > 0, 0, 1)

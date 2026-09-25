@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.axes as cx
 
 from .._strict import StrictModule
-from ..domain import ComponentSum, DomainFunction
+from ..domain import ComponentSum, DomainFunction, PointwiseEvaluator
 from ..integration._api import IntegrationRealization, reduce
 from ..integration._estimates import IntegrationEstimate, IntegrationProvenance
 from ..integration._status import IntegrationStatus
@@ -114,7 +114,7 @@ class SemidiscreteTransportProblem(StrictModule):
             DomainFunction(
                 domain=domain,
                 deps=domain.labels,
-                func=_ConstantOne(),
+                func=PointwiseEvaluator(_ConstantOne()),
             ),
             realization,
         )

@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from math import ceil
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import Any, final, Literal, NamedTuple
 
 import equinox as eqx
 import jax
@@ -20,6 +20,7 @@ import numpy as np
 import optax
 from jaxtyping import Array
 
+from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import (
     array_tree_fingerprint,
     array_tree_signature,
@@ -28,22 +29,40 @@ from ..._fingerprint import (
 from ..._frozendict import frozendict
 from ..._iteration import IterationSession
 from ..._model import AbstractArrayModel
-from ..._trainable import combine_trainable, partition_trainable
+from ..._strict import StrictModule
+from ..._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..._training import (
     _update_validation_selection,
     DelayedTargetPolicy,
     EvaluationParametersFn,
     ExponentialMovingAverageTargetPolicy,
-    resolve_evaluation_parameters,
-    TargetParameterState,
     TensorBoardLogger,
     TrainingController,
     TrainingIterationKind,
     TrainingProgress,
     TrainingSignalGuard,
 )
+from ..._training_checkpoint import (
+    load_training_checkpoint,
+    read_training_checkpoint_metadata,
+    save_training_checkpoint,
+)
+from ..._training_kernel import (
+    build_training_checkpoint,
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    training_accepted_site_key,
+    TrainingAttemptOutcome,
+    TrainingKernelSpec,
+    TrainingRejectionBudgetError,
+)
 from ..._training_objective import (
-    _GradientAccumulationState,
     _ObjectiveAccumulator,
     _ObjectiveContribution,
 )
@@ -56,11 +75,6 @@ from ._linear_refinement import (
     ProgressiveLinearRefinementRecord,
     ProgressiveLinearRefinementState,
 )
-from ._neural_checkpoint import (
-    _load_neural_training_checkpoint,
-    _read_neural_training_manifest,
-    _save_neural_training_checkpoint,
-)
 from ._neural_transition import (
     AbstractDiscreteModelRolloutTransition,
     DirectDiscreteModelRolloutTransition,
@@ -72,6 +86,10 @@ from ._neural_windows import (
     _NeuralWindowSource,
     _semantic_window_keys,
 )
+
+
+_OBJECTIVE_ID = "discrete-model-rollout"
+_CHECKPOINT_FORMAT = "phydrax-discrete-model-training-checkpoint"
 
 
 @dataclass(frozen=True, slots=True)
@@ -442,7 +460,6 @@ def _rollout_scan_step(
         batch.parent_index,
         batch.start_index,
         depth,
-        0,
     )
     controls = None if batch.inputs is None else batch.inputs[:, depth]
 
@@ -846,6 +863,7 @@ def _objective_contributions(
     /,
     *,
     target_model: AbstractArrayModel | None = None,
+    target_key: Array | None = None,
     execution_control: Any = None,
 ) -> tuple[_ObjectiveContribution, tuple[_ObjectiveContribution, ...], Array]:
     resolved_iteration = (
@@ -865,8 +883,8 @@ def _objective_contributions(
     runtime_valid = rollout_valid
     target_endpoint_states = None
     if any(isinstance(value, TargetDiscreteModelObjective) for value in objectives):
-        if target_model is None:
-            raise ValueError("Target objective requires a target model.")
+        if target_model is None or target_key is None:
+            raise ValueError("Target objective requires a target model and key.")
         target_endpoint_states, _, _, target_valid = _rollout_states(
             target_model,
             batch,
@@ -875,7 +893,7 @@ def _objective_contributions(
             state_layout,
             transition,
             execution_control,
-            jr.fold_in(root_key, 707),
+            target_key,
             resolved_iteration,
         )
         runtime_valid = rollout_valid & target_valid
@@ -930,6 +948,27 @@ def _objective_contributions(
     return total, tuple(term_contributions), runtime_valid
 
 
+@final
+class _DiscreteRolloutObjective(StrictModule):
+    """Kernel objective of one discrete-model fit.
+
+    The rollout transition is a visible dynamic child: its arrays (for example a
+    discretization, operators, and projection solver) are PyTree leaves instead
+    of state captured by the objective. `evaluate` is a stateless operation over
+    the array-free fit configuration and receives the transition explicitly.
+    """
+
+    transition: AbstractDiscreteModelRolloutTransition
+    evaluate: Callable[..., Any] = eqx.field(static=True)
+
+    def __call__(
+        self, parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any, /
+    ) -> tuple[_ObjectiveContribution, Any, Any]:
+        return self.evaluate(
+            self.transition, parameters, model_state, fixed, payload, keys
+        )
+
+
 def _tree_real_result_dtype(tree: Any, /):
     dtypes = tuple(
         leaf.dtype for leaf in jax.tree_util.tree_leaves(tree) if eqx.is_array(leaf)
@@ -939,18 +978,27 @@ def _tree_real_result_dtype(tree: Any, /):
     return jnp.result_type(*dtypes)
 
 
-def _tree_finite(tree: Any, /) -> Array:
-    checks = [
-        jnp.all(jnp.isfinite(leaf))
-        for leaf in jax.tree_util.tree_leaves(tree)
-        if eqx.is_array(leaf)
+def _accumulate(kernel, state, payload):
+    return kernel.accumulate_with_diagnostics(state, payload)
+
+
+_compiled_accumulate = eqx.filter_jit(_accumulate)
+
+
+def _add_metric_diagnostics(
+    accumulators: list[_ObjectiveAccumulator], diagnostics: tuple[Any, ...], /
+) -> list[_ObjectiveAccumulator]:
+    """Merge one microbatch's total and per-term contributions into the metrics."""
+    (terms,) = diagnostics
+    return [
+        accumulator.add(_ObjectiveContribution(*values))
+        for accumulator, values in zip(accumulators, terms, strict=True)
     ]
-    return jnp.all(jnp.stack(checks)) if checks else jnp.asarray(True)
 
 
 def _validate_precision(model: AbstractArrayModel, *datasets: TrajectoryData) -> None:
     allowed = (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64))
-    parameters, _ = partition_trainable(model)
+    parameters, _, _ = partition_parameters(model)
     for leaf in jax.tree_util.tree_leaves(parameters):
         if eqx.is_array(leaf) and (
             jnp.issubdtype(leaf.dtype, jnp.complexfloating) or leaf.dtype not in allowed
@@ -1059,6 +1107,7 @@ def _resolve_discrete_fit_request(
 ):
     if not isinstance(model, AbstractArrayModel):
         raise TypeError("fit_discrete_model requires an AbstractArrayModel.")
+    require_parameter_roles(model, context="fit_discrete_model")
     if not isinstance(rollout_policy, DiscreteModelRolloutPolicy):
         raise TypeError("rollout_policy must be a DiscreteModelRolloutPolicy.")
     if not isinstance(state_layout, StateLayout):
@@ -1461,30 +1510,11 @@ def fit_discrete_model(
         linear_refinement=linear_refinement,
     )
 
-    parameters, fixed = partition_trainable(model)
+    parameters, _, _ = partition_parameters(model)
     accumulation_dtype = _tree_real_result_dtype(parameters)
-    optimizer_state = optimizer.init(parameters)
-    evaluated_parameters = resolve_evaluation_parameters(
-        evaluation_parameters,
-        optimizer_state,
-        parameters,
-    )
-    initial_target_parameters = (
-        evaluated_parameters
-        if isinstance(target_policy, ExponentialMovingAverageTargetPolicy)
-        and target_policy.source == "evaluation"
-        else parameters
-    )
-    target_state = (
-        None
-        if target_policy is None
-        else TargetParameterState.initialize(initial_target_parameters, target_policy)
-    )
-    evaluation_model = eqx.nn.inference_mode(
-        combine_trainable(evaluated_parameters, fixed)
-    )
-    best_model = evaluation_model
-    master_key = jr.key(seed) if key is None else key
+    master_key = jr.key(seed) if key is None else jnp.asarray(key)
+    if not jax.dtypes.issubdtype(master_key.dtype, jax.dtypes.prng_key):
+        master_key = jr.wrap_key_data(master_key)
     progress = TrainingProgress()
     metric_names = ("loss",) + tuple(term.name for term in terms)
     checkpoint = None if checkpoint_path is None else Path(checkpoint_path)
@@ -1527,9 +1557,82 @@ def fit_discrete_model(
     }
     fit_fingerprint = canonical_fingerprint(fit_contract)
 
+    def training_objective(transition, parameters, model_state, fixed, payload, keys):
+        batch, target_parameters, execution_control = payload
+        step = keys.accepted_cursor
+        total, components, valid = _objective_contributions(
+            combine_parameters(parameters, model_state, fixed),
+            batch,
+            rollout_policy.active_horizon(step),
+            rollout_policy,
+            terms,
+            state_layout,
+            transition,
+            keys.attempt_key("rollout"),
+            step,
+            target_model=(
+                None
+                if target_parameters is None
+                else combine_parameters(target_parameters, model_state, fixed)
+            ),
+            target_key=keys.attempt_key("target-rollout"),
+            execution_control=execution_control,
+        )
+        # A failed model, reference, target, or residual rollout is a nonfinite
+        # evaluation, so the kernel rolls the attempt back.
+        numerator = jnp.where(valid, total.numerator, jnp.nan)
+        diagnostics = tuple(
+            (value.numerator, value.support, value.log_scale)
+            for value in (total, *components)
+        )
+        return (
+            _ObjectiveContribution(numerator, total.support, total.log_scale),
+            model_state,
+            diagnostics,
+        )
+
+    kernel = prepare_training_kernel(
+        model,
+        (
+            KernelObjective(
+                objective_id=_OBJECTIVE_ID,
+                kind=ObjectiveKind.ROLLOUT,
+                route=DerivativeRoute.UNROLLED,
+                fn=_DiscreteRolloutObjective(resolved_transition, training_objective),
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(
+                optimizer,
+                rule_id=canonical_fingerprint(
+                    {
+                        "kind": "optax",
+                        "optimizer_id": resolved_optimizer_id,
+                        "evaluation_parameters_id": resolved_evaluation_id,
+                    }
+                ),
+                evaluation_parameters=evaluation_parameters,
+            ),
+            context="fit_discrete_model",
+            rejection_budget=0,
+            target_policy=target_policy,
+            accumulation_dtype=accumulation_dtype,
+        ),
+        root_authority=ComponentAuthority.MODEL,
+    )
+    state = kernel.init(model, master_key)
+
+    def evaluation_view():
+        evaluated = kernel.rule.evaluation_parameters(state.rule_state, state.parameters)
+        return eqx.nn.inference_mode(
+            combine_parameters(evaluated, state.model_state, kernel.fixed)
+        )
+
+    evaluation_model = evaluation_view()
+    best_model = evaluation_model
+
     control = TrainingController(
         total_steps=maximum_steps,
-        key=master_key,
         algorithm_id="discrete-model-training",
         progress=progress,
         session=session,
@@ -1555,90 +1658,6 @@ def fit_discrete_model(
         None if linear_refinement is None else linear_refinement.evaluation_control()
     )
 
-    def loss_components(
-        current_model,
-        target_model,
-        batch,
-        root_key,
-        step,
-        execution_control,
-    ):
-        active_horizon = rollout_policy.active_horizon(step)
-        return _objective_contributions(
-            current_model,
-            batch,
-            active_horizon,
-            rollout_policy,
-            terms,
-            state_layout,
-            resolved_transition,
-            root_key,
-            step,
-            target_model=target_model,
-            execution_control=execution_control,
-        )
-
-    def gradient_fn(
-        current_parameters,
-        target_parameters,
-        batch,
-        root_key,
-        step,
-        execution_control,
-    ):
-        def objective(candidate):
-            current_model = combine_trainable(candidate, fixed)
-            target_model = (
-                combine_trainable(target_parameters, fixed)
-                if target_state is not None
-                else None
-            )
-            contribution, components, valid = loss_components(
-                current_model,
-                target_model,
-                batch,
-                root_key,
-                step,
-                execution_control,
-            )
-            return contribution.numerator, (
-                contribution.numerator,
-                contribution.support,
-                contribution.log_scale,
-                tuple(
-                    (component.numerator, component.support, component.log_scale)
-                    for component in components
-                ),
-                valid,
-            )
-
-        (_, auxiliary), gradient = eqx.filter_value_and_grad(
-            objective,
-            has_aux=True,
-        )(current_parameters)
-        numerator, support, log_scale, component_arrays, valid = auxiliary
-        finite = valid & _tree_finite(
-            (numerator, support, log_scale, component_arrays, gradient)
-        )
-        return (
-            (numerator, support, log_scale),
-            component_arrays,
-            gradient,
-            finite,
-        )
-
-    def update_fn(current_parameters, current_state, gradient):
-        updates, next_state = optimizer.update(
-            gradient,
-            current_state,
-            current_parameters,
-        )
-        next_parameters = eqx.apply_updates(current_parameters, updates)
-        return next_parameters, next_state, _tree_finite((next_parameters, next_state))
-
-    run_gradient = eqx.filter_jit(gradient_fn) if jit else gradient_fn
-    run_update = eqx.filter_jit(update_fn) if jit else update_fn
-
     def batches(source, epoch, size, *, shuffle_data):
         indices = source.ordered_indices(epoch, shuffle=shuffle_data, seed=seed)
         for batch_index, start in enumerate(range(0, source.size, size)):
@@ -1646,20 +1665,31 @@ def fit_discrete_model(
 
     def evaluate(current_model, source, size, step, execution_control):
         metric_accumulators = [_ObjectiveAccumulator() for _ in metric_names]
-        evaluation_key = control.key_for(int(step), site=1000)
-        target_model = (
-            combine_trainable(target_state.target, fixed)
-            if target_state is not None
-            else None
+        evaluation_key, target_key = (
+            training_accepted_site_key(
+                master_key,
+                objective_id=_OBJECTIVE_ID,
+                site=site,
+                accepted=int(step),
+                microstep=0,
+            )
+            for site in ("evaluation-rollout", "evaluation-target-rollout")
         )
+        target_model = None if state.targets is None else kernel.target_tree(state)
         for _, batch in batches(source, 0, size, shuffle_data=False):
-            total, components, valid_array = loss_components(
+            total, components, valid_array = _objective_contributions(
                 current_model,
-                target_model,
                 batch,
+                rollout_policy.active_horizon(jnp.asarray(step, dtype=jnp.int32)),
+                rollout_policy,
+                terms,
+                state_layout,
+                resolved_transition,
                 evaluation_key,
                 jnp.asarray(step, dtype=jnp.int32),
-                execution_control,
+                target_model=target_model,
+                target_key=target_key,
+                execution_control=execution_control,
             )
             if not bool(jax.device_get(valid_array)):
                 raise FloatingPointError(
@@ -1683,28 +1713,36 @@ def fit_discrete_model(
         }
 
     initial_metrics: dict[str, float]
-    resume_manifest = None
+    resume_metadata = None
     if checkpoint is not None and resume and (checkpoint / "manifest.json").is_file():
-        resume_manifest, _ = _read_neural_training_manifest(checkpoint)
-    if resume_manifest is not None:
-        assert checkpoint is not None
-        if resume_manifest["metadata"]["fit_fingerprint"] != fit_fingerprint:
-            raise ValueError("Discrete-model checkpoint fit contract mismatch.")
-        restored = _load_neural_training_checkpoint(
-            checkpoint,
-            (model, best_model),
-            (optimizer_state, target_state),
+        resume_metadata = read_training_checkpoint_metadata(
+            checkpoint, format=_CHECKPOINT_FORMAT
         )
-        model, best_model = restored.model
-        optimizer_state, target_state = restored.optimizer_state
-        metadata = restored.metadata
-        progress = TrainingProgress(**metadata["progress"])
-        if progress.update_step != restored.step or progress.update_step > maximum_steps:
+    if resume_metadata is not None:
+        assert checkpoint is not None
+        if resume_metadata.get("fit_fingerprint") != fit_fingerprint:
+            raise ValueError("Discrete-model checkpoint fit contract mismatch.")
+        loaded = load_training_checkpoint(
+            checkpoint,
+            kernel,
+            state,
+            best_model,
+            format=_CHECKPOINT_FORMAT,
+        )
+        state = loaded.restored.state
+        best_model = loaded.extra
+        metadata = loaded.metadata
+        if loaded.restored.selection is None:
+            raise ValueError("Discrete-model checkpoint progress is missing.")
+        progress = loaded.restored.selection
+        if (
+            progress.update_step != int(jax.device_get(state.accepted_cursor))
+            or progress.update_step > maximum_steps
+            or int(jax.device_get(state.microstep)) != 0
+        ):
             raise ValueError("Discrete-model checkpoint progress is incompatible.")
-        master_key = restored.key
         control = TrainingController(
             total_steps=maximum_steps,
-            key=master_key,
             algorithm_id="discrete-model-training",
             progress=progress,
             session=session,
@@ -1725,7 +1763,6 @@ def fit_discrete_model(
                 ProgressiveLinearRefinementRecord(**dict(value))
                 for value in metadata["linear_refinement_records"]
             ]
-        parameters, fixed = partition_trainable(model)
     else:
         initial_metrics = evaluate(
             evaluation_model,
@@ -1766,24 +1803,28 @@ def fit_discrete_model(
                 )
                 refinement_records.append(record)
 
+    window_microbatches = 0
+
     def save_progress(training_seconds, *, emit_event=True):
-        if checkpoint is None or not gradient_accumulator.is_empty:
+        if checkpoint is None or window_microbatches:
             return
         if emit_event:
             control.emit(
                 TrainingIterationKind.CHECKPOINT,
                 metrics={"step": control.progress.update_step},
             )
-        _save_neural_training_checkpoint(
+        save_training_checkpoint(
             checkpoint,
-            (model, best_model),
-            (optimizer_state, target_state),
-            step=control.progress.update_step,
-            key=master_key,
+            # A closed window after a zero-support skip is a committed state
+            # whose only change is the kernel's attempt bookkeeping.
+            build_training_checkpoint(
+                kernel, state, selection=control.progress, allow_intermediate=True
+            ),
+            best_model,
+            format=_CHECKPOINT_FORMAT,
             metadata={
                 "fit_fingerprint": fit_fingerprint,
                 "fit_contract": fit_contract,
-                "progress": asdict(control.progress),
                 "initial_metrics": initial_metrics,
                 "train_steps": train_steps,
                 "train_metrics": train_history,
@@ -1819,6 +1860,7 @@ def fit_discrete_model(
         if control.progress.stopped_early:
             control.stop_requested = True
 
+    accumulate = _compiled_accumulate if jit else _accumulate
     logger_context = (
         nullcontext(None)
         if tensorboard_log_dir is None
@@ -1828,15 +1870,8 @@ def fit_discrete_model(
     stopped_by_signal = False
     control.emit(TrainingIterationKind.RUN_START, metrics=initial_metrics)
     with logger_context as tensorboard, TrainingSignalGuard() as signal_guard:
-        gradient_accumulator = _GradientAccumulationState.empty(
-            parameters,
-            accumulation_dtype=accumulation_dtype,
-        )
         accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
-        has_trainable = any(
-            eqx.is_array(leaf) for leaf in jax.tree_util.tree_leaves(parameters)
-        )
-        if has_trainable and not control.progress.stopped_early:
+        if not control.progress.stopped_early:
             for epoch in range(control.progress.epoch, int(epochs)):
                 if control.stop_requested or signal_guard.stop_requested:
                     break
@@ -1851,57 +1886,44 @@ def fit_discrete_model(
                         continue
                     if control.progress.update_step >= maximum_steps:
                         break
-                    root_key = control.key_for(control.progress.microstep, site=0)
-                    total_arrays, component_arrays, gradient, finite_array = run_gradient(
-                        parameters,
-                        (target_state.target if target_state is not None else parameters),
+                    payload = (
                         batch,
-                        root_key,
-                        jnp.asarray(
-                            control.progress.update_step,
-                            dtype=jnp.int32,
-                        ),
+                        None if state.targets is None else state.targets.target,
                         training_execution_control(),
                     )
-                    if not bool(jax.device_get(finite_array)):
-                        raise FloatingPointError(
-                            "Nonfinite model, reference, residual, loss, or gradient encountered."
-                        )
-                    total_contribution = _ObjectiveContribution(*total_arrays)
-                    component_contributions = tuple(
-                        _ObjectiveContribution(*values) for values in component_arrays
-                    )
-                    gradient_accumulator = gradient_accumulator.add(
-                        gradient,
-                        total_contribution,
-                    )
-                    accumulated_metrics = [
-                        accumulator.add(contribution)
-                        for accumulator, contribution in zip(
-                            accumulated_metrics,
-                            (total_contribution,) + component_contributions,
-                            strict=True,
-                        )
-                    ]
                     control.progress = replace(
                         control.progress,
                         microstep=control.progress.microstep + 1,
                         next_batch_index=batch_index + 1,
                     )
+                    window_microbatches += 1
                     end_of_epoch = batch_index + 1 >= batches_per_epoch
                     if (
-                        gradient_accumulator.microsteps < int(gradient_accumulation)
+                        window_microbatches < int(gradient_accumulation)
                         and not end_of_epoch
                     ):
-                        continue
-                    if not bool(
-                        jax.device_get(gradient_accumulator.has_positive_support)
-                    ):
-                        control.emit(TrainingIterationKind.SKIP)
-                        gradient_accumulator = _GradientAccumulationState.empty(
-                            parameters,
-                            accumulation_dtype=accumulation_dtype,
+                        state, diagnostics = accumulate(kernel, state, payload)
+                        accumulated_metrics = _add_metric_diagnostics(
+                            accumulated_metrics, diagnostics
                         )
+                        continue
+                    window_microbatches = 0
+                    try:
+                        state, evidence = run_training_attempt(
+                            kernel, state, payload, jit=jit
+                        )
+                    except TrainingRejectionBudgetError as error:
+                        raise FloatingPointError(
+                            "Nonfinite model, reference, residual, loss, gradient, or "
+                            "optimizer state encountered; the update was rolled back."
+                        ) from error
+                    accumulated_metrics = _add_metric_diagnostics(
+                        accumulated_metrics, evidence.diagnostics
+                    )
+                    # Budget 0 raises on every supported rejection, so a returned
+                    # rejection is a zero-support window.
+                    if int(evidence.outcome) != TrainingAttemptOutcome.ACCEPTED:
+                        control.emit(TrainingIterationKind.SKIP)
                         accumulated_metrics = [
                             _ObjectiveAccumulator() for _ in metric_names
                         ]
@@ -1909,31 +1931,8 @@ def fit_discrete_model(
                             break
                         continue
 
-                    averaged_gradient = gradient_accumulator.normalized_gradient(
-                        parameters
-                    )
-                    candidate_parameters, candidate_state, candidate_finite = run_update(
-                        parameters,
-                        optimizer_state,
-                        averaged_gradient,
-                    )
-                    if not bool(jax.device_get(candidate_finite)):
-                        raise FloatingPointError("Optimizer produced nonfinite state.")
-                    parameters = candidate_parameters
-                    optimizer_state = candidate_state
-                    model = combine_trainable(parameters, fixed)
                     update_step = control.progress.update_step + 1
                     control.complete_update(update_step)
-                    if target_state is not None:
-                        target_state = target_state.update(
-                            parameters,
-                            accepted=True,
-                            evaluation_parameters=resolve_evaluation_parameters(
-                                evaluation_parameters,
-                                optimizer_state,
-                                parameters,
-                            ),
-                        )
                     metrics = {
                         name: float(jax.device_get(accumulator.value))
                         for name, accumulator in zip(
@@ -1944,10 +1943,6 @@ def fit_discrete_model(
                     }
                     train_steps.append(update_step)
                     train_history.append(metrics)
-                    gradient_accumulator = _GradientAccumulationState.empty(
-                        parameters,
-                        accumulation_dtype=accumulation_dtype,
-                    )
                     accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
                     control.emit(TrainingIterationKind.UPDATE, metrics=metrics)
                     if (
@@ -1962,14 +1957,7 @@ def fit_discrete_model(
                         and update_step % int(validation_config.every) == 0
                     ):
                         assert resolved_validation_batch is not None
-                        evaluated_parameters = resolve_evaluation_parameters(
-                            evaluation_parameters,
-                            optimizer_state,
-                            parameters,
-                        )
-                        evaluation_model = eqx.nn.inference_mode(
-                            combine_trainable(evaluated_parameters, fixed)
-                        )
+                        evaluation_model = evaluation_view()
                         validation_metrics = evaluate(
                             evaluation_model,
                             validation_source,
@@ -2022,14 +2010,7 @@ def fit_discrete_model(
         stopped_by_signal = signal_guard.stop_requested
 
     training_seconds = prior_training_seconds + time.perf_counter() - started
-    evaluated_parameters = resolve_evaluation_parameters(
-        evaluation_parameters,
-        optimizer_state,
-        parameters,
-    )
-    evaluation_model = eqx.nn.inference_mode(
-        combine_trainable(evaluated_parameters, fixed)
-    )
+    evaluation_model = evaluation_view()
     if (
         validation_source is not None
         and validation_config is not None

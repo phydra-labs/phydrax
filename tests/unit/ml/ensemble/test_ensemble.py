@@ -7,12 +7,18 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from phydrax._model import AbstractArrayModel
 from phydrax.ml import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     MLBatch,
 )
 from phydrax.ml.ensemble import (
@@ -31,6 +37,21 @@ from phydrax.ml.ensemble import (
 )
 
 
+_DIRECT_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+        ),
+    ),
+    route=DerivativeRoute.DIRECT,
+)
+
+
 def _result(model, batch, method):
     valid = jnp.ones(batch.case_shape or (), dtype="bool")
     status = jnp.zeros(batch.case_shape or (), dtype=jnp.int32)
@@ -46,7 +67,7 @@ def _result(model, batch, method):
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=GradientContract.direct(),
+        derivative_contract=_DIRECT_CONTRACT,
     )
 
 
@@ -195,7 +216,7 @@ def test_soft_and_hard_voting_are_distinct_and_fail_closed_on_weights():
     assert isinstance(hard.as_trainable(), HardVotingModel)
     assert jnp.allclose(soft.model(batch.dense_features()), 2.5)
     assert jnp.all(hard.model(batch.dense_features()) == 2.0)
-    assert hard.gradient_contract.prediction_inputs == "none"
+    assert hard.derivative_contract.level(DerivativeSurface.INPUT) is (GradientLevel.NONE)
     with pytest.raises(TypeError, match="real-valued"):
         SoftVotingRecipe((_ConstantRecipe(1),), member_weights=jnp.array([1.0j]))
     with pytest.raises(Exception, match="nonnegative"):
@@ -215,7 +236,7 @@ def test_stacking_meta_features_are_strictly_out_of_fold():
     # Each fold trains on four of six samples. A leaky full-data base fit would produce six.
     assert jnp.allclose(model(batch.dense_features()), 4.0)
     assert result.diagnostics.auxiliary_status.shape == (1, 3)
-    assert result.gradient_contract.nondifferentiable_outputs == ("fold_assignment",)
+    assert result.derivative_contract.nondifferentiable_outputs == ("fold_assignment",)
     with pytest.raises(ValueError, match="cannot exceed"):
         StackingRecipe((_CountRecipe(),), _FeatureMeanRecipe(), num_folds=7).fit_batch(
             batch, key=jax.random.key(0)

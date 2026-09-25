@@ -14,11 +14,32 @@ import jax.random as jr
 import optax
 from jaxtyping import Array
 
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
+from .._fingerprint import canonical_fingerprint
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from .._trainable import combine_parameters, fixed_field
+from .._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingKernelSpec,
+    TrainingRejectionBudgetError,
+)
+from .._training_objective import _ObjectiveContribution
 from ..stochastic import StateSpaceProblem
 from ._state_space_amortized import AmortizedGaussianMarkovFamily
 from ._state_space_path_density import state_space_path_log_density
 from ._variational import _tree_all_finite, VariationalConfig
+
+
+_FAMILY_ADDRESS = SampleAddress(
+    "uq.state-space-buffered", "family-initialization", role="initialization"
+)
+_FINAL_DRAWS_ADDRESS = SampleAddress(
+    "uq.state-space-buffered", "final-draws", role="posterior-draws"
+)
 
 
 class StateSpaceWindowBatch(StrictModule):
@@ -35,7 +56,7 @@ class StateSpaceWindowBatch(StrictModule):
 class StateSpaceWindowPlan(StrictModule):
     """Uniform fixed-length target windows with explicit edge probabilities."""
 
-    inclusion_probability: Array
+    inclusion_probability: Array = fixed_field()
     num_steps: int = eqx.field(static=True)
     target_length: int = eqx.field(static=True)
     left_buffer: int = eqx.field(static=True)
@@ -173,6 +194,59 @@ class BufferedStateSpaceVariationalResult(StrictModule):
         return self.log_model.shape[0]
 
 
+class _BufferedPathObjective(StrictModule):
+    """Inverse-inclusion-weighted buffered path ELBO; the payload is the problem.
+
+    The target window is accepted-addressed (a retried attempt reuses it) and the
+    path draws are attempt-addressed. A nonfinite draw, density, or loss makes
+    the numerator nonfinite, so the kernel rolls the attempt back.
+    """
+
+    plan: StateSpaceWindowPlan
+    samples_per_step: int = eqx.field(static=True)
+
+    def __call__(self, parameters, model_state, fixed, problem, keys):
+        plan = self.plan
+        window = plan.sample(keys.accepted_key("window"))
+        case_shape = problem.observations.case_shape
+        family = combine_parameters(parameters, model_state, fixed)
+        context_mask = (
+            jnp.broadcast_to(window.context_mask, case_shape + (plan.num_steps,))
+            & problem.observations.step_valid
+        )
+        window_family = eqx.tree_at(
+            lambda value: value.context_mask, family, context_mask
+        )
+        conditional = window_family.conditional_family
+        paths, _ = conditional.sample_and_log_prob(
+            keys.attempt_key("path-sample"),
+            sample_shape=(self.samples_per_step,),
+        )
+        q_initial, q_transition = conditional.log_prob_terms(paths)
+        model = jax.vmap(lambda path: state_space_path_log_density(problem, path))(paths)
+        target_weight = (
+            window.target_mask.astype(paths.dtype) / window.inclusion_probability
+        )
+        target_weight = jnp.broadcast_to(target_weight, case_shape + (plan.num_steps,))
+        step_terms = (model.transition + model.observation - q_transition) * target_weight
+        initial_weight = target_weight[..., 0]
+        initial_terms = (model.prior - q_initial) * initial_weight
+        elbo_samples = initial_terms.reshape((paths.shape[0], -1)).sum(axis=-1)
+        elbo_samples = elbo_samples + step_terms.reshape((paths.shape[0], -1)).sum(
+            axis=-1
+        )
+        loss = -jnp.mean(elbo_samples)
+        finite = jnp.isfinite(loss) & jnp.all(model.valid) & _tree_all_finite(paths)
+        numerator = jnp.where(finite, loss, jnp.full_like(loss, jnp.nan))
+        diagnostics = (
+            loss,
+            window.target_start,
+            window.context_start,
+            window.context_end,
+        )
+        return _ObjectiveContribution(numerator, 1.0), model_state, diagnostics
+
+
 def fit_buffered_state_space_variational(
     problem: StateSpaceProblem,
     /,
@@ -182,7 +256,12 @@ def fit_buffered_state_space_variational(
     family: AmortizedGaussianMarkovFamily | None = None,
     num_samples: int = 1000,
 ) -> BufferedStateSpaceVariationalResult:
-    """Fit an inverse-inclusion-weighted buffered path ELBO approximation."""
+    """Fit an inverse-inclusion-weighted buffered path ELBO approximation.
+
+    Every step is one attempt of the shared training kernel (`MODEL` root
+    authority, one data-fit objective, clipped Adam). A nonfinite step rolls
+    back and raises `FloatingPointError`.
+    """
 
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be StateSpaceProblem.")
@@ -202,76 +281,44 @@ def fit_buffered_state_space_variational(
             problem,
             hidden_size=config.hidden_size,
             scale_floor=config.scale_floor,
-            key=jr.fold_in(key, 0xB0FFE2),
+            key=derive_key(key, _FAMILY_ADDRESS),
         )
         if family is None
         else family.condition(problem)
     )
     if not isinstance(family_, AmortizedGaussianMarkovFamily):
         raise TypeError("family must be AmortizedGaussianMarkovFamily or None.")
-    optimizer = optax.chain(
-        optax.clip_by_global_norm(config.optimization.gradient_clip),
-        optax.adam(config.optimization.learning_rate),
+    optimization = config.optimization
+    kernel = prepare_training_kernel(
+        family_,
+        (
+            KernelObjective(
+                objective_id="buffered-path-elbo",
+                kind=ObjectiveKind.DATA_FIT,
+                route=DerivativeRoute.DIRECT,
+                fn=_BufferedPathObjective(plan, optimization.samples_per_step),
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(
+                optax.chain(
+                    optax.clip_by_global_norm(optimization.gradient_clip),
+                    optax.adam(optimization.learning_rate),
+                ),
+                rule_id=canonical_fingerprint(
+                    {
+                        "kind": "buffered-path-elbo-clipped-adam",
+                        "gradient_clip": optimization.gradient_clip.hex(),
+                        "learning_rate": optimization.learning_rate.hex(),
+                    }
+                ),
+            ),
+            context="fit_buffered_state_space_variational",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.MODEL,
     )
-    dynamic_family, static_family = eqx.partition(family_, eqx.is_inexact_array)
-    optimizer_state = optimizer.init(dynamic_family)
-    case_shape = problem.observations.case_shape
-    step_valid = problem.observations.step_valid
-
-    def loss_function(current_dynamic, sample_key, window):
-        current_family = eqx.combine(current_dynamic, static_family)
-        context_mask = (
-            jnp.broadcast_to(
-                window.context_mask,
-                case_shape + (plan.num_steps,),
-            )
-            & step_valid
-        )
-        window_family = eqx.tree_at(
-            lambda value: value.context_mask,
-            current_family,
-            context_mask,
-        )
-        conditional = window_family.conditional_family
-        paths, _ = conditional.sample_and_log_prob(
-            sample_key,
-            sample_shape=(config.optimization.samples_per_step,),
-        )
-        q_initial, q_transition = conditional.log_prob_terms(paths)
-        model = jax.vmap(lambda path: state_space_path_log_density(problem, path))(paths)
-        target_weight = (
-            window.target_mask.astype(paths.dtype) / window.inclusion_probability
-        )
-        target_weight = jnp.broadcast_to(
-            target_weight,
-            case_shape + (plan.num_steps,),
-        )
-        step_terms = (model.transition + model.observation - q_transition) * target_weight
-        initial_weight = target_weight[..., 0]
-        initial_terms = (model.prior - q_initial) * initial_weight
-        elbo_samples = initial_terms.reshape((paths.shape[0], -1)).sum(axis=-1)
-        elbo_samples = elbo_samples + step_terms.reshape((paths.shape[0], -1)).sum(
-            axis=-1
-        )
-        loss = -jnp.mean(elbo_samples)
-        finite = jnp.isfinite(loss) & jnp.all(model.valid) & _tree_all_finite(paths)
-        return loss, finite
-
-    @eqx.filter_jit
-    def update(current_dynamic, current_optimizer_state, sample_key, window):
-        (loss, finite), gradient = eqx.filter_value_and_grad(
-            loss_function,
-            has_aux=True,
-        )(current_dynamic, sample_key, window)
-        gradient_norm = optax.tree.norm(gradient)
-        updates, next_optimizer_state = optimizer.update(
-            gradient,
-            current_optimizer_state,
-            current_dynamic,
-        )
-        next_dynamic = eqx.apply_updates(current_dynamic, updates)
-        finite = finite & jnp.isfinite(gradient_norm) & _tree_all_finite(next_dynamic)
-        return next_dynamic, next_optimizer_state, loss, gradient_norm, finite
+    state = kernel.init(family_, key)
 
     recorded_steps = []
     starts = []
@@ -281,37 +328,31 @@ def fit_buffered_state_space_variational(
     gradient_history = []
     finite_history = []
     started = perf_counter()
-    for step in range(config.optimization.num_steps):
-        window_key = jr.fold_in(jr.fold_in(key, 0x710D0), step)
-        sample_key = jr.fold_in(jr.fold_in(key, 0x5A4F1E), step)
-        window = plan.sample(window_key)
-        dynamic_family, optimizer_state, loss, gradient_norm, finite = update(
-            dynamic_family,
-            optimizer_state,
-            sample_key,
-            window,
-        )
-        jax.block_until_ready(loss)
-        if not bool(finite):
+    for step in range(optimization.num_steps):
+        try:
+            state, evidence = run_training_attempt(kernel, state, problem)
+        except TrainingRejectionBudgetError as error:
             raise FloatingPointError(
-                f"Buffered variational optimization became nonfinite at step {step + 1}."
-            )
+                f"Buffered variational optimization became nonfinite at step {step + 1}; "
+                "the encoder was rolled back to its last accepted state."
+            ) from error
         completed = step + 1
         if (
-            completed % config.optimization.record_every == 0
-            or completed == config.optimization.num_steps
+            completed % optimization.record_every == 0
+            or completed == optimization.num_steps
         ):
+            loss, target_start, context_start, context_end = evidence.diagnostics[0]
             recorded_steps.append(completed)
-            starts.append(window.target_start)
-            context_starts.append(window.context_start)
-            context_ends.append(window.context_end)
+            starts.append(target_start)
+            context_starts.append(context_start)
+            context_ends.append(context_end)
             elbo_history.append(-loss)
-            gradient_history.append(gradient_norm)
-            finite_history.append(finite)
+            gradient_history.append(evidence.gradient_norm)
+            finite_history.append(evidence.finite)
 
-    fitted_family = eqx.combine(dynamic_family, static_family)
+    fitted_family = kernel.tree(state)
     states, log_variational = fitted_family.sample_and_log_prob(
-        jr.fold_in(key, 0xF17A1),
+        derive_key(key, _FINAL_DRAWS_ADDRESS),
         sample_shape=(draws,),
     )
     log_model = jax.vmap(

@@ -1,6 +1,6 @@
 # Fixed-mesh FEM solver acceleration
 
-This guide covers linear-history initial guesses, exact FEM diagonals,
+This guide covers history-based initial guesses, exact FEM diagonals,
 p-transfer, p-multigrid, collocated tensor kernels, staged DG traces,
 quadrature policies, one-ring Schwarz, and low-order auxiliary operators.
 
@@ -11,17 +11,22 @@ The algorithms are Phydrax-native. The design was informed by
 [overlapping Schwarz preconditioner](https://github.com/paranumal/libparanumal/blob/main/solvers/elliptic/src/ellipticPreconOAS.cpp), and
 [tensor-product kernels](https://github.com/paranumal/libparanumal/blob/main/solvers/elliptic/okl/ellipticAxQuad2D.okl).
 
-## Linear solve histories
+## History initial guesses
 
-`LinearSolveHistory` stores accepted solution vectors and their operator images.
-For projection strategies it chooses coefficients that minimize the represented
-RHS residual and reconstructs an initial solution from the paired solution
-basis. Histories carry explicit operator-family, constraint, and nullspace
-identities. Incompatible histories are rejected rather than reused by shape.
+`HistoryInitialGuess` stores accepted solution vectors and their operator
+images. For projection strategies it chooses coefficients that minimize the
+represented RHS residual and reconstructs an initial solution from the paired
+solution basis. Histories carry explicit operator-family, constraint, and
+nullspace identities. Incompatible histories are rejected rather than reused by
+shape.
 
-Updates are immutable and require an explicit acceptance decision. Initial
-guesses are treated as algorithmic data and stop gradients by default; the
-converged solve retains its existing differentiation policy.
+A history is an `AbstractInitialGuessProvider`: pass it as
+`phx.linalg.solve(..., initial_guess=history)`. The solve checks the proposed
+guess's true residual against the native zero guess on device, uses it only
+when it strictly improves the residual, and reports the branch in
+`result.initial_guess`. Updates are immutable and require an explicit acceptance
+decision. The selected guess is algorithmic data and carries no derivative; the
+solve retains its own differentiation policy.
 
 Available strategies are:
 
@@ -29,7 +34,8 @@ Available strategies are:
 - last accepted solution;
 - paired RHS/solution projection;
 - fixed-capacity rolling history;
-- stabilized polynomial extrapolation from accepted times.
+- stabilized polynomial extrapolation from accepted times to
+  `history.at_time(time)`.
 
 The history design follows ideas described in
 [Initial Guesses for Sequences of Linear Systems](https://arxiv.org/abs/2009.10863).

@@ -11,10 +11,26 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
+from ..._model._array import value_derivative_contract
+from ..._trainable import fixed_field
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract, ML_NONCONVERGED
+from .._contracts import (
+    AbstractRecipe,
+    FitResult,
+    ML_NONCONVERGED,
+    prediction_fit_contract,
+)
 from .._numerics import pairwise_distances, weighted_mean
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
@@ -25,6 +41,15 @@ from ._common import (
     _score_bounds,
     _weighted_threshold,
     OutlierDiagnostics,
+)
+
+
+# Negative log-sum-exp of Gaussian kernels and summed pseudo-Huber terms are
+# both smooth scores.
+_SMOOTH_SCORE_CONTRACT = prediction_fit_contract(
+    value_derivative_contract(DerivativeRegularity.smooth()),
+    route=DerivativeRoute.DIRECT,
+    nondifferentiable_outputs=("predict",),
 )
 
 
@@ -82,17 +107,20 @@ def _kde_leave_one_out_one(
     return -log_density
 
 
-class KernelDensityOutlierModel(AbstractArrayModel):
+class KernelDensityOutlierModel(AbstractFittedModel):
     """Gaussian KDE negative-log-density anomaly score."""
 
-    training_features: Array
-    training_weights: Array
+    training_features: Array = fixed_field()
+    training_weights: Array = fixed_field()
     threshold: Array
     bandwidth: float = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
     _input_binding: ClassVar[ModelBinding] = _BLOCKWISE_BINDING
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_SCORE_CONTRACT
 
     def __init__(
         self,
@@ -199,15 +227,21 @@ class KernelDensityOutlierRecipe(AbstractRecipe):
             bandwidth=self.bandwidth,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="smooth",
-            fit_mode="direct",
-            nondifferentiable_outputs=("predict", "threshold", "valid", "status"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            nondifferentiable_outputs=("threshold", "valid", "status"),
             conditions=(
                 "leave-one-out score ordering at contamination threshold is fixed",
             ),
@@ -218,7 +252,7 @@ class KernelDensityOutlierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="kernel-density-outlier",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -282,7 +316,7 @@ def _fit_robust_one(
     return location, scale, scores, residual, objective
 
 
-class RobustNoveltyModel(AbstractArrayModel):
+class RobustNoveltyModel(AbstractFittedModel):
     """Smooth pseudo-Huber standardized novelty score with a separate hard cutoff."""
 
     location: Array
@@ -293,6 +327,9 @@ class RobustNoveltyModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
     _input_binding: ClassVar[ModelBinding] = _BLOCKWISE_BINDING
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_SCORE_CONTRACT
 
     def __init__(
         self,
@@ -426,15 +463,21 @@ class RobustNoveltyRecipe(AbstractRecipe):
             tuning=self.tuning,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
-            nondifferentiable_outputs=("predict", "threshold", "valid", "status"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
+            nondifferentiable_outputs=("threshold", "valid", "status"),
             conditions=(
                 "fixed IRLS iteration count",
                 "scale-floor branches and score ordering at threshold are held fixed",
@@ -446,7 +489,7 @@ class RobustNoveltyRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="robust-pseudo-huber-novelty",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

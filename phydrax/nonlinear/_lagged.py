@@ -54,6 +54,10 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
     update solves ``B(state) direction = -residual(state)`` and proposes the damped
     correction. Application only certifies a finite, physically valid proposal; an
     outer nonlinear method remains responsible for root convergence.
+
+    ``operator_function`` is a stateless operation or a callable module held as
+    a dynamic child whose arrays keep their own roles; arrays hidden in closures
+    are rejected at training and artifact boundaries.
     """
 
     operator_function: Any

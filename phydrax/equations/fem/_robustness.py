@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -260,18 +261,35 @@ class ConservationCorrectionResult(StrictModule):
 
 
 class ConservationCorrectionLadderPlan(StrictModule, NonTrainableState):
-    differentiability_policy_id: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, /, *, differentiability_policy_id: str = "branchwise"):
-        policy = str(differentiability_policy_id)
-        if policy not in ("branchwise", "unsupported"):
-            raise ValueError("Hard correction ladders are branchwise or unsupported.")
-        self.differentiability_policy_id = policy
+    def __init__(
+        self,
+        /,
+        *,
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.BRANCHWISE
+        ),
+    ):
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.UNSUPPORTED
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "ConservationCorrectionLadderPlan supports BRANCHWISE or "
+                    f"UNSUPPORTED; got {differentiability.name}."
+                )
+        self.differentiability = differentiability
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "conservation-correction-ladder",
-                "differentiability": policy,
+                "differentiability": differentiability.value,
             }
         )
 
@@ -337,7 +355,7 @@ class ConservationCorrectionLadderPlan(StrictModule, NonTrainableState):
             troubled_cell_mask=sensor.troubled,
             correction_level=levels,
             accepted=True,
-            differentiability_policy_id=self.differentiability_policy_id,
+            differentiability_policy_id=self.differentiability.value,
         )
         rate = selected.scatter_content_rate()
         successful = jnp.asarray(True)

@@ -107,9 +107,10 @@ def test_bilby_json_import_rejects_duplicate_object_keys(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="duplicate key"):
+    with pytest.raises(phx.interchange.ResourceReadError) as caught:
         phx.interchange.read_bilby_result_json(
             path,
             trusted_root=tmp_path,
             limits=_limits(),
         )
+    assert caught.value.reason == "malformed"

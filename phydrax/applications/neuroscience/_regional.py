@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...ein import contract
 from ...solver import DelayHistoryWindow
@@ -24,7 +25,7 @@ def _parameter(value: ArrayLike, name: str, /, *, positive: bool = False) -> Arr
     raw = jnp.asarray(value)
     if raw.ndim > 1 or jnp.iscomplexobj(raw):
         raise ValueError(f"{name} must be a real scalar or region vector.")
-    array = raw.astype(jnp.result_type(raw.dtype, jnp.float64))
+    array = raw.astype(inexact_result_type(raw.dtype))
     bad = ~jnp.all(jnp.isfinite(array))
     if positive:
         bad = bad | jnp.any(array <= 0.0)

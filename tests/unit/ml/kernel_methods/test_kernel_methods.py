@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute
 from phydrax.kernels import FiniteFeatureKernel, SquaredExponentialKernel
 from phydrax.ml import MLBatch
 from phydrax.ml.kernel_methods import (
@@ -52,7 +53,7 @@ def test_kernel_ridge_preserves_cases_masks_weights_complex_outputs_and_gradient
     assert prediction.shape == (2, 3)
     assert jnp.iscomplexobj(prediction)
     assert result.diagnostics.effective_samples.shape == (2,)
-    assert result.gradient_contract.fit_mode == "direct"
+    assert result.derivative_contract.route is DerivativeRoute.DIRECT
     assert jax.jit(model)(query).shape == prediction.shape
 
     point_gradient = jax.grad(
@@ -120,7 +121,7 @@ def test_ls_svm_svc_svr_and_one_class_expose_smooth_and_hard_contracts():
         assert model(x[:2]).shape == (2,)
         assert model.predict_proba(x[:2]).shape == (2, 2)
         assert model.predict(x[:2]).dtype == jnp.int32
-        assert "predict" in result.gradient_contract.nondifferentiable_outputs
+        assert "predict" in result.derivative_contract.nondifferentiable_outputs
     assert svr_result.as_trainable()(x[:2]).shape == (2,)
     assert one_result.as_trainable().inlier_probability(x[:2]).shape == (2,)
     assert one_result.as_trainable().predict(x[:2]).shape == (2,)
@@ -151,7 +152,7 @@ def test_kernel_pca_nystrom_and_random_features_have_key_geometry_and_jit_contra
     kpca_model = kpca.as_trainable()
     assert kpca_model(x[:3]).shape == (3, 2)
     assert kpca.diagnostics.rank.shape == ()
-    assert kpca.gradient_contract.fit_mode == "spectral"
+    assert kpca.derivative_contract.route is DerivativeRoute.SPECTRAL
     assert jnp.all(
         jnp.isfinite(jax.grad(lambda point: jnp.sum(kpca_model(point) ** 2))(x[0]))
     )
@@ -229,4 +230,4 @@ def test_gp_classification_reuses_exact_and_finite_uq_factor_geometry():
     assert categorical_probability.shape == (2, 3)
     assert jnp.allclose(jnp.sum(categorical_probability, axis=-1), 1.0, atol=1e-5)
     assert categorical.as_trainable().predict(x[:2]).dtype == jnp.int32
-    assert categorical.gradient_contract.fit_mode == "unrolled"
+    assert categorical.derivative_contract.route is DerivativeRoute.UNROLLED

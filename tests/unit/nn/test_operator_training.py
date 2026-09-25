@@ -330,7 +330,7 @@ def test_dataset_preserves_named_multi_query_target_contracts():
     )
     dataset = phx.nn.operator.training.OperatorDataset(batch, targets)
     selected = dataset.take(jnp.array([1]))
-    assert tuple(selected.targets.fields) == ("state", "flux")
+    assert tuple(selected.targets.fields) == ("flux", "state")
     assert selected.targets.field("state").values.shape == (1, 3)
     assert selected.targets.field("flux").values.shape == (1, 4, 2)
     assert selected.targets.field("flux").query_name == "flux-query"
@@ -377,8 +377,8 @@ def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
     )
     normalized = policy.normalize_targets(targets)
     restored = policy.denormalize_targets(normalized)
-    assert tuple(policy.targets) == ("wave", "sensor")
-    assert tuple(policy.query_coordinates) == ("wave-query", "sensor-query")
+    assert tuple(policy.targets) == ("sensor", "wave")
+    assert tuple(policy.query_coordinates) == ("sensor-query", "wave-query")
     assert jnp.allclose(
         restored.field("wave").values,
         targets.field("wave").values,
@@ -429,7 +429,7 @@ def _assert_trees_equal(left, right):
 
 
 def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
-    model = eqx.nn.Linear(1, 1, key=jr.key(1))
+    model = _linear_model()
     optimizer = optax.adam(1e-2)
     state = optimizer.init(eqx.filter(model, eqx.is_array))
     key = jr.key(9)
@@ -508,7 +508,7 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
     manifest_path = path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["format"] == "phydrax-operator-training-checkpoint"
-    manifest.pop("version")
+    manifest.pop("binding")
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="current canonical fields"):
         phx.nn.operator.training.load_operator_training_checkpoint(
@@ -517,6 +517,94 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
             expected_state,
             expected_schema=schema,
         )
+
+
+def _linear_model():
+    return phx.nn.models.EquinoxModel(
+        eqx.nn.Linear(1, 1, key=jr.key(1)),
+        in_size=1,
+        out_size=1,
+        layout="passthrough",
+    )
+
+
+class _StaticScale(phx.StrictModule):
+    weight: jax.Array
+
+    def __call__(self, value):
+        return self.weight * value
+
+
+def test_checkpoint_binding_separates_dynamic_and_static_weights(tmp_path):
+    model = _linear_model()
+    optimizer_state = optax.adam(1e-2).init(eqx.filter(model, eqx.is_array))
+    scale = _StaticScale(jnp.asarray(2.0))
+
+    def save(name, current, static_scale):
+        path = phx.nn.operator.training.save_operator_training_checkpoint(
+            tmp_path / name,
+            current,
+            optimizer_state,
+            step=0,
+            key=jr.key(0),
+            static_callables={"output_scale": static_scale},
+        )
+        return path, json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+
+    base_path, base = save("base", model, scale)
+    updated = eqx.apply_updates(
+        model, jax.tree.map(jnp.ones_like, eqx.filter(model, eqx.is_inexact_array))
+    )
+    dynamic_path, dynamic = save("dynamic", updated, scale)
+    _, static = save("static", model, _StaticScale(jnp.asarray(3.0)))
+
+    assert dynamic["binding"]["semantic_id"] == base["binding"]["semantic_id"]
+    assert (
+        dynamic["binding"]["numeric_revision_id"]
+        != base["binding"]["numeric_revision_id"]
+    )
+    assert (
+        dynamic["binding"]["executable_signature_id"]
+        == base["binding"]["executable_signature_id"]
+    )
+    assert (
+        static["binding"]["numeric_revision_id"] == base["binding"]["numeric_revision_id"]
+    )
+    assert (
+        static["binding"]["executable_signature_id"]
+        != base["binding"]["executable_signature_id"]
+    )
+
+    def load(path, static_scale):
+        return phx.nn.operator.training.load_operator_training_checkpoint(
+            path,
+            model,
+            optimizer_state,
+            static_callables={"output_scale": static_scale},
+        )
+
+    restored = load(base_path, scale)
+    assert restored.binding.to_record() == base["binding"]
+    with pytest.raises(ValueError, match="executable_signature_id"):
+        load(base_path, _StaticScale(jnp.asarray(3.0)))
+
+    manifest_path = base_path / "manifest.json"
+    swapped_arrays = dict(
+        base,
+        state_file=dynamic["state_file"],
+        state_sha256=dynamic["state_sha256"],
+    )
+    (base_path / dynamic["state_file"]).write_bytes(
+        (dynamic_path / dynamic["state_file"]).read_bytes()
+    )
+    manifest_path.write_text(json.dumps(swapped_arrays), encoding="utf-8")
+    with pytest.raises(ValueError, match="numeric_revision_id"):
+        load(base_path, scale)
+
+    corrupt = dict(base, binding=dict(base["binding"], binding_id="0" * 64))
+    manifest_path.write_text(json.dumps(corrupt), encoding="utf-8")
+    with pytest.raises(ValueError, match="corrupt"):
+        load(base_path, scale)
 
 
 def test_dtype_and_prefetch_loader_apply_explicit_device_policy():
@@ -937,12 +1025,16 @@ def test_fit_operator_returns_task_bound_physical_operator():
     output_pipeline = phx.nn.operator.training.OperatorOutputPipeline(
         phx.nn.operator.training.ConservationProjection("solution", source_name="state")
     )
+    solution_port = task.field_by_name["solution"].value_port()
     result = phx.nn.operator.training.fit_operator(
         _fit_model(seed=4),
         dataset,
         task=task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "solution"},
+        output_ports={"output": solution_port},
+        port_mapping=phx.PortMapping(
+            outputs=((solution_port.port_id, solution_port.port_id),)
+        ),
         epochs=1,
         steps=1,
         batch_size=4,

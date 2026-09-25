@@ -14,10 +14,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._differentiation import BranchDifferentiationPolicy
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field, NonTrainableState
 from ..discretization import TopologyEpoch
 from ..discretization._conservation_ledger import (
     AcceptedConservationFluxIntegralBlock,
@@ -400,33 +401,35 @@ class FiniteVolumeEmbeddedAdvanceEvidence(StrictModule):
 
 
 class FiniteVolumeAdvanceResult(StrictModule):
-    runtime_state: FiniteVolumeRuntimeState
-    accepted: Array
-    retries: Array
-    attempted_step_size: Array
-    accepted_step_size: Array
-    positivity: FiniteVolumeAdmissibilityReport
-    accepted_flux_integrals: AcceptedConservationIntegralLedger
+    runtime_state: FiniteVolumeRuntimeState = fixed_field()
+    accepted: Array = fixed_field()
+    retries: Array = fixed_field()
+    attempted_step_size: Array = fixed_field()
+    accepted_step_size: Array = fixed_field()
+    positivity: FiniteVolumeAdmissibilityReport = fixed_field()
+    accepted_flux_integrals: AcceptedConservationIntegralLedger = fixed_field()
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
-    ale: FiniteVolumeALEAdvanceEvidence | None
-    embedded: FiniteVolumeEmbeddedAdvanceEvidence | None
+    ale: FiniteVolumeALEAdvanceEvidence | None = fixed_field()
+    embedded: FiniteVolumeEmbeddedAdvanceEvidence | None = fixed_field()
     successor_runtime: PreparedFiniteVolumeRuntime | None = None
-    shallow_water_integrals: ShallowWaterAcceptedFaceIntegrals | None = None
+    shallow_water_integrals: ShallowWaterAcceptedFaceIntegrals | None = fixed_field(
+        default=None
+    )
     stage_flux_trace: FiniteVolumeStageFluxTrace | None = None
 
 
 class FiniteVolumeScheduledAdvanceResult(StrictModule):
     """One exact prescribed-step attempt with explicit stability evidence."""
 
-    runtime_state: FiniteVolumeRuntimeState
+    runtime_state: FiniteVolumeRuntimeState = fixed_field()
     attempted: FiniteVolumeAdvanceResult
-    accepted: Array
-    requested_step_size: Array
-    stable_step_size: Array
-    stability_margin: Array
+    accepted: Array = fixed_field()
+    requested_step_size: Array = fixed_field()
+    stable_step_size: Array = fixed_field()
+    stability_margin: Array = fixed_field()
 
 
-class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
+class PreparedFiniteVolumeRuntime(StrictModule):
     """Content-authoritative SSPRK3 runtime with bounded positivity retries."""
 
     dynamics: (
@@ -443,10 +446,12 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
     policy: FiniteVolumeStepPolicy
     stage_state_provider: FiniteVolumeStageStateProvider | None
     stage_flux_provider: FiniteVolumeStageFluxProvider | None
-    effective_cell_volumes: Array
-    active_cell_mask: Array
+    effective_cell_volumes: Array = fixed_field()
+    active_cell_mask: Array = fixed_field()
     precision: FiniteVolumePrecisionPolicy
-    static_flux_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...]
+    static_flux_rate_block_templates: tuple[ConservationStageFluxRateBlock, ...] = (
+        fixed_field()
+    )
     embedded_redistribution: ConservativeSmallCellRedistributionPlan | None
     embedded_stage_template: FiniteVolumeStageMetrics | None
     sliding_plan: PeriodicSlidingInterfacePlan | None
@@ -541,7 +546,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             fallback_method = FiniteVolumeMethodPlan(
                 PiecewiseConstantReconstruction(),
                 dynamics.method.interface_solver,
-                differentiability="branchwise",
+                differentiability=BranchDifferentiationPolicy.BRANCHWISE,
             )
             fallback = PreparedFiniteVolumeDynamics(
                 dynamics.system,
@@ -558,7 +563,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 PiecewiseConstantReconstruction(),
                 positivity.fallback_flux,
                 viscous=dynamics.method.viscous,
-                differentiability="branchwise",
+                differentiability=BranchDifferentiationPolicy.BRANCHWISE,
             )
             fallback = PreparedFiniteVolumeDynamics(
                 dynamics.system,

@@ -46,13 +46,13 @@ against referenced stage evidence. Units and aggregation
 required stage yields failed evidence; an absent required stage is inconclusive
 and cannot be compensated by a passing metric.
 
-The four profiles returned by `biophysical_candidate_profiles()` are narrow,
-evidence-free candidates:
+The four molecular profiles returned by `biophysical_candidate_profiles()` are
+narrow, evidence-free candidates:
 
-- `protein.stability.megascale-natural-small-domain`
-- `nucleic.strand-displacement.rna-to-dna.declared-condition`
-- `protein.coordinate-proposal.fixed-construct-standard-chemistry`
-- `rna.ensemble.adenine-riboswitch.declared-protocol`
+- `protein.stability.megascale-natural-small-domain.canonical`
+- `nucleic.strand-displacement.rna-to-dna.declared-condition.canonical`
+- `protein.coordinate-proposal.fixed-construct-standard-chemistry.canonical`
+- `rna.ensemble.adenine-riboswitch.declared-protocol.canonical`
 
 Every returned `CapabilityProfile` has `released=False` and default version
 `candidate`. A candidate name is not release evidence and is not discoverable as

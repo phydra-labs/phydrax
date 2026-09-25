@@ -11,8 +11,10 @@ from jaxtyping import Array, Key
 
 from phydrax.ein import contract
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from .._base import _AbstractBaseModel
+from .._contracts import activated_affine
 from .._initializers import _initializer_dict
 from .._keys import EvalKey
 from .._utils import (
@@ -229,3 +231,6 @@ class Linear(_AbstractBaseModel):
 
         # Apply the activation after shaping to preserve value dimensions
         return self.activation(y)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return activated_affine(self.activation)

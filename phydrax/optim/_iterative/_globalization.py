@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._tree_math import (
     tree_allfinite as _tree_allfinite,
@@ -130,7 +131,7 @@ def armijo_backtracking(
     directional = jnp.asarray(directional_derivative)
     if directional.shape != ():
         raise ValueError("Armijo directional derivative must be scalar.")
-    scalar_dtype = jnp.result_type(initial_value, directional, jnp.float64)
+    scalar_dtype = inexact_result_type(initial_value, directional)
     initial_rate = jnp.asarray(policy.initial_rate, dtype=scalar_dtype)
     minimum_rate = jnp.asarray(policy.minimum_rate, dtype=scalar_dtype)
     contraction = jnp.asarray(policy.contraction, dtype=scalar_dtype)
@@ -346,7 +347,7 @@ def strong_wolfe_line_search(
     initial_directional = jnp.asarray(_tree_inner(gradient, direction))
     if initial_directional.shape != ():
         raise ValueError("Strong-Wolfe directional derivative must be scalar.")
-    scalar_dtype = jnp.result_type(initial_value, initial_directional, jnp.float64)
+    scalar_dtype = inexact_result_type(initial_value, initial_directional)
     zero = jnp.asarray(0.0, dtype=scalar_dtype)
     initial_rate = jnp.asarray(policy.initial_rate, dtype=scalar_dtype)
     minimum_rate = jnp.asarray(policy.minimum_rate, dtype=scalar_dtype)

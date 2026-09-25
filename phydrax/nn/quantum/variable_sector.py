@@ -15,6 +15,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from ...operators.quantum._amplitude import LogAmplitude
 from ...operators.quantum.variable_sector import (
     VariableParticleConfiguration,
@@ -62,7 +63,7 @@ def _log_amplitude(value: Array, valid: Array, /) -> LogAmplitude:
     return LogAmplitude(jnp.real(value), phase, valid=valid & jnp.isfinite(value))
 
 
-class BosonicJastrowAmplitude(StrictModule):
+class BosonicJastrowAmplitude(StrictModule, ParameterOwner):
     """Complex permutation-invariant Gaussian/Jastrow Fock amplitude.
 
     For species ``s`` the one-body term is
@@ -210,7 +211,7 @@ class BosonicJastrowAmplitude(StrictModule):
         )
 
 
-class FermionicDeterminantJastrowAmplitude(StrictModule):
+class FermionicDeterminantJastrowAmplitude(StrictModule, ParameterOwner):
     """Species-resolved Slater determinants times a symmetric complex Jastrow.
 
     Every determinant is embedded in a fixed ``capacity × capacity`` matrix with

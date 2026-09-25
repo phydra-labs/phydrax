@@ -535,12 +535,12 @@ def qualify() -> dict[str, object]:
     }
     quantum_cases, quantum_criteria = _quantum_transport_cases()
     profile_names = (
-        "semiconductor.detector.fixed-linear-electrostatics",
-        "semiconductor.detector.prescribed-shockley-ramo",
-        "semiconductor.quantum.chain-landauer",
-        "semiconductor.quantum.chain-coherent-ac",
-        "semiconductor.quantum.chain-finite-lead-transient",
-        "semiconductor.quantum.chain-optical-phonon-scba",
+        "semiconductor.detector.fixed-linear-electrostatics.canonical",
+        "semiconductor.detector.prescribed-shockley-ramo.canonical",
+        "semiconductor.quantum.chain-landauer.canonical",
+        "semiconductor.quantum.chain-coherent-ac.canonical",
+        "semiconductor.quantum.chain-finite-lead-transient.canonical",
+        "semiconductor.quantum.chain-optical-phonon-scba.canonical",
     )
     return {
         "campaigns": {

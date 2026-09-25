@@ -67,7 +67,7 @@ The private general owner is `phydrax._execution_workset`. It extends the existi
 
 Values supplied to `gather`, evaluation, and checkpoints are always ordered by `plan.semantic_ids`, not by the order passed to the constructor. `gather` and `scatter` work on numeric array pytrees and preserve trailing shapes. Padded lanes gather a safe duplicate from their own homogeneous bucket so a kernel never receives a synthetic zero state; `valid_mask` identifies those lanes, and scatter masks their outputs before returning canonical item order.
 
-Each semantic ID is hashed into a checked 32-bit RNG index. A work item key is obtained by folding that index and an explicit per-item restart counter into the root key. The semantic key therefore does not depend on bucket capacity, padding, or lane placement. JAX JEP 263 specifies the functional PRNG model and `fold_in` semantics [4]; the semantic-ID hashing, collision rejection, and restart-counter policy are Phydrax contracts introduced here.
+Each semantic ID selects a checked 32-bit RNG index: the token of Phydrax's semantic sample address for the workset item family extended by that ID. A work item key is derived from that address by folding the index and an explicit per-item restart counter into the root key, the same addressing substrate the training kernel uses. The semantic key therefore does not depend on bucket capacity, padding, lane placement, or the other items in the plan. JAX JEP 263 specifies the functional PRNG model and `fold_in` semantics [4]; the semantic-ID addressing, collision rejection, and restart-counter policy are Phydrax contracts introduced here.
 
 `evaluate_execution_worksets_serial` and `evaluate_execution_worksets_vmap` invoke the same operation with
 
@@ -75,7 +75,7 @@ Each semantic ID is hashed into a checked 32-bit RNG index. A work item key is o
 
 Both return `ExecutionWorksetEvaluation` and `ExecutionWorksetEvidence`. The evaluation carries the whole result and the atomically advanced per-item RNG counters; counter overflow fails before a new continuation state is exposed. Evidence reports finite output, exact coverage, active items, and padded lanes. The serial route is an executable reference for the vectorized route, not a different mathematical model.
 
-`ExecutionWorksetCheckpoint` content-addresses the prepared identity, canonical semantic IDs, complete item-state pytree, and RNG counters. Restore rejects a checkpoint from another preparation and rejects any payload whose recomputed content identity differs. There is no partial-state restore or symptom-level fallback.
+`ExecutionWorksetCheckpoint` content-addresses the prepared identity, canonical semantic IDs, the sorted `NumericRevision` IDs of learned content bound into the items (none here), complete item-state pytree, and RNG counters. Restore rejects a checkpoint from another preparation or other bound numeric revisions and rejects any payload whose recomputed content identity differs. There is no partial-state restore or symptom-level fallback.
 
 ## Example and qualification
 

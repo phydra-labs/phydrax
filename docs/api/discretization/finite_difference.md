@@ -178,6 +178,11 @@ Periodic SBP conservation diagnostics use a twofold compensated reduction for th
 quadrature-weighted residual in the prepared grid dtype. The antisymmetric pairwise
 flux construction, entropy rates, and evolution residual are unchanged.
 
+`SBPFluxDifferencingMethodPlan.volume_flux` is a dynamic child typed by the neutral
+numerical-flux slot, so a learned symmetric two-point flux keeps its parameters.
+The optional source uses the same `(time, state, coordinates, args)` conservation
+source ABI as the finite-volume owners.
+
 
 ::: phydrax.discretization.TensorSBPPlan
 
@@ -470,6 +475,34 @@ different policy.
 ---
 
 ::: phydrax.solver.CompatibleThermoelasticDynamics
+
+### Field views
+
+Finite-difference nodal values become field views only through an explicit
+interpolation policy; point clouds use a prepared moving-least-squares
+reconstruction with conditioning and support evidence.
+
+::: phydrax.discretization.prepare_finite_difference_field_reconstruction
+
+---
+
+::: phydrax.discretization.MultilinearGridInterpolation
+
+---
+
+::: phydrax.discretization.BSplineGridInterpolation
+
+---
+
+::: phydrax.discretization.FiniteDifferenceFieldReconstructionKernel
+
+---
+
+::: phydrax.discretization.prepare_point_cloud_field_reconstruction
+
+---
+
+::: phydrax.discretization.PointCloudFieldReconstructionKernel
 
 ## Staggered acoustic reference solver
 

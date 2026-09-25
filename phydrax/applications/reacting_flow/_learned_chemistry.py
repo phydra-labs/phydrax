@@ -17,14 +17,42 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
+from ..._admissibility import (
+    AdmissibilityHeader,
+    AdmissibilityReason,
+    DOMAIN_REASON_SHIFT,
+    guard_derivative_validity,
+    reason_bits_where,
+)
+from ..._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._identity import SemanticProvenance
+from ..._model._frozen import trainable_provider
+from ..._model._ports import intrinsic_model_ports
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import (
+    ExplicitFreeze,
+    fixed_field,
+    NonTrainableState,
+    parameter_field,
+)
 from ...equations._chemical_mechanism import PreparedChemicalMechanism
 from ...qualification import ReferenceArtifactManifest
 
 
 class LearnedChemicalFallbackReason(IntEnum):
+    """Prioritized fallback code; domain reasons also set header reason bits.
+
+    A domain reason `r` sets bit `DOMAIN_REASON_SHIFT + r` of the
+    `AdmissibilityHeader` reason bits; support, uncertainty, and finiteness use
+    the common `AdmissibilityReason` bits instead.
+    """
+
     NONE = 0
     OUT_OF_SUPPORT = 1
     UNCERTAIN = 2
@@ -32,6 +60,17 @@ class LearnedChemicalFallbackReason(IntEnum):
     NEGATIVE_SPECIES = 4
     INVARIANT_FAILURE = 5
     EXACT_FAILURE = 6
+
+
+# Derivatives of the executed transition with the learned/exact selection frozen.
+_DERIVATIVE_CONTRACT = branch_policy_contract(
+    BranchDifferentiationPolicy.FROZEN_DECISION,
+    surfaces=(DerivativeSurface.PRIMAL_STATE, DerivativeSurface.PHYSICAL_PARAMETER),
+)
+
+
+def _domain_reason_bits(predicate: Array, reason: LearnedChemicalFallbackReason) -> Array:
+    return reason_bits_where(predicate, 1 << (DOMAIN_REASON_SHIFT + int(reason)))
 
 
 class LearnedChemicalFeatureSchema(StrictModule, NonTrainableState):
@@ -98,6 +137,18 @@ class LearnedChemicalFeatureSchema(StrictModule, NonTrainableState):
 
 
 class LearnedChemicalTransitionResult(StrictModule):
+    """Lane-wise learned/exact transition with domain and common evidence.
+
+    `header` is the learned component's admissibility per lane: its margin is
+    the smaller of the feature-support margin and the uncertainty margin, it is
+    eligible exactly where the learned transition was selected, and its reason
+    bits record every failed predicate (not only the prioritized
+    `fallback_reason`). `header.model_id` is the plan's `component_id` and
+    `header.evidence_id` its `plan_id`. Where `derivative_valid` is false the
+    candidate and accepted concentrations keep their primal values but carry
+    NaN derivatives.
+    """
+
     candidate_concentrations: Array
     accepted_concentrations: Array
     learned_concentrations: Array
@@ -110,14 +161,24 @@ class LearnedChemicalTransitionResult(StrictModule):
     charge_residual: Array
     derivative_valid: Array
     successful: Array
+    header: AdmissibilityHeader
+    derivative_contract: DerivativeContract
     plan_id: str = eqx.field(static=True)
 
 
-class LearnedChemicalTransitionPlan(StrictModule, NonTrainableState):
-    mechanism: PreparedChemicalMechanism
+class _AbstractLearnedChemicalTransition(StrictModule):
+    """Learned reaction-extent transition with an exact-mechanism fallback.
+
+    The frozen artifact (`LearnedChemicalTransitionPlan`) and its explicit
+    trainable counterpart (`TrainableLearnedChemicalTransitionPlan`) share the
+    mechanism, feature schema, manifests, identities, numerical policy, and
+    `advance`; they differ only in the role of the extent `model`.
+    """
+
+    mechanism: PreparedChemicalMechanism = fixed_field()
     feature_schema: LearnedChemicalFeatureSchema
-    model: Callable = eqx.field(static=True)
-    uncertainty_model: Callable = eqx.field(static=True)
+    model: eqx.AbstractVar[Callable]
+    uncertainty_model: eqx.AbstractVar[Callable]
     model_manifest: ReferenceArtifactManifest = eqx.field(static=True)
     training_manifests: tuple[ReferenceArtifactManifest, ...] = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
@@ -125,94 +186,8 @@ class LearnedChemicalTransitionPlan(StrictModule, NonTrainableState):
     exact_subcycles: int = eqx.field(static=True)
     exact_iterations: int = eqx.field(static=True)
     invariant_tolerance: float = eqx.field(static=True)
+    component_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        mechanism: PreparedChemicalMechanism,
-        feature_schema: LearnedChemicalFeatureSchema,
-        model: Callable[[Array], ArrayLike],
-        uncertainty_model: Callable[[Array], ArrayLike],
-        model_manifest: ReferenceArtifactManifest,
-        training_manifests: tuple[ReferenceArtifactManifest, ...],
-        /,
-        *,
-        model_id: str,
-        maximum_uncertainty: float,
-        exact_subcycles: int = 8,
-        exact_iterations: int = 4,
-        invariant_tolerance: float = 1.0e-9,
-        commercial_use: bool = False,
-        export: bool = False,
-    ):
-        if not isinstance(mechanism, PreparedChemicalMechanism):
-            raise TypeError("mechanism must be PreparedChemicalMechanism.")
-        if not isinstance(feature_schema, LearnedChemicalFeatureSchema):
-            raise TypeError("feature_schema must be LearnedChemicalFeatureSchema.")
-        expected_features = mechanism.schema.species_count + 3
-        if len(feature_schema.feature_names) != expected_features:
-            raise ValueError(
-                "Learned chemistry features must be log concentrations, temperature, pressure, and step."
-            )
-        if not callable(model) or not callable(uncertainty_model):
-            raise TypeError(
-                "Learned chemistry model and uncertainty model must be callable."
-            )
-        manifests = tuple(training_manifests)
-        if (
-            not isinstance(model_manifest, ReferenceArtifactManifest)
-            or not manifests
-            or any(
-                not isinstance(value, ReferenceArtifactManifest) for value in manifests
-            )
-        ):
-            raise TypeError("Learned chemistry requires model and training manifests.")
-        model_manifest.require_rights(commercial_use=commercial_use, export=export)
-        for manifest in manifests:
-            manifest.require_rights(
-                commercial_use=commercial_use,
-                training_use=True,
-                export=export,
-            )
-        identifier = str(model_id).strip()
-        uncertainty = float(maximum_uncertainty)
-        subcycles, iterations = int(exact_subcycles), int(exact_iterations)
-        tolerance = float(invariant_tolerance)
-        if (
-            not identifier
-            or not isfinite(uncertainty)
-            or uncertainty < 0.0
-            or subcycles < 1
-            or iterations < 1
-            or not isfinite(tolerance)
-            or tolerance <= 0.0
-        ):
-            raise ValueError("Learned chemistry identity or numerical policy is invalid.")
-        self.mechanism = mechanism
-        self.feature_schema = feature_schema
-        self.model = model
-        self.uncertainty_model = uncertainty_model
-        self.model_manifest = model_manifest
-        self.training_manifests = manifests
-        self.model_id = identifier
-        self.maximum_uncertainty = uncertainty
-        self.exact_subcycles = subcycles
-        self.exact_iterations = iterations
-        self.invariant_tolerance = tolerance
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "learned-chemical-transition-with-exact-fallback",
-                "mechanism": mechanism.mechanism_id,
-                "features": feature_schema.schema_id,
-                "model_manifest": model_manifest.manifest_id,
-                "training_manifests": [value.manifest_id for value in manifests],
-                "model_id": identifier,
-                "maximum_uncertainty": uncertainty,
-                "exact_subcycles": subcycles,
-                "exact_iterations": iterations,
-                "invariant_tolerance": tolerance,
-            }
-        )
 
     def _features(self, concentrations, temperature, pressure, step):
         tiny = jnp.finfo(concentrations.dtype).tiny
@@ -354,6 +329,31 @@ class LearnedChemicalTransitionPlan(StrictModule, NonTrainableState):
         derivative_valid = successful & (
             boundary_distance > 32.0 * jnp.finfo(concentration.dtype).eps
         )
+        candidate, accepted = guard_derivative_validity(
+            (candidate, accepted),
+            derivative_valid[..., None],
+            dependencies=(concentration, temperature_, pressure_, step),
+        )
+        reasons = (
+            reason_bits_where(supported, AdmissibilityReason.OUTSIDE_SUPPORT)
+            | reason_bits_where(certain, AdmissibilityReason.UNCERTAINTY_UNRESOLVED)
+            | reason_bits_where(finite_model, AdmissibilityReason.NONFINITE)
+            | _domain_reason_bits(
+                positive, LearnedChemicalFallbackReason.NEGATIVE_SPECIES
+            )
+            | _domain_reason_bits(
+                invariant, LearnedChemicalFallbackReason.INVARIANT_FAILURE
+            )
+            | _domain_reason_bits(
+                ~fallback | exact_success, LearnedChemicalFallbackReason.EXACT_FAILURE
+            )
+        )
+        header = AdmissibilityHeader(
+            jnp.minimum(support_margin, self.maximum_uncertainty - uncertainty),
+            reasons,
+            self.component_id,
+            self.plan_id,
+        )
         return LearnedChemicalTransitionResult(
             candidate,
             accepted,
@@ -367,8 +367,170 @@ class LearnedChemicalTransitionPlan(StrictModule, NonTrainableState):
             charge_residual,
             derivative_valid,
             successful,
+            header,
+            _DERIVATIVE_CONTRACT,
             self.plan_id,
         )
+
+
+class LearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition, ExplicitFreeze):
+    """Frozen learned chemistry artifact with lane-wise exact fallback.
+
+    As an `ExplicitFreeze` holder the extent and uncertainty models are FIXED
+    wherever the plan is held, so training never updates the deployed artifact
+    accidentally. `as_trainable_binding` is the explicit operation that returns
+    a new trainable plan.
+
+    The plan's feature schema declares no owner value ports, so a model or
+    uncertainty model declaring ports (`intrinsic_model_ports`) cannot bind to
+    it and is refused.
+    """
+
+    model: Callable
+    uncertainty_model: Callable
+
+    def __init__(
+        self,
+        mechanism: PreparedChemicalMechanism,
+        feature_schema: LearnedChemicalFeatureSchema,
+        model: Callable[[Array], ArrayLike],
+        uncertainty_model: Callable[[Array], ArrayLike],
+        model_manifest: ReferenceArtifactManifest,
+        training_manifests: tuple[ReferenceArtifactManifest, ...],
+        /,
+        *,
+        model_id: str,
+        maximum_uncertainty: float,
+        exact_subcycles: int = 8,
+        exact_iterations: int = 4,
+        invariant_tolerance: float = 1.0e-9,
+        commercial_use: bool = False,
+        export: bool = False,
+    ):
+        if not isinstance(mechanism, PreparedChemicalMechanism):
+            raise TypeError("mechanism must be PreparedChemicalMechanism.")
+        if not isinstance(feature_schema, LearnedChemicalFeatureSchema):
+            raise TypeError("feature_schema must be LearnedChemicalFeatureSchema.")
+        expected_features = mechanism.schema.species_count + 3
+        if len(feature_schema.feature_names) != expected_features:
+            raise ValueError(
+                "Learned chemistry features must be log concentrations, temperature, pressure, and step."
+            )
+        if not callable(model) or not callable(uncertainty_model):
+            raise TypeError(
+                "Learned chemistry model and uncertainty model must be callable."
+            )
+        for name, value in (("model", model), ("uncertainty_model", uncertainty_model)):
+            if intrinsic_model_ports(value) is not None:
+                raise ValueError(
+                    "LearnedChemicalTransitionPlan declares no owner value ports; its "
+                    f"{name} {type(value).__name__} declares model ports and cannot "
+                    "be bound without them."
+                )
+        manifests = tuple(training_manifests)
+        if (
+            not isinstance(model_manifest, ReferenceArtifactManifest)
+            or not manifests
+            or any(
+                not isinstance(value, ReferenceArtifactManifest) for value in manifests
+            )
+        ):
+            raise TypeError("Learned chemistry requires model and training manifests.")
+        model_manifest.require_rights(commercial_use=commercial_use, export=export)
+        for manifest in manifests:
+            manifest.require_rights(
+                commercial_use=commercial_use,
+                training_use=True,
+                export=export,
+            )
+        identifier = str(model_id).strip()
+        uncertainty = float(maximum_uncertainty)
+        subcycles, iterations = int(exact_subcycles), int(exact_iterations)
+        tolerance = float(invariant_tolerance)
+        if (
+            not identifier
+            or not isfinite(uncertainty)
+            or uncertainty < 0.0
+            or subcycles < 1
+            or iterations < 1
+            or not isfinite(tolerance)
+            or tolerance <= 0.0
+        ):
+            raise ValueError("Learned chemistry identity or numerical policy is invalid.")
+        self.mechanism = mechanism
+        self.feature_schema = feature_schema
+        self.model = model
+        self.uncertainty_model = uncertainty_model
+        self.model_manifest = model_manifest
+        self.training_manifests = manifests
+        self.model_id = identifier
+        self.maximum_uncertainty = uncertainty
+        self.exact_subcycles = subcycles
+        self.exact_iterations = iterations
+        self.invariant_tolerance = tolerance
+        self.component_id = SemanticProvenance(
+            {
+                "kind": "learned-chemical-extent-component",
+                "model_id": identifier,
+                "features": feature_schema.schema_id,
+            },
+            resource_ids={"model_manifest": model_manifest.manifest_id},
+        ).semantic_id
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "learned-chemical-transition-with-exact-fallback",
+                "mechanism": mechanism.mechanism_id,
+                "features": feature_schema.schema_id,
+                "model_manifest": model_manifest.manifest_id,
+                "training_manifests": [value.manifest_id for value in manifests],
+                "model_id": identifier,
+                "maximum_uncertainty": uncertainty,
+                "exact_subcycles": subcycles,
+                "exact_iterations": iterations,
+                "invariant_tolerance": tolerance,
+            }
+        )
+
+    def as_trainable_binding(self, /) -> TrainableLearnedChemicalTransitionPlan:
+        """Return a new plan whose extent model is a trainable PARAMETER child.
+
+        The mechanism, feature schema, manifests, identities (`component_id`,
+        `plan_id`), and fallback policy are kept, and the uncertainty model
+        stays FIXED so training cannot move the admission gate; this frozen
+        artifact is not modified. A `FrozenModel` extent model is unwrapped to
+        its trainable model. Raises `ValueError` when the extent model holds no
+        trainable array.
+        """
+        return TrainableLearnedChemicalTransitionPlan(self.model, self)
+
+
+class TrainableLearnedChemicalTransitionPlan(_AbstractLearnedChemicalTransition):
+    """Explicit trainable counterpart of a frozen `LearnedChemicalTransitionPlan`.
+
+    Created by `LearnedChemicalTransitionPlan.as_trainable_binding`. The extent
+    model is a PARAMETER child; the uncertainty model, mechanism, feature
+    schema, and every identity stay those of the source artifact and FIXED.
+    """
+
+    model: Callable = parameter_field()
+    uncertainty_model: Callable = fixed_field()
+
+    def __init__(self, model: Callable, source: LearnedChemicalTransitionPlan, /):
+        if not isinstance(source, LearnedChemicalTransitionPlan):
+            raise TypeError("source must be a LearnedChemicalTransitionPlan.")
+        self.model = trainable_provider(model)
+        self.uncertainty_model = source.uncertainty_model
+        self.mechanism = source.mechanism
+        self.feature_schema = source.feature_schema
+        self.model_manifest = source.model_manifest
+        self.training_manifests = source.training_manifests
+        self.model_id = source.model_id
+        self.maximum_uncertainty = source.maximum_uncertainty
+        self.exact_subcycles = source.exact_subcycles
+        self.exact_iterations = source.exact_iterations
+        self.invariant_tolerance = source.invariant_tolerance
+        self.component_id = source.component_id
+        self.plan_id = source.plan_id
 
 
 __all__ = [
@@ -376,4 +538,5 @@ __all__ = [
     "LearnedChemicalFeatureSchema",
     "LearnedChemicalTransitionPlan",
     "LearnedChemicalTransitionResult",
+    "TrainableLearnedChemicalTransitionPlan",
 ]

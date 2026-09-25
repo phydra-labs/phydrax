@@ -12,11 +12,24 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..units import DimensionSignature, parse_unit
 
 
 StateRepresentation = Literal["nondimensional", "dimensional"]
+
+
+def _declared_dimension(unit: str, owner: str, /) -> DimensionSignature:
+    # Declared unit strings are the only dimension source; unresolvable text fails
+    # closed instead of leaving the port dimension undeclared.
+    try:
+        return parse_unit(unit).dimension
+    except ValueError as error:
+        raise ValueError(
+            f"{owner} declares unresolvable unit {unit!r}: {error}"
+        ) from error
 
 
 class FlowStateSchema(StrictModule, NonTrainableState):
@@ -138,6 +151,52 @@ class FlowStateSchema(StrictModule, NonTrainableState):
     def nondimensionalize(self, values: ArrayLike, /) -> Array:
         array = self.validate(values)
         return array / jnp.asarray(self.reference_scales, dtype=array.dtype)
+
+    def value_port(self, *, representation: StateRepresentation) -> ValuePort:
+        """Return the per-point flow-state port in declared component order.
+
+        The event is the trailing component axis: `event_shape` is
+        `(component_count,)`, `component_ids` are `component_names`, and each
+        dimension is `phydrax.units.parse_unit(unit).dimension` of the declared
+        component unit. `semantic_id` is `f"flow-state-schema:{schema_id}"`, so
+        names, units, reference scales, and roles all enter the identity.
+        `representation` states which snapshot representation the values use
+        and becomes the port representation: nondimensional values carry the
+        content fingerprint of `reference_scales` as `normalization_id`, and
+        dimensional values carry no normalization. Space, frame, and event axes
+        are undeclared; variance is neutral.
+
+        Raises `ValueError` for an unknown representation or a component unit
+        that `parse_unit` cannot resolve.
+        """
+        match representation:
+            case "nondimensional":
+                normalization_id = canonical_fingerprint(
+                    {
+                        "kind": "flow-state-reference-scales",
+                        "reference_scales": list(self.reference_scales),
+                    }
+                )
+            case "dimensional":
+                normalization_id = None
+            case _:
+                raise ValueError(f"Unknown flow-state representation {representation!r}.")
+        return ValuePort(
+            f"flow-state-schema:{self.schema_id}",
+            event_shape=(self.component_count,),
+            component_ids=self.component_names,
+            representation=representation,
+            dimensions=tuple(
+                _declared_dimension(
+                    unit,
+                    f"Flow-state schema {self.schema_id} component {name!r}",
+                )
+                for name, unit in zip(
+                    self.component_names, self.component_units, strict=True
+                )
+            ),
+            normalization_id=normalization_id,
+        )
 
 
 class ClosureSnapshot(StrictModule, NonTrainableState):

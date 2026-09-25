@@ -2161,10 +2161,14 @@ def solve_jump_differential(
         t0=differential.t0,
         t1=differential.t1,
     )
-    if not bool(
-        jnp.isclose(times[0], differential.t0) & jnp.isclose(times[-1], differential.t1)
-    ):
-        raise ValueError("Hybrid save_times must include both problem endpoints.")
+    times = eqx.error_if(
+        times,
+        ~(
+            jnp.isclose(times[0], differential.t0)
+            & jnp.isclose(times[-1], differential.t1)
+        ),
+        "Hybrid save_times must include both problem endpoints.",
+    )
     sample_shape = poisson_realization.sample_shape
     state_shape = jumps.state_shape
     expected_initial_shape = sample_shape + state_shape
@@ -2183,8 +2187,11 @@ def solve_jump_differential(
             raise TypeError(
                 "initial_states dtype must match DifferentialProblem.initial_state."
             )
-        if bool(jnp.any(~jnp.isfinite(ensemble_initials))):
-            raise ValueError("initial_states must be finite.")
+        ensemble_initials = eqx.error_if(
+            ensemble_initials,
+            jnp.any(~jnp.isfinite(ensemble_initials)),
+            "initial_states must be finite.",
+        )
     prepared_schedule = (
         None
         if hybrid_schedule is None
@@ -2233,10 +2240,12 @@ def solve_jump_differential(
                 "Stochastic hybrid integration requires dt0 unless every step is declared with diffrax.StepTo."
             )
         resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=jnp.float64)
-        if resolved_dt0 is not None and bool(
-            jnp.abs(resolved_dt0) <= wiener_realization.tolerance
-        ):
-            raise ValueError("Wiener tolerance must be smaller than dt0.")
+        if resolved_dt0 is not None:
+            resolved_dt0 = eqx.error_if(
+                resolved_dt0,
+                jnp.abs(resolved_dt0) <= wiener_realization.tolerance,
+                "Wiener tolerance must be smaller than dt0.",
+            )
         selected_solver = (
             dfx.Euler()
             if solver is None and differential.interpretation == "ito"

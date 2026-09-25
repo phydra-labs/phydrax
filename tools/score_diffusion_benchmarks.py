@@ -22,8 +22,8 @@ import phydrax as phx
 
 class _GaussianMarginalScore(eqx.Module):
     process: phx.stochastic.AbstractGaussianDiffusion
-    mean: jax.Array
-    variance: jax.Array
+    mean: jax.Array = phx.fixed_field()
+    variance: jax.Array = phx.fixed_field()
 
     def __call__(self, state, time):
         if isinstance(self.process, phx.stochastic.VariancePreservingDiffusion):

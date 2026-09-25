@@ -11,19 +11,45 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._numerics import effective_sample_size, soft_threshold
+from .._schema import AbstractFittedModel
+
+
+# Each multiplicative step divides by a denominator floored at a positive epsilon,
+# so the fixed unrolled encoder is continuous with smooth rational pieces.
+_NMF_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
+        ),
+        SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+    ),
+    route=DerivativeRoute.UNROLLED,
+    regularity=DerivativeRegularity.piecewise_smooth(continuity=0),
+    conditions=("multiplicative iterates must stay strictly positive",),
+)
 
 
 class FactorizationDiagnostics(StrictModule):
@@ -121,7 +147,7 @@ def _ista_codes(
     return jax.lax.fori_loop(0, int(iterations), body, codes)
 
 
-class SparseCodingModel(AbstractArrayModel):
+class SparseCodingModel(AbstractFittedModel):
     """Fixed dictionary with a deterministic unrolled proximal encoder."""
 
     dictionary: Array
@@ -154,6 +180,32 @@ class SparseCodingModel(AbstractArrayModel):
         self.case_shape = tuple(dictionary_.shape[:-2])
         if self.regularization < 0.0 or self.transform_iterations <= 0:
             raise ValueError("Sparse coding regularization and iterations are invalid.")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # Each unrolled ISTA step is affine in the input followed by the continuous
+        # soft threshold, which is piecewise linear on real codes and a smooth
+        # magnitude shrinkage away from zero on complex codes.
+        regularity = (
+            DerivativeRegularity.piecewise_smooth(continuity=0)
+            if jnp.iscomplexobj(self.dictionary)
+            else DerivativeRegularity.piecewise_polynomial(
+                continuity=0, degree_bound=1, conditions=("real-valued inputs",)
+            )
+        )
+        return DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.ALMOST_EVERYWHERE
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            regularity=regularity,
+            nondifferentiable_outputs=("active_set",),
+            conditions=("ISTA gradients exclude soft-threshold knots",),
+        )
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -190,7 +242,7 @@ class SparseCodingModel(AbstractArrayModel):
         return self.transform(x)
 
 
-class NMFModel(AbstractArrayModel):
+class NMFModel(AbstractFittedModel):
     """Nonnegative basis with multiplicative nonnegative encoding."""
 
     components: Array
@@ -212,6 +264,9 @@ class NMFModel(AbstractArrayModel):
         self.in_size = self.components.shape[-1]
         self.out_size = self.components.shape[-2]
         self.case_shape = tuple(self.components.shape[:-2])
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _NMF_CONTRACT
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -422,13 +477,7 @@ class NMF(AbstractRecipe):
             valid=valid,
             status=status,
             method="multiplicative-nmf",
-            gradient_contract=GradientContract(
-                prediction_inputs="almost-everywhere",
-                fit_features="almost-everywhere",
-                fit_weights="conditional",
-                fit_mode="unrolled",
-                conditions=("multiplicative iterates must stay strictly positive",),
-            ),
+            derivative_contract=_NMF_CONTRACT,
         )
 
 
@@ -555,13 +604,14 @@ class SparseCoding(AbstractRecipe):
             valid=valid,
             status=status,
             method="fixed-dictionary-ista",
-            gradient_contract=GradientContract(
-                prediction_inputs="almost-everywhere",
-                prediction_parameters="almost-everywhere",
-                fit_features="almost-everywhere",
-                fit_mode="unrolled",
-                nondifferentiable_outputs=("active_set",),
-                conditions=("ISTA gradients exclude soft-threshold knots",),
+            derivative_contract=prediction_fit_contract(
+                model._prediction_contract(),
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
             ),
         )
 
@@ -732,13 +782,17 @@ class DictionaryLearning(AbstractRecipe):
             valid=valid,
             status=status,
             method="alternating-ista-dictionary-learning",
-            gradient_contract=GradientContract(
-                prediction_inputs="almost-everywhere",
-                prediction_parameters="almost-everywhere",
-                fit_features="almost-everywhere",
-                fit_weights="conditional",
-                fit_mode="unrolled",
-                nondifferentiable_outputs=("active_set",),
+            derivative_contract=prediction_fit_contract(
+                model._prediction_contract(),
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.UNROLLED,
                 conditions=(
                     "unrolled sparse-code gradients exclude soft-threshold knots",
                     "atom normalization requires nonzero atoms",

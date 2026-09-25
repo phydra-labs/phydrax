@@ -557,7 +557,7 @@ def test_topology_event_journal_replay_reconstructs_exact_history():
         "failure",
         None,
     )
-    with pytest.raises(ValueError, match="final journal record"):
+    with pytest.raises(ValueError, match="must form a trailing batch"):
         FiniteVolumeTopologyEventJournal.from_events(
             initial,
             initial_artifacts,

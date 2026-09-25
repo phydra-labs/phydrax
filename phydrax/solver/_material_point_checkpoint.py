@@ -52,7 +52,7 @@ class MPMCheckpointManifest(StrictModule, NonTrainableState):
     manifest_id: str = eqx.field(static=True)
 
 
-class MPMCheckpointPlan(StrictModule, NonTrainableState):
+class MPMCheckpointPlan(StrictModule):
     compiled: CompiledMaterialPointProblem
     template_state: MPMRuntimeState
     checkpoint_id: str = eqx.field(static=True)

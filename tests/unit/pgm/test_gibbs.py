@@ -105,7 +105,9 @@ def test_impossible_conditional_preserves_state_and_reports_failure():
     assert jnp.array_equal(updated.positions, state.positions)
     assert not info.valid[0]
     assert info.invalid_conditional_count[0] == 1
-    assert info.status[0] == int(phx.pgm.GibbsTransitionStatus.INFEASIBLE_CONDITIONAL)
+    # An impossible conditional implies an infeasible input state; invalid input
+    # state status takes precedence while the infeasible site is still counted.
+    assert info.status[0] == int(phx.pgm.GibbsTransitionStatus.INVALID_STATE)
 
 
 def test_gibbs_empirical_distribution_matches_exact_two_spin_law():

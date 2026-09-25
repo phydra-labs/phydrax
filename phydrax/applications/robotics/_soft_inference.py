@@ -1535,7 +1535,7 @@ class SoftPlantMPCResult(StrictModule, NonTrainableState):
         return self.accepted
 
 
-class SoftPlantMPCPlan(StrictModule, NonTrainableState):
+class SoftPlantMPCPlan(StrictModule):
     """Realization-aware sampling MPC bound to one declared soft-robot mode."""
 
     sampling: SamplingMPCPlan

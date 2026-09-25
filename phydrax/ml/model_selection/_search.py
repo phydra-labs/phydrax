@@ -14,11 +14,18 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
 from ...optim._differential_evolution import _bounded_differential_evolution
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract
+from .._contracts import AbstractRecipe, FitResult
 from ._cross_validation import (
     _aggregate_scores,
     _call_scorer,
@@ -51,14 +58,9 @@ class _DirectionalScorer(Protocol):
     greater_is_better: bool
 
 
-_EXACT_SEARCH_CONTRACT = GradientContract(
-    prediction_inputs="none",
-    prediction_parameters="none",
-    fit_features="none",
-    fit_targets="none",
-    fit_weights="none",
-    fit_hyperparameters="none",
-    fit_mode="stopped",
+_EXACT_SEARCH_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.STOPPED,
     nondifferentiable_outputs=(
         "candidate_indices",
         "surviving_candidates",
@@ -199,7 +201,7 @@ class SearchResult(StrictModule):
     status: Any
     key: Any
     refit_key: Any
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     method: str = eqx.field(static=True)
 
     def __init__(
@@ -230,7 +232,7 @@ class SearchResult(StrictModule):
         )
         self.key = _require_key(key)
         self.refit_key = _require_key(refit_key)
-        self.gradient_contract = _EXACT_SEARCH_CONTRACT
+        self.derivative_contract = _EXACT_SEARCH_CONTRACT
         self.method = str(method)
 
 
@@ -668,8 +670,8 @@ class DifferentiableSearchResult(StrictModule):
     status: Any
     key: Any
     refit_key: Any
-    gradient_contract: GradientContract
-    objective_gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
+    objective_derivative_contract: DerivativeContract
     method: str = eqx.field(static=True)
 
     def __init__(
@@ -683,7 +685,7 @@ class DifferentiableSearchResult(StrictModule):
         *,
         key: Any,
         refit_key: Any,
-        objective_gradient_contract: GradientContract,
+        objective_derivative_contract: DerivativeContract,
     ):
         finite = jnp.isfinite(optimizer_result.raw_objective)
         self.best_vector = optimizer_result.best_vector
@@ -711,8 +713,8 @@ class DifferentiableSearchResult(StrictModule):
         ).astype(jnp.int32)
         self.key = _require_key(key)
         self.refit_key = _require_key(refit_key)
-        self.gradient_contract = _EXACT_SEARCH_CONTRACT
-        self.objective_gradient_contract = objective_gradient_contract
+        self.derivative_contract = _EXACT_SEARCH_CONTRACT
+        self.objective_derivative_contract = objective_derivative_contract
         self.method = "differentiable_objective_differential_evolution"
 
 
@@ -721,7 +723,7 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
 
     Differential evolution and its final argmin remain explicitly nondifferentiable.
     Only the objective at a fixed vector and fixed folds carries the separately
-    reported ``objective_gradient_contract``.
+    reported ``objective_derivative_contract``.
     """
 
     initial_vector: Any
@@ -792,8 +794,11 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
         audit = _cross_validate_materialized(
             initial_recipe, batch, splits, scorer, key=audit_key
         )
-        contracts = tuple(fold.fit_result.gradient_contract for fold in audit.folds)
-        if any(contract.fit_hyperparameters == "none" for contract in contracts):
+        contracts = tuple(fold.fit_result.derivative_contract for fold in audit.folds)
+        if any(
+            contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.NONE
+            for contract in contracts
+        ):
             raise ValueError(
                 "At least one fold recipe rejects hyperparameter differentiation; "
                 "the differentiable adapter fails closed."
@@ -806,16 +811,12 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
                 "The differentiable search objective must have a real floating dtype."
             )
         maximize = _resolve_maximize(self.maximize, scorer)
-        objective_contract = GradientContract(
-            prediction_inputs=audit.gradient_contract.prediction_inputs,
-            prediction_parameters=audit.gradient_contract.prediction_parameters,
-            fit_features=audit.gradient_contract.fit_features,
-            fit_targets=audit.gradient_contract.fit_targets,
-            fit_weights=audit.gradient_contract.fit_weights,
-            fit_hyperparameters=audit.gradient_contract.fit_hyperparameters,
-            fit_mode=audit.gradient_contract.fit_mode,
+        objective_contract = DerivativeContract(
+            audit.derivative_contract.surfaces,
+            route=audit.derivative_contract.route,
+            regularity=audit.derivative_contract.regularity,
             nondifferentiable_outputs=("fold_indices", "valid", "status"),
-            conditions=audit.gradient_contract.conditions
+            conditions=audit.derivative_contract.conditions
             + (
                 "The recipe factory must be smooth in its vector argument.",
                 "This contract applies only to the fixed-vector CV objective, not the DE-selected vector.",
@@ -859,7 +860,7 @@ class DifferentiableSearchAdapter(AbstractSearchPlan):
             splits,
             key=key,
             refit_key=refit_key,
-            objective_gradient_contract=objective_contract,
+            objective_derivative_contract=objective_contract,
         )
 
 
@@ -887,7 +888,7 @@ class NestedCrossValidationResult(StrictModule):
     valid: Any
     status: Any
     key: Any
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     method: str = eqx.field(static=True)
 
     def __init__(
@@ -905,7 +906,7 @@ class NestedCrossValidationResult(StrictModule):
         self.valid = outer_cross_validation.valid
         self.status = outer_cross_validation.status
         self.key = _require_key(key)
-        self.gradient_contract = _EXACT_SEARCH_CONTRACT
+        self.derivative_contract = _EXACT_SEARCH_CONTRACT
         self.method = "nested_cross_validation"
 
 
@@ -943,7 +944,7 @@ def nested_cross_validate(
         )
         validation_batch = batch.take_samples(nested_fold.outer_fold.validation_indices)
         predictions = _predict(
-            search_result.best_fit, validation_batch, key=prediction_key
+            search_result.best_fit, validation_batch, scorer, key=prediction_key
         )
         score = _call_scorer(scorer, predictions, validation_batch)
         outer_evaluation = FoldEvaluation(
@@ -970,7 +971,7 @@ def nested_cross_validate(
         outer_split,
         _aggregate_scores(outer_folds),
         key=key,
-        gradient_contract=_cross_validation_contract(outer_folds),
+        derivative_contract=_cross_validation_contract(outer_folds),
     )
     return NestedCrossValidationResult(
         tuple(nested_evaluations), outer_cv, nested, key=key

@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike, Key
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..graph._gauge_transport import GaugeStaplePlan
@@ -366,7 +367,7 @@ def _sample_von_mises(
     key: Key[Array, ""], mean: Array, concentration: Array, attempts: int, /
 ) -> tuple[Array, Array, Array]:
     """Best--Fisher exact rejection with explicit finite-capacity exhaustion."""
-    dtype = jnp.result_type(mean, concentration, jnp.float64)
+    dtype = inexact_result_type(mean, concentration)
     keys = jr.split(key, attempts)
     uniforms = jax.vmap(lambda value: jr.uniform(value, (3,), dtype=dtype))(keys)
     zero_concentration = concentration == 0.0
@@ -422,7 +423,7 @@ def _sample_su2(
     key: Key[Array, ""], concentration: Array, attempts: int, /
 ) -> tuple[Array, Array, Array]:
     """Exact SU(2) Haar heatbath rejection for density exp(k a0)."""
-    dtype = jnp.result_type(concentration, jnp.float64)
+    dtype = inexact_result_type(concentration)
     keys = jr.split(key, attempts + 1)
     uniforms = jax.vmap(lambda value: jr.uniform(value, (2,), dtype=dtype))(keys[:-1])
     zero_concentration = concentration == 0.0

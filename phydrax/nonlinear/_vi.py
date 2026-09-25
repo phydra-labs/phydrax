@@ -26,7 +26,7 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ._linearization import prepare_jacobian
-from ._newton import NewtonKrylov
+from ._newton import _remaining_linear_steps, NewtonKrylov
 from ._prepared import (
     prepare_nonlinear,
     PreparedNonlinearSolve,
@@ -1040,9 +1040,11 @@ def _solve_projected_semismooth(
             None
             if termination.maximum_linear_iterations is None
             else LinearSolveControl(
-                maximum_steps=jnp.maximum(
-                    termination.maximum_linear_iterations - current.linear_iterations,
-                    1,
+                maximum_steps=_remaining_linear_steps(
+                    termination,
+                    current.linear_iterations,
+                    method.newton.linear_policy.tolerance.max_steps
+                    or jacobian.operator.source.size,
                 )
             )
         )

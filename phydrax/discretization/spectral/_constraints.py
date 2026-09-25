@@ -29,6 +29,7 @@ from .._axis_domain import AxisDomain
 from .._spectral import ModalTransform
 from ._basis import (
     _analysis_from_synthesis,
+    _legendre_normalizers,
     AbstractSpectralBasisPlan,
     PreparedSpectralAxis,
     SpectralBoundaryKind,
@@ -190,8 +191,7 @@ def _basis_normalizers(
     ):
         return np.ones((count,), dtype=np.float64)
     if prepared.family == "legendre":
-        length = float(np.asarray(prepared.length))
-        return np.sqrt((2.0 * np.arange(count) + 1.0) / length)
+        return _legendre_normalizers(count, float(np.asarray(prepared.length)))
     raise ValueError("The prepared basis does not expose polynomial trace rows.")
 
 

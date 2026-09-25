@@ -19,6 +19,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import fixed_field, NonTrainableState
 from ...solver._fixed_step import (
     AbstractFixedStepMethod,
     FixedStepResult,
@@ -213,7 +214,10 @@ class AbstractScheduledCosmologyProductionMethod(AbstractFixedStepMethod):
         raise NotImplementedError
 
 
-class PeriodicWaveProductionMethod(AbstractScheduledCosmologyProductionMethod):
+class PeriodicWaveProductionMethod(
+    AbstractScheduledCosmologyProductionMethod,
+    NonTrainableState,
+):
     """One accepted periodic-wave schedule interval per production transaction."""
 
     prepared: PreparedPeriodicWaveDarkMatter
@@ -337,7 +341,7 @@ class RareSIDMProductionMethod(AbstractScheduledCosmologyProductionMethod):
     """One rare equal-mass SIDM/PM interval per atomic production transaction."""
 
     plan: CosmologicalSIDMPlan
-    background: FLRWBackground
+    background: FLRWBackground = fixed_field()
     collision_half_steps_per_interval: int = eqx.field(static=True, default=2)
 
     def __init__(

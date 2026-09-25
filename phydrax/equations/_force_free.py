@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._physical import RelativityScaleContract
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..metrix._adm_exchange import ADMGridGeometry
 from ..metrix._spacetime_conventions import RelativityConvention
 from ._hyperbolic_systems import AbstractAdmissibleSystem
@@ -75,7 +76,7 @@ class ForceFreeProjectionResult(StrictModule):
     system_id: str = eqx.field(static=True)
 
 
-class GRForceFreeSystem(AbstractAdmissibleSystem):
+class GRForceFreeSystem(AbstractAdmissibleSystem, NonTrainableState):
     """Eulerian 3+1 force-free Maxwell system with GLM constraint cleaning.
 
     The eight conserved components are contravariant ``E``, contravariant ``B``

@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax.execution import (
     evaluate_execution_worksets_filter_vmap,
     evaluate_execution_worksets_serial,
@@ -134,6 +135,46 @@ def test_filter_vmap_worksets_broadcast_static_module_leaves() -> None:
     assert bool(result.evidence.successful)
 
 
+def test_filter_vmap_worksets_map_only_the_declared_item_lane() -> None:
+    class Normalized(phx.StrictModule, phx.ParameterOwner):
+        weight: jax.Array
+        shift: jax.Array = phx.fixed_field()
+
+    prepared = _plan().prepare()
+    shifts = jnp.arange(10, dtype=jnp.float32).reshape((5, 2))
+    items = Normalized(jnp.asarray([2.0, 3.0]), shifts)
+    counters = jnp.zeros((5,), dtype=jnp.uint32)
+
+    def operation(signature, item, key, semantic_index):
+        del signature, key, semantic_index
+        return item.weight * (1.0 - item.shift)
+
+    # FIXED per-item normalizers are mapped while the parameter is shared.
+    result = evaluate_execution_worksets_filter_vmap(
+        prepared,
+        operation,
+        items,
+        jax.random.key(0),
+        counters,
+        layout=phx.LaneLayout("item", (".shift",)),
+    )
+    assert jnp.array_equal(result.values, items.weight * (1.0 - shifts))
+    assert jnp.array_equal(result.next_rng_counters, counters + 1)
+    with pytest.raises(ValueError, match="share one lane size"):
+        evaluate_execution_worksets_filter_vmap(
+            prepared, operation, items, jax.random.key(0), counters
+        )
+    with pytest.raises(TypeError, match="kind 'item'"):
+        evaluate_execution_worksets_filter_vmap(
+            prepared,
+            operation,
+            items,
+            jax.random.key(0),
+            counters,
+            layout=phx.LaneLayout("member", (".shift",)),
+        )
+
+
 def test_semantic_rng_keys_survive_a_bucket_capacity_change() -> None:
     first = _plan(capacity=2).prepare()
     second = _plan(capacity=4).prepare()
@@ -144,21 +185,70 @@ def test_semantic_rng_keys_survive_a_bucket_capacity_change() -> None:
     assert jnp.array_equal(first_keys, second_keys)
 
 
+def test_semantic_rng_keys_do_not_depend_on_the_other_items() -> None:
+    full = _plan().prepare()
+    fast = _signature("fast-fiber")
+    subset = ExecutionWorksetPlan(("unit-4", "unit-1"), (fast, fast)).prepare()
+    key = jax.random.key(19)
+    full_keys = full.scatter(
+        jax.random.key_data(full.semantic_keys(key, jnp.full((5,), 3, jnp.uint32)))
+    )
+    subset_keys = subset.scatter(
+        jax.random.key_data(subset.semantic_keys(key, jnp.full((2,), 3, jnp.uint32)))
+    )
+    by_id = dict(zip(full.plan.semantic_ids, full_keys, strict=True))
+    for semantic_id, key_words in zip(subset.plan.semantic_ids, subset_keys, strict=True):
+        assert jnp.array_equal(key_words, by_id[semantic_id])
+
+
 def test_checkpoint_validates_runtime_and_payload_identity() -> None:
     prepared = _plan().prepare()
     state = jnp.arange(10, dtype=jnp.float32).reshape((5, 2))
     counters = jnp.arange(5, dtype=jnp.uint32)
-    checkpoint = ExecutionWorksetCheckpoint(prepared, state, counters)
+    checkpoint = ExecutionWorksetCheckpoint(
+        prepared, state, counters, numeric_revisions=()
+    )
     restored_state, restored_counters = restore_execution_workset_checkpoint(
-        prepared, checkpoint
+        prepared, checkpoint, numeric_revisions=()
     )
     assert jnp.array_equal(restored_state, state)
     assert jnp.array_equal(restored_counters, counters)
     corrupt = eqx.tree_at(lambda value: value.state, checkpoint, state.at[0, 0].set(-1.0))
     with pytest.raises(ValueError, match="content identity"):
-        restore_execution_workset_checkpoint(prepared, corrupt)
+        restore_execution_workset_checkpoint(prepared, corrupt, numeric_revisions=())
     with pytest.raises(ValueError, match="another runtime"):
-        restore_execution_workset_checkpoint(_plan(capacity=4).prepare(), checkpoint)
+        restore_execution_workset_checkpoint(
+            _plan(capacity=4).prepare(), checkpoint, numeric_revisions=()
+        )
+
+
+def test_checkpoint_binds_the_numeric_revisions_of_bound_weights() -> None:
+    prepared = _plan().prepare()
+    state = jnp.ones((5, 2), dtype=jnp.float32)
+    counters = jnp.zeros((5,), dtype=jnp.uint32)
+    semantic = phx.SemanticProvenance({"kind": "workset-gain"})
+    trained = phx.NumericRevision(semantic, {"gain": jnp.asarray(2.0)})
+    updated = phx.NumericRevision(semantic, {"gain": jnp.asarray(3.0)})
+    checkpoint = ExecutionWorksetCheckpoint(
+        prepared, state, counters, numeric_revisions=(trained,)
+    )
+    unbound = ExecutionWorksetCheckpoint(prepared, state, counters, numeric_revisions=())
+
+    # The same item state produced by other weights is another checkpoint.
+    assert checkpoint.checkpoint_id != unbound.checkpoint_id
+    restored, _ = restore_execution_workset_checkpoint(
+        prepared, checkpoint, numeric_revisions=(trained,)
+    )
+    assert jnp.array_equal(restored, state)
+    for bound in ((updated,), (), (trained, updated)):
+        with pytest.raises(ValueError, match="other bound numeric revisions"):
+            restore_execution_workset_checkpoint(
+                prepared, checkpoint, numeric_revisions=bound
+            )
+    with pytest.raises(ValueError, match="distinct"):
+        ExecutionWorksetCheckpoint(
+            prepared, state, counters, numeric_revisions=(trained, trained)
+        )
 
 
 @pytest.mark.parametrize(

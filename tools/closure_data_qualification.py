@@ -148,7 +148,7 @@ def closure_support_tuple(
             {
                 "binding_id": binding.binding_id,
                 "model_artifact_id": binding.model_artifact_id,
-                "differentiability": binding.differentiability,
+                "differentiability": binding.differentiability.value,
             }
         )
     return SupportTuple("closure-data", attributes)
@@ -486,7 +486,7 @@ def build_closure_data_candidate(
                 "schema_id": binding.schema_id,
                 "model_artifact_id": binding.model_artifact_id,
                 "normalizer_provenance_id": binding.normalizer_provenance_id,
-                "differentiability": binding.differentiability,
+                "differentiability": binding.differentiability.value,
             },
         },
         "quality": {

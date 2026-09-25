@@ -81,6 +81,30 @@ def test_mixed_fixed_and_iid_plan_reports_only_stochastic_axis_error():
     assert estimate.error_estimate > 0.0
 
 
+def test_stochastic_product_requires_declared_domain_functions():
+    domain, _ = _product_problem()
+    plan = phx.integration.ProductIntegrationPlan(
+        {
+            "x": phx.integration.FixedQuadraturePlan(
+                phx.integration.GaussLegendreRule(4)
+            ),
+            "t": phx.integration.MonteCarloPlan(16),
+        }
+    )
+
+    def undeclared(x=jnp.asarray(2.0), *, key=None):
+        del key
+        return x**2
+
+    with pytest.raises(TypeError, match=r"domain\.Function\(\*labels\)\(callable\)"):
+        phx.integration.integrate(
+            undeclared,
+            phx.integration.over(domain.component()),
+            plan,
+            key=jr.key(2),
+        )
+
+
 def test_mixed_qmc_needs_replicates_for_uncertainty():
     domain, function = _product_problem()
     fixed = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))

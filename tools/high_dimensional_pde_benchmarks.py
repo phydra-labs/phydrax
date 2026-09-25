@@ -166,7 +166,7 @@ class SemidiscretePDEBenchmarkRecord:
 
 
 class _LinearHJBValue(eqx.Module):
-    time_coefficient: Array
+    time_coefficient: Array = phx.parameter_field()
 
     def __call__(self, time: Array, state: Array, *, key=None) -> Array:
         del key
@@ -174,7 +174,7 @@ class _LinearHJBValue(eqx.Module):
 
 
 class _LinearHJBControl(eqx.Module):
-    coefficient: Array
+    coefficient: Array = phx.parameter_field()
     dimension: int = eqx.field(static=True)
 
     def __call__(self, time: Array, state: Array, *, key=None) -> Array:
@@ -183,7 +183,7 @@ class _LinearHJBControl(eqx.Module):
 
 
 class _OrnsteinUhlenbeckScore(eqx.Module):
-    variance: Array
+    variance: Array = phx.fixed_field()
 
     def __call__(self, state: Array, time: Array, *, key=None) -> Array:
         del time, key

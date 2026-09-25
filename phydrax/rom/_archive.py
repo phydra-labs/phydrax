@@ -18,7 +18,8 @@ from .._array_archive import (
     unpack_array_tree,
     write_array_archive,
 )
-from ..lifecycle import ModelManifest, NumericRevision
+from .._identity import NumericRevision, SemanticProvenance
+from ..lifecycle import ModelManifest
 from ._affine import PreparedAffineLinearROM
 from ._basis import ReducedBasisArtifact
 from ._empirical_interpolation import EmpiricalInterpolationArtifact
@@ -65,6 +66,24 @@ def _model_manifest(record: object, /) -> ModelManifest:
     if manifest.manifest_id != record["manifest_id"]:
         raise ValueError("ROM archive model manifest identity mismatch.")
     return manifest
+
+
+def _empirical_interpolation_revision(
+    record: dict[str, Any], arrays: dict[str, Any], /
+) -> NumericRevision:
+    return NumericRevision(
+        SemanticProvenance(
+            {
+                "kind": "empirical-interpolation",
+                "source_artifact_id": record["source_artifact_id"],
+                "basis_role": record["basis_role"],
+                "support_id": record["support_id"],
+                "measure_id": record["measure_id"],
+                "geometry_id": record["geometry_id"],
+            }
+        ),
+        arrays,
+    )
 
 
 def _write_strict_model(
@@ -260,7 +279,14 @@ def write_empirical_interpolation_artifact(
         "reconstruction_matrix": artifact.reconstruction_matrix,
     }
     digest = array_collection_digest(arrays)
-    revision = NumericRevision(digest, label="empirical-interpolation")
+    record = {
+        "source_artifact_id": artifact.source_artifact_id,
+        "basis_role": artifact.basis_role,
+        "support_id": artifact.support_id,
+        "measure_id": artifact.measure_id,
+        "geometry_id": artifact.geometry_id,
+    }
+    revision = _empirical_interpolation_revision(record, arrays)
     lifecycle = ModelManifest(
         artifact.artifact_id,
         analysis_plan_id,
@@ -272,11 +298,7 @@ def write_empirical_interpolation_artifact(
         path,
         manifest={
             "kind": _EIM_KIND,
-            "source_artifact_id": artifact.source_artifact_id,
-            "basis_role": artifact.basis_role,
-            "support_id": artifact.support_id,
-            "measure_id": artifact.measure_id,
-            "geometry_id": artifact.geometry_id,
+            **record,
             "condition_number": artifact.condition_number,
             "maximum_reproduction_error": artifact.maximum_reproduction_error,
             "plan_id": artifact.plan_id,
@@ -311,7 +333,7 @@ def read_empirical_interpolation_artifact(
     if set(manifest) != expected or manifest.get("kind") != _EIM_KIND:
         raise ValueError("Archive is not a native empirical-interpolation artifact.")
     digest = array_collection_digest(arrays)
-    revision = NumericRevision(digest, label="empirical-interpolation")
+    revision = _empirical_interpolation_revision(manifest, arrays)
     if revision.revision_id != manifest["numeric_revision_id"]:
         raise ValueError("Empirical-interpolation numeric revision mismatch.")
     lifecycle = _model_manifest(manifest["model_manifest"])

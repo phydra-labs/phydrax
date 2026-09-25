@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.discretization.lattice_boltzmann._amr import (
@@ -311,7 +312,7 @@ def test_collision_aware_amr_transfer_roundtrips_nonequilibrium_and_half_time():
 
 def test_fixed_branch_geometry_jvp_has_explicit_validity():
     policy = LatticeBoltzmannGeometrySensitivityPolicy(
-        mode=phx.solver.HybridSensitivityMode.SHARP_BRANCHWISE
+        mode=phx.BranchDifferentiationPolicy.BRANCHWISE
     )
     margins = LatticeBoltzmannGeometrySensitivityMargins(
         jnp.asarray(1.0),
@@ -332,6 +333,21 @@ def test_fixed_branch_geometry_jvp_has_explicit_validity():
 
     assert result.usable
     np.testing.assert_allclose(result.sensitivity, 4.0)
+    contract = result.derivative_contract
+    assert (
+        contract.level(phx.DerivativeSurface.PHYSICAL_PARAMETER)
+        is phx.GradientLevel.ALMOST_EVERYWHERE
+    )
+    assert contract.conditions == ("executed-branch",)
+
+
+def test_geometry_sensitivity_policy_rejects_unsupported_branch_policies():
+    with pytest.raises(ValueError, match="LatticeBoltzmannGeometrySensitivityPolicy"):
+        LatticeBoltzmannGeometrySensitivityPolicy(
+            mode=phx.BranchDifferentiationPolicy.FROZEN_DECISION
+        )
+    with pytest.raises(TypeError, match="BranchDifferentiationPolicy"):
+        LatticeBoltzmannGeometrySensitivityPolicy(mode="branchwise")
 
 
 def test_immersed_direct_forcing_balances_body_load_and_target_velocity():

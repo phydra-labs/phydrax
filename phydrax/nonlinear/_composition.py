@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import fixed_field
 from .._tree_math import tree_allfinite
 from ..linalg import (
     DenseLinearOperator,
@@ -87,7 +88,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
     regularization: float = eqx.field(static=True)
     safeguard_factor: float = eqx.field(static=True)
     update_name: str = eqx.field(static=True)
-    linear: LinearSolvePolicy
+    linear: LinearSolvePolicy = fixed_field()
     precision: NonlinearPrecisionPolicy
 
     def __init__(

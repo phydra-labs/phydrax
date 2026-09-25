@@ -13,16 +13,22 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._numerics import MetricName
 from ._common import (
@@ -190,23 +196,28 @@ def _fit_result(
     )
     if soft_temperature is None:
         model = HardClusterModel(centers, active, method=method)
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("labels", "assignments"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
+            nondifferentiable_outputs=("assignments",),
             conditions=("deterministic lowest-index tie breaking",),
         )
     else:
         model = SoftClusterModel(centers, active, soft_temperature, method=method)
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
-            nondifferentiable_outputs=("hard_labels",),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             conditions=(
                 "positive temperature",
                 "fixed active mask",
@@ -231,7 +242,7 @@ def _fit_result(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
 
 
@@ -442,11 +453,10 @@ class KMedoids(AbstractRecipe):
             converged=converged,
             method="k-medoids",
         )
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("labels", "medoid indices"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
+            nondifferentiable_outputs=("medoid indices",),
             conditions=("deterministic lowest-index tie breaking",),
         )
         return FitResult(
@@ -455,7 +465,7 @@ class KMedoids(AbstractRecipe):
             valid=valid,
             status=status,
             method="k-medoids",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -670,11 +680,10 @@ class MiniBatchKMeans(AbstractRecipe):
             converged=jnp.ones_like(valid),
             method="mini-batch-k-means",
         )
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("labels", "sampled mini-batches"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
+            nondifferentiable_outputs=("sampled mini-batches",),
             conditions=("explicit random key", "fixed iteration count"),
         )
         return FitResult(
@@ -683,7 +692,7 @@ class MiniBatchKMeans(AbstractRecipe):
             valid=valid,
             status=status,
             method="mini-batch-k-means",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

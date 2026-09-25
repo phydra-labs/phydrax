@@ -10,8 +10,15 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model._binding import ModelBinding
+from ..._trainable import fixed_field
 from ...uq._gp_classification import (
     BernoulliGaussianProcessPosterior,
     CategoricalGaussianProcessPosterior,
@@ -28,12 +35,18 @@ from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
-from ._utils import finite_array, validated_weights
+from .._schema import AbstractFittedModel
+from ._utils import (
+    finite_array,
+    kernel_regularity,
+    linear_expansion_contract,
+    validated_weights,
+)
 
 
 def _size(shape: tuple[int, ...]) -> int:
@@ -43,12 +56,12 @@ def _size(shape: tuple[int, ...]) -> int:
     return result
 
 
-class GaussianProcessClassifierModel(AbstractArrayModel):
+class GaussianProcessClassifierModel(AbstractFittedModel):
     """Smooth class probabilities from UQ Laplace-conditioned GP factors."""
 
     posteriors: tuple[
         BernoulliGaussianProcessPosterior | CategoricalGaussianProcessPosterior, ...
-    ]
+    ] = fixed_field()
     feature_count: int = eqx.field(static=True)
     class_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -72,6 +85,18 @@ class GaussianProcessClassifierModel(AbstractArrayModel):
         self.out_size = self.class_count
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # The latent mean and (nonnegative) variance are kernel expansions and the
+        # logistic-Gaussian moment correction and link are smooth, so the
+        # probabilities keep the shared kernel's regularity.
+        posterior = self.posteriors[0]
+        if isinstance(posterior, CategoricalGaussianProcessPosterior):
+            posterior = posterior.factors[0]
+        return linear_expansion_contract(
+            kernel_regularity(posterior.factor.state.kernel),
+            nondifferentiable_outputs=("predict",),
+        )
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -245,15 +270,20 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
             effective_samples=effective,
             method="uq-gp-laplace-classification",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
-            nondifferentiable_outputs=("predict",),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             conditions=("Class labels and Newton iteration count are fixed.",),
         )
         return FitResult(
@@ -262,7 +292,7 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="gp-classification",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

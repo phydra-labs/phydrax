@@ -12,7 +12,6 @@ import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
-from phydrax._trainable import partition_trainable
 
 
 def _small_mlp(key, *, width=6):
@@ -72,7 +71,7 @@ def test_randomized_prior_is_structurally_nontrainable_and_members_are_independe
         _small_mlp(jr.key(6)),
         beta=0.5,
     )
-    trainable, _ = partition_trainable(model)
+    trainable, _model_state, _ = phx.partition_parameters(model)
     learned_leaves = jax.tree_util.tree_leaves(
         eqx.filter(model.learned, eqx.is_inexact_array)
     )
@@ -253,3 +252,29 @@ def test_fit_ensemble_returns_deterministic_member_diagnostics_and_indexed_failu
     assert error.value.member_index == 0
     assert error.value.completed == ()
     assert isinstance(error.value.__cause__, ValueError)
+
+
+def test_homogeneous_ensemble_maps_only_its_declared_member_lane():
+    class Normalized(phx.StrictModule, phx.ParameterOwner):
+        weight: jax.Array
+        shift: jax.Array = phx.fixed_field()
+
+        def __call__(self, x, *, key=None):
+            return self.weight * (x - self.shift)
+
+    shifts = jnp.arange(8.0).reshape((4, 2))
+    members = Normalized(jnp.asarray([2.0, -1.0]), shifts)
+    layout = phx.LaneLayout("member", (".shift",))
+    ensemble = phx.uq.HomogeneousFunctionEnsemble(
+        members, 4, source_dim="member", layout=layout
+    )
+    x = jnp.asarray([0.5, 1.5])
+
+    # Per-member FIXED normalizers are mapped; the shared parameter is not.
+    prediction = ensemble.predict(x, key=jr.key(0))
+    serial = jnp.stack(tuple(Normalized(members.weight, shift)(x) for shift in shifts))
+    assert jnp.array_equal(jnp.asarray(prediction.samples.data), serial)
+    with pytest.raises(ValueError, match="share one lane size"):
+        phx.uq.HomogeneousFunctionEnsemble(members, 4)
+    with pytest.raises(ValueError, match="member axis of size 3"):
+        phx.uq.HomogeneousFunctionEnsemble(members, 3, layout=layout)

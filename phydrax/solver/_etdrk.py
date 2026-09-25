@@ -172,7 +172,7 @@ class ETDRKMethod(StrictModule, NonTrainableState):
         return result.accepted_state
 
 
-class PreparedETDRKMethod(AbstractFixedStepMethod):
+class PreparedETDRKMethod(AbstractFixedStepMethod, NonTrainableState):
     """ETDRK method bound to one complete semilinear drift identity."""
 
     drift: SemilinearDrift
@@ -395,7 +395,10 @@ class LESStabilityGuardedETDRKMethod(StrictModule, NonTrainableState):
         return result.accepted_state
 
 
-class PreparedLESStabilityGuardedETDRKMethod(AbstractFixedStepMethod):
+class PreparedLESStabilityGuardedETDRKMethod(
+    AbstractFixedStepMethod,
+    NonTrainableState,
+):
     """Prepared ETDRK transition guarded by one bound periodic LES realization."""
 
     plan: LESStabilityGuardedETDRKMethod

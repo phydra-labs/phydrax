@@ -25,6 +25,7 @@ from jaxtyping import Array, ArrayLike
 from ..._array_archive import read_array_archive, write_array_archive
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...solver._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._moist import MoistThermodynamicPlan
 from ._radiation import ColumnRadiationPlan
@@ -1109,7 +1110,7 @@ class InteractiveMoistColumnPlan(StrictModule):
         return state
 
 
-class InteractiveColumnFixedStepMethod(AbstractFixedStepMethod):
+class InteractiveColumnFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     """Native method adapter; ``args`` is a dictionary of physical forcing values."""
 
     plan: InteractiveMoistColumnPlan

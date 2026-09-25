@@ -18,7 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._model._structure import deserialize_model_leaf, serialize_model_leaf
 from ..._strict import StrictModule
-from ..._trainable import is_non_trainable_leaf
+from ..._trainable import require_parameter_roles
 from ..._training_checkpoint import (
     _open_verified_state,
     _prune_state_files,
@@ -74,6 +74,9 @@ class FunctionalPatchParticipant(StrictModule):
         seed: int = 0,
         jit: bool = True,
     ) -> FunctionalPatchParticipant:
+        require_parameter_roles(
+            self.solver.functions, context="FunctionalPatchParticipant.solve"
+        )
         trained = self.solver.solve(
             num_iter=num_iter,
             optim=optim,
@@ -237,7 +240,6 @@ def save_decomposition_artifact(
             target,
             artifact,
             filter_spec=serialize_model_leaf,
-            is_leaf=is_non_trainable_leaf,
         ),
     )
     _publish_manifest(
@@ -291,7 +293,6 @@ def load_decomposition_artifact(
             state_stream,
             artifact_like,
             filter_spec=deserialize_model_leaf,
-            is_leaf=is_non_trainable_leaf,
         )
 
 

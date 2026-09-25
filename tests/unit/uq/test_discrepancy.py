@@ -230,8 +230,13 @@ def test_path_valued_gp_likelihood_is_differentiable_and_functional_gp_rejects_i
     gradient = jax.grad(objective)(jnp.asarray(0.7))
     assert jnp.isfinite(gradient)
 
-    with pytest.raises(ValueError, match="input_ndim == 1"):
-        phx.uq.FunctionalGaussianProcessLikelihoodState(
-            kernel=phx.kernels.SignaturePDEKernel(phx.kernels.LinearKernel()),
-            noise_scale=0.1,
+    point_design = phx.uq.FunctionalDesign.from_inputs(
+        jnp.linspace(0.0, 1.0, 3),
+        phx.uq.value_functional(1),
+        name="points",
+    )
+    with pytest.raises(ValueError, match="Kernel input rank must match"):
+        phx.uq.functional_kernel_diagonal(
+            phx.kernels.SignaturePDEKernel(phx.kernels.LinearKernel()),
+            point_design,
         )

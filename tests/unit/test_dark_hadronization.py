@@ -195,11 +195,14 @@ def test_dark_cluster_decay_and_fission_normalize_channels_and_preserve_lineage_
     np.testing.assert_allclose(fission.four_momentum_residual, 0.0, atol=1e-5)
     np.testing.assert_allclose(decay.charge_residual, 0.0, atol=1e-12)
     np.testing.assert_allclose(fission.charge_residual, 0.0, atol=1e-12)
-    for result in (decay, fission):
+    for result, four_momenta, charges in (
+        (decay, decay.output_four_momenta, decay.output_charges),
+        (fission, fission.daughter_four_momenta, fission.daughter_charges),
+    ):
         np.testing.assert_allclose(
-            jnp.sum(result.output_four_momenta, axis=0),
+            jnp.sum(four_momenta, axis=0),
             result.input_four_momentum,
             atol=1e-5,
         )
-        np.testing.assert_allclose(jnp.sum(result.output_charges), 0.0, atol=1e-12)
+        np.testing.assert_allclose(jnp.sum(charges), 0.0, atol=1e-12)
     assert decay.parent_entity_id == fission.parent_entity_id == "cluster-parent"

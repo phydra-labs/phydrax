@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
 from phydrax.ml import (
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
@@ -207,8 +208,8 @@ def test_bayesian_mixture_exposes_each_covariance_mode_and_posterior_concentrati
     assert jnp.allclose(jnp.sum(model(_DATA), axis=-1), 1.0, atol=1e-6)
     assert jnp.all(jnp.isfinite(model.log_prob(_DATA)))
     assert result.method == "bayesian-gaussian-mixture"
-    assert result.gradient_contract.fit_mode == "unrolled"
-    assert "positive variational prior" in result.gradient_contract.conditions
+    assert result.derivative_contract.route is DerivativeRoute.UNROLLED
+    assert "positive variational prior" in result.derivative_contract.conditions
 
 
 @pytest.mark.parametrize(
@@ -247,13 +248,15 @@ def test_each_mixture_family_exercises_declared_fit_feature_and_weight_gradients
             .log_prob(point)
         )
     )(weights)
-    contract = recipe.fit_batch(MLBatch(_DATA, sample_weight=weights)).gradient_contract
+    contract = recipe.fit_batch(MLBatch(_DATA, sample_weight=weights)).derivative_contract
 
-    assert contract.prediction_inputs == "smooth"
-    assert contract.prediction_parameters == "smooth"
-    assert contract.fit_features == "conditional"
-    assert contract.fit_weights == "conditional"
-    assert contract.fit_hyperparameters == "conditional"
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )
     assert jnp.all(jnp.isfinite(feature_gradient))
     assert jnp.all(jnp.isfinite(weight_gradient))
 

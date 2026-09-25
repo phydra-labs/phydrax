@@ -51,21 +51,30 @@ def run():
     dense = phx.linalg.DenseLinearOperator(
         jnp.asarray([[2.0, 0.0], [0.0, 3.0]]), source=space, target=space
     )
-    history = phx.linalg.LinearSolveHistory.empty(
-        dense,
-        phx.linalg.LinearSolveHistoryPolicy("projection", capacity=3),
-        "benchmark-family",
-    )
+    history = phx.linalg.HistoryInitialGuess(dense, "benchmark-family", capacity=3)
     history = history.update(dense, jnp.asarray([1.0, 0.0]), time=0.0)
     history = history.update(dense, jnp.asarray([0.0, 1.0]), time=1.0)
-    guess, diagnostics = history.initial_guess(dense.mv(jnp.asarray([2.0, 3.0])))
+    problem = phx.linalg.LinearSystem(dense)
+    policy = phx.linalg.LinearSolvePolicy(phx.linalg.FGMRES(restart=2))
+    rhs = dense.mv(jnp.asarray([2.0, 3.0]))
+
+    def guarded_solve(target):
+        return phx.linalg.solve(problem, target, policy=policy, initial_guess=history)
+
+    guarded = guarded_solve(rhs)
+    native = phx.linalg.solve(problem, rhs, policy=policy)
 
     return {
         "collocated_apply_seconds": collocated_time,
         "collocated_dofs": value.size,
-        "history_effective_dimension": int(diagnostics.effective_dimension),
-        "history_projection_residual": float(diagnostics.projection_residual_norm),
-        "history_guess_norm": float(jnp.linalg.norm(guess)),
+        "history_effective_dimension": int(history.effective_dimension),
+        "history_guess_accepted": bool(guarded.initial_guess.accepted),
+        "history_proposal_residual": float(guarded.initial_guess.proposal_residual_norm),
+        "history_guarded_iterations": int(guarded.diagnostics.iterations),
+        "native_iterations": int(native.diagnostics.iterations),
+        "history_guarded_solve_seconds": _average_time(
+            lambda target: guarded_solve(target).value, rhs
+        ),
     }
 
 

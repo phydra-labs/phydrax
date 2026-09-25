@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 from ._subspace_diffusion import AffineSubspaceLayout, SubspaceGaussianDiffusion
 
@@ -139,7 +140,7 @@ def _time_weights(times: Array) -> Array:
 class PathCoefficientDiffusion(StrictModule):
     """Gaussian diffusion in a trajectory basis or innovation coordinate space."""
 
-    layout: TrajectoryEventLayout
+    layout: TrajectoryEventLayout = fixed_field()
     coefficient_process: AbstractGaussianDiffusion
     subspace_process: SubspaceGaussianDiffusion
     score_dependency: PathScoreDependency = eqx.field(static=True)

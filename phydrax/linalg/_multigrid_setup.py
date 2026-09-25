@@ -15,6 +15,7 @@ from jaxtyping import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ._assembly import (
     plan_sparse_assembly,
     prepare_sparse_assembly,
@@ -66,11 +67,13 @@ MultigridRefreshMode: TypeAlias = Literal[
 class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
     """Generate every coarse operator from fixed restriction/prolongation pairs."""
 
-    transfers: tuple[tuple[AbstractLinearOperator, AbstractLinearOperator], ...]
+    transfers: tuple[tuple[AbstractLinearOperator, AbstractLinearOperator], ...] = (
+        fixed_field()
+    )
     smoothers: tuple[PreconditionerSource, ...]
     coarse_solver: PreconditionerSource
-    properties: PreconditionerProperties
-    cycle_policy: MultigridCyclePolicy
+    properties: PreconditionerProperties = fixed_field()
+    cycle_policy: MultigridCyclePolicy = fixed_field()
     refresh_mode: MultigridRefreshMode = eqx.field(static=True)
     pre_smoothing: int = eqx.field(static=True)
     post_smoothing: int = eqx.field(static=True)
@@ -465,12 +468,12 @@ class SmoothedAggregationPolicy(StrictModule):
 class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
     """Host-setup deterministic smoothed aggregation for explicit operators."""
 
-    policy: SmoothedAggregationPolicy
+    policy: SmoothedAggregationPolicy = fixed_field()
     smoother: PreconditionerSource
     coarse_solver: PreconditionerSource
-    near_nullspaces: tuple[LinearSubspace, ...]
-    properties: PreconditionerProperties
-    cycle_policy: MultigridCyclePolicy
+    near_nullspaces: tuple[LinearSubspace, ...] = fixed_field()
+    properties: PreconditionerProperties = fixed_field()
+    cycle_policy: MultigridCyclePolicy = fixed_field()
     refresh_mode: MultigridRefreshMode = eqx.field(static=True)
     _properties_supplied: bool = eqx.field(static=True)
     _builder_id: str = eqx.field(static=True)

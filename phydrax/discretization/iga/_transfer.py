@@ -16,12 +16,12 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._identity import NumericRevision
 from ..._interpolation._bspline import bspline_stencil
 from ..._interpolation._bspline_grid import BSplineGrid
 from ..._interpolation._bspline_projection import BSplineGridTransfer
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...lifecycle import NumericRevision
 from ...linalg import AbstractLinearOperator, FunctionLinearOperator, transpose
 from .._core import DiscretizationCapability, PreparationReport
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
@@ -139,8 +139,8 @@ class TransferPlan(StrictModule, NonTrainableState):
     target_layout_id: str = eqx.field(static=True)
     source_revision_id: str = eqx.field(static=True)
     target_revision_id: str = eqx.field(static=True)
-    source_content_digest: str = eqx.field(static=True)
-    target_content_digest: str = eqx.field(static=True)
+    source_content_id: str = eqx.field(static=True)
+    target_content_id: str = eqx.field(static=True)
     composition: tuple[str, ...] = eqx.field(static=True)
     invalidation_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -242,8 +242,8 @@ class TransferPlan(StrictModule, NonTrainableState):
         self.target_layout_id = target_layout
         self.source_revision_id = source_revision.revision_id
         self.target_revision_id = target_revision.revision_id
-        self.source_content_digest = source_revision.content_digest
-        self.target_content_digest = target_revision.content_digest
+        self.source_content_id = source_revision.content_id
+        self.target_content_id = target_revision.content_id
         self.composition = composition_
         self.invalidation_id = invalidation
         self.plan_id = canonical_fingerprint(
@@ -374,8 +374,8 @@ class TransferPlan(StrictModule, NonTrainableState):
             "target_layout_id": self.target_layout_id,
             "source_revision_id": self.source_revision_id,
             "target_revision_id": self.target_revision_id,
-            "source_content_digest": self.source_content_digest,
-            "target_content_digest": self.target_content_digest,
+            "source_content_id": self.source_content_id,
+            "target_content_id": self.target_content_id,
             "transfer_class": self.evidence.transfer_class,
             "evidence_id": self.evidence.evidence_id,
             "composition": list(self.composition),

@@ -308,7 +308,7 @@ class RegionalDoseResult:
             or self.evidence.source_id not in self.asset.derivation.parent_ids
             or self.evidence.target_id != self.asset.field.support.support_id
             or metadata.get("s_value_table_id") != table
-            or metadata.get("target_region_ids") != targets
+            or metadata.get("target_region_ids") != list(targets)
             or metadata.get("radionuclide_id") != self.evidence.radionuclide_id
             or metadata.get("transition_id") != self.evidence.transition_id
             or metadata.get("kernel_data_id") != self.evidence.kernel_data_id

@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem
@@ -231,11 +232,8 @@ class Marquis2019SpmeState(StrictModule):
             raise ValueError("SPMe electrolyte amount must contain a through-cell axis.")
         if jnp.issubdtype(electrolyte.dtype, jnp.complexfloating):
             raise TypeError("SPMe electrolyte amount must be real-valued.")
-        dtype = jnp.result_type(
-            particles.negative_amount_mol,
-            particles.positive_amount_mol,
-            electrolyte,
-            jnp.float64,
+        dtype = inexact_result_type(
+            particles.negative_amount_mol, particles.positive_amount_mol, electrolyte
         )
         self.negative_amount_mol = particles.negative_amount_mol.astype(dtype)
         self.positive_amount_mol = particles.positive_amount_mol.astype(dtype)
@@ -586,7 +584,7 @@ def _eq49_ocp_error(
 
 
 def _finite_large_ratio(numerator: Array, denominator: Array, /) -> Array:
-    dtype = jnp.result_type(numerator, denominator, jnp.float64)
+    dtype = inexact_result_type(numerator, denominator)
     maximum = jnp.asarray(jnp.finfo(dtype).max, dtype=dtype)
     floor = jnp.maximum(jnp.abs(numerator) / maximum, jnp.finfo(dtype).tiny)
     return numerator / jnp.maximum(denominator, floor)

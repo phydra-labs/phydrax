@@ -19,6 +19,7 @@ from ..._holomorphic import (
     HolomorphicMapCertificate,
 )
 from ..._strict import StrictModule
+from ..._trainable import fixed_field, ParameterOwner
 
 
 def _horner(coefficients: Array, coordinate: Array, /) -> Array:
@@ -43,15 +44,15 @@ def _derivative_coefficients(coefficients: Array, order: int, /) -> Array:
     return coefficients[..., order_:] * factors
 
 
-class HolomorphicPolynomialPotential(StrictModule):
+class HolomorphicPolynomialPotential(StrictModule, ParameterOwner):
     """Independent complex polynomial potential branches with analytic jets."""
 
     coefficient_real: Array
     coefficient_imag: Array
-    normalization: ComplexAffineNormalization
+    normalization: ComplexAffineNormalization = fixed_field()
     branches: int = eqx.field(static=True)
     maximum_degree: int = eqx.field(static=True)
-    _certificate: HolomorphicMapCertificate
+    _certificate: HolomorphicMapCertificate = fixed_field()
 
     def __init__(
         self,

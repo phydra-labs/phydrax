@@ -7,7 +7,10 @@ E xdot = A x + B u
 y      = C x + D u
 ```
 
-For the repository-wide `exp(-i omega t)` convention, `descriptor_frequency_response` solves
+`phydrax.control.descriptor_frequency_response` evaluates the control transfer
+function at `s = i omega`, solving `(i omega E - A) x = B u`. Circuits use the
+`exp(-i omega t)` convention, so `circuit_small_signal_response` and
+`propagate_descriptor_noise` solve
 
 ```text
 (-i omega E - A) x = B u

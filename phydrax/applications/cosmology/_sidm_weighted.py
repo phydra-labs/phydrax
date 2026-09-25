@@ -318,7 +318,7 @@ def _scattered_velocities(
     return first, second
 
 
-class WeightedSIDMPlan(StrictModule, NonTrainableState):
+class WeightedSIDMPlan(StrictModule):
     """Fixed-capacity weighted rare SIDM with runtime-mass PM coupling.
 
     This is an explicitly rare, packet-splitting profile. It never switches to

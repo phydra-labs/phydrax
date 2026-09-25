@@ -355,7 +355,9 @@ class TwoTemperatureThermodynamicsPlan(StrictModule, NonTrainableState):
 
 
 class TwoTemperatureMixtureEulerSystem(
-    AbstractAdmissibleSystem, AbstractNormalReflectionSystem
+    AbstractAdmissibleSystem,
+    AbstractNormalReflectionSystem,
+    NonTrainableState,
 ):
     """Neutral multi-species Euler system with explicit thermal-mode energies."""
 

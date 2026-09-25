@@ -21,10 +21,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import DerivativeContract, DerivativeRoute
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract, ScientificArtifactEnvelope
+from ...artifacts import ScientificArtifactEnvelope
 from ...backends import (
     AbstractExternalBackend,
     BackendAvailability,
@@ -1063,7 +1064,7 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
             ),
             scale_id=request.cosmology.scale.scale_id,
             source_kind="external",
-            differentiation=DifferentiationContract.constant(),
+            differentiation=DerivativeContract(route=DerivativeRoute.DIRECT),
             parent_product_ids=(self.reference_manifest.manifest_id,),
         )
         table = MatterPowerTable(

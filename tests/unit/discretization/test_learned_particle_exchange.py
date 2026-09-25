@@ -106,11 +106,16 @@ def _task(channels):
 
 
 def _trained(model, channels, artifact):
+    task = _task(channels)
+    exchange_port = task.field_by_name["pair_exchange"].value_port()
     return phx.nn.operator.training.TrainedOperator(
         model,
-        _task(channels),
+        task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "pair_exchange"},
+        output_ports={"output": exchange_port},
+        port_mapping=phx.PortMapping(
+            outputs=((exchange_port.port_id, exchange_port.port_id),)
+        ),
         artifact_id=artifact,
     )
 

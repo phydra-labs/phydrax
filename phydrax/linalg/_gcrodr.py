@@ -433,6 +433,7 @@ def _build_result(
         status,
         diagnostics,
         provenance,
+        differentiation=prepared.plan.policy.differentiation,
     )
 
 

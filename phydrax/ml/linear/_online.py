@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import DerivativeContract, GradientLevel
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -23,6 +24,10 @@ from .._contracts import (
     ML_SUCCESS,
 )
 from ._base import (
+    _AFFINE,
+    _HARD_LABELS,
+    _linear_contract,
+    _SMOOTH,
     AbstractLinearRegressorModel,
     AbstractLinearScoreClassifierModel,
     binary_targets,
@@ -52,6 +57,12 @@ class AbstractOnlineClassifierModel(AbstractLinearScoreClassifierModel):
     def __init__(self, *args, probabilistic: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         self.probabilistic = bool(probabilistic)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _linear_contract(
+            _SMOOTH if self.probabilistic else _AFFINE,
+            nondifferentiable_outputs=_HARD_LABELS,
+        )
 
     def positive_probability(self, x: Any, /) -> Array:
         if not self.probabilistic:
@@ -181,7 +192,7 @@ def _finish_online(
     model,
     extra_valid: Array | bool = True,
     nonsmooth: bool = False,
-    fit_targets: str | None = None,
+    fit_targets: GradientLevel | None = None,
     hard_outputs: tuple[str, ...] = (),
 ) -> FitResult:
     finite = (
@@ -221,7 +232,8 @@ def _finish_online(
         valid=valid_cases,
         status=status_cases,
         method=method,
-        gradient_contract=unrolled_contract(
+        derivative_contract=unrolled_contract(
+            model,
             nonsmooth=nonsmooth,
             fit_targets=fit_targets,
             hard_outputs=hard_outputs,
@@ -447,11 +459,10 @@ class SGDClassifierRecipe(AbstractRecipe):
             objective=objective,
             passes=self.passes,
             method=f"weighted-online-sgd-{self.loss}-classification",
-            fit_targets="none",
+            fit_targets=GradientLevel.NONE,
             model=model,
             extra_valid=label_valid,
             nonsmooth=self.loss == "hinge",
-            hard_outputs=("predict", "predict_indices"),
         )
 
 
@@ -527,11 +538,11 @@ class PerceptronRecipe(AbstractRecipe):
             objective=objective,
             passes=self.passes,
             method="weighted-online-perceptron",
-            fit_targets="none",
+            fit_targets=GradientLevel.NONE,
             model=model,
             extra_valid=label_valid,
             nonsmooth=True,
-            hard_outputs=("predict", "predict_indices", "mistake_updates"),
+            hard_outputs=("mistake_updates",),
         )
 
 
@@ -726,11 +737,11 @@ class PassiveAggressiveClassifierRecipe(_AbstractPassiveAggressiveRecipe):
             objective=objective,
             passes=self.passes,
             method=f"weighted-online-passive-aggressive-classification-{self.variant}",
-            fit_targets="none",
+            fit_targets=GradientLevel.NONE,
             model=model,
             extra_valid=label_valid,
             nonsmooth=True,
-            hard_outputs=("predict", "predict_indices", "margin_updates"),
+            hard_outputs=("margin_updates",),
         )
 
 

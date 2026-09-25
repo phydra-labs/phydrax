@@ -237,7 +237,7 @@ class FiniteXBoundaryLayerCaseSpec(StrictModule, NonTrainableState):
         return 2 if self.spanwise_bounds is None else 3
 
 
-class CompressibleFlowCaseSpec(StrictModule, NonTrainableState):
+class CompressibleFlowCaseSpec(StrictModule):
     """Physical application case bound to one exact canonical gas system."""
 
     system: (

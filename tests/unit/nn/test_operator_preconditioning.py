@@ -115,11 +115,16 @@ def _binding(*, gain=0.5, artifact_id="correction-artifact", normalization=None)
     solver_space = _field_space("solver", support, vector)
     residual_space = _field_space("model-residual", support, vector)
     correction_space = _field_space("model-correction", support, vector)
+    task = _operator_task()
+    correction_port = task.field_by_name["correction"].value_port()
     trained = phx.nn.operator.training.TrainedOperator(
         _ResidualCorrectionOperator(gain),
-        _operator_task(),
+        task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "correction"},
+        output_ports={"output": correction_port},
+        port_mapping=phx.PortMapping(
+            outputs=((correction_port.port_id, correction_port.port_id),)
+        ),
         fixed_query_fingerprints={
             "query": template.query("query").geometry_fingerprint()
         },

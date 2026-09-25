@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from .._tree_math import tree_allfinite
 from ..linalg import AbstractVectorSpace
 from ._types import NonlinearSystemProblem
@@ -67,8 +68,8 @@ class NonlinearSubdomain(StrictModule):
     prolong_correction: Any
     local_residual: Any
     update: AbstractNonlinearUpdate
-    state_space: AbstractVectorSpace
-    residual_space: AbstractVectorSpace
+    state_space: AbstractVectorSpace = fixed_field()
+    residual_space: AbstractVectorSpace = fixed_field()
     weight: float = eqx.field(static=True)
     subdomain_id: str = eqx.field(static=True)
 

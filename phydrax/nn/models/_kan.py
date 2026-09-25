@@ -11,14 +11,22 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._base import _AbstractBaseModel
+from .._contracts import AFFINE, compose_regularity, SMOOTH, sum_regularity
 from .._keys import EvalKey
 from .._scan import pack_scan_modules, scan_apply, stack_scan_dynamics
 from .._utils import _canonical_size, _get_size, _get_value_shape, _identity, SizeLike
+from ..activations import activation_regularity
 from ..layers._linear import Linear
 from ._kan_basis import AbstractEdgeBasis, OrthogonalPolynomialEdgeBasis
+
+
+# The clamp of edge inputs onto [-1, 1] without `use_tanh`.
+_CLAMP = DerivativeRegularity.piecewise_polynomial(continuity=0, degree_bound=1)
 
 
 def _canonicalize_edge_inputs(inputs: Array, use_tanh: bool) -> Array:
@@ -31,7 +39,7 @@ def _canonicalize_edge_inputs(inputs: Array, use_tanh: bool) -> Array:
     )
 
 
-class KANEdgeBlock(StrictModule):
+class KANEdgeBlock(StrictModule, ParameterOwner):
     """Shape-homogeneous sparse collection of KAN edges sharing one basis."""
 
     output_indices: tuple[int, ...] = eqx.field(static=True)
@@ -253,6 +261,19 @@ class KANLayer(StrictModule):
             raise RuntimeError("Dense KAN layer edge parameters are missing.")
         return self.edge_basis.regularization(self.coeffs)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Scaled (affine) inputs are squashed into [-1, 1], passed through the edge
+        # functions, and summed with the bias.
+        bases = (
+            tuple(block.edge_basis for block in self.edge_blocks)
+            if self.edge_blocks
+            else (self.edge_basis,)
+        )
+        edges = sum_regularity(
+            None if basis is None else basis._edge_regularity() for basis in bases
+        )
+        return compose_regularity(AFFINE, SMOOTH if self.use_tanh else _CLAMP, edges)
+
 
 class KAN(_AbstractBaseModel):
     """Kolmogorov-Arnold Network with typed scalar edge-function bases.
@@ -446,3 +467,9 @@ class KAN(_AbstractBaseModel):
         for layer in self.layers:
             regularization = regularization + layer.regularization()
         return jnp.asarray(alpha, dtype=regularization.dtype) * regularization
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        stack = compose_regularity(*(layer._value_regularity() for layer in self.layers))
+        if self.skip_connection:
+            stack = sum_regularity((stack, AFFINE))
+        return compose_regularity(stack, activation_regularity(self.final_activation))

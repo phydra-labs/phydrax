@@ -4,16 +4,27 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import inspect
+from collections.abc import Callable
+from typing import Any, final, Literal
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
-from ...._callable import _ensure_special_kwonly_args
+from ...._callable import _ensure_special_kwonly_args, _KeyIterAdapter
+from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
+from ...._model import AbstractArrayModel
+from ...._model._array import value_derivative_contract
+from ...._model._component import ExecutionCapabilities, ModelExecutionContract
+from ...._trainable import model_state_field, parameter_field
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..._contracts import AFFINE, compose_regularity, model_regularity, SMOOTH
 from ..._keys import EvalKey
 from ..._utils import _canonical_size, _get_size, _get_value_shape, SizeLike
+from ...activations import activation_regularity
 
 
 _Layout = Literal["value", "passthrough"]
@@ -33,6 +44,91 @@ def _flatten_value(x: Array, /, *, in_size: int | tuple[int, ...] | Literal["sca
         raise ValueError(f"`x` must have shape {in_shape}, got {x_arr.shape}.")
     x_flat = x_arr.reshape((_get_size(in_size),))
     return x_flat, ()
+
+
+_EQX_MLP_IDENTITY = (
+    inspect.signature(eqx.nn.MLP.__init__).parameters["final_activation"].default
+)
+_EQX_AFFINE_LAYERS = (
+    eqx.nn.Linear,
+    eqx.nn.Conv,
+    eqx.nn.ConvTranspose,
+    eqx.nn.Identity,
+    eqx.nn.Dropout,
+    eqx.nn.AvgPool1d,
+    eqx.nn.AvgPool2d,
+    eqx.nn.AvgPool3d,
+    eqx.nn.AdaptiveAvgPool1d,
+    eqx.nn.AdaptiveAvgPool2d,
+    eqx.nn.AdaptiveAvgPool3d,
+)
+_EQX_PIECEWISE_LINEAR_LAYERS = (
+    eqx.nn.PReLU,
+    eqx.nn.MaxPool1d,
+    eqx.nn.MaxPool2d,
+    eqx.nn.MaxPool3d,
+    eqx.nn.AdaptiveMaxPool1d,
+    eqx.nn.AdaptiveMaxPool2d,
+    eqx.nn.AdaptiveMaxPool3d,
+)
+_EQX_NORMALIZATIONS = (eqx.nn.LayerNorm, eqx.nn.RMSNorm, eqx.nn.GroupNorm)
+
+
+def _activation(fn: Any, /) -> DerivativeRegularity | None:
+    if fn is _EQX_MLP_IDENTITY:
+        return AFFINE
+    return _module_regularity(fn)
+
+
+def _module_regularity(module: Any, /) -> DerivativeRegularity | None:
+    """Structural value regularity of a known Equinox layer tree (`None` if unknown).
+
+    Affine layers (linear, convolution, identity, average pooling, inference-mode
+    dropout) are degree-1 polynomials; `PReLU` and max pooling are C0 piecewise
+    linear; normalizations with a positive epsilon are smooth; `Sequential` and
+    `MLP` compose their stages; `Lambda` and bare callables use
+    `activation_regularity`.
+    """
+    if isinstance(module, _KeyIterAdapter):
+        return _module_regularity(module.func)
+    if isinstance(module, _EQX_AFFINE_LAYERS):
+        return AFFINE
+    if isinstance(module, _EQX_PIECEWISE_LINEAR_LAYERS):
+        return DerivativeRegularity.piecewise_polynomial(continuity=0, degree_bound=1)
+    if isinstance(module, _EQX_NORMALIZATIONS):
+        return SMOOTH if module.eps > 0.0 else None
+    if isinstance(module, eqx.nn.Sequential):
+        return compose_regularity(*(_module_regularity(layer) for layer in module.layers))
+    if isinstance(module, eqx.nn.MLP):
+        stages = []
+        for layer in module.layers[:-1]:
+            stages += [_module_regularity(layer), _activation(module.activation)]
+        stages += [
+            _module_regularity(module.layers[-1]),
+            _activation(module.final_activation),
+        ]
+        return compose_regularity(*stages)
+    if isinstance(module, eqx.nn.Lambda):
+        return activation_regularity(module.fn)
+    if isinstance(module, AbstractArrayModel):
+        return model_regularity(module)
+    return activation_regularity(module)
+
+
+def _stateless_module(module: Any, /, *, wrapper: str) -> Any:
+    """Wrap `module` for keyword dispatch after rejecting Equinox state."""
+    if any(
+        isinstance(node, eqx.nn.StateIndex)
+        for node in jax.tree_util.tree_leaves(
+            module, is_leaf=lambda node: isinstance(node, eqx.nn.StateIndex)
+        )
+    ):
+        raise TypeError(
+            f"stateful Equinox modules are not supported by {wrapper}; wrap the "
+            "module in FunctionalJAXAdapter, whose apply(parameters, model_state, "
+            "input, key, *, inference) returns (output, next_model_state)"
+        )
+    return _ensure_special_kwonly_args(module)
 
 
 def _reshape_value(
@@ -77,6 +173,9 @@ class EquinoxModel(_AbstractBaseModel):
     (flatten value axes) -> (call wrapped module) -> (reshape back to value axes).
 
     Use `layout="passthrough"` to forward inputs/outputs unchanged.
+
+    The wrapper is a `ParameterOwner`: every inexact array of `module` is a
+    PARAMETER. Modules holding `eqx.nn.StateIndex` state are rejected.
     """
 
     module: Any
@@ -93,7 +192,7 @@ class EquinoxModel(_AbstractBaseModel):
         out_size: SizeLike,
         layout: _Layout = "value",
     ):
-        self.module = _ensure_special_kwonly_args(module)
+        self.module = _stateless_module(module, wrapper=type(self).__name__)
         self.in_size = _canonical_size(in_size)
         self.out_size = _canonical_size(out_size)
         self.layout = layout
@@ -115,9 +214,16 @@ class EquinoxModel(_AbstractBaseModel):
         y_flat = self.module(x_flat, key=key, **kwargs)
         return _reshape_value(y_flat, leading_shape=leading_shape, out_size=self.out_size)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return _module_regularity(self.module)
+
 
 class EquinoxStructuredModel(_AbstractStructuredInputModel):
-    """Equinox/JAX callable adapter that supports structured (tuple) inputs."""
+    """Equinox/JAX callable adapter that supports structured (tuple) inputs.
+
+    Like `EquinoxModel`, the module's inexact arrays are PARAMETER and stateful
+    modules are rejected.
+    """
 
     module: Any
     in_size: int | tuple[int, ...] | Literal["scalar"]
@@ -133,7 +239,7 @@ class EquinoxStructuredModel(_AbstractStructuredInputModel):
         out_size: SizeLike,
         layout: _Layout = "passthrough",
     ):
-        self.module = _ensure_special_kwonly_args(module)
+        self.module = _stateless_module(module, wrapper=type(self).__name__)
         self.in_size = _canonical_size(in_size)
         self.out_size = _canonical_size(out_size)
         self.layout = layout
@@ -174,5 +280,103 @@ class EquinoxStructuredModel(_AbstractStructuredInputModel):
         y_flat = self.module(x_flat, key=key, **kwargs)
         return _reshape_value(y_flat, leading_shape=leading_shape, out_size=self.out_size)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return _module_regularity(self.module)
 
-__all__ = ["EquinoxModel", "EquinoxStructuredModel"]
+
+_FUNCTIONAL_CAPABILITIES = ExecutionCapabilities("functional-jax", stateful=True)
+
+
+@final
+class FunctionalJAXAdapter(_AbstractBaseModel):
+    """Stateful functional JAX model with explicit parameter and state lanes.
+
+    `apply(parameters, model_state, input, key, *, inference)` returns
+    `(output, next_model_state)` with `next_model_state` congruent to
+    `model_state`. It is the functional form of Haiku `transform_with_state`,
+    Flax `apply(..., mutable=...)`, and Equinox `make_with_state` models; no
+    such framework is required. `parameters` are PARAMETER and `model_state` is
+    MODEL_STATE (for example running statistics).
+
+    Inference mode is explicit: `inference` is passed to every `apply` call and
+    is switched with `phydrax.nn.layers.inference_mode`. Evaluation (`__call__`)
+    returns the output only and never changes the model. `transition` returns
+    the output together with the adapter holding the candidate next state; the
+    training kernel commits that state only with an accepted update and keeps
+    the committed state on rejection.
+    """
+
+    apply: Callable[..., tuple[Any, PyTree[Any]]] = eqx.field(static=True)
+    parameters: PyTree[Any] = parameter_field()
+    model_state: PyTree[Any] = model_state_field()
+    inference: bool
+    in_size: int | tuple[int, ...] | Literal["scalar"]
+    out_size: int | tuple[int, ...] | Literal["scalar"]
+
+    def __init__(
+        self,
+        apply: Callable[..., tuple[Any, PyTree[Any]]],
+        parameters: PyTree[Any],
+        model_state: PyTree[Any],
+        /,
+        *,
+        in_size: SizeLike,
+        out_size: SizeLike,
+        inference: bool,
+    ):
+        if not callable(apply):
+            raise TypeError("apply must be callable.")
+        if not isinstance(inference, bool):
+            raise TypeError("inference must be bool.")
+        self.apply = apply
+        self.parameters = parameters
+        self.model_state = model_state
+        self.inference = inference
+        self.in_size = _canonical_size(in_size)
+        self.out_size = _canonical_size(out_size)
+
+    def _apply(self, x: Any, key: EvalKey, /) -> tuple[Any, PyTree[Any]]:
+        result = self.apply(
+            self.parameters, self.model_state, x, key, inference=self.inference
+        )
+        if not isinstance(result, tuple) or len(result) != 2:
+            raise TypeError("apply must return (output, next_model_state).")
+        output, next_state = result
+        if jax.tree_util.tree_structure(next_state) != jax.tree_util.tree_structure(
+            self.model_state
+        ) or any(
+            jnp.shape(new) != jnp.shape(old)
+            or jnp.result_type(new) != jnp.result_type(old)
+            for new, old in zip(
+                jax.tree_util.tree_leaves(next_state),
+                jax.tree_util.tree_leaves(self.model_state),
+                strict=True,
+            )
+        ):
+            raise ValueError(
+                "apply returned a next_model_state that differs from model_state in "
+                "structure, shape, or dtype."
+            )
+        return output, next_state
+
+    def __call__(self, x: Any, /, *, key: EvalKey = DOC_KEY0) -> Array:
+        """Evaluate the output; the model state is read, never advanced."""
+        return jnp.asarray(self._apply(x, key)[0])
+
+    def transition(
+        self, x: Any, /, *, key: EvalKey = DOC_KEY0
+    ) -> tuple[Array, FunctionalJAXAdapter]:
+        """Return the output and this adapter holding the candidate next state."""
+        output, next_state = self._apply(x, key)
+        return jnp.asarray(output), eqx.tree_at(
+            lambda adapter: adapter.model_state, self, next_state
+        )
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        """Undeclared regularity under stateful `"functional-jax"` execution."""
+        return self._execution_contract(
+            value_derivative_contract(None), execution=_FUNCTIONAL_CAPABILITIES
+        )
+
+
+__all__ = ["EquinoxModel", "EquinoxStructuredModel", "FunctionalJAXAdapter"]

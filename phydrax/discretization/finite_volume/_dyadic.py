@@ -39,6 +39,7 @@ class DyadicFiniteVolumeDiscretization(AbstractPreparedDiscretization):
 
     topology: DyadicCellTopology
     topology_leaf_slots: Array
+    vertices: Array
     cell_centers: Array
     cell_volumes: Array
     cell_quadrature_points: Array
@@ -322,6 +323,31 @@ class DyadicFiniteVolumePlan(AbstractDiscretizationPlan):
         measures = np.asarray([item[5] for item in faces], dtype=np.float64)
         area_vectors = normals * measures[:, None]
         face_ids = np.arange(len(faces), dtype=np.int32)
+        # Leaf-box corners on the integer dyadic lattice, mapped once to physical
+        # coordinates so coincident corners of different levels are identical.
+        corner_offsets = np.asarray(list(product((0, 1), repeat=dimension)))
+        integer_corners = np.unique(
+            np.concatenate(
+                [
+                    (
+                        np.asarray(
+                            _morton_decode_host(
+                                int(leaf_prefixes[cell]),
+                                dimension,
+                                int(leaf_levels[cell]),
+                            )
+                        )
+                        + corner_offsets
+                    )
+                    * (1 << (maximum_depth - int(leaf_levels[cell])))
+                    for cell in range(leaf_slots.size)
+                ]
+            ),
+            axis=0,
+        )
+        vertices = domain_lower + integer_corners * (
+            (domain_upper - domain_lower) / resolution
+        )
         geometry_id = canonical_fingerprint(
             {
                 "kind": "dyadic-finite-volume-geometry",
@@ -449,6 +475,7 @@ class DyadicFiniteVolumePlan(AbstractDiscretizationPlan):
         return DyadicFiniteVolumeDiscretization(
             topology=topology,
             topology_leaf_slots=jnp.asarray(leaf_slots),
+            vertices=jnp.asarray(vertices),
             cell_centers=jnp.asarray(centers),
             cell_volumes=jnp.asarray(volumes),
             cell_quadrature_points=jnp.asarray(centers[:, None, :]),

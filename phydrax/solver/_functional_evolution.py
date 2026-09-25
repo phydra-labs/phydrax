@@ -13,11 +13,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jax import core as jcore
 
 from .._frozendict import frozendict
 from .._iteration import IterationSession
-from .._trainable import combine_trainable, partition_trainable
+from .._sampling import derive_key, SampleAddress
 from .._training import (
     emit_training_signal_stop as _emit_training_signal_stop,
     tensorboard_every as _tensorboard_every,
@@ -27,8 +26,27 @@ from .._training import (
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
+from .._training_kernel import (
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingAttemptOutcome,
+    TrainingKernelSpec,
+)
 from ..logging import is_enabled as _logging_enabled
-from ..optim._evolution_strategy import AbstractDistributionEvolutionMethod
+from ..optim._evolution_strategy import (
+    AbstractDistributionEvolutionMethod,
+    DistributionEvolutionPayload,
+    DistributionEvolutionUpdateRule,
+)
+from ._functional_kernel import (
+    functional_kernel_objective,
+    functional_lanes,
+    functional_parameter_lane,
+    FUNCTIONAL_REJECTION_BUDGET,
+    FUNCTIONAL_ROOT_AUTHORITY,
+    functional_site_key,
+    functional_training_tree,
+)
 from ._functional_objective import (
     evaluate_prepared_objective,
     prepared_data_metrics,
@@ -46,6 +64,20 @@ from ._model_losses import function_model_loss_labels
 
 if TYPE_CHECKING:
     from ._functional_solver import FunctionalSolver
+
+
+_ALGORITHM_INITIALIZATION_ADDRESS = SampleAddress(
+    "functional", "distribution-evolution", target="algorithm", role="initialization"
+)
+
+
+def _prepared_objective_total(
+    trained: Any, held: Any, payload: DistributionEvolutionPayload, keys: Any, /
+) -> tuple[jax.Array, tuple[()]]:
+    """Ordered total of one generation's prepared training objective."""
+    del keys
+    functions = eqx.combine(trained, held)
+    return evaluate_prepared_objective(payload.objective, functions).total, ()
 
 
 def _solve_distribution_evolution(
@@ -73,7 +105,6 @@ def _solve_distribution_evolution(
             "train_term_sample_size is currently supported only for Optax optimizers."
         )
 
-    params, non_trainable = partition_trainable(self.functions)
     log_every_ = int(log_every)
     if log_every_ < 0:
         raise ValueError("log_every must be >= 0.")
@@ -93,43 +124,55 @@ def _solve_distribution_evolution(
     model_loss_names = function_model_loss_labels(self.functions)
     evaluation_term_names = tuple(_term_label(c) for c in self.evaluation_terms)
 
-    algo_runtime = algo
-
-    def _loss_for_params(p, non_trainable_, prepared_):
-        functions = combine_trainable(p, non_trainable_)
-        return evaluate_prepared_objective(prepared_, functions).total
-
-    def _values_for_params(p, non_trainable_, prepared_):
-        functions = combine_trainable(p, non_trainable_)
+    def _values_for_params(p, held_, prepared_):
+        functions = eqx.combine(p, held_)
         return evaluate_prepared_objective(prepared_, functions).flat_values
 
-    def _evaluation_term_values_for_params(p, non_trainable_, prepared_):
-        functions = combine_trainable(p, non_trainable_)
+    def _evaluation_term_values_for_params(p, held_, prepared_):
+        functions = eqx.combine(p, held_)
         return evaluate_prepared_objective(
             prepared_,
             functions,
             include_model_losses=False,
         ).term_values
 
-    def _data_metrics_for_terms(p, non_trainable_, prepared_):
-        functions = combine_trainable(p, non_trainable_)
+    def _data_metrics_for_terms(p, held_, prepared_):
+        functions = eqx.combine(p, held_)
         return prepared_data_metrics(prepared_, functions)
 
-    loss_fn = eqx.filter_jit(_loss_for_params) if jit else _loss_for_params
     terms_fn = eqx.filter_jit(_values_for_params) if jit else _values_for_params
 
-    key = jr.key(seed)
-    evo_state = algo_runtime.init(key, params)
+    tree = functional_training_tree(self.functions)
+    root_key = jr.key(seed)
+    kernel = prepare_training_kernel(
+        tree,
+        (functional_kernel_objective(_prepared_objective_total),),
+        TrainingKernelSpec(
+            DistributionEvolutionUpdateRule(
+                algo,
+                derive_key(root_key, _ALGORITHM_INITIALIZATION_ADDRESS),
+                rule_id="functional-distribution-evolution",
+            ),
+            context="FunctionalSolver distribution evolution",
+            rejection_budget=FUNCTIONAL_REJECTION_BUDGET,
+        ),
+        root_authority=FUNCTIONAL_ROOT_AUTHORITY,
+    )
+    state = kernel.init(tree, root_key)
+    params, held = functional_lanes(state.parameters, state.model_state, kernel.fixed)
+    # One generation evaluates the prepared objective at the committed mean (the
+    # kernel's attempt value), at every population member, and at the proposal.
+    evaluations_per_generation = algo.population_size + 2
 
+    total_steps = int(num_iter)
     control = TrainingController(
-        total_steps=int(num_iter),
-        key=key,
+        total_steps=total_steps,
         algorithm_id="functional-evolution-training",
         progress=TrainingProgress(),
         session=session,
     )
     control.best_payload = params
-    control.emit(TrainingIterationKind.RUN_START, metrics={"total_steps": int(num_iter)})
+    control.emit(TrainingIterationKind.RUN_START, metrics={"total_steps": total_steps})
     objective = self.objective
 
     tb_ctx = (
@@ -143,88 +186,70 @@ def _solve_distribution_evolution(
         optimizer_wall_time = 0.0
 
         completed = control.progress.update_step
-        for epoch in range(int(num_iter)):
+        while completed < total_steps:
             if control.stop_requested:
                 break
             if signal_guard.stop_requested:
                 _emit_training_signal_stop(
                     "native-evolution",
                     signal_guard,
-                    completed=epoch,
-                    total=int(num_iter),
+                    completed=completed,
+                    total=total_steps,
                 )
                 break
-            completed = epoch
             try:
                 iter_start = time.perf_counter()
-                control.key, ask_key, eval_key = jr.split(control.key, 3)
-                population, evo_state = algo_runtime.ask(ask_key, evo_state)
-                popsize = None
-                for leaf in jax.tree_util.tree_leaves(population):
-                    if (
-                        isinstance(leaf, (jax.Array, jcore.Tracer))
-                        and len(leaf.shape) > 0
-                    ):
-                        popsize = leaf.shape[0]
-                        break
-                if popsize is None:
-                    raise ValueError(
-                        "Could not infer population size from the evolution population."
-                    )
-
-                iter_ = jnp.asarray(epoch + 1, dtype=jnp.float64)
-                functions_snapshot = combine_trainable(
-                    control.selected(params),
-                    non_trainable,
-                )
+                step = completed + 1
+                iter_ = jnp.asarray(step, dtype=jnp.float64)
+                # Every host site of this attempt is addressed by its cursors.
+                attempt_state = state
                 refresh_started = time.perf_counter() if profile_adaptive else 0.0
-                objective = objective.refresh(
-                    functions_snapshot,
-                    key=jr.fold_in(eval_key, 101),
-                    iter_=epoch + 1,
+                attempt_objective = objective.refresh(
+                    eqx.combine(control.selected(params), held),
+                    key=functional_site_key(attempt_state, "refresh"),
+                    iter_=step,
                 )
                 if profile_adaptive:
-                    jax.block_until_ready(objective)
+                    jax.block_until_ready(attempt_objective)
                     refresh_wall_time += time.perf_counter() - refresh_started
                 optimizer_started = time.perf_counter() if profile_adaptive else 0.0
 
                 # Common random numbers: prepare every stochastic term once per
-                # generation and reuse the payloads across the population.
-                batch_key = jr.fold_in(eval_key, 0)
-                eval_key_shared = jr.fold_in(eval_key, 1)
-                prepared = objective.prepare_training(
-                    range(len(objective.training)),
+                # generation and reuse the payload across the population.
+                prepared = attempt_objective.prepare_training(
+                    range(len(attempt_objective.training)),
                     scale=1.0,
-                    evaluation_key=eval_key_shared,
-                    sampling_key=batch_key,
+                    evaluation_key=functional_site_key(attempt_state, "evaluation"),
+                    sampling_key=functional_site_key(attempt_state, "sampling"),
                     iteration=iter_,
                 )
-                losses = jax.vmap(
-                    lambda p: loss_fn(
-                        p,
-                        non_trainable,
-                        prepared,
-                    )
-                )(population)
-                evo_state = algo_runtime.tell(population, losses, evo_state)
-                cand_params = algo_runtime.mean(evo_state)
-                cand_loss = loss_fn(
-                    cand_params,
-                    non_trainable,
-                    prepared,
+                state, evidence = run_training_attempt(
+                    kernel,
+                    state,
+                    DistributionEvolutionPayload(
+                        prepared, functional_site_key(attempt_state, "ask")
+                    ),
+                    jit=jit,
+                )
+                outcome, cand_loss = jax.device_get(
+                    (evidence.outcome, state.rule_state.value)
                 )
                 if profile_adaptive:
-                    jax.block_until_ready((evo_state, cand_params, cand_loss))
                     optimizer_wall_time += time.perf_counter() - optimizer_started
-                objective = objective.record_training_evaluations(
-                    multiplier=popsize + 1,
+                if outcome != TrainingAttemptOutcome.ACCEPTED:
+                    # A rejected generation commits nothing, including the
+                    # refreshed objective: the retry refreshes and asks afresh.
+                    continue
+                params = functional_parameter_lane(state.parameters)
+                objective = attempt_objective.record_training_evaluations(
+                    multiplier=evaluations_per_generation,
                 )
-                step = epoch + 1
                 control.complete_update(step)
+                loss_f = float(cand_loss)
                 if keep_best:
-                    control.select(float(cand_loss), cand_params, step=step)
+                    control.select(loss_f, params, step=step)
                 else:
-                    control.best_payload = cand_params
+                    control.best_payload = params
                 completed = step
                 iter_time_s = time.perf_counter() - iter_start
                 log_step = (
@@ -245,37 +270,28 @@ def _solve_distribution_evolution(
                 train_model_loss_terms = values_arr[len(term_names) :]
                 if log_terms_ and report_step:
                     values_arr = jnp.asarray(
-                        terms_fn(
-                            cand_params,
-                            non_trainable,
-                            prepared,
-                        ),
+                        terms_fn(params, held, prepared),
                         dtype=jnp.float64,
                     )
                     train_term_values = values_arr[: len(term_names)]
                     train_model_loss_terms = values_arr[len(term_names) :]
-                    train_data_metrics = _data_metrics_for_terms(
-                        cand_params,
-                        non_trainable,
-                        prepared,
-                    )
+                    train_data_metrics = _data_metrics_for_terms(params, held, prepared)
                     prepared_evaluation = objective.prepare_evaluation(
-                        key=jr.fold_in(eval_key_shared, 2),
+                        key=functional_site_key(attempt_state, "report-evaluation"),
                         iteration=iter_,
                     )
                     eval_terms = _evaluation_term_values_for_params(
-                        cand_params,
-                        non_trainable,
+                        params,
+                        held,
                         prepared_evaluation,
                     )
                     eval_data_metrics = _data_metrics_for_terms(
-                        cand_params,
-                        non_trainable,
+                        params,
+                        held,
                         prepared_evaluation,
                     )
 
                 if report_step:
-                    loss_f = float(cand_loss)
                     best_display = _best_display_value(
                         control.progress.best_value,
                         loss_f,
@@ -306,7 +322,7 @@ def _solve_distribution_evolution(
                             scalars,
                             backend="native-evolution",
                             step=step,
-                            total_steps=int(num_iter),
+                            total_steps=total_steps,
                         )
                     if tensorboard_step and tb_writer is not None:
                         _write_tensorboard_scalars(tb_writer, scalars, step=step)
@@ -319,7 +335,7 @@ def _solve_distribution_evolution(
                         "native-evolution",
                         signal_guard,
                         completed=step,
-                        total=int(num_iter),
+                        total=total_steps,
                     )
                     break
             except (KeyboardInterrupt, InterruptedError) as exc:
@@ -328,15 +344,15 @@ def _solve_distribution_evolution(
                     "native-evolution",
                     signal_guard,
                     completed=completed,
-                    total=int(num_iter),
+                    total=total_steps,
                 )
                 break
 
-        functions = combine_trainable(control.selected(params), non_trainable)
+        functions = eqx.combine(control.selected(params), held)
         settle_started = time.perf_counter() if profile_adaptive else 0.0
         objective = objective.settle(
             functions,
-            key=jr.fold_in(control.key, 991),
+            key=functional_site_key(state, "settle"),
             iter_=completed + 1,
         )
         if profile_adaptive:

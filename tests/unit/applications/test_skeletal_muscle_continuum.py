@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import phydrax.ein as ein
-from phydrax._trainable import partition_trainable
+from phydrax import partition_parameters
 from phydrax.applications.skeletal_muscle.continuum import (
     affine_mesh_power_evidence,
     EngelhardtGasam2025Parameters,
@@ -44,9 +44,10 @@ def test_material_parameters_are_dynamic_jax_leaves():
     assert len(leaves) == 7
     assert all(isinstance(value, jax.Array) for value in leaves)
     material = _material(0.5)
-    trainable, fixed = partition_trainable(material)
-    assert trainable.parameters.alpha is not None
-    assert trainable.parameters.peak_active_nominal_stress_pa is not None
+    parameters_lane, _, fixed = partition_parameters(material)
+    assert parameters_lane.parameters.alpha is not None
+    assert parameters_lane.parameters.peak_active_nominal_stress_pa is not None
+    assert parameters_lane.plan is None
     assert fixed.plan is material.plan
 
 
@@ -176,7 +177,7 @@ def test_material_commit_rejects_a_stale_source_state_without_mutation():
     np.testing.assert_array_equal(first.source_state_id, material.state.state_id)
     np.testing.assert_array_equal(first.source_activation, material.state.activation)
     assert advanced.state.state_id != material.state.state_id
-    with pytest.raises(ValueError, match="stale or different source state"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="stale or different source state"):
         advanced.with_commit(stale)
 
     np.testing.assert_array_equal(advanced.state.activation, 0.5)
@@ -190,7 +191,7 @@ def test_material_commit_rejects_a_source_mismatched_sibling_state():
     left_commit = left.propose_activation(0.9).commit()
 
     np.testing.assert_array_equal(left_commit.source_state_id, right.state.state_id)
-    with pytest.raises(ValueError, match="stale or different source state"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="stale or different source state"):
         right.with_commit(left_commit)
 
     np.testing.assert_array_equal(right.state.activation, 0.75)

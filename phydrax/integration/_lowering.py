@@ -360,11 +360,11 @@ def materialize_sampled_component(
 class IntegrationAxisSpec(AbstractAxisSpec):
     """Domain-grid adapter for a canonical interval quadrature rule."""
 
+    n: int
     rule: IntervalRule
 
     def __init__(self, rule: IntervalRule):
-        data = interval_rule_data(rule)
-        super().__init__(data.nodes.shape[0])
+        self.n = int(interval_rule_data(rule).nodes.shape[0])
         self.rule = rule
 
     def materialize(self, lower: Array, upper: Array, /) -> AxisDiscretization:

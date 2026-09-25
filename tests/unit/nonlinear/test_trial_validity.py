@@ -89,7 +89,7 @@ def test_prepared_refresh_refuses_a_changed_domain_contract():
         _positive_log,
         problem_id=problem.problem_id,
         trial_validity=lambda state, _: jnp.all(state > 0.5),
-        trial_validity_id="strict-positive-log",
+        trial_validity_id="strict-log-above-half",
     )
     with pytest.raises(ValueError, match="trial_validity_id"):
         nl.refresh_nonlinear(prepared, changed, jnp.asarray([1.0]))
@@ -170,7 +170,15 @@ def test_mapped_domain_guard_preserves_jvp_and_transpose_in_both_transform_order
     assert jnp.allclose(nested_gradient, jnp.asarray([[[0.0], [1.0]], [[0.25], [0.0]]]))
 
 
-@pytest.mark.parametrize("method", (nl.NewtonKrylov(), nl.NewtonTrustRegion()))
+# The first Newton step from 10 lands at 10 - 10 log(10) < 0; the trust radius
+# must admit it for the guarded out-of-domain trials to occur at all.
+@pytest.mark.parametrize(
+    "method",
+    (
+        nl.NewtonKrylov(),
+        nl.NewtonTrustRegion(trust_region=nl.RootTrustRegion(initial_radius=100.0)),
+    ),
+)
 def test_guarded_trials_consume_only_actual_residual_budget(method):
     result = method.solve(
         _problem(),

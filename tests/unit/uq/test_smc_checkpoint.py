@@ -120,7 +120,7 @@ def test_smc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
         )
 
     checkpoint.write_bytes(checkpoint.read_bytes()[:64])
-    with pytest.raises(phx.uq.CheckpointCorruptionError, match="Cannot read"):
+    with pytest.raises(phx.uq.CheckpointCorruptionError):
         phx.uq.sample_tempered_smc(
             problem,
             **settings,

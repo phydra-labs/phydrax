@@ -105,7 +105,7 @@ def _retained(
     )
 
 
-class AdaptiveFiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
+class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
     """Fixed-attempt adaptive rollout that records its realized accepted mesh."""
 
     runtime: PreparedFiniteVolumeRuntime
@@ -221,7 +221,7 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
         )
 
 
-class ScheduledFiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
+class ScheduledFiniteVolumeRolloutPlan(StrictModule):
     """Exact fixed-temporal-mesh rollout for deterministic differentiation."""
 
     runtime: PreparedFiniteVolumeRuntime

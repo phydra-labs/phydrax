@@ -136,8 +136,11 @@ It does not claim a device transport or collective solver.
 
 `prepare_cardiovascular_cohort` canonicalizes stable case IDs and creates the
 native `PoolExecutionSignature`. `execute_cardiovascular_cohort` derives each
-random key from the semantic case index with `semantic_task_keys`; lane
-placement and refill wave do not affect it. Completed lanes are assigned with
+random key from the stable case ID through Phydrax's semantic sample
+addressing: the case ID selects a checked 32-bit index in the cohort address
+family, and that index is folded into the root key. A case key therefore
+depends only on the root key and the case ID; cohort membership, lane
+placement, and refill wave do not affect it. Completed lanes are assigned with
 `refill_completed_tasks`.
 
 ```python

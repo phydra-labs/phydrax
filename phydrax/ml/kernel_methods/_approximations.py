@@ -12,27 +12,43 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model._array import value_derivative_contract
 from ..._model._binding import ModelBinding
+from ..._trainable import fixed_field
 from ...kernels import FiniteFeatureKernel, SquaredExponentialKernel
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
+from .._schema import AbstractFittedModel
 from .._sparse_features import SparseFeatures
 from ._utils import (
     case_kernel_matrix,
     finite_array,
+    kernel_regularity,
+    linear_expansion_contract,
     query_kernel_matrix,
     validate_kernel,
     validated_weights,
 )
+
+
+# Cosines of affine maps of the input.
+_RANDOM_FOURIER_CONTRACT = value_derivative_contract(DerivativeRegularity.smooth())
 
 
 def _size(shape: tuple[int, ...]) -> int:
@@ -55,14 +71,14 @@ def _case_matmul(matrix: Array, factor: Array, case_shape: tuple[int, ...]) -> A
     return output.reshape(case_shape + query_shape + (factor.shape[-1],))
 
 
-class KernelPCAModel(AbstractArrayModel):
-    support: Array
+class KernelPCAModel(AbstractFittedModel):
+    support: Array = fixed_field()
     support_mask: Array
-    normalized_weight: Array
-    support_column_mean: Array
-    total_mean: Array
+    normalized_weight: Array = fixed_field()
+    support_column_mean: Array = fixed_field()
+    total_mean: Array = fixed_field()
     components: Array
-    kernel: Any
+    kernel: Any = fixed_field()
     feature_count: int = eqx.field(static=True)
     component_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -96,6 +112,9 @@ class KernelPCAModel(AbstractArrayModel):
         self.out_size = self.component_count
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return linear_expansion_contract(kernel_regularity(self.kernel))
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -201,13 +220,20 @@ class KernelPCARecipe(AbstractRecipe):
             rank=jnp.sum(values > self.eigenvalue_floor, axis=-1),
             method="weighted-kernel-eigh",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             conditions=("Selected eigenspace is separated and support mask is fixed.",),
         )
         return FitResult(
@@ -216,14 +242,14 @@ class KernelPCARecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="kernel-pca",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
-class NystromModel(AbstractArrayModel):
-    landmarks: Array
-    whitening: Array
-    kernel: Any
+class NystromModel(AbstractFittedModel):
+    landmarks: Array = fixed_field()
+    whitening: Array = fixed_field()
+    kernel: Any = fixed_field()
     feature_count: int = eqx.field(static=True)
     component_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -249,6 +275,9 @@ class NystromModel(AbstractArrayModel):
         self.out_size = self.component_count
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return linear_expansion_contract(kernel_regularity(self.kernel))
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -370,12 +399,20 @@ class NystromRecipe(AbstractRecipe):
             ),
             method=f"nystrom-{self.selection}",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional" if self.selection == "even" else "none",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES,
+                    GradientLevel.CONDITIONAL
+                    if self.selection == "even"
+                    else GradientLevel.NONE,
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             nondifferentiable_outputs=("landmark_indices",),
             conditions=("Landmark selection and eigenspace rank are fixed.",),
         )
@@ -385,14 +422,14 @@ class NystromRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="nystrom",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
-class RandomFourierFeatureModel(AbstractArrayModel):
-    frequencies: Array
-    phases: Array
-    scale: Array
+class RandomFourierFeatureModel(AbstractFittedModel):
+    frequencies: Array = fixed_field()
+    phases: Array = fixed_field()
+    scale: Array = fixed_field()
     feature_count: int = eqx.field(static=True)
     component_count: int = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -415,6 +452,9 @@ class RandomFourierFeatureModel(AbstractArrayModel):
         self.out_size = self.component_count
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _RANDOM_FOURIER_CONTRACT
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -495,11 +535,14 @@ class RandomFourierFeaturesRecipe(AbstractRecipe):
             rank=self.n_components,
             method="squared-exponential-spectral-sampling",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_hyperparameters="conditional",
-            fit_mode="stopped",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=("sampled_frequencies",),
             conditions=("Random draw is fixed by the explicit key.",),
         )
@@ -509,7 +552,7 @@ class RandomFourierFeaturesRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="random-fourier-features",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

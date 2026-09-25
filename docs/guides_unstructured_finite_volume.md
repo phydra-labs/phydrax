@@ -85,9 +85,22 @@ compiled = phx.equations.compile_conservation_problem(problem, fv, method)
 ```
 
 Every internal face flux is computed once, subtracted from its owner, and added to its
-neighbor. Rusanov, HLL, HLLC, and Einfeldt-HLL use physical unit normals. Prepared
-dynamics expose face fluxes, CFL limits, conservation diagnostics, JVP/VJP
-linearization, shared SSPRK, and conservative positivity/retry.
+neighbor. Stationary meshes accept any `AbstractArbitraryNormalNumericalFluxPlan`,
+including `EntropyStableEulerFluxPlan`; fluxes are evaluated on physical unit normals.
+Moving and overset couplings additionally require
+`AbstractArbitraryNormalALENumericalFluxPlan` (Rusanov, HLL, HLLC, Einfeldt-HLL,
+`AllSpeedHLLFluxPlan`, and `ShockAwareAllSpeedFluxPlan`); preparation raises
+`ValueError` for a stationary-only flux. Positivity fallback stays explicit through
+`FluxPositivityPlan`, whose fallback flux obeys the same rule. Prepared dynamics
+expose face fluxes, CFL limits, conservation diagnostics, JVP/VJP linearization,
+shared SSPRK, and conservative positivity/retry.
+
+`UnstructuredFiniteVolumeMethodPlan(..., closure=...)` accepts an
+`AbstractFaceClosurePlan`. The closure corrects the baseline normal flux at every
+centroid or quadrature site with a `FaceFluxContext` holding the physical unit
+normal, face measure, geometry identity, and, on moving and overset stages, the exact
+quadrature grid-normal velocity; inactive stage routes receive no correction. The
+positivity fallback flux stays uncorrected.
 
 ## Cell-polynomial and WENO-Z reconstruction
 

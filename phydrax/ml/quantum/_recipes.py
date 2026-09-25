@@ -14,29 +14,41 @@ import jax.numpy as jnp
 import optax
 from jaxtyping import Array
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    ComponentAuthority,
+    DerivativeContract,
+    DerivativeRoute,
+    ObjectiveKind,
+)
 from ..._strict import StrictModule
-from ..._trainable import combine_trainable, partition_trainable
+from ..._trainable import combine_parameters, partition_parameters
+from ..._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    TrainingKernelSpec,
+)
+from ..._training_objective import _ObjectiveContribution
 from ..._tree_math import tree_allfinite, tree_inner, tree_norm
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._numerics import run_fixed_iterations
-from .._schema import FeatureSchema
+from .._schema import AbstractFittedModel, FeatureSchema
 from ._models import (
     BinaryVariationalCircuitClassifier,
     DenseCircuitExpectationModel,
 )
 
 
-class FittedCircuitFeatureTransform(AbstractArrayModel):
+class FittedCircuitFeatureTransform(AbstractFittedModel):
     """Schema-bound exact dense quantum expectation feature transform."""
 
     model: DenseCircuitExpectationModel
@@ -63,6 +75,9 @@ class FittedCircuitFeatureTransform(AbstractArrayModel):
         self.output_schema = output_schema
         self.in_size = model.in_size
         self.out_size = model.out_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return self.model._prediction_contract()
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return self.model(x, key=key)
@@ -162,14 +177,10 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
             effective_samples=effective,
             method="circuit_feature_transform",
         )
-        contract = GradientContract(
-            prediction_inputs="conditional",
-            prediction_parameters="conditional",
-            fit_mode="direct",
-            conditions=(
-                "The dense program and local observables remain valid.",
-                "The circuit feature model is frozen by this fit-free recipe.",
-            ),
+        contract = prediction_fit_contract(
+            fitted._prediction_contract(),
+            route=DerivativeRoute.DIRECT,
+            conditions=("The circuit feature model is frozen by this fit-free recipe.",),
         )
         return FitResult(
             fitted,
@@ -177,7 +188,7 @@ class CircuitFeatureTransformRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="circuit_feature_transform",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -188,6 +199,19 @@ class CircuitFitDiagnostics(StrictModule):
     logical_program_evaluations: Array
     parameterized_occurrences: int = eqx.field(static=True)
     gradient_method: str = eqx.field(static=True)
+
+
+def _classifier_objective(parameters, model_state, fixed, payload, keys, /):
+    """Weighted logistic data fit plus L2 penalty of the circuit classifier."""
+    del keys
+    features, encoded, weights, mass, l2_strength = payload
+    candidate = combine_parameters(parameters, model_state, fixed)
+    logits = jax.vmap(candidate.decision_function)(features)
+    losses = jax.nn.softplus(logits) - encoded * logits
+    value = jnp.sum(weights * losses) / mass + l2_strength * tree_inner(
+        parameters, parameters
+    )
+    return _ObjectiveContribution(value, 1.0, 0.0), model_state, ()
 
 
 class VariationalCircuitClassifierRecipe(AbstractRecipe):
@@ -308,16 +332,36 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             self.negative_label,
             self.positive_label,
         )
-        trainable, fixed = partition_trainable(classifier)
+        # The recipe stays a pure fitting algorithm: it runs the training
+        # kernel's preflight (roles, MODEL authority, data-fit admission) but
+        # not the kernel's accepted-update lifecycle.
         optimizer = optax.adam(self.learning_rate)
+        prepare_training_kernel(
+            classifier,
+            (
+                KernelObjective(
+                    objective_id="variational-circuit-classifier",
+                    kind=ObjectiveKind.DATA_FIT,
+                    route=DerivativeRoute.DIRECT,
+                    fn=_classifier_objective,
+                ),
+            ),
+            TrainingKernelSpec(
+                OptaxUpdateRule(optimizer, rule_id="variational-circuit-adam"),
+                context="VariationalCircuitClassifierRecipe.fit_batch",
+                rejection_budget=0,
+            ),
+            root_authority=ComponentAuthority.MODEL,
+        )
+        trainable, model_state, fixed = partition_parameters(classifier)
         optimizer_state = optimizer.init(trainable)
+        payload = (safe_features, encoded, safe_weights, mass, self.l2_strength)
 
         def objective(parameters):
-            candidate = combine_trainable(parameters, fixed)
-            logits = jax.vmap(candidate.decision_function)(safe_features)
-            losses = jax.nn.softplus(logits) - encoded * logits
-            data_loss = jnp.sum(safe_weights * losses) / mass
-            return data_loss + self.l2_strength * tree_inner(parameters, parameters)
+            contribution, _, _ = _classifier_objective(
+                parameters, model_state, fixed, payload, None
+            )
+            return contribution.numerator
 
         value_and_grad = eqx.filter_value_and_grad(objective)
 
@@ -337,7 +381,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             method="variational_circuit_classifier",
         )
         fitted_trainable, _ = iteration.value
-        fitted = combine_trainable(fitted_trainable, fixed)
+        fitted = combine_parameters(fitted_trainable, model_state, fixed)
         final_index = jnp.maximum(iteration.iterations - 1, 0)
         objective_value = iteration.objective_history[final_index]
         gradient_norm = iteration.residual_history[final_index]
@@ -373,15 +417,8 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             self.feature_model.execution.shift_plan.occurrence_count,
             self.feature_model.gradient_method,
         )
-        contract = GradientContract(
-            prediction_inputs="conditional",
-            prediction_parameters="conditional",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("predict",),
-            conditions=(
-                "The dense quantum program and local observables remain valid.",
-                "Parameter-shift mode certifies first-order Pauli-angle derivatives only.",
-            ),
+        contract = prediction_fit_contract(
+            fitted._prediction_contract(), route=DerivativeRoute.STOPPED
         )
         return FitResult(
             fitted,
@@ -389,7 +426,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="variational_circuit_classifier",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

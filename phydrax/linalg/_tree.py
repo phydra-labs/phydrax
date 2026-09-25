@@ -16,6 +16,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._operators import (
@@ -113,7 +114,7 @@ class TreeLinearOperator(_AbstractCostedLinearOperator):
             raise ValueError(
                 "Tree coefficient vectors must each have length topology.size."
             )
-        dtype = jnp.result_type(*arrays, jnp.float64)
+        dtype = inexact_result_type(*arrays)
         self.diagonal, self.lower, self.upper = (value.astype(dtype) for value in arrays)
         space_ = ArraySpace((topology.size,), dtype=dtype) if space is None else space
         if not isinstance(space_, AbstractVectorSpace) or space_.size != topology.size:

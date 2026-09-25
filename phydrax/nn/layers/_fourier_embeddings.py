@@ -13,8 +13,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
+from ..._trainable import fixed_field
 from .._base import _AbstractBaseModel
+from .._contracts import SMOOTH
 from .._keys import EvalKey
 from .._utils import _canonical_size, _get_size, _get_value_shape, _tuple, SizeLike
 
@@ -145,7 +148,7 @@ class _AbstractFourierFeatureEmbeddings(_AbstractBaseModel):
     out_size: int = eqx.field(kw_only=True)
 
     embedding_matrix: Array = eqx.field(kw_only=True)
-    phases: Array = eqx.field(kw_only=True)
+    phases: Array = fixed_field(kw_only=True)
     passthrough: tuple[int, ...] = eqx.field(kw_only=True)
     include_constant: bool = eqx.field(kw_only=True)
     trainable: bool = eqx.field(kw_only=True)
@@ -219,6 +222,10 @@ class _AbstractFourierFeatureEmbeddings(_AbstractBaseModel):
             features.append(jnp.ones((1,), dtype=periodic.dtype))
         return periodic if len(features) == 1 else jnp.concatenate(features)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # cos/sin of an affine map juxtaposed with affine passthrough features.
+        return SMOOTH
+
 
 class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
     r"""Fourier features defined by explicit, fixed wavevectors.
@@ -227,6 +234,8 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
     $[\cos(Bx+p),\sin(Bx+p)]$, followed by selected raw coordinates and an
     optional constant. Wavevectors use angular-frequency units.
     """
+
+    embedding_matrix: Array = fixed_field(kw_only=True)
 
     def __init__(
         self,
@@ -303,8 +312,9 @@ class MultiscaleFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
     `base_wavevectors=None`, the coordinate-axis unit vectors are used.
     """
 
-    scales: Array
-    base_wavevectors: Array
+    embedding_matrix: Array = fixed_field(kw_only=True)
+    scales: Array = fixed_field()
+    base_wavevectors: Array = fixed_field()
 
     def __init__(
         self,
@@ -369,6 +379,7 @@ class MultiscaleFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
 class HybridFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
     r"""Fixed deterministic wavevectors with a Gaussian random spectral tail."""
 
+    embedding_matrix: Array = fixed_field(kw_only=True)
     deterministic_wavevector_count: int
     random_feature_size: int
 

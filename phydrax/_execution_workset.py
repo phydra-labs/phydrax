@@ -4,8 +4,7 @@
 
 from __future__ import annotations
 
-import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
 import equinox as eqx
@@ -14,7 +13,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
-from ._execution_pool import PoolExecutionSignature, semantic_task_keys
+from ._execution_pool import (
+    PoolExecutionSignature,
+    semantic_task_indices,
+    semantic_task_keys,
+)
 from ._execution_runtime import (
     bind_execution_group,
     ExecutionGroup,
@@ -23,16 +26,16 @@ from ._execution_runtime import (
 )
 from ._execution_tasks import HostTaskExecutor, InlineTaskExecutor
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ._identity import NumericRevision
+from ._sampling._addressing import SampleAddress
 from ._strict import StrictModule
-from ._trainable import NonTrainableState
+from ._trainable import LaneLayout, NonTrainableState
 
 
 ExecutionWorksetMode = Literal["serial", "vmap", "filter_vmap"]
-
-
-def _semantic_rng_index(identifier: str, /) -> int:
-    digest = hashlib.sha256(f"phydrax-execution-item:{identifier}".encode()).digest()
-    return int.from_bytes(digest[:4], "big")
+# Semantic RNG family of workset items: an item's index is this address extended
+# by its semantic ID, and its key folds that index and its restart counter.
+_WORKSET_ITEM_ADDRESS = SampleAddress("execution", "workset", role="item")
 
 
 def _item_tree(values: PyTree[ArrayLike], item_count: int, /) -> PyTree[Array]:
@@ -69,6 +72,16 @@ def _mask_tree(values: PyTree[Array], mask: Array, /) -> PyTree[Array]:
 def _tree_finite(values: PyTree[Array], /) -> Array:
     leaves = jax.tree_util.tree_leaves(values)
     return jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in leaves)))
+
+
+def _item_layout(values: Any, layout: LaneLayout | None, /) -> LaneLayout:
+    if layout is None:
+        if not any(eqx.is_array(leaf) for leaf in jax.tree_util.tree_leaves(values)):
+            raise ValueError("Filtered workset values require at least one array leaf.")
+        return LaneLayout.from_predicate(values, lambda _: True, kind="item")
+    if not isinstance(layout, LaneLayout) or layout.kind != "item":
+        raise TypeError("layout must be a LaneLayout of kind 'item'.")
+    return layout
 
 
 class ExecutionWorksetPlan(StrictModule, NonTrainableState):
@@ -114,11 +127,7 @@ class ExecutionWorksetPlan(StrictModule, NonTrainableState):
         )
         canonical_ids = tuple(value[0] for value in ordered)
         canonical_signatures = tuple(value[1] for value in ordered)
-        rng_indices = tuple(_semantic_rng_index(value) for value in canonical_ids)
-        if len(set(rng_indices)) != len(rng_indices):
-            raise ValueError(
-                "Semantic RNG indices collide; choose distinct semantic identifiers."
-            )
+        rng_indices = semantic_task_indices(_WORKSET_ITEM_ADDRESS, canonical_ids)
         self.semantic_ids = canonical_ids
         self.signatures = canonical_signatures
         self.semantic_rng_indices = jnp.asarray(rng_indices, dtype=jnp.uint32)
@@ -236,29 +245,18 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
         arrays = _item_tree(values, self.item_count)
         return jax.tree_util.tree_map(lambda value: value[self.item_indices], arrays)
 
-    def gather_filtered(self, values: Any, /) -> Any:
-        """Gather mapped array leaves while broadcasting shared static leaves."""
-        arrays, static = eqx.partition(values, eqx.is_array)
-        leaves = [
-            value
-            for value in jax.tree_util.tree_leaves(
-                arrays,
-                is_leaf=lambda value: value is None,
-            )
-            if value is not None
-        ]
-        if not leaves:
-            raise ValueError("Filtered workset values require at least one array leaf.")
-        if any(value.ndim < 1 or value.shape[0] != self.item_count for value in leaves):
+    def gather_filtered(self, values: Any, /, *, layout: LaneLayout | None = None) -> Any:
+        """Gather the item lane of the declared leaves; other leaves are shared.
+
+        `layout` declares which leaves carry the leading item axis, independently
+        of array roles (FIXED data may be mapped). By default every array leaf does.
+        """
+        lanes = _item_layout(values, layout)
+        if lanes.lane_size(values) != self.item_count:
             raise ValueError(
                 "Every mapped workset array leaf must have one leading item axis."
             )
-        gathered = jax.tree.map(
-            lambda value: None if value is None else value[self.item_indices],
-            arrays,
-            is_leaf=lambda value: value is None,
-        )
-        return eqx.combine(gathered, static)
+        return lanes.take(values, self.item_indices)
 
     def scatter(self, bucket_values: PyTree[ArrayLike], /) -> PyTree[Array]:
         """Scatter every valid bucket lane back to canonical item order."""
@@ -299,13 +297,14 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
         root = jnp.asarray(root_key)
         if jax.random.key_data(root).shape != (2,):
             raise ValueError("root_key must be one JAX PRNG key.")
-        item_keys = semantic_task_keys(root, self.plan.semantic_rng_indices)
-        bucket_keys = item_keys[self.item_indices]
-        bucket_counters = counters[self.item_indices]
-        flat_keys = bucket_keys.reshape((-1,) + bucket_keys.shape[2:])
-        flat_counters = bucket_counters.reshape((-1,))
-        folded = jax.vmap(jax.random.fold_in)(flat_keys, flat_counters)
-        return folded.reshape(bucket_keys.shape)
+        bucket_counters = counters[self.item_indices].reshape((-1,))
+        keys = semantic_task_keys(
+            root,
+            _WORKSET_ITEM_ADDRESS,
+            self.bucket_rng_indices.reshape((-1,)),
+            bucket_counters,
+        )
+        return keys.reshape(self.item_indices.shape + keys.shape[1:])
 
 
 class ExecutionWorksetEvidence(StrictModule, NonTrainableState):
@@ -350,16 +349,18 @@ def _evaluate_execution_worksets(
     /,
     *,
     mode: ExecutionWorksetMode,
+    layout: LaneLayout | None = None,
 ) -> ExecutionWorksetEvaluation:
     if not isinstance(prepared, PreparedExecutionWorksets):
         raise TypeError("prepared must be PreparedExecutionWorksets.")
     if not callable(operation):
         raise TypeError("operation must be callable.")
-    gathered = (
-        prepared.gather_filtered(values)
-        if mode == "filter_vmap"
-        else prepared.gather(values)
-    )
+    if mode == "filter_vmap":
+        lanes = _item_layout(values, layout)
+        gathered = prepared.gather_filtered(values, layout=lanes)
+        lane_axes = (lanes.in_axes(gathered), 0, 0)
+    else:
+        gathered = prepared.gather(values)
     counters = jnp.asarray(rng_counters, dtype=jnp.uint32)
     keys = prepared.semantic_keys(root_key, counters)
     counter_overflow = jnp.any(counters == jnp.iinfo(jnp.uint32).max)
@@ -376,21 +377,24 @@ def _evaluate_execution_worksets(
                 == signature.signature_id
             ):
                 stop += 1
-            group_values = jax.tree_util.tree_map(
-                lambda value, start=start, stop=stop: value[start:stop],
-                gathered,
-            )
             group_keys = keys[start:stop]
             group_indices = prepared.bucket_rng_indices[start:stop]
 
             def lane_operation(item, key, semantic_index, signature=signature):
                 return operation(signature, item, key, semantic_index)
 
-            mapper = (
-                eqx.filter_vmap(eqx.filter_vmap(lane_operation))
-                if mode == "filter_vmap"
-                else jax.vmap(jax.vmap(lane_operation))
-            )
+            if mode == "filter_vmap":
+                group_values = lanes.take(gathered, slice(start, stop))
+                mapper = eqx.filter_vmap(
+                    eqx.filter_vmap(lane_operation, in_axes=lane_axes),
+                    in_axes=lane_axes,
+                )
+            else:
+                group_values = jax.tree_util.tree_map(
+                    lambda value, start=start, stop=stop: value[start:stop],
+                    gathered,
+                )
+                mapper = jax.vmap(jax.vmap(lane_operation))
             signature_group_outputs.append(
                 mapper(group_values, group_keys, group_indices)
             )
@@ -501,8 +505,17 @@ def evaluate_execution_worksets_filter_vmap(
     root_key: Array,
     rng_counters: ArrayLike,
     /,
+    *,
+    layout: LaneLayout | None = None,
 ) -> ExecutionWorksetEvaluation:
-    """Map homogeneous Equinox PyTrees while broadcasting their static leaves."""
+    """Map homogeneous Equinox PyTrees over their declared item lane.
+
+    `layout` (a `LaneLayout` of kind ``"item"``) declares which leaves carry the
+    leading item axis; every other leaf, including static configuration and shared
+    arrays, is broadcast within each signature bucket. Lanes are independent of
+    array roles, so FIXED data may be mapped. By default every array leaf is
+    mapped.
+    """
     return _evaluate_execution_worksets(
         prepared,
         operation,
@@ -510,16 +523,24 @@ def evaluate_execution_worksets_filter_vmap(
         root_key,
         rng_counters,
         mode="filter_vmap",
+        layout=layout,
     )
 
 
 class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
-    """Content-addressed host checkpoint for canonical item state and RNG counters."""
+    """Content-addressed host checkpoint for canonical item state and RNG counters.
+
+    `numeric_revisions` are the `NumericRevision`s of the dynamic numeric content
+    (for example learned weights) bound into the evaluated items; `()` declares
+    that no such content was bound. Their sorted revision IDs enter the
+    checkpoint identity, and restoring requires the same bound revisions.
+    """
 
     state: Any
     rng_counters: Array
     prepared_id: str = eqx.field(static=True)
     semantic_ids: tuple[str, ...] = eqx.field(static=True)
+    numeric_revision_ids: tuple[str, ...] = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
     def __init__(
@@ -528,6 +549,8 @@ class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
         state: PyTree[ArrayLike],
         rng_counters: ArrayLike,
         /,
+        *,
+        numeric_revisions: Sequence[NumericRevision],
     ):
         if not isinstance(prepared, PreparedExecutionWorksets):
             raise TypeError("prepared must be PreparedExecutionWorksets.")
@@ -535,21 +558,37 @@ class ExecutionWorksetCheckpoint(StrictModule, NonTrainableState):
         counters = jnp.asarray(rng_counters, dtype=jnp.uint32)
         if counters.shape != (prepared.item_count,):
             raise ValueError("rng_counters must contain one scalar counter per item.")
+        revision_ids = _numeric_revision_ids(numeric_revisions)
         self.state = arrays
         self.rng_counters = counters
         self.prepared_id = prepared.prepared_id
         self.semantic_ids = prepared.plan.semantic_ids
+        self.numeric_revision_ids = revision_ids
         self.checkpoint_id = _checkpoint_id(
             prepared.prepared_id,
             prepared.plan.semantic_ids,
+            revision_ids,
             arrays,
             counters,
         )
 
 
+def _numeric_revision_ids(
+    numeric_revisions: Sequence[NumericRevision], /
+) -> tuple[str, ...]:
+    revisions = tuple(numeric_revisions)
+    if any(not isinstance(revision, NumericRevision) for revision in revisions):
+        raise TypeError("numeric_revisions must contain NumericRevision values.")
+    revision_ids = tuple(sorted(revision.revision_id for revision in revisions))
+    if len(set(revision_ids)) != len(revision_ids):
+        raise ValueError("numeric_revisions must be distinct.")
+    return revision_ids
+
+
 def _checkpoint_id(
     prepared_id: str,
     semantic_ids: tuple[str, ...],
+    numeric_revision_ids: tuple[str, ...],
     state: PyTree[Array],
     counters: Array,
     /,
@@ -559,6 +598,7 @@ def _checkpoint_id(
             "kind": "execution-workset-checkpoint",
             "prepared": prepared_id,
             "semantic_ids": list(semantic_ids),
+            "numeric_revision_ids": list(numeric_revision_ids),
             "state": array_tree_fingerprint(state),
             "rng_counters": array_tree_fingerprint(counters),
         }
@@ -588,6 +628,9 @@ def evaluate_execution_worksets_grouped(
     owns_executor = executor is None
     sentinel = object()
     results: list[Any] = [sentinel] * prepared.plan.item_count
+    rng_indices = tuple(
+        int(value) for value in np.asarray(prepared.plan.semantic_rng_indices)
+    )
     grouped: dict[str, list[int]] = {}
     signatures: dict[str, PoolExecutionSignature] = {}
     for item_index, signature in enumerate(prepared.plan.signatures):
@@ -629,7 +672,7 @@ def evaluate_execution_worksets_grouped(
                 handles = []
                 for slot, item_index in enumerate(wave):
                     semantic_id = prepared.plan.semantic_ids[item_index]
-                    rng_index = _semantic_rng_index(semantic_id)
+                    rng_index = rng_indices[item_index]
                     group = groups[slot]
                     handles.append(
                         (
@@ -659,8 +702,14 @@ def restore_execution_workset_checkpoint(
     prepared: PreparedExecutionWorksets,
     checkpoint: ExecutionWorksetCheckpoint,
     /,
+    *,
+    numeric_revisions: Sequence[NumericRevision],
 ) -> tuple[PyTree[Array], Array]:
-    """Validate topology and payload identity before returning checkpoint state."""
+    """Validate topology, bound numeric revisions, and payload identity.
+
+    `numeric_revisions` are the revisions currently bound into the items; they
+    must be exactly the revisions the checkpoint was produced with.
+    """
     if not isinstance(prepared, PreparedExecutionWorksets):
         raise TypeError("prepared must be PreparedExecutionWorksets.")
     if not isinstance(checkpoint, ExecutionWorksetCheckpoint):
@@ -670,9 +719,14 @@ def restore_execution_workset_checkpoint(
         or checkpoint.semantic_ids != prepared.plan.semantic_ids
     ):
         raise ValueError("Execution workset checkpoint belongs to another runtime.")
+    if _numeric_revision_ids(numeric_revisions) != checkpoint.numeric_revision_ids:
+        raise ValueError(
+            "Execution workset checkpoint was produced with other bound numeric revisions."
+        )
     observed = _checkpoint_id(
         checkpoint.prepared_id,
         checkpoint.semantic_ids,
+        checkpoint.numeric_revision_ids,
         checkpoint.state,
         checkpoint.rng_counters,
     )

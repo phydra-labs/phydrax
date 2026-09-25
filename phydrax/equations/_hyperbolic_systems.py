@@ -28,7 +28,7 @@ ScalarFlux = Callable[[Array, int, Any], ArrayLike]
 ScalarWaveSpeed = Callable[[Array, Array, int, Any], ArrayLike]
 
 
-class AbstractConservationSystem(StrictModule, NonTrainableState):
+class AbstractConservationSystem(StrictModule):
     """Physical conservation system independent of a numerical method."""
 
     dimension: int = eqx.field(static=True)
@@ -180,6 +180,29 @@ class AbstractNormalCharacteristicSystem(abc.ABC):
         raise NotImplementedError
 
 
+class AbstractNormalFrameSystem(abc.ABC):
+    """Optional capability for face-normal frames of conserved states and fluxes.
+
+    A system implementing it declares which conserved components are spatial
+    vectors and rotates them into the orthonormal frame `(n, t_1, ...)` of a unit
+    face normal `n`; scalar components are unchanged. Normal-flux vectors
+    transform like states. Consumers never infer these transforms from a state
+    layout.
+    """
+
+    @abc.abstractmethod
+    def rotate_state_to_normal_frame(self, state: Array, normal: Array, /) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def rotate_flux_to_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def rotate_flux_from_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        raise NotImplementedError
+
+
 class ConservationDiffusionEvaluation(StrictModule):
     """Equation-owned diffusive flux and gradient-coupled source."""
 
@@ -272,6 +295,30 @@ def _conserved_normal_rotation(frame: Array, /) -> Array:
     return matrix.at[..., 1 : 1 + dimension, 1 : 1 + dimension].set(frame)
 
 
+def _rotate_normal_frame_components(
+    values: ArrayLike,
+    normal: ArrayLike,
+    dimension: int,
+    vector_components: slice,
+    /,
+    *,
+    inverse: bool,
+) -> Array:
+    """Rotate one declared vector block of `values` into or out of a normal frame.
+
+    The frame rows are `(n, t_1, ...)`; `inverse` applies the transpose.
+    """
+    value = jnp.asarray(values)
+    frame = _orthonormal_normal_frame(normal, dimension)
+    rotated = ein.contract(
+        "...ji,...j->...i" if inverse else "...ij,...j->...i",
+        frame,
+        value[..., vector_components],
+        backend="jax",
+    )
+    return value.at[..., vector_components].set(rotated)
+
+
 class AbstractAdmissibleSystem(AbstractConservationSystem):
     """Conservation system with a convex admissible-state predicate."""
 
@@ -289,7 +336,9 @@ class AbstractEntropySystem(AbstractConservationSystem):
 
 
 class ScalarConservationSystem(
-    AbstractConservationSystem, AbstractNormalReflectionSystem
+    AbstractConservationSystem,
+    AbstractNormalReflectionSystem,
+    NonTrainableState,
 ):
     flux: ScalarFlux = eqx.field(static=True)
     wave_speed: ScalarWaveSpeed = eqx.field(static=True)
@@ -383,6 +432,8 @@ class EulerSystem(
     AbstractEntropySystem,
     AbstractNormalReflectionSystem,
     AbstractNormalCharacteristicSystem,
+    AbstractNormalFrameSystem,
+    NonTrainableState,
 ):
     """Ideal-gas Euler equations in one, two, or three dimensions."""
 
@@ -595,6 +646,21 @@ class EulerSystem(
         reflected = momentum - 2.0 * normal_momentum[..., None] * unit
         return value.at[..., 1 : 1 + self.dimension].set(reflected)
 
+    def rotate_state_to_normal_frame(self, state: Array, normal: Array, /) -> Array:
+        return _rotate_normal_frame_components(
+            state, normal, self.dimension, self.momentum_slice, inverse=False
+        )
+
+    def rotate_flux_to_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        return _rotate_normal_frame_components(
+            flux, normal, self.dimension, self.momentum_slice, inverse=False
+        )
+
+    def rotate_flux_from_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        return _rotate_normal_frame_components(
+            flux, normal, self.dimension, self.momentum_slice, inverse=True
+        )
+
     def eigensystem(
         self,
         left: Array,
@@ -736,6 +802,7 @@ class CompressibleNavierStokesSystem(
     AbstractEntropySystem,
     AbstractNormalReflectionSystem,
     AbstractNormalCharacteristicSystem,
+    AbstractNormalFrameSystem,
     AbstractEntropyDiffusionSystem,
 ):
     """Ideal-gas compressible Navier–Stokes physical system."""
@@ -1024,6 +1091,15 @@ class CompressibleNavierStokesSystem(
     def reflect_normal_state(self, state: Array, normal: Array, /) -> Array:
         return self.inviscid.reflect_normal_state(state, normal)
 
+    def rotate_state_to_normal_frame(self, state: Array, normal: Array, /) -> Array:
+        return self.inviscid.rotate_state_to_normal_frame(state, normal)
+
+    def rotate_flux_to_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        return self.inviscid.rotate_flux_to_normal_frame(flux, normal)
+
+    def rotate_flux_from_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        return self.inviscid.rotate_flux_from_normal_frame(flux, normal)
+
     def eigensystem(
         self,
         left: Array,
@@ -1048,7 +1124,11 @@ class CompressibleNavierStokesSystem(
         return self.inviscid.entropy_variables(state)
 
 
-class IdealMHDSystem(AbstractAdmissibleSystem, AbstractNormalReflectionSystem):
+class IdealMHDSystem(
+    AbstractAdmissibleSystem,
+    AbstractNormalReflectionSystem,
+    NonTrainableState,
+):
     """Ideal MHD with three-vector momentum and magnetic field."""
 
     material: IdealGasMaterial
@@ -1271,7 +1351,7 @@ class IdealMHDSystem(AbstractAdmissibleSystem, AbstractNormalReflectionSystem):
         return result.at[..., 5:8].set(reflected_magnetic)
 
 
-class ShallowWaterSystem(AbstractAdmissibleSystem):
+class ShallowWaterSystem(AbstractAdmissibleSystem, NonTrainableState):
     """One- or two-dimensional shallow-water conservation system."""
 
     gravity: float = eqx.field(static=True)
@@ -1419,6 +1499,7 @@ __all__ = [
     "AbstractEntropyDiffusionSystem",
     "AbstractEntropySystem",
     "AbstractNormalCharacteristicSystem",
+    "AbstractNormalFrameSystem",
     "AbstractNormalReflectionSystem",
     "CompressibleNavierStokesSystem",
     "EulerSystem",

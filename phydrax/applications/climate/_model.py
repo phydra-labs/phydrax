@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
 from ...metrix import EuclideanStateGeometry
 from ...solver import (
@@ -436,7 +437,7 @@ class PreparedReducedClimate(StrictModule):
         )
 
 
-class ReducedClimateFixedStepMethod(AbstractFixedStepMethod):
+class ReducedClimateFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     climate: PreparedReducedClimate
     start_step: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)

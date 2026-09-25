@@ -20,6 +20,7 @@ import phydrax.ein as ein
 
 from .._probability import _leading_shape, DiagonalNormalLaw
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ._wiener import WienerRealization
 
@@ -413,6 +414,7 @@ class ProcessRealization(StrictModule):
 class LatentGaussianCoefficientProcess(
     AbstractPathwiseTransition,
     AbstractMarginalTransitionLaw,
+    NonTrainableState,
 ):
     """Drifted Brownian dynamics in a finite latent coefficient space.
 

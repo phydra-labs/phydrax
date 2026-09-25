@@ -163,7 +163,7 @@ def test_gradient_length_knudsen_reports_modes_and_hysteretic_recommendation():
     plan = GradientLengthKnudsenPlan(enter_threshold=1.0e-12, leave_threshold=5.0e-13)
     evidence, hysteresis = plan.evaluate(system, state, gradient)
 
-    assert bool(evidence.successful)
+    assert bool(evidence.header.eligible)
     assert evidence.mean_free_path > 0.0
     assert evidence.mode_temperature_knudsen.shape == (1,)
     assert bool(evidence.kinetic_recommended)

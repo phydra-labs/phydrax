@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax.ml import (
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
@@ -119,7 +120,9 @@ def test_multiclass_compositions_preserve_labels_normalization_and_distinct_evid
     assert model.target_schema.class_labels == _SCHEMA.class_labels
     assert jax.jit(model)(_FEATURES[:2]).shape == (2, 3)
     assert jax.vmap(model)(_FEATURES[:2]).shape == (2, 3)
-    assert result.gradient_contract.prediction_inputs == "smooth"
+    assert (
+        result.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
+    )
     if isinstance(model, OneVsOneModel):
         votes = model.vote_counts(_FEATURES)
         assert votes.dtype == jnp.int32
@@ -164,30 +167,30 @@ def test_one_vs_rest_preserves_case_masks_weights_and_keys_and_rejects_sparse_in
 
 
 @pytest.mark.parametrize(
-    ("recipe", "model_type", "method", "prediction_inputs"),
+    ("recipe", "model_type", "method", "input_level"),
     [
         (
             MultilabelRecipe(_base()),
             MultilabelModel,
             "multilabel-binary-relevance",
-            "smooth",
+            GradientLevel.SMOOTH,
         ),
         (
             ClassifierChainRecipe(_base()),
             ClassifierChainModel,
             "classifier-chain",
-            "none",
+            GradientLevel.NONE,
         ),
         (
             SmoothClassifierChainRecipe(_base()),
             SmoothClassifierChainModel,
             "smooth-classifier-chain",
-            "smooth",
+            GradientLevel.SMOOTH,
         ),
     ],
 )
 def test_multilabel_and_chain_families_preserve_target_axis_masks_and_probabilities(
-    recipe, model_type, method, prediction_inputs
+    recipe, model_type, method, input_level
 ):
     target_mask = jnp.ones_like(_MULTILABEL_TARGETS, dtype="bool").at[1, 2].set(False)
     batch = MLBatch(
@@ -212,10 +215,13 @@ def test_multilabel_and_chain_families_preserve_target_axis_masks_and_probabilit
     assert model.target_schema.names == _MULTILABEL_SCHEMA.names
     assert jax.jit(model)(_MULTILABEL_FEATURES[:2]).shape == (2, 3)
     assert jax.vmap(model)(_MULTILABEL_FEATURES[:2]).shape == (2, 3)
-    assert result.gradient_contract.prediction_inputs == prediction_inputs
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == "conditional"
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.INPUT) is input_level
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )
 
 
 def test_exact_and_smooth_classifier_chains_use_hard_and_smooth_link_outputs():
@@ -255,8 +261,14 @@ def test_exact_and_smooth_classifier_chains_use_hard_and_smooth_link_outputs():
     assert not jnp.allclose(
         hard.decision_function(points), smooth.decision_function(points)
     )
-    assert hard_result.gradient_contract.prediction_inputs == "none"
-    assert smooth_result.gradient_contract.prediction_inputs == "smooth"
+    assert (
+        hard_result.derivative_contract.level(DerivativeSurface.INPUT)
+        is GradientLevel.NONE
+    )
+    assert (
+        smooth_result.derivative_contract.level(DerivativeSurface.INPUT)
+        is GradientLevel.SMOOTH
+    )
 
 
 @pytest.mark.parametrize(
@@ -350,7 +362,10 @@ def test_every_composition_has_declared_fit_and_prediction_parameter_gradients(
         )(probe)
         assert jnp.all(jnp.isfinite(input_gradient))
     else:
-        assert result.gradient_contract.prediction_inputs == "none"
+        assert (
+            result.derivative_contract.level(DerivativeSurface.INPUT)
+            is GradientLevel.NONE
+        )
 
 
 def test_composition_failures_report_vocabulary_support_multilabel_domain_and_capacity():

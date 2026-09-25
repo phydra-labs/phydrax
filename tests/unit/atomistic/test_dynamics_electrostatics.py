@@ -58,7 +58,7 @@ def test_pme_is_finite_and_tracks_direct_ewald_reference():
 def test_isotropic_barostat_produces_typed_detailed_balance_move():
     cell = phx.discretization.PeriodicCell(5.0 * jnp.eye(3))
     system = _system(cell=cell)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
+    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(
@@ -106,7 +106,7 @@ def test_isotropic_barostat_produces_typed_detailed_balance_move():
 def test_pme_supports_isotropic_npt_energy_re_evaluation():
     cell = phx.discretization.PeriodicCell(6.0 * jnp.eye(3))
     system = _system(cell=cell)
-    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1).prepare(
+    neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(1, box=cell).prepare(
         system.particles
     )
     potential = phx.atomistic.AtomisticPotentialProgram(

@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from .._bounds import Bounds
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..dynamics import TimeGrid
 from ..linalg import OperatorProperties
 from ..optim._programming import (
@@ -35,6 +36,7 @@ from ..optim._programming import (
     solve_convex_program,
     ZeroCone,
 )
+from ..optim._programming._quadratic import _rebind_quadratic_program
 from ..sparse import EdgeRelation, SparseLinearMap
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
@@ -101,19 +103,55 @@ def _required_array(value: Array | None, name: str, /) -> Array:
     return value
 
 
-def _positive_semidefinite_symmetric_part(
-    value: Array,
+def _require_positive_semidefinite(
+    symmetric: Array,
     name: str,
     tolerance: float,
     /,
-) -> Array:
-    symmetric = 0.5 * (value + jnp.swapaxes(value, -1, -2))
+) -> None:
     eigenvalues = jnp.linalg.eigvalsh(symmetric)
     if bool(jnp.any(jnp.isfinite(eigenvalues) & (eigenvalues < -tolerance))):
         raise ValueError(
             f"{name} must be positive semidefinite; indefinite costs are unsupported."
         )
-    return symmetric
+
+
+def _symmetric_cost_blocks(
+    specification: LinearQuadraticControlProblem,
+    /,
+) -> tuple[Array, Array, Array, Array, Array]:
+    """Return the symmetric joint stage Hessian, its blocks, and terminal cost.
+
+    Affine in the specification and traceable; positive semidefiniteness is a
+    separate eager admission check.
+    """
+    state_size = specification.state_size
+    joint = jnp.concatenate(
+        (
+            jnp.concatenate(
+                (specification.state_costs, specification.state_control_cross),
+                axis=-1,
+            ),
+            jnp.concatenate(
+                (
+                    jnp.swapaxes(specification.state_control_cross, -1, -2),
+                    specification.control_costs,
+                ),
+                axis=-1,
+            ),
+        ),
+        axis=-2,
+    )
+    joint = 0.5 * (joint + jnp.swapaxes(joint, -1, -2))
+    terminal = specification.terminal_state_cost
+    terminal = 0.5 * (terminal + jnp.swapaxes(terminal, -1, -2))
+    return (
+        joint,
+        joint[..., :state_size, :state_size],
+        joint[..., :state_size, state_size:],
+        joint[..., state_size:, state_size:],
+        terminal,
+    )
 
 
 class LinearQuadraticControlProblem(StrictModule):
@@ -1273,13 +1311,13 @@ class LinearControlQPSolution(StrictModule):
     """Decoded QP solution with exact primal arrays and solver provenance."""
 
     compilation: LinearControlQPCompilation
-    qp_result: ConvexProgramResult
+    qp_result: ConvexProgramResult = fixed_field()
     trajectory: ControlTrajectory
     policy: PiecewiseConstantControlParameterization
-    parameters: Array
-    objective: Array
-    valid: Array
-    status: Array
+    parameters: Array = fixed_field()
+    objective: Array = fixed_field()
+    valid: Array = fixed_field()
+    status: Array = fixed_field()
     solution_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
@@ -1296,81 +1334,23 @@ class LinearControlQPSolution(StrictModule):
         return self.valid & (self.status == int(ConvexProgramStatus.OPTIMAL))
 
 
-def compile_linear_quadratic_control(
+def _dense_control_program_arrays(
     specification: LinearQuadraticControlProblem,
+    layout: LinearControlDecisionLayout,
+    constraints: LinearControlConstraintLayout,
+    state_costs: Array,
+    state_control_cross: Array,
+    control_costs: Array,
+    terminal_state_cost: Array,
     /,
-    *,
-    cost_tolerance: float = 1e-10,
-    compilation_policy: LinearControlCompilationPolicy | None = None,
-) -> LinearControlQPCompilation:
-    """Compile an affine finite-horizon problem without condensing or repair."""
-    if not isinstance(specification, LinearQuadraticControlProblem):
-        raise TypeError("specification must be a LinearQuadraticControlProblem.")
-    tolerance = float(cost_tolerance)
-    if not isfinite(tolerance) or tolerance < 0.0:
-        raise ValueError("cost_tolerance must be finite and non-negative.")
-    selected_compilation = (
-        LinearControlCompilationPolicy()
-        if compilation_policy is None
-        else compilation_policy
-    )
-    if not isinstance(selected_compilation, LinearControlCompilationPolicy):
-        raise TypeError(
-            "compilation_policy must be a LinearControlCompilationPolicy or None."
-        )
-    layout = LinearControlDecisionLayout(
-        specification.horizon,
-        specification.state_size,
-        specification.control_size,
-    )
-    constraints = LinearControlConstraintLayout(specification)
-    bound_layout = LinearControlBoundLayout(specification, layout)
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+    """Assemble dense multiple-shooting QP data, affine in every coefficient.
+
+    Returns quadratic, linear, user equality rows and right-hand side, user
+    inequality rows and right-hand side, and lower/upper decision bounds.
+    """
     dtype = specification.dynamics_matrices.dtype
     batch = specification.case_shape
-    stage_hessian = jnp.concatenate(
-        (
-            jnp.concatenate(
-                (specification.state_costs, specification.state_control_cross),
-                axis=-1,
-            ),
-            jnp.concatenate(
-                (
-                    jnp.swapaxes(specification.state_control_cross, -1, -2),
-                    specification.control_costs,
-                ),
-                axis=-1,
-            ),
-        ),
-        axis=-2,
-    )
-    stage_hessian = _positive_semidefinite_symmetric_part(
-        stage_hessian, "joint stage costs", tolerance
-    )
-    state_costs = stage_hessian[
-        ..., : specification.state_size, : specification.state_size
-    ]
-    state_control_cross = stage_hessian[
-        ..., : specification.state_size, specification.state_size :
-    ]
-    control_costs = stage_hessian[
-        ..., specification.state_size :, specification.state_size :
-    ]
-    terminal_state_cost = _positive_semidefinite_symmetric_part(
-        specification.terminal_state_cost,
-        "terminal_state_cost",
-        tolerance,
-    )
-    if selected_compilation.representation == "sparse":
-        return _compile_sparse_control_program(
-            specification,
-            layout,
-            constraints,
-            bound_layout,
-            state_costs,
-            state_control_cross,
-            control_costs,
-            terminal_state_cost,
-        )
     quadratic = jnp.zeros(
         batch + (layout.num_variables, layout.num_variables), dtype=dtype
     )
@@ -1520,7 +1500,81 @@ def compile_linear_quadratic_control(
                 batch + (specification.horizon * specification.control_size,)
             )
         )
+    return (
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        lower_bounds,
+        upper_bounds,
+    )
 
+
+def compile_linear_quadratic_control(
+    specification: LinearQuadraticControlProblem,
+    /,
+    *,
+    cost_tolerance: float = 1e-10,
+    compilation_policy: LinearControlCompilationPolicy | None = None,
+) -> LinearControlQPCompilation:
+    """Compile an affine finite-horizon problem without condensing or repair."""
+    if not isinstance(specification, LinearQuadraticControlProblem):
+        raise TypeError("specification must be a LinearQuadraticControlProblem.")
+    tolerance = float(cost_tolerance)
+    if not isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("cost_tolerance must be finite and non-negative.")
+    selected_compilation = (
+        LinearControlCompilationPolicy()
+        if compilation_policy is None
+        else compilation_policy
+    )
+    if not isinstance(selected_compilation, LinearControlCompilationPolicy):
+        raise TypeError(
+            "compilation_policy must be a LinearControlCompilationPolicy or None."
+        )
+    layout = LinearControlDecisionLayout(
+        specification.horizon,
+        specification.state_size,
+        specification.control_size,
+    )
+    constraints = LinearControlConstraintLayout(specification)
+    bound_layout = LinearControlBoundLayout(specification, layout)
+    joint, state_costs, state_control_cross, control_costs, terminal_state_cost = (
+        _symmetric_cost_blocks(specification)
+    )
+    _require_positive_semidefinite(joint, "joint stage costs", tolerance)
+    _require_positive_semidefinite(terminal_state_cost, "terminal_state_cost", tolerance)
+    if selected_compilation.representation == "sparse":
+        return _compile_sparse_control_program(
+            specification,
+            layout,
+            constraints,
+            bound_layout,
+            state_costs,
+            state_control_cross,
+            control_costs,
+            terminal_state_cost,
+        )
+    (
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        lower_bounds,
+        upper_bounds,
+    ) = _dense_control_program_arrays(
+        specification,
+        layout,
+        constraints,
+        state_costs,
+        state_control_cross,
+        control_costs,
+        terminal_state_cost,
+    )
     qp = QuadraticProgram(
         quadratic,
         linear,
@@ -1544,6 +1598,54 @@ def compile_linear_quadratic_control(
         objective_constant=objective_constant,
         representation="dense",
         compiler_id="control:qp-compiler:linear-multiple-shooting",
+    )
+
+
+def _rebind_dense_control_program(
+    compilation: LinearControlQPCompilation,
+    specification: LinearQuadraticControlProblem,
+    /,
+) -> QuadraticProgram:
+    """Reassemble a dense compilation's QP at new, possibly traced coefficients.
+
+    ``specification`` must share the compiled layout. Positive
+    semidefiniteness and bound roles were admitted eagerly when
+    ``compilation`` was built, so this map is affine and traceable.
+    """
+    program = compilation.program
+    if not isinstance(program, QuadraticProgram):
+        raise ValueError("Only dense control compilations can be rebound.")
+    _, state_costs, state_control_cross, control_costs, terminal_state_cost = (
+        _symmetric_cost_blocks(specification)
+    )
+    (
+        quadratic,
+        linear,
+        equality_matrix,
+        equality_rhs,
+        inequality_matrix,
+        inequality_rhs,
+        lower_bounds,
+        upper_bounds,
+    ) = _dense_control_program_arrays(
+        specification,
+        compilation.decision_layout,
+        compilation.constraint_layout,
+        state_costs,
+        state_control_cross,
+        control_costs,
+        terminal_state_cost,
+    )
+    return _rebind_quadratic_program(
+        program,
+        quadratic=quadratic,
+        linear=linear,
+        equality_matrix=equality_matrix,
+        equality_rhs=equality_rhs,
+        inequality_matrix=inequality_matrix,
+        inequality_rhs=inequality_rhs,
+        lower_bounds=lower_bounds,
+        upper_bounds=upper_bounds,
     )
 
 

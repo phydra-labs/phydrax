@@ -185,7 +185,7 @@ def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input()
         base = jnp.sum(jnp.asarray(data_vec, dtype="float64"))
         x0 = jnp.asarray(x0, dtype="float64").reshape((-1, 1))
         x1 = jnp.asarray(x1, dtype="float64").reshape((1, -1))
-        return base + 0.0 * x0 + 0.0 * x1
+        return base + x0 + 2.0 * x1
 
     component = domain.component()
     nx, ny = 6, 5
@@ -204,6 +204,8 @@ def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input()
         "structured",
         pass_key=True,
         pass_iter=True,
+        output_layout="dependency_subset",
+        output_labels=("x",),
     )
     u = domain.Model("data", "x", binding=binding)(plain_callable)
     out = u(batch)
@@ -212,6 +214,20 @@ def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input()
     x_axis0, x_axis1 = batch.coord_axes_by_label["x"]
     assert out.dims == (data_axis, x_axis0, x_axis1)
     assert out.data.shape == (2, nx, ny)
+    data_sum = jnp.sum(jnp.asarray(batch.points["data"].data))
+    x0, x1 = (jnp.asarray(field.data) for field in batch.points["x"])
+    expected = data_sum + x0[:, None] + 2.0 * x1[None, :]
+    assert jnp.allclose(jnp.asarray(out.data), jnp.broadcast_to(expected, (2, nx, ny)))
+
+    unreduced = domain.Model(
+        "data",
+        "x",
+        binding=phx.domain.ModelBinding.blockwise(
+            "structured", pass_key=True, pass_iter=True
+        ),
+    )(plain_callable)
+    with pytest.raises(ValueError, match="declared leading axes"):
+        unreduced(batch)
 
 
 def test_separable_mlp_domain_model_defaults_to_flat_point_packing():

@@ -158,6 +158,15 @@ Tangent and adjoint linear policies come from
 to the corrector linear policy; derivative-based continuation with another nonlinear
 method must supply the required tangent policy explicitly.
 
+`accepted_point_sensitivity` differentiates one accepted `BranchPoint` with
+respect to `args` only. It holds the branch coordinate fixed, re-corrects
+`F(state, gamma(s), args) = 0` once from the accepted state in real execution
+coordinates through `phydrax.nonlinear.implicit_root_result`, and returns the
+public state and residual with that result's status and evidence. No derivative flows
+through the continuation path, step-size, predictor, or acceptance decisions. A
+point whose corrector did not succeed is refused with `ValueError`; near a fold the
+fixed-coordinate Jacobian is singular and differentiation raises.
+
 ::: phydrax.continuation.ContinuationPlan
 
 ---
@@ -183,6 +192,10 @@ method must supply the required tangent policy explicitly.
 ---
 
 ::: phydrax.continuation.continue_branch
+
+---
+
+::: phydrax.continuation.accepted_point_sensitivity
 
 ---
 

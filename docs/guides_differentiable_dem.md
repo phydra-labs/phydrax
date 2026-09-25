@@ -10,7 +10,9 @@ A sharp branchwise derivative is the JVP/VJP of the executed fixed-step program 
 
 ## Replay and checkpointing
 
-`checkpointed_dem_rollout` rematerializes fixed scan blocks in reverse AD and records acceptance, rejection reasons, route digest, active/sliding counts, and cache epoch. A replay mismatch invalidates the VJP.
+`checkpointed_dem_rollout` rematerializes fixed scan blocks in reverse AD and records acceptance, rejection reasons, route digest, active/sliding counts, and cache epoch.
+
+`checkpointed_dem_vjp` compares a forward rollout with an independent replay before it takes the pullback. The differentiated terminal map carries that comparison as a derivative-validity guard, so a replay mismatch poisons the returned `initial_state_cotangent` itself with NaN in every inexact leaf. The primal loss, the forward `replay` record, and the `replay_matched` evidence remain intact for inspection; a mismatch never yields a finite but unverified cotangent.
 
 ## Smooth surrogate mode
 
@@ -22,6 +24,6 @@ A sharp branchwise derivative is the JVP/VJP of the executed fixed-step program 
 
 ## Hybrid event mode
 
-`HybridEventPlan` is the shared transverse-event contract for DEM and particle conversion. It localizes one bracketed guard, applies a reset, and computes the saltation matrix including event-time sensitivity. `HybridSensitivityMode` selects sharp branchwise, smooth surrogate, or hybrid-event-aware treatment where supported.
+`HybridEventPlan` is the shared transverse-event contract for DEM and particle conversion. It localizes one bracketed guard, applies a reset, and computes the saltation matrix including event-time sensitivity. The sensitivity policies (`DEMSensitivityPolicy`, `ParticleConversionSensitivityPolicy`, `LatticeBoltzmannGeometrySensitivityPolicy`) take `mode=phx.BranchDifferentiationPolicy.BRANCHWISE`, `SMOOTH_SURROGATE`, or `EVENT_AWARE`; other members raise `ValueError`. Their JVP/VJP results carry the canonical `derivative_contract` from `phx.branch_policy_contract`.
 
 `ParticleConversionSensitivityPolicy` adds species-exhaustion, porosity, morphology-scale, temperature-bound, phase, and reaction margins. Conversion JVP/VJP results carry a validity certificate and return invalid/NaN payloads at unresolved branch changes. Grazing, simultaneous competing guards, unbracketed roots, nonfinite state, or residual above tolerance fail. General simultaneous-impact and topology-event sensitivities remain research limitations.

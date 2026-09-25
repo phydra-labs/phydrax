@@ -135,9 +135,9 @@ time-coordinate construction deterministic.
 | Chunk capacity and valid length | No | Static capacity or discrete prefix count |
 | Active masks and absolute counters | No | Discrete stream metadata |
 
-Plans inherit `NonTrainableState`; carried states do not. This prevents static
-topology from entering optimizer parameter trees without blocking gradients
-through history.
+Plans inherit `NonTrainableState`, so every array below a plan is FIXED in
+training trees and static topology never enters optimizer parameters. Carried
+states do not inherit the marker, so gradients still flow through history.
 
 Complex arrays use native complex dtypes. For a real scalar objective, JAX's
 ordinary conjugate-aware JVP/VJP conventions apply.

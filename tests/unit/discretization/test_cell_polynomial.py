@@ -373,23 +373,26 @@ def test_unstructured_coupling_types_are_exported_from_discretization_root():
     )
 
 
+# Moving fixed-connectivity execution admits only stage-refreshable degree-one
+# and degree-two cell-polynomial/WENO-Z reconstruction; higher static degrees
+# must fail at compilation and at dynamics construction.
 @pytest.mark.parametrize(
     "reconstruction_plan",
     (
         pytest.param(
-            phx.discretization.CellPolynomialReconstructionPlan(1),
+            phx.discretization.CellPolynomialReconstructionPlan(3),
             id="cell-polynomial",
         ),
         pytest.param(
-            phx.discretization.UnstructuredWENOZReconstructionPlan(2, limiter="none"),
+            phx.discretization.UnstructuredWENOZReconstructionPlan(3, limiter="none"),
             id="weno-z",
         ),
     ),
 )
-def test_moving_unstructured_rejects_static_high_order_at_compile_and_dynamics(
+def test_moving_unstructured_rejects_non_refreshable_high_order_at_compile_and_dynamics(
     reconstruction_plan,
 ):
-    base_plan = _coupling_mesh_plan()
+    base_plan = _coupling_mesh_plan(6, 6)
     discretization = base_plan.prepare()
     reconstruction = reconstruction_plan.prepare(discretization)
     static_compiled = _compile_scalar_coupling(
@@ -406,7 +409,9 @@ def test_moving_unstructured_rejects_static_high_order_at_compile_and_dynamics(
     coupling = UnstructuredFiniteVolumeCouplingPlan(motion=motion)
     prepared_coupling = coupling.prepare(discretization)
 
-    with pytest.raises(ValueError) as compile_error:
+    with pytest.raises(
+        ValueError, match="stage-refreshable degree-one/two"
+    ) as compile_error:
         _compile_scalar_coupling(
             discretization,
             coupling,
@@ -416,7 +421,9 @@ def test_moving_unstructured_rejects_static_high_order_at_compile_and_dynamics(
     assert static_compiled.method.method_id in str(compile_error.value)
     assert type(reconstruction).__name__ in str(compile_error.value)
 
-    with pytest.raises(ValueError) as dynamics_error:
+    with pytest.raises(
+        ValueError, match="stage-refreshable degree-one/two"
+    ) as dynamics_error:
         phx.discretization.PreparedUnstructuredFiniteVolumeDynamics(
             static_compiled.problem.system,
             discretization,

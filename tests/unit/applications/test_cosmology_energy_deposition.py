@@ -3,6 +3,7 @@ import jax
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.applications.cosmology._background import FLRWBackground
 from phydrax.applications.cosmology._energy_deposition import (
     CascadeKernelProduct,
@@ -14,7 +15,6 @@ from phydrax.applications.cosmology._energy_deposition import (
 )
 from phydrax.applications.cosmology._products import CosmologyProductProvenance
 from phydrax.applications.cosmology._scales import CODE_COSMOLOGY_SCALE
-from phydrax.artifacts import DifferentiationContract
 from phydrax.interchange import AdapterStatus
 from phydrax.qualification import ReferenceArtifactManifest
 
@@ -85,7 +85,7 @@ def _history_context(manifest):
         physics_policy_id="hydrogen-helium-cascade",
         scale_id=scale.scale_id,
         source_kind="external",
-        differentiation=DifferentiationContract.constant(),
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
         parent_product_ids=(manifest.manifest_id,),
     )
     return scale, background, provenance
@@ -194,10 +194,7 @@ def test_species_history_enforces_hydrogen_helium_electron_relation_and_projects
         history.he_ii_fraction + 2.0 * history.he_iii_fraction
     )
     np.testing.assert_allclose(history.electron_fraction, relation)
-    assert (
-        history.provenance.differentiation.contract_id
-        == DifferentiationContract.constant().contract_id
-    )
+    assert history.provenance.differentiation.supported_surfaces == ()
 
     projected, report = project_to_thermodynamics_history(
         history,
@@ -255,7 +252,7 @@ def test_external_history_and_injection_require_admitted_manifest_rights():
             ("photon", "electron"),
             source_id="external-injection",
             source_kind="external",
-            differentiation="constant",
+            differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
             manifest=denied,
             commercial_use=True,
         )

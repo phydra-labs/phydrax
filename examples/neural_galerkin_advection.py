@@ -13,7 +13,7 @@ from phydrax import StrictModule
 
 
 class FourierMode(StrictModule):
-    coefficients: Array
+    coefficients: Array = phx.parameter_field()
 
     def __call__(self, x: Array, /) -> Array:
         phase = 2.0 * jnp.pi * x[0]

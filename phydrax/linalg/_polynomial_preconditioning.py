@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import NonTrainableState
 from ._assembly import assemble_diagonal
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
@@ -132,7 +133,7 @@ class _SymmetricJacobiLinearOperator(AbstractLinearOperator):
         )
 
 
-class ChebyshevPreconditioner(AbstractPreconditioner):
+class ChebyshevPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Fixed-degree Chebyshev semi-iteration prepared as a linear action."""
 
     effective_operator: AbstractLinearOperator

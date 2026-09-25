@@ -306,4 +306,5 @@ def test_field_stationarity_reuses_one_prepared_scalar_term_realization():
     second = prepared.problem.residual(prepared.initial_state)
 
     assert jnp.array_equal(first, second)
-    assert jnp.allclose(first, jnp.asarray((0.0, 0.0, 2.0)), atol=1e-12)
+    assert first.shape == (1,)
+    assert jnp.allclose(first, jnp.asarray((2.0,)), atol=1e-12)

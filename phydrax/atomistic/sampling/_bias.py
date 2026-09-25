@@ -54,7 +54,7 @@ class AbstractAtomisticBiasState(StrictModule):
     bias_id: eqx.AbstractVar[str]
 
 
-class AbstractAtomisticBiasPlan(StrictModule, NonTrainableState):
+class AbstractAtomisticBiasPlan(StrictModule):
     variables: eqx.AbstractVar[AbstractCollectiveVariableProgram]
     bias_id: eqx.AbstractVar[str]
 
@@ -63,7 +63,7 @@ class AbstractAtomisticBiasPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class AtomisticBiasPlan(AbstractAtomisticBiasPlan):
+class AtomisticBiasPlan(AbstractAtomisticBiasPlan, NonTrainableState):
     kind: BiasKind = eqx.field(static=True)
     variables: AbstractCollectiveVariableProgram
     center: Array

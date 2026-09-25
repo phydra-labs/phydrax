@@ -107,7 +107,9 @@ def circuit_small_signal_response(
 ) -> DescriptorFrequencyResponse:
     if not isinstance(linearization, CircuitLinearizationResult):
         raise TypeError("linearization must be CircuitLinearizationResult.")
-    return descriptor_frequency_response(linearization.descriptor, angular_frequency)
+    # Circuits use exp(-i omega t): s = -i omega is the control resolvent at -omega.
+    omega = jnp.asarray(angular_frequency, dtype=jnp.float64)
+    return descriptor_frequency_response(linearization.descriptor, -omega)
 
 
 def descriptor_poles(

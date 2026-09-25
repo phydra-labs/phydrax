@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._interpolation import linear_interpolate
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from .._evolution import AbstractEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid
@@ -280,7 +281,7 @@ def finite_size_growth(
         vectors = jax.random.normal(
             jax.random.PRNGKey(int(seed)),
             (count,) + evolution.state_layout.shape,
-            dtype=jnp.result_type(state, jnp.float64),
+            dtype=inexact_result_type(state),
         )
     else:
         vectors = jnp.asarray(directions)
@@ -304,7 +305,7 @@ def finite_size_growth(
     growth = jnp.full((count, len(report_steps)), jnp.nan)
     separations = jnp.full((count, len(report_steps)), jnp.nan)
     report_valid = jnp.zeros((count, len(report_steps)), dtype=jnp.bool_)
-    accumulated_log = jnp.zeros((count,), dtype=jnp.result_type(state, jnp.float64))
+    accumulated_log = jnp.zeros((count,), dtype=inexact_result_type(state))
     accumulated_time = jnp.asarray(0.0, dtype=grid.coordinates.dtype)
     interval_start = grid.coordinates[0]
     run_valid = jnp.ones((count,), dtype=jnp.bool_)
@@ -504,7 +505,10 @@ def recurrence_quantification(
         )
         for output, value in zip(scalar_outputs, values, strict=True):
             output[case] = value
-        valid_output[case] = eligible_points > 0 and bool(np.all(np.isfinite(values)))
+        # Rate statistics require at least one recurrence. Line-conditional
+        # statistics (mean lengths, entropy, trapping time, divergence) are
+        # undefined, not invalid, when no line reaches its minimum length.
+        valid_output[case] = eligible_points > 0 and recurrence_points > 0
         status[case] = (
             CHAOS_DIAGNOSTIC_SUCCESS
             if valid_output[case]

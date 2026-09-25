@@ -73,17 +73,21 @@ atlases, or seam diagnostics without checking concrete representation classes.
 
 `FieldCertificate` records the actual numerical contract of the boundary field:
 zero-set accuracy, sign reliability, distance semantics, regularity, validity
-region, safe-step information, and parameter differentiability. Approximate CAD
+region, safe-step information, parameter differentiability, and optional
+`lipschitz_upper_bound`, `evaluation_error`, and `topology_identity` (each `None`
+when undeclared; declared bounds are finite and non-negative). Approximate CAD
 and reconstruction fields therefore do not masquerade as exact analytic signed
-distances.
+distances. Analytic and mesh exact signed distances declare a Lipschitz bound of
+one and zero evaluation error; rigid transforms preserve every declared bound.
 
-`ExactSDFEnclosureCertificate` adds the numerical evaluation error and global
-Lipschitz bound required to certify sign enclosures over cells and faces. It qualifies
-interval classification, not exact curved-interface measures. `QualifiedSharpGeometry`
-then records absolute fluid volumes/open measures, lower/upper bounds, source fidelity,
-topology and epoch identities, GCL evidence, and fail-closed status. Exact measure
-fidelity requires independent clipping evidence; an exact SDF with unresolved
-sub-boxes remains certified bounded error.
+`ExactSDFEnclosureCertificate` qualifies a globally reliable exact signed-distance
+field certificate whose declared evaluation error and Lipschitz bound certify sign
+enclosures over cells and faces. It qualifies interval classification, not exact
+curved-interface measures. `QualifiedSharpGeometry` then records absolute fluid
+volumes/open measures, lower/upper bounds, source fidelity, topology and epoch
+identities, GCL evidence, and fail-closed status. Exact measure fidelity requires
+independent clipping evidence; an exact SDF with unresolved sub-boxes remains
+certified bounded error.
 
 ## Interface observables
 
@@ -383,6 +387,20 @@ R-(d+1). `Revolution` remains the explicitly axisymmetric 2D-to-3D operation.
 runtime preserves triangle connectivity and reports sign, root, QEF, orientation,
 and intersection evidence.
 
+`NeuralImplicitRegion` is the region `{x in B : phi(x; w) <= 0}` of a scalar
+network over declared axis-aligned bounds `B`. The network's PARAMETER arrays are
+design parameters of the compiled `DesignState`; FIXED arrays (`fixed_field`
+data) stay fixed kernel data, and networks with model state are refused.
+Construction refuses without a Lipschitz bound (constructed for a plain `MLP` or
+declared), an evaluation-error bound, sign margins on explicit sample points, and
+a topology resolved from the field signs on a `discovery_resolution` lattice. The
+evidence is sampled, not a covering proof: a zero-set component between samples
+can go undetected, so the field certificate reports `SignReliability.LOCAL`,
+`ZeroSetAccuracy.APPROXIMATE`, and no `topology_identity`.
+`NeuralImplicitRegion.recertify(state)` rejects trained weights whose sampled
+margins fail or whose sampled `ImplicitRegionTopology` changed; other states
+report inconclusive validity.
+
 `FiniteElementMeshMotionPlan` is owned by `phydrax.discretization`; it consumes any
 structural fixed-route boundary provider, performs graph-harmonic interior motion,
 and returns a safe `FiniteElementRuntimeData` plus signed-Jacobian evidence.
@@ -453,6 +471,20 @@ a primitive constructor.
 ---
 
 ::: phydrax.geometry.ImplicitSurfacePlan
+
+---
+
+::: phydrax.geometry.NeuralImplicitRegion
+
+---
+
+::: phydrax.geometry.NeuralImplicitCertificate
+
+---
+
+::: phydrax.geometry.ImplicitRegionTopology
+
+---
 
 ::: phydrax.geometry.BoundaryAtlas
 

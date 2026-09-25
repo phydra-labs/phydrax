@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..linalg import (
     DifferentiationPolicy,
     FailurePolicy,
@@ -49,17 +50,17 @@ class ScalarBoundarySolveResult3D(StrictModule):
     is a DP0 discrete solve and does not claim continuum certification.
     """
 
-    solution: Array
-    right_hand_side: Array
-    boundary_data: Array
-    boundary_dirichlet: Array | None
-    boundary_neumann: Array | None
-    linear_result: LinearSolveResult
+    solution: Array = fixed_field()
+    right_hand_side: Array = fixed_field()
+    boundary_data: Array = fixed_field()
+    boundary_dirichlet: Array | None = fixed_field()
+    boundary_neumann: Array | None = fixed_field()
+    linear_result: LinearSolveResult = fixed_field()
     potential: ScalarBoundaryPotential3D | None
-    compatibility_residual: Array
-    gauge_residual: Array
-    finite: Array
-    valid: Array
+    compatibility_residual: Array = fixed_field()
+    gauge_residual: Array = fixed_field()
+    finite: Array = fixed_field()
+    valid: Array = fixed_field()
     metadata: ScalarBoundaryFormulationMetadata3D
     assembly_report: ScalarCalderonAssemblyReport3D
 

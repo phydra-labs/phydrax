@@ -13,9 +13,9 @@ import numpy as np
 from jaxtyping import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import NumericRevision, SemanticProvenance
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..lifecycle import NumericRevision
 from ..linalg import ArraySpace, DiagonalPairing, LinearSubspace
 from ..ml.decomposition import SubspaceModel
 
@@ -57,7 +57,6 @@ class ReducedBasisArtifact(StrictModule, NonTrainableState):
         geometry_id: str,
         source_artifact_ids: Sequence[str],
         evidence_ids: Sequence[str] = (),
-        numeric_revision: NumericRevision | None = None,
     ):
         if not isinstance(subspace, LinearSubspace):
             raise TypeError("subspace must be a LinearSubspace.")
@@ -76,21 +75,16 @@ class ReducedBasisArtifact(StrictModule, NonTrainableState):
         evidence = tuple(_identifier("evidence_id", item) for item in evidence_ids)
         if len(set(evidence)) != len(evidence):
             raise ValueError("evidence_ids must be unique.")
-        basis_content = array_tree_fingerprint(
-            {
-                "basis": subspace.basis,
-                "dimension": subspace.dimension,
-            }
-        )["sha256"]
-        revision = (
-            NumericRevision(basis_content, label=f"{role}-basis")
-            if numeric_revision is None
-            else numeric_revision
+        revision = NumericRevision(
+            SemanticProvenance(
+                {
+                    "kind": "reduced-basis",
+                    "role": role,
+                    "space": subspace.space.space_id,
+                }
+            ),
+            {"basis": subspace.basis, "dimension": subspace.dimension},
         )
-        if not isinstance(revision, NumericRevision):
-            raise TypeError("numeric_revision must be NumericRevision or None.")
-        if revision.content_digest != basis_content:
-            raise ValueError("numeric_revision must identify the exact basis content.")
         state_contract = _identifier("state_contract_id", state_contract_id)
         support = _identifier("support_id", support_id)
         measure = _identifier("measure_id", measure_id)

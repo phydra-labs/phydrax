@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState, ParameterOwner
 from .._keys import EvalKey
 from ._linear_recurrent_unit import _last_valid_array
 from ._physical_sequence import normalize_physical_schedule
@@ -36,14 +37,14 @@ class CausalConvolutionResult(StrictModule):
     final_state: Array
 
 
-class SelectiveStateSpaceState(StrictModule):
+class SelectiveStateSpaceState(StrictModule, NonTrainableState):
     convolution: Array
     recurrent: Array
     last_time: Array
     has_time: Array
 
 
-class ResetAwareCausalConv1D(StrictModule):
+class ResetAwareCausalConv1D(StrictModule, ParameterOwner):
     """Depthwise causal convolution whose history clears at packed resets."""
 
     weight: Array
@@ -146,7 +147,7 @@ class ResetAwareCausalConv1D(StrictModule):
         return self.evaluate_with_state(batch).outputs
 
 
-class SelectiveStateSpaceBlock(StrictModule):
+class SelectiveStateSpaceBlock(StrictModule, ParameterOwner):
     """Reset-aware selective diagonal state-space block with causal local mixing."""
 
     input_projection: Array

@@ -194,16 +194,21 @@ plan = phx.solver.FunctionalDecompositionPlan(
 )
 ```
 
-Block and Schwarz strategies use the shared `FunctionalUpdateKernel`, preserving
-one optimizer state per local parameter block. Standard Optax transformations are
-supported; transformations requiring update-time line-search arguments remain a
-separate backend route.
+Each local patch update is one attempt of Phydrax's training kernel over the patch's
+exact parameter subspace, preserving one kernel state per local parameter block: the
+Optax state, a patch-addressed random root, and the accepted-update cursor. An
+update is accepted only when the objective, gradient, candidate parameters,
+candidate optimizer state, and candidate objective are all finite; any rejected local
+update raises `FloatingPointError`. Standard Optax transformations are supported;
+transformations requiring update-time line-search arguments remain a separate
+backend route.
 
 Use `max_sweeps` to stop at an accepted sweep boundary. Save and restore the exact
-local parameters and optimizer states with
+local parameters and patch kernel states with
 `save_functional_decomposition_checkpoint` and
 `load_functional_decomposition_checkpoint`, then pass the restored state back to
-`solve_functional_decomposition`.
+`solve_functional_decomposition`. The resumed run verifies each patch kernel state
+against its patch kernel identity and continues it exactly.
 
 ## Coarse correction
 
@@ -262,7 +267,8 @@ Periodic Cartesian partitions use wrapped local supports and fixed periodic
 coordinate maps, so overlapping POU windows remain smooth across the seam.
 
 `FunctionalDecompositionShardingPlan` assigns every patch to an explicit JAX device.
-`place_local_field_family` places local array trees, while
+`place_local_field_family` moves each local field's parameter, model-state, and
+undeclared arrays to its patch device and leaves fixed arrays in place, while
 `place_schwarz_trace_state` moves incoming traces to their target devices and reports
 cross-device payload bytes. `distributed_pou_collective` uses an actual device-axis
 sum, and `distributed_schwarz_exchange` routes fixed-shape traces through a device

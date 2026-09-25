@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from ...metrix.algebra import AlgebraProductPlan, BracketingPlan
 
 
@@ -70,7 +71,7 @@ class AnalyticityOperator(StrictModule):
         return jnp.max(jnp.abs(value))
 
 
-class AlgebraAnalyticLayer(StrictModule):
+class AlgebraAnalyticLayer(StrictModule, ParameterOwner):
     weights: Array
     bias: Array
     product: AlgebraProductPlan
@@ -143,7 +144,7 @@ class AnalyticityEvidence(StrictModule):
         self.side = str(side)
 
 
-class AlgebraAnalyticNetwork(StrictModule):
+class AlgebraAnalyticNetwork(StrictModule, ParameterOwner):
     """Operator-specific network with fixed algebra, side, and bracket semantics."""
 
     layers: tuple[AlgebraAnalyticLayer, ...]

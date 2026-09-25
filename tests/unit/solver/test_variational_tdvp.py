@@ -18,7 +18,7 @@ _HAMILTONIAN = jnp.asarray(
 
 
 class _TableModel(eqx.Module):
-    parameters: jax.Array
+    parameters: jax.Array = phx.parameter_field()
 
     def __call__(self, configuration):
         bits = (configuration > 0).astype(jnp.int32)

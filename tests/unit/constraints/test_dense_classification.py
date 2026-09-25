@@ -270,4 +270,5 @@ def test_dense_active_nonfinite_logits_propagate_to_the_objective():
 
     loss = term.loss({"u": poisoned}, batch=term.observed_batch())
 
-    assert jnp.isnan(loss)
+    # Classification kernels score invalid logits with log-probability -inf.
+    assert jnp.isposinf(loss)

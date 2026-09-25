@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._numerics._quadrature_rules import gauss_legendre_data
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._bspline_grid import BSplineGrid, TrainableBSplineGrid
@@ -139,7 +140,7 @@ class TrainableBSplineGridBank(StrictModule):
         if not np.all(np.isfinite(logits_host)):
             raise ValueError("raw_span_logits must be finite.")
 
-        intervals_ = jnp.asarray(intervals, dtype=jnp.result_type(logits, jnp.float64))
+        intervals_ = jnp.asarray(intervals, dtype=inexact_result_type(logits))
         if intervals_.shape == (2,):
             intervals_ = jnp.broadcast_to(intervals_, (logits.shape[0], 2))
         if intervals_.shape != (logits.shape[0], 2):
@@ -168,7 +169,7 @@ class TrainableBSplineGridBank(StrictModule):
                 "minimum_spans must be positive and leave movable length in every row."
             )
 
-        dtype = jnp.result_type(logits, intervals_, jnp.float64)
+        dtype = inexact_result_type(logits, intervals_)
         self.raw_span_logits = logits.astype(dtype)
         self.degree = degree_
         self._intervals = tuple(

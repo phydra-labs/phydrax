@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 
+from phydrax import DerivativeRoute
 from phydrax.ml import MLBatch
 from phydrax.ml.neighbors import (
     KernelDensityRecipe,
@@ -46,7 +47,7 @@ def test_kernel_density_preserves_measure_weights_masks_chunking_and_gradients()
     assert jnp.allclose(jnp.exp(model.score_samples(query)), model(query))
     assert jnp.allclose(model(query), model.predict_chunked(query, chunk_size=1))
     assert result.diagnostics.effective_samples == 5
-    assert result.gradient_contract.fit_mode == "direct"
+    assert result.derivative_contract.route is DerivativeRoute.DIRECT
     assert jax.jit(model)(query).shape == (3,)
 
     input_gradient = jax.grad(lambda point: model(point))(query[0])
@@ -82,8 +83,8 @@ def test_local_outlier_factor_uses_chunked_weighted_geometry_and_hard_output():
     assert model.predict(features, threshold=1.5).dtype == jnp.int32
     assert jnp.allclose(scores, model.predict_chunked(features, chunk_size=3))
     assert result.diagnostics.method == "chunked-local-outlier-factor"
-    assert "neighbor_indices" in result.gradient_contract.nondifferentiable_outputs
-    assert "predict" in result.gradient_contract.nondifferentiable_outputs
+    assert "neighbor_indices" in result.derivative_contract.nondifferentiable_outputs
+    assert "predict" in result.derivative_contract.nondifferentiable_outputs
 
 
 def test_nearest_centroid_probabilities_cases_masks_and_hard_contract():
@@ -105,7 +106,7 @@ def test_nearest_centroid_probabilities_cases_masks_and_hard_contract():
     assert probability.shape == (2, 2, 2)
     assert jnp.allclose(jnp.sum(probability, axis=-1), 1.0)
     assert model.predict(cases[:, :2]).dtype == jnp.int32
-    assert "predict" in result.gradient_contract.nondifferentiable_outputs
+    assert "predict" in result.derivative_contract.nondifferentiable_outputs
     assert jnp.all(
         jnp.isfinite(
             jax.grad(lambda point: jnp.sum(model.predict_proba(point) ** 2))(cases[:, 0])
@@ -133,7 +134,7 @@ def test_nca_embedding_geometry_unrolled_gradients_jit_and_vmap():
     assert jax.jit(model)(features).shape == features.shape
     assert jax.vmap(model)(features).shape == features.shape
     assert result.diagnostics.iterations == 3
-    assert result.gradient_contract.fit_mode == "unrolled"
+    assert result.derivative_contract.route is DerivativeRoute.UNROLLED
 
     prediction_gradient = jax.grad(lambda point: jnp.sum(model(point) ** 2))(features[0])
     feature_gradient = jax.grad(
@@ -163,7 +164,7 @@ def test_mahalanobis_unsupervised_and_supervised_whitening_geometry():
     assert unsupervised_model.metric_matrix.shape == (2, 2)
     assert jnp.all(jnp.linalg.eigvalsh(unsupervised_model.metric_matrix) > 0.0)
     assert supervised.diagnostics.rank == 2
-    assert supervised.gradient_contract.fit_mode == "spectral"
+    assert supervised.derivative_contract.route is DerivativeRoute.SPECTRAL
     assert jnp.all(
         jnp.isfinite(
             jax.grad(lambda point: supervised_model.squared_distance(point, features[0]))(

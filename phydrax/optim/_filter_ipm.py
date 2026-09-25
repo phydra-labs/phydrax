@@ -421,11 +421,25 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 ),
                 axis=-1,
             )
+            # A trial that leaves the primal iterate in place only recenters the
+            # slacks and multipliers: its (objective, violation) pair equals the
+            # current filter entry, so the filter cannot rank it. Admit it when it
+            # does not raise the primal violation.
+            centering = (
+                line_search_alphas * jnp.linalg.norm(direction.primal)
+                <= termination.step_threshold(jnp.linalg.norm(evaluation.coordinates))
+            ) & (
+                candidate_primals
+                <= jnp.maximum(
+                    primal,
+                    termination.optimality_threshold(initial_optimality),
+                )
+            )
             acceptable = (
                 candidate_evaluations.finite
                 & jnp.all(candidate_slacks > 0.0, axis=-1)
                 & jnp.all(candidate_duals > 0.0, axis=-1)
-                & ~dominated
+                & (~dominated | centering)
             )
             accepted_trial = bool(jnp.any(acceptable))
             selected = int(jnp.argmax(acceptable))
@@ -456,6 +470,17 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             globalization_evaluations += trial_evaluations
             iterations += 1
             step_norm = float(jnp.linalg.norm(alpha * direction.primal))
+            iterate_step_norm = jnp.linalg.norm(
+                alpha
+                * jnp.concatenate(
+                    [
+                        direction.primal,
+                        direction.slack,
+                        direction.inequality_dual,
+                        direction.equality_dual,
+                    ]
+                )
+            )
             if accepted_trial:
                 barrier = jnp.maximum(
                     self.minimum_barrier,
@@ -508,8 +533,21 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                     slack = jnp.maximum(restored.inequality_slacks, 1e-8)
                     if restorations >= self.maximum_restoration_steps:
                         status = int(OptimizationStatus.RESTORATION_FAILED)
-            if status == int(OptimizationStatus.ITERATING) and step_norm <= float(
-                termination.step_threshold(jnp.linalg.norm(evaluation.coordinates))
+            if status == int(OptimizationStatus.ITERATING) and float(
+                iterate_step_norm
+            ) <= float(
+                termination.step_threshold(
+                    jnp.linalg.norm(
+                        jnp.concatenate(
+                            [
+                                evaluation.coordinates,
+                                slack,
+                                inequality_dual,
+                                equality_dual,
+                            ]
+                        )
+                    )
+                )
             ):
                 status = int(OptimizationStatus.STAGNATION)
         if status == int(OptimizationStatus.ITERATING):
@@ -566,7 +604,11 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 model.unflatten(dual_residual),
             ),
         )
-        if termination.maximum_evaluations is None:
+        budget_reached = status == int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
+        if not budget_reached and (
+            termination.maximum_evaluations is None
+            or evaluations < termination.maximum_evaluations
+        ):
             certificate = certify_constrained_physical(
                 model,
                 parameters,
@@ -620,9 +662,9 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             jnp.asarray(restorations, dtype=jnp.int32),
             jnp.asarray(barrier),
         )
-        if (
+        if not budget_reached and (
             termination.maximum_evaluations is None
-            or evaluations < termination.maximum_evaluations
+            or evaluations + certificate.evaluation_work < termination.maximum_evaluations
         ):
             objective, auxiliary = problem.value(parameters, args)
             evaluations += 1

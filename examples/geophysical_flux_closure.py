@@ -351,11 +351,19 @@ def run_example(*, steps=200, artifact_directory=None):
         zip(tasks, training_data["datasets"], models, strict=True)
     ):
         experiment = GeophysicalLearningExperiment.prepare(task, dataset)
+        # The model's single output is the task's last (target) field.
+        target_port = task.fields[-1].value_port()
+        output_binding = {
+            "output_ports": {"output": target_port},
+            "port_mapping": phx.PortMapping(
+                outputs=((target_port.port_id, target_port.port_id),)
+            ),
+        }
         fit = experiment.fit(
             model,
             steps=steps,
             learning_rate=0.003,
-            output_field_map={"output": task.fields[-1].name},
+            **output_binding,
             artifact_id=f"closed-flux-{index}-trained",
         )
         if fit.trained_operator is None:
@@ -370,7 +378,7 @@ def run_example(*, steps=200, artifact_directory=None):
                 training_evidence=phx.nn.operator.OperatorTrainingEvidence(
                     "task_specific"
                 ),
-                output_field_map={"output": task.fields[-1].name},
+                **output_binding,
                 normalization=fit.normalization,
                 artifact_id=f"closed-flux-{index}-untrained",
                 provenance={"untrained_baseline": True},
@@ -415,7 +423,8 @@ def run_example(*, steps=200, artifact_directory=None):
                 source.execution_model,
                 source.task,
                 training_evidence=source.training_evidence,
-                output_field_map=source.output_field_map,
+                output_ports=source.output_ports,
+                port_mapping=phx.PortMapping(outputs=source.port_binding.outputs),
                 fixed_query_fingerprints=source.fixed_query_fingerprints,
                 output_pipeline=source.output_pipeline,
                 normalization=source.normalization,

@@ -49,7 +49,7 @@ decays fail rather than being resolved by precedence.
 
 ## Derivatives
 
-JAX transformability does not imply a physics derivative. Cuts, topology, status choices, pileup counts, provider calls, thresholding, and capacity decisions are stopped events. Generic `DerivativeEvidence` names differentiable and discrete parameters, estimator kind, stopped events, support, and evidence while retaining the shared `DifferentiationContract`.
+JAX transformability does not imply a physics derivative. Cuts, topology, status choices, pileup counts, provider calls, thresholding, and capacity decisions are stopped events. Generic `DerivativeEvidence` names differentiable and discrete parameters, estimator kind, stopped events, support, and evidence on top of the shared `DerivativeContract`; an unsupported estimator requires a contract without supported surfaces.
 
 ## End-to-end simulated-collider profile
 

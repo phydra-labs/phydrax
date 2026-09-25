@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...linalg import (
     AbstractLinearOperator,
     AbstractPreconditioner,
@@ -441,11 +441,19 @@ def _point_interpolation(source: np.ndarray, target: np.ndarray, /) -> np.ndarra
     return matrix
 
 
-class _DenseCoarsePreconditioner(AbstractPreconditioner):
-    inverse: Array
+class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):
+    """Coarse-level pseudoinverse factorized and applied in accumulation precision."""
 
-    def __init__(self, operator: AbstractLinearOperator, /):
-        matrix = operator._materialize()
+    inverse: Array
+    precision: FDExecutionPrecisionPolicy
+
+    def __init__(
+        self,
+        operator: AbstractLinearOperator,
+        precision: FDExecutionPrecisionPolicy,
+        /,
+    ):
+        matrix = precision.accumulation(operator._materialize())
         inverse_result = pseudoinverse(
             matrix,
             FactorizationPolicy(
@@ -469,9 +477,11 @@ class _DenseCoarsePreconditioner(AbstractPreconditioner):
             {
                 "kind": "structured-dense-coarse-solve",
                 "operator": operator.operator_id,
+                "precision": precision.policy_id,
             }
         )
         self.inverse = inverse
+        self.precision = precision
 
     def apply(
         self,
@@ -481,8 +491,10 @@ class _DenseCoarsePreconditioner(AbstractPreconditioner):
         iteration: ArrayLike | None = None,
     ):
         del iteration
-        coordinates = self.space.flatten(self.space.validate(residual))
-        return self.space.unflatten(self.inverse @ coordinates)
+        coordinates = self.precision.accumulation(
+            self.space.flatten(self.space.validate(residual))
+        )
+        return self.space.unflatten(self.precision.field(self.inverse @ coordinates))
 
 
 class StructuredMultigridResult(StrictModule, NonTrainableState):
@@ -509,7 +521,7 @@ class StructuredMultigridResult(StrictModule, NonTrainableState):
         self.precision_evidence = precision_evidence
 
 
-class _RedBlackPreconditioner(AbstractPreconditioner):
+class _RedBlackPreconditioner(AbstractPreconditioner, NonTrainableState):
     operator: AbstractLinearOperator
     inverse_diagonal: Array
     color_masks: tuple[Array, Array]
@@ -564,7 +576,7 @@ class _RedBlackPreconditioner(AbstractPreconditioner):
         return estimate
 
 
-class _LinePreconditioner(AbstractPreconditioner):
+class _LinePreconditioner(AbstractPreconditioner, NonTrainableState):
     lower: Array
     diagonal: Array
     upper: Array
@@ -838,11 +850,11 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
         return PreparedStructuredMultigrid(self)
 
 
-class PreparedStructuredMultigrid(StrictModule, NonTrainableState):
+class PreparedStructuredMultigrid(StrictModule):
     plan: StructuredMultigridPlan
     grids: tuple[PreparedTensorGrid, ...]
-    diffusion_operators: tuple[PreparedConservativeDiffusion, ...]
-    level_operators: tuple[AbstractLinearOperator, ...]
+    diffusion_operators: tuple[PreparedConservativeDiffusion, ...] = fixed_field()
+    level_operators: tuple[AbstractLinearOperator, ...] = fixed_field()
     transfers: tuple[StructuredTransferPlan, ...]
     hierarchy: MultigridHierarchy
     preconditioner: MultigridPreconditioner
@@ -906,7 +918,7 @@ class PreparedStructuredMultigrid(StrictModule, NonTrainableState):
         levels = []
         for index, operator in enumerate(level_operators):
             if index == len(level_operators) - 1:
-                smoother = _DenseCoarsePreconditioner(operator)
+                smoother = _DenseCoarsePreconditioner(operator, plan.precision)
                 restriction = None
                 prolongation = None
             else:

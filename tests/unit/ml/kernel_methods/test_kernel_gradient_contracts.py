@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax.kernels import SquaredExponentialKernel
 from phydrax.ml import ML_NONFINITE, MLBatch
 from phydrax.ml.kernel_methods import (
@@ -69,13 +70,18 @@ def test_ls_svm_exercises_every_declared_fit_and_prediction_gradient():
     )
     _assert_finite(gradients)
     result = base.fit_batch(MLBatch(features, labels, sample_weight=weights))
-    contract = result.gradient_contract
+    contract = result.derivative_contract
     assert (
-        contract.fit_features,
-        contract.fit_targets,
-        contract.fit_weights,
-        contract.fit_hyperparameters,
-    ) == ("conditional", "none", "conditional", "conditional")
+        contract.level(DerivativeSurface.FIT_FEATURES),
+        contract.level(DerivativeSurface.FIT_TARGETS),
+        contract.level(DerivativeSurface.FIT_WEIGHTS),
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS),
+    ) == (
+        GradientLevel.CONDITIONAL,
+        GradientLevel.NONE,
+        GradientLevel.CONDITIONAL,
+        GradientLevel.CONDITIONAL,
+    )
     _assert_finite(jax.grad(lambda point: result.as_trainable()(point) ** 2)(query[0]))
     _assert_prediction_parameter_gradient(result.as_trainable(), query)
 
@@ -113,9 +119,18 @@ def test_projected_svc_and_one_class_exercise_conditional_fit_gradients():
     )
     _assert_finite(svc_gradients)
     svc_result = svc_base.fit_batch(MLBatch(features, labels, sample_weight=weights))
-    assert svc_result.gradient_contract.fit_features == "conditional"
-    assert svc_result.gradient_contract.fit_weights == "conditional"
-    assert svc_result.gradient_contract.fit_hyperparameters == "conditional"
+    assert (
+        svc_result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        svc_result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        svc_result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
     _assert_prediction_parameter_gradient(svc_result.as_trainable(), query)
 
     one_base = OneClassSVMRecipe(
@@ -147,9 +162,18 @@ def test_projected_svc_and_one_class_exercise_conditional_fit_gradients():
     )
     _assert_finite(one_gradients)
     one_result = one_base.fit_batch(MLBatch(features, sample_weight=weights))
-    assert one_result.gradient_contract.fit_features == "conditional"
-    assert one_result.gradient_contract.fit_weights == "conditional"
-    assert one_result.gradient_contract.fit_hyperparameters == "conditional"
+    assert (
+        one_result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        one_result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        one_result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
     _assert_prediction_parameter_gradient(one_result.as_trainable(), query)
 
 
@@ -190,17 +214,17 @@ def test_svr_exercises_almost_everywhere_fit_and_prediction_gradients():
     )
     _assert_finite(gradients)
     result = base.fit_batch(MLBatch(features, targets, sample_weight=weights))
-    contract = result.gradient_contract
+    contract = result.derivative_contract
     assert (
-        contract.fit_features,
-        contract.fit_targets,
-        contract.fit_weights,
-        contract.fit_hyperparameters,
+        contract.level(DerivativeSurface.FIT_FEATURES),
+        contract.level(DerivativeSurface.FIT_TARGETS),
+        contract.level(DerivativeSurface.FIT_WEIGHTS),
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS),
     ) == (
-        "conditional",
-        "almost-everywhere",
-        "almost-everywhere",
-        "almost-everywhere",
+        GradientLevel.CONDITIONAL,
+        GradientLevel.ALMOST_EVERYWHERE,
+        GradientLevel.ALMOST_EVERYWHERE,
+        GradientLevel.ALMOST_EVERYWHERE,
     )
     _assert_prediction_parameter_gradient(result.as_trainable(), query)
 
@@ -233,9 +257,18 @@ def test_spectral_and_random_maps_exercise_declared_fit_gradients():
     )
     _assert_finite(kpca_gradients)
     kpca_result = kpca_base.fit_batch(MLBatch(features, sample_weight=weights))
-    assert kpca_result.gradient_contract.fit_features == "conditional"
-    assert kpca_result.gradient_contract.fit_weights == "conditional"
-    assert kpca_result.gradient_contract.fit_hyperparameters == "conditional"
+    assert (
+        kpca_result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        kpca_result.derivative_contract.level(DerivativeSurface.FIT_WEIGHTS)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        kpca_result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
     _assert_prediction_parameter_gradient(kpca_result.as_trainable(), query)
 
     nystrom_base = NystromRecipe(
@@ -264,8 +297,14 @@ def test_spectral_and_random_maps_exercise_declared_fit_gradients():
     )
     _assert_finite(nystrom_gradients)
     nystrom_result = nystrom_base.fit_batch(MLBatch(features))
-    assert nystrom_result.gradient_contract.fit_features == "conditional"
-    assert nystrom_result.gradient_contract.fit_hyperparameters == "conditional"
+    assert (
+        nystrom_result.derivative_contract.level(DerivativeSurface.FIT_FEATURES)
+        is GradientLevel.CONDITIONAL
+    )
+    assert (
+        nystrom_result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
     _assert_prediction_parameter_gradient(nystrom_result.as_trainable(), query)
 
     key = jax.random.key(17)
@@ -284,7 +323,10 @@ def test_spectral_and_random_maps_exercise_declared_fit_gradients():
     rff_result = RandomFourierFeaturesRecipe(
         SquaredExponentialKernel(length_scale=0.95), n_components=12
     ).fit_batch(MLBatch(features), key=key)
-    assert rff_result.gradient_contract.fit_hyperparameters == "conditional"
+    assert (
+        rff_result.derivative_contract.level(DerivativeSurface.FIT_HYPERPARAMETERS)
+        is GradientLevel.CONDITIONAL
+    )
     _assert_prediction_parameter_gradient(rff_result.as_trainable(), query)
 
 
@@ -325,13 +367,18 @@ def test_generic_gp_classifier_fit_gradients_status_and_complex_contract():
     )
     _assert_finite(gradients)
     result = base.fit_batch(MLBatch(features, labels, sample_weight=weights))
-    contract = result.gradient_contract
+    contract = result.derivative_contract
     assert (
-        contract.fit_features,
-        contract.fit_targets,
-        contract.fit_weights,
-        contract.fit_hyperparameters,
-    ) == ("conditional", "none", "conditional", "conditional")
+        contract.level(DerivativeSurface.FIT_FEATURES),
+        contract.level(DerivativeSurface.FIT_TARGETS),
+        contract.level(DerivativeSurface.FIT_WEIGHTS),
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS),
+    ) == (
+        GradientLevel.CONDITIONAL,
+        GradientLevel.NONE,
+        GradientLevel.CONDITIONAL,
+        GradientLevel.CONDITIONAL,
+    )
     _assert_prediction_parameter_gradient(result.as_trainable(), query)
 
     complex_features = features.astype(jnp.complex64) * (1.0 + 0.2j)

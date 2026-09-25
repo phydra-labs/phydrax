@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Sequence
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
@@ -16,8 +16,10 @@ import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint
-from .._strict import StrictModule
+from .._model._component import AbstractComponentSlot
+from .._trainable import fixed_field, NonTrainableState
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._dense_inverse import dense_inverse
 from ._local_blocks import (
@@ -111,11 +113,25 @@ def _prepared_action_cost(
     )
 
 
-class AbstractPreconditioner(StrictModule):
-    """Prepared approximate inverse with explicit source-space semantics."""
+class AbstractPreconditioner(AbstractComponentSlot):
+    """Prepared approximate inverse with explicit source-space semantics.
 
-    space: AbstractVectorSpace
-    properties: PreconditionerProperties
+    The base is the neutral `ACCELERATOR` slot of Krylov and fixed-point solvers:
+    an accelerator may change how fast a solve converges but never the equation
+    it solves, because every solver re-evaluates the original operator residual.
+    `space` and `properties` are FIXED. Analytic implementations are fixed
+    `NonTrainableState` leaves; composites (precision cast, multigrid levels,
+    subspace-correction terms, block factorizations) stay neutral so a learned
+    child implementation keeps its PARAMETER arrays. A learned implementation
+    holds its model as a dynamic child and never claims `linear` without
+    construction evidence.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.ACCELERATOR
+    slot_semantic_id: ClassVar[str] = "phydrax.linalg.preconditioner"
+
+    space: AbstractVectorSpace = fixed_field()
+    properties: PreconditionerProperties = fixed_field()
     preconditioner_id: str = eqx.field(static=True)
 
     @abc.abstractmethod
@@ -190,7 +206,7 @@ class PrecisionCastPreconditioner(AbstractPreconditioner):
         return self.space.validate(restored)
 
 
-class IdentityPreconditioner(AbstractPreconditioner):
+class IdentityPreconditioner(AbstractPreconditioner, NonTrainableState):
     def __init__(self, space: AbstractVectorSpace, /):
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
@@ -224,7 +240,7 @@ class IdentityPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator)
 
 
-class DiagonalPreconditioner(AbstractPreconditioner):
+class DiagonalPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Jacobi inverse prepared from a nonzero canonical diagonal."""
 
     inverse_diagonal: Array
@@ -302,7 +318,7 @@ class DiagonalPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator)
 
 
-class BlockDiagonalPreconditioner(AbstractPreconditioner):
+class BlockDiagonalPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Prepared inverse of independent dense canonical-coordinate blocks."""
 
     inverse_blocks: tuple[Array, ...]
@@ -391,7 +407,7 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator)
 
 
-class LocalBlockPreconditioner(AbstractPreconditioner):
+class LocalBlockPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Prepared inverse of homogeneous local blocks without explicit inverses."""
 
     factorization: LocalBlockFactorization
@@ -514,7 +530,7 @@ class LocalBlockPreconditioner(AbstractPreconditioner):
         )
 
 
-class IncompleteFactorizationPreconditioner(AbstractPreconditioner):
+class IncompleteFactorizationPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Triangular-factor approximate inverse, suitable for ILU/IC factors."""
 
     lower: Array
@@ -605,7 +621,7 @@ class IncompleteFactorizationPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator, apply_workspace_multiplier=3)
 
 
-class LowRankWoodburyPreconditioner(AbstractPreconditioner):
+class LowRankWoodburyPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Prepared inverse of ``diag(d) + U C Vᴴ`` via Woodbury."""
 
     inverse_diagonal: Array
@@ -724,7 +740,7 @@ class LowRankWoodburyPreconditioner(AbstractPreconditioner):
         return _prepared_action_cost(self, setup_operator, apply_workspace_multiplier=3)
 
 
-class OperatorPreconditioner(AbstractPreconditioner):
+class OperatorPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Adapter for an already-prepared inverse action."""
 
     operator: AbstractLinearOperator

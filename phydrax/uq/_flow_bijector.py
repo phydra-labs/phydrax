@@ -9,10 +9,11 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._trainable import ParameterOwner
 from ._posterior import AbstractBijector
 
 
-class AffineFlowBijector(AbstractBijector):
+class AffineFlowBijector(AbstractBijector, ParameterOwner):
     """Exact trainable affine chart under the Phydrax bijector contract."""
 
     shift: Array

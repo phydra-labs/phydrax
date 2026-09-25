@@ -15,9 +15,32 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..linalg import FactorizationPolicy, inverse
 from ._chart import CoordinateChart
 from ._lorentzian import _assemble_adm_matrix
 from ._metric import _metric_inverse, LorentzianConvention, LorentzianMetric
+
+
+def _adm_spacetime_inverse(
+    lapse: Array,
+    shift: Array,
+    spatial_inverse: Array,
+    convention: LorentzianConvention,
+    /,
+) -> Array:
+    """Assemble the analytic inverse spacetime metric from one spatial inverse."""
+    inverse_lapse_squared = 1.0 / lapse**2
+    time_time = -inverse_lapse_squared
+    time_space = shift * inverse_lapse_squared[..., None]
+    spatial = (
+        spatial_inverse
+        - ein.contract("...i,...j->...ij", shift, shift)
+        * inverse_lapse_squared[..., None, None]
+    )
+    first_row = jnp.concatenate((time_time[..., None], time_space), axis=-1)
+    remaining = jnp.concatenate((time_space[..., :, None], spatial), axis=-1)
+    matrix = jnp.concatenate((first_row[..., None, :], remaining), axis=-2)
+    return matrix if convention == "mostly_plus" else -matrix
 
 
 class ADMDecomposition(StrictModule):
@@ -96,22 +119,12 @@ class ADMDecomposition(StrictModule):
     @property
     def spacetime_inverse(self) -> Array:
         """Return the analytic inverse spacetime metric of this decomposition."""
-        inverse_lapse_squared = 1.0 / self.lapse**2
-        time_time = -inverse_lapse_squared
-        time_space = self.shift * inverse_lapse_squared[..., None]
-        spatial = (
-            self.spatial_inverse
-            - ein.contract(
-                "...i,...j->...ij",
-                self.shift,
-                self.shift,
-            )
-            * inverse_lapse_squared[..., None, None]
+        return _adm_spacetime_inverse(
+            self.lapse,
+            self.shift,
+            self.spatial_inverse,
+            self.convention,
         )
-        first_row = jnp.concatenate((time_time[..., None], time_space), axis=-1)
-        remaining = jnp.concatenate((time_space[..., :, None], spatial), axis=-1)
-        inverse = jnp.concatenate((first_row[..., None, :], remaining), axis=-2)
-        return inverse if self.convention == "mostly_plus" else -inverse
 
 
 def decompose_adm_metric(
@@ -231,7 +244,16 @@ def validate_adm_decomposition(
     shift = decomposition.shift
     spatial = decomposition.spatial_metric
     matrix = decomposition.spacetime_metric()
-    inverse = decomposition.spacetime_inverse
+    # Validation diagnoses the positivity it must not assume: invert the spatial
+    # block without the positive-definite assertion of `spatial_inverse` and
+    # report factorization failure as evidence instead of raising.
+    spatial_inversion = inverse(spatial, FactorizationPolicy("lu"))
+    inverse_matrix = _adm_spacetime_inverse(
+        lapse,
+        shift,
+        spatial_inversion.value,
+        decomposition.convention,
+    )
     finite = (
         jnp.all(jnp.isfinite(lapse))
         & jnp.all(jnp.isfinite(shift))
@@ -275,8 +297,10 @@ def validate_adm_decomposition(
         jnp.eye(decomposition.chart.dimension, dtype=matrix.dtype),
         matrix.shape,
     )
-    maximum_inverse_residual = jnp.max(jnp.abs(matrix @ inverse - identity))
-    inverse_valid = maximum_inverse_residual <= tolerances[2]
+    maximum_inverse_residual = jnp.max(jnp.abs(matrix @ inverse_matrix - identity))
+    inverse_valid = jnp.all(spatial_inversion.successful) & (
+        maximum_inverse_residual <= tolerances[2]
+    )
     if reference_metric is None:
         maximum_reconstruction_residual = jnp.asarray(0.0, dtype=matrix.dtype)
     else:

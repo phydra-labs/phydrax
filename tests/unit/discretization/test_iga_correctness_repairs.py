@@ -125,7 +125,7 @@ def test_field_specific_facet_actions_use_the_field_basis_on_the_common_overlay(
         prepared.exterior_facet_domain,
         field_names=("u",),
         maximum_derivative_order=1,
-        kernel_mode="dense",
+        kernel_mode="sum_factorized",
     )
 
     assert prepared.exterior_facet_domain.entity_indices.size == 8

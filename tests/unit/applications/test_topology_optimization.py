@@ -124,8 +124,9 @@ def _mechanics_problem(
 
 
 class _WarmRollbackMethod(optim.AbstractStateDesignMethod):
-    def __init__(self):
-        self.method_id = "test-warm-rollback"
+    @property
+    def method_id(self) -> str:
+        return "test-warm-rollback"
 
     def solve(self, problem, initial_state, initial_design, /, *, termination, args):
         del termination

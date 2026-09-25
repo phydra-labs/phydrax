@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, Key
 
 import phydrax.axes as cx
@@ -24,6 +25,7 @@ from .._execution_runtime import ExecutionGroup
 from .._fingerprint import array_tree_fingerprint
 from .._numerics import log_normalize, weight_ess
 from .._strict import StrictModule
+from .._trainable import ArrayRole, require_parameter_roles
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
 from ._checkpoint import (
     read_checkpoint_archive,
@@ -398,13 +400,20 @@ class ParticleBackwardSimulationResult(StrictModule):
 
 
 class ParticleFisherScoreResult(StrictModule):
-    """Transition-density Fisher-identity score over particle smoothing pairs."""
+    """Transition-density Fisher-identity score over particle smoothing pairs.
+
+    The score covers the transition kernel's PARAMETER leaves only, listed in
+    `parameter_paths` (relative to the kernel) in `flat_score` order;
+    `transition_score` holds them in the kernel's structure with `None` in place
+    of FIXED and MODEL_STATE leaves.
+    """
 
     transition_score: Any
     flat_score: Array
     case_scores: Array
     valid: Array
     smoother: ParticleBackwardSmootherResult
+    parameter_paths: tuple[str, ...] = eqx.field(static=True)
     parameter_size: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
@@ -1594,53 +1603,73 @@ def _case_transition_objective(
     return objective
 
 
-def _flatten_transition_score(score: Any, /) -> Array:
-    leaves = [
-        jnp.ravel(leaf)
-        for leaf in jax.tree_util.tree_leaves(score)
-        if eqx.is_inexact_array(leaf)
-    ]
-    if not leaves:
-        raise ValueError("The transition kernel has no differentiable array parameters.")
-    return jnp.concatenate(leaves)
+def _parameter_lane(component: Any, context: str, /) -> tuple[Any, Any, tuple[str, ...]]:
+    """PARAMETER lane of `component`, its constant complement, and the lane's paths.
+
+    Scores differentiate the PARAMETER lane only: FIXED and MODEL_STATE leaves
+    are constants and never enter a score vector.
+    """
+    roles = require_parameter_roles(component, context=context)
+    parameters, constants = eqx.partition(
+        component, roles.filter_spec(ArrayRole.PARAMETER)
+    )
+    paths = tuple(
+        path
+        for path, role in zip(roles.paths, roles.roles, strict=True)
+        if role is ArrayRole.PARAMETER
+    )
+    return parameters, constants, paths
 
 
 def particle_fisher_score(
     smoother: ParticleBackwardSmootherResult,
     /,
 ) -> ParticleFisherScoreResult:
-    """Estimate the stored-transition score using Fisher's smoothing identity."""
+    """Estimate the stored-transition score using Fisher's smoothing identity.
+
+    Only the transition kernel's PARAMETER leaves are scored.
+    """
     if not isinstance(smoother, ParticleBackwardSmootherResult):
         raise TypeError("smoother must be a ParticleBackwardSmootherResult.")
     transition = smoother.filter_result.problem.model.transition
     if not transition.has_log_density:
         raise ValueError("A Fisher score requires a normalized transition density.")
+    parameters, constants, parameter_paths = _parameter_lane(
+        transition, "particle_fisher_score"
+    )
+    if not parameter_paths:
+        raise ValueError(
+            "particle_fisher_score: the transition kernel has no PARAMETER leaves."
+        )
     case_count = prod(smoother.case_shape) if smoother.case_shape else 1
     valid = smoother.successful.reshape((case_count,))
+
+    def case_objective(values: Any, case_index: int) -> Array:
+        return _case_transition_objective(
+            eqx.combine(values, constants), smoother, case_index
+        )
+
     case_scores = []
     for case_index in range(case_count):
-        case_gradient = eqx.filter_grad(
-            lambda kernel: _case_transition_objective(kernel, smoother, case_index)
-        )(transition)
-        flattened = _flatten_transition_score(case_gradient)
+        flattened, _ = ravel_pytree(
+            jax.grad(lambda values: case_objective(values, case_index))(parameters)
+        )
         case_scores.append(jnp.where(valid[case_index], flattened, 0.0))
     stacked = jnp.stack(case_scores)
-    total_gradient = eqx.filter_grad(
-        lambda kernel: sum(
-            (
-                _case_transition_objective(kernel, smoother, case_index)
-                for case_index in range(case_count)
-            ),
+    total_gradient = jax.grad(
+        lambda values: sum(
+            (case_objective(values, case_index) for case_index in range(case_count)),
             start=jnp.asarray(0.0, dtype=smoother.particles.dtype),
         )
-    )(transition)
-    flat_score = _flatten_transition_score(total_gradient)
+    )(parameters)
+    flat_score, _ = ravel_pytree(total_gradient)
     return ParticleFisherScoreResult(
         transition_score=total_gradient,
         flat_score=flat_score,
         case_scores=stacked.reshape(smoother.case_shape + (flat_score.shape[0],)),
         valid=valid.reshape(smoother.case_shape),
         smoother=smoother,
+        parameter_paths=parameter_paths,
         parameter_size=flat_score.shape[0],
         method_id="particle-fisher-transition-score",
         process_id=transition.process_id,

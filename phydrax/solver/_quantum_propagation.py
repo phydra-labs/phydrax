@@ -167,13 +167,27 @@ class UnitaryPropagatorProblem(StrictModule):
 
 
 class _UnitaryPropagatorDrift(StrictModule):
-    problem: UnitaryPropagatorProblem
+    """Spatial velocity of `dU/dt = -i H U / hbar` in the group's algebra coordinates.
 
-    def __init__(self, problem: UnitaryPropagatorProblem, /):
+    The right-group geometry's physical tangent at `U` is `vee(dU/dt U^{-1})`,
+    which is the generator itself; the drift therefore returns physical tangent
+    coordinates, never the point-storage product `generator @ U`.
+    """
+
+    problem: UnitaryPropagatorProblem
+    group: UnitaryGroup | SpecialUnitaryGroup
+
+    def __init__(
+        self,
+        problem: UnitaryPropagatorProblem,
+        group: UnitaryGroup | SpecialUnitaryGroup,
+        /,
+    ):
         self.problem = problem
+        self.group = group
 
     def __call__(self, time: Array, state: Array, args: Any) -> Array:
-        del args
+        del state, args
         hamiltonian = self.problem.hamiltonian(time)
         if self.problem.group_kind == "special-unitary":
             trace = jnp.trace(hamiltonian) / float(self.problem.dimension)
@@ -181,7 +195,7 @@ class _UnitaryPropagatorDrift(StrictModule):
                 self.problem.dimension, dtype=hamiltonian.dtype
             )
         generator = -1j * hamiltonian / self.problem.hbar
-        return generator @ state
+        return self.group.vee(generator)
 
 
 class UnitaryPropagatorSolution(StrictModule):
@@ -259,7 +273,7 @@ def solve_unitary_propagator(
     )
     geometry = RightLieGroupStateGeometry(group)
     differential_problem = DifferentialProblem(
-        _UnitaryPropagatorDrift(problem),
+        _UnitaryPropagatorDrift(problem, group),
         problem.initial_propagator,
         t0=problem.t0,
         t1=problem.t1,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -153,7 +154,7 @@ def test_reconstruction_zero_coverage_and_weight_validation():
         result.support, jnp.asarray([True, False, False, False, False])
     )
     assert result.zero_coverage_count == 4
-    with pytest.raises(ValueError, match="nonnegative"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="nonnegative"):
         prepared.reconstruct(state, jnp.asarray([7.0]), jnp.asarray([-1.0]))
     empty = prepared.reconstruct(state, jnp.asarray([7.0]), jnp.asarray([0.0]))
     assert jnp.all(empty.values == 0.0)

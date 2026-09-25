@@ -86,6 +86,32 @@ class CallbackDerivativeRule(DerivativeRule):
         )
 
 
+class DerivativeRuleProvider(abc.ABC):
+    """Evaluator protocol deriving a derivative rule from its own dynamic operands.
+
+    A `DomainFunction` without an explicit rule asks its evaluator for one each
+    time `DomainFunction.derivative_rule` is read. The returned rule is built from
+    the evaluator's current PyTree children, so it never holds a second, stale
+    copy of their arrays and every array stays a visible leaf with one role.
+
+    Conformance is structural: any class defining `derivative_rule_for` is a
+    provider, so packages below `phydrax.domain` need not import this class.
+    """
+
+    @classmethod
+    def __subclasshook__(cls, subclass: type, /) -> bool:
+        if cls is DerivativeRuleProvider and callable(
+            getattr(subclass, "derivative_rule_for", None)
+        ):
+            return True
+        return NotImplemented
+
+    @abc.abstractmethod
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule | None:
+        """Return the rule of ``function``, whose evaluator is ``self``."""
+        raise NotImplementedError
+
+
 __all__ = [
     "CallbackDerivativeRule",
     "DerivativeBackend",
@@ -93,4 +119,5 @@ __all__ = [
     "DerivativeCallback",
     "DerivativeMode",
     "DerivativeRule",
+    "DerivativeRuleProvider",
 ]

@@ -10,6 +10,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ._regional import _parameter
 
@@ -46,8 +47,8 @@ class NeuralBOLDDrive(StrictModule):
                 raise ValueError(
                     "BOLD drive weights/baseline require real [2] or [region,2] arrays."
                 )
-        weights = weights.astype(jnp.result_type(weights.dtype, jnp.float64))
-        reference = reference.astype(jnp.result_type(reference.dtype, jnp.float64))
+        weights = weights.astype(inexact_result_type(weights.dtype))
+        reference = reference.astype(inexact_result_type(reference.dtype))
         self.component_weights = eqx.error_if(
             weights, ~jnp.all(jnp.isfinite(weights)), "BOLD drive weights must be finite."
         )

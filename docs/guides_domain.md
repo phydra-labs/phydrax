@@ -285,7 +285,139 @@ callable may receive the keyword-only randomness key declared by its
 `ModelBinding` (or an explicit binding for a plain callable). Evaluation never
 switches protocol because of hidden call-time flags.
 
+Output axes are declared, never inferred from array sizes. Pointwise evaluation
+gets batch axes from its mapping schedule, and coordinate grids get them from the
+coordinate axes declared for each dependency. A blockwise model declares its
+output layout on its `ModelBinding`:
 
+- `output_layout="dependency_axes"` (default): the raw output starts with the batch
+  axes of every dependency, in dependency order; trailing axes are channels.
+- `output_layout="dependency_subset", output_labels=(...)`: the raw output starts
+  with the batch axes of exactly those labels, in that order; the model reduced
+  every other dependency axis, and the result is broadcast back over it. Labels
+  that are not dependencies of the model raise `ValueError` when `Domain.Model`
+  binds it, and again before any blockwise invocation.
+- `output_layout="axis_array"`: the model returns a `phydrax.axes.AxisArray`
+  whose `None` dims are channels and whose named dims are dependency batch axes.
+
+A raw output whose leading shape differs from its declaration raises
+`ValueError`, even when another axis happens to have the same size.
+
+```python
+binding = phx.domain.ModelBinding.blockwise(
+    "structured",
+    pass_key=False,
+    output_layout="dependency_subset",
+    output_labels=("x",),
+)
+
+
+@domain.Model("x", "t", binding=binding)
+def u_mean_in_t(inputs):
+    x, t = inputs
+    return x[:, 0] * jnp.mean(t)  # batch axis of x only
+```
+
+Reduced layouts describe whole dependency blocks, so they require singleton
+sampling blocks; pointwise evaluation of such a model raises `ValueError`.
+
+### Binding models with intrinsic ports
+
+Each dense coordinate label publishes a `ValuePort` through
+`domain.value_port(label)` (`domain.value_ports()` lists them in label order).
+Ports are label-scoped: equal coordinate schemas under different labels never
+share a port. Domains declare no coordinate units, frames, normalizations, or
+spaces.
+
+Plain neural networks carry no scientific ports and bind as above. A model that
+declares intrinsic ports (a `PortProvider`, such as a fitted `phx.ml` executable,
+also when frozen) requires `port_mapping=phx.PortMapping(inputs=...)` binding each
+model input port to the port of one dependency label:
+
+```python
+x_port, t_port = domain.value_port("x"), domain.value_port("t")
+width = len(x_port.component_ids) + len(t_port.component_ids)
+samples = jr.uniform(jr.key(1), (32, width))
+fitted = phx.ml.fit(
+    phx.ml.linear.RidgeRecipe(alpha=1e-6),
+    samples,
+    jnp.sum(samples, axis=-1),
+    feature_schema=phx.ml.FeatureSchema.from_ports((x_port, t_port)),
+)
+mapping = phx.PortMapping(
+    inputs=[(x_port.port_id, x_port.port_id), (t_port.port_id, t_port.port_id)]
+)
+closure = domain.Model("x", "t", port_mapping=mapping)(fitted.model)
+evidence = closure.port_binding
+```
+
+Binding is checked before any evaluation. Semantic ID, components, event shape,
+representation, and variance must match exactly; dimensions, semantic axes,
+frames, normalizations, and spaces must match when both sides declare them and
+are otherwise recorded in `closure.port_binding.unverified`. Dependencies are
+packed in `deps` order and never repacked, so the labels mapped from the model's
+ordered input ports must equal `deps`. A missing mapping, a mapping for a model
+without ports, a mapping onto a mismatched port, and a mapping in a different
+order all raise `ValueError`. The field publishes the model's own output ports,
+so the mapping binds inputs only. Fit a model on a domain's coordinates with
+`phx.ml.FeatureSchema.from_ports(...)` so that its input ports are the domain's
+ports. Derived fields (arithmetic, transposition) drop `port_binding`, because
+they no longer carry the bound model's value.
+
+
+
+## Discrete field views
+
+A discretization's coefficients become a `DomainFunction` only through a
+`DiscreteFieldFunctionView` bound to an explicit, equivalent `GeometryDomain`.
+The view's `PreparedFieldReconstruction` owns coordinate evaluation, support,
+regularity, the evidenced maximum derivative order, and the trace policy;
+there is no generic conversion from discrete arrays to domain functions.
+
+```python
+domain = phx.domain.GeometryDomain(reconstruction.support_geometry, label="x")
+view = phx.discretization.DiscreteFieldFunctionView(
+    reconstruction, coefficients, domain, variable="x"
+)
+u_discrete = view.as_domain_function()
+```
+
+`as_domain_function()` requires a reconstruction that defines an evaluation at
+every point of its support; partial-coverage reconstructions (for example
+point clouds) are queried through `view.query(points)`, which returns values
+with pointwise `FieldQueryEvidence` (status, conditioning, support count).
+Coordinate derivatives of the view are the reconstruction's own exact
+derivatives: a request above `maximum_derivative_order` or at an invalid query
+point (outside the support, or a non-smooth locus without a trace side) raises
+`ValueError` eagerly and fails at runtime under `jit`; it never falls back to
+generic differentiation. Reconstruction data is FIXED; only the coefficients and
+query coordinates carry derivatives.
+
+Views participate in ordinary field algebra. Adding a view to another field,
+such as a network bound with `Domain.Model`, requires the other operand to
+declare its value port with the same units, event shape, frame, semantic axes,
+normalization, and variance; constants are read in the view's units. Operands
+on colliding supports are refused by domain joining:
+
+```python
+kelvin = phx.units.DimensionSignature({"temperature": 1})
+temperature = phx.ValuePort(
+    "temperature",
+    event_shape=(),
+    component_ids=("T",),
+    representation="scalar-field",
+    dimensions=(kelvin,),
+)
+u_fe = phx.discretization.DiscreteFieldFunctionView(
+    fe_reconstruction, coefficients, domain, variable="x"
+).as_domain_function()
+u_total = u_fe + domain.Model("x", port_mapping=mapping)(ported_network)
+```
+
+The declared regularity of the view enters derivative admission like a model's
+regularity, so, for example, the Laplacian of a piecewise-linear view is
+rejected as degenerate. Integrated functionals of discrete fields keep using
+`phydrax.variational.Functional` and its prepared-local compilers.
 
 ## Components: interior, boundary, and fixed slices
 

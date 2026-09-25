@@ -20,7 +20,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 from .._bounds import Bounds
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field, NonTrainableState
 from ..optim import AbstractRiskMeasure, CVaRRisk, EntropicRisk, MeanVarianceRisk
 from ._dynamics import DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
@@ -129,7 +129,7 @@ class SamplingMPCStatus(IntEnum):
     NO_VALID_CANDIDATE = 1
 
 
-class SamplingMPCPlan(StrictModule, NonTrainableState):
+class SamplingMPCPlan(StrictModule):
     """Static Gaussian work with an explicit, fixed-capacity model axis.
 
     Legacy plans use ``ControlProblem.case_shape`` as that axis. Realization-aware
@@ -140,11 +140,11 @@ class SamplingMPCPlan(StrictModule, NonTrainableState):
     problem: ControlProblem
     parameterization: AbstractControlParameterization
     bounds: Bounds | None
-    risk_measure: AbstractRiskMeasure | None
+    risk_measure: AbstractRiskMeasure | None = fixed_field()
     realizations: SamplingMPCRealizations | None
     realization_binding: SamplingMPCRealizationBinding | None = eqx.field(static=True)
-    model_weights: Array
-    model_support: Array
+    model_weights: Array = fixed_field()
+    model_support: Array = fixed_field()
     candidate_count: int = eqx.field(static=True)
     iteration_count: int = eqx.field(static=True)
     elite_count: int = eqx.field(static=True)

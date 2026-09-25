@@ -16,6 +16,7 @@ from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ..linalg import inverse
 from ._chemical_species import ChemicalPhaseKind
 from ._favre_les import FavreLESInputs, FavreLESResult, PreparedFavreLESModel
@@ -25,11 +26,13 @@ from ._homogeneous_thermodynamics import (
     HomogeneousThermodynamicEvaluation,
 )
 from ._hyperbolic_systems import (
+    _rotate_normal_frame_components,
     AbstractAdmissibleSystem,
     AbstractCharacteristicSystem,
     AbstractEntropyDiffusionSystem,
     AbstractEntropySystem,
     AbstractNormalCharacteristicSystem,
+    AbstractNormalFrameSystem,
     AbstractNormalReflectionSystem,
     ConservationDiffusionEvaluation,
 )
@@ -109,6 +112,8 @@ class HomogeneousMixtureEulerSystem(
     AbstractEntropySystem,
     AbstractNormalReflectionSystem,
     AbstractNormalCharacteristicSystem,
+    AbstractNormalFrameSystem,
+    NonTrainableState,
 ):
     """Frozen-composition Euler flow driven by homogeneous gas thermodynamics.
 
@@ -453,6 +458,33 @@ class HomogeneousMixtureEulerSystem(
         reflected = momentum - 2.0 * normal_momentum[..., None] * unit
         return value.at[..., self.momentum_slice].set(reflected)
 
+    def rotate_state_to_normal_frame(self, state: Array, normal: Array, /) -> Array:
+        return _rotate_normal_frame_components(
+            self._check_state(state, "Conserved state"),
+            normal,
+            self.dimension,
+            self.momentum_slice,
+            inverse=False,
+        )
+
+    def rotate_flux_to_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        return _rotate_normal_frame_components(
+            self._check_state(flux, "Normal flux"),
+            normal,
+            self.dimension,
+            self.momentum_slice,
+            inverse=False,
+        )
+
+    def rotate_flux_from_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        return _rotate_normal_frame_components(
+            self._check_state(flux, "Normal flux"),
+            normal,
+            self.dimension,
+            self.momentum_slice,
+            inverse=True,
+        )
+
     def _characteristic_basis_point(
         self, primitive: Array, frame: Array, normal_norm: Array, /
     ) -> tuple[Array, Array]:
@@ -683,6 +715,7 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
     AbstractEntropySystem,
     AbstractNormalReflectionSystem,
     AbstractNormalCharacteristicSystem,
+    AbstractNormalFrameSystem,
     AbstractEntropyDiffusionSystem,
 ):
     """All-species compressible Navier–Stokes system with canonical calorics.
@@ -1694,6 +1727,33 @@ class HomogeneousMixtureCompressibleNavierStokesSystem(
         normal_momentum = contract("...d,...d->...", momentum, unit, backend="jax")
         reflected = momentum - 2.0 * normal_momentum[..., None] * unit
         return value.at[..., self.momentum_slice].set(reflected)
+
+    def rotate_state_to_normal_frame(self, state: Array, normal: Array, /) -> Array:
+        return _rotate_normal_frame_components(
+            self._check_state(state, "Conserved state"),
+            normal,
+            self.dimension,
+            self.momentum_slice,
+            inverse=False,
+        )
+
+    def rotate_flux_to_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        return _rotate_normal_frame_components(
+            self._check_state(flux, "Normal flux"),
+            normal,
+            self.dimension,
+            self.momentum_slice,
+            inverse=False,
+        )
+
+    def rotate_flux_from_normal_frame(self, flux: Array, normal: Array, /) -> Array:
+        return _rotate_normal_frame_components(
+            self._check_state(flux, "Normal flux"),
+            normal,
+            self.dimension,
+            self.momentum_slice,
+            inverse=True,
+        )
 
     def _coupled_characteristic_basis_point(
         self,

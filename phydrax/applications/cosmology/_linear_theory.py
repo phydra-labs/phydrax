@@ -15,6 +15,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from ..._differentiation import DerivativeContract, DerivativeRoute
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -510,7 +511,7 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
             physics_policy_id="external-linear-theory",
             scale_id=result_scale.scale_id,
             source_kind="external",
-            differentiation="constant",
+            differentiation=DerivativeContract(route=DerivativeRoute.DIRECT),
         )
         transfer = LinearTransferTable(
             scales,

@@ -98,6 +98,8 @@ from ._planar_bands import (
     prepare_planar_bands,
 )
 from ._proposals import (
+    AbstractMeshProposer,
+    LearnedMeshProposer,
     mesh_proposal_scope,
     MeshCoordinateProposal,
     MeshMarkingProposal,
@@ -195,6 +197,8 @@ __all__ = [
     "OversetCoupling",
     "PeriodicCoupling",
     "MeshDistribution",
+    "AbstractMeshProposer",
+    "LearnedMeshProposer",
     "MeshCoordinateProposal",
     "MeshMarkingProposal",
     "MeshMetricProposal",

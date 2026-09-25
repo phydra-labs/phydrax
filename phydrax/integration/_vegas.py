@@ -19,6 +19,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import linear_interpolate
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -372,7 +373,7 @@ def prepare_vegas(
     estimate_array = (
         jnp.stack(estimates)
         if estimates
-        else jnp.zeros((0,), dtype=jnp.result_type(plan.lower, jnp.float64))
+        else jnp.zeros((0,), dtype=inexact_result_type(plan.lower))
     )
     finite_array = jnp.stack(finite) if finite else jnp.ones((0,), dtype=jnp.bool_)
     marginal_history = (

@@ -8,8 +8,7 @@ from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from math import prod
-from types import BuiltinFunctionType, FunctionType, MethodType
-from typing import Any, cast
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -19,7 +18,12 @@ from jaxtyping import Array, ArrayLike
 
 from ..._array_tree import ArrayPyTreeSchema
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._identity import ExecutableSignature, NumericRevision, SemanticProvenance
+from ..._identity import (
+    callable_payload,
+    ExecutableSignature,
+    NumericRevision,
+    SemanticProvenance,
+)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics._plant import (
@@ -162,33 +166,16 @@ def _provenance_value(value: Any, owner: str, /) -> Any:
     if isinstance(value, type):
         return {"type": "class", "value": _type_id(value)}
     if callable(value):
-        return {"callable": _callable_provenance(value, owner)}
+        identity = callable_payload(value)
+        return {
+            "callable": {
+                "semantic_content_id": identity["semantic_content_id"],
+                "numeric_content_id": identity["numeric_content_id"],
+            }
+        }
     raise TypeError(
         f"{owner} contains unsupported provenance value of type {_type_id(value)}."
     )
-
-
-def _callable_provenance(value: Callable[..., Any], owner: str, /) -> Any:
-    if isinstance(value, (FunctionType, BuiltinFunctionType)):
-        return {
-            "type": "function",
-            "module": value.__module__,
-            "qualname": value.__qualname__,
-        }
-    if isinstance(value, MethodType):
-        bound_owner = value.__self__
-        function = cast(FunctionType, value.__func__)
-        return {
-            "type": "method",
-            "module": function.__module__,
-            "qualname": function.__qualname__,
-            "owner": (
-                _provenance_value(bound_owner, f"{owner} owner")
-                if is_dataclass(bound_owner)
-                else _type_id(bound_owner)
-            ),
-        }
-    return {"type": _type_id(value)}
 
 
 def _tree_case_all_finite(
@@ -1275,8 +1262,11 @@ def prepare_array_robot_environment(
     wrappers: tuple[AbstractRobotEnvironmentWrapper, ...] = (),
     /,
     *,
-    initializer_id: str,
     reset_fallback: ArrayLike,
+    transition_semantic_id: str | None = None,
+    transition_numeric_id: str | None = None,
+    initializer_semantic_id: str | None = None,
+    initializer_numeric_id: str | None = None,
     parameter_values: Any | None = None,
     parameter_schema: ArrayPyTreeSchema | None = None,
     semantic_provenance: SemanticProvenance | None = None,
@@ -1287,7 +1277,12 @@ def prepare_array_robot_environment(
     step_size: float | None = None,
     environment_id: str | None = None,
 ) -> PreparedRobotEnvironment:
-    """Adapt one legacy array ``DiscreteSystem`` to the complete plant lifecycle."""
+    """Adapt one legacy array ``DiscreteSystem`` to the complete plant lifecycle.
+
+    The system transition and ``initializer`` are content-addressed when they are
+    StrictModules or plain module-level functions. Any other callable is opaque and
+    requires both of its ``*_semantic_id`` and ``*_numeric_id`` declarations.
+    """
     if not isinstance(system, DiscreteSystem):
         raise TypeError("system must be a DiscreteSystem.")
     if system.input_layout is None:
@@ -1300,7 +1295,16 @@ def prepare_array_robot_environment(
         raise ValueError("Every robot environment input must have role 'control'.")
     if not callable(initializer):
         raise TypeError("initializer must be callable.")
-    initialization_id = _identifier(initializer_id, "initializer_id")
+    transition_identity = callable_payload(
+        system.transition,
+        semantic_id=transition_semantic_id,
+        numeric_id=transition_numeric_id,
+    )
+    initializer_identity = callable_payload(
+        initializer,
+        semantic_id=initializer_semantic_id,
+        numeric_id=initializer_numeric_id,
+    )
     fallback = jnp.asarray(reset_fallback)
     if fallback.shape != system.state_layout.shape:
         raise ValueError("reset_fallback must match the DiscreteSystem state shape.")
@@ -1326,10 +1330,7 @@ def prepare_array_robot_environment(
             {
                 "kind": "array-discrete-system-robot-plant",
                 "system_id": system.system_id,
-                "transition": _callable_provenance(
-                    system.transition,
-                    "system transition",
-                ),
+                "transition": transition_identity["semantic_content_id"],
                 "state_layout": _provenance_value(
                     system.state_layout,
                     "state_layout",
@@ -1338,10 +1339,7 @@ def prepare_array_robot_environment(
                     system.input_layout,
                     "input_layout",
                 ),
-                "initializer": {
-                    "initializer_id": initialization_id,
-                    "callable": _callable_provenance(initializer, "initializer"),
-                },
+                "initializer": initializer_identity["semantic_content_id"],
                 "step_size": system.step_size,
                 "step_rtol": system.step_rtol,
                 "step_atol": system.step_atol,
@@ -1367,6 +1365,8 @@ def prepare_array_robot_environment(
             {
                 "parameter_values": values,
                 "reset_fallback": fallback,
+                "transition": transition_identity["numeric_content_id"],
+                "initializer": initializer_identity["numeric_content_id"],
             },
         )
         if numeric_revision is None

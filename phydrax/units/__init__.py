@@ -116,6 +116,7 @@ from phydrax.units._dimension import (
     VOLTAGE,
     VOLUME,
 )
+from phydrax.units._parse import parse_unit
 from phydrax.units._unit import (
     conversion_factor,
     convert_value,
@@ -241,4 +242,5 @@ __all__ = [
     "conversion_factor",
     "convert_value",
     "derived_unit",
+    "parse_unit",
 ]

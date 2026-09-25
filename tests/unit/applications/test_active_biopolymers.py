@@ -257,6 +257,7 @@ def test_chromatin_atomistic_checkpoint_binds_complete_state_content():
         positions,
         thermodynamic,
         velocity=jnp.zeros_like(positions),
+        key=jr.key(0),
     )
     chromatin = ChromatinDynamicsPlan(2, 1, ambient_dimension=3).prepare()
     prepared = ChromatinAtomisticCouplingPlan(

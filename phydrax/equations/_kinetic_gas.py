@@ -15,8 +15,13 @@ from phydrax.ein import contract
 from .._admissibility import (
     AdmissibilityHeader,
     AdmissibilityReason,
-    DerivativeAvailability,
     reason_bits_where,
+)
+from .._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
 )
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -577,12 +582,19 @@ class MaxwellGasSurfaceBoundary(StrictModule):
         return jnp.where(incoming, reflected, value)
 
 
+# Derivatives of the executed algorithm with model and regime decisions frozen.
+_DERIVATIVE_CONTRACT = branch_policy_contract(
+    BranchDifferentiationPolicy.FROZEN_DECISION,
+    surfaces=(DerivativeSurface.PRIMAL_STATE, DerivativeSurface.PHYSICAL_PARAMETER),
+)
+
+
 class KineticBreakdownEvidence(StrictModule):
     header: AdmissibilityHeader
     knudsen_number: Array
     distribution_defect: Array
     kinetic_required: Array
-    derivative_availability: DerivativeAvailability = eqx.field(static=True)
+    derivative_contract: DerivativeContract
     plan_id: str = eqx.field(static=True)
 
 
@@ -676,7 +688,7 @@ class KineticBreakdownPlan(StrictModule):
             knudsen,
             defect,
             required,
-            DerivativeAvailability.ALGORITHMIC_FIXED_MODEL,
+            _DERIVATIVE_CONTRACT,
             self.plan_id,
         )
 

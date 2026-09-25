@@ -36,6 +36,10 @@ See [Domains and sampling](../../guides_domain.md) for the full conceptual model
 
 ## Base contracts
 
+`Domain.value_ports()` derives one label-scoped coordinate `ValuePort` per label:
+components and event-axis keys carry the domain label, so equal coordinate schemas
+under different labels never share a port identity.
+
 ::: phydrax.domain.Domain
     options:
         members:
@@ -44,6 +48,7 @@ See [Domains and sampling](../../guides_domain.md) for the full conceptual model
             - factor
             - same_support
             - schema_compatible
+            - value_ports
             - component
             - restrict
             - drop

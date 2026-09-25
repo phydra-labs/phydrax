@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
 
 import equinox as eqx
 import jax
@@ -9,34 +8,26 @@ import jax.numpy as jnp
 
 from phydrax._strict import StrictModule
 
+from ...sparse import gather_routes, route_reduce
 from .._index import add_self_loops, maybe_num_nodes
-from .._kernels import scatter_max, scatter_mean, scatter_min, segment_sum
-from .._mp import MessagePassing
+from .._mp import (
+    _edge_index_relation,
+    _route_reduction,
+    MessageAggregation,
+    MessagePassing,
+)
 
 
 def _apply_linear(linear: eqx.nn.Linear, x: jnp.ndarray) -> jnp.ndarray:
     return jax.vmap(linear)(x)
 
 
-def _aggregate(
-    messages: jnp.ndarray,
-    index: jnp.ndarray,
-    num_nodes: int,
-    aggr: Literal["add", "mean", "max", "min"],
-) -> jnp.ndarray:
-    if aggr == "add":
-        return segment_sum(messages, index, num_nodes)
-    if aggr == "mean":
-        return scatter_mean(messages, index, num_nodes)
-    if aggr == "max":
-        return scatter_max(messages, index, num_nodes)
-    if aggr == "min":
-        return scatter_min(messages, index, num_nodes)
-    raise ValueError(f"Unsupported aggregation mode: {aggr!r}.")
-
-
 class GCNConv(StrictModule):
-    """Graph Convolution layer with symmetric degree normalization."""
+    """Graph Convolution layer with symmetric degree normalization.
+
+    Degrees, gathers, and the neighborhood sum run over the `edge_index`
+    `EdgeRelation` (after optional self-loop insertion).
+    """
 
     linear: eqx.nn.Linear
     add_self_loops: bool = eqx.field(static=True)
@@ -101,27 +92,37 @@ class GCNConv(StrictModule):
                 raise RuntimeError("Self-loop insertion dropped explicit edge weights.")
             edge_weight = loop_weight
 
-        row = edge_index[0].astype(jnp.int32)
-        col = edge_index[1].astype(jnp.int32)
+        relation = _edge_index_relation(
+            edge_index, reverse=False, source_size=n_nodes, target_size=n_nodes
+        )
 
         if self.normalize:
-            deg = segment_sum(edge_weight, col, n_nodes)
+            deg = route_reduce(relation, edge_weight)
             deg_inv_sqrt = jnp.where(deg > 0, jnp.power(deg, -0.5), 0.0)
-            norm = deg_inv_sqrt[row] * edge_weight * deg_inv_sqrt[col]
+            norm = (
+                gather_routes(relation, deg_inv_sqrt)
+                * edge_weight
+                * gather_routes(relation.transpose(), deg_inv_sqrt)
+            )
         else:
             norm = edge_weight
 
         x_proj = _apply_linear(self.linear, x)
-        messages = x_proj[row] * norm[:, None]
-        return segment_sum(messages, col, n_nodes)
+        messages = gather_routes(relation, x_proj) * norm[:, None]
+        return route_reduce(relation, messages)
 
 
 class SAGEConv(StrictModule):
-    """GraphSAGE convolution with configurable neighborhood aggregation."""
+    """GraphSAGE convolution with configurable neighborhood aggregation.
+
+    Neighborhood aggregation reduces source projections over the `edge_index`
+    `EdgeRelation`; `aggr="add"` is the route `"sum"` and empty neighborhoods
+    aggregate to zero.
+    """
 
     lin_neigh: eqx.nn.Linear
     lin_root: eqx.nn.Linear | None
-    aggr: Literal["add", "mean", "max", "min"] = eqx.field(static=True)
+    aggr: MessageAggregation = eqx.field(static=True)
     normalize_output: bool = eqx.field(static=True)
 
     def __init__(
@@ -130,11 +131,12 @@ class SAGEConv(StrictModule):
         out_features: int,
         *,
         key: jax.Array,
-        aggr: Literal["add", "mean", "max", "min"] = "mean",
+        aggr: MessageAggregation = "mean",
         root_weight: bool = True,
         normalize_output: bool = False,
         use_bias: bool = True,
     ):
+        _route_reduction(aggr)
         k1, k2 = jax.random.split(key)
         if isinstance(in_features, tuple):
             in_src, in_dst = in_features
@@ -156,22 +158,24 @@ class SAGEConv(StrictModule):
         x: jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray],
         edge_index: jnp.ndarray,
     ) -> jnp.ndarray:
-        edge_index = jnp.asarray(edge_index)
-        if edge_index.ndim != 2 or edge_index.shape[0] != 2:
-            raise ValueError("`edge_index` must have shape (2, num_edges).")
-
         if isinstance(x, tuple):
             x_src, x_dst = x
         else:
             x_src = x
             x_dst = x
 
-        row = edge_index[0].astype(jnp.int32)
-        col = edge_index[1].astype(jnp.int32)
-
+        relation = _edge_index_relation(
+            edge_index,
+            reverse=False,
+            source_size=x_src.shape[0],
+            target_size=x_dst.shape[0],
+        )
         src_proj = _apply_linear(self.lin_neigh, x_src)
-        messages = src_proj[row]
-        out = _aggregate(messages, col, x_dst.shape[0], self.aggr)
+        out = route_reduce(
+            relation,
+            gather_routes(relation, src_proj),
+            reduction=_route_reduction(self.aggr),
+        )
 
         if self.lin_root is not None:
             out = out + _apply_linear(self.lin_root, x_dst)

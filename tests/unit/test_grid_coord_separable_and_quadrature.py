@@ -70,13 +70,21 @@ def test_legendre_axis_endpoint_rules_and_validation():
         LegendreAxisSpec(1, kind="lobatto")
 
 
-def test_sdf_domain_function_preserves_interval_sign_and_distance():
+def test_sdf_domain_function_preserves_interval_sign_and_boundary_distance():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
-    batch = component.points({"x": jnp.asarray([[-0.25], [0.0], [0.25], [1.0], [1.25]])})
+    epsilon = 1e-4
+    points = jnp.asarray(
+        [-0.25, -epsilon, 0.0, epsilon, 0.5, 1.0 - epsilon, 1.0, 1.0 + epsilon, 1.25]
+    )
+    batch = component.points({"x": points[:, None]})
 
     values = jnp.asarray(component.sdf(var="x")(batch).data, dtype="float64")
-    assert jnp.allclose(values, jnp.asarray([0.25, 0.0, -0.25, 0.0, 0.25]))
+    assert jnp.array_equal(
+        jnp.sign(values), jnp.asarray([1.0, 1.0, 0.0, -1.0, -1.0, -1.0, 0.0, 1.0, 1.0])
+    )
+    near_boundary = jnp.asarray([1, 3, 5, 7])
+    assert jnp.allclose(jnp.abs(values[near_boundary]), epsilon, rtol=1e-3)
 
 
 def test_coord_separable_scalar_time_axis_integral_constant():

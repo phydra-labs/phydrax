@@ -11,34 +11,49 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model._array import value_derivative_contract
 from ..._model._binding import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
+from .._schema import AbstractFittedModel
 from ._utils import (
     broadcast_support,
     case_distances,
     chunked_call,
     gather_support,
+    metric_regularity,
     pad_support,
     validate_metric,
     validated_weights,
 )
 
 
-class KernelDensityModel(AbstractArrayModel):
-    support: Array
-    support_weight: Array
+# A Gaussian mixture density: exp of a log-sum-exp of quadratics.
+_KERNEL_DENSITY_CONTRACT = value_derivative_contract(DerivativeRegularity.smooth())
+
+
+class KernelDensityModel(AbstractFittedModel):
+    support: Array = fixed_field()
+    support_weight: Array = fixed_field()
     support_mask: Array
-    bandwidth: Array
+    bandwidth: Array = fixed_field()
     feature_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -87,6 +102,9 @@ class KernelDensityModel(AbstractArrayModel):
         self.out_size = "scalar"
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _KERNEL_DENSITY_CONTRACT
 
     def log_density(self, x: ArrayLike, /) -> Array:
         squared, query_shape = case_distances(
@@ -196,13 +214,16 @@ class KernelDensityRecipe(AbstractRecipe):
             effective_samples=effective,
             method="gaussian-kernel-density",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="smooth",
-            fit_weights="smooth",
-            fit_hyperparameters="smooth",
-            fit_mode="direct",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+                SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
         )
         return FitResult(
             model,
@@ -210,16 +231,16 @@ class KernelDensityRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="kernel-density",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
-class LocalOutlierFactorModel(AbstractArrayModel):
-    support: Array
+class LocalOutlierFactorModel(AbstractFittedModel):
+    support: Array = fixed_field()
     support_mask: Array
-    support_weight: Array
-    local_reachability_density: Array
-    k_distance: Array
+    support_weight: Array = fixed_field()
+    local_reachability_density: Array = fixed_field()
+    k_distance: Array = fixed_field()
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
@@ -277,6 +298,20 @@ class LocalOutlierFactorModel(AbstractArrayModel):
         self.out_size = "scalar"
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # The neighbor-density average jumps when the top-k set changes; between
+        # changes the score is the metric's reachability distances, rescaled.
+        regularity = (
+            DerivativeRegularity.discontinuous()
+            if metric_regularity(self.metric) is None
+            else DerivativeRegularity.piecewise_smooth(continuity=-1)
+        )
+        return prediction_fit_contract(
+            value_derivative_contract(regularity),
+            route=DerivativeRoute.DIRECT,
+            nondifferentiable_outputs=("neighbor_indices", "predict"),
+        )
 
     def score_samples(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
@@ -425,11 +460,9 @@ class LocalOutlierFactorRecipe(AbstractRecipe):
             effective_samples=effective,
             method="chunked-local-outlier-factor",
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("neighbor_indices", "predict"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
             conditions=("Neighbor ordering is fixed and tie-free.",),
         )
         return FitResult(
@@ -438,7 +471,7 @@ class LocalOutlierFactorRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="local-outlier-factor",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

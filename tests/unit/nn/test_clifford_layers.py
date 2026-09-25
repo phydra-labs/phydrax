@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 cl = phx.metrix.clifford
@@ -167,7 +166,7 @@ def test_grade_linear_and_gate_are_euclidean_equivariant():
     assert layer.certificate.group_scope == "orthogonal-euclidean"
     assert bool(report.valid)
     assert bool(gate_report.valid)
-    trainable, _ = partition_trainable(layer)
+    trainable, _model_state, _ = phx.partition_parameters(layer)
     assert sum(leaf.size for leaf in jax.tree.leaves(trainable)) > 0
 
 

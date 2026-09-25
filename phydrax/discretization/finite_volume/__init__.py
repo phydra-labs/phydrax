@@ -21,7 +21,6 @@ from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
     ConservationStageLedger,
 )
-from .._conservation_policy import DifferentiabilityPolicy
 from ._amr import BlockAMRConservationPlan
 from ._amr_diffusion import (
     composite_amr_multigrid_builder,
@@ -57,7 +56,14 @@ from ._cell_polynomial import (
     CellPolynomialReconstructionReport,
     PreparedCellPolynomialReconstruction,
 )
-from ._closure import ConservativeFaceClosurePlan
+from ._closure import (
+    AbstractFaceClosurePlan,
+    ArbitraryNormalFaceClosurePlan,
+    FaceClosureFrame,
+    FaceFluxContext,
+    SymmetrizedFaceClosure,
+    SymmetrizedFaceClosureCertificate,
+)
 from ._contact_angle import (
     ContactAngleCondition,
     ContactAngleEvidence,
@@ -114,6 +120,11 @@ from ._entropy import (
     FiniteVolumeEntropyProductionDiagnostics,
     integrated_finite_volume_relative_entropy,
 )
+from ._field_view import (
+    prepare_finite_volume_field_reconstruction,
+    StructuredFiniteVolumeFieldReconstructionKernel,
+    UnstructuredFiniteVolumeFieldReconstructionKernel,
+)
 from ._geometry_protocol import (
     ALEGeometryConsistencyPolicy,
     ExplicitFaceBlockGeometry,
@@ -141,7 +152,6 @@ from ._high_resolution import (
 )
 from ._high_resolution_extended import (
     ExplicitStabilizationPlan,
-    FilterADPolicy,
     TENOQualification,
 )
 from ._hybrid_diffusion import HybridMimeticDiffusion
@@ -233,7 +243,6 @@ from ._mac_ocean import MACOceanForcingEvidence, PreparedMACOceanForcing
 from ._mac_passive_tracer import (
     MACPassiveTracerCharacteristicIntegrator,
     MACPassiveTracerConservation,
-    MACPassiveTracerDifferentiation,
     MACPassiveTracerInterpolation,
     MACPassiveTracerMacCormackPlan,
     MACPassiveTracerMacCormackResult,
@@ -353,6 +362,7 @@ from ._reconstruction import (
     VanLeerLimiter,
 )
 from ._riemann import (
+    AbstractArbitraryNormalALENumericalFluxPlan,
     AbstractArbitraryNormalNumericalFluxPlan,
     AbstractNumericalFluxPlan,
     AbstractSymmetricTwoPointFluxPlan,
@@ -628,6 +638,9 @@ __all__ = [
     "PreparedUnstructuredWENOZReconstruction",
     "UnstructuredWENOLimiter",
     "UnstructuredWENOZReconstructionPlan",
+    "StructuredFiniteVolumeFieldReconstructionKernel",
+    "UnstructuredFiniteVolumeFieldReconstructionKernel",
+    "prepare_finite_volume_field_reconstruction",
     "PreparedTriangleFiniteVolumeDynamics",
     "TriangleFiniteVolumeBoundarySet",
     "TriangleFiniteVolumeDiagnostics",
@@ -667,6 +680,7 @@ __all__ = [
     "AbstractConservationBoundary",
     "BoundaryTraceResult",
     "evaluate_conservation_boundary",
+    "AbstractArbitraryNormalALENumericalFluxPlan",
     "AbstractArbitraryNormalNumericalFluxPlan",
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",
@@ -682,8 +696,12 @@ __all__ = [
     "CharacteristicSystem",
     "ConstantStateBoundary",
     "ConvexStateLimiterPlan",
-    "ConservativeFaceClosurePlan",
-    "DifferentiabilityPolicy",
+    "AbstractFaceClosurePlan",
+    "ArbitraryNormalFaceClosurePlan",
+    "FaceClosureFrame",
+    "FaceFluxContext",
+    "SymmetrizedFaceClosure",
+    "SymmetrizedFaceClosureCertificate",
     "EntropyConservativeEulerFluxPlan",
     "BlockAMRConservationPlan",
     "BlockAMRFiniteVolumePlan",
@@ -778,7 +796,6 @@ __all__ = [
     "MACPressureClosureKind",
     "MACPassiveTracerCharacteristicIntegrator",
     "MACPassiveTracerConservation",
-    "MACPassiveTracerDifferentiation",
     "MACPassiveTracerInterpolation",
     "MACPassiveTracerMacCormackPlan",
     "MACPassiveTracerMacCormackResult",
@@ -844,7 +861,6 @@ __all__ = [
     "HighResolutionMethod",
     "HighResolutionReconstructionPlan",
     "ExplicitStabilizationPlan",
-    "FilterADPolicy",
     "TENOQualification",
     "MCLimiter",
     "MUSCLReconstruction",

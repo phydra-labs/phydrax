@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
+import pytest
 
 import phydrax as phx
 import phydrax.solver.functional_decomposition._checkpoint as decomposition_checkpoint
@@ -94,43 +95,49 @@ def test_joint_partition_of_unity_trains_canonical_local_parameters():
     )
 
 
-def test_functional_update_kernel_rejects_nonfinite_candidate_objective():
+class _PoleTerm(phx.terms.AbstractScalarTerm):
+    """`(u - 1)^-2` of one constant field, unchecked, so a pole is a nonfinite value."""
+
+    fields: tuple[str, ...] = eqx.field(static=True)
+    label: str | None = eqx.field(static=True)
+
+    def __init__(self, field_name):
+        self.fields = (field_name,)
+        self.label = None
+
+    def loss(self, functions, /, *, key=None, iter_=None, **kwargs):
+        del key, iter_, kwargs
+        return (functions[self.fields[0]].func.value - 1.0) ** -2
+
+
+def test_block_local_update_rejects_nonfinite_candidate_and_optimizer_state():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    field = domain.Parameter(jnp.asarray(0.0))
-    component = domain.component()
-    condition = phx.conditions.Residual(
+    cover = phx.domain.cartesian_subdomain_cover(domain, "x", 1)
+    patch = cover.patches[0]
+    family = phx.domain.LocalFieldFamily(
         "u",
-        component,
-        lambda value: domain.Parameter(1.0 / (value.func() - 1.0)),
+        cover,
+        {patch.patch_id: patch.domain.Parameter(jnp.asarray(0.0))},
     )
-    batch = component.points({"x": jnp.asarray([[0.25], [0.75]])})
-    term = phx.terms.ResidualPenalty(
-        condition,
-        phx.integration.fixed(
-            phx.integration.from_samples(
-                phx.integration.mean_over(component),
-                batch,
-            )
+    prepared = phx.solver.prepare_functional_decomposition(
+        phx.solver.FunctionalDecompositionProblem.broken(
+            family,
+            (
+                phx.solver.ScopedFunctionalTerm(
+                    _PoleTerm(family.field_name(patch.patch_id)),
+                    phx.solver.PatchScope(patch.patch_id),
+                ),
+            ),
+        ),
+        phx.solver.FunctionalDecompositionPlan(
+            phx.solver.BlockDecompositionTraining(1, 1, sweep="jacobi")
         ),
     )
-    solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
-    paths = tuple(
-        path
-        for path in phx.nn.parameters.ParameterSubspace.array_leaf_paths(solver.functions)
-        if ".func.value" in path
-    )
-    subspace = phx.nn.parameters.ParameterSubspace.from_leaf_paths(
-        solver.functions,
-        paths,
-    )
-    kernel = solver.update_kernel(optax.sgd(-0.5), subspace, jit=False)
-    state = kernel.initialize()
 
-    advanced, evidence = kernel.advance(state, key=jr.key(101))
-
-    assert not bool(evidence.accepted)
-    assert advanced.step == 0
-    assert eqx.tree_equal(advanced.functions, state.functions)
+    # The value, gradient, candidate, and optimizer state are finite; the step
+    # lands on the pole, so only the candidate objective is nonfinite.
+    with pytest.raises(FloatingPointError, match="rejected as non-finite"):
+        phx.solver.solve_functional_decomposition(prepared, optax.sgd(-0.5), jit=False)
     nonfinite_state_optimizer = optax.GradientTransformation(
         lambda parameters: jnp.asarray(0.0),
         lambda gradients, optimizer_state, params=None: (
@@ -138,17 +145,10 @@ def test_functional_update_kernel_rejects_nonfinite_candidate_objective():
             jnp.asarray(jnp.inf),
         ),
     )
-    state_kernel = solver.update_kernel(
-        nonfinite_state_optimizer,
-        subspace,
-        jit=False,
-    )
-    state_result, state_evidence = state_kernel.advance(
-        state_kernel.initialize(),
-        key=jr.key(102),
-    )
-    assert not bool(state_evidence.accepted)
-    assert state_result.step == 0
+    with pytest.raises(FloatingPointError, match="rejected as non-finite"):
+        phx.solver.solve_functional_decomposition(
+            prepared, nonfinite_state_optimizer, jit=True
+        )
 
 
 def test_jacobi_uses_one_snapshot_while_gauss_seidel_uses_latest_patch():
@@ -266,10 +266,23 @@ def test_checkpoint_resume_matches_uninterrupted_block_training(tmp_path, monkey
         replacement.replace(state_path)
         return deserialize(state_stream, *args, **kwargs)
 
-    monkeypatch.setattr(
-        decomposition_checkpoint.eqx,
-        "tree_deserialise_leaves",
-        replace_path_after_open,
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            decomposition_checkpoint.eqx,
+            "tree_deserialise_leaves",
+            replace_path_after_open,
+        )
+        # A state file replaced while it is being read fails closed.
+        with pytest.raises(ValueError, match="changed during reading"):
+            phx.solver.load_functional_decomposition_checkpoint(
+                tmp_path / "decomposition",
+                prepared,
+                partial.state,
+            )
+    phx.solver.save_functional_decomposition_checkpoint(
+        tmp_path / "decomposition",
+        partial.state,
+        prepared,
     )
     restored = phx.solver.load_functional_decomposition_checkpoint(
         tmp_path / "decomposition",
@@ -288,8 +301,8 @@ def test_checkpoint_resume_matches_uninterrupted_block_training(tmp_path, monkey
     assert resumed.state.local_steps == (6, 6)
     assert eqx.tree_equal(resumed.state.functions, uninterrupted.state.functions)
     assert eqx.tree_equal(
-        resumed.state.optimizer_states,
-        uninterrupted.state.optimizer_states,
+        resumed.state.kernel_states,
+        uninterrupted.state.kernel_states,
     )
 
 

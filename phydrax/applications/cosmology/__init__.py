@@ -115,7 +115,6 @@ from ._closure import (
     CorrelatedGaussianResult,
     CosmologyPhysicalState,
     CosmologyRealizationSignature,
-    DifferentiationContract,
     LinearObservationPlan,
     PhysicalDependencyProjection,
     PrecisionCovarianceAction,
@@ -583,7 +582,6 @@ from ._production_profiles import (
     RareSIDMProductionState,
 )
 from ._products import (
-    combine_differentiation,
     cosmology_product_content_id,
     CosmologyProductProvenance,
     CosmologyProductSource,

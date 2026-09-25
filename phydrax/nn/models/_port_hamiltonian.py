@@ -10,9 +10,19 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import AbstractArrayModel
 from .._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from .._contracts import (
+    AFFINE,
+    compose_regularity,
+    gradient_regularity,
+    model_regularity,
+    product_regularity,
+    SMOOTH,
+    sum_regularity,
+)
 from .._keys import EvalKey, fold_in_eval_key
 from .._utils import _get_value_shape
 from ..parameters import (
@@ -29,6 +39,7 @@ DissipationStructure = Literal["positive_definite", "positive_semidefinite"]
 _ResolvedDissipationStructure = Literal[
     "none", "positive_definite", "positive_semidefinite"
 ]
+_CONSTANT = DerivativeRegularity.smooth(degree_bound=0)
 
 
 def _inverse_softplus(value: float, /) -> float:
@@ -114,6 +125,16 @@ class FeatureNormPotential(_AbstractBaseModel):
         return (
             0.5 * jnp.vdot(features, features).real
             + self.quadratic() * jnp.vdot(state_array, state_array).real
+        )
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Squared norms carry no square root: products of the features and state.
+        features = model_regularity(self.features)
+        return sum_regularity(
+            (
+                product_regularity((features, features)),
+                product_regularity((AFFINE, AFFINE)),
+            )
         )
 
 
@@ -589,6 +610,39 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
             + jnp.vdot(projected, projected).real
             - jnp.vdot(gradient, external).real
         )
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # (J - L L.T) grad(H) + f + G u over the (state, control) input; packing
+        # structural coordinates is linear and the definite factor applies a
+        # smooth softplus to its diagonal.
+        gradient = gradient_regularity(model_regularity(self.energy))
+        interconnection = (
+            _CONSTANT
+            if self.interconnection_model is None
+            else model_regularity(self.interconnection_model)
+        )
+        terms = [product_regularity((interconnection, gradient))]
+        if self.dissipative:
+            if self.dissipation_model is None:
+                factor = _CONSTANT
+            else:
+                factor = compose_regularity(
+                    model_regularity(self.dissipation_model),
+                    SMOOTH
+                    if self.dissipation_structure == "positive_definite"
+                    else AFFINE,
+                )
+            terms.append(product_regularity((factor, factor, gradient)))
+        if self.forcing_model is not None:
+            terms.append(model_regularity(self.forcing_model))
+        if self.control_size is not None:
+            control_map = (
+                _CONSTANT
+                if self.control_model is None
+                else model_regularity(self.control_model)
+            )
+            terms.append(product_regularity((control_map, AFFINE)))
+        return sum_regularity(terms)
 
 
 __all__ = ["DissipationStructure", "FeatureNormPotential", "PortHamiltonianVectorField"]

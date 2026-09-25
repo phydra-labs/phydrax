@@ -1178,7 +1178,7 @@ class AllenCahnFEMPlan(StrictModule, NonTrainableState):
         )
 
 
-class PreparedAllenCahnFEM(AbstractFixedStepMethod):
+class PreparedAllenCahnFEM(AbstractFixedStepMethod, NonTrainableState):
     """Compiled Allen-Cahn dynamics with physical accepted-step evidence."""
 
     plan: AllenCahnFEMPlan
@@ -1644,7 +1644,7 @@ class CahnHilliardFEMPlan(StrictModule, NonTrainableState):
         )
 
 
-class PreparedCahnHilliardFEM(AbstractFixedStepMethod):
+class PreparedCahnHilliardFEM(AbstractFixedStepMethod, NonTrainableState):
     """Compiled Cahn-Hilliard dynamics with conservative accepted-step evidence."""
 
     plan: CahnHilliardFEMPlan

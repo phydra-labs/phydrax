@@ -2,6 +2,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.applications.astrophysics._operators import BinnedResponsePlan, SpectralField
 from phydrax.applications.astrophysics._photometry import ObservationDataProvenance
 from phydrax.applications.dark_matter._indirect_detection import (
@@ -162,7 +163,7 @@ def test_external_yield_provider_requires_manifest_identity_rights_and_constant_
         source_id="yield-table",
         checksum=manifest.checksum,
         license_id=manifest.license_id,
-        differentiation="constant",
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
     )
     spectrum = _spectrum(provenance=provenance)
 
@@ -184,7 +185,7 @@ def test_external_yield_provider_requires_manifest_identity_rights_and_constant_
         source_id="yield-table",
         checksum=denied.checksum,
         license_id=denied.license_id,
-        differentiation="constant",
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
     )
     with pytest.raises(PermissionError, match="commercial-use-not-permitted"):
         ExternalYieldProviderResult(

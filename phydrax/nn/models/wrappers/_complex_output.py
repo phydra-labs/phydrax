@@ -9,12 +9,13 @@ from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
+from ...._trainable import ParameterOwner
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from ..._keys import EvalKey, split_eval_key
 from ..._utils import _get_size
 
 
-class ComplexOutputModel(StrictModule):
+class ComplexOutputModel(StrictModule, ParameterOwner):
     r"""Wrap model(s) and return complex outputs.
 
     Two modes:

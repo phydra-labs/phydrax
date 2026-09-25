@@ -16,9 +16,11 @@ import numpy as np
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import AFFINE, compose_regularity, sum_regularity
 from phydrax.nn._dependency import OperatorDependencySupport
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -30,6 +32,8 @@ from phydrax.nn.layers._measure_convolution import (
 from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
+
+from ._fno import _activation_regularity
 
 
 CNOActivation = Literal["gelu", "silu", "tanh"]
@@ -463,6 +467,13 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
             )
         return output
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Measure-normalized convolution and band-limited or linear resampling are
+        # linear in the values; masks and quadrature are fixed geometry.
+        if self.activation is None:
+            return AFFINE
+        return compose_regularity(AFFINE, _activation_regularity(self.activation))
+
 
 class _CNOBlock(StrictModule):
     first: AntiAliasedConvND
@@ -547,6 +558,13 @@ class _CNOBlock(StrictModule):
                 jnp.zeros_like(output),
             )
         return output
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        residual = AFFINE if self.skip is None else self.skip._value_regularity()
+        branch = compose_regularity(
+            self.first._value_regularity(), self.second._value_regularity()
+        )
+        return sum_regularity((residual, branch))
 
     def dependency_support(self) -> OperatorDependencySupport:
         branch = self.first.dependency_support().sequential(
@@ -768,6 +786,13 @@ class CNO(AbstractOperatorModel):
             )
         )
         return self._evaluate(jnp.asarray(x[0]), axes)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(
+            self.lift._value_regularity(),
+            *(block._value_regularity() for block in self.blocks),
+            self.projection._value_regularity(),
+        )
 
 
 class UNO(AbstractOperatorModel):
@@ -1075,6 +1100,23 @@ class UNO(AbstractOperatorModel):
             )
         )
         return self._evaluate(jnp.asarray(x[0]), axes)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Masked resampling divides only by observed mass, so it is linear.
+        hidden = self.lift._value_regularity()
+        skips = []
+        for encoder in self.encoders:
+            hidden = compose_regularity(hidden, encoder._value_regularity())
+            skips.append(hidden)
+        for decoder, merger, skip in zip(
+            self.decoders, self.mergers, reversed(skips[:-1]), strict=True
+        ):
+            hidden = compose_regularity(
+                sum_regularity((hidden, skip)),
+                merger._value_regularity(),
+                decoder._value_regularity(),
+            )
+        return compose_regularity(hidden, self.projection._value_regularity())
 
 
 __all__ = [

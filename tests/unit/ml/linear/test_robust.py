@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute
 from phydrax.ml import ML_NONCONVERGED, MLBatch, SparseFeatures
 from phydrax.ml.linear import (
     HuberModel,
@@ -116,7 +117,7 @@ def test_huber_relaxed_robust_loss_masks_weights_sparse_jit_vmap_and_gradients()
     assert model(features).shape == targets.shape
     assert jax.jit(model)(features).shape == targets.shape
     assert jax.vmap(model)(features).shape == targets.shape
-    assert result.gradient_contract.fit_mode == "unrolled"
+    assert result.derivative_contract.route is DerivativeRoute.UNROLLED
     _assert_model_gradients(model, features[0])
 
     sparse_model = recipe.fit_batch(
@@ -159,7 +160,7 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
     fixed_model = fixed_result.as_trainable()
     assert isinstance(fixed_model, QuantileModel)
     assert fixed_model(_sparse(features)).shape == scalar_targets.shape
-    assert fixed_result.gradient_contract.fit_mode == "unrolled"
+    assert fixed_result.derivative_contract.route is DerivativeRoute.UNROLLED
     _assert_model_gradients(fixed_model, features[0])
 
     def fixed_loss(x, y, sample_weight, quantile):
@@ -178,8 +179,8 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
         0.5,
         solver="dense-qp",
         l2_strength=0.1,
-        max_iterations=40,
-        tolerance=1e-4,
+        max_iterations=100,
+        tolerance=1e-10,
     )
     qp_result = qp.fit_batch(
         MLBatch(
@@ -192,7 +193,7 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
     qp_model = qp_result.as_trainable()
     assert isinstance(qp_model, QuantileModel)
     assert qp_model(features).shape == scalar_targets.shape
-    assert qp_result.gradient_contract.fit_mode == "implicit"
+    assert qp_result.derivative_contract.route is DerivativeRoute.IMPLICIT
     assert jax.jit(qp_model)(features).shape == scalar_targets.shape
     _assert_model_gradients(qp_model, features[0])
 
@@ -203,8 +204,13 @@ def test_quantile_fixed_sparse_and_native_qp_have_explicit_gradient_policies():
         ).as_trainable()
         return jnp.sum(jnp.square(fitted(features[:2])))
 
+    # The clean targets are exactly affine, so the unperturbed fit interpolates
+    # eight samples with three parameters: the active set violates LICQ and the
+    # implicit derivative is refused.  A generic perturbation restores a
+    # regular, strictly complementary active set.
+    generic_targets = scalar_targets + 0.1 * jnp.cos(1.7 * jnp.arange(10.0))
     qp_gradients = jax.grad(qp_loss, argnums=(0, 1, 2, 3))(
-        features, scalar_targets, weights, qp.quantile
+        features, generic_targets, weights, qp.quantile
     )
     assert all(jnp.all(jnp.isfinite(value)) for value in qp_gradients)
     with pytest.raises(TypeError, match="requires dense features"):

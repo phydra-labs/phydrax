@@ -9,7 +9,7 @@ import phydrax as phx
 
 
 class _ConstantVelocity(eqx.Module):
-    value: jnp.ndarray
+    value: jnp.ndarray = phx.parameter_field()
 
     def __call__(self, state, time):
         del time

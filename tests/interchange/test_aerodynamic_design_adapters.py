@@ -3,12 +3,18 @@
 #
 """Artifact and convergence boundaries; real external solves live in the benchmark."""
 
+import json
 import re
+import sys
+from types import SimpleNamespace
 
 import jax
 import numpy as np
 import pytest
 
+from phydrax._external_runtime import pin_energy_executable
+from phydrax._fingerprint import canonical_fingerprint
+from phydrax.interchange import dafoam
 from phydrax.interchange.dafoam import _request, run_dafoam
 from phydrax.interchange.xfoil import (
     _geometry_bytes,
@@ -175,3 +181,164 @@ def test_aerodynamic_launches_refuse_argument_free_jax_tracing():
         xfoil_trace()
     with pytest.raises(TypeError, match="JAX transformations"):
         dafoam_trace()
+
+
+# A linear external response f = Σ_var A[f, var] · var stands in for the engine
+# so the whole host path (request, worker payload, acceptance, staging, adjoint)
+# runs without DAFoam.
+_SENSITIVITIES = {
+    ("CD", "patchV"): np.asarray([0.01, -0.2]),
+    ("CD", "shape"): np.arange(6.0).reshape(2, 3),
+    ("CL", "patchV"): np.asarray([0.3, 0.05]),
+    ("CL", "shape"): -np.ones((2, 3)),
+}
+
+
+def _fake_runtime(tmp_path):
+    package = tmp_path / "dafoam"
+    (package / "mphys").mkdir(parents=True)
+    files = (package / "pyDAFoam.py", package / "mphys" / "mphys_dafoam.py")
+    for path in files:
+        path.write_text("# pinned\n")
+    return dafoam.DAFoamRuntime(
+        pin_energy_executable(sys.executable, version="3", license_id="PSF-2.0"),
+        str(package),
+        tuple((str(path.resolve()), "0" * 64) for path in files),
+        "GPL-3.0-or-later",
+    )
+
+
+def _fake_worker(runtime, *, accept):
+    def run_energy_command(executable, argv, *, inputs, **options):
+        request = json.loads(inputs["aerodynamic-request.json"])
+        design = {
+            name: np.asarray(values).reshape(request["design_shapes"][name])
+            for name, values in request["design"].items()
+        }
+        functions = {
+            name: float(
+                sum(np.sum(_SENSITIVITIES[name, var] * design[var]) for var in design)
+            )
+            for name in ("CL", "CD")
+        }
+        realization = {
+            "state_sha256": "1" * 64,
+            "mesh_sha256": "2" * 64,
+            "design_sha256": canonical_fingerprint(request["design"]),
+        }
+        payload = {
+            "request_id": request["request_id"],
+            "runtime_sha256": canonical_fingerprint(dict(runtime.implementation_files)),
+            "functions": functions if accept else {},
+            "total_derivatives": [
+                {
+                    "function": name,
+                    "design_variable": var,
+                    "values": _SENSITIVITIES[name, var].reshape(-1).tolist(),
+                }
+                for name in ("CL", "CD")
+                for var in ("shape", "patchV")
+            ]
+            if accept
+            else [],
+            "adjoints": [
+                {
+                    "function": name,
+                    "accepted": True,
+                    **realization,
+                    "adjoint_sha256": str(index) * 64,
+                    "linear_iterations": 12,
+                    "linear_residual_norm": 1e-12,
+                    "petsc_converged_reason": 2,
+                    "failure_reason": "",
+                }
+                for index, name in enumerate(("CL", "CD"))
+            ]
+            if accept
+            else [],
+            "mesh_accepted": True,
+            "state_accepted": accept,
+            **realization,
+            "failure_reason": "" if accept else "Native primalFail rejected the primal.",
+        }
+        return SimpleNamespace(
+            artifact=SimpleNamespace(artifact_id="3" * 64),
+            output=lambda path: json.dumps(payload).encode(),
+        )
+
+    return run_energy_command
+
+
+def _dafoam_action(tmp_path, options=None):
+    files, base_options, _ = naca0012_dafoam_case(16, 16)
+    base_options = {
+        **base_options,
+        "inputInfo": {
+            **base_options["inputInfo"],
+            "shape": {"type": "volCoord", "components": ["solver", "function"]},
+        },
+    }
+    runtime = _fake_runtime(tmp_path)
+    action = dafoam.DAFoamAdjointAction(
+        runtime,
+        case_files=files,
+        options={**base_options, **(options or {})},
+        design_shapes={"shape": (2, 3), "patchV": (2,)},
+        geometry_source=GEOMETRY_SOURCE,
+    )
+    return runtime, action
+
+
+def test_dafoam_staged_adjoint_contracts_shape_preserving_totals(tmp_path, monkeypatch):
+    runtime, action = _dafoam_action(tmp_path)
+    monkeypatch.setattr(dafoam, "run_energy_command", _fake_worker(runtime, accept=True))
+    assert [spec.name for spec in action.input_schema] == ["patchV", "shape"]
+    assert [spec.name for spec in action.output_schema] == ["CD", "CL"]
+
+    patch = np.asarray([10.0, 2.0])
+    shape = np.linspace(0.0, 1.0, 6).reshape(2, 3)
+    stage = action.stage_primal(patch, shape)
+    assert stage.accepted
+    for output, name in zip(stage.outputs, ("CD", "CL"), strict=True):
+        expected = np.sum(_SENSITIVITIES[name, "patchV"] * patch) + np.sum(
+            _SENSITIVITIES[name, "shape"] * shape
+        )
+        assert float(output) == pytest.approx(expected)
+
+    weights = (np.asarray(0.5), np.asarray(-2.0))
+    patch_bar, shape_bar = action.apply_adjoint(stage, *weights)
+    for bar, var in ((patch_bar, "patchV"), (shape_bar, "shape")):
+        expected = sum(
+            weight * _SENSITIVITIES[name, var]
+            for weight, name in zip(weights, ("CD", "CL"), strict=True)
+        )
+        assert bar.shape == expected.shape
+        np.testing.assert_allclose(bar, expected)
+
+    other_runtime, other = _dafoam_action(tmp_path / "other", {"primalMinResTol": 1e-9})
+    monkeypatch.setattr(
+        dafoam, "run_energy_command", _fake_worker(other_runtime, accept=True)
+    )
+    with pytest.raises(ValueError, match="Replay mismatch"):
+        action.apply_adjoint(other.stage_primal(patch, shape), *weights)
+
+
+def test_dafoam_failed_primal_stages_evidence_without_an_adjoint(tmp_path, monkeypatch):
+    runtime, action = _dafoam_action(tmp_path)
+    monkeypatch.setattr(dafoam, "run_energy_command", _fake_worker(runtime, accept=False))
+    stage = action.stage_primal(np.asarray([10.0, 2.0]), np.zeros((2, 3)))
+    assert not stage.accepted and stage.outputs == ()
+    assert "primalFail" in stage.failure_reason
+    assert dict(stage.evidence)["state_sha256"] == "1" * 64
+    with pytest.raises(ValueError, match="not accepted"):
+        action.apply_adjoint(stage, 1.0, 1.0)
+
+
+def test_dafoam_design_kinds_are_closed():
+    files, options, design = naca0012_dafoam_case(16, 16)
+    unsupported = {
+        **options,
+        "inputInfo": {"patchV": {**options["inputInfo"]["patchV"], "type": "shape"}},
+    }
+    with pytest.raises(ValueError, match="volCoord, patchVelocity, patchVar, field"):
+        _request(files, unsupported, design, GEOMETRY_SOURCE, True, 8 * 1024**2)

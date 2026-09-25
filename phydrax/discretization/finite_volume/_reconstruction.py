@@ -5,14 +5,15 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, Literal, TypeAlias
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import BranchDifferentiationPolicy, ComponentAuthority
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import StrictModule
+from ..._model import AbstractComponentSlot
 from ..._trainable import NonTrainableState
 from ._high_resolution import (
     CharacteristicReconstructionPlan,
@@ -22,15 +23,6 @@ from ._high_resolution import (
     NonuniformWENOReconstructionPlan,
 )
 from ._weno import WENOOrder, WENOReconstructionPlan
-
-
-DifferentiabilityClass: TypeAlias = Literal[
-    "smooth_discrete",
-    "almost_everywhere",
-    "frozen_decision",
-    "smooth_surrogate",
-    "unsupported",
-]
 
 
 def _move_front(value: ArrayLike, axis: int, /) -> Array:
@@ -54,12 +46,15 @@ def _boundary_layer(value: ArrayLike, interior: Array, /) -> Array:
     return layer
 
 
-class AbstractFaceReconstructionPlan(StrictModule, NonTrainableState):
-    """Cell-average to directional left/right face traces."""
+class AbstractFaceReconstructionPlan(AbstractComponentSlot):
+    """Neutral slot of cell-average to directional left/right face traces."""
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.DISCRETIZATION
+    slot_semantic_id: ClassVar[str] = "discretization.face-reconstruction"
 
     formal_order: int = eqx.field(static=True)
     ghost_width: int = eqx.field(static=True)
-    differentiability: DifferentiabilityClass = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     @abc.abstractmethod
@@ -77,13 +72,16 @@ class AbstractFaceReconstructionPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class PiecewiseConstantReconstruction(AbstractFaceReconstructionPlan):
+class PiecewiseConstantReconstruction(
+    AbstractFaceReconstructionPlan,
+    NonTrainableState,
+):
     """First-order Godunov traces from cell averages."""
 
     def __init__(self):
         self.formal_order = 1
         self.ghost_width = 1
-        self.differentiability = "smooth_discrete"
+        self.differentiability = BranchDifferentiationPolicy.SMOOTH
         self.plan_id = canonical_fingerprint({"kind": "piecewise-constant-fv"})
 
     def reconstruct_axis(
@@ -110,8 +108,11 @@ class PiecewiseConstantReconstruction(AbstractFaceReconstructionPlan):
         return _restore_axis(left, axis), _restore_axis(right, axis)
 
 
-class AbstractSlopeLimiter(StrictModule, NonTrainableState):
-    """Two-slope nonlinear limiter."""
+class AbstractSlopeLimiter(AbstractComponentSlot):
+    """Neutral slot of a two-slope nonlinear limiter."""
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.DISCRETIZATION
+    slot_semantic_id: ClassVar[str] = "discretization.slope-limiter"
 
     limiter_id: str = eqx.field(static=True)
 
@@ -129,7 +130,7 @@ def _same_sign_minimum(left: Array, right: Array, /) -> Array:
     )
 
 
-class UnlimitedLimiter(AbstractSlopeLimiter):
+class UnlimitedLimiter(AbstractSlopeLimiter, NonTrainableState):
     """Centered smooth-solution slope without nonlinear limiting."""
 
     def __init__(self):
@@ -139,7 +140,7 @@ class UnlimitedLimiter(AbstractSlopeLimiter):
         return 0.5 * (backward + forward)
 
 
-class MinmodLimiter(AbstractSlopeLimiter):
+class MinmodLimiter(AbstractSlopeLimiter, NonTrainableState):
     def __init__(self):
         self.limiter_id = canonical_fingerprint({"kind": "minmod"})
 
@@ -147,7 +148,7 @@ class MinmodLimiter(AbstractSlopeLimiter):
         return _same_sign_minimum(backward, forward)
 
 
-class MCLimiter(AbstractSlopeLimiter):
+class MCLimiter(AbstractSlopeLimiter, NonTrainableState):
     def __init__(self):
         self.limiter_id = canonical_fingerprint({"kind": "monotonized-central"})
 
@@ -159,7 +160,7 @@ class MCLimiter(AbstractSlopeLimiter):
         )
 
 
-class VanLeerLimiter(AbstractSlopeLimiter):
+class VanLeerLimiter(AbstractSlopeLimiter, NonTrainableState):
     def __init__(self):
         self.limiter_id = canonical_fingerprint({"kind": "van-leer"})
 
@@ -171,7 +172,7 @@ class VanLeerLimiter(AbstractSlopeLimiter):
         return jnp.where(backward * forward > 0.0, harmonic, 0.0)
 
 
-class SuperbeeLimiter(AbstractSlopeLimiter):
+class SuperbeeLimiter(AbstractSlopeLimiter, NonTrainableState):
     def __init__(self):
         self.limiter_id = canonical_fingerprint({"kind": "superbee"})
 
@@ -193,7 +194,7 @@ class MUSCLReconstruction(AbstractFaceReconstructionPlan):
         self.limiter = limiter_
         self.formal_order = 2
         self.ghost_width = 2
-        self.differentiability = "frozen_decision"
+        self.differentiability = BranchDifferentiationPolicy.FROZEN_DECISION
         self.plan_id = canonical_fingerprint(
             {"kind": "muscl-fv", "limiter": limiter_.limiter_id}
         )
@@ -309,7 +310,6 @@ __all__ = [
     "AbstractSlopeLimiter",
     "CharacteristicReconstructionPlan",
     "CharacteristicSystem",
-    "DifferentiabilityClass",
     "HighResolutionMethod",
     "HighResolutionReconstructionPlan",
     "MCLimiter",

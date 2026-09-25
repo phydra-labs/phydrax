@@ -232,7 +232,7 @@ def parse_slha(
             if len(tokens) < 1:
                 raise ValueError(f"SLHA entry is malformed on line {line_number}.")
             value_token = tokens[-1]
-            indices = tuple(tokens[:-1])
+            indices = tuple(int(token) for token in tokens[:-1])
             entry = SLHAEntry(indices, _number(value_token), value_token, comment)
             key = (len(blocks) - 1, indices)
             if key in seen_entries:
@@ -250,7 +250,7 @@ def parse_slha(
                     f"SLHA decay channel is malformed on line {line_number}."
                 )
             daughter_count = int(tokens[1])
-            daughters = tuple(tokens[2:])
+            daughters = tuple(int(token) for token in tokens[2:])
             if daughter_count != len(daughters):
                 raise ValueError(
                     f"SLHA decay daughter count is inconsistent on line {line_number}."

@@ -4,6 +4,16 @@ import numpy as np
 import phydrax as phx
 
 
+NATIVE_DIFFERENTIATION = phx.DerivativeContract.smooth(
+    (
+        phx.DerivativeSurface.INPUT,
+        phx.DerivativeSurface.MODEL_PARAMETER,
+        phx.DerivativeSurface.PHYSICAL_PARAMETER,
+        phx.DerivativeSurface.STORED_VALUES,
+    )
+)
+
+
 cosmology = phx.applications.cosmology
 
 
@@ -19,7 +29,7 @@ def _context():
         physics_policy_id="linear-total-matter",
         scale_id=background.scale.scale_id,
         source_kind="native",
-        differentiation=cosmology.DifferentiationContract.native(),
+        differentiation=NATIVE_DIFFERENTIATION,
     )
     k = jnp.geomspace(1.0e-2, 100.0, 512)
     values = 1.0e-2 * k / (1.0 + k**3)

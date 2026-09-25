@@ -720,7 +720,7 @@ def _has_unstructured_coupling(
     )
 
 
-class UnsplitFiniteVolumeSSPRK3Plan(StrictModule, NonTrainableState):
+class UnsplitFiniteVolumeSSPRK3Plan(StrictModule):
     """Three-stage SSPRK update of the complete FV semidiscretization."""
 
     dynamics: PreparedFVDynamics
@@ -768,7 +768,7 @@ class UnsplitFiniteVolumeSSPRK3Plan(StrictModule, NonTrainableState):
         return FiniteVolumeStepResult(updated, time_ + dt, dt, self.temporal_method_id)
 
 
-class DirectionalSplitFiniteVolumePlan(StrictModule, NonTrainableState):
+class DirectionalSplitFiniteVolumePlan(StrictModule):
     """Godunov or symmetric Strang composition of directional FV operators."""
 
     dynamics: PreparedFiniteVolumeDynamics

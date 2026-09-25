@@ -12,6 +12,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._trainable import fixed_field
 from ..atomistic._alchemical import (
     AlchemicalRegionInteractionMode,
     PreparedControlledHamiltonian,
@@ -29,9 +30,9 @@ class CenterOfMassPreservingBijector(AbstractBijector):
     """Lift an exact internal-coordinate bijector while preserving center of mass."""
 
     internal: AbstractBijector
-    masses: Array
-    translation_basis: Array
-    internal_basis: Array
+    masses: Array = fixed_field()
+    translation_basis: Array = fixed_field()
+    internal_basis: Array = fixed_field()
     event_shape: tuple[int, int] = eqx.field(static=True)
     chart_id: str = eqx.field(static=True)
 

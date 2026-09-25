@@ -124,17 +124,31 @@ def test_attention_is_invariant_to_residual_units_and_enforces_ess_guard():
     assert bool(base.ess_guard_triggered)
 
 
-def test_attention_support_is_conditional_and_fixed_support_rejects_anchors():
+def test_attention_support_is_conditional_and_anchors_mark_reference_rows():
     policy = phx.sampling.collocation.ResidualAttentionCollocation()
     support = phx.sampling.collocation.collocation_policy_support(policy)
 
     assert support.name == "residual_attention"
     assert support.tier == "conditional"
-    with pytest.raises(ValueError, match="does not accept coverage anchors"):
-        phx.sampling.collocation.controlled_collocation(
-            policy,
-            anchors=phx.sampling.collocation.CoverageAnchors(0.25),
-        )
+
+    controlled = phx.sampling.collocation.controlled_collocation(
+        policy,
+        schedule=phx.sampling.collocation.RefreshSchedule(1),
+        anchors=phx.sampling.collocation.CoverageAnchors(0.25),
+    )
+    domain, term, _functions = _interval_term(controlled)
+    initial = controlled.initialize(term, key=jr.key(30))
+    refreshed = controlled.refresh(
+        term,
+        {"u": domain.Function("x")(lambda x: x[0])},
+        initial,
+        key=jr.key(31),
+        iter_=1,
+    )
+
+    assert not jnp.any(initial.current.anchor_mask)
+    assert bool(refreshed.proposal_pending)
+    assert jnp.array_equal(refreshed.current.anchor_mask, jnp.arange(16) < 4)
 
 
 def test_functional_solver_persists_attention_population_and_diagnostics():

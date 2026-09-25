@@ -14,6 +14,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
@@ -350,6 +351,11 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("LaplaceTemporalOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Linear in the source values, but the held feedthrough and the interval
+        # switch jump as a query time crosses a source time.
+        return DerivativeRegularity.piecewise_smooth(continuity=-1)
 
 
 __all__ = ["LaplaceTemporalOperator"]

@@ -17,11 +17,14 @@ from jax import core as jax_core
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
 from phydrax.discretization import SpectralDecomposition
+from phydrax.nn._contracts import AFFINE, compose_regularity, sum_regularity
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._utils import _get_size
+from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
@@ -277,6 +280,20 @@ class ManifoldSpectralOperator(AbstractOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("ManifoldSpectralOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Eigenbasis analysis, mixing, and synthesis are linear on the fixed plans.
+        activation = activation_regularity(self.activation)
+        return compose_regularity(
+            self.lift._value_regularity(),
+            *(
+                compose_regularity(
+                    sum_regularity((AFFINE, pointwise._value_regularity())), activation
+                )
+                for pointwise in self.pointwise
+            ),
+            self.projection._value_regularity(),
+        )
 
 
 __all__ = ["ManifoldSpectralOperator"]

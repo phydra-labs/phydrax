@@ -800,10 +800,13 @@ class LinearSolvePolicy(StrictModule):
         self.require_device_binding = bool(require_device_binding)
 
 
-register_artifact_value(
-    "phydrax.linalg.policy:DifferentiationPolicy",
-    DifferentiationPolicy,
-)
+for _artifact_value in (DifferentiationPolicy, FailurePolicy):
+    register_artifact_value(
+        f"phydrax.linalg.policy:{_artifact_value.__name__}",
+        _artifact_value,
+    )
+
+del _artifact_value
 
 
 __all__ = [

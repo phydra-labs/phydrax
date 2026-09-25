@@ -114,11 +114,15 @@ def test_transferred_operator_correction_solves_and_certifies_original_system():
         transfer_id="model-to-fine-correction",
     )
     inverse_in_model_order = jnp.asarray([1.0 / 3.0, 1.0, 0.25, 0.5])
+    correction_port = task.field_by_name["correction"].value_port()
     trained = phx.nn.operator.training.TrainedOperator(
         _DiagonalInverseOperator(inverse_in_model_order),
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "correction"},
+        output_ports={"output": correction_port},
+        port_mapping=phx.PortMapping(
+            outputs=((correction_port.port_id, correction_port.port_id),)
+        ),
         fixed_query_fingerprints={
             "query": template.query("query").geometry_fingerprint()
         },

@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._trainable import NonTrainableState
 from ...equations import (
     AbstractImplicitMPMConstitutivePlan,
     MPMConstitutiveCapabilities,
@@ -24,7 +25,10 @@ from ...operators.mechanics import (
 )
 
 
-class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
+class NeoHookeanMPMConstitutivePlan(
+    AbstractImplicitMPMConstitutivePlan,
+    NonTrainableState,
+):
     """Stateless logarithmic Neo-Hookean material for 1-D, plane strain, or 3-D MPM."""
 
     dimension: int = eqx.field(static=True)

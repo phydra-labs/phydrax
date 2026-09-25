@@ -11,6 +11,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import RelativityScaleContract
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...units import (
@@ -515,9 +516,7 @@ class ThermalSynchrotronModel(StrictModule, NonTrainableState):
             jnp.asarray(frequency_hz),
             jnp.asarray(pitch_cosine),
         )
-        dtype = jnp.result_type(
-            density, temperature, magnetic_field, frequency, jnp.float64
-        )
+        dtype = inexact_result_type(density, temperature, magnetic_field, frequency)
         density = density.astype(dtype)
         temperature = temperature.astype(dtype)
         magnetic_field = magnetic_field.astype(dtype)

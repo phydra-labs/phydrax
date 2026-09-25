@@ -27,7 +27,11 @@ from ._flow_process import (
     StateTimeProcessConditioner,
 )
 from ._holomorphic import HolomorphicMLP
-from ._input_convex import InputConvexNetwork, PartiallyInputConvexNetwork
+from ._input_convex import (
+    InputConvexCertificate,
+    InputConvexNetwork,
+    PartiallyInputConvexNetwork,
+)
 from ._kan import KAN, KANEdgeBlock
 from ._kan_adaptation import (
     adapt_kan_grids,
@@ -91,6 +95,7 @@ from .wrappers import (
     ExponentialSpectralEnvelope,
     FixedSubspaceOnsagerModel,
     FixedSubspaceProjectionReport,
+    FunctionalJAXAdapter,
     ImplicitModalField,
     LatentContractionModel,
     LatentExecutionPolicy,
@@ -142,7 +147,9 @@ __all__ = [
     "FunctionalStateDecoder",
     "FixedSubspaceOnsagerModel",
     "FixedSubspaceProjectionReport",
+    "FunctionalJAXAdapter",
     "IdentityCoefficientTransition",
+    "InputConvexCertificate",
     "InputConvexNetwork",
     "KAN",
     "HolomorphicMLP",

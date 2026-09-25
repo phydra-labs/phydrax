@@ -130,12 +130,12 @@ def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered():
     smoke = runner.get_configuration("smoke")
     standard = runner.get_configuration("standard")
 
-    assert tuple(runner.SCENARIOS)[-4:] == (
+    assert {
         "stochastic_gradient_regression",
         "linearized_uncertainty_propagation",
         "dynamic_factor_stochastic_volatility",
         "exponential_family_geometry",
-    )
+    } <= set(runner.SCENARIOS)
     assert smoke.sgmcmc_burnin > 0
     assert smoke.sgmcmc_draws > 0
     assert smoke.sgmcmc_batch_size > 0

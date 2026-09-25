@@ -83,7 +83,7 @@ def test_concrete_linear_theory_backend_returns_named_constant_products(tmp_path
     assert result.return_code == 0
     assert result.thermodynamics is not None
     assert result.power.descriptor.left_field == "cold_baryon"
-    assert not result.power.provenance.differentiation.query_coordinates
+    assert result.power.provenance.differentiation.supported_surfaces == ()
     assert result.power.scale.scale_id == request.scale.scale_id
     assert result.power.scale.length_unit == phx.units.MEGAPARSEC
     np.testing.assert_allclose(result.power.evaluate([1.0, 3.0], 0.75), [0.625, 1.875])

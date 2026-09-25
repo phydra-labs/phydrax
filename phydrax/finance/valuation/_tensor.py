@@ -190,13 +190,13 @@ class TensorCausalityEvidence(StrictModule):
 
 
 class TensorRankEvidence(StrictModule):
-    """Observed ranks, declared caps and fail-closed saturation evidence."""
+    """Observed numerical ranks, declared caps and fail-closed saturation evidence."""
 
-    observed_ranks: tuple[int, ...] = eqx.field(static=True)
+    observed_ranks: Array
     max_ranks: tuple[int, ...] = eqx.field(static=True)
-    rank_saturated: bool = eqx.field(static=True)
-    ranks_within_caps: bool = eqx.field(static=True)
-    base_approximation_converged: bool = eqx.field(static=True)
+    rank_saturated: Array
+    ranks_within_caps: Array
+    base_approximation_converged: Array
     reported_relative_error: Array
     reported_error_is_bound: bool = eqx.field(static=True)
 
@@ -261,11 +261,12 @@ class TensorValuationCandidate(StrictModule):
 
 def _tensor_and_base_evidence(
     approximation: TensorApproximation, /
-) -> tuple[TensorTrain, bool, Array, bool]:
+) -> tuple[TensorTrain, Array, Array, Array, bool]:
     if isinstance(approximation, TensorTrainCompressionResult):
         evidence = approximation.evidence
         return (
             approximation.tensor,
+            evidence.selected_ranks,
             evidence.tolerance_met,
             evidence.relative_error_bound,
             True,
@@ -273,6 +274,7 @@ def _tensor_and_base_evidence(
     if isinstance(approximation, TTCrossResult):
         return (
             approximation.tensor,
+            jnp.asarray(approximation.tensor.ranks, dtype=jnp.int32),
             approximation.converged,
             approximation.evidence.holdout_relative_error_estimator,
             False,
@@ -290,23 +292,18 @@ def tensor_rank_evidence(
 ) -> TensorRankEvidence:
     if not isinstance(applicability, TensorValuationApplicability):
         raise TypeError("applicability must be TensorValuationApplicability.")
-    tensor, converged, reported, is_bound = _tensor_and_base_evidence(approximation)
+    tensor, observed, converged, reported, is_bound = _tensor_and_base_evidence(
+        approximation
+    )
     if len(tensor.ranks) != len(applicability.max_ranks):
         raise ValueError("Tensor order does not match the declared rank-cap layout.")
-    within = all(
-        rank <= cap
-        for rank, cap in zip(tensor.ranks, applicability.max_ranks, strict=True)
-    )
-    saturated = any(
-        rank >= cap
-        for rank, cap in zip(tensor.ranks, applicability.max_ranks, strict=True)
-    )
+    caps = jnp.asarray(applicability.max_ranks, dtype=jnp.int32)
     return TensorRankEvidence(
-        tensor.ranks,
+        observed,
         applicability.max_ranks,
-        saturated,
-        within,
-        converged,
+        jnp.any(observed >= caps),
+        jnp.all(observed <= caps),
+        jnp.asarray(converged, dtype=jnp.bool_),
         jnp.asarray(reported),
         is_bound,
     )
@@ -325,7 +322,7 @@ def tensor_independent_validation(
     """Evaluate explicit held-out physical-grid indices and retain reconstruction."""
     if not isinstance(applicability, TensorValuationApplicability):
         raise TypeError("applicability must be TensorValuationApplicability.")
-    tensor, _, _, _ = _tensor_and_base_evidence(approximation)
+    tensor = _tensor_and_base_evidence(approximation)[0]
     points = jnp.asarray(indices, dtype=jnp.int32)
     reference = jnp.asarray(reference_values)
     if (
@@ -425,7 +422,7 @@ def assess_tensor_valuation_candidate(
     """Fail closed on absent holdout, rank saturation, resources, law or domain."""
     if not isinstance(applicability, TensorValuationApplicability):
         raise TypeError("applicability must be TensorValuationApplicability.")
-    tensor, _, _, _ = _tensor_and_base_evidence(approximation)
+    tensor = _tensor_and_base_evidence(approximation)[0]
     if not isinstance(pricing_law, PricingLaw):
         raise TypeError("pricing_law must be a PricingLaw.")
     if validation is not None and not isinstance(validation, TensorIndependentValidation):
@@ -466,7 +463,7 @@ def assess_tensor_valuation_candidate(
         & support.valid
         & causality.valid
         & rank.ranks_within_caps
-        & (not rank.rank_saturated)
+        & ~rank.rank_saturated
         & rank.base_approximation_converged
         & (rank.reported_relative_error <= applicability.validation_tolerance)
         & resources.within_budget

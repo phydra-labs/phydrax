@@ -479,7 +479,7 @@ def _relativistic_bounds(
     return lower, upper
 
 
-class SRHDSystem(AbstractConservationSystem):
+class SRHDSystem(AbstractConservationSystem, NonTrainableState):
     """Cartesian special-relativistic hydrodynamics in Valencia variables."""
 
     eos: AbstractRelativisticEOS

@@ -18,7 +18,13 @@ import phydrax.ein as ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import AbstractPreparedParticleNeighborhood, PeriodicCell
+from ..discretization import (
+    AbstractParticleNeighborhoodPlan,
+    AbstractPreparedParticleNeighborhood,
+    DenseParticleNeighborhoodPlan,
+    MetricCellListParticleNeighborhoodPlan,
+    PeriodicCell,
+)
 from ..linalg import DenseLinearOperator, OperatorProperties
 from ..linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
 from ..units import UnitDefinition
@@ -27,6 +33,26 @@ from ._potential_program import PreparedAtomisticPotentialProgram
 
 
 _VOIGT_COMPONENTS = ((0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1))
+
+
+def _strained_neighborhood_plan(
+    plan: AbstractParticleNeighborhoodPlan, cell: PeriodicCell, /
+) -> AbstractParticleNeighborhoodPlan:
+    """Bind the reference neighborhood policy to one homogeneously strained cell."""
+
+    match plan:
+        case DenseParticleNeighborhoodPlan():
+            return DenseParticleNeighborhoodPlan(plan.maximum_pairs, box=cell)
+        case MetricCellListParticleNeighborhoodPlan():
+            return MetricCellListParticleNeighborhoodPlan(
+                plan.search_radius,
+                plan.maximum_particles_per_cell,
+                plan.maximum_pairs,
+                cell,
+                maximum_candidate_slots=plan.maximum_candidate_slots,
+            )
+        case _:
+            raise RuntimeError("Validated neighborhood plan unexpectedly unsupported.")
 
 
 class CrystalElasticityResult(StrictModule, NonTrainableState):
@@ -113,7 +139,11 @@ class CrystalElasticityResult(StrictModule, NonTrainableState):
 
 
 class CrystalElasticityPlan(StrictModule, NonTrainableState):
-    """Fixed-neighborhood homogeneous-strain response for EAM/SW/Tersoff crystals."""
+    """Finite-difference homogeneous-strain response for EAM/SW/Tersoff crystals.
+
+    Every strained cell re-prepares the system, potential, and the reference
+    neighborhood policy, because the fixed cell is part of each prepared identity.
+    """
 
     potential: PreparedAtomisticPotentialProgram
     neighborhood: AbstractPreparedParticleNeighborhood
@@ -151,6 +181,20 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
         cell = potential.system.cell
         if cell is None or cell.rank != 3 or not cell.fully_periodic:
             raise ValueError("Crystal elasticity requires a fully periodic rank-3 cell.")
+        if (
+            not isinstance(neighborhood.box, PeriodicCell)
+            or neighborhood.box.cell_id != cell.cell_id
+        ):
+            raise ValueError(
+                "Neighborhood periodic cell must exactly match the potential system cell."
+            )
+        if not isinstance(
+            neighborhood.plan,
+            (DenseParticleNeighborhoodPlan, MetricCellListParticleNeighborhoodPlan),
+        ):
+            raise ValueError(
+                "Crystal elasticity requires a dense or metric cell-list periodic neighborhood."
+            )
         fractional = np.asarray(equilibrium_fractional_positions)
         if fractional.shape != (potential.system.capacity, 3) or np.any(
             ~np.isfinite(fractional)
@@ -213,6 +257,9 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
         all_successful = True
 
         def energy_of_strain(voigt: np.ndarray) -> float:
+            # A homogeneous strain changes the fixed cell, which is part of the
+            # prepared system, potential, and neighborhood identity; each strained
+            # cell is therefore prepared from the reference plans.
             nonlocal all_successful
             deformation = identity + strain_matrix(voigt)
             vectors = ein.contract("ij,kj->ki", deformation, reference_vectors)
@@ -225,13 +272,17 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
                     float(np.linalg.cond(vectors)),
                 ),
             )
-            positions = deformed_cell.cartesian(fractional)
-            neighborhood = self.neighborhood.build(positions)
-            evaluation = self.potential.evaluate(
-                positions,
-                neighborhood,
-                cell=deformed_cell,
+            system = self.potential.system.plan.with_cell(deformed_cell).prepare(
+                numeric_version=self.potential.system.numeric_version
             )
+            potential = self.potential.plan.prepare(
+                system, graph_execution=self.potential.graph_execution
+            )
+            neighborhood = _strained_neighborhood_plan(
+                self.neighborhood.plan, deformed_cell
+            ).prepare(system.particles)
+            positions = deformed_cell.cartesian(fractional)
+            evaluation = potential.evaluate(positions, neighborhood.build(positions))
             all_successful = all_successful and bool(evaluation.successful)
             return float(evaluation.energy)
 

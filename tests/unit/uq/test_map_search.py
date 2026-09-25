@@ -190,7 +190,7 @@ def test_invalid_posterior_evaluations_are_counted_without_rejecting_search():
     )
 
     assert result.invalid_evaluations >= 1
-    assert result.termination_reason != "no_finite_candidates"
+    assert result.termination_reason != "no_valid_candidates"
     assert jnp.isfinite(result.objective)
 
     invalid = phx.uq.PosteriorProblem(
@@ -204,7 +204,7 @@ def test_invalid_posterior_evaluations_are_counted_without_rejecting_search():
         position_bounds=(jnp.asarray(-2.0), jnp.asarray(2.0)),
     )
     assert not invalid_result.population_converged
-    assert invalid_result.termination_reason == "no_finite_candidates"
+    assert invalid_result.termination_reason == "no_valid_candidates"
     assert invalid_result.invalid_evaluations == 8
     assert jnp.isnan(invalid_result.objective)
     assert jnp.all(jnp.isinf(invalid_result.population_objectives))

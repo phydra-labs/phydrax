@@ -69,6 +69,12 @@ from ._execution import (
     StencilExecutionPlan,
     StencilExecutionReport,
 )
+from ._field_view import (
+    BSplineGridInterpolation,
+    FiniteDifferenceFieldReconstructionKernel,
+    MultilinearGridInterpolation,
+    prepare_finite_difference_field_reconstruction,
+)
 from ._flux_differencing import (
     PreparedSBPConservationDynamics,
     SBPFluxDifferencingDiagnostics,
@@ -193,6 +199,10 @@ __all__ = [
     "lower_stencil_operator",
     "DistributedStencilPartition",
     "DerivativeRequest",
+    "BSplineGridInterpolation",
+    "FiniteDifferenceFieldReconstructionKernel",
+    "MultilinearGridInterpolation",
+    "prepare_finite_difference_field_reconstruction",
     "certify_operator_adjoint",
     "certify_operator_conservation",
     "certify_stencil_consistency",

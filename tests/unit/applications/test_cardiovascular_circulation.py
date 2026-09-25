@@ -197,12 +197,17 @@ def test_periodic_shooting_closes_affine_cycle_map_and_commits():
     assert jnp.allclose(committed.state, jnp.asarray([2.0, -4.0]))
 
 
+def _zero_volume_rate(time, args):
+    del time, args
+    return jnp.asarray(0.0)
+
+
 def test_mechanics_replacement_transfers_storage_exclusively():
     model = systemic_closed_loop()
     coupling = MechanicsChamberCoupling(
         "left_ventricle",
         "mechanics-lv",
-        lambda time, args: jnp.asarray(0.0),
+        _zero_volume_rate,
     )
     replaced = replace_chamber_with_mechanics(
         model,
@@ -224,7 +229,7 @@ def test_mechanics_replacement_transfers_storage_exclusively():
             MechanicsChamberCoupling(
                 "duplicate_left_ventricle",
                 "mechanics-lv",
-                lambda time, args: jnp.asarray(0.0),
+                _zero_volume_rate,
             ),
             135_000.0,
         )

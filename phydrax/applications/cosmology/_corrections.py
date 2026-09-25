@@ -10,12 +10,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import DerivativeContract, DerivativeRoute, DerivativeSurface
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._closure import DifferentiationContract
 from ._products import (
-    combine_differentiation,
     CosmologyProductProvenance,
     MatterPowerDescriptor,
     MatterPowerTable,
@@ -140,7 +139,7 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
     wavenumbers: Array
     factor_values: Array
     card: CorrectionModelCard
-    differentiation: DifferentiationContract
+    differentiation: DerivativeContract
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -151,24 +150,14 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
         card: CorrectionModelCard,
         /,
         *,
-        differentiation: DifferentiationContract | str = "constant",
+        differentiation: DerivativeContract = DerivativeContract(
+            route=DerivativeRoute.DIRECT
+        ),
     ):
         if not isinstance(card, CorrectionModelCard):
             raise TypeError("card must be CorrectionModelCard.")
-        if isinstance(differentiation, str):
-            if differentiation == "native-parameter":
-                differentiation_ = DifferentiationContract(
-                    upstream_physical_parameters=False,
-                    stored_values=True,
-                    query_coordinates=True,
-                    local_parameters=True,
-                )
-            else:
-                differentiation_ = DifferentiationContract.from_label(differentiation)
-        else:
-            differentiation_ = differentiation
-        if not isinstance(differentiation_, DifferentiationContract):
-            raise TypeError("differentiation must be DifferentiationContract.")
+        if not isinstance(differentiation, DerivativeContract):
+            raise TypeError("differentiation must be DerivativeContract.")
         scales = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
         wavenumbers_ = np.asarray(wavenumbers, dtype=np.float64).reshape((-1,))
         factors = jnp.asarray(factor_values)
@@ -187,20 +176,20 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
             jnp.any(~jnp.isfinite(factors)) | jnp.any(factors < 0.0),
             "Correction factors must be finite and non-negative.",
         )
-        if not differentiation_.stored_values:
+        if DerivativeSurface.STORED_VALUES not in differentiation.supported_surfaces:
             factors = jax.lax.stop_gradient(factors)
         self.scale_factors = jnp.asarray(scales)
         self.wavenumbers = jnp.asarray(wavenumbers_)
         self.factor_values = factors
         self.card = card
-        self.differentiation = differentiation_
+        self.differentiation = differentiation
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "multiplicative-matter-power-correction",
                 "scale_factors": scales.tolist(),
                 "wavenumbers": wavenumbers_.tolist(),
                 "card": card.card_id,
-                "differentiation": differentiation_.contract_id,
+                "differentiation": differentiation.contract_id,
             }
         )
 
@@ -258,10 +247,7 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
             ~successful,
             "Matter-power correction failed grid, domain, or finite-output checks.",
         )
-        differentiation = combine_differentiation(
-            power.provenance.differentiation,
-            self.differentiation,
-        )
+        differentiation = power.provenance.differentiation.meet(self.differentiation)
         provenance = CosmologyProductProvenance(
             producer="phydrax.applications.cosmology.MultiplicativeMatterPowerCorrectionPlan",
             producer_version="native",

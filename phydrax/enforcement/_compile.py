@@ -17,7 +17,6 @@ from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
     Boundary,
-    CallbackDerivativeRule,
     Domain,
     DomainComponent,
     DomainFunction,
@@ -38,13 +37,10 @@ from .._interpolation import (
     local_cubic_slopes,
 )
 from .._strict import StrictModule
-from ..operators.differential._domain_ops import partial_n
-from ..operators.differential._hooks import (
-    blend_with_gate,
-    nth_quotient_rule,
-    with_derivative_rule,
-)
-from ._ansatz import _enforcement_weight_fn, enforce_initial
+from ..domain._derivative import DerivativeRule, DerivativeRuleProvider
+from ..domain._function import differentiate_operands
+from ..operators.differential._hooks import blend_with_gate
+from ._ansatz import _enforcement_weight, _enforcement_weight_fn, enforce_initial
 from ._lifecycle import (
     EnforcementState,
     PreparedEnforcementStep,
@@ -768,7 +764,7 @@ def _initial_overlay_boundary_compatible(
     return True
 
 
-class _BoundaryWeightedQuotientCallable(StrictModule):
+class _BoundaryWeightedQuotientCallable(StrictModule, DerivativeRuleProvider):
     pieces: tuple[DomainFunction, ...]
     weights: tuple[DomainFunction, ...]
     remainder_weight: DomainFunction | None
@@ -829,6 +825,18 @@ class _BoundaryWeightedQuotientCallable(StrictModule):
             den = den + w_val
 
         return num / den
+
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule | None:
+        # The quotient rule over the weighted sums, rebuilt from the live operands.
+        num = DomainFunction(domain=function.domain, deps=(), func=0.0)
+        den = DomainFunction(domain=function.domain, deps=(), func=0.0)
+        for weight, piece in zip(self.weights, self.pieces, strict=True):
+            num = num + weight * piece
+            den = den + weight
+        if self.remainder_weight is not None:
+            num = num + self.remainder_weight * self.base
+            den = den + self.remainder_weight
+        return differentiate_operands(num / den).derivative_rule
 
 
 class _BoundaryBlendOverlay(StrictModule):
@@ -895,33 +903,35 @@ class _BoundaryBlendOverlay(StrictModule):
         for c in self.pieces:
             where_fn = _boundary_piece_where(c.component, self.var)
             wheres.append(where_fn)
-            w_fn = _enforcement_weight_fn(
-                geom,
-                where_fn,
-                num_reference=int(num_reference),
-                sampler=str(sampler),
-                key=next(key_iter),
-                on_empty="error",
-            )
             weights.append(
-                DomainFunction(
-                    domain=u_base.domain, deps=(self.var,), func=w_fn, metadata={}
+                _enforcement_weight(
+                    u_base.domain,
+                    self.var,
+                    _enforcement_weight_fn(
+                        geom,
+                        where_fn,
+                        num_reference=int(num_reference),
+                        sampler=str(sampler),
+                        key=next(key_iter),
+                        on_empty="error",
+                    ),
                 )
             )
 
         if include_identity_remainder:
             rem_where = _complement_where(wheres)
             if rem_where is not None:
-                w_rem_fn = _enforcement_weight_fn(
-                    geom,
-                    rem_where,
-                    num_reference=int(num_reference),
-                    sampler=str(sampler),
-                    key=next(key_iter),
-                    on_empty="zero",
-                )
-                remainder_weight = DomainFunction(
-                    domain=u_base.domain, deps=(self.var,), func=w_rem_fn, metadata={}
+                remainder_weight = _enforcement_weight(
+                    u_base.domain,
+                    self.var,
+                    _enforcement_weight_fn(
+                        geom,
+                        rem_where,
+                        num_reference=int(num_reference),
+                        sampler=str(sampler),
+                        key=next(key_iter),
+                        on_empty="zero",
+                    ),
                 )
 
         self.weights = tuple(weights)
@@ -966,7 +976,7 @@ class _BoundaryBlendOverlay(StrictModule):
             )
             base_pos = tuple(dep_idx[lbl] for lbl in u.deps)
 
-        blended = DomainFunction(
+        return DomainFunction(
             domain=blended_expr.domain,
             deps=deps,
             func=_BoundaryWeightedQuotientCallable(
@@ -981,41 +991,6 @@ class _BoundaryBlendOverlay(StrictModule):
             ),
             metadata=blended_expr.metadata,
         )
-
-        def _hook(
-            *,
-            var: str,
-            axis: int | None,
-            order: int,
-            mode: Literal["reverse", "forward"],
-            backend: Literal["ad", "jet", "fd", "basis"],
-            basis: Literal["poly", "fourier", "sine", "cosine"],
-            periodic: bool,
-        ) -> DomainFunction | None:
-            if backend not in ("ad", "jet"):
-                return None
-
-            def _derive(fn: DomainFunction, k: int, /) -> DomainFunction:
-                return partial_n(
-                    fn,
-                    var=var,
-                    axis=axis,
-                    order=int(k),
-                    mode=mode,
-                    backend=backend,
-                    basis=basis,
-                    periodic=periodic,
-                )
-
-            return nth_quotient_rule(
-                num,
-                den,
-                var=var,
-                order=int(order),
-                derive=_derive,
-            )
-
-        return with_derivative_rule(blended, CallbackDerivativeRule(_hook))
 
 
 class _InitialEnforcedOverlay(StrictModule):
@@ -1608,41 +1583,8 @@ class _InteriorAnchorOverlay(StrictModule):
             func=_correction,
             metadata={"interior_data_correction": True},
         )
-        ansatz = u0 + correction
-
-        def _hook(
-            *,
-            var: str,
-            axis: int | None,
-            order: int,
-            mode: Literal["reverse", "forward"],
-            backend: Literal["ad", "jet", "fd", "basis"],
-            basis: Literal["poly", "fourier", "sine", "cosine"],
-            periodic: bool,
-        ) -> DomainFunction | None:
-            if backend not in ("ad", "jet"):
-                return None
-            return partial_n(
-                u0,
-                var=var,
-                axis=axis,
-                order=int(order),
-                mode=mode,
-                backend=backend,
-                basis=basis,
-                periodic=periodic,
-            ) + partial_n(
-                correction,
-                var=var,
-                axis=axis,
-                order=int(order),
-                mode=mode,
-                backend=backend,
-                basis=basis,
-                periodic=periodic,
-            )
-
-        return with_derivative_rule(ansatz, CallbackDerivativeRule(_hook))
+        # Differentiate the base and correction separately, even when trainable.
+        return differentiate_operands(u0 + correction)
 
 
 class _FieldEnforcementPipeline(StrictModule):

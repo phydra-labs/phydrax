@@ -14,10 +14,17 @@ from jaxtyping import Array
 from phydrax._strict import StrictModule
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._sampling._addressing import derive_key, SampleAddress
 from .._trajectory import TrajectoryData
 
 
-_KEY_POLICY_ID = "trajectory-window:case-start-depth-objective"
+_KEY_POLICY_ID = "trajectory-window:sample-address(parent,start,depth)"
+_WINDOW_ADDRESS = SampleAddress(
+    "training", "discrete-model-rollout", target=("window-transition",), role="window"
+)
+_ORDER_ADDRESS = SampleAddress(
+    "training", "discrete-model-rollout", target=("window-order",), role="epoch"
+)
 
 
 class _NeuralWindowBatch(StrictModule):
@@ -90,7 +97,9 @@ class _NeuralWindowSource:
             raise ValueError("epoch must be nonnegative.")
         indices = jnp.arange(self.size, dtype=jnp.int32)
         if shuffle:
-            indices = jr.permutation(jr.fold_in(jr.key(seed), int(epoch)), indices)
+            indices = jr.permutation(
+                derive_key(jr.key(seed), _ORDER_ADDRESS, int(epoch)), indices
+            )
         return np.asarray(indices)
 
     def prepare(self, indices: np.ndarray | Array, /) -> _NeuralWindowBatch:
@@ -246,18 +255,12 @@ def _semantic_window_keys(
     parent_index: Array,
     start_index: Array,
     depth: Array,
-    objective_site: int,
     /,
 ) -> Array:
     """Derive per-window keys from stable semantic rollout coordinates."""
-
-    def one(parent, start):
-        key = jr.fold_in(root_key, parent)
-        key = jr.fold_in(key, start)
-        key = jr.fold_in(key, depth)
-        return jr.fold_in(key, int(objective_site))
-
-    return jax.vmap(one)(parent_index, start_index)
+    return jax.vmap(
+        lambda parent, start: derive_key(root_key, _WINDOW_ADDRESS, parent, start, depth)
+    )(parent_index, start_index)
 
 
 def _trajectory_content_fingerprint(

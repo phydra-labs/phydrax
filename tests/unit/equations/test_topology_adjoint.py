@@ -43,7 +43,7 @@ def test_reverse_checkpoint_schedule_and_unsupported_event_are_explicit():
         lambda cotangent: cotangent,
         (2,),
         (2,),
-        policy="unsupported",
+        policy=phx.BranchDifferentiationPolicy.UNSUPPORTED,
         event_id="nonsmooth-remesh",
     )
     result = phx.equations.fem.ReverseTimeTopologyTape((event,)).reverse(jnp.ones((2,)))

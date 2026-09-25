@@ -35,7 +35,6 @@ class Interval1d(_AbstractGeometry1D):
     start: Array
     end: Array
     _label: str
-    adf: Callable[[Array], Array]
 
     def __init__(
         self,

@@ -13,20 +13,37 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
+from .._schema import AbstractFittedModel
 from ._common import active_data, distances_to_centers, positive_scalar, real_dtype
 from ._spectral import _deterministic_embedding_kmeans
+
+
+# A softmax of negated squared-Euclidean distances to the row centers.
+_ROW_RESPONSIBILITY_CONTRACT = prediction_fit_contract(
+    value_derivative_contract(DerivativeRegularity.smooth()),
+    route=DerivativeRoute.DIRECT,
+    nondifferentiable_outputs=("hard_row_labels", "column_labels"),
+)
 
 
 class BiclusterDiagnostics(StrictModule):
@@ -75,7 +92,7 @@ class BiclusterDiagnostics(StrictModule):
         self.method = str(method)
 
 
-class BiclusterModel(AbstractArrayModel):
+class BiclusterModel(AbstractFittedModel):
     """Blockwise row transform plus immutable terminal column partition."""
 
     row_centers: Array
@@ -113,6 +130,9 @@ class BiclusterModel(AbstractArrayModel):
         self.out_size = self.row_centers.shape[-2]
         self.case_shape = self.row_centers.shape[:-2]
         self.method = str(method)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _ROW_RESPONSIBILITY_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -203,18 +223,19 @@ def _finish(
         degeneracy=~nonempty | infeasible_,
         method=method,
     )
-    contract = GradientContract(
-        prediction_inputs="smooth",
-        prediction_parameters="smooth",
-        fit_features="conditional",
-        fit_weights="conditional",
-        fit_hyperparameters="conditional",
-        fit_mode="spectral" if "spectral" in method else "unrolled",
-        nondifferentiable_outputs=(
-            "hard_row_labels",
-            "column_labels",
-            "block assignments",
+    contract = prediction_fit_contract(
+        model._prediction_contract(),
+        (
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(
+                DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+            ),
         ),
+        route=DerivativeRoute.SPECTRAL
+        if "spectral" in method
+        else DerivativeRoute.UNROLLED,
+        nondifferentiable_outputs=("block assignments",),
         conditions=(
             "fixed row and column partitions",
             "separated spectral subspaces when applicable",
@@ -226,7 +247,7 @@ def _finish(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
 
 

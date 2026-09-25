@@ -20,6 +20,23 @@ The design separates six concerns:
 A solve returns `LinearSolveResult`: value, status, diagnostics, and static
 provenance. A failed numerical method never masquerades as a successful value.
 
+`LinearSolveResult.derivative_contract` is the canonical `DerivativeContract`
+of the executed `DifferentiationPolicy`. The right-hand side is the
+`SOLVER_ARGUMENT` surface and the operator arrays are the `PHYSICAL_PARAMETER`
+surface:
+
+| Mode | Route | Surfaces | Condition |
+|---|---|---|---|
+| `"mathematical"` | implicit | right-hand side, operator | `solve-converged` |
+| `"rhs-only"` | implicit | right-hand side (operator stopped) | `solve-converged` |
+| `"algorithmic"` | unrolled | right-hand side, operator | `decisions-frozen` |
+| `"none"` | stopped | none | none |
+
+`LinearSolveResult.derivative_valid` reports per right-hand side whether that
+contract holds for this solve: implicit contracts require convergence (the same
+evidence that guards the returned value's derivative), unrolled contracts
+require finite arithmetic, and a stopped contract is never valid.
+
 ## First workflow
 
 ```python
@@ -689,6 +706,21 @@ is stationary but nonlinear and therefore eligible for `FGMRES`, not GMRES,
 PCG, or MINRES. Regardless of preconditioner provenance, success is certified
 against the original `LinearSystem` residual.
 
+`AbstractPreconditioner` is the neutral `ACCELERATOR` component slot
+(`slot_semantic_id="phydrax.linalg.preconditioner"`). An accelerator may change
+how fast a Krylov or fixed-point solve converges, never the equation it solves.
+Built-in analytic actions such as `DiagonalPreconditioner`,
+`IncompleteFactorizationPreconditioner`, and `GaussSeidelPreconditioner` are
+fixed leaves. Composites stay neutral: `MultigridLevel` smoothers,
+`SubspaceCorrectionTerm` local solvers, the Schur action of
+`BlockFactorizationPreconditioner`, and the inner action of a precision-cast
+adapter keep the roles of their children. A learned action that holds its model
+as a dynamic child therefore contributes PARAMETER arrays even inside a
+multigrid hierarchy, while every operator, transfer, and analytic sibling stays
+FIXED under `partition_parameters`. A learned action must claim linearity only
+with construction evidence; without it, hierarchies and block factorizations
+derive a nonlinear contract and remain `FGMRES`-only.
+
 `BlockJacobiPreconditionerBuilder(block_size, ...)` extracts fixed-size
 canonical diagonal blocks, factors them once, and returns a
 `LocalBlockPreconditioner`. Dense and structured operators use exact block
@@ -792,6 +824,48 @@ singular values, determinant or pseudodeterminant, nullspaces, or transformed
 solves in addition to `solve`. `refresh_factorization` applies the same symbolic
 identity rule and numerical versioning.
 
+## Initial-guess providers
+
+`solve(..., initial_guess=...)` accepts either a raw guess, used exactly as
+given, or an `AbstractInitialGuessProvider`. A provider is the neutral
+`ACCELERATOR` slot of solves: it may change how much work a solve performs but
+never the equation it solves. `propose(data, baseline)` receives the
+right-hand side and the native zero guess. Before dispatch, the runtime
+evaluates the proposal's true residual on device and uses it only when it is
+finite with a strictly smaller residual than the zero guess; otherwise the solve
+visibly starts from the zero guess. The selected guess is stopped, so no
+derivative flows through the proposal or the branch. `result.initial_guess`
+is an `InitialGuessDiagnostics` with the proposal and baseline residual norms,
+proposal validity, the accepted branch, and the provider identity, one entry
+per right-hand side. Native Krylov and Lineax providers accept guesses;
+operator-batched and minimum-norm solves reject providers.
+
+```python
+history = phx.linalg.HistoryInitialGuess(operator, "shifted-family", capacity=3)
+history = history.update(operator, previous_solution, time=0.0)
+result = phx.linalg.solve(prepared, rhs, initial_guess=history)
+history = history.update(operator, result.value, time=1.0, accepted=result.successful)
+```
+
+`HistoryInitialGuess` stores accepted solutions and their operator images with
+explicit operator-family, constraint, and nullspace identities. Its strategies
+are `"zero"`, `"last-solution"`, `"projection"` (paired RHS-image projection),
+`"rolling-qr"`, and `"stabilized-extrapolation"`, which extrapolates in accepted
+times to `history.at_time(time)`. Updates are immutable and require an explicit
+acceptance decision; a rejected update is bitwise inert.
+
+`LearnedInitialGuess(function)` holds a callable module containing at least one
+model; every model is bound to the provider slot with `ACCELERATOR` authority
+and keeps its parameters. A model declaring ports cannot be a bare child: the
+callable module, which owns the values it passes, holds it as
+`bind_component(model, LearnedInitialGuess, owner_ports=..., port_mapping=...)`.
+Production solves treat its proposal like any other.
+Training instead differentiates the raw `provider.propose(rhs, baseline)`
+passed as an ordinary guess to an `"algorithmic"` solve, whose executed work is
+the objective (see `AlgorithmicWorkObjective` in `phydrax.solver`).
+`phydrax.nonlinear.select_initial_state` applies the same guarded selection to
+nonlinear initial states with the original residual and domain validity.
+
 ## Iteration evidence
 
 All solve entry points accept `iteration=IterationPlan(...)`. Native scalar
@@ -802,7 +876,7 @@ reject inner-iteration observation rather than inventing a merged order.
 
 Direct, structured, sparse-host, Lineax, and other opaque providers support
 terminal evidence only. `solve_many`, transpose/adjoint solves, checked solves,
-history-assisted solves, and recycled solves forward the same contract.
+provider-guessed solves, and recycled solves forward the same contract.
 Device stop rules on native Krylov methods preserve the latest complete update;
 an uncertified result has `LinearSolveStatus.USER_STOPPED`.
 
@@ -860,6 +934,21 @@ Unsupported provider/mode combinations fail in planning. In particular, a
 provider is never treated as algorithmically differentiable merely because its
 forward pass is JIT-compatible. Transpose and adjoint rules use the declared
 pairings and conjugation semantics.
+
+`"algorithmic"` native `PCG`, `ProjectedPCG`, `GMRES`, and `FGMRES` run a
+fixed-trip loop driver: the executed steps are the same gated steps as the
+default early-exit route, placed inside static-length scans so reverse mode
+differentiates the executed iteration, including across FGMRES restart
+boundaries. Gram-Schmidt and Givens loops run the static restart length with
+exact-zero masks beyond the active basis, so active work keeps the early-exit
+floating-point order and iterates, iteration counts, and status agree with the
+early-exit route. Each FGMRES restart cycle and each Arnoldi step are
+`jax.checkpoint` units, and PCG uses square-root block checkpointing, so
+reverse-mode storage is bounded by the cycle carries plus the step carries of
+one restart cycle (or one PCG block). All other modes keep the
+data-dependent early-exit loops. To run a fixed amount of work, set zero
+tolerances and `TolerancePolicy(max_steps=k)`; only an exact breakdown ends
+the iteration early.
 
 The implicit rule supports one or many right-hand sides and operator-batched
 dense solves. `rhs-only` stops every problem coefficient while retaining the
@@ -2011,6 +2100,22 @@ runtime.
 ---
 
 ::: phydrax.linalg.LinearSolveResult
+
+---
+
+::: phydrax.linalg.AbstractInitialGuessProvider
+
+---
+
+::: phydrax.linalg.HistoryInitialGuess
+
+---
+
+::: phydrax.linalg.LearnedInitialGuess
+
+---
+
+::: phydrax.linalg.InitialGuessDiagnostics
 
 ---
 

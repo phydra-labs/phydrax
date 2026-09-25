@@ -158,7 +158,8 @@ def test_supplied_control_incumbent_closes_gap_without_a_tree_incumbent():
             2.0,
             relaxation_id="supplied-incumbent-quadratic",
         ),
-        BranchAndBoundPolicy(maximum_nodes=1, absolute_gap=0.8),
+        # The node budget counts every relaxation: the root plus its two children.
+        BranchAndBoundPolicy(maximum_nodes=3, absolute_gap=0.8),
         lambda value: jnp.asarray(True),
         minimum_box_width=0.01,
         problem_id="supplied-incumbent-quadratic",

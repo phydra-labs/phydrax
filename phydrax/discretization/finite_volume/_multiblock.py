@@ -14,7 +14,6 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
 from ..multiblock import InterfaceOrientation
 from ._positivity import FiniteVolumeAdmissibilityReport, FluxPositivityPlan
 from ._riemann import AbstractNumericalFluxPlan
@@ -70,7 +69,7 @@ class ConservativeMultiblockFluxResult(StrictModule):
     max_speed: Array
 
 
-class ConservativeMultiblockInterfacePlan(StrictModule, NonTrainableState):
+class ConservativeMultiblockInterfacePlan(StrictModule):
     """Conforming or nested 2:1 shared FV interface flux."""
 
     left: FiniteVolumeDiscretization
@@ -221,7 +220,7 @@ class MultiblockPositivityResult(StrictModule):
     accepted: Array
 
 
-class FiniteVolumeMultiblockRuntimePlan(StrictModule, NonTrainableState):
+class FiniteVolumeMultiblockRuntimePlan(StrictModule):
     """Fixed-block stage limiter sharing one factor across every mortar."""
 
     block_dynamics: tuple[Any, ...]

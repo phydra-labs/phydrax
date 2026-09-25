@@ -5,14 +5,11 @@
 import jax.numpy as jnp
 import numpy as np
 
+import phydrax as phx
 from phydrax.applications.relativistic_scattering._matrix_element_revision import (
     MatrixElementRevision,
 )
-from phydrax.artifacts import (
-    DerivativeEstimatorKind,
-    DerivativeEvidence,
-    DifferentiationContract,
-)
+from phydrax.artifacts import DerivativeEstimatorKind, DerivativeEvidence
 from phydrax.particle_physics._capabilities import HEPProviderBinding
 from phydrax.particle_physics._host_events import HostEventRecord, HostEventWeight
 from phydrax.particle_physics._identity import ReproducibilityGrade
@@ -36,7 +33,7 @@ def _provider_contracts():
         (SupportTuple("hep.shower", {"event_record": "host", "signed_weights": True}),),
     )
     differentiation = DerivativeEvidence(
-        DifferentiationContract.constant(),
+        phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
         estimator=DerivativeEstimatorKind.UNSUPPORTED,
         discrete_parameters=("tune",),
         stopped_events=("accept-reject",),

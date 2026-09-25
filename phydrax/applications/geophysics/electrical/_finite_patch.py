@@ -13,10 +13,14 @@ from jaxtyping import Array, ArrayLike
 import phydrax.linalg as la
 from phydrax import ein
 
+from ...._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+)
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....artifacts import DifferentiationContract
 from ....discretization import (
     CellMesh,
     FiniteElementDiscretization,
@@ -258,13 +262,13 @@ class FinitePatchDCPlan(StrictModule, NonTrainableState):
                 "no-contact-impedance",
                 "finite-domain",
             ),
-            differentiation=DifferentiationContract(
-                upstream_physical_parameters=True,
-                stored_values=True,
-                query_coordinates=False,
-                local_parameters=True,
-                stochastic_realization=False,
-                higher_order=True,
+            differentiation=DerivativeContract.smooth(
+                (
+                    DerivativeSurface.MODEL_PARAMETER,
+                    DerivativeSurface.PHYSICAL_PARAMETER,
+                    DerivativeSurface.STORED_VALUES,
+                ),
+                route=DerivativeRoute.IMPLICIT,
             ),
         )
 

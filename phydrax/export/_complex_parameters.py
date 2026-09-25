@@ -575,7 +575,7 @@ def complex_coefficients_to_frame(frame: Any, coefficients: ArrayLike, /) -> Arr
 
 def _constrained_architecture(value: Any, /) -> str:
     certificate = value.frame.linear_frame_certificate()
-    return certificate.frame_id
+    return certificate.certificate_id
 
 
 def _recover_free_coordinates(
@@ -730,7 +730,7 @@ def export_complex_parameters(value: Any, /) -> ComplexInterchangeState:
                 ),
             ),
             metadata={
-                "frame_id": value.frame.linear_frame_certificate().frame_id,
+                "frame_id": value.frame.linear_frame_certificate().certificate_id,
                 "prepared_operator_id": value.coefficient_map.operator.prepared_id,
                 "affine_map_id": value.coefficient_map.map_id,
                 "target": array_tree_fingerprint(value.coefficient_map.target),
@@ -745,7 +745,7 @@ def export_complex_parameters(value: Any, /) -> ComplexInterchangeState:
         return ComplexInterchangeState(
             "meromorphic-coefficients",
             "constrained-meromorphic-potential",
-            value.frame.linear_frame_certificate().frame_id,
+            value.frame.linear_frame_certificate().certificate_id,
             (
                 ComplexInterchangeEntry(
                     "coefficients",
@@ -756,7 +756,7 @@ def export_complex_parameters(value: Any, /) -> ComplexInterchangeState:
                 ),
             ),
             metadata={
-                "frame_id": value.frame.linear_frame_certificate().frame_id,
+                "frame_id": value.frame.linear_frame_certificate().certificate_id,
                 "pole_set_id": value.frame.poles.pole_set_id,
                 "affine_map_id": value.coefficient_map.map_id,
                 "meromorphic_certificate_id": certificate.certificate_id,
@@ -902,7 +902,7 @@ def import_complex_parameters(
         free = _recover_free_coordinates(value, coefficients, policy_)
         return eqx.tree_at(lambda potential: potential.free_coordinates, value, free)
     if isinstance(value, ConstrainedMeromorphicPotential):
-        architecture = value.frame.linear_frame_certificate().frame_id
+        architecture = value.frame.linear_frame_certificate().certificate_id
         if (
             state.semantics != "meromorphic-coefficients"
             or state.provider_kind != "constrained-meromorphic-potential"

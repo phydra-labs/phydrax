@@ -14,6 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax.ein import contract
+
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import ArraySpace, DiagonalPairing
 from .._axis import AxisDiscretization
@@ -71,6 +73,85 @@ def _apply_axis_transform(
     transformed = jax.vmap(function)(flattened)
     restored = transformed.reshape(leading_shape + (transformed.shape[-1],))
     return jnp.moveaxis(restored, -1, axis)
+
+
+# Mode-axis labels of tensor point synthesis; `p` is reserved for the points.
+_MODE_LABELS = "abcdefghijklmnoqrstuvwxyz"
+
+
+def _point_derivative_orders(
+    derivative: Sequence[int], dimension: int, /
+) -> tuple[int, ...]:
+    if isinstance(derivative, (str, bytes)) or not isinstance(derivative, Sequence):
+        raise TypeError("derivative must be a sequence of per-axis orders.")
+    orders = tuple(derivative)
+    if len(orders) != dimension:
+        raise ValueError(
+            f"derivative must give one order per spectral axis ({dimension})."
+        )
+    if any(
+        isinstance(order, bool) or not isinstance(order, (int, np.integer))
+        for order in orders
+    ):
+        raise TypeError("Spectral derivative orders must be ints.")
+    if any(order < 0 for order in orders):
+        raise ValueError("Spectral derivative orders must be non-negative.")
+    return tuple(int(order) for order in orders)
+
+
+def _point_support_mask(
+    axes: tuple[PreparedSpectralAxis, ...],
+    points: Array,
+    /,
+    *,
+    include_periodic: bool,
+) -> Array:
+    """Return whether each point lies in the closed axis box (finite points only).
+
+    The rounding allowance is 32 machine epsilons of the bound magnitude, so
+    samples on the box boundary stay inside; nothing further is extrapolated.
+    """
+    inside = jnp.all(jnp.isfinite(points), axis=1)
+    epsilon = jnp.finfo(points.dtype).eps
+    for index, axis in enumerate(axes):
+        if axis.periodic and not include_periodic:
+            continue
+        lower = axis.domain.lower.astype(points.dtype)
+        upper = axis.domain.upper.astype(points.dtype)
+        tolerance = (
+            32.0 * epsilon * jnp.maximum(1.0, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
+        )
+        coordinate = points[:, index]
+        inside = (
+            inside & (coordinate >= lower - tolerance) & (coordinate <= upper + tolerance)
+        )
+    return inside
+
+
+def _tensor_point_rows(
+    axes: tuple[PreparedSpectralAxis, ...],
+    points: Array,
+    orders: tuple[int, ...],
+    /,
+) -> tuple[Array, ...]:
+    return tuple(
+        axis.evaluate_basis(points[:, index], order=order)
+        for index, (axis, order) in enumerate(zip(axes, orders, strict=True))
+    )
+
+
+def _tensor_point_synthesis(rows: tuple[Array, ...], coefficients: Array, /) -> Array:
+    """Contract per-axis basis rows `(points, modes_a)` with tensor coefficients."""
+    labels = _MODE_LABELS[: len(rows)]
+    operands = ",".join(f"p{label}" for label in labels)
+    return contract(f"{operands},{labels}...->p...", *rows, coefficients)
+
+
+def _tensor_point_transpose(rows: tuple[Array, ...], cotangent: Array, /) -> Array:
+    """Bilinear transpose of `_tensor_point_synthesis` (no conjugation)."""
+    labels = _MODE_LABELS[: len(rows)]
+    operands = ",".join(f"p{label}" for label in labels)
+    return contract(f"{operands},p...->{labels}...", *rows, cotangent)
 
 
 class TensorSpectralPlan(AbstractDiscretizationPlan):
@@ -618,6 +699,103 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
     ) -> Array:
         """Differentiate physical values and return physical values."""
         return self.partial_derivative_values(values, axis=axis, order=order)
+
+    def evaluate(
+        self,
+        coefficients: ArrayLike,
+        coordinates: ArrayLike,
+        /,
+        *,
+        real_output: bool | None = None,
+    ) -> Array:
+        """Synthesize the modal field at arbitrary physical coordinates.
+
+        `coordinates` has shape `(points, axes)` in physical units. Every axis
+        synthesizes through its prepared basis rows
+        (`PreparedSpectralAxis.evaluate_basis`), so values at the grid equal
+        `reconstruct`. Periodic axes wrap coordinates into the periodic cell; a
+        coordinate outside a bounded axis (or a non-finite coordinate) fails at
+        runtime, also under `jit`, instead of extrapolating. Trailing
+        coefficient axes are preserved and the value dtype follows
+        `reconstruct(real_output=...)`.
+        """
+        return self._point_synthesis(
+            coefficients, coordinates, (0,) * len(self.axes), real_output
+        )
+
+    def derivative_at(
+        self,
+        coefficients: ArrayLike,
+        coordinates: ArrayLike,
+        derivative: Sequence[int],
+        /,
+        *,
+        real_output: bool | None = None,
+    ) -> Array:
+        """Synthesize one coordinate derivative at arbitrary physical coordinates.
+
+        `derivative` is a multi-index with one non-negative order per axis;
+        single-axis derivatives at the grid equal `derivative_values`. Support,
+        wrapping, and dtype semantics are those of `evaluate`.
+        """
+        return self._point_synthesis(
+            coefficients,
+            coordinates,
+            _point_derivative_orders(derivative, len(self.axes)),
+            real_output,
+        )
+
+    def _point_synthesis(
+        self,
+        coefficients: ArrayLike,
+        coordinates: ArrayLike,
+        orders: tuple[int, ...],
+        real_output: bool | None,
+        /,
+    ) -> Array:
+        values = self._validate_leading(
+            coefficients,
+            self.modal_shape,
+            "Modal coefficients",
+        ).astype(jnp.dtype(self.plan.precision.coefficient_dtype))
+        points = jnp.asarray(coordinates)
+        if points.ndim != 2 or points.shape[1] != len(self.axes):
+            raise ValueError(
+                f"coordinates must have shape (points, {len(self.axes)}); got {points.shape}."
+            )
+        if not jnp.issubdtype(points.dtype, jnp.floating):
+            raise TypeError("coordinates must be real floating point.")
+        points = points.astype(
+            jnp.finfo(jnp.dtype(self.plan.precision.physical_dtype)).dtype
+        )
+        inside = _point_support_mask(self.axes, points, include_periodic=False)
+        wrapped = jnp.stack(
+            tuple(
+                axis.domain.lower
+                + jnp.mod(points[:, index] - axis.domain.lower, axis.length)
+                if axis.periodic
+                else points[:, index]
+                for index, axis in enumerate(self.axes)
+            ),
+            axis=1,
+        )
+        result = _tensor_point_synthesis(
+            _tensor_point_rows(self.axes, wrapped, orders), values
+        )
+        result = eqx.error_if(
+            result,
+            ~jnp.all(inside),
+            "Spectral point synthesis refuses coordinates outside a bounded axis "
+            "or non-finite coordinates; bounded spectral bases do not extrapolate.",
+        )
+        real = (
+            not self.plan.precision.physical_dtype.startswith("complex")
+            if real_output is None
+            else bool(real_output)
+        )
+        if real:
+            return self.plan.precision.output(jnp.real(result))
+        return result
 
     def _selected_axes(
         self,

@@ -4,7 +4,7 @@
 native JAX programs and compose with the rest of Phydrax. It is not a mutable
 estimator compatibility layer. A fitting recipe is an immutable configuration;
 `phydrax.ml.fit` is a pure map from a recipe, data, masks, weights, and an explicit
-key to a frozen executable model, diagnostics, and a declared gradient contract.
+key to a frozen executable model, diagnostics, and a declared derivative contract.
 
 ## The fitting lifecycle
 
@@ -30,20 +30,25 @@ prediction = result.model(query)
 
 The recipe is unchanged by fitting. The returned `FitResult` contains:
 
-- `model`: a `FrozenModel` that is excluded from Phydrax solver parameter
-  partitions but remains an ordinary differentiable JAX PyTree when called. The
-  wrapper preserves the fitted model's exact input binding and exposes only named
-  prediction capabilities that the wrapped model actually implements:
+- `model`: a `FrozenModel`, an `ExplicitFreeze` holder whose arrays are all
+  FIXED in Phydrax training trees but which remains an ordinary differentiable
+  JAX PyTree when called. The wrapper preserves the fitted model's exact input
+  binding and exposes only named prediction capabilities that the wrapped model
+  actually implements:
   `decision_function`, `predict`, `predict_log_proba`, and `predict_proba`;
 - `diagnostics`: family-specific numerical evidence;
 - `valid` and `status`: scalar or case-shaped fit validity;
 - `method`: the resolved numerical method, not an ambiguous `"auto"` policy;
-- `gradient_contract`: the precise derivative surface supported by the fit and
-  prediction operations.
+- `derivative_contract`: the canonical `phydrax.DerivativeContract` declaring the
+  derivatives supported by prediction (`INPUT`, `MODEL_PARAMETER`) and by the fit
+  (`FIT_FEATURES`, `FIT_TARGETS`, `FIT_WEIGHTS`, `FIT_HYPERPARAMETERS`).
 
 Call `result.as_trainable()` to make the fitted arrays an explicit warm start for a
 later optimization problem. This unwraps the same arrays; it does not copy them or
-silently change the fitting gradient.
+silently change the fitting gradient. The unwrapped model is a `ParameterOwner`: its
+fitted coefficients are PARAMETER, while data and statistics it retains (neighbor
+training sets, kernel landmarks, scaler statistics, hard tree thresholds, cluster
+assignments) are declared with `fixed_field` and stay FIXED.
 
 ## Canonical data semantics
 
@@ -77,9 +82,41 @@ reject sparse input. They never densify silently.
 
 `FeatureSchema` assigns a stable name and semantic kind to each feature.
 `TargetSchema` records target kind, output names, and the external class
-vocabulary. Classification kernels operate on contiguous internal integer class
-indices. The fitted model preserves the external label ordering and converts only
-at its explicit input/output boundary.
+vocabulary. Both accept optional `dimensions`: one
+`phydrax.units.DimensionSignature` per feature, or per named target component
+(target dimensions require `names`). Classification kernels operate on contiguous
+internal integer class indices. The fitted model preserves the external label
+ordering and converts only at its explicit input/output boundary.
+
+```python
+feature_schema = phx.ml.FeatureSchema(
+    ("strain", "temperature"),
+    dimensions=(phx.units.DIMENSIONLESS, phx.units.TEMPERATURE),
+)
+target_schema = phx.ml.TargetSchema(
+    "continuous", names=("stress",), dimensions=(phx.units.PRESSURE,)
+)
+```
+
+`phydrax.ml.fit` binds the batch feature schema, and the target schema when the
+fit is supervised, into the fitted executable; a schema the fit already recorded,
+such as a learned class vocabulary, is kept. Calling a recipe's `fit_batch`
+directly binds nothing. The bound executable derives its scientific ports:
+`result.model_ports()` returns a `phydrax.ModelPorts` whose input is the feature
+port (semantic ID `layout_id`, or `"ml-features"` when empty; feature names as
+components; declared dimensions), and whose outputs are the target port for
+families that estimate the target, the joined feature port for `FeatureUnion`
+and `ColumnTransformer`, the final stage's outputs for `Pipeline`, and empty
+otherwise.
+
+To fit on values an owner already publishes as ports, derive the schemas from
+them. `FeatureSchema.from_ports(ports)` declares the feature axis as the
+row-major concatenation of those ports' events, in port order: its features are
+the ports' component IDs, and the fitted input ports are exactly those ports.
+`TargetSchema.from_port(port)` declares a continuous target whose fitted output
+port is `port`; the output event shape must equal the port's event shape. Such
+a model then binds to that owner through an explicit `phydrax.PortMapping`.
+Artifacts persist the backing ports.
 
 Category discovery, hard bin construction, rank selection, and class vocabulary
 construction are discrete fit operations. They are never advertised as
@@ -105,8 +142,8 @@ the hardening operation itself remains nondifferentiable.
 
 ## Differentiating through fitting
 
-Fitting gradients are separate from prediction gradients. Each family records one
-of these fit modes:
+Fitting derivatives are separate from prediction derivatives. The contract route
+(`phydrax.DerivativeRoute`) records how the fit is differentiated:
 
 - **direct**: closed-form array operations are differentiated directly;
 - **implicit**: a root or KKT system is differentiated under its regularity
@@ -116,16 +153,32 @@ of these fit modes:
 - **spectral**: projector or basis derivatives require eigengap conditions;
 - **relaxed**: the fit differentiates through an explicitly smooth replacement for
   a discrete algorithm;
-- **stopped**: the fit contains a declared discrete choice and supplies no gradient
-  through that choice.
+- **stopped**: the fit contains a declared discrete choice and supplies no
+  derivative through that choice; the fit contract admits no request, and
+  prediction derivatives come from the fitted model's `model_execution_contract()`.
 
-The contract separately records gradients with respect to training features,
-targets, weights, continuous hyperparameters, prediction inputs, and fitted
-parameters. Conditions such as full rank, positive regularization, active-set
-stability, a nonzero eigengap, or finite temperature are part of the result.
+Each surface carries a `phydrax.GradientLevel` (`SMOOTH`, `ALMOST_EVERYWHERE`,
+`CONDITIONAL`, or `NONE`). Conditions such as full rank, positive regularization,
+active-set stability, a nonzero eigengap, or finite temperature are part of the
+contract. State what you intend to differentiate as a
+`phydrax.DifferentiationRequest` and check it before transforming:
 
-See [ML differentiation contracts](../appendix/ml_differentiability.md) for the
-failure boundaries and numerical interpretation.
+```python
+request = phx.DifferentiationRequest(
+    (phx.DerivativeSurface.FIT_TARGETS, phx.DerivativeSurface.FIT_HYPERPARAMETERS)
+)
+admission = result.derivative_admission(request)
+admission.supported, admission.conditions, admission.reasons
+
+result = phx.ml.fit(recipe, features, targets, derivative_request=request)
+```
+
+With `derivative_request=`, `fit` raises a `ValueError` starting with
+`derivative-unsupported` instead of returning a fit whose requested derivative is
+not declared.
+
+See [Derivative contracts](../appendix/ml_differentiability.md) for surfaces,
+admission, the per-family contract table, and the failure boundaries.
 
 ## Composition without leakage
 
@@ -137,8 +190,10 @@ scaler, imputer, encoder, target transform, or feature selector therefore cannot
 consume validation observations accidentally.
 
 Randomness is split deterministically from the explicit fit key. Stage names,
-resolved schemas, child diagnostics, and child gradient contracts remain available
-on the fitted composition.
+resolved schemas, child diagnostics, and child derivative contracts remain
+available on the fitted composition. The composition's own contract composes
+pipeline stages in order and meets parallel children
+(`phydrax.DerivativeContract.compose` and `.meet`).
 
 ## Fixed-recipe selective reliability
 
@@ -230,7 +285,10 @@ Fitted pointwise models implement the shared `AbstractArrayModel` and
 therefore be:
 
 - called under `jax.jit`, `jax.vmap`, and JAX transformations;
-- bound into a `DomainFunction` when their input schema matches a domain layout;
+- bound into a `DomainFunction` (and into dynamics, operator, and closure owners)
+  through an explicit `phydrax.PortMapping` when their ports are the owner's ports
+  (see `FeatureSchema.from_ports`); ports never bind by name, shape, or order,
+  and the recorded `PortBindingEvidence` lists what stayed unverified;
 - used as fixed reduced-order closures or explicitly converted to trainable warm
   starts;
 - composed with `phydrax.kernels`, `phydrax.optim`, operator models, and UQ;
@@ -256,6 +314,32 @@ JSON/UBJSON artifacts. Conversion is one-time and fail-closed:
 
 Unsupported options raise `UnsupportedConversionError`; there is no fallback to
 source prediction and no per-call NumPy conversion.
+
+Models that stay in another framework are placed on an explicit execution tier
+(`phydrax.ExecutionCapabilities`) rather than converted:
+
+- **functional JAX**: `phydrax.nn.models.FunctionalJAXAdapter` wraps
+  `apply(parameters, model_state, input, key, *, inference) -> (output,
+  next_model_state)` (the form of Haiku `transform_with_state`, Flax
+  `apply(..., mutable=...)`, and Equinox `make_with_state`; none of these
+  packages is required). `parameters` are PARAMETER, `model_state` is
+  MODEL_STATE; inference mode is explicit (`phydrax.nn.layers.inference_mode`),
+  evaluation never advances the state, and `transition` proposes the next state
+  that the training kernel commits only with an accepted update. `EquinoxModel`
+  rejects `eqx.nn.StateIndex` state and names this adapter.
+- **host inference**: `phydrax.export.HostInferenceAdapter` and
+  `phydrax.export.load_onnx` (`phydrax[onnx-inference]`) run a host runtime
+  eagerly with exact schemas, detached outputs, an artifact binding identity,
+  and optional DLPack transport. `jit`, `vmap`, `grad`, `jvp`, and `vjp` are
+  refused before the runtime runs.
+- **external adjoint**: `phydrax.interchange.ExternalAdjointAction` stages a
+  provider's primal and applies its adjoint at the same realization; a provider
+  without an adjoint reports derivative-free alternatives without selecting one.
+
+`ExternalOperatorAdapter` requires the runner's `capabilities`; its artifact
+`binding` is derived from the checkpoint manifest (`binding_identity()`), never
+supplied separately. A host-only runner is refused under transformations and
+cannot use the compiled `OperatorExecutionPlan` strategy.
 
 ## Numerical policies
 
@@ -505,6 +589,17 @@ hard. Isolation topology and support selection are discrete; smooth isolation is
 a separate fitted model. Artifacts and converters are terminal serialization or
 copy boundaries and do not carry gradients through source formats.
 
+`save_ml_artifact(path, model, /, *, fit_result=None, provenance=None, licenses=())`
+takes schemas and ports from the executable itself, so save a model fitted by
+`phydrax.ml.fit`. `read_ml_artifact(path).manifest` exposes the restored
+`feature_schema` and `target_schema`, the derived `ports`, the recorded
+`derivative_contract` and `fit` status of a supplied `fit_result`, the identity
+triplet (`semantic_provenance`, `numeric_revision`, `executable_signature`,
+recomputed and verified on load), `provenance`, `licenses`, and `versions`.
+`load_ml_model(path)` returns the verified schema- and port-bound executable.
+Records written in an earlier manifest format fail closed with an archive
+corruption error instead of being reinterpreted.
+
 ## Keys, transforms, and failure handling
 
 A recipe whose algorithm samples anything requires an explicit JAX key. The key
@@ -523,9 +618,10 @@ fixed_prediction = result.model(query)
 warm_start = result.as_trainable()
 ```
 
-`result.model` and `warm_start` contain the same fitted arrays. The first is a
-`NonTrainableState` for solver partitioning; the second deliberately exposes
-those leaves to later optimization. Neither object is mutable.
+`result.model` and `warm_start` contain the same fitted arrays. The first is an
+`ExplicitFreeze` holder, so every array is FIXED in solver partitions; the second
+deliberately exposes its PARAMETER leaves to later optimization. Neither object is
+mutable.
 
 Invalid dynamic data is represented by `valid`, `status`, and diagnostic arrays so
 case-batched and transformed fits remain JAX programs. Invalid static

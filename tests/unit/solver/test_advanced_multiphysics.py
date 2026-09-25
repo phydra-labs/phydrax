@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -589,7 +590,7 @@ def test_cosmology_inference_and_closure_contracts():
         physics_policy_id="linear-cold-baryon-power",
         scale_id=background.scale.scale_id,
         source_kind="external",
-        differentiation="constant",
+        differentiation=phx.DerivativeContract(route=phx.DerivativeRoute.DIRECT),
     )
     power = MatterPowerTable(
         [0.1, 1.0],
@@ -649,3 +650,61 @@ def test_cosmology_inference_and_closure_contracts():
     assert jnp.all(jnp.isfinite(corrected))
     assert jnp.all(edge == 0.0)
     assert not bool(closure_report.fallback_activated)
+
+
+def _mhd_closure(coefficients, scores):
+    face = StructurePreservingFaceClosurePlan(
+        lambda left, right, args: jnp.asarray(coefficients),
+        lambda left, right, args: jnp.asarray(scores),
+        closure_id="learned-face",
+    )
+    return ConstrainedMHDClosurePlan(
+        face,
+        lambda left, right, flux, edge, args: 0.5 * jnp.ones_like(edge),
+        closure_id="learned-face-edge",
+    )
+
+
+def test_mhd_closure_header_reasons_and_derivative_poisoning():
+    # Lane 0 is learned, lane 1 sits on the dissipation clip, lane 2 is OOD.
+    closure = _mhd_closure((1.0, 0.0, 1.0), (0.0, 0.0, 2.0))
+    left = jnp.ones((3, 2))
+    right = 2.0 * left
+    baseline_edge = jnp.zeros((2,))
+
+    def apply(right_state):
+        return closure.apply(left, right_state, jnp.zeros_like(left), baseline_edge)
+
+    face, edge, report = apply(right)
+
+    np.testing.assert_allclose(face, ((-1.0, -1.0), (0.0, 0.0), (0.0, 0.0)))
+    np.testing.assert_allclose(edge, 0.0)
+    assert bool(report.fallback_activated)
+    np.testing.assert_array_equal(report.header.eligible, (True, True, False))
+    np.testing.assert_array_equal(
+        report.header.reason_bits,
+        (0, 0, int(phx.AdmissibilityReason.OUTSIDE_SUPPORT)),
+    )
+    np.testing.assert_allclose(report.header.margin, (1.0, 1.0, -1.0))
+    assert report.header.model_id == closure.closure_id
+    assert report.header.evidence_id == closure.evidence_id
+    assert report.derivative_contract.conditions == ("executed-branch",)
+    np.testing.assert_array_equal(report.derivative_valid, (True, False, True))
+
+    _, (face_tangent, edge_tangent, _) = jax.jvp(apply, (right,), (jnp.ones_like(right),))
+    np.testing.assert_allclose(face_tangent[0], -1.0)
+    assert bool(jnp.all(jnp.isnan(face_tangent[1])))
+    np.testing.assert_allclose(face_tangent[2], 0.0)
+    assert bool(jnp.all(jnp.isfinite(edge_tangent)))
+
+    on_threshold = _mhd_closure((1.0, 1.0, 1.0), (0.0, 1.0, 0.0))
+    _, (face_tangent, edge_tangent, _) = jax.jvp(
+        lambda value: on_threshold.apply(
+            left, value, jnp.zeros_like(left), baseline_edge
+        ),
+        (right,),
+        (jnp.ones_like(right),),
+    )
+    assert bool(jnp.all(jnp.isnan(face_tangent[1])))
+    assert bool(jnp.all(jnp.isfinite(face_tangent[0])))
+    assert bool(jnp.all(jnp.isnan(edge_tangent)))

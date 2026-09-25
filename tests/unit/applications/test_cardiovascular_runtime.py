@@ -310,6 +310,17 @@ def test_execution_pool_cohort_is_case_and_lane_deterministic_and_fail_closed():
     )
     np.testing.assert_array_equal(np.asarray(first.values), np.asarray(second.values))
 
+    # A case key depends on its stable ID, not on the rest of the cohort.
+    subset = prepare_cardiovascular_cohort(
+        _execution(CardiovascularCohortExecution(2)), ("patient-d", "patient-b")
+    )
+    partial = execute_cardiovascular_cohort(subset, jax.random.key(17), execute)
+    full_keys = dict(zip(first.case_ids, np.asarray(first.evidence.semantic_keys)))
+    for case_id, key_words in zip(
+        partial.case_ids, np.asarray(partial.evidence.semantic_keys), strict=True
+    ):
+        np.testing.assert_array_equal(key_words, full_keys[case_id])
+
     def reject_one(case_id, key):
         value = jax.random.uniform(key)
         if case_id == "patient-b":

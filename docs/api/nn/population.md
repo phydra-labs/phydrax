@@ -44,9 +44,9 @@ Assessment is intentionally explicit: the library does not secretly split,
 resample, or reuse training samples as held-out evidence.
 
 `LIFPopulation`, `PopulationCode`, diagnostics, and filtered state are
-`NonTrainableState`: fitting is intentionally frozen under the native solver's
-trainable partition. Decoder application remains differentiable with respect to
-inputs; frozen training ownership is not a `stop_gradient` operation.
+`NonTrainableState`: every array below them is FIXED, so native trainers never
+update a fitted code. Decoder application remains differentiable with respect to
+inputs; the FIXED role is not a `stop_gradient` operation.
 
 ## Encoding and physical units
 

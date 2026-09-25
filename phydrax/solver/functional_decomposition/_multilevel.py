@@ -12,7 +12,7 @@ import equinox as eqx
 import optax
 
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, require_parameter_roles
 from ...domain import (
     LocalFieldFamily,
     partition_of_unity_field,
@@ -153,6 +153,10 @@ def train_functional_hierarchy(
             {name: correction_field},
             epsilon=epsilon,
         )
+        require_parameter_roles(
+            correction.training_solver.functions,
+            context=f"train_functional_hierarchy (level {level.level_id})",
+        )
         trained = correction.training_solver.solve(
             num_iter=iterations,
             optim=optimizer,
@@ -269,6 +273,10 @@ def train_functional_cycles(
                 current,
                 {str(field_name): level.field()},
                 epsilon=1.0,
+            )
+            require_parameter_roles(
+                correction.training_solver.functions,
+                context=f"train_functional_cycles (level {level.level_id})",
             )
             trained = correction.training_solver.solve(
                 num_iter=iterations,

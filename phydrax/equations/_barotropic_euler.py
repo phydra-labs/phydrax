@@ -12,6 +12,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax import ein
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import NonTrainableState
 from ._barotropic import AbstractBarotropicMaterial
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
@@ -19,7 +20,11 @@ from ._hyperbolic_systems import (
 )
 
 
-class BarotropicEulerSystem(AbstractAdmissibleSystem, AbstractNormalReflectionSystem):
+class BarotropicEulerSystem(
+    AbstractAdmissibleSystem,
+    AbstractNormalReflectionSystem,
+    NonTrainableState,
+):
     """Mass and momentum conservation closed by one barotropic material."""
 
     material: AbstractBarotropicMaterial

@@ -211,7 +211,7 @@ def material_invariants(
     )
 
 
-class FiniteBulkCardiacMaterial(HyperelasticLaw):
+class FiniteBulkCardiacMaterial(HyperelasticLaw, NonTrainableState):
     """Displacement-only isochoric cardiac law with a finite bulk penalty.
 
     This is a distinct fidelity route from exact mixed incompressibility. The

@@ -10,9 +10,10 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 
 
-class ProjectiveInvariantPotential(StrictModule):
+class ProjectiveInvariantPotential(StrictModule, ParameterOwner):
     """Real scalar potential over normalized Hermitian-projector features."""
 
     network: eqx.nn.MLP

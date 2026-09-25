@@ -44,10 +44,10 @@ locked prediction, external transfer, and prospective intervention remain
 separate stage IDs.
 
 The four public molecular capability profiles are **unreleased candidates**:
-`protein.stability.megascale-natural-small-domain`,
-`nucleic.strand-displacement.rna-to-dna.declared-condition`,
-`protein.coordinate-proposal.fixed-construct-standard-chemistry`, and
-`rna.ensemble.adenine-riboswitch.declared-protocol`.
+`protein.stability.megascale-natural-small-domain.canonical`,
+`nucleic.strand-displacement.rna-to-dna.declared-condition.canonical`,
+`protein.coordinate-proposal.fixed-construct-standard-chemistry.canonical`, and
+`rna.ensemble.adenine-riboswitch.declared-protocol.canonical`.
 `biophysical_candidate_profile` and `biophysical_candidate_profiles` return
 `CapabilityProfile` values with `released=False`, no release evidence, and
 default version `candidate`. They are scopes to qualify, not shipped scientific

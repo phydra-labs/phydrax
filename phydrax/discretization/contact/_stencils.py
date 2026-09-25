@@ -12,6 +12,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._distance import (
@@ -221,7 +222,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         identifier = generated if batch_id is None else str(batch_id)
         if not identifier:
             raise ValueError("batch_id must be nonempty or None.")
-        dtype = jnp.result_type(weight, separation, jnp.float64)
+        dtype = inexact_result_type(weight, separation)
         self.vertex_indices = jnp.asarray(indices, dtype=jnp.int32)
         self.left_feature_ids = jnp.asarray(left, dtype=jnp.int64)
         self.right_feature_ids = jnp.asarray(right, dtype=jnp.int64)

@@ -7,7 +7,6 @@ import pytest
 from jaxtyping import ArrayLike
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def _basis(
@@ -123,7 +122,7 @@ def test_discrete_spectrum_is_fixed_while_multiplier_parameters_are_trainable():
         phx.kernels.MaternSpectralMultiplier(0.7, 1.5),
     )
 
-    trainable, fixed = partition_trainable(kernel)
+    trainable, _, fixed = phx.partition_parameters(kernel)
 
     assert trainable.eigenbasis is None
     assert fixed.eigenbasis is basis

@@ -2,7 +2,9 @@
 
 A field space binds scientific representation and conformity to an exact DOF layout
 and `phydrax.linalg.AbstractVectorSpace`. Evaluation points, quadrature points, and
-DOFs remain distinct.
+DOFs remain distinct. `DiscreteFieldSpace.value_port()` derives the `ValuePort` of
+the complete coefficient array: its `space_id` is the field-space identity and its
+event structure follows the declared DOF layout.
 
 ::: phydrax.discretization.TensorDofLayout
 

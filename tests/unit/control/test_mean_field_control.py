@@ -28,11 +28,12 @@ from phydrax.stochastic import (
 def _paths(*, path_id="planner-paths", valid=None, particles=None):
     if particles is None:
         particles = jnp.ones((2, 2, 1))
+    particles = jnp.asarray(particles)
     return BSDEPathBatch(
         jnp.asarray([0.0, 1.0]),
-        jnp.asarray(particles),
-        jnp.zeros((2, 1, 1)),
-        sample_shape=(2,),
+        particles,
+        jnp.zeros((particles.shape[0], 1, 1)),
+        sample_shape=(particles.shape[0],),
         state_shape=(1,),
         noise_shape=(1,),
         path_id=path_id,

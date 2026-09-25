@@ -9,6 +9,11 @@ from ._curve_discovery import (
     ImplicitCurveRealization,
 )
 from ._discovery import discover_implicit_surface
+from ._neural import (
+    ImplicitRegionTopology,
+    NeuralImplicitCertificate,
+    NeuralImplicitRegion,
+)
 from ._policy import (
     ImplicitProjectionPolicy,
     ImplicitProjectionStatus,
@@ -36,11 +41,14 @@ __all__ = [
     "ImplicitPointProjectionResult",
     "ImplicitProjectionPolicy",
     "ImplicitProjectionStatus",
+    "ImplicitRegionTopology",
     "ImplicitSurfaceEvidence",
     "ImplicitSurfacePlan",
     "ImplicitSurfacePolicy",
     "ImplicitSurfaceRealization",
     "ImplicitSurfaceStatus",
+    "NeuralImplicitCertificate",
+    "NeuralImplicitRegion",
     "discover_implicit_curve",
     "discover_implicit_surface",
 ]

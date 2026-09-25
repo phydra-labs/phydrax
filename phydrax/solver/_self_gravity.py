@@ -294,7 +294,7 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
         )
         self.requires_realization = False
         self.realization_name = None
-        self.differentiability = "smooth_discrete"
+        self.differentiability = "smooth"
         self.modified_components = tuple(names[index] for index in momentum_indices) + (
             "total_energy",
         )

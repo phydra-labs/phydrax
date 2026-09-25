@@ -318,11 +318,15 @@ def test_native_artifact_reload_preserves_flux_and_rejects_wrong_restart_identit
             coord_dim=1,
         )
         # Explicitly untrained weights isolate artifact/restart behavior from optimizer behavior.
+        target_port = task.fields[-1].value_port()
         original = native.TrainedOperator(
             model,
             task,
             training_evidence=op.OperatorTrainingEvidence("task_specific"),
-            output_field_map={"output": task.fields[-1].name},
+            output_ports={"output": target_port},
+            port_mapping=phx.PortMapping(
+                outputs=((target_port.port_id, target_port.port_id),)
+            ),
             artifact_id=f"artifact-test-{index}",
             provenance={"untrained_baseline": True},
         )

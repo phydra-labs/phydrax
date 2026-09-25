@@ -15,7 +15,6 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ._execution_runtime import ExecutionGroup
-from ._trainable import place_array_leaves
 
 
 def shard_array_axis(
@@ -91,10 +90,14 @@ def shard_tree_axis(
 
 
 def replicate_tree(tree: Any, execution_group: ExecutionGroup, /) -> Any:
-    """Replicate array leaves on an assigned execution-group mesh."""
+    """Replicate every array leaf on an assigned execution-group mesh.
 
-    sharding = execution_group.named_sharding(())
-    return place_array_leaves(tree, sharding)
+    Placement is independent of array roles: FIXED data is replicated like
+    parameters, and non-array leaves are returned unchanged.
+    """
+
+    arrays, rest = eqx.partition(tree, eqx.is_array)
+    return eqx.combine(jax.device_put(arrays, execution_group.named_sharding(())), rest)
 
 
 def global_weighted_mean(

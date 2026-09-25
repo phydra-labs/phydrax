@@ -230,7 +230,7 @@ def boundary_fast_provider_capabilities(
         token in identifier.lower() for token in ("fmm", "h2", "h²")
     ):
         raise BEMFastCapabilityError(
-            f"No catalogd 3D fast provider matches {identifier!r}."
+            f"No catalogued 3D fast provider matches {identifier!r}."
         )
     raise BEMFastCapabilityError(f"Unknown BEM fast provider {identifier!r}.")
 

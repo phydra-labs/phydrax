@@ -10,7 +10,7 @@ import jax
 import numpy as np
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ....lifecycle import NumericRevision
+from ...._identity import NumericRevision, SemanticProvenance
 from ._continuous import PreparedContinuousFourierModalLayer
 from ._contracts import (
     ContinuousFourierModalLayer,
@@ -227,7 +227,7 @@ def fourier_modal_physical_state_digest(
             "superstrate": port_descriptor(problem.superstrate),
             "elements": static_elements,
             "substrate": port_descriptor(problem.substrate),
-            "source_parents": [parent.content_digest for parent in parents],
+            "source_parents": [parent.revision_id for parent in parents],
         }
     )
 
@@ -237,9 +237,13 @@ def fourier_modal_numeric_revision(
     /,
     *,
     source_parents: Sequence[NumericRevision] = (),
-    label: str = "fourier-modal-maxwell",
 ) -> NumericRevision:
-    """Content-bind one host-materialized prepared Fourier-modal numeric state."""
+    """Content-bind one host-materialized prepared Fourier-modal numeric state.
+
+    The semantic provenance names the problem, preparation, harmonic layout, and
+    static port/element descriptors; the numeric content is the prepared arrays
+    together with the canonical revision IDs of the source-plane parents.
+    """
     if not isinstance(prepared, PreparedFourierModalMaxwell):
         raise TypeError("prepared must be PreparedFourierModalMaxwell.")
     parents = tuple(source_parents)
@@ -248,10 +252,6 @@ def fourier_modal_numeric_revision(
     problem = prepared.problem
     if problem.source_ids and len(parents) != len(problem.source_ids):
         raise ValueError("Every source plane requires one host NumericRevision parent.")
-    physical_stack_digest = fourier_modal_physical_stack_digest(prepared)
-    physical_state_digest = fourier_modal_physical_state_digest(
-        prepared, source_parents=parents
-    )
     arrays: dict[str, object] = {
         "angular_frequency": problem.angular_frequency,
         "bloch_wavevector": problem.bloch_wavevector,
@@ -330,52 +330,38 @@ def fourier_modal_numeric_revision(
         raise ValueError(
             "A Fourier-modal NumericRevision requires host-materialized numeric inputs."
         )
-    parent_digests = tuple(parent.content_digest for parent in parents)
-    content_digest = canonical_fingerprint(
+
+    def port_descriptor(port) -> dict[str, object]:
+        return {
+            "port_id": port.port_id,
+            "material_id": port.material.material_id,
+            "material_role": port.material.material_role,
+            "origin_evidence_id": port.material.origin_evidence_id,
+            "factorization_id": port.factorization.plan_id
+            if isinstance(port, PeriodicMaxwellPort)
+            else None,
+            "mode_policy": port.mode_policy
+            if isinstance(port, PeriodicMaxwellPort)
+            else None,
+        }
+
+    semantic = SemanticProvenance(
         {
             "kind": "fourier-modal-numeric-state",
-            "arrays": array_tree_fingerprint(arrays),
+            "problem_id": problem.problem_id,
+            "preparation_id": prepared.preparation_id,
             "harmonic_layout_id": problem.harmonics.plan.layout.layout_id,
-            "physical_state_digest": physical_state_digest,
-            "physical_stack_digest": physical_stack_digest,
-            "problem_numeric_version": problem.numeric_version,
-            "superstrate": {
-                "port_id": problem.superstrate.port_id,
-                "material_id": problem.superstrate.material.material_id,
-                "material_role": problem.superstrate.material.material_role,
-                "origin_evidence_id": problem.superstrate.material.origin_evidence_id,
-                "factorization_id": problem.superstrate.factorization.plan_id
-                if isinstance(problem.superstrate, PeriodicMaxwellPort)
-                else None,
-                "mode_policy": problem.superstrate.mode_policy
-                if isinstance(problem.superstrate, PeriodicMaxwellPort)
-                else None,
-            },
+            "superstrate": port_descriptor(problem.superstrate),
             "elements": static_elements,
-            "substrate": {
-                "port_id": problem.substrate.port_id,
-                "material_id": problem.substrate.material.material_id,
-                "material_role": problem.substrate.material.material_role,
-                "origin_evidence_id": problem.substrate.material.origin_evidence_id,
-                "factorization_id": problem.substrate.factorization.plan_id
-                if isinstance(problem.substrate, PeriodicMaxwellPort)
-                else None,
-                "mode_policy": problem.substrate.mode_policy
-                if isinstance(problem.substrate, PeriodicMaxwellPort)
-                else None,
-            },
-            "source_parents": list(parent_digests),
+            "substrate": port_descriptor(problem.substrate),
         }
     )
     return NumericRevision(
-        content_digest,
-        label=label,
-        metadata=(
-            ("problem_id", problem.problem_id),
-            ("preparation_id", prepared.preparation_id),
-            ("physical_state_digest", physical_state_digest),
-            ("physical_stack_digest", physical_stack_digest),
-        ),
+        semantic,
+        {
+            "arrays": arrays,
+            "source_parents": tuple(parent.revision_id for parent in parents),
+        },
     )
 
 
@@ -389,18 +375,8 @@ def require_fourier_modal_numeric_revision(
     """Fail closed unless a revision binds the complete prepared numeric state."""
     if not isinstance(revision, NumericRevision):
         raise TypeError("numeric_revision must be NumericRevision.")
-    expected = fourier_modal_numeric_revision(
-        prepared, source_parents=source_parents, label=revision.label
-    )
-    revision_metadata = dict(revision.metadata)
-    expected_metadata = dict(expected.metadata)
-    if (
-        revision.content_digest != expected.content_digest
-        or revision_metadata.get("physical_state_digest")
-        != expected_metadata["physical_state_digest"]
-        or revision_metadata.get("physical_stack_digest")
-        != expected_metadata["physical_stack_digest"]
-    ):
+    expected = fourier_modal_numeric_revision(prepared, source_parents=source_parents)
+    if revision.revision_id != expected.revision_id:
         raise ValueError("numeric_revision does not bind this prepared numeric state.")
 
 

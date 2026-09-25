@@ -171,7 +171,7 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
         design = str(accepted_design_id)
         if epoch_ < 0 or count < 0 or minimum <= 0 or not plan or not design:
             raise ValueError("Adaptive design epoch metadata is invalid.")
-        event = DeterministicEventAddress("iga-adaptive-design", epoch_, 0, 0)
+        event = DeterministicEventAddress("iga-adaptive-design", epoch_, 0, 0, 0, 0, 0)
         self.epoch = epoch_
         self.plan_id = plan
         self.hierarchy_id = hierarchy.hierarchy_id

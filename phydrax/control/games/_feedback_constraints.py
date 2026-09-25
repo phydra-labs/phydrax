@@ -24,6 +24,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...linalg import (
     DenseLinearOperator,
@@ -259,12 +260,8 @@ class ConstrainedFeedbackGameProblem(StrictModule):
             else jnp.zeros((0,), dtype=jnp.bool_)
         )
 
-        dtype = jnp.result_type(
-            residuals,
-            state_jacobians,
-            control_jacobians,
-            model.nominal_controls,
-            jnp.float64,
+        dtype = inexact_result_type(
+            residuals, state_jacobians, control_jacobians, model.nominal_controls
         )
         self.suggestion = suggestion
         self.constraints = constraints

@@ -7,12 +7,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import product
 from operator import index
-from typing import Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ._differentiation import AbstractConstructionCertificate
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -182,9 +183,14 @@ class HolomorphicMultiJet(StrictModule):
         return self.derivatives[self.index_set.nonzero_indices.index(index)]
 
 
-class HolomorphicLinearFrameCertificate(StrictModule, NonTrainableState):
-    """Construction evidence for a finite real-coordinate holomorphic frame."""
+class HolomorphicLinearFrameCertificate(AbstractConstructionCertificate):
+    """Construction evidence for a finite real-coordinate holomorphic frame.
 
+    `certificate_id` content-addresses the frame and is the frame identity used
+    by constraint plans, projected potentials, and interchange records.
+    """
+
+    capability_id: ClassVar[str] = "holomorphic-linear-frame"
     complex_input_size: int = eqx.field(static=True)
     complex_output_size: int = eqx.field(static=True)
     real_coefficient_count: int = eqx.field(static=True)
@@ -193,7 +199,7 @@ class HolomorphicLinearFrameCertificate(StrictModule, NonTrainableState):
     basis_construction: str = eqx.field(static=True)
     coefficient_mode: str = eqx.field(static=True)
     construction_dependencies: tuple[str, ...] = eqx.field(static=True)
-    frame_id: str = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -233,7 +239,7 @@ class HolomorphicLinearFrameCertificate(StrictModule, NonTrainableState):
         self.basis_construction = identifiers[1]
         self.coefficient_mode = identifiers[2]
         self.construction_dependencies = dependencies
-        self.frame_id = canonical_fingerprint(
+        self.certificate_id = canonical_fingerprint(
             {
                 "kind": "holomorphic-linear-frame-certificate",
                 "complex_input_size": input_size,

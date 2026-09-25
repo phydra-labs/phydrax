@@ -361,7 +361,7 @@ def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable():
 
     assert (
         loader.fingerprint
-        == "a4f52f4c52fc978f134d7253f984518e5bf04e2edab1c8939749143b867bc395"
+        == "7a81e9736fb2800590b2a217d517755d313046680b13f2f27b08ce6d7ae2d367"
     )
     assert type(positional) is phx.nn.operator.training.OperatorEpochPlan
     assert positional == keyword
@@ -726,10 +726,10 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
 
     manifest_path = checkpoint / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest.pop("version")
+    manifest["format"] = "phydrax-operator-training-checkpoint"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     old_format_reads = []
-    with pytest.raises(ValueError, match="current canonical fields"):
+    with pytest.raises(ValueError, match="is not a"):
         phx.nn.operator.training.fit_operator(
             _fit_model(),
             _logged_dataset_source(dataset, old_format_reads),

@@ -203,7 +203,7 @@ class SpalartAllmarasManufacturedEvidence(StrictModule):
     case_id: str = eqx.field(static=True)
 
 
-class SpalartAllmarasManufacturedPlan(StrictModule, NonTrainableState):
+class SpalartAllmarasManufacturedPlan(StrictModule):
     """Automatic strong-form SA-neg manufactured source on physical points."""
 
     system: SpalartAllmarasCompressibleSystem

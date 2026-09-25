@@ -97,7 +97,7 @@ class MHDCTRateResult(StrictModule):
     uct_maximum_dissipation: Array
 
 
-class UpwindConstrainedTransportPlan(StrictModule, NonTrainableState):
+class UpwindConstrainedTransportPlan(StrictModule):
     """Periodic Cartesian flux-CT in one, two, or three physical dimensions."""
 
     dynamics: PreparedFiniteVolumeDynamics

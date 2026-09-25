@@ -127,18 +127,13 @@ def _physical_tangent(
     point = jnp.asarray(state)
     candidate = jnp.asarray(value)
     tangent_zero = jnp.asarray(geometry.project_tangent(point, jnp.zeros_like(point)))
-    if candidate.shape == point.shape:
-        projected = jnp.asarray(geometry.project_tangent(point, candidate))
-        if projected.shape != tangent_zero.shape:
-            raise ValueError(
-                f"{owner} projection must preserve physical tangent shape {tangent_zero.shape}; got {projected.shape}."
-            )
-        return projected
     if candidate.shape != tangent_zero.shape:
         raise ValueError(
             f"{owner} must have physical tangent shape {tangent_zero.shape}; got {candidate.shape}."
         )
-    return candidate
+    if candidate.shape != point.shape:
+        return candidate
+    return jnp.asarray(geometry.project_tangent(point, candidate))
 
 
 def _local_zero(geometry: AbstractStateGeometry, state: Array, /) -> Array:

@@ -15,6 +15,7 @@ from jaxtyping import Array, Key
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
+from phydrax._trainable import ParameterOwner
 
 from ..._doc import DOC_KEY0
 from .._keys import EvalKey
@@ -41,7 +42,7 @@ def _last_valid_array(values: Array, valid: Array, /) -> Array:
     return jnp.where(has_value, selected, jnp.zeros_like(selected))
 
 
-class LinearRecurrentUnit(StrictModule):
+class LinearRecurrentUnit(StrictModule, ParameterOwner):
     """Stable complex-diagonal linear recurrence with real input/output maps."""
 
     raw_radius: Array

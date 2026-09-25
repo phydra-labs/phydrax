@@ -925,14 +925,6 @@ def _amr_accepted_ledger(
 ):
     interval = end_time - start_time
     integral = np.asarray(flux_integral, dtype=np.float32)
-    stage = _stage(
-        integral / interval,
-        np.zeros((2, 1), dtype=np.float32),
-        geometry_family_id=plan.topology.plan.geometry_id,
-        geometry_layout_id=plan.topology.partition_id,
-        evidence_policy_id=plan.precision.policy_id,
-        topology_epoch_id=plan.topology.epoch.epoch_id,
-    )
     start_version = accepted_step if start_version is None else start_version
     end_version = accepted_step + 1 if end_version is None else end_version
     start_evidence_version = (
@@ -940,6 +932,17 @@ def _amr_accepted_ledger(
     )
     end_evidence_version = (
         end_version if end_evidence_version is None else end_evidence_version
+    )
+    # An accepted ledger starts at its first stage's geometry/evidence versions.
+    stage = _stage(
+        integral / interval,
+        np.zeros((2, 1), dtype=np.float32),
+        geometry_family_id=plan.topology.plan.geometry_id,
+        geometry_layout_id=plan.topology.partition_id,
+        geometry_version=start_version,
+        evidence_policy_id=plan.precision.policy_id,
+        evidence_version=start_evidence_version,
+        topology_epoch_id=plan.topology.epoch.epoch_id,
     )
     return _integrate(
         stage,

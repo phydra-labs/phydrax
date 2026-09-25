@@ -25,6 +25,10 @@ from phydrax.applications.battery._protocol import (
     CurrentStepPlan,
     RestStepPlan,
 )
+from phydrax.applications.battery._qualification import (
+    BROSA_PLANELLA_SPME_SEI_CANDIDATE,
+    BROSA_PLANELLA_SPME_SEI_SUPPORT,
+)
 from phydrax.applications.battery._results import BatteryRunStatus
 from phydrax.applications.battery._spm import SpmParameters
 from phydrax.applications.battery._spme_marquis2019 import (
@@ -39,7 +43,6 @@ from phydrax.applications.battery._spme_side_reactions import (
     BrosaPlanellaSpmeSeiPlan,
     BrosaPlanellaSpmeSeiState,
 )
-from phydrax.qualification import CapabilityProfile, SupportTuple
 
 
 FARADAY = 96485.33212
@@ -501,22 +504,8 @@ def test_orchestration_closes_lithium_charge_product_film_and_porosity_ledgers()
         (CurrentStepPlan(0.5), RestStepPlan(0.25), CurrentStepPlan(0.25))
     )
     protocol_values = BatteryProtocolValues(protocol, jnp.asarray((0.2, -0.05)))
-    support = SupportTuple(
-        "battery.simulation",
-        {
-            "model": "spme-sei-brosa-planella-widanage",
-            "control": "prescribed-current",
-            "thermal": False,
-            "plating": False,
-        },
-    )
-    profile = CapabilityProfile(
-        "battery.spme-sei-test-candidate",
-        "phydrax-tests",
-        "candidate",
-        (support,),
-        released=False,
-    )
+    support = BROSA_PLANELLA_SPME_SEI_SUPPORT
+    profile = BROSA_PLANELLA_SPME_SEI_CANDIDATE
     save_times = jnp.asarray((0.0, 0.25, 0.5, 0.75, 1.0))
     experiment = BatteryExperimentPlan(
         adapter,

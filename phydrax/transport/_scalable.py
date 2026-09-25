@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ._costs import SquaredEuclideanCost
 from ._problem import DiscreteTransportProblem
@@ -370,9 +371,7 @@ class GaussianPositiveFeatures(StrictModule):
             raise TypeError("GaussianPositiveFeatures requires SquaredEuclideanCost.")
         epsilon_ = jnp.asarray(
             epsilon,
-            dtype=jnp.result_type(
-                problem.source.points, problem.target.points, jnp.float64
-            ),
+            dtype=inexact_result_type(problem.source.points, problem.target.points),
         ).reshape(())
         epsilon_ = eqx.error_if(
             epsilon_,

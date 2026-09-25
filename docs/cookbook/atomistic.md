@@ -157,4 +157,6 @@ continued = phx.atomistic.fit_atomistic_potential(
 
 Only `maximum_steps` may change across that continuation. A changed optimizer,
 loss scale or weight, validation cadence, patience, delta, or selection policy
-is rejected rather than silently starting a different run.
+is rejected rather than silently starting a different run. The result's
+`training_state` is the committed training-kernel state (Adam moments, root key,
+and cursors); the continuation resumes it and ignores a newly supplied `key`.

@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field
 from ...solver import ParticleMeshGravityPlan
 from ._background import FLRWBackground
 from ._particles import (
@@ -106,12 +106,12 @@ def _advance_particle_mesh_interval(
     )
 
 
-class CosmologicalParticleMeshPlan(StrictModule, NonTrainableState):
+class CosmologicalParticleMeshPlan(StrictModule):
     """Compose Phydrax PM acceleration with canonical scale-factor KDK."""
 
     kinematics: CosmologicalKDKPlan
     gravity: ParticleMeshGravityPlan
-    scale_factors: Array
+    scale_factors: Array = fixed_field()
     plan_id: str = eqx.field(static=True)
 
     def __init__(

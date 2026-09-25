@@ -26,12 +26,47 @@ Every outer update performs the following lifecycle:
 6. freeze the optimizer surrogate;
 7. reuse it for the gradient, KFAC/GGN curvature, and every line-search
    candidate;
-8. commit one accepted iterate;
-9. run fixed model selection when scheduled;
+8. run one attempt of Phydrax's internal training kernel, which decides one of
+   three outcomes on device: **accepted** (commit parameters, optimizer state,
+   target parameters, and the accepted-update counter), **finite rejection**
+   (commit only the optimizer state the method declares, such as
+   Levenberg-Marquardt damping, KFAC curvature, or a failed Riemannian line
+   search; parameters stay unchanged), or **nonfinite** (roll everything back);
+9. run fixed model selection when scheduled (accepted updates only);
 10. publish a checkpoint only at this accepted-update boundary.
 
 This prevents line searches from comparing candidates evaluated on different
-samples, weights, or causal gates.
+samples, weights, or causal gates. The solver lowers its ordered total as one
+kernel objective, so the floating-point sum of the authored terms is unchanged.
+Parameters without an owning component slot train with surrogate authority on
+physical-residual objectives. Pseudo-transient history, term multipliers, and
+diagnostic gradients advance only with accepted updates. A run tolerates 64
+consecutive rejected attempts; the next raises
+`TrainingRejectionBudgetError`. `training_state.progress.epoch` counts attempts
+and `training_state.progress.update_step` counts accepted updates.
+
+Randomness is addressed semantically: refresh, term selection, sampling,
+evaluation, NTK probes, selection, reporting, and settling each draw from their
+own named site of the run's root key, folded with the attempt cursor and
+microstep. A retry after a rejection therefore sees a fresh realization, and a
+resumed run replays exactly the keys an uninterrupted run would use. Each
+term's realization is addressed by its original term index, independent of
+which terms a step selects.
+
+## Parameter lanes
+
+Every backend updates only the PARAMETER lane of `solver.functions`, as returned by
+`solver.partition_functions()` (see
+[array roles](api/phydrax.md#array-roles-and-lanes)). FIXED leaves are never
+trained, and MODEL_STATE leaves are carried unchanged because no functional
+objective returns a next model state. Optimizer state, delayed and EMA target
+state (`target_policy`), and best-iterate selection all hold parameter-lane trees;
+`training_state.kernel_state` holds the committed parameters, optimizer state
+(`rule_state`), target parameters (`targets`), root key, and attempt/accepted
+cursors.
+Undeclared inexact leaves fail before the first update; an explicit
+`parameter_subspace` declares its own selection. KFAC and
+`solve_linear_trial_space(...)` reject a non-empty model-state lane.
 
 ## Optimizer choice
 
@@ -100,11 +135,22 @@ For residual block `r_j`, pseudo-transient training uses
 `ResidualRelaxationMap` explicitly declares the state-to-residual map `M`.
 This is required for constrained, mixed, overdetermined, and gauge systems where
 a residual cannot be inferred from a similarly named field.
+The map identity is formed with the canonical callable payload: StrictModule
+operators and plain module-level functions are identified by content, while
+opaque operators (lambdas, closures, methods, partials, and functions reading a
+numeric array from their defaults or module globals) must declare
+`operator_semantic_id` and `operator_numeric_id`; omitting them raises
+`TypeError`.
 
 ```python
 pseudo = phx.solver.PseudoTransientPolicy(
     0,
-    phx.solver.ResidualRelaxationMap("u", lambda u: u),
+    phx.solver.ResidualRelaxationMap(
+        "u",
+        lambda u: u,
+        operator_semantic_id="identity-map",
+        operator_numeric_id="identity-map",
+    ),
     adaptation=phx.solver.PseudoTransientAdaptation(
         start=2,
         every=1000,
@@ -206,17 +252,31 @@ continued = trained.solve(
 )
 ```
 
-A checkpoint retains current and best functions separately, optimizer state,
-previous pseudo-time fields, adaptive coefficients, collocation populations,
-PRNG state, update/microstep progress, gradient-accumulation identity, and run
-identities. Restore rejects mismatched accumulation, training plans, target
-policies, and discretization bundles. Checkpoints are published only after the
-accumulated Optax update; transient gradient buffers are never serialized.
+A checkpoint retains the training kernel's committed state (parameters,
+optimizer state, target parameters, root key, attempt and accepted cursors,
+role schema, objective and update-rule identities), current and best functions
+separately, previous pseudo-time fields, adaptive coefficients, collocation
+populations, update/microstep progress, gradient-accumulation identity, and run
+identities. Its metadata also records the solved functions'
+`ArtifactBindingIdentity`: the kernel checkpoint identity as semantics, the
+PARAMETER lane as the numeric revision (the kernel's parameter revision), and
+parameter shapes, dtypes, update rule, FIXED and model-state structure,
+discretization, and sharding as the executable signature. Restore rejects
+mismatched accumulation, training plans, target policies, discretization
+bundles, roles, objectives, update rules, array structures, and bindings
+recomputed from the restored parameters, and any array lane or cursor whose
+content differs from the kernel manifest's canonical content digest;
+checkpoints without a binding or written before the training kernel fail
+closed.
+Periodic checkpoints are published only at accepted-update boundaries; the
+final checkpoint of a run may follow a rejected attempt and records that.
 
 ## Named sharding
 
 `FunctionalShardingPolicy` maps native sample-axis names onto a caller-owned
-JAX mesh. Parameters are replicated; prepared sample fields are sharded.
+JAX mesh. Placement follows array roles: parameters and model state are
+replicated, fixed data shards its named sample axes and replicates its other
+arrays, and prepared sample fields are sharded.
 Ordinary global-array reductions therefore compute one global weighted
 numerator divided by one global support. Phydrax never averages already
 normalized local means.
@@ -226,14 +286,19 @@ normalized local means.
 `FunctionalTimeWindowPlan` owns physical window boundaries and delegates the
 equation-specific initial/terminal conversion to a `FunctionalWindowAdapter`.
 Parameter transfer and optimizer-state transfer remain independent.
-Optimizer-state transfer requires a `FunctionalTrainingPlan` in every window
-and identical parameter PyTree structure. Results retain every window solver,
+Optimizer-state transfer requires a `FunctionalTrainingPlan` in every window.
+When the next window's parameter and model-state lanes match the previous
+window's structure, it continues the previous kernel state: optimizer state,
+target parameters, and enforcement state carry over, the adapter's functions
+supply parameters and model state, and the root key is re-addressed by window
+index with fresh cursors. Otherwise the window starts a fresh run. Results retain every window solver,
 terminal field, seam metric, and explicit half-open interior endpoint routing;
 extrapolation is rejected.
 
 ## Defect and fidelity correction
 
-`prepare_functional_correction(...)` freezes a base field and trains only the
+`prepare_functional_correction(...)` freezes a base field inside an `ExplicitFreeze`
+holder, so its model parameters are FIXED, and trains only the
 supplied correction fields against the exact nonlinear scaled residual
 `R(u_base + epsilon * delta_u) / epsilon`. Optional `replacement_functions`
 remain independently trainable for target-owned coefficients or fields. The returned
@@ -262,8 +327,8 @@ composed direction.
 Set it with
 `FunctionalTrainingPlan(gradient_composition=...)`. Initial support is a
 standard Optax update with all terms active, one microstep, no attached model
-losses, and no simultaneous term balancing. Infeasible opposite gradients fail
-instead of falling back to an unlabeled weighted sum. Stationary and
+losses, and no simultaneous term balancing. Infeasible opposite gradients are a
+finite rejection that commits nothing, never an unlabeled weighted sum. Stationary and
 zero-support objectives remain separately identified.
 
 Componentized terms, including `PhysicsFlowMatchingTerm`, share one sampled
@@ -295,8 +360,10 @@ The projector returns the original additive Optax update unchanged when it is
 already feasible. Otherwise it solves a loss-dimensional dual problem and
 records gradient, constructed-direction, raw-proposal, and applied-direction
 conflicts; correction norms; active constraints; and KKT residuals. Cumulative
-statistics live in `FunctionalTrainingState.update_alignment_statistics`, so
-checkpoint resume preserves the complete mismatch history.
+statistics live in the update rule's state
+(`training_state.kernel_state.rule_state.statistics`), so checkpoint resume
+preserves the complete mismatch history. An unsuccessful alignment is a finite
+rejection that commits nothing.
 
 The cone is built from authored physical objective components on the same
 prepared stochastic realization. Term balancing, causal transforms, and

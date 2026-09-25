@@ -15,11 +15,12 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ..finite_volume._riemann import (
     AbstractSymmetricTwoPointFluxPlan,
     EntropyConservativeEulerFluxPlan,
@@ -27,7 +28,6 @@ from ..finite_volume._riemann import (
 from ._method import (
     PreparedPseudospectralMethod,
     PseudospectralMethodPlan,
-    SpectralDifferentiabilityPolicy,
 )
 from ._space import TensorSpectralDiscretization
 
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from ...equations import ConvexEntropyPair
 
 
-class SpectralSplitFormPlan(StrictModule, NonTrainableState):
+class SpectralSplitFormPlan(StrictModule):
     """Certified periodic Fourier flux-differencing plan."""
 
     volume_flux: AbstractSymmetricTwoPointFluxPlan
@@ -91,24 +91,24 @@ class SpectralSplitFormReport(StrictModule, NonTrainableState):
     report_id: str = eqx.field(static=True)
 
 
-class PreparedSpectralSplitForm(StrictModule, NonTrainableState):
+class PreparedSpectralSplitForm(StrictModule):
     plan: SpectralSplitFormPlan
-    differentiation_matrices: tuple[Array, ...]
-    quadrature_norms: tuple[Array, ...]
-    pair_rows: tuple[Array, ...]
-    pair_columns: tuple[Array, ...]
+    differentiation_matrices: tuple[Array, ...] = fixed_field()
+    quadrature_norms: tuple[Array, ...] = fixed_field()
+    pair_rows: tuple[Array, ...] = fixed_field()
+    pair_columns: tuple[Array, ...] = fixed_field()
     report: SpectralSplitFormReport
     prepared_id: str = eqx.field(static=True)
 
 
-class SpectralConservationMethodPlan(StrictModule, NonTrainableState):
+class SpectralConservationMethodPlan(StrictModule):
     """Periodic conservative projected flux or certified Fourier split form."""
 
     pseudospectral: PseudospectralMethodPlan | None
     split_form: SpectralSplitFormPlan | None
     flux_polynomial_degree: int | None = eqx.field(static=True)
     entropy_diagnostics: bool = eqx.field(static=True)
-    differentiability: SpectralDifferentiabilityPolicy = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -119,7 +119,9 @@ class SpectralConservationMethodPlan(StrictModule, NonTrainableState):
         split_form: SpectralSplitFormPlan | None = None,
         flux_polynomial_degree: int | None = None,
         entropy_diagnostics: bool = False,
-        differentiability: SpectralDifferentiabilityPolicy = "smooth_discrete",
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.SMOOTH
+        ),
     ):
         if (pseudospectral is None) == (split_form is None):
             raise ValueError(
@@ -136,13 +138,22 @@ class SpectralConservationMethodPlan(StrictModule, NonTrainableState):
             raise ValueError("flux_polynomial_degree must be positive or None.")
         if split_form is not None and degree is not None:
             raise ValueError("flux_polynomial_degree is invalid on the split-form route.")
-        if differentiability not in (
-            "smooth_discrete",
-            "branchwise",
-            "smooth_surrogate",
-            "unsupported",
-        ):
-            raise ValueError("Unknown spectral differentiability policy.")
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.SMOOTH
+                | BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.UNSUPPORTED
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "SpectralConservationMethodPlan supports SMOOTH, BRANCHWISE, "
+                    "SMOOTH_SURROGATE, or UNSUPPORTED; got "
+                    f"{differentiability.name}."
+                )
         self.pseudospectral = pseudospectral
         self.split_form = split_form
         self.flux_polynomial_degree = degree
@@ -157,7 +168,7 @@ class SpectralConservationMethodPlan(StrictModule, NonTrainableState):
                 "split_form": None if split_form is None else split_form.plan_id,
                 "flux_polynomial_degree": degree,
                 "entropy_diagnostics": bool(entropy_diagnostics),
-                "differentiability": differentiability,
+                "differentiability": differentiability.value,
             }
         )
 
@@ -189,7 +200,7 @@ class SpectralConservationMethodPlan(StrictModule, NonTrainableState):
         )
 
 
-class PreparedSpectralConservationMethod(StrictModule, NonTrainableState):
+class PreparedSpectralConservationMethod(StrictModule):
     plan: SpectralConservationMethodPlan
     discretization: TensorSpectralDiscretization
     pseudospectral: PreparedPseudospectralMethod | None

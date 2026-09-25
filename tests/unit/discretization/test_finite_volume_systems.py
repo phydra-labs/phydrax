@@ -801,6 +801,20 @@ def test_mhd_flux_preserves_declared_components():
     assert jnp.all(mhd.admissible(mhd_state))
 
 
+def test_wave_propagation_method_refuses_face_closure():
+    closure = phx.discretization.ArbitraryNormalFaceClosurePlan(
+        lambda system, left, right, baseline, context, args: 0.1 * (right - left),
+        closure_id="wave-jump-correction",
+    )
+
+    with pytest.raises(ValueError, match="numerical-flux interface solver"):
+        phx.discretization.FiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RoeWavePropagationPlan(),
+            closure=closure,
+        )
+
+
 def test_unsplit_two_dimensional_scalar_residual_preserves_periodic_mass():
     grid = _cell_grid((18, 14), periodic=(True, True))
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
@@ -873,3 +887,33 @@ def test_nonuniform_weno_prepares_ghost_geometry_for_bounded_faces():
 
     assert fluxes[0].shape == (7, 1)
     np.testing.assert_allclose(compiled(jnp.asarray(0.0), state), 0.0, atol=1e-12)
+
+
+@pytest.mark.parametrize("geometry_kind", ("triangle", "unstructured"))
+def test_stationary_polygonal_fv_executes_arbitrary_normal_non_ale_flux(
+    geometry_kind,
+):
+    system = phx.equations.EulerSystem(2)
+    solver = phx.discretization.EntropyStableEulerFluxPlan()
+    assert not isinstance(
+        solver, phx.discretization.AbstractArbitraryNormalALENumericalFluxPlan
+    )
+    compiled = _compile_two_dimensional_system(geometry_kind, system, solver)
+    assert compiled.method.interface_solver is solver
+    discretization = compiled.dynamics.discretization
+    uniform = system.primitive_to_conserved(
+        jnp.broadcast_to(jnp.asarray((1.0, 0.2, -0.1, 1.0)), discretization.state_shape)
+    )
+    np.testing.assert_allclose(
+        compiled.dynamics(jnp.asarray(0.0), uniform), 0.0, atol=1e-12
+    )
+
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        compiled.dynamics, phx.discretization.FluxPositivityPlan(), None
+    )
+    result = runtime.advance(runtime.initialize_state(uniform, 0.0, 1.0e-3))
+
+    assert bool(result.accepted)
+    np.testing.assert_allclose(
+        result.runtime_state.cell_average(), uniform, rtol=1e-12, atol=1e-12
+    )

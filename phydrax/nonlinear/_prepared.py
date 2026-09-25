@@ -21,6 +21,7 @@ from ..linalg import (
     LinearSystem,
     refresh_recycling,
 )
+from ._components import admit_residual_components
 from ._linearization import (
     _jacobian_solve_operator,
     prepare_jacobian,
@@ -128,6 +129,29 @@ class PreparedNonlinearSolve(StrictModule):
     @property
     def linear_template_id(self) -> str:
         return self.run.refresh_state.template.template_id
+
+    @property
+    def component_evidence(self) -> tuple[str, ...]:
+        """Randomness admission evidence of the residual components.
+
+        An opaque residual closure is recorded as
+        `"residual:determinism-undeclared"`; each model component records its
+        admitted randomness (for example `"residual.model:deterministic"`).
+        """
+        return admit_residual_components(self.problem, self.args, implicit=False)
+
+
+def _validate_prepared_tolerance(
+    prepared: PreparedNonlinearSolve,
+    termination: NonlinearTermination,
+    /,
+) -> None:
+    _, residual_dtype = prepared.precision.validate_trees(
+        prepared.state, prepared.run.residual
+    )
+    prepared.precision.validate_tolerance(
+        termination.absolute_residual, residual_dtype=residual_dtype
+    )
 
 
 def _globalization_id(method: NewtonKrylov | NewtonTrustRegion, /) -> str:
@@ -284,6 +308,7 @@ def prepare_nonlinear(
         _initial_trust_radius(method_),
         args,
         precision_,
+        termination_,
     )
     provenance = _prepared_provenance(
         problem_,
@@ -322,6 +347,7 @@ def refresh_nonlinear(
         raise ValueError("Nonlinear refreshes must preserve problem_id.")
     if problem.trial_validity_id != prepared.problem.trial_validity_id:
         raise ValueError("Nonlinear refreshes must preserve trial_validity_id.")
+    admit_residual_components(problem, args, implicit=False)
     state = problem.validate_state(initial_state)
     jacobian = prepare_jacobian(problem, state, prepared.method.jacobian_policy, args)
     prepared.precision.validate_trees(state, jacobian.residual)
@@ -409,6 +435,8 @@ def solve_prepared_nonlinear(
     termination_ = prepared.termination if termination is None else termination
     if not isinstance(termination_, NonlinearTermination):
         raise TypeError("termination must be a NonlinearTermination or None.")
+    if termination is not None:
+        _validate_prepared_tolerance(prepared, termination_)
     return prepared.method.solve(
         prepared.problem,
         prepared.state,
@@ -438,6 +466,8 @@ def step_prepared_nonlinear(
     source = prepared.termination if termination is None else termination
     if not isinstance(source, NonlinearTermination):
         raise TypeError("termination must be a NonlinearTermination or None.")
+    if termination is not None:
+        _validate_prepared_tolerance(prepared, source)
     one_step = NonlinearTermination(
         absolute_residual=source.absolute_residual,
         relative_residual=source.relative_residual,
@@ -499,6 +529,7 @@ def _seed_nonlinear_continuation(
     deferred = int(defer_refresh_steps)
     if deferred < 0:
         raise ValueError("defer_refresh_steps must be non-negative.")
+    admit_residual_components(problem, args, implicit=False)
     state = problem.validate_state(initial_state)
     residual, auxiliary = problem.evaluate(state, args)
     problem_ = problem.bind_spaces(state, residual)

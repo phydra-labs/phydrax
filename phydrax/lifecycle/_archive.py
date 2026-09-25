@@ -31,6 +31,7 @@ from .._array_archive import (
 from .._execution_plan import ExecutionPlan
 from .._fingerprint import canonical_fingerprint, canonical_json
 from .._host_io import open_regular_file
+from .._identity import ArtifactBindingIdentity, NumericRevision
 from .._publication import publish_bytes
 from ..diagnostics import Diagnostic, DiagnosticError
 from ..logging import emit
@@ -45,15 +46,15 @@ from ._models import (
     CheckpointManifest,
     CheckpointShard,
     ModelManifest,
-    NumericRevision,
     ResultManifest,
     ResultRevision,
+    RevisionLineage,
     RunRecord,
 )
 
 
 LifecycleRecord: TypeAlias = (
-    NumericRevision
+    RevisionLineage
     | CheckpointManifest
     | AnalysisPlan
     | ExecutionPlan
@@ -450,7 +451,7 @@ def create(
     if not isinstance(
         manifest,
         (
-            NumericRevision,
+            RevisionLineage,
             CheckpointManifest,
             AnalysisPlan,
             ExecutionPlan,
@@ -518,8 +519,7 @@ def open(
     record_digest = canonical_fingerprint(record)
     if container.get("record_digest") != record_digest:
         raise ArrayArchiveCorruptionError("Lifecycle record checksum failed.")
-    manifest = _decode_record(record)
-    _validate_payloads(manifest, arrays)
+    manifest = _decode_verified_record(record, arrays)
     _validate_parent_archive(manifest, parent)
     archive_id = canonical_fingerprint(
         {
@@ -662,9 +662,9 @@ _SUPPORT_RECORD_KINDS = frozenset(
         "checkpoint-manifest",
         "execution-plan",
         "model-manifest",
-        "numeric-revision",
         "result-manifest",
         "result-revision",
+        "revision-lineage",
         "run-record",
     }
 )
@@ -870,11 +870,13 @@ def _validate_payloads(
         expected = tuple(
             (name, digest, None) for name, digest in manifest.manifest.payloads
         )
-    elif isinstance(manifest, NumericRevision):
-        if not arrays:
-            raise ValueError("Numeric revision archives require materialized payloads.")
-        if array_collection_digest(arrays) != manifest.content_digest:
-            raise ValueError("Numeric revision content digest does not match payloads.")
+    elif isinstance(manifest, RevisionLineage):
+        if _lineage_revision(manifest.semantic_id, arrays).revision_id != (
+            manifest.revision_id
+        ):
+            raise ValueError(
+                "Revision lineage payloads do not realize its canonical numeric revision."
+            )
         return
     else:
         if arrays:
@@ -898,16 +900,16 @@ def _validate_parent_archive(
 ) -> None:
     if parent is not None and not isinstance(parent, LifecycleArchive):
         raise TypeError("parent must be a LifecycleArchive or None.")
-    if isinstance(manifest, NumericRevision):
-        has_parent = manifest.parent_digest is not None
+    if isinstance(manifest, RevisionLineage):
+        has_parent = manifest.parent_lineage_id is not None
         if has_parent != (parent is not None):
-            raise ValueError("Numeric revision parent archive is required exactly once.")
+            raise ValueError("Revision lineage parent archive is required exactly once.")
         if parent is not None and (
-            not isinstance(parent.manifest, NumericRevision)
-            or manifest.parent_digest != parent.manifest.content_digest
+            not isinstance(parent.manifest, RevisionLineage)
+            or manifest.parent_lineage_id != parent.manifest.lineage_id
             or manifest.parent_revision_id != parent.manifest.revision_id
         ):
-            raise ValueError("Numeric revision parent archive identity is invalid.")
+            raise ValueError("Revision lineage parent archive identity is invalid.")
         return
     if isinstance(manifest, CheckpointManifest):
         has_parent = manifest.parent_checkpoint_id is not None
@@ -1013,8 +1015,7 @@ def _verified_archive_snapshot(
     if container.get("kind") != "lifecycle-archive" or not isinstance(record, Mapping):
         raise ArrayArchiveCorruptionError("Support source is not a lifecycle archive.")
     record_digest = canonical_fingerprint(record)
-    manifest = _decode_record(record)
-    _validate_payloads(manifest, arrays)
+    _decode_verified_record(record, arrays)
     snapshot_id = canonical_fingerprint(
         {
             "kind": "lifecycle-archive",
@@ -1033,16 +1034,26 @@ def _verified_archive_snapshot(
     return payload
 
 
+def _lineage_revision(
+    semantic_id: str, arrays: Mapping[str, Any], /
+) -> NumericRevision:
+    """Recompute the canonical numeric revision realized by lineage payloads."""
+    if not arrays:
+        raise ValueError("Revision lineage archives require materialized payloads.")
+    return NumericRevision(semantic_id, dict(arrays))
+
+
 def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
-    if isinstance(record, NumericRevision):
+    if isinstance(record, RevisionLineage):
         return {
-            "kind": "numeric-revision",
-            "content_digest": record.content_digest,
-            "label": record.label,
-            "parent_digest": record.parent_digest,
-            "parent_revision_id": record.parent_revision_id,
-            "metadata": [list(item) for item in record.metadata],
+            "kind": "revision-lineage",
+            "semantic_id": record.semantic_id,
             "revision_id": record.revision_id,
+            "label": record.label,
+            "parent_revision_id": record.parent_revision_id,
+            "parent_lineage_id": record.parent_lineage_id,
+            "metadata": [list(item) for item in record.metadata],
+            "lineage_id": record.lineage_id,
         }
     if isinstance(record, CheckpointManifest):
         return {
@@ -1105,6 +1116,11 @@ def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
             "payloads": [list(item) for item in record.payloads],
             "unit_contract_id": record.unit_contract_id,
             "association_ids": list(record.association_ids),
+            **(
+                {}
+                if record.binding is None
+                else {"binding": record.binding.to_record()}
+            ),
             "manifest_id": record.manifest_id,
         }
     if isinstance(record, ResultManifest):
@@ -1138,18 +1154,28 @@ def _encode_result_manifest(record: ResultManifest, /) -> dict[str, Any]:
     }
 
 
+def _decode_verified_record(
+    record: Mapping[str, Any], arrays: Mapping[str, Any], /
+) -> LifecycleRecord:
+    """Decode one record and verify its payloads, hashing lineage content once."""
+    if record.get("kind") != "revision-lineage":
+        manifest = _decode_record(record)
+        _validate_payloads(manifest, arrays)
+        return manifest
+    value = RevisionLineage(
+        _lineage_revision(record["semantic_id"], arrays),
+        label=record["label"],
+        parent_revision_id=record["parent_revision_id"],
+        parent_lineage_id=record["parent_lineage_id"],
+        metadata=record["metadata"],
+    )
+    _identity(record, "revision_id", value.revision_id)
+    _identity(record, "lineage_id", value.lineage_id)
+    return value
+
+
 def _decode_record(record: Mapping[str, Any], /) -> LifecycleRecord:
     kind = record.get("kind")
-    if kind == "numeric-revision":
-        value = NumericRevision(
-            record["content_digest"],
-            label=record["label"],
-            parent_digest=record["parent_digest"],
-            parent_revision_id=record["parent_revision_id"],
-            metadata=record["metadata"],
-        )
-        _identity(record, "revision_id", value.revision_id)
-        return value
     if kind == "checkpoint-manifest":
         shards = tuple(_decode_shard(item) for item in record["shards"])
         value = CheckpointManifest(
@@ -1203,6 +1229,11 @@ def _decode_record(record: Mapping[str, Any], /) -> LifecycleRecord:
             record["payloads"],
             unit_contract_id=record["unit_contract_id"],
             association_ids=record["association_ids"],
+            binding=(
+                ArtifactBindingIdentity.from_record(record["binding"])
+                if "binding" in record
+                else None
+            ),
         )
         _identity(record, "manifest_id", value.manifest_id)
         return value
@@ -1256,8 +1287,8 @@ def _identity(record: Mapping[str, Any], name: str, expected: str, /) -> None:
 
 
 def _record_id(record: LifecycleRecord, /) -> str:
-    if isinstance(record, NumericRevision):
-        return record.revision_id
+    if isinstance(record, RevisionLineage):
+        return record.lineage_id
     if isinstance(record, CheckpointManifest):
         return record.manifest_id
     if isinstance(record, (AnalysisPlan, ExecutionPlan)):

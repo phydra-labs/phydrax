@@ -15,10 +15,18 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._frozendict import frozendict
 from phydrax._model import AbstractArrayModel, register_artifact_value
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    model_regularity,
+    product_regularity,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn._utils import _get_size
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
@@ -68,6 +76,10 @@ class AbstractBranchEncoder(StrictModule):
     ) -> Array:
         raise NotImplementedError
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        """Declared regularity of the latent coefficients (`None`: undeclared)."""
+        return None
+
 
 class FixedBranchEncoder(AbstractBranchEncoder):
     """Compatibility encoder that flattens a fixed source discretization."""
@@ -100,6 +112,9 @@ class FixedBranchEncoder(AbstractBranchEncoder):
         flat = values.reshape((-1, prod(values.shape[case_ndim:])))
         encoded = jax.vmap(lambda value: self.model(value, key=key))(flat)
         return jnp.asarray(encoded).reshape(case_shape + (self.latent_size,))
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return model_regularity(self.model)
 
 
 class IntegralBranchEncoder(AbstractBranchEncoder):
@@ -195,6 +210,14 @@ class IntegralBranchEncoder(AbstractBranchEncoder):
         mixed = jax.vmap(lambda value: mixer(value, key=key))(flat_cases)
         return jnp.asarray(mixed).reshape(case_shape + (self.latent_size,))
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Quadrature weights are fixed source geometry, so the reduction is linear.
+        return compose_regularity(
+            model_regularity(self.feature_model),
+            AFFINE,
+            AFFINE if self.mixer is None else model_regularity(self.mixer),
+        )
+
 
 class AbstractBasisTrunk(StrictModule):
     """Coordinate basis evaluator consumed by the shared DeepONet decoder."""
@@ -228,6 +251,10 @@ class AbstractBasisTrunk(StrictModule):
         key: EvalKey = None,
     ) -> Array:
         raise NotImplementedError
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        """Declared regularity of the basis in the query (`None`: undeclared)."""
+        return None
 
 
 class PODBasis(AbstractBasisTrunk, NonTrainableState):
@@ -439,6 +466,24 @@ class PODBasis(AbstractBasisTrunk, NonTrainableState):
         self.validate_query_layout(query)
         offset = self._validated_query_value(self.offset, query)
         return jnp.broadcast_to(offset, case_shape + offset.shape)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Basis and offset are fixed values on the validated fit layout.
+        return DerivativeRegularity.smooth(degree_bound=0)
+
+
+def _fused_branch_regularity(
+    branches: Mapping[str, AbstractBranchEncoder],
+    fusion: BranchFusion,
+    branch_mixer: object | None,
+    /,
+) -> DerivativeRegularity | None:
+    encoded = tuple(encoder._value_regularity() for encoder in branches.values())
+    if fusion == "sum":
+        return sum_regularity(encoded)
+    if fusion == "product":
+        return product_regularity(encoded)
+    return compose_regularity(sum_regularity(encoded), model_regularity(branch_mixer))
 
 
 def _deeponet_contract(model):
@@ -738,6 +783,18 @@ class DeepONet(AbstractOperatorModel):
                 return output.reshape(point_shape)
             return output.reshape(point_shape + (_get_size(self.out_size),))
         return output
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        coefficients = _fused_branch_regularity(
+            self.branches, self.fusion, self.branch_mixer
+        )
+        trunk = (
+            self.trunk._value_regularity()
+            if isinstance(self.trunk, AbstractBasisTrunk)
+            else model_regularity(self.trunk)
+        )
+        # Coefficients contract against the trunk basis; offset and bias add.
+        return sum_regularity((product_regularity((coefficients, trunk)), AFFINE))
 
 
 register_artifact_value(

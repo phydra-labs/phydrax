@@ -23,6 +23,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ._newton import _remaining_linear_steps
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
@@ -122,6 +123,10 @@ class VectorHalley(AbstractNonlinearMethod):
             raise ValueError(
                 "VectorHalley requires a square system within maximum_dimension."
             )
+        linear_policy = self.precision.bind_linear(self.linear)
+        # The aggregate linear budget may only tighten each solve's planned
+        # structural step limit.
+        structural_linear_limit = linear_policy.tolerance.max_steps or source.size
         self.precision.validate_trees(state, residual)
         norm = _coordinate_norm(target, residual, self.precision)
         finite = tree_allfinite(state) & tree_allfinite(residual)
@@ -187,18 +192,17 @@ class VectorHalley(AbstractNonlinearMethod):
                 None
                 if termination.maximum_linear_iterations is None
                 else LinearSolveControl(
-                    maximum_steps=jnp.maximum(
-                        termination.maximum_linear_iterations
-                        - current.linear_iterations
-                        - 1,
-                        1,
+                    maximum_steps=_remaining_linear_steps(
+                        termination,
+                        current.linear_iterations + 1,
+                        structural_linear_limit,
                     )
                 )
             )
             first = solve_linear(
                 LinearSystem(jacobian),
                 current.residual,
-                policy=self.precision.bind_linear(self.linear),
+                policy=linear_policy,
                 control=first_control,
             )
             inverse_residual = first.value
@@ -239,18 +243,17 @@ class VectorHalley(AbstractNonlinearMethod):
                 None
                 if termination.maximum_linear_iterations is None
                 else LinearSolveControl(
-                    maximum_steps=jnp.maximum(
-                        termination.maximum_linear_iterations
-                        - current.linear_iterations
-                        - first_iterations,
-                        1,
+                    maximum_steps=_remaining_linear_steps(
+                        termination,
+                        current.linear_iterations + first_iterations,
+                        structural_linear_limit,
                     )
                 )
             )
             second = solve_linear(
                 LinearSystem(modified),
                 jax.tree.map(jnp.negative, current.residual),
-                policy=self.precision.bind_linear(self.linear),
+                policy=linear_policy,
                 control=second_control,
             )
             direction = second.value

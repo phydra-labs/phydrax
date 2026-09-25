@@ -4,9 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import inspect
-import marshal
 from collections.abc import Callable
 from enum import IntEnum
 from typing import TypeAlias
@@ -24,22 +21,21 @@ from ..._trainable import NonTrainableState
 GRRayEventMargin: TypeAlias = Callable[[Array, Array, Array], Array]
 
 
-def _event_margin_identity(margin: GRRayEventMargin | None, /) -> object:
+def _event_margin_identity(
+    margin: GRRayEventMargin | None,
+    semantic_id: str | None,
+    numeric_id: str | None,
+    /,
+) -> dict[str, str] | None:
     if margin is None:
+        if semantic_id is not None or numeric_id is not None:
+            raise ValueError("Disabled GR event margins do not accept identities.")
         return None
-    if inspect.isfunction(margin):
-        closure = (
-            ()
-            if margin.__closure__ is None
-            else tuple(cell.cell_contents for cell in margin.__closure__)
-        )
-        return {
-            "function": f"{margin.__module__}.{margin.__qualname__}",
-            "code": hashlib.sha256(marshal.dumps(margin.__code__)).hexdigest(),
-            "defaults": margin.__defaults__,
-            "closure": closure,
-        }
-    return callable_payload(margin)
+    payload = callable_payload(margin, semantic_id=semantic_id, numeric_id=numeric_id)
+    return {
+        "semantic": payload["semantic_content_id"],
+        "numeric": payload["numeric_content_id"],
+    }
 
 
 class GRRayEventCode(IntEnum):
@@ -57,7 +53,10 @@ class GRRayEventSurfaces(StrictModule, NonTrainableState):
 
     Each callable receives ``(affine_parameter, coordinates, tangent)`` and returns
     a scalar margin. A trajectory is inside the admissible side while the margin is
-    positive and triggers on a down-crossing through zero.
+    positive and triggers on a down-crossing through zero. StrictModule margins and
+    plain module-level functions are identified by content; opaque margins
+    (lambdas, closures, methods, partials) require their
+    ``*_margin_semantic_id``/``*_margin_numeric_id`` pair.
     """
 
     capture_margin: GRRayEventMargin | None
@@ -71,25 +70,36 @@ class GRRayEventSurfaces(StrictModule, NonTrainableState):
         capture_margin: GRRayEventMargin | None = None,
         escape_margin: GRRayEventMargin | None = None,
         domain_margin: GRRayEventMargin | None = None,
-        event_id: str | None = None,
+        capture_margin_semantic_id: str | None = None,
+        capture_margin_numeric_id: str | None = None,
+        escape_margin_semantic_id: str | None = None,
+        escape_margin_numeric_id: str | None = None,
+        domain_margin_semantic_id: str | None = None,
+        domain_margin_numeric_id: str | None = None,
     ):
         margins = (capture_margin, escape_margin, domain_margin)
         if any(margin is not None and not callable(margin) for margin in margins):
             raise TypeError("GR ray event margins must be callable or None.")
-        event_id_ = (
-            canonical_fingerprint(
-                {
-                    "kind": "gr-ray-event-surfaces",
-                    "capture": _event_margin_identity(capture_margin),
-                    "escape": _event_margin_identity(escape_margin),
-                    "domain": _event_margin_identity(domain_margin),
-                }
-            )
-            if event_id is None
-            else str(event_id)
+        event_id_ = canonical_fingerprint(
+            {
+                "kind": "gr-ray-event-surfaces",
+                "capture": _event_margin_identity(
+                    capture_margin,
+                    capture_margin_semantic_id,
+                    capture_margin_numeric_id,
+                ),
+                "escape": _event_margin_identity(
+                    escape_margin,
+                    escape_margin_semantic_id,
+                    escape_margin_numeric_id,
+                ),
+                "domain": _event_margin_identity(
+                    domain_margin,
+                    domain_margin_semantic_id,
+                    domain_margin_numeric_id,
+                ),
+            }
         )
-        if not event_id_:
-            raise ValueError("event_id must be non-empty.")
         self.capture_margin = capture_margin
         self.escape_margin = escape_margin
         self.domain_margin = domain_margin

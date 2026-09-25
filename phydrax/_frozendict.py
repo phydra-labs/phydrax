@@ -2,11 +2,12 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Hashable, Iterator, Mapping
+from collections.abc import Hashable, Iterable, Iterator, Mapping
 from math import isfinite
 from typing import Any, NoReturn, TypeVar
 
 import equinox as eqx
+import jax
 
 from ._strict import StrictModule
 
@@ -62,8 +63,43 @@ def _canonical_key_token(key: Hashable, /) -> tuple[Any, ...]:
     )
 
 
+class _KeyedValues(tuple):
+    """Mapping values in key order whose pytree key paths are the mapping keys.
+
+    A plain tuple to every structural consumer; only its pytree key paths differ.
+    """
+
+    mapping_keys: tuple[Any, ...]
+
+    def __new__(cls, keys: tuple[Any, ...], values: Iterable[Any], /):
+        instance = super().__new__(cls, values)
+        instance.mapping_keys = keys
+        return instance
+
+    def __reduce__(self):
+        return (type(self), (self.mapping_keys, tuple(self)))
+
+
+jax.tree_util.register_pytree_with_keys(
+    _KeyedValues,
+    lambda values: (
+        tuple(
+            (jax.tree_util.DictKey(key), value)
+            for key, value in zip(values.mapping_keys, values, strict=True)
+        ),
+        values.mapping_keys,
+    ),
+    lambda keys, values: _KeyedValues(keys, values),
+    flatten_func=lambda values: (tuple(values), values.mapping_keys),
+)
+
+
 class frozendict(StrictModule, Mapping[_KT, _VT]):
     _keys: tuple[_KT, ...] = eqx.field(static=True)
+    # Leaves flatten under `._values[key]`, so key paths name the mapping keys. An
+    # empty mapping holds a plain `()`: there is no key to name, and `eqx.tree_at`
+    # rebuilds every empty non-namedtuple tuple as a plain `()`, so an empty
+    # `_KeyedValues` would not survive a structural update.
     _values: tuple[_VT, ...]
 
     def __init__(self, *args, **kwargs):
@@ -71,7 +107,7 @@ class frozendict(StrictModule, Mapping[_KT, _VT]):
         mapping = {_canonical_key(key): value for key, value in supplied.items()}
         keys = tuple(sorted(mapping, key=_canonical_key_token))
         self._keys = keys
-        self._values = tuple(mapping[key] for key in keys)
+        self._values = _KeyedValues(keys, (mapping[key] for key in keys)) if keys else ()
 
     def __len__(self) -> int:
         return len(self._keys)

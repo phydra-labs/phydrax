@@ -13,8 +13,15 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, PRNGKeyArray
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._fingerprint import canonical_fingerprint
-from ..._model import AbstractArrayModel
 from ..._trainable import NonTrainableState
 from ...operators.quantum._observables import LocalObservable
 from ...operators.quantum._operations import LocalUnitaryOperation
@@ -26,6 +33,7 @@ from ...operators.quantum._parameterized import (
 from ...operators.quantum._register import HilbertRegisterLayout
 from ...solver._quantum_expectation import DenseQuantumObservablePolicy
 from ...solver._quantum_program import DenseQuantumProgramPolicy
+from .._schema import AbstractFittedModel
 from ._models import (
     CircuitGradientMethod,
     DenseCircuitExpectationModel,
@@ -95,7 +103,7 @@ def _pauli_matrix(axis: str, dtype: jnp.dtype, /) -> Array:
     return jnp.asarray([[one, zero], [zero, -one]], dtype=dtype)
 
 
-class IQPAngleMap(AbstractArrayModel, NonTrainableState):
+class IQPAngleMap(AbstractFittedModel, NonTrainableState):
     """Fixed IQP phase map with explicit single and pair feature monomials."""
 
     pair_indices: tuple[tuple[int, int], ...] = eqx.field(static=True)
@@ -144,6 +152,16 @@ class IQPAngleMap(AbstractArrayModel, NonTrainableState):
             }
         )
 
+    def _prediction_contract(self) -> DerivativeContract:
+        # The inputs and their pairwise products, tiled per repetition.
+        return DerivativeContract(
+            (SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),),
+            route=DerivativeRoute.DIRECT,
+            regularity=DerivativeRegularity.smooth(
+                degree_bound=2 if self.pair_indices else 1
+            ),
+        )
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         value = jnp.asarray(x)
@@ -163,7 +181,7 @@ class IQPAngleMap(AbstractArrayModel, NonTrainableState):
         return jnp.tile(one_layer, self.repetitions)
 
 
-class ReuploadingAngleMap(AbstractArrayModel):
+class ReuploadingAngleMap(AbstractFittedModel):
     """Trainable per-occurrence affine re-uploading of selected input features."""
 
     scale: Array
@@ -206,6 +224,18 @@ class ReuploadingAngleMap(AbstractArrayModel):
         self.feature_indices = indices
         self.in_size = size
         self.out_size = len(indices)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            regularity=DerivativeRegularity.smooth(degree_bound=1),
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key

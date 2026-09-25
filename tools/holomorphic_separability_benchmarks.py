@@ -16,12 +16,12 @@ import jax.random as jr
 
 import phydrax as phx
 from phydrax._fingerprint import canonical_fingerprint
-from phydrax._trainable import partition_trainable
+from phydrax._trainable import partition_parameters
 
 
 def _parameter_count(model: Any, /) -> int:
-    trainable, _ = partition_trainable(model)
-    return sum(leaf.size for leaf in jax.tree.leaves(trainable))
+    parameters, _, _ = partition_parameters(model)
+    return sum(leaf.size for leaf in jax.tree.leaves(parameters))
 
 
 def _cauchy_riemann_residual(model: Any, point: jax.Array, /) -> jax.Array:

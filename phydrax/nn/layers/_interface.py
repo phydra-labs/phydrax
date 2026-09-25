@@ -13,13 +13,32 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._differentiation import DerivativeRegularity
 from ..._model import AbstractArrayModel
+from ..._model._array import value_derivative_contract
+from ..._model._component import ModelExecutionContract
 from ...geometry import regularized_heaviside_values
 from .._base import _AbstractBaseModel
+from .._contracts import (
+    AFFINE,
+    compose_regularity,
+    gradient_regularity,
+    model_regularity,
+    network_randomness,
+    product_regularity,
+    sum_regularity,
+)
 from .._keys import EvalKey
 
 
 InterfaceDistanceSemantics = Literal["level_set", "signed_distance"]
+# Clip and absolute value; the floored gradient norm; the cosine Heaviside,
+# which matches its constant branches to second order at +-width.
+_C0_PIECEWISE_LINEAR = DerivativeRegularity.piecewise_polynomial(
+    continuity=0, degree_bound=1
+)
+_C0_PIECEWISE_SMOOTH = DerivativeRegularity.piecewise_smooth(continuity=0)
+_C2_PIECEWISE_SMOOTH = DerivativeRegularity.piecewise_smooth(continuity=2)
 
 
 class InterfaceFeatureLift(_AbstractBaseModel):
@@ -140,6 +159,37 @@ class InterfaceFeatureLift(_AbstractBaseModel):
             side = regularized_heaviside_values(distance, width=self.side_width)
             features.append(side[None])
         return jnp.concatenate(tuple(features), axis=-1)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        level_set = model_regularity(self.level_set)
+        if self.distance_semantics == "signed_distance":
+            distance = level_set
+        else:
+            norm = compose_regularity(
+                gradient_regularity(level_set), _C0_PIECEWISE_SMOOTH
+            )
+            distance = product_regularity((level_set, norm))
+        distance = compose_regularity(distance, _C0_PIECEWISE_LINEAR)
+        features = []
+        if self.include_coordinates:
+            features.append(AFFINE)
+        if self.include_signed_distance:
+            features.append(distance)
+        if self.include_cusp:
+            features.append(compose_regularity(distance, _C0_PIECEWISE_LINEAR))
+        if self.include_side:
+            features.append(compose_regularity(distance, _C2_PIECEWISE_SMOOTH))
+        return sum_regularity(features)
+
+    def model_execution_contract(self) -> ModelExecutionContract:
+        regularity = self._value_regularity()
+        if regularity is None or not self.include_side:
+            return super().model_execution_contract()
+        # The side feature is evaluated in float64 whatever the level-set dtype.
+        return self._execution_contract(
+            value_derivative_contract(regularity),
+            randomness=network_randomness(self),
+        )
 
 
 def _positive_finite(value: float, name: str, /) -> float:

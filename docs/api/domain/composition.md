@@ -28,7 +28,12 @@ leaves share one leading dataset axis. It composes with physical factors through
 Phydrax models expose their own input binding. A plain callable model must receive
 an explicit `phx.nn.models.ModelBinding`; evaluation does not inspect signatures or
 switch between flat, structured, pointwise, blockwise, or axis-batch execution
-implicitly.
+implicitly. Output axes are never inferred from array sizes: a blockwise binding
+declares whether its output keeps every dependency batch axis
+(`output_layout="dependency_axes"`, the default), keeps exactly
+`output_labels` (`"dependency_subset"`), or returns a `phydrax.axes.AxisArray`
+with explicit dims (`"axis_array"`). A raw output whose leading shape differs from
+the declaration raises `ValueError`.
 
 For row-indexed time series with different sequence lengths, use
 [`TrajectoryDatasetDomain`](trajectory_dataset.md). It is not a rectangular

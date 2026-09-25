@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import GradientLevel
 from ..._exponential_family import BernoulliFamily, PoissonFamily
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import AbstractRecipe, FitResult
@@ -26,7 +27,6 @@ from ._base import (
     MultinomialLogisticModel,
     parameter_dtype,
     prepare_supervised,
-    unrolled_contract,
 )
 
 
@@ -157,10 +157,8 @@ def _fit_binary_logistic(
             case_shape=prepared.case_shape,
             target_shape=prepared.target_shape,
         ),
-        gradient_contract=unrolled_contract(
-            fit_targets="none", hard_outputs=("predict", "predict_indices")
-        ),
         extra_valid=label_valid,
+        fit_targets=GradientLevel.NONE,
     )
 
 
@@ -325,10 +323,8 @@ class MultinomialLogisticRegressionRecipe(AbstractRecipe):
                 labels,
                 case_shape=prepared.case_shape,
             ),
-            gradient_contract=unrolled_contract(
-                fit_targets="none", hard_outputs=("predict", "predict_indices")
-            ),
             extra_valid=label_valid & class_valid,
+            fit_targets=GradientLevel.NONE,
         )
 
 
@@ -451,7 +447,6 @@ def _fit_log_glm(recipe, batch: MLBatch, /, *, family: str, power: float) -> Fit
         method=f"weighted-{family}-log-link-fixed-gradient",
         objective=objective,
         model_factory=make_model,
-        gradient_contract=unrolled_contract(),
         extra_valid=domain_valid,
     )
 

@@ -215,7 +215,7 @@ def _flatten_batch_inputs(batch: phx.nn.operator.OperatorBatch, names: tuple[str
     return jnp.concatenate(features, axis=-1)
 
 
-class PODLinearROMBaseline(eqx.Module):
+class PODLinearROMBaseline(eqx.Module, phx.ParameterOwner):
     """POD output basis with a fitted linear map from source observations."""
 
     output_mean: jax.Array
@@ -267,7 +267,7 @@ class PODLinearROMBaseline(eqx.Module):
         return _apply_query_mask(output, batch)
 
 
-class PointwiseAffineBaseline(eqx.Module):
+class PointwiseAffineBaseline(eqx.Module, phx.ParameterOwner):
     """Trainable scalar affine baseline on coincident samples."""
 
     weight: jax.Array
@@ -568,7 +568,7 @@ class OperatorArchitecture:
 
 
 def _primary_source(scenario: OperatorBenchmarkScenario):
-    name = next(iter(scenario.train_batch.inputs))
+    name = scenario.primary_source_key
     return name, scenario.train_batch.input(name)
 
 
@@ -2079,11 +2079,12 @@ def _conservative_geometry_compatible(
 
 
 def _matching_coordinate_dimensions(scenario: OperatorBenchmarkScenario, /) -> bool:
+    source_name, _ = _primary_source(scenario)
     batches = (scenario.train_batch,) + tuple(
         evaluation.batch for evaluation in scenario.evaluations
     )
     return all(
-        _coordinate_dimension(batch.input(next(iter(batch.inputs))))
+        _coordinate_dimension(batch.input(source_name))
         == _coordinate_dimension(batch.require_single_query())
         for batch in batches
     )

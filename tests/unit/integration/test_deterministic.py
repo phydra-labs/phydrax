@@ -56,6 +56,78 @@ def test_fixed_integral_mean_and_density_have_distinct_measure_semantics():
     assert integral.error_estimate is None
 
 
+def _key_tolerant_square(x=jnp.asarray(2.0), *, key=None):
+    del key
+    return x**2
+
+
+@pytest.mark.parametrize(
+    ("target", "plan", "key"),
+    [
+        (
+            phx.integration.over(_interval().component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8)),
+            None,
+        ),
+        (
+            phx.integration.over(_interval().component()),
+            phx.integration.AdaptiveQuadraturePlan(),
+            None,
+        ),
+        (
+            phx.integration.over(_interval().component()),
+            phx.integration.MonteCarloPlan(16),
+            jr.key(0),
+        ),
+        (
+            phx.integration.expectation(
+                phx.domain.ProbabilityDomain(phx.uq.Uniform(0.0, 1.0), label="z")
+            ),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8)),
+            None,
+        ),
+    ],
+)
+def test_domain_targets_reject_raw_callables_with_explicit_remedy(target, plan, key):
+    keyword = {} if key is None else {"key": key}
+
+    with pytest.raises(TypeError, match=r"domain\.Function\(\*labels\)\(callable\)"):
+        phx.integration.integrate(_key_tolerant_square, target, plan, **keyword)
+
+
+def test_density_targets_reject_raw_log_density_callables():
+    domain = _interval()
+    target = phx.integration.normalized_density(
+        phx.integration.over(domain.component()),
+        _key_tolerant_square,
+    )
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))
+
+    with pytest.raises(TypeError, match=r"domain\.Function\(\*labels\)\(callable\)"):
+        phx.integration.integrate(1.0, target, plan)
+
+
+def test_declared_domain_functions_and_constants_integrate_over_domain_targets():
+    domain = _interval()
+    target = phx.integration.over(domain.component())
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))
+
+    square = phx.integration.integrate(domain.Function("x")(lambda x: x**2), target, plan)
+    constant = phx.integration.integrate(jnp.asarray(3.0), target, plan)
+
+    assert jnp.allclose(jnp.asarray(square.value.data), 1.0 / 3.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(constant.value.data), 3.0, atol=1e-12)
+
+
+def test_domain_functions_with_incompatible_support_are_rejected():
+    wide = phx.domain.ScalarInterval(0.0, 2.0, label="x")
+    target = phx.integration.over(_interval().component())
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8))
+
+    with pytest.raises(ValueError, match="not supported by the target domain"):
+        phx.integration.integrate(wide.Function("x")(lambda x: x), target, plan)
+
+
 def test_materialize_reduce_reuses_exactly_the_same_realization():
     domain = _interval()
     target = phx.integration.over(domain.component())

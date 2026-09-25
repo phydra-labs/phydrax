@@ -15,6 +15,7 @@ from phydrax._sampling import (
     MetropolisHastings,
     SampleAddress,
 )
+from phydrax._trainable import parameter_field
 from phydrax.metrix import BosonicGaussianState
 from phydrax.operators.quantum import (
     ApproximationAxis,
@@ -79,7 +80,7 @@ from .contracts import (
 
 
 class _CampaignTableAmplitude(eqx.Module):
-    parameters: jax.Array
+    parameters: jax.Array = parameter_field()
 
     def __call__(self, configuration):
         index = (configuration[0] > 0).astype(jnp.int32)

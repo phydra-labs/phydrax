@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import NonTrainableState
 from ..discretization.discrete_velocity import (
     CompressibleKineticRuntimePlan,
     CompressibleKineticRuntimeState,
@@ -18,7 +19,7 @@ from ..discretization.discrete_velocity import (
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
-class CompressibleKineticFixedStepMethod(AbstractFixedStepMethod):
+class CompressibleKineticFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
     runtime: CompressibleKineticRuntimePlan
     method_id: str = eqx.field(static=True)
 

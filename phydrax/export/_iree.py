@@ -19,7 +19,15 @@ from phydrax.domain import DomainFunction
 
 from .._document_resource import decode_json_resource
 from .._external_resource import bounded_resource_from_bytes, ResourceLimits
+from .._external_runtime import _require_execution
 from .._fingerprint import canonical_fingerprint
+from .._identity import (
+    ArtifactBindingIdentity,
+    ExecutableSignature,
+    NumericRevision,
+    SemanticProvenance,
+)
+from .._model._component import ExecutionCapabilities
 from .._publication import publish_resource_set, ResourceSetPublicationReceipt
 from .._resource_set import open_bounded_resource_set, ResourceSetLimits
 from ..backends.iree import import_iree, iree_availability
@@ -160,6 +168,47 @@ class IREEArtifactManifest:
             ),
         )
 
+    def binding_identity(self) -> ArtifactBindingIdentity:
+        """Artifact binding identity of the executable this manifest describes.
+
+        The semantic provenance is the calling ABI and pre/postprocessing
+        declaration with the module as a named resource, the numeric revision is
+        the module digest, and the executable signature records the input/output
+        shapes and dtypes with the compiler, runtime, target, and driver.
+        """
+        semantic = SemanticProvenance(
+            {
+                "kind": "iree-inference-executable",
+                "artifact_id": self.artifact_id,
+                "function_name": self.function_name,
+                "entry_point": self.entry_point,
+                "calling_convention_version": self.calling_convention_version,
+                "input_names": self.input_names,
+                "output_names": self.output_names,
+                "vectorized": self.vectorized,
+                "has_preprocess": self.has_preprocess,
+                "has_postprocess": self.has_postprocess,
+            },
+            resource_ids={"module": self.module_sha256},
+        )
+        names = tuple(f"input:{name}" for name in self.input_names) + tuple(
+            f"output:{name}" for name in self.output_names
+        )
+        return ArtifactBindingIdentity(
+            semantic,
+            NumericRevision(semantic, {"module_sha256": self.module_sha256}),
+            ExecutableSignature(
+                shapes=zip(names, self.input_shapes + self.output_shapes, strict=True),
+                dtypes=zip(names, self.input_dtypes + self.output_dtypes, strict=True),
+                backend_facts={
+                    "compiler_version": self.compiler_version,
+                    "runtime_version": self.runtime_version,
+                    "target_backend": self.target_backend,
+                    "runtime_driver": self.runtime_driver,
+                },
+            ),
+        )
+
     def to_dict(self, /) -> dict[str, Any]:
         value = asdict(self)
         value["input_names"] = list(self.input_names)
@@ -185,7 +234,14 @@ class IREEExportResult:
 
 
 class IREEExecutable:
-    """Loaded IREE executable with exact positional input and output ABI checks."""
+    """Loaded IREE executable with exact positional input and output ABI checks.
+
+    The executable runs on the host (`capabilities.tier == "compiled-inference"`,
+    host-only): `jit`, `vmap`, `grad`, `jvp`, and `vjp` are refused before the
+    module is invoked. `binding` is the manifest's artifact binding identity.
+    """
+
+    capabilities = ExecutionCapabilities("compiled-inference", host_only=True)
 
     def __init__(
         self,
@@ -200,11 +256,13 @@ class IREEExecutable:
         module = runtime.VmModule.copy_buffer(context.instance, module_bytes)
         context.add_vm_module(module)
         self.manifest = manifest
+        self.binding = manifest.binding_identity()
         self._context = context
         self._module = module
         self._function = context.modules[module.name][manifest.entry_point]
 
     def __call__(self, *args: Any) -> np.ndarray | tuple[np.ndarray, ...]:
+        _require_execution(self.capabilities, args)
         if len(args) != len(self.manifest.input_shapes):
             raise ValueError(
                 f"IREE executable expected {len(self.manifest.input_shapes)} inputs; got {len(args)}."

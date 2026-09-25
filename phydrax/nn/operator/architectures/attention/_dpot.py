@@ -15,10 +15,20 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
+from phydrax._trainable import fixed_field
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    SMOOTH,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
+from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
@@ -102,6 +112,10 @@ def _unpatchify(
 def _group_norm(norm: eqx.nn.GroupNorm, values: Array, /) -> Array:
     channel_first = values.transpose((0, 3, 1, 2))
     return jax.vmap(norm)(channel_first).transpose((0, 2, 3, 1))
+
+
+def _group_norm_regularity(norm: eqx.nn.GroupNorm, /) -> DerivativeRegularity | None:
+    return SMOOTH if norm.eps > 0.0 else None
 
 
 def dpot_corrupt_history(
@@ -244,6 +258,11 @@ class _AFNO2D(StrictModule):
         )
         return filtered + values
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Block-diagonal complex mixing of the truncated spectrum around one GELU.
+        filtered = compose_regularity(AFFINE, activation_regularity(jax.nn.gelu), AFFINE)
+        return sum_regularity((filtered, AFFINE))
+
 
 class _DPOTBlock(StrictModule):
     first_norm: eqx.nn.GroupNorm
@@ -303,10 +322,25 @@ class _DPOTBlock(StrictModule):
         hidden = self.contract(self.expand(_group_norm(self.second_norm, hidden)))
         return hidden + residual
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        hidden = compose_regularity(
+            _group_norm_regularity(self.first_norm), self.filter._value_regularity()
+        )
+        update = compose_regularity(
+            _group_norm_regularity(self.second_norm),
+            self.expand._value_regularity(),
+            self.contract._value_regularity(),
+        )
+        if self.double_skip:
+            return compose_regularity(
+                sum_regularity((hidden, AFFINE)), sum_regularity((update, AFFINE))
+            )
+        return sum_regularity((AFFINE, compose_regularity(hidden, update)))
+
 
 class _TemporalAggregator(StrictModule):
     weight: Array
-    frequencies: Array
+    frequencies: Array = fixed_field()
     history_steps: int
     width: int
     exponential_embedding: bool
@@ -715,6 +749,26 @@ class DPOT(AbstractOperatorModel):
             case_shape=case_shape,
         )
         return self.__call_operator_batch__(batch)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Standardization uses a positive variance floor; temporal aggregation is
+        # linear; the optional statistics modulate and restore the scale.
+        statistics = SMOOTH if self.normalize else AFFINE
+        hidden = compose_regularity(
+            statistics,
+            self.patch_lift._value_regularity(),
+            self.patch_projection._value_regularity(),
+        )
+        if self.normalize:
+            hidden = product_regularity((hidden, statistics))
+        output = compose_regularity(
+            hidden,
+            *(block._value_regularity() for block in self.blocks),
+            self.patch_recovery._value_regularity(),
+            self.output_hidden._value_regularity(),
+            self.output_projection._value_regularity(),
+        )
+        return product_regularity((output, statistics)) if self.normalize else output
 
 
 __all__ = ["DPOT", "dpot_corrupt_history"]

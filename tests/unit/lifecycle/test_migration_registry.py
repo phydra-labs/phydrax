@@ -44,14 +44,14 @@ def _mutate_input(record: Mapping[str, object]) -> Mapping[str, object]:
 def _edges() -> tuple[MigrationEdge, MigrationEdge]:
     return (
         MigrationEdge(
-            "format",
-            "format",
+            "source-format",
+            "intermediate-format",
             _rename_value,
             migration_id="rename-value",
         ),
         MigrationEdge(
-            "format",
-            "format",
+            "intermediate-format",
+            "current-format",
             _wrap_value,
             migration_id="wrap-value",
         ),
@@ -60,11 +60,11 @@ def _edges() -> tuple[MigrationEdge, MigrationEdge]:
 
 def test_registry_migrates_to_current_writer_with_digest_lineage() -> None:
     first, second = _edges()
-    registry = CompatibilityRegistry("format", (second, first))
+    registry = CompatibilityRegistry("current-format", (second, first))
 
-    report = registry.resolve({"value": 7}, source_format_id="format")
+    report = registry.resolve({"value": 7}, source_format_id="source-format")
 
-    assert report.output_format_id == "format"
+    assert report.output_format_id == "current-format"
     assert report.output_record == {"payload": 7}
     assert report.migration_ids == ("rename-value", "wrap-value")
     assert report.lineage == (
@@ -77,13 +77,13 @@ def test_registry_migrates_to_current_writer_with_digest_lineage() -> None:
 
 
 def test_registry_preserves_existing_lineage_and_requires_continuity() -> None:
-    registry = CompatibilityRegistry("format", _edges())
-    initial = registry.resolve({"value": 7}, source_format_id="format")
+    registry = CompatibilityRegistry("current-format", _edges())
+    initial = registry.resolve({"value": 7}, source_format_id="source-format")
     ancestor = "0" * 64
 
     report = registry.resolve(
         {"value": 7},
-        source_format_id="format",
+        source_format_id="source-format",
         lineage=(ancestor, initial.input_digest),
     )
 
@@ -92,7 +92,7 @@ def test_registry_preserves_existing_lineage_and_requires_continuity() -> None:
     with pytest.raises(ValueError, match="does not terminate"):
         registry.resolve(
             {"value": 7},
-            source_format_id="format",
+            source_format_id="source-format",
             lineage=(ancestor,),
         )
 
@@ -100,14 +100,14 @@ def test_registry_preserves_existing_lineage_and_requires_continuity() -> None:
 def test_registry_selects_unique_shortest_path_deterministically() -> None:
     first, second = _edges()
     direct = MigrationEdge(
-        "format",
-        "format",
+        "source-format",
+        "current-format",
         _direct_value,
         migration_id="direct-value",
     )
-    registry = CompatibilityRegistry("format", (second, direct, first))
+    registry = CompatibilityRegistry("current-format", (second, direct, first))
 
-    report = registry.resolve({"value": 11}, source_format_id="format")
+    report = registry.resolve({"value": 11}, source_format_id="source-format")
 
     assert report.migration_ids == ("direct-value",)
     assert report.output_record == {"payload": 11}
@@ -164,8 +164,8 @@ def test_lossy_migration_requires_explicit_authorization() -> None:
 
 
 def test_report_reconstruction_and_rollback_select_the_parent_artifact() -> None:
-    registry = CompatibilityRegistry("format", _edges())
-    report = registry.resolve({"value": 19}, source_format_id="format")
+    registry = CompatibilityRegistry("current-format", _edges())
+    report = registry.resolve({"value": 19}, source_format_id="source-format")
 
     restored = MigrationReport.from_json(report.to_json())
     parent = registry.rollback(restored)
@@ -173,7 +173,7 @@ def test_report_reconstruction_and_rollback_select_the_parent_artifact() -> None
     assert restored.report_id == report.report_id
     assert restored.to_json() == report.to_json()
     assert parent == {
-        "format_id": "format",
+        "format_id": "source-format",
         "record": {"value": 19},
         "artifact_id": report.input_digest,
         "lineage": [report.input_digest],
@@ -186,17 +186,17 @@ def test_report_reconstruction_and_rollback_select_the_parent_artifact() -> None
 def test_registry_identity_is_independent_of_edge_order() -> None:
     first, second = _edges()
 
-    left = CompatibilityRegistry("format", (first, second))
-    right = CompatibilityRegistry("format", (second, first))
+    left = CompatibilityRegistry("current-format", (first, second))
+    right = CompatibilityRegistry("current-format", (second, first))
 
     assert left.registry_id == right.registry_id
     assert left.to_record() == right.to_record()
 
 
 def test_canonical_load_is_strict_and_rejects_nonfinite_values() -> None:
-    registry = CompatibilityRegistry("format", _edges())
+    registry = CompatibilityRegistry("current-format", _edges())
     request = {
-        "format_id": "format",
+        "format_id": "source-format",
         "record": {"value": 3},
         "lineage": [],
     }
@@ -214,7 +214,7 @@ def test_canonical_load_is_strict_and_rejects_nonfinite_values() -> None:
         registry.load(
             json.dumps(
                 {
-                    "format_id": "format",
+                    "format_id": "source-format",
                     "record": {"value": float("inf")},
                     "lineage": [],
                 }

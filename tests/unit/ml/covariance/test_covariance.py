@@ -2,10 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
 from phydrax.ml import (
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
@@ -64,8 +66,9 @@ def test_covariance_recipe_families_produce_immutable_spd_geometry(recipe):
     assert jnp.allclose(model.covariance, model.covariance.T, atol=2e-5)
     assert jnp.isfinite(model.log_density(jnp.array([0.1, -0.2, 0.3])))
     assert result.diagnostics.effective_samples > 0.0
-    assert result.gradient_contract.fit_mode in ("direct", "unrolled")
-    assert result.gradient_contract.prediction_inputs == "smooth"
+    contract = result.derivative_contract
+    assert contract.route in (DerivativeRoute.DIRECT, DerivativeRoute.UNROLLED)
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
 
 
 def test_weighted_covariance_uses_effective_denominator_masks_and_case_axes():
@@ -197,10 +200,10 @@ def test_each_declared_covariance_fit_gradient_is_finite(recipe):
             .log_density(point)
         )
     )(jnp.arange(1.0, 7.0))
-    contract = recipe.fit_batch(MLBatch(_DATA)).gradient_contract
+    contract = recipe.fit_batch(MLBatch(_DATA)).derivative_contract
 
-    assert contract.fit_features == "conditional"
-    assert contract.fit_weights == "conditional"
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
     assert jnp.all(jnp.isfinite(feature_gradient))
     assert jnp.all(jnp.isfinite(weight_gradient))
 
@@ -315,5 +318,5 @@ def test_covariance_configuration_fails_closed():
         FactorCovariance(0)
     with pytest.raises(ValueError):
         WeightedCovariance(weight_policy="none")
-    with pytest.raises(ValueError):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="finite and positive"):
         GraphicalLasso(regularization=0.0)

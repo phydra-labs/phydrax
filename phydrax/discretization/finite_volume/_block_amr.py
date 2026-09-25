@@ -15,8 +15,8 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from .._conservation_boundary import PrescribedNormalFluxBoundary
+from ..._trainable import fixed_field, NonTrainableState
+from .._conservation_boundary import PrescribedNormalFluxBoundary, SourceFunction
 from .._conservation_ledger import (
     ConservationStageFluxRateBlock,
     ConservationStageLedger,
@@ -33,7 +33,6 @@ from ._dynamics import (
     evaluate_cartesian_numerical_flux,
     FiniteVolumeMethodPlan,
     reconstruct_cartesian_ghosted_axis,
-    SourceFunction,
 )
 from ._precision import FiniteVolumePrecisionPolicy
 from ._riemann import AbstractNumericalFluxPlan
@@ -88,7 +87,7 @@ class BlockAMRFiniteVolumeStageResult(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope
 
 
-class BlockAMRFiniteVolumePlan(StrictModule, NonTrainableState):
+class BlockAMRFiniteVolumePlan(StrictModule):
     """Cartesian cell-centered FV method bound to one prepared fixed-block hierarchy."""
 
     hierarchy: PreparedFDAMRHierarchy
@@ -122,6 +121,8 @@ class BlockAMRFiniteVolumePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Block AMR currently accepts inviscid finite-volume methods only."
             )
+        if method.closure is not None:
+            method.closure.admit_system(system)
         if not isinstance(boundaries, FiniteVolumeBoundarySet):
             raise TypeError("boundaries must be FiniteVolumeBoundarySet.")
         hierarchy_plan = hierarchy.plan.hierarchy
@@ -188,7 +189,7 @@ class BlockAMRFiniteVolumePlan(StrictModule, NonTrainableState):
         return PreparedBlockAMRFiniteVolumeDynamics(self, topology)
 
 
-class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
+class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
     """Topology-bound block-local Cartesian finite-volume dynamics."""
 
     plan: BlockAMRFiniteVolumePlan
@@ -199,8 +200,8 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
     physical_boundary_slots: tuple[
         tuple[tuple[tuple[int, ...], tuple[int, ...]], ...], ...
     ] = eqx.field(static=True)
-    cell_coordinates: tuple[Array, ...]
-    active_cell_mask: Array
+    cell_coordinates: tuple[Array, ...] = fixed_field()
+    active_cell_mask: Array = fixed_field()
     level_cell_offsets: tuple[int, ...] = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
@@ -782,6 +783,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                 self.plan.precision,
                 values,
                 array_axis,
+                reconstruction=self.plan.method.reconstruction,
                 interior_cell_count=size,
                 ghost_depth=width,
                 periodic=False,
@@ -799,6 +801,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
             crop.append(slice(None))
             left = left[tuple(crop)]
             right = right[tuple(crop)]
+            spacings = self.topology.plan.level_spacings[level]
             flux, speed = evaluate_cartesian_numerical_flux(
                 self.plan.method,
                 self.plan.system,
@@ -807,6 +810,11 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                 right,
                 axis,
                 args,
+                face_measure=prod(
+                    value for index, value in enumerate(spacings) if index != axis
+                ),
+                geometry_id=self.plan.hierarchy.prepared_id,
+                active=active_cells,
             )
             fluxes.append(flux)
             speeds.append(speed)
@@ -949,7 +957,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
             evidence_policy_id=self.plan.precision.policy_id,
             evidence_version=jnp.asarray(evidence_version),
             topology_epoch_id=self.topology.epoch.epoch_id,
-            differentiability_policy_id=self.plan.method.differentiability,
+            differentiability_policy_id=self.plan.method.differentiability.value,
         )
         content_rate = ledger.scatter_content_rate()
         residuals = []

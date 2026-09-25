@@ -22,6 +22,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._sampling._proposals import SingleCoordinateProposalPayload
 from ..._sampling._targets import IncrementalMarkovTarget
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from ...discretization import PeriodicCell
 from ...linalg import (
     accept_low_rank_update,
@@ -273,7 +274,7 @@ def _cache_from_exact_state(
     )
 
 
-class PeriodicFermiNet(AbstractPeriodicElectronicAmplitude):
+class PeriodicFermiNet(AbstractPeriodicElectronicAmplitude, ParameterOwner):
     """Finite physical-cell determinant amplitude with twist covariance.
 
     Cartesian electron coordinates are transformed by ``PeriodicCellFeatures``.

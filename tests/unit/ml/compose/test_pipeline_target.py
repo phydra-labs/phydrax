@@ -10,9 +10,36 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from phydrax._model import AbstractArrayModel
 from phydrax.ml.compose import Pipeline, TransformedTargetRegressor
 from phydrax.ml.preprocessing import StandardScaler
+
+
+def _contract(levels, *, route=DerivativeRoute.DIRECT, conditions=()):
+    return DerivativeContract(
+        (SurfaceDerivative(surface, level) for surface, level in levels.items()),
+        route=route,
+        conditions=conditions,
+    )
+
+
+_DIRECT_CONTRACT = _contract(
+    {
+        DerivativeSurface.INPUT: GradientLevel.SMOOTH,
+        DerivativeSurface.MODEL_PARAMETER: GradientLevel.SMOOTH,
+        DerivativeSurface.FIT_FEATURES: GradientLevel.CONDITIONAL,
+        DerivativeSurface.FIT_TARGETS: GradientLevel.CONDITIONAL,
+        DerivativeSurface.FIT_WEIGHTS: GradientLevel.CONDITIONAL,
+        DerivativeSurface.FIT_HYPERPARAMETERS: GradientLevel.CONDITIONAL,
+    }
+)
 
 
 class _AuditDiagnostics(eqx.Module):
@@ -38,14 +65,10 @@ class _IdentityModel(AbstractArrayModel):
 
 
 class _AuditRecipe(phx.ml.AbstractRecipe):
-    gradient_contract: phx.ml.GradientContract
+    derivative_contract: DerivativeContract
 
-    def __init__(self, gradient_contract=None):
-        self.gradient_contract = (
-            phx.ml.GradientContract.direct()
-            if gradient_contract is None
-            else gradient_contract
-        )
+    def __init__(self, derivative_contract=_DIRECT_CONTRACT):
+        self.derivative_contract = derivative_contract
 
     def fit_batch(self, batch, /, *, key=None):
         del key
@@ -63,7 +86,7 @@ class _AuditRecipe(phx.ml.AbstractRecipe):
             valid=True,
             status=phx.ml.ML_SUCCESS,
             method="audit",
-            gradient_contract=self.gradient_contract,
+            derivative_contract=self.derivative_contract,
         )
 
 
@@ -109,14 +132,12 @@ class _KeyedShiftRecipe(phx.ml.AbstractRecipe):
             valid=True,
             status=phx.ml.ML_SUCCESS,
             method="keyed-shift",
-            gradient_contract=phx.ml.GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="conditional",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="direct",
+            derivative_contract=_contract(
+                {
+                    DerivativeSurface.INPUT: GradientLevel.SMOOTH,
+                    DerivativeSurface.MODEL_PARAMETER: GradientLevel.SMOOTH,
+                    DerivativeSurface.FIT_FEATURES: GradientLevel.CONDITIONAL,
+                }
             ),
         )
 
@@ -159,14 +180,14 @@ class _MeanRegressor(phx.ml.AbstractRecipe):
             valid=True,
             status=phx.ml.ML_SUCCESS,
             method="mean-regressor",
-            gradient_contract=phx.ml.GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="smooth",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_hyperparameters="none",
-                fit_mode="direct",
+            derivative_contract=_contract(
+                {
+                    DerivativeSurface.INPUT: GradientLevel.SMOOTH,
+                    DerivativeSurface.MODEL_PARAMETER: GradientLevel.SMOOTH,
+                    DerivativeSurface.FIT_FEATURES: GradientLevel.SMOOTH,
+                    DerivativeSurface.FIT_TARGETS: GradientLevel.CONDITIONAL,
+                    DerivativeSurface.FIT_WEIGHTS: GradientLevel.CONDITIONAL,
+                },
                 conditions=("Positive total sample weight is held fixed.",),
             ),
         )
@@ -191,7 +212,13 @@ class _StatusRecipe(phx.ml.AbstractRecipe):
             valid=valid,
             status=self.status,
             method="status-test",
-            gradient_contract=phx.ml.GradientContract(),
+            derivative_contract=_contract(
+                {
+                    DerivativeSurface.INPUT: GradientLevel.SMOOTH,
+                    DerivativeSurface.MODEL_PARAMETER: GradientLevel.SMOOTH,
+                },
+                route=DerivativeRoute.STOPPED,
+            ),
         )
 
 
@@ -210,14 +237,11 @@ def _batch():
 
 def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata():
     batch = _batch()
-    contract = phx.ml.GradientContract(
-        prediction_inputs="almost-everywhere",
-        prediction_parameters="smooth",
-        fit_features="none",
-        fit_targets="none",
-        fit_weights="none",
-        fit_hyperparameters="none",
-        fit_mode="direct",
+    contract = _contract(
+        {
+            DerivativeSurface.INPUT: GradientLevel.ALMOST_EVERYWHERE,
+            DerivativeSurface.MODEL_PARAMETER: GradientLevel.SMOOTH,
+        }
     )
     recipe = Pipeline((("shift", _KeyedShiftRecipe()), ("audit", _AuditRecipe(contract))))
 
@@ -239,9 +263,16 @@ def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata():
     assert jnp.array_equal(audit.targets, batch.targets)
     assert fitted.feature_schema.names == ("x", "z")
     assert fitted.final_feature_schema.names == ("x", "z")
-    assert first.gradient_contract.prediction_inputs == "almost-everywhere"
-    assert first.gradient_contract.fit_features == "none"
-    assert first.gradient_contract.fit_mode == "direct"
+    pipeline_contract = first.derivative_contract
+    assert pipeline_contract.level(DerivativeSurface.INPUT) is (
+        GradientLevel.ALMOST_EVERYWHERE
+    )
+    # The shift parameters reach the output through the almost-everywhere stage.
+    assert pipeline_contract.level(DerivativeSurface.MODEL_PARAMETER) is (
+        GradientLevel.ALMOST_EVERYWHERE
+    )
+    assert pipeline_contract.level(DerivativeSurface.FIT_FEATURES) is (GradientLevel.NONE)
+    assert pipeline_contract.route is DerivativeRoute.DIRECT
     assert first.diagnostics.names == ("shift", "audit")
     assert len(fitted.fit_results) == 2
     with pytest.raises(FrozenInstanceError, match="cannot assign to field 'steps'"):
@@ -327,11 +358,14 @@ def test_transformed_target_regressor_uses_fitted_inverse_and_composes_contracts
     assert fitted.transformer_result.method == "standard_scaler"
     assert fitted.regressor_result.method == "mean-regressor"
     assert result.diagnostics.names == ("transformer", "regressor")
-    assert result.gradient_contract.prediction_inputs == "smooth"
-    assert result.gradient_contract.fit_features == "smooth"
-    assert result.gradient_contract.fit_targets == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert "inverse_transform" in result.gradient_contract.conditions[-1]
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.FIT_TARGETS) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert contract.route is DerivativeRoute.DIRECT
+    assert "Positive total sample weight is held fixed." in contract.conditions
+    assert any("inverse_transform" in condition for condition in contract.conditions)
 
 
 def test_transformed_target_regressor_rejects_non_regression_target_semantics():

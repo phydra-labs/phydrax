@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 from math import isfinite
-from typing import Any, Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,6 +16,7 @@ import numpy as np
 import optax
 from jaxtyping import Array, Key
 
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import AbstractArrayModel, model_structure_recipe
 from .._numerics._checkpointed_scan import (
@@ -23,7 +25,21 @@ from .._numerics._checkpointed_scan import (
     PreparedReplaySchedule,
 )
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import combine_parameters, fixed_field, require_parameter_roles
+from .._training_kernel import (
+    AbstractKernelUpdateRule,
+    KernelObjective,
+    KernelUpdateContext,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    PreparedTrainingKernel,
+    run_training_attempt,
+    training_site_key,
+    TrainingAttemptOutcome,
+    TrainingKernelSpec,
+    TrainingKernelState,
+)
+from .._training_objective import _ObjectiveContribution
 from ..discretization.discrete_velocity._smooth_compressible import (
     SmoothCompressibleKineticState,
 )
@@ -41,6 +57,7 @@ from ._kinetic_rollout import (
 KineticRolloutReplayMode: TypeAlias = CheckpointedScanMode
 KineticRolloutTermination: TypeAlias = Literal["maximum_attempts", "curriculum_complete"]
 _DEFAULT_CURRICULUM = (1, 2, 4, 8, 16, 25)
+_OBJECTIVE_ID = "kinetic-rollout"
 
 
 def _positive_integer(value: int, role: str, /) -> int:
@@ -77,7 +94,7 @@ def _tree_finite(tree: Any, /) -> Array:
     return jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in leaves)))
 
 
-class KineticRolloutTrainingPlan(StrictModule, NonTrainableState):
+class KineticRolloutTrainingPlan(StrictModule):
     """Static curriculum, optimizer, replay, and physical-runtime contract."""
 
     dynamics: PreparedSmoothCompressibleD2V17SpatialDynamics
@@ -94,6 +111,7 @@ class KineticRolloutTrainingPlan(StrictModule, NonTrainableState):
     replay_mode: KineticRolloutReplayMode = eqx.field(static=True)
     replay_block_size: int | None = eqx.field(static=True)
     replay_schedules: tuple[PreparedReplaySchedule, ...]
+    rejection_budget: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -114,6 +132,7 @@ class KineticRolloutTrainingPlan(StrictModule, NonTrainableState):
         replay_mode: KineticRolloutReplayMode = "step",
         replay_block_size: int | None = None,
         replay_schedules: tuple[PreparedReplaySchedule, ...] = (),
+        rejection_budget: int = 64,
     ):
         if not isinstance(dynamics, PreparedSmoothCompressibleD2V17SpatialDynamics):
             raise TypeError(
@@ -143,6 +162,12 @@ class KineticRolloutTrainingPlan(StrictModule, NonTrainableState):
                     "accepted_updates_per_horizon must align with the curriculum."
                 )
         batch = _positive_integer(batch_size, "batch_size")
+        if isinstance(rejection_budget, (bool, np.bool_)) or not isinstance(
+            rejection_budget, (int, np.integer)
+        ):
+            raise TypeError("rejection_budget must be an integer.")
+        if int(rejection_budget) < 0:
+            raise ValueError("rejection_budget must be non-negative.")
         guard_batch = _positive_integer(guard_batch_size, "guard_batch_size")
         rate = float(learning_rate)
         if not isfinite(rate) or rate <= 0.0:
@@ -211,6 +236,7 @@ class KineticRolloutTrainingPlan(StrictModule, NonTrainableState):
         self.replay_mode = replay_mode
         self.replay_block_size = block
         self.replay_schedules = schedules
+        self.rejection_budget = int(rejection_budget)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "kinetic-rollout-training-plan",
@@ -226,6 +252,7 @@ class KineticRolloutTrainingPlan(StrictModule, NonTrainableState):
                 "replay_mode": replay_mode,
                 "replay_block_size": block,
                 "replay_schedules": [value.schedule_id for value in schedules],
+                "rejection_budget": int(rejection_budget),
             }
         )
 
@@ -521,46 +548,41 @@ def _window_arrays(
     )
 
 
-def kinetic_rollout_objective(
-    model: AbstractArrayModel,
-    plan: KineticRolloutTrainingPlan,
-    statistics: SmoothCompressibleRolloutStatistics,
-    windows: tuple[SmoothCompressibleRolloutWindow, ...],
-    horizon: int,
-    /,
-) -> tuple[Array, KineticRolloutObjectiveEvidence]:
-    """Vmap complete atomic trajectory scans without materializing state histories."""
-
+def _require_rollout_model(model: AbstractArrayModel, /) -> None:
     if (
         not isinstance(model, AbstractArrayModel)
         or model.in_size != 4
         or model.out_size != 2
     ):
         raise TypeError("The rollout model must implement the explicit 4→2 array ABI.")
-    if not isinstance(plan, KineticRolloutTrainingPlan):
-        raise TypeError("plan must be KineticRolloutTrainingPlan.")
-    if not isinstance(statistics, SmoothCompressibleRolloutStatistics):
-        raise TypeError("statistics must be SmoothCompressibleRolloutStatistics.")
-    horizon_ = _positive_integer(horizon, "horizon")
-    if horizon_ not in plan.curriculum_horizons:
-        raise ValueError("The objective horizon must be a curriculum stage.")
-    values = tuple(windows)
-    if any(value.schema_id != statistics.schema_id for value in values):
-        raise ValueError("Rollout windows and training statistics schemas differ.")
-    f_initial, g_initial, g_targets, U_targets = _window_arrays(values, horizon_)
+
+
+def _objective_arrays(
+    model: AbstractArrayModel,
+    plan: KineticRolloutTrainingPlan,
+    statistics: SmoothCompressibleRolloutStatistics,
+    windows: tuple[Array, Array, Array, Array],
+    /,
+) -> tuple[Array, tuple[Array, ...]]:
+    """Batch-mean objective and compact per-trajectory diagnostics of stacked windows.
+
+    The horizon is the static rollout length of the stacked targets.
+    """
+    f_initial, g_initial, g_targets, U_targets = windows
+    horizon = int(g_targets.shape[1])
     total, compact = jax.vmap(
         lambda f0, g0, gt, Ut: _single_trajectory_objective(
-            model,
-            plan,
-            statistics,
-            f0,
-            g0,
-            gt,
-            Ut,
-            horizon_,
+            model, plan, statistics, f0, g0, gt, Ut, horizon
         )
     )(f_initial, g_initial, g_targets, U_targets)
+    return jnp.mean(total), (total, *compact)
+
+
+def _objective_evidence(
+    compact: tuple[Array, ...], horizon: int, /
+) -> KineticRolloutObjectiveEvidence:
     (
+        total,
         macro,
         energy_population,
         equilibrium,
@@ -574,7 +596,7 @@ def kinetic_rollout_objective(
         minimum_energy,
         minimum_support,
     ) = compact
-    return jnp.mean(total), KineticRolloutObjectiveEvidence(
+    return KineticRolloutObjectiveEvidence(
         total_loss=total,
         macro_loss=macro,
         energy_population_loss=energy_population,
@@ -588,8 +610,161 @@ def kinetic_rollout_objective(
         minimum_particle_population=minimum_particle,
         minimum_energy_population=minimum_energy,
         minimum_support_margin=minimum_support,
-        horizon=horizon_,
+        horizon=horizon,
     )
+
+
+def _validated_windows(
+    plan: KineticRolloutTrainingPlan,
+    statistics: SmoothCompressibleRolloutStatistics,
+    windows: tuple[SmoothCompressibleRolloutWindow, ...],
+    horizon: int,
+    /,
+) -> tuple[Array, Array, Array, Array]:
+    if not isinstance(plan, KineticRolloutTrainingPlan):
+        raise TypeError("plan must be KineticRolloutTrainingPlan.")
+    if not isinstance(statistics, SmoothCompressibleRolloutStatistics):
+        raise TypeError("statistics must be SmoothCompressibleRolloutStatistics.")
+    horizon_ = _positive_integer(horizon, "horizon")
+    if horizon_ not in plan.curriculum_horizons:
+        raise ValueError("The objective horizon must be a curriculum stage.")
+    values = tuple(windows)
+    if any(value.schema_id != statistics.schema_id for value in values):
+        raise ValueError("Rollout windows and training statistics schemas differ.")
+    return _window_arrays(values, horizon_)
+
+
+def kinetic_rollout_objective(
+    model: AbstractArrayModel,
+    plan: KineticRolloutTrainingPlan,
+    statistics: SmoothCompressibleRolloutStatistics,
+    windows: tuple[SmoothCompressibleRolloutWindow, ...],
+    horizon: int,
+    /,
+) -> tuple[Array, KineticRolloutObjectiveEvidence]:
+    """Vmap complete atomic trajectory scans without materializing state histories."""
+
+    _require_rollout_model(model)
+    arrays = _validated_windows(plan, statistics, windows, horizon)
+    loss, compact = _objective_arrays(model, plan, statistics, arrays)
+    return loss, _objective_evidence(compact, int(horizon))
+
+
+def _rollout_training_objective(
+    parameters: Any, model_state: Any, fixed: Any, payload: Any, keys: Any, /
+) -> tuple[_ObjectiveContribution, Any, tuple[Array, ...]]:
+    del keys
+    plan, statistics, training, _ = payload
+    loss, compact = _objective_arrays(
+        combine_parameters(parameters, model_state, fixed), plan, statistics, training
+    )
+    return _ObjectiveContribution(loss, jnp.ones_like(loss)), model_state, compact
+
+
+class _GuardedRolloutState(StrictModule):
+    """Optax state plus the evidence of the rule's last guard judgment."""
+
+    optimizer: Any
+    proposal_finite: Array
+    guard_loss: Array
+    guard: tuple[Array, ...]
+
+
+class _GuardedRolloutRule(AbstractKernelUpdateRule):
+    """Adam proposal accepted only when the candidate passes the guard rollout.
+
+    The attempt payload is `(plan, statistics, training windows, guard windows)`.
+    The guard judgment (proposal finiteness, guard loss, per-trajectory guard
+    evidence) is rule bookkeeping committed on every judged outcome; the Optax
+    state commits only on acceptance.
+    """
+
+    rejection_commit_policy: ClassVar[tuple[str, ...]] = (
+        "proposal_finite",
+        "guard_loss",
+        "guard",
+    )
+    proposal: OptaxUpdateRule
+    guard_count: int = eqx.field(static=True)
+    dtype: str = eqx.field(static=True)
+    rule_id: str = eqx.field(static=True)
+
+    def __init__(self, plan: KineticRolloutTrainingPlan, guard_count: int, dtype: Any):
+        self.proposal = OptaxUpdateRule(
+            plan.optimizer(), rule_id=f"adam:{float(plan.learning_rate).hex()}"
+        )
+        self.guard_count = int(guard_count)
+        self.dtype = jnp.dtype(dtype).name
+        self.rule_id = canonical_fingerprint(
+            {
+                "kind": "kinetic-rollout-guarded-proposal",
+                "proposal": self.proposal.rule_id,
+                "plan": plan.plan_id,
+                "guard_count": self.guard_count,
+                "dtype": self.dtype,
+            }
+        )
+
+    @property
+    def reads_payload(self) -> bool:
+        return True
+
+    def unjudged_guard(self) -> tuple[Array, ...]:
+        """Guard evidence of a candidate the rule never judged."""
+        unjudged = jnp.full((self.guard_count,), jnp.nan, dtype=self.dtype)
+        return (
+            (unjudged,) * 4
+            + (jnp.zeros((self.guard_count,), dtype=jnp.bool_),)
+            + (unjudged,) * 8
+        )
+
+    def init(self, parameters: Any, /) -> _GuardedRolloutState:
+        return _GuardedRolloutState(
+            self.proposal.init(parameters),
+            jnp.asarray(False),
+            jnp.asarray(jnp.nan, dtype=self.dtype),
+            self.unjudged_guard(),
+        )
+
+    def rule_state_finite(self, rule_state: _GuardedRolloutState, /) -> Array:
+        return _tree_finite(rule_state.optimizer)
+
+    def propose(
+        self,
+        parameters: Any,
+        gradients: Any,
+        value: Array,
+        rule_state: _GuardedRolloutState,
+        context: KernelUpdateContext,
+        /,
+    ) -> tuple[Any, _GuardedRolloutState, _GuardedRolloutState, Array]:
+        candidate, optimizer_state, _, _ = self.proposal.propose(
+            parameters, gradients, value, rule_state.optimizer, context
+        )
+        plan, statistics, _, guard = context.payload
+        guard_loss, compact = _objective_arrays(
+            combine_parameters(candidate, context.model_state, context.fixed),
+            plan,
+            statistics,
+            guard,
+        )
+        proposal_finite = _tree_finite((candidate, optimizer_state))
+        judged = _GuardedRolloutState(
+            optimizer_state,
+            proposal_finite,
+            guard_loss.astype(self.dtype),
+            tuple(
+                value if value.dtype == jnp.bool_ else value.astype(self.dtype)
+                for value in compact
+            ),
+        )
+        accepted = proposal_finite & jnp.isfinite(guard_loss) & jnp.all(compact[4])
+        return (
+            candidate,
+            judged,
+            dataclasses.replace(judged, optimizer=rule_state.optimizer),
+            accepted,
+        )
 
 
 def _validate_dataset(
@@ -632,13 +807,19 @@ def _validate_dataset(
 
 
 class KineticRolloutTrainingState(StrictModule):
-    """One exact transactional optimizer boundary and curriculum cursor."""
+    """One exact transactional training-kernel boundary and curriculum cursor.
+
+    `training` is the kernel state (parameters, Optax and guard-judgment rule
+    state, root key, attempt/accepted cursors, rejection counters); `model` is
+    its committed tree. Attempt, acceptance, and rejection counts are the
+    kernel's cursors. The best-model selection and curriculum cursors are owned
+    by this frontend.
+    """
 
     model: AbstractArrayModel
-    optimizer_state: Any
+    training: TrainingKernelState
     best_model: AbstractArrayModel
-    key: Array
-    best_loss: Array
+    best_loss: Array = fixed_field()
     attempt_count: int = eqx.field(static=True)
     accepted_update_count: int = eqx.field(static=True)
     rejection_count: int = eqx.field(static=True)
@@ -655,15 +836,11 @@ class KineticRolloutTrainingState(StrictModule):
     def __init__(
         self,
         model: AbstractArrayModel,
-        optimizer_state: Any,
+        training: TrainingKernelState,
         best_model: AbstractArrayModel,
-        key: Array,
         best_loss: Array,
         /,
         *,
-        attempt_count: int,
-        accepted_update_count: int,
-        rejection_count: int,
         curriculum_index: int,
         accepted_in_curriculum: int,
         training_cursor: int,
@@ -677,28 +854,36 @@ class KineticRolloutTrainingState(StrictModule):
             best_model, AbstractArrayModel
         ):
             raise TypeError("Training state model snapshots must be array models.")
+        if not isinstance(training, TrainingKernelState):
+            raise TypeError("training must be a TrainingKernelState.")
         structure = _model_structure_id(model)
         if (
             structure != _model_structure_id(best_model)
             or structure != model_structure_id
         ):
             raise ValueError("Current and best model structures must match exactly.")
-        key_ = jnp.asarray(key)
-        if key_.shape != (2,) or key_.dtype != jnp.uint32:
-            raise ValueError("Training checkpoint keys use exact uint32[2] key data.")
         best_loss_ = jnp.asarray(best_loss)
         if best_loss_.shape != () or not jnp.issubdtype(best_loss_.dtype, jnp.floating):
             raise ValueError("best_loss must be one floating scalar array.")
-        counters = tuple(
-            (
-                attempt_count,
-                accepted_update_count,
-                rejection_count,
-                curriculum_index,
-                accepted_in_curriculum,
-                training_cursor,
-                guard_cursor,
+        attempts, accepted, finite, nonfinite = (
+            int(value)
+            for value in jax.device_get(
+                (
+                    training.attempt_cursor,
+                    training.accepted_cursor,
+                    training.finite_rejections,
+                    training.nonfinite_rejections,
+                )
             )
+        )
+        counters = (
+            attempts,
+            accepted,
+            finite + nonfinite,
+            curriculum_index,
+            accepted_in_curriculum,
+            training_cursor,
+            guard_cursor,
         )
         if any(value < 0 for value in counters):
             raise ValueError("Training progress and cursors must be non-negative.")
@@ -713,9 +898,8 @@ class KineticRolloutTrainingState(StrictModule):
         if not plan_identity or not dataset_identity:
             raise ValueError("Training state identities must be non-empty.")
         self.model = model
-        self.optimizer_state = optimizer_state
+        self.training = training
         self.best_model = best_model
-        self.key = key_
         self.best_loss = best_loss_
         (
             self.attempt_count,
@@ -725,7 +909,7 @@ class KineticRolloutTrainingState(StrictModule):
             self.accepted_in_curriculum,
             self.training_cursor,
             self.guard_cursor,
-        ) = counters
+        ) = (int(value) for value in counters)
         self.last_update_accepted = last_update_accepted
         self.plan_id = plan_identity
         self.dataset_id = dataset_identity
@@ -749,26 +933,32 @@ class KineticRolloutTrainingState(StrictModule):
                 "arrays": array_tree_fingerprint(
                     {
                         "model": model,
-                        "optimizer_state": optimizer_state,
+                        "training": dataclasses.replace(
+                            training, root_key=jr.key_data(training.root_key)
+                        ),
                         "best_model": best_model,
-                        "key": key_,
                         "best_loss": best_loss_,
                     }
                 ),
             }
         )
 
+    @property
+    def optimizer_state(self) -> Any:
+        """Committed Optax state of the training kernel."""
+        return self.training.rule_state.optimizer
+
 
 class KineticRolloutUpdateResult(StrictModule):
     state: KineticRolloutTrainingState
-    training_evidence: KineticRolloutObjectiveEvidence
-    guard_evidence: KineticRolloutObjectiveEvidence
-    selection_evidence: KineticRolloutObjectiveEvidence
-    training_loss: Array
-    guard_loss: Array
-    selection_loss: Array
-    gradient_finite: Array
-    proposal_finite: Array
+    training_evidence: KineticRolloutObjectiveEvidence = fixed_field()
+    guard_evidence: KineticRolloutObjectiveEvidence = fixed_field()
+    selection_evidence: KineticRolloutObjectiveEvidence = fixed_field()
+    training_loss: Array = fixed_field()
+    guard_loss: Array = fixed_field()
+    selection_loss: Array = fixed_field()
+    gradient_finite: Array = fixed_field()
+    proposal_finite: Array = fixed_field()
     accepted: bool = eqx.field(static=True)
     horizon: int = eqx.field(static=True)
 
@@ -826,6 +1016,35 @@ def _guard_windows(
     return dataset.train_windows
 
 
+def _training_kernel(
+    model: AbstractArrayModel,
+    plan: KineticRolloutTrainingPlan,
+    dataset: PreparedSmoothCompressibleRolloutDataset,
+    /,
+) -> PreparedTrainingKernel:
+    """Guarded-proposal kernel of one plan: MODEL authority, unrolled rollout."""
+    guard_count = min(plan.guard_batch_size, len(_guard_windows(dataset)))
+    return prepare_training_kernel(
+        model,
+        (
+            KernelObjective(
+                objective_id=_OBJECTIVE_ID,
+                kind=ObjectiveKind.ROLLOUT,
+                route=DerivativeRoute.UNROLLED,
+                fn=_rollout_training_objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            _GuardedRolloutRule(
+                plan, guard_count, jnp.dtype(dataset.trajectories[0].schema.dtype)
+            ),
+            context="kinetic rollout training",
+            rejection_budget=plan.rejection_budget,
+        ),
+        root_authority=ComponentAuthority.MODEL,
+    )
+
+
 def initialize_kinetic_rollout_training(
     model: AbstractArrayModel,
     plan: KineticRolloutTrainingPlan,
@@ -834,7 +1053,7 @@ def initialize_kinetic_rollout_training(
     *,
     key: Key[Array, ""],
 ) -> KineticRolloutTrainingState:
-    """Initialize an exact optimizer boundary and immutable baseline selection."""
+    """Initialize an exact kernel boundary and immutable baseline selection."""
 
     if (
         not isinstance(model, AbstractArrayModel)
@@ -845,11 +1064,11 @@ def initialize_kinetic_rollout_training(
     if not isinstance(plan, KineticRolloutTrainingPlan):
         raise TypeError("plan must be KineticRolloutTrainingPlan.")
     _validate_dataset(plan, dataset)
-    raw_key = jnp.asarray(jr.key_data(key), dtype=jnp.uint32)
-    if raw_key.shape != (2,):
-        raise ValueError("Stage-two training requires one scalar PRNG key.")
-    trainable = eqx.filter(model, eqx.is_inexact_array)
-    optimizer_state = plan.optimizer().init(trainable)
+    require_parameter_roles(model, context="initialize_kinetic_rollout_training")
+    key_ = jnp.asarray(key)
+    if not jax.dtypes.issubdtype(key_.dtype, jax.dtypes.prng_key) or key_.shape:
+        raise ValueError("Stage-two training requires one scalar typed PRNG key.")
+    training = _training_kernel(model, plan, dataset).init(model, key_)
     selection_windows = _guard_windows(dataset)
     initial_loss, evidence = kinetic_rollout_objective(
         model,
@@ -866,13 +1085,9 @@ def initialize_kinetic_rollout_training(
     )
     return KineticRolloutTrainingState(
         model,
-        optimizer_state,
+        training,
         model,
-        raw_key,
         best_loss,
-        attempt_count=0,
-        accepted_update_count=0,
-        rejection_count=0,
         curriculum_index=0,
         accepted_in_curriculum=0,
         training_cursor=0,
@@ -908,68 +1123,79 @@ def _validate_state_binding(
         raise ValueError("Training state identities or progress do not match this run.")
 
 
+def _batch_offset(training: TrainingKernelState, site: str, count: int, /) -> int:
+    """Attempt-addressed random batch offset: a rejection draws a fresh batch."""
+    key = training_site_key(
+        training.root_key,
+        objective_id=_OBJECTIVE_ID,
+        site=site,
+        attempt=training.attempt_cursor,
+        microstep=0,
+    )
+    return int(np.asarray(jr.randint(key, (), 0, count)))
+
+
 def attempt_kinetic_rollout_update(
     state: KineticRolloutTrainingState,
     plan: KineticRolloutTrainingPlan,
     dataset: PreparedSmoothCompressibleRolloutDataset,
     /,
 ) -> KineticRolloutUpdateResult:
-    """Attempt one proposal and atomically commit model and optimizer on guard success."""
+    """Attempt one guarded proposal through the training kernel.
+
+    The kernel accepts the Adam candidate only when the guard rollout of the
+    candidate succeeds; acceptance commits parameters and optimizer together,
+    and any rejection (guard failure or nonfinite proposal) commits neither.
+    More than `plan.rejection_budget` consecutive rejections raise
+    `TrainingRejectionBudgetError`.
+    """
 
     _validate_state_binding(state, plan, dataset)
+    require_parameter_roles(state.model, context="attempt_kinetic_rollout_update")
+    kernel = _training_kernel(state.model, plan, dataset)
     horizon = plan.curriculum_horizons[state.curriculum_index]
-    training_key, guard_key, next_key = jr.split(jr.wrap_key_data(state.key), num=3)
     training_start = (
         state.training_cursor
-        + int(np.asarray(jr.randint(training_key, (), 0, len(dataset.train_windows))))
+        + _batch_offset(state.training, "training-batch", len(dataset.train_windows))
     ) % len(dataset.train_windows)
     training_batch, next_training_cursor = _cyclic_batch(
         dataset.train_windows, plan.batch_size, training_start
     )
     guard_pool = _guard_windows(dataset)
     guard_start = (
-        state.guard_cursor
-        + int(np.asarray(jr.randint(guard_key, (), 0, len(guard_pool))))
+        state.guard_cursor + _batch_offset(state.training, "guard-batch", len(guard_pool))
     ) % len(guard_pool)
     guard_batch, next_guard_cursor = _cyclic_batch(
         guard_pool, plan.guard_batch_size, guard_start
     )
-
-    def objective(candidate: AbstractArrayModel):
-        return kinetic_rollout_objective(
-            candidate, plan, dataset.statistics, training_batch, horizon
-        )
-
-    (training_loss, training_evidence), gradient = eqx.filter_value_and_grad(
-        objective, has_aux=True
-    )(state.model)
-    gradient_finite = _tree_finite(gradient) & jnp.isfinite(training_loss)
-    updates, candidate_optimizer_state = plan.optimizer().update(
-        gradient,
-        state.optimizer_state,
-        params=eqx.filter(state.model, eqx.is_inexact_array),
+    statistics = dataset.statistics
+    # Eager like the per-attempt API it serves: the horizon changes the traced
+    # rollout length at every curriculum stage.
+    training, evidence = run_training_attempt(
+        kernel,
+        state.training,
+        (
+            plan,
+            statistics,
+            _validated_windows(plan, statistics, training_batch, horizon),
+            _validated_windows(plan, statistics, guard_batch, horizon),
+        ),
+        jit=False,
     )
-    candidate_model = eqx.apply_updates(state.model, updates)
-    proposal_finite = (
-        gradient_finite
-        & _tree_finite(updates)
-        & _tree_finite(candidate_model)
-        & _tree_finite(candidate_optimizer_state)
-    )
-    guard_loss, guard_evidence = kinetic_rollout_objective(
-        candidate_model, plan, dataset.statistics, guard_batch, horizon
-    )
-    accepted = bool(
-        np.asarray(
-            proposal_finite
-            & jnp.isfinite(guard_loss)
-            & jnp.all(guard_evidence.successful)
-        )
-    )
-    model = candidate_model if accepted else state.model
-    optimizer_state = candidate_optimizer_state if accepted else state.optimizer_state
-    accepted_count = state.accepted_update_count + int(accepted)
-    rejection_count = state.rejection_count + int(not accepted)
+    outcome = TrainingAttemptOutcome(int(evidence.outcome))
+    accepted = outcome is TrainingAttemptOutcome.ACCEPTED
+    judged = training.rule_state
+    if outcome is TrainingAttemptOutcome.NONFINITE:
+        # A nonfinite evaluation rolls the guard judgment back with everything
+        # else: the candidate was never judged.
+        guard_loss = jnp.asarray(jnp.nan, dtype=judged.guard_loss.dtype)
+        guard_compact = kernel.rule.unjudged_guard()
+        proposal_finite = jnp.asarray(False)
+    else:
+        guard_loss = judged.guard_loss
+        guard_compact = judged.guard
+        proposal_finite = judged.proposal_finite
+    model = kernel.tree(training)
     accepted_in_curriculum = state.accepted_in_curriculum + int(accepted)
     curriculum_index = state.curriculum_index
     if (
@@ -982,11 +1208,10 @@ def attempt_kinetic_rollout_update(
     elif accepted_in_curriculum > plan.accepted_updates_per_horizon[curriculum_index]:
         raise ValueError("Training state exceeded its curriculum acceptance gate.")
 
-    selection_model = candidate_model if accepted else state.model
     selection_loss, selection_evidence = kinetic_rollout_objective(
-        selection_model,
+        model,
         plan,
-        dataset.statistics,
+        statistics,
         guard_pool,
         plan.curriculum_horizons[-1],
     )
@@ -997,17 +1222,11 @@ def attempt_kinetic_rollout_update(
             & (selection_loss < state.best_loss)
         )
     )
-    best_model = candidate_model if improves else state.best_model
-    best_loss = selection_loss if improves else state.best_loss
     next_state = KineticRolloutTrainingState(
         model,
-        optimizer_state,
-        best_model,
-        jr.key_data(next_key),
-        best_loss,
-        attempt_count=state.attempt_count + 1,
-        accepted_update_count=accepted_count,
-        rejection_count=rejection_count,
+        training,
+        model if improves else state.best_model,
+        selection_loss if improves else state.best_loss,
         curriculum_index=curriculum_index,
         accepted_in_curriculum=accepted_in_curriculum,
         training_cursor=next_training_cursor,
@@ -1019,13 +1238,13 @@ def attempt_kinetic_rollout_update(
     )
     return KineticRolloutUpdateResult(
         state=next_state,
-        training_evidence=training_evidence,
-        guard_evidence=guard_evidence,
+        training_evidence=_objective_evidence(evidence.diagnostics[0], horizon),
+        guard_evidence=_objective_evidence(guard_compact, horizon),
         selection_evidence=selection_evidence,
-        training_loss=training_loss,
+        training_loss=evidence.value,
         guard_loss=guard_loss,
         selection_loss=selection_loss,
-        gradient_finite=gradient_finite,
+        gradient_finite=evidence.finite,
         proposal_finite=proposal_finite,
         accepted=accepted,
         horizon=horizon,

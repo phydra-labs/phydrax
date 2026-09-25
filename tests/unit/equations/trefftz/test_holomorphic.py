@@ -9,7 +9,6 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def _set_polynomial(potential, real, imaginary=None):
@@ -42,10 +41,8 @@ def test_complex_linear_uses_real_leaves_and_matches_dense_complex_oracle():
     point = jnp.asarray([0.4 + 0.2j, -0.7 + 0.5j])
     expected = layer.weight @ point + layer.bias
     assert jnp.allclose(layer(point), expected)
-    trainable, _ = partition_trainable(layer)
-    assert all(
-        not jnp.iscomplexobj(leaf) for leaf in jax.tree_util.tree_leaves(trainable)
-    )
+    parameters = jax.tree_util.tree_leaves(phx.partition_parameters(layer)[0])
+    assert parameters and all(not jnp.iscomplexobj(leaf) for leaf in parameters)
 
 
 def test_complex_normalization_preserves_nonreal_data_for_real_coordinates():
@@ -93,10 +90,8 @@ def test_holomorphic_mlp_satisfies_cauchy_riemann_with_real_parameters():
 
     derivative = jax.jacfwd(complex_value)(point)
     assert jnp.allclose(derivative[:, 0] + 1j * derivative[:, 1], 0.0, atol=2e-11)
-    trainable, _ = partition_trainable(model)
-    assert all(
-        not jnp.iscomplexobj(leaf) for leaf in jax.tree_util.tree_leaves(trainable)
-    )
+    parameters = jax.tree_util.tree_leaves(phx.partition_parameters(model)[0])
+    assert parameters and all(not jnp.iscomplexobj(leaf) for leaf in parameters)
     assert not model.holomorphic_certificate().linear_in_parameters
     assert (
         model.holomorphic_certificate().parameter_coverage == "finite-parametric-family"

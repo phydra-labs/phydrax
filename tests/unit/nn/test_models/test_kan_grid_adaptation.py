@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def _spline_kan(*, scan=False, use_tanh=False, key=jax.random.key(0)):
@@ -59,8 +58,8 @@ def test_shared_grid_adaptation_is_pure_and_fixed_count():
         np.asarray(adapted.layers[0].edge_basis.grid.knots),
     )
 
-    old_trainable, _ = partition_trainable(model)
-    new_trainable, _ = partition_trainable(adapted)
+    old_trainable, _model_state, _ = phx.partition_parameters(model)
+    new_trainable, _model_state, _ = phx.partition_parameters(adapted)
     assert sum(leaf.size for leaf in jax.tree.leaves(old_trainable)) == sum(
         leaf.size for leaf in jax.tree.leaves(new_trainable)
     )

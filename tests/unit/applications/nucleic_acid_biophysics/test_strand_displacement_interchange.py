@@ -225,5 +225,5 @@ def test_prepared_csv_refuses_schema_or_digest_disagreement(tmp_path):
             source.plate_layout.manifest.manifest_id,
         ),
     )
-    with pytest.raises(ValueError, match="byte size"):
+    with pytest.raises(ValueError, match="Reference artifact size mismatch"):
         admit_prepared_strand_displacement_csv(path, source, prepared, requested_use=_USE)

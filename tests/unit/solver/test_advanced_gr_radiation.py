@@ -277,13 +277,15 @@ def test_multigroup_and_neutrino_uniform_transport_preserve_all_groups_and_lepto
     )
     rejected_stages = (
         lower_valencia_stage_geometry(discretization, geometry, 0.0),
-        lower_valencia_stage_geometry(discretization, scaled_geometry, 0.0),
-        lower_valencia_stage_geometry(discretization, scaled_geometry, 0.0),
+        lower_valencia_stage_geometry(discretization, scaled_geometry, 1.0),
+        lower_valencia_stage_geometry(discretization, scaled_geometry, 0.5),
     )
+    # A unit interval spans four cell widths, far beyond the M1 stability limit, so
+    # the step is rejected on a valid interval.
     rejected = multigroup_transport.advance(
         multigroup_state,
         0.0,
-        0.0,
+        1.0,
         rejected_stages,
     )
     assert not bool(rejected.accepted)

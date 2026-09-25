@@ -17,8 +17,8 @@ from phydrax.ein import contract
 from .._admissibility import (
     AdmissibilityHeader,
     AdmissibilityReason,
-    DerivativeAvailability,
 )
+from .._differentiation import DerivativeContract, DerivativeRoute, DerivativeSurface
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -67,6 +67,14 @@ class ResolvedElectroosmoticLedger(StrictModule):
     conservative: Array
 
 
+# Implicit derivatives of the fixed model with its regime decisions frozen.
+_DERIVATIVE_CONTRACT = DerivativeContract.smooth(
+    (DerivativeSurface.PRIMAL_STATE, DerivativeSurface.PHYSICAL_PARAMETER),
+    route=DerivativeRoute.IMPLICIT,
+    conditions=("decisions-frozen",),
+)
+
+
 class ResolvedElectroosmoticStepResult(StrictModule):
     candidate: ResolvedElectroosmoticState
     accepted: ResolvedElectroosmoticState
@@ -78,7 +86,7 @@ class ResolvedElectroosmoticStepResult(StrictModule):
     fixed_point_residual: Array
     iteration_count: Array
     header: AdmissibilityHeader
-    derivative_availability: DerivativeAvailability = eqx.field(static=True)
+    derivative_contract: DerivativeContract
     successful: Array
     plan_id: str = eqx.field(static=True)
 
@@ -530,7 +538,7 @@ class ResolvedElectroosmoticStokesPlan(StrictModule, NonTrainableState):
             fixed_point_residual,
             jnp.asarray(self.maximum_iterations, dtype=jnp.int32),
             header,
-            DerivativeAvailability.IMPLICIT_FIXED_MODEL,
+            _DERIVATIVE_CONTRACT,
             successful,
             self.plan_id,
         )

@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
+from .._trainable import fixed_field
 
 
 class AbstractBijector(StrictModule):
@@ -82,8 +83,8 @@ class ExpBijector(_AbstractShapePreservingBijector):
 class SigmoidIntervalBijector(_AbstractShapePreservingBijector):
     """Logistic map from the real line to an open finite interval."""
 
-    lower: Array
-    upper: Array
+    lower: Array = fixed_field()
+    upper: Array = fixed_field()
 
     def __init__(self, lower: ArrayLike, upper: ArrayLike):
         lower_array = jnp.asarray(lower, dtype=jnp.float64)

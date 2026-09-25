@@ -24,6 +24,7 @@ _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_TIMESTAMP = (1 << 63) - 1
 _MAX_MANIFEST_CHUNKS = 65_536
 _MAX_MANIFEST_METADATA_ITEMS = 4_096
+_MAX_METADATA_VALUE_BYTES = 1024 * 1024
 
 
 class RepositoryError(RuntimeError):
@@ -935,8 +936,10 @@ def _metadata(value: Mapping[str, str] | Sequence[tuple[str, str]], /) -> Metada
 def _metadata_value(value: object, /) -> str:
     if not isinstance(value, str):
         raise TypeError("Artifact metadata values must be strings.")
-    if len(value.encode("utf-8")) > 4096:
-        raise ValueError("Artifact metadata values must be at most 4096 bytes.")
+    if len(value.encode("utf-8")) > _MAX_METADATA_VALUE_BYTES:
+        raise ValueError(
+            f"Artifact metadata values must be at most {_MAX_METADATA_VALUE_BYTES} bytes."
+        )
     return value
 
 

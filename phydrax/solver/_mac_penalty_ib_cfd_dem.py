@@ -537,7 +537,9 @@ def advance_mac_penalty_ib_cfd_dem_window(
         ),
         accepted_windows=state.accepted_windows + jnp.asarray(1, dtype=jnp.int32),
     )
-    finite = tree_allfinite(candidate) & tree_allfinite(projection)
+    # Projection diagnostics carry an infinite hybrid-action sentinel when the hybrid
+    # route is unavailable; its own `finite` evidence covers the computed fields.
+    finite = tree_allfinite(candidate) & projection.finite
     status = status | jnp.where(
         projection.converged,
         0,

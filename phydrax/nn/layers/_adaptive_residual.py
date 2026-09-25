@@ -11,10 +11,11 @@ from jaxtyping import Array, ArrayLike
 
 from ..._callable import _ensure_special_kwonly_args
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey
 
 
-class AdaptiveResidual(StrictModule):
+class AdaptiveResidual(StrictModule, ParameterOwner):
     r"""Identity-start residual interpolation around a shape-preserving branch.
 
     For input ``x`` and branch ``F``, this layer evaluates

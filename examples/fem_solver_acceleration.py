@@ -11,14 +11,16 @@ space = phx.linalg.ArraySpace((2,))
 operator = phx.linalg.DenseLinearOperator(
     jnp.asarray([[2.0, 0.0], [0.0, 3.0]]), source=space, target=space
 )
-history = phx.linalg.LinearSolveHistory.empty(
-    operator,
-    phx.linalg.LinearSolveHistoryPolicy("projection", capacity=3),
-    "example-shifted-family",
-)
+history = phx.linalg.HistoryInitialGuess(operator, "example-shifted-family", capacity=3)
 history = history.update(operator, jnp.asarray([1.0, 0.0]), time=0.0)
 history = history.update(operator, jnp.asarray([0.0, 2.0]), time=1.0)
-guess, history_diagnostics = history.initial_guess(operator.mv(jnp.asarray([2.0, 6.0])))
+history_solve = phx.linalg.solve(
+    phx.linalg.LinearSystem(operator),
+    operator.mv(jnp.asarray([2.0, 6.0])),
+    policy=phx.linalg.LinearSolvePolicy(phx.linalg.FGMRES(restart=2)),
+    initial_guess=history,
+)
+history_evidence = history_solve.initial_guess
 
 derivative = jnp.zeros((2, 2))
 metric = jnp.ones((1, 2, 2, 3))
@@ -47,8 +49,9 @@ flow_state, flow_diagnostics = flow.pressure_correction_step(
 )
 
 if (
-    not jnp.allclose(guess, jnp.asarray([2.0, 6.0]))
-    or history_diagnostics.projection_residual_norm > 1.0e-12
+    not bool(history_evidence.accepted)
+    or history_evidence.proposal_residual_norm > 1.0e-12
+    or not jnp.allclose(history_solve.value, jnp.asarray([2.0, 6.0]))
     or tensor_defect > 1.0e-12
     or flow_diagnostics.divergence_after > 1.0e-12
 ):
@@ -56,10 +59,9 @@ if (
 
 print(
     {
-        "history_guess": guess.tolist(),
-        "history_projection_residual": float(
-            history_diagnostics.projection_residual_norm
-        ),
+        "history_guess_accepted": bool(history_evidence.accepted),
+        "history_proposal_residual": float(history_evidence.proposal_residual_norm),
+        "history_solution": history_solve.value.tolist(),
         "collocated_tensor_defect": float(tensor_defect),
         "corrected_velocity": flow_state.velocity.tolist(),
         "corrected_divergence": float(flow_diagnostics.divergence_after),

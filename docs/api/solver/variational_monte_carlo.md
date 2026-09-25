@@ -103,8 +103,14 @@ electronic coordinate-Hessian work have method-specific meanings.
 
 The result retains every training energy, variance, acceptance rate, update norm,
 status, and linear solve result, plus a separate frozen-model final evaluation.
-`failure_mode="record"` stops without applying a failed update; `"raise"` raises at
-the first invalid estimator or metric solve.
+Each iteration is one attempt of the shared accepted-update training kernel: the
+host samples the persistent chains, the attempt estimates the frozen-sample
+energy at the current parameters and forms the SR direction, and a stateless SR
+rule clips and applies the step. An invalid estimate or failed metric solve is
+a rejected attempt: parameters roll back, the chains keep their advanced state,
+and the attempt still advances `attempt_cursor`. Every rejection stops the run:
+`failure_mode="record"` returns the rolled-back state, `"raise"` raises at the
+first invalid estimator or metric solve.
 
 When `final_chain_diagnostics=True`, the separate frozen-model evaluation reports
 rank-normalized R-hat, bulk ESS, and tail ESS for configurations and the real/imaginary
@@ -162,21 +168,32 @@ per trainable state. Accept/reject decisions remain outside differentiation.
 
 The checkpoint is a checksum-validated, pickle-free array archive. It retains
 model arrays, selected parameter coordinates, walker positions, per-chain
-validity/taint, transition index, iteration, and root key. Target values and
+validity/taint, transition index, accepted-update `iteration`, training
+`attempt_cursor`, and root key. Archives without the attempt cursor are
+rejected. Target values and
 caches are deliberately ephemeral: restore invokes the declared
 model-to-target binding at the saved positions, deterministically rebuilding
 both and combining rebuilt validity with the retained taint before
 continuation. Resume requires the same problem, sampler/proposal, target
-factory identity and target kind, parameter structure, complex mode, and step
-policy.
+factory identity and target kind, parameter structure, model static structure,
+complex mode, and step policy. Callables held in model static fields are
+identified by content: a plain module-level function contributes its module,
+name, code, static defaults, and the scalar constants it reads from module
+globals, and a callable module contributes its fields. Lambdas, closures, nested
+functions, bound methods, partials, functions reading module-level arrays, and
+other opaque callables are rejected with `TypeError` when checkpoint compatibility is
+formed; define them as module-level functions or modules instead.
 
 `num_iterations` and final evaluation length are intentionally excluded from
 compatibility so a caller can select additional work after restoring.
 
 `solve_variational_monte_carlo(..., state=restored)` uses the checkpoint root key when
-`key` is omitted. Supplying a different key is rejected. Frozen final evaluation does
-not advance the continuation state, so splitting a run across checkpoints reproduces
-the same training trajectory as an uninterrupted run.
+`key` is omitted. Supplying a different key is rejected. Training sample keys are
+semantic training-site keys addressed by the root key and the attempt cursor, and
+the final evaluation uses its own site at the final cursor without advancing the
+continuation state, so splitting a run across checkpoints reproduces the same
+training trajectory as an uninterrupted run and a retry after a recorded rejection
+never reuses a sample key.
 
 ## Status
 

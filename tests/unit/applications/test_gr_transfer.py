@@ -163,6 +163,10 @@ class _OpaqueMinkowskiMetric:
         return jnp.diag(jnp.asarray((-1.0, 1.0, 1.0, 1.0), dtype=coordinates.dtype))
 
 
+def _capture_after_affine_03(affine, point, tangent):
+    return 0.3 - affine
+
+
 def _flat_polarized_ray(
     affine_parameter,
     *,
@@ -324,7 +328,7 @@ def test_polarized_transfer_binds_ray_basis_and_preserves_faraday_cone():
 def test_polarized_ray_path_retains_exact_terminal_partial_segment():
     metric, ray = _flat_polarized_ray(
         jnp.asarray([0.0, 0.5, 1.0]),
-        capture_margin=lambda affine, point, tangent: 0.3 - affine,
+        capture_margin=_capture_after_affine_03,
     )
     assert bool(ray.event_ledger.recorded[0])
     path = PolarizedRayPath(ray, metric, ray_index=0, basis_tolerance=1.0e-7)

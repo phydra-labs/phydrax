@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute, DerivativeSurface, GradientLevel
 from phydrax.ml import (
     ML_CAPACITY_EXHAUSTED,
     ML_INFEASIBLE,
@@ -48,8 +49,8 @@ def test_dbscan_finds_weighted_components_and_exposes_hard_and_soft_routes():
         jnp.array([0.05])
     )
     assert jnp.all(jnp.isfinite(gradient))
-    assert result.gradient_contract.fit_mode == "stopped"
-    assert "hard radius labels are terminal" in result.gradient_contract.conditions
+    assert result.derivative_contract.route is DerivativeRoute.STOPPED
+    assert "hard radius labels are terminal" in result.derivative_contract.conditions
 
 
 def test_connectivity_clustering_keeps_isolated_points_but_reports_capacity():
@@ -119,10 +120,13 @@ def test_mean_shift_returns_smooth_modes_and_declared_unrolled_gradients():
     assert result.status == ML_SUCCESS
     assert jnp.all(result.diagnostics.active_clusters)
     assert jnp.allclose(jnp.sum(probability, axis=-1), 1.0)
-    assert result.gradient_contract.fit_mode == "unrolled"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == "conditional"
+    contract = result.derivative_contract
+    assert contract.route is DerivativeRoute.UNROLLED
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )
     assert jnp.all(jnp.isfinite(feature_gradient))
     assert jnp.all(jnp.isfinite(weight_gradient))
     assert jnp.isfinite(bandwidth_gradient)
@@ -143,8 +147,8 @@ def test_affinity_propagation_has_a_deterministic_fallback_exemplar():
     assert jnp.sum(model.active_clusters) >= 1
     assert model.active_clusters[0]
     assert jnp.allclose(jnp.sum(model(features), axis=-1), 1.0)
-    assert result.gradient_contract.fit_mode == "unrolled"
-    assert "fixed exemplar top-k ordering" in result.gradient_contract.conditions
+    assert result.derivative_contract.route is DerivativeRoute.UNROLLED
+    assert "fixed exemplar top-k ordering" in result.derivative_contract.conditions
 
 
 def test_spectral_clustering_is_jittable_vmappable_and_reports_disconnection():
@@ -162,7 +166,7 @@ def test_spectral_clustering_is_jittable_vmappable_and_reports_disconnection():
     assert jnp.all(
         jnp.isfinite(jax.grad(lambda point: model(point)[0])(jnp.array([0.1])))
     )
-    assert result.gradient_contract.fit_mode == "spectral"
+    assert result.derivative_contract.route is DerivativeRoute.SPECTRAL
 
     disconnected = SpectralClustering(1, gamma=1.0, kmeans_iterations=2).fit_batch(
         MLBatch(jnp.array([[0.0], [100.0]]))
@@ -179,8 +183,8 @@ def test_agglomerative_clustering_uses_lexicographic_merge_ties():
     assert result.status == ML_SUCCESS
     assert jnp.allclose(model.centers, jnp.array([[1.0], [4.0]]))
     assert jnp.array_equal(model(features), jnp.array([0, 1, 0]))
-    assert result.gradient_contract.fit_mode == "stopped"
-    assert result.gradient_contract.conditions == (
+    assert result.derivative_contract.route is DerivativeRoute.STOPPED
+    assert result.derivative_contract.conditions == (
         "deterministic lexicographic merge ties",
     )
 
@@ -217,8 +221,9 @@ def test_biclustering_families_return_fixed_column_partitions_and_smooth_rows(re
     assert jnp.allclose(jnp.sum(model(features), axis=-1), 1.0)
     assert model.column_labels.shape == (4,)
     assert jnp.all(jnp.isfinite(jax.grad(lambda row: model(row)[0])(features[0])))
-    assert result.gradient_contract.prediction_inputs == "smooth"
-    assert "column_labels" in result.gradient_contract.nondifferentiable_outputs
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
+    assert "column_labels" in contract.nondifferentiable_outputs
 
 
 def test_coclustering_rejects_complex_and_reports_negative_data_infeasible():

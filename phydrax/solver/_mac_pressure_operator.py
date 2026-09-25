@@ -184,7 +184,7 @@ class MACPressureSolveResult(StrictModule):
         return self.evidence.converged
 
 
-class _ScaledIdentityPressurePreconditioner(AbstractPreconditioner):
+class _ScaledIdentityPressurePreconditioner(AbstractPreconditioner, NonTrainableState):
     inverse_scale: Array
 
     def __init__(self, operators: PreparedMACOperators, scale: ArrayLike, /):

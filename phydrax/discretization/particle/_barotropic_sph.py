@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, TypeAlias
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.linalg as la
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._precision import PrecisionEvidenceEnvelope
@@ -42,7 +43,6 @@ from ._sph_operators import (
 )
 
 
-ParticleDifferentiabilityPolicy: TypeAlias = Literal["branchwise"]
 ExternalParticlePotential = Callable[[Array, Array, Any], ArrayLike]
 
 
@@ -53,7 +53,7 @@ class BarotropicSPHMethodPlan(StrictModule, NonTrainableState):
     smoothing_length: float = eqx.field(static=True)
     acoustic_cfl: float = eqx.field(static=True)
     force_cfl: float = eqx.field(static=True)
-    differentiability: ParticleDifferentiabilityPolicy = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     key: DiscretizationKey
     method_id: str = eqx.field(static=True)
 
@@ -93,7 +93,7 @@ class BarotropicSPHMethodPlan(StrictModule, NonTrainableState):
         self.smoothing_length = smoothing
         self.acoustic_cfl = acoustic
         self.force_cfl = force
-        self.differentiability = "branchwise"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.key = key
         self.method_id = resolved_identifier(
             "method_id",
@@ -104,7 +104,7 @@ class BarotropicSPHMethodPlan(StrictModule, NonTrainableState):
                 "smoothing_length": smoothing,
                 "acoustic_cfl": acoustic,
                 "force_cfl": force,
-                "differentiability": "branchwise",
+                "differentiability": BranchDifferentiationPolicy.BRANCHWISE.value,
                 "key": key.key_id,
             },
         )

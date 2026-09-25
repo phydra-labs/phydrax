@@ -16,6 +16,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
 from ._mean_field import (
@@ -594,8 +595,8 @@ def solve_common_noise_mean_field_fixed_point(
 
     capacity = plan.maximum_iterations
     scenario_count = len(problem.scenario_ids)
-    dtype = jnp.result_type(
-        *(flow.particles for flow in problem.initial_conditional_flows), jnp.float64
+    dtype = inexact_result_type(
+        *(flow.particles for flow in problem.initial_conditional_flows)
     )
     shape = (capacity, scenario_count)
     distance_history = jnp.full(shape, jnp.nan, dtype=dtype)

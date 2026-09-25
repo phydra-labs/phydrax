@@ -110,9 +110,8 @@ class RigidContactParticipant(AbstractContactParticipant):
         ):
             raise TypeError("Rigid vertex owners must be one integer vector.")
         for primitive in (np.asarray(plan.edges), np.asarray(plan.faces)):
-            if primitive.size and np.any(
-                np.any(owner[primitive] != owner[primitive, :1], axis=1)
-            ):
+            primitive_owner = owner[primitive]
+            if np.any(primitive_owner != primitive_owner[:, :1]):
                 raise ValueError(
                     "Rigid collision primitives cannot span distinct body owners."
                 )

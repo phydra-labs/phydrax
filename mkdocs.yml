@@ -483,6 +483,7 @@ nav:
         - Probabilistic graphical models: "guides_probabilistic_graphical_models.md"
         - Optimal transport: "guides_transport.md"
         - Native machine learning: "guides/ml.md"
+        - Machine learning interoperability: "guides_ml_interoperability.md"
         - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
         - Quantum operators and dynamics: "guides_quantum.md"
         - Local quantum programs: "guides_quantum_programs.md"
@@ -494,6 +495,7 @@ nav:
         - Overview: "examples/index.md"
     - API:
         - Overview: "api/phydrax.md"
+        - Derivative contracts and ports: "api/differentiation.md"
         - Logging: "api/logging.md"
         - Differential privacy: "api/privacy.md"
         - Execution worksets: "api/execution.md"
@@ -851,6 +853,7 @@ nav:
             - Delay and functional differential equations: "api/solver/delay.md"
             - Functional solver: "api/solver/functional_solver.md"
             - Functional domain decomposition: "api/solver/functional_decomposition.md"
+            - Solver objectives and component training: "api/solver/component_training.md"
             - Variational Monte Carlo: "api/solver/variational_monte_carlo.md"
             - Variational TDVP: "api/solver/variational_tdvp.md"
             - Exact enforcement: "api/solver/enforcement.md"
@@ -877,6 +880,6 @@ nav:
     - Appendix:
         - Overview: "appendix/index.md"
         - Differentiation modes: "appendix/differentiation_modes.md"
-        - ML differentiation contracts: "appendix/ml_differentiability.md"
+        - Derivative contracts: "appendix/ml_differentiability.md"
         - Physics-Constrained Interpolation: "appendix/physics_constrained_interpolation.md"
         - Surely You're Joking!: "appendix/surely_youre_joking.md"

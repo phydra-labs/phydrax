@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState, ParameterOwner
 from .._keys import EvalKey
 from ._recurrent import (
     AffineRecurrence,
@@ -30,14 +31,14 @@ WeightSpaceInputMode = Literal["value", "difference"]
 WeightSpaceExecution = Literal["serial", "associative"]
 
 
-class WeightSpaceState(StrictModule):
+class WeightSpaceState(StrictModule, NonTrainableState):
     """Selected parameter vector and previous observation for streaming continuation."""
 
     parameters: Array
     previous_input: Array
 
 
-class WeightSpaceRecurrence(StrictModule):
+class WeightSpaceRecurrence(StrictModule, ParameterOwner):
     """Stable diagonal recurrence in a selected root-model parameter subspace."""
 
     raw_retention: Array

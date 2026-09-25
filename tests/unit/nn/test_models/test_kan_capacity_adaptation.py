@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def _model(*, scan=False, per_input=False):
@@ -30,7 +29,7 @@ def _model(*, scan=False, per_input=False):
 
 
 def _trainable_count(model):
-    trainable, _ = partition_trainable(model)
+    trainable, _model_state, _ = phx.partition_parameters(model)
     return sum(leaf.size for leaf in jax.tree.leaves(trainable))
 
 
@@ -124,7 +123,7 @@ def test_identical_hidden_block_layouts_preserve_scan_and_gradients():
 
 def test_capacity_adaptation_validation_and_tolerance_are_explicit():
     model = _model()
-    with pytest.raises(ValueError, match="one value per positive span"):
+    with pytest.raises(ValueError, match="one value per span"):
         phx.nn.models.refine_kan_edges(
             model,
             {(0, 0, 0): jnp.ones(3)},

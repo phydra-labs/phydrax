@@ -65,7 +65,10 @@ values_m = phx.units.convert_value(
 
 Conversion is allowed only when dimensions and reference-system IDs match
 exactly. Unit labels do not trigger parsing or inference. Domain adapters may
-map a closed set of accepted source tokens to canonical unit definitions.
+map a closed set of accepted source tokens to canonical unit definitions, and
+owners that declare unit strings resolve them explicitly with
+`phx.units.parse_unit`, a closed grammar over catalog symbols that fails with
+`ValueError` on any unknown symbol or malformed expression.
 
 Cardiovascular and skeletal-muscle quantity specifications store the same
 `UnitDefinition` objects while retaining their domain-owned quantity kind,
@@ -117,7 +120,7 @@ The native unit layer does not provide:
 
 - array-wrapper quantities;
 - implicit conversion or unit stripping;
-- arbitrary string-expression parsing;
+- string-expression parsing beyond the closed catalog grammar of `parse_unit`;
 - affine temperature or epoch conversions;
 - logarithmic units;
 - global equivalencies such as mass-energy or spectral conversion;

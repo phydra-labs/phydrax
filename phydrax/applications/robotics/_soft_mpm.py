@@ -17,7 +17,7 @@ from ..._array_tree import ArrayPyTreeSchema
 from ..._fingerprint import canonical_fingerprint
 from ..._identity import ExecutableSignature, NumericRevision, SemanticProvenance
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...backends._types import BackendUnavailableError
 from ...discretization.mpm import (
     BlockSparseMPMNodalStoragePlan,
@@ -532,7 +532,7 @@ class MPMSoftObservation(StrictModule, NonTrainableState):
         return self.evidence.successful
 
 
-class MPMSoftPlant(AbstractDiscretePlant, NonTrainableState):
+class MPMSoftPlant(AbstractDiscretePlant):
     """Fixed-topology, contact-free soft plant over native explicit MPM."""
 
     compiled: CompiledMaterialPointProblem
@@ -543,13 +543,13 @@ class MPMSoftPlant(AbstractDiscretePlant, NonTrainableState):
     profile: RoboticsBackendProfile
     features: MPMSoftFeatureManifest
     resolution: MPMSoftResolutionEvidence
-    state_schema: ArrayPyTreeSchema
-    control_schema: ArrayPyTreeSchema | None
-    parameter_schema: ArrayPyTreeSchema
+    state_schema: ArrayPyTreeSchema = fixed_field()
+    control_schema: ArrayPyTreeSchema | None = fixed_field()
+    parameter_schema: ArrayPyTreeSchema = fixed_field()
     reset_fallback: MPMSoftState
-    semantic_provenance: SemanticProvenance
-    numeric_revision: NumericRevision
-    execution_signature: ExecutableSignature
+    semantic_provenance: SemanticProvenance = fixed_field()
+    numeric_revision: NumericRevision = fixed_field()
+    execution_signature: ExecutableSignature = fixed_field()
     require_finite_state: bool = eqx.field(static=True)
     require_finite_controls: bool = eqx.field(static=True)
     require_finite_parameters: bool = eqx.field(static=True)

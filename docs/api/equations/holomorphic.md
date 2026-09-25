@@ -3,6 +3,14 @@
 See [Holomorphic potential fields](../../guides_holomorphic_potentials.md) for scientific
 assumptions, evidence boundaries, and workflows.
 
+Holomorphic, holomorphic-frame, pluriharmonic, meromorphic, and
+meromorphic-frame certificates are `phydrax.AbstractConstructionCertificate`
+values with the capability IDs `holomorphic-map`, `holomorphic-linear-frame`,
+`pluriharmonic-map`, `meromorphic-map`, and `meromorphic-linear-frame`. Each
+`certificate_id` content-addresses its construction; a frame certificate's
+`certificate_id` is the frame identity used by constraint plans, trace plans,
+projected potentials, and complex-parameter interchange records.
+
 ::: phydrax.equations.ComplexAffineNormalization
 
 ---

@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ._costs import PreconditionerCostEstimate
 from ._hermitian_spectral import HermitianSpectrum
 from ._materialization import MaterializationPolicy
@@ -130,7 +131,7 @@ class RandomizedNystromDiagnostics(StrictModule):
         self.refresh_count = int(refresh_count)
 
 
-class RandomizedNystromPreconditioner(AbstractPreconditioner):
+class RandomizedNystromPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Shifted inverse of a fixed-rank randomized positive-operator model."""
 
     basis: Array

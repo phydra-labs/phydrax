@@ -12,9 +12,12 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
+from ...._trainable import fixed_field, NonTrainableState
 from ..._base import _AbstractBaseModel
+from ..._contracts import gradient_regularity, model_regularity
 from ..._keys import EvalKey
 
 
@@ -27,7 +30,7 @@ DifferentialTransform = Literal[
 DerivativeBackend = Literal["autodiff", "central_difference"]
 
 
-class DifferentialNormalization(StrictModule):
+class DifferentialNormalization(StrictModule, NonTrainableState):
     """Affine scale factors needed to recover physical derivatives."""
 
     coordinate_scale: Array
@@ -60,7 +63,7 @@ class DifferentialNormalization(StrictModule):
         )
 
 
-class LinearDifferentialTransform(StrictModule):
+class LinearDifferentialTransform(StrictModule, NonTrainableState):
     """Validated linear map from a field Jacobian to derived output channels."""
 
     coefficients: Array
@@ -109,7 +112,7 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
     transform: DifferentialTransform | LinearDifferentialTransform
     backend: DerivativeBackend
     normalization: DifferentialNormalization
-    step: Array
+    step: Array = fixed_field()
     coord_dim: int
     field_channels: int
     in_size: int
@@ -196,6 +199,14 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
         self.field_channels = channels
         self.in_size = dimension
         self.out_size = out_size
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # The scalings and transforms are linear in the Jacobian; a central
+        # difference is a linear combination of translated decoder values.
+        decoder = model_regularity(self.decoder)
+        if self.backend == "central_difference":
+            return decoder
+        return gradient_regularity(decoder)
 
     def _field(self, point: Array, key: EvalKey, /) -> Array:
         value = jnp.asarray(self.decoder(point, key=key))

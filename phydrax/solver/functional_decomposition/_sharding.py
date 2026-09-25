@@ -12,7 +12,7 @@ import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState, place_array_leaves
+from ..._trainable import ArrayRole, NonTrainableState, resolve_array_roles
 from ...domain import LocalFieldFamily, SubdomainCover
 from ._schwarz import SchwarzTraceState, TraceExchangeState
 
@@ -102,12 +102,35 @@ class ShardedLocalFieldFamily(StrictModule):
         self.evidence = evidence
 
 
+def _place_evolving_arrays(tree, device: jax.Device, /):
+    """Place PARAMETER, MODEL_STATE and unclassified arrays; keep FIXED in place.
+
+    Placement never raises on undeclared trees; FIXED leaves (including every leaf
+    below a domain or other terminal node) are left untouched.
+    """
+    resolution = resolve_array_roles(tree)
+    leaves = jax.tree_util.tree_leaves(tree)
+    return jax.tree_util.tree_unflatten(
+        resolution.treedef,
+        [
+            jax.device_put(leaf, device)
+            if role is not ArrayRole.FIXED and eqx.is_array(leaf)
+            else leaf
+            for leaf, role in zip(leaves, resolution.roles, strict=True)
+        ],
+    )
+
+
 def place_local_field_family(
     family: LocalFieldFamily,
     plan: FunctionalDecompositionShardingPlan,
     /,
 ) -> ShardedLocalFieldFamily:
-    """Place each local function array tree on its declared owning device."""
+    """Place each local field's evolving arrays on its declared owning device.
+
+    PARAMETER, MODEL_STATE and unclassified arrays move to the patch device; FIXED
+    arrays stay where they are.
+    """
     if not isinstance(family, LocalFieldFamily):
         raise TypeError("family must be a LocalFieldFamily.")
     if not isinstance(plan, FunctionalDecompositionShardingPlan):
@@ -115,7 +138,7 @@ def place_local_field_family(
     if set(family.cover.patch_ids) != {name for name, _ in plan.assignments}:
         raise ValueError("Sharding plan and local family covers do not match.")
     fields = {
-        patch.patch_id: place_array_leaves(field, plan.device(patch.patch_id))
+        patch.patch_id: _place_evolving_arrays(field, plan.device(patch.patch_id))
         for patch, field in zip(family.cover.patches, family.fields, strict=True)
     }
     placed = LocalFieldFamily(family.field_id, family.cover, fields)

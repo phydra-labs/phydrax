@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PRNGKeyArray
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
@@ -154,7 +155,7 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
         return jnp.real(jnp.vdot(probe, solution)), result.successful
 
     def _lanczos(self, operator, probe):
-        dtype = jnp.result_type(probe.dtype, jnp.float64)
+        dtype = inexact_result_type(probe.dtype)
         q = probe.astype(dtype) / jnp.sqrt(jnp.asarray(self.dimension, dtype=dtype))
         previous = jnp.zeros_like(q)
         beta = jnp.asarray(0.0, dtype=dtype)

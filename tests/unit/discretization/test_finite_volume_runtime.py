@@ -142,9 +142,13 @@ def test_runtime_initialization_binds_static_content_and_round_trips_averages():
     assert journal.epoch_table == (runtime.initial_topology_epoch,)
     assert journal.current_epoch_id == state.content_state.topology_epoch_id
     assert journal.current_epoch_id == runtime.topology_epoch_id
-    assert runtime.initial_topology_epoch.parent_epoch_id is None
+    assert runtime.initial_topology_epoch.index == 0
     assert (
-        runtime.initial_topology_epoch.prepared_id
+        runtime.initial_topology_artifacts.epoch_id
+        == runtime.initial_topology_epoch.epoch_id
+    )
+    assert (
+        runtime.initial_topology_artifacts.prepared_id
         == runtime.dynamics.discretization.prepared_id
     )
 
@@ -364,7 +368,7 @@ def test_mapped_runtime_high_order_fallback_and_ledger_routes_are_deterministic(
     )
 
 
-def test_mapped_runtime_rejects_hllc_flux():
+def test_mapped_runtime_admits_arbitrary_normal_hllc_and_refuses_axis_only_roe():
     runtime, average = _runtime(
         cells=18,
         mapped=True,
@@ -372,14 +376,9 @@ def test_mapped_runtime_rejects_hllc_flux():
     )
     initial = runtime.initialize_state(average, 0.0, 0.001)
 
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"Mapped finite volumes currently require Rusanov, HLL, "
-            r"or Einfeldt HLL flux\."
-        ),
-    ):
-        runtime.advance(initial)
+    assert bool(runtime.advance(initial).accepted)
+    with pytest.raises(ValueError, match="arbitrary-normal numerical flux"):
+        _runtime(cells=18, mapped=True, interface_solver=phx.discretization.RoeFluxPlan())
 
 
 def test_static_accepted_ledger_accounts_source_and_boundary_content():

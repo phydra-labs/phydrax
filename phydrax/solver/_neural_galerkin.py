@@ -12,7 +12,6 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
@@ -22,8 +21,9 @@ from phydrax.domain import ComponentSum, DomainFunction
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
-from .._trainable import partition_trainable
+from .._trainable import ArrayRole, require_parameter_roles
 from ..dynamics import TimeGrid
 from ..enforcement import EnforcementProgram
 from ..integration import (
@@ -61,6 +61,11 @@ from ._temporal_precision import TemporalPrecisionPolicy
 
 
 TangentFormulation: TypeAlias = Literal["rectangular", "gram"]
+
+_COMPONENT_EVALUATION_ADDRESS = SampleAddress(
+    "neural-galerkin", "field-projection", target="component", role="evaluation"
+)
+
 RateFunction: TypeAlias = Callable[
     [Array, Mapping[str, DomainFunction], Any], Mapping[str, DomainFunction]
 ]
@@ -93,15 +98,10 @@ def _qualified_type_name(value: Any, /) -> str:
 
 
 def _default_parameter_subspace(functions: frozendict[str, DomainFunction]):
-    trainable, _ = partition_trainable(functions)
-    paths = tuple(
-        jax.tree_util.keystr(path)
-        for path, leaf in jax.tree_util.tree_flatten_with_path(trainable)[0]
-        if eqx.is_inexact_array(leaf)
-    )
-    if not paths:
-        raise ValueError("Neural Galerkin evolution requires trainable function leaves.")
-    return ParameterSubspace.from_leaf_paths(functions, paths)
+    resolution = require_parameter_roles(functions, context="NeuralGalerkinProblem")
+    if ArrayRole.PARAMETER not in resolution.roles:
+        raise ValueError("Neural Galerkin evolution requires PARAMETER function leaves.")
+    return ParameterSubspace(functions, resolution.filter_spec(ArrayRole.PARAMETER))
 
 
 def _copy_linear_policy(
@@ -484,7 +484,10 @@ def _component_batches_and_keys(metric: FieldProjectionMetric):
     if isinstance(base.component, ComponentSum):
         if not isinstance(batch, tuple):
             raise TypeError("Component-sum metric realization must contain batch tuples.")
-        return batch, tuple(jr.split(key, len(batch)))
+        return batch, tuple(
+            derive_key(key, _COMPONENT_EVALUATION_ADDRESS, index)
+            for index in range(len(batch))
+        )
     if isinstance(batch, tuple):
         raise TypeError(
             "Single-component metric realization cannot contain batch tuples."
@@ -667,8 +670,14 @@ class _NeuralGalerkinVectorField(StrictModule):
         )
         accepted = result.successful & finite
         if self.adjoint_policy.mode == "certified_backsolve":
+            # The implicit adjoint differentiates the damped normal-equation
+            # stationarity J^T(J rate - target) + damping rate = 0, so that residual
+            # (not the least-squares residual, nonzero at the exact minimizer)
+            # certifies the primal tangent.
+            damping = jnp.asarray(self.policy.damping, dtype=parameters.real.dtype)
+            stationarity = jnp.asarray(jacobian.adjoint_mv(defect)) + damping * rate
             accepted = accepted & (
-                diagnostics.residual_norm <= self.adjoint_policy.maximum_primal_residual
+                _norm(stationarity) <= self.adjoint_policy.maximum_primal_residual
             )
         if self.policy.maximum_relative_defect is not None:
             accepted = accepted & (relative_defect <= self.policy.maximum_relative_defect)

@@ -11,6 +11,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import apply_gather_stencil, rectilinear_stencil
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...operators.interpolation import InterpolationResult, linear_interpolate
 
@@ -30,7 +31,7 @@ def _support_bounds(values: ArrayLike, /) -> Array:
         raise ValueError(
             "Property support bounds must be finite and strictly increasing."
         )
-    return bounds.astype(jnp.result_type(bounds, jnp.float64))
+    return bounds.astype(inexact_result_type(bounds))
 
 
 def _value_bounds(values: ArrayLike, dtype, /) -> Array:
@@ -173,7 +174,7 @@ class TabulatedPropertyLaw(StrictModule):
             values_.dtype, jnp.complexfloating
         ):
             raise TypeError("Tabulated property nodes and values must be real-valued.")
-        dtype = jnp.result_type(nodes_, values_, jnp.float64)
+        dtype = inexact_result_type(nodes_, values_)
         nodes_ = nodes_.astype(dtype)
         values_ = values_.astype(dtype)
         node_host = np.asarray(nodes_, dtype=np.float64)
@@ -314,12 +315,7 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
             raise TypeError(
                 "Concentration-temperature property data must be real-valued."
             )
-        dtype = jnp.result_type(
-            concentration_nodes,
-            temperature_nodes,
-            table,
-            jnp.float64,
-        )
+        dtype = inexact_result_type(concentration_nodes, temperature_nodes, table)
         concentration_nodes = concentration_nodes.astype(dtype)
         temperature_nodes = temperature_nodes.astype(dtype)
         table = table.astype(dtype)

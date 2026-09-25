@@ -25,8 +25,11 @@ components and the scoring-policy ID.
 energy, forces, optional stress, provider, acquisition, system, topology, and units.
 Only records carrying `successful=True` may enter `AtomisticLabelSet`.
 
-A label-set append creates a new `lifecycle.NumericRevision` whose parent is the
-previous content digest. Duplicate configuration/provider pairs are rejected.
+A label set carries a canonical `phydrax.NumericRevision` of its ordered label IDs
+(semantics: system, topology, and unit system) and a `lifecycle.RevisionLineage`.
+An append creates a child revision whose lineage names the parent's canonical
+`revision_id` and `lineage_id`; `label_set_id` binds both. Duplicate
+configuration/provider pairs are rejected.
 Training and validation membership is stored on each label and cannot be silently
 reshuffled by a campaign round.
 

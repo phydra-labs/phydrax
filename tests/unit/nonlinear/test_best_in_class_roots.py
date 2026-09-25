@@ -60,8 +60,9 @@ def test_dynamic_budget_and_fail_fast_nested_evidence_are_jittable():
     assert int(result.components[0].diagnostics.work.residual_evaluations) == 2
     assert int(result.components[1].diagnostics.work.residual_evaluations) == 0
     assert bool(result.components[1].evidence.skipped)
-    assert exhausted.status == int(nl.NonlinearUpdateStatus.INNER_FAILURE)
-    assert int(exhausted.diagnostics.work.residual_evaluations) == 2
+    assert exhausted.status == int(nl.NonlinearUpdateStatus.BUDGET_EXHAUSTED)
+    assert int(exhausted.diagnostics.work.residual_evaluations) == 0
+    assert jnp.array_equal(exhausted.state, jnp.asarray([0.0]))
 
 
 def test_canonical_prepared_newton_step_retains_iteration_state():
@@ -693,6 +694,113 @@ def test_small_batch_mixed_precision_and_sharding_contracts():
     assert float(policy.residual_norm(placed)) == pytest.approx(5.0)
 
 
+def _component(authority, precision):
+    return phx.ComponentContract(
+        authority=authority,
+        model_contract=phx.ModelExecutionContract(
+            derivative=phx.DerivativeContract.smooth((phx.DerivativeSurface.INPUT,)),
+            execution=phx.ExecutionCapabilities("native-jax"),
+            precision=precision,
+        ),
+    )
+
+
+def test_model_precision_below_state_precision_requires_declared_cast_boundary():
+    def float32_model(*casts):
+        return phx.ComponentPrecisionContract(
+            input_dtype="float64",
+            parameter_dtype="float32",
+            compute_dtype="float32",
+            accumulation_dtype="float32",
+            output_dtype="float64",
+            absolute_error_floor=1e-5,
+            cast_boundary_evidence=casts,
+        )
+
+    model = phx.ComponentAuthority.MODEL
+    for components in ((), (_component(model, float32_model()),)):
+        with pytest.raises(ValueError, match="cast_boundary_evidence"):
+            nl.NonlinearPrecisionPolicy(
+                state_dtype="float64",
+                model_dtype="float32",
+                components=components,
+            )
+    with pytest.raises(ValueError, match="declares no ComponentPrecisionContract"):
+        nl.NonlinearPrecisionPolicy(components=(_component(model, None),))
+
+    policy = nl.NonlinearPrecisionPolicy(
+        state_dtype="float64",
+        residual_dtype="float64",
+        model_dtype="float32",
+        components=(_component(model, float32_model("input-downcast")),),
+    )
+    assert (policy.state_dtype, policy.model_dtype) == ("float64", "float32")
+    assert policy.residual_floor() == pytest.approx(1e-5)
+
+
+def test_relative_component_floor_requires_a_declared_residual_scale():
+    relative = phx.ComponentPrecisionContract(
+        input_dtype="float64",
+        parameter_dtype="float32",
+        compute_dtype="float32",
+        accumulation_dtype="float64",
+        output_dtype="float64",
+        relative_error_floor=1e-3,
+        cast_boundary_evidence=("input-downcast",),
+    )
+    components = (_component(phx.ComponentAuthority.MODEL, relative),)
+    problem = nl.NonlinearSystemProblem(lambda state, target: state**3 - target)
+    target = jnp.asarray([2.0, 3.0])
+
+    def termination(tolerance):
+        return nl.NonlinearTermination(
+            absolute_residual=tolerance, relative_residual=0.0, maximum_steps=50
+        )
+
+    unscaled = nl.NonlinearPrecisionPolicy(
+        residual_dtype="float64", components=components
+    )
+    assert unscaled.residual_floor(2.0) == pytest.approx(2e-3)
+    with pytest.raises(ValueError, match="residual_scale"):
+        unscaled.validate_tolerance(1e-12)
+    with pytest.raises(ValueError, match="residual_scale"):
+        nl.NewtonKrylov().solve(
+            problem,
+            jnp.ones(2),
+            termination=termination(1e-12),
+            args=target,
+            precision=unscaled,
+        )
+    with pytest.raises(ValueError, match="residual_scale"):
+        nl.prepare_nonlinear(
+            problem,
+            jnp.ones(2),
+            termination=termination(1e-12),
+            args=target,
+            precision=unscaled,
+        )
+
+    scaled = nl.NonlinearPrecisionPolicy(
+        residual_dtype="float64", components=components, residual_scale=4.0
+    )
+    assert scaled.residual_floor() == pytest.approx(4e-3)
+    assert scaled.policy_id != unscaled.policy_id
+    with pytest.raises(ValueError, match="below the declared component"):
+        scaled.validate_tolerance(1e-12)
+    result = nl.NewtonKrylov().solve(
+        problem,
+        jnp.ones(2),
+        termination=termination(4e-3),
+        args=target,
+        precision=scaled,
+    )
+    assert bool(result.successful)
+    with pytest.raises(ValueError, match="finite and positive"):
+        nl.NonlinearPrecisionPolicy(components=components, residual_scale=0.0)
+    with pytest.raises(TypeError, match="real number"):
+        nl.NonlinearPrecisionPolicy(components=components, residual_scale=True)
+
+
 def test_solver_graduation_and_regression_gates():
     evidence = nl.SolverGraduationEvidence(
         0,
@@ -810,9 +918,12 @@ def test_picard_certification_uses_declared_residual_geometry():
 def test_steffensen_exit_reuses_cached_mapping_under_evaluation_limit():
     calls = 0
 
-    def mapping(state, args):
+    def count():
         nonlocal calls
         calls += 1
+
+    def mapping(state, args):
+        jax.debug.callback(count)
         return state + 1.0
 
     result = nl.SteffensenIteration().solve(
@@ -825,6 +936,7 @@ def test_steffensen_exit_reuses_cached_mapping_under_evaluation_limit():
             maximum_evaluations=1,
         ),
     )
+    jax.effects_barrier()
 
     assert calls == 1
     assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
@@ -853,9 +965,12 @@ def test_quasi_newton_reserves_final_certification_evaluation(method):
 def test_safeguarded_derivative_root_reserves_certification_budget():
     calls = 0
 
-    def residual(value, target):
+    def count():
         nonlocal calls
         calls += 1
+
+    def residual(value, target):
+        jax.debug.callback(count)
         return value * value - target
 
     problem = nl.ScalarRootProblem(residual, bracket=(0.0, 2.0))
@@ -868,6 +983,7 @@ def test_safeguarded_derivative_root_reserves_certification_budget():
         ),
         args=2.0,
     )
+    jax.effects_barrier()
 
     assert calls == 3
     assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)

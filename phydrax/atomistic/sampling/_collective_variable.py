@@ -75,7 +75,7 @@ class AbstractCollectiveVariablePlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class AbstractCollectiveVariableProgram(StrictModule, NonTrainableState):
+class AbstractCollectiveVariableProgram(StrictModule):
     output_size: eqx.AbstractVar[int]
     names: eqx.AbstractVar[tuple[str, ...]]
     metrics: eqx.AbstractVar[tuple[CollectiveVariableMetric, ...]]
@@ -428,7 +428,7 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
         )
 
 
-class CollectiveVariableProgram(AbstractCollectiveVariableProgram):
+class CollectiveVariableProgram(AbstractCollectiveVariableProgram, NonTrainableState):
     variables: tuple[PreparedCollectiveVariable, ...]
     output_size: int = eqx.field(static=True)
     names: tuple[str, ...] = eqx.field(static=True)

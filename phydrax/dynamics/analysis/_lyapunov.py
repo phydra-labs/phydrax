@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from .._evolution import AbstractDifferentiableEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid
@@ -259,7 +260,7 @@ def _thin_qr(matrix: Array, /) -> tuple[Array, Array]:
 
 def _initial_basis(state: Array, rank: int, supplied: ArrayLike | None, /) -> Array:
     dimension = state.size
-    dtype = jnp.result_type(state, jnp.float64)
+    dtype = inexact_result_type(state)
     if supplied is None:
         if rank == dimension:
             return jnp.eye(dimension, dtype=dtype)
@@ -364,7 +365,7 @@ def finite_time_lyapunov_spectrum(
         if rank <= 0 or rank > dimension:
             raise ValueError("leading_k must lie between one and the state dimension.")
         basis = _initial_basis(state, rank, initial_basis)
-        logs = jnp.zeros((rank,), dtype=jnp.result_type(state, jnp.float64))
+        logs = jnp.zeros((rank,), dtype=inexact_result_type(state))
         elapsed = jnp.asarray(0.0, dtype=grid.coordinates.dtype)
         start_step = 0
         previous_intervals = 0

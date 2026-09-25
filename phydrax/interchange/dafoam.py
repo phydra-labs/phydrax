@@ -6,7 +6,8 @@
 This adapter launches our bundled worker using a pinned Python executable. The
 worker invokes PYDAFOAM, DAFoamSolver, DAFoamFunctions and OpenMDAO compute_totals;
 its JSON is transport produced by PHYDRAX, not an alleged DAFoam file format.
-No native PHYDRAX residual or differentiation through a host process is exposed.
+No native PHYDRAX residual or differentiation through a host process is exposed;
+`DAFoamAdjointAction` stages the accepted totals as a host-boundary adjoint.
 The reference APIs are pinned to https://github.com/mdolab/dafoam/tree/v4.0.3 .
 """
 
@@ -19,18 +20,37 @@ import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
+from typing import Any, final
+
+import numpy as np
 
 from .._external_runtime import (
     _artifact,
     _host_only,
     EnergyRunResult,
+    ExternalAdjointAction,
+    ExternalPrimalStage,
+    ExternalTensorSpec,
     PinnedExecutable,
     run_energy_command,
 )
 from .._external_worker import _digest_file, _relative_path
 from .._fingerprint import canonical_fingerprint, canonical_json
 from ..artifacts import ScientificArtifactEnvelope
+
+
+class DAFoamDesignVariableKind(StrEnum):
+    """Closed set of DAFoam solver-input kinds of the steady aerodynamic profile.
+
+    Values are DAFoam's own `inputInfo` type spellings.
+    """
+
+    VOLUME_COORDINATES = "volCoord"
+    PATCH_VELOCITY = "patchVelocity"
+    PATCH_VARIABLE = "patchVar"
+    FIELD = "field"
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,20 +163,28 @@ class DAFoamAdjointEvidence:
     failure_reason: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class DAFoamTotalDerivative:
+    """Total derivative of one function with respect to one design variable.
+
+    `values` is read-only and has the declared shape of the design variable.
+    """
+
     function: str
     design_variable: str
-    values: tuple[float, ...]
+    values: np.ndarray
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class DAFoamResult:
     """External functionals and optional accepted-point *total* adjoints.
 
     Mesh/state acceptance is engine-native checkMesh/primalFail evidence under
     declared options, not a fabricated native residual tolerance. Failed primal
     solves expose no objective values; failed adjoints expose no total gradients.
+    Functions and totals are in canonical (function, design variable) name
+    order. `replay_id` identifies the realization: request, runtime, state,
+    mesh, design, and adjoint digests.
     """
 
     functions: tuple[tuple[str, float], ...]
@@ -169,6 +197,7 @@ class DAFoamResult:
     adjoints: tuple[DAFoamAdjointEvidence, ...]
     gradient_capability: str
     failure_reason: str
+    replay_id: str
     run: EnergyRunResult
     artifact: ScientificArtifactEnvelope
 
@@ -193,10 +222,24 @@ class DAFoamConvergenceError(RuntimeError):
         super().__init__(result.failure_reason or "DAFoam acceptance failed.")
 
 
+def _design_values(
+    design: Mapping[str, Any], /
+) -> tuple[dict[str, list[float]], dict[str, list[int]]]:
+    values = {}
+    shapes = {}
+    for name in sorted(design):
+        array = np.asarray(design[name], dtype=np.float64)
+        if array.size == 0 or not np.all(np.isfinite(array)):
+            raise ValueError("Design vectors must be nonempty and finite.")
+        values[name] = array.reshape(-1).tolist()
+        shapes[name] = list(array.shape)
+    return values, shapes
+
+
 def _request(
     case_files: Mapping[str, bytes],
     options: Mapping,
-    design: Mapping[str, Sequence[float]],
+    design: Mapping[str, Any],
     geometry_source: str,
     total_adjoint: bool,
     max_bytes: int,
@@ -261,9 +304,8 @@ def _request(
     input_info = opts.get("inputInfo", {})
     if set(input_info) != set(design) or not design:
         raise ValueError("Supply exactly every declared solver input as a design vector.")
-    values = {}
-    names = tuple(opts["function"])
-    for name, vector in design.items():
+    names = tuple(sorted(opts["function"]))
+    for name in design:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name) or name in (
             *names,
             "aero_states",
@@ -276,13 +318,12 @@ def _request(
             raise ValueError(
                 "Each input must participate in solver and function derivatives."
             )
-        if entry.get("type") not in ("volCoord", "patchVelocity", "patchVar", "field"):
+        if entry.get("type") not in tuple(DAFoamDesignVariableKind):
             raise ValueError(
-                "Supported design inputs: volCoord, patchVelocity, patchVar, field."
+                "Supported design inputs: "
+                f"{', '.join(kind.value for kind in DAFoamDesignVariableKind)}."
             )
-        values[name] = [float(v) for v in vector]
-        if not values[name] or not all(math.isfinite(v) for v in values[name]):
-            raise ValueError("Design vectors must be nonempty and finite.")
+    values, shapes = _design_values(design)
     if any(
         not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", n) or n == "aero_states" for n in names
     ):
@@ -290,6 +331,7 @@ def _request(
     request = {
         "options": opts,
         "design": values,
+        "design_shapes": shapes,
         "geometry_source": geometry_source,
         "total_adjoint": total_adjoint,
         "case_sha256": {
@@ -300,12 +342,53 @@ def _request(
     return files, request
 
 
+def _total_derivatives(
+    payload: Mapping[str, Any], request: Mapping[str, Any], /
+) -> tuple[DAFoamTotalDerivative, ...]:
+    """Shape-preserving totals in canonical (function, design variable) order."""
+    derivatives = []
+    for total in payload["total_derivatives"]:
+        variable = total["design_variable"]
+        if variable not in request["design_shapes"]:
+            raise ValueError("DAFoam returned a total for an undeclared design input.")
+        values = np.asarray(total["values"], dtype=np.float64)
+        if values.shape != (len(request["design"][variable]),):
+            raise ValueError("DAFoam total derivative has the wrong design dimension.")
+        if not np.all(np.isfinite(values)):
+            raise ValueError("DAFoam returned nonfinite physics/derivatives.")
+        values = values.reshape(request["design_shapes"][variable])
+        values.setflags(write=False)
+        derivatives.append(DAFoamTotalDerivative(total["function"], variable, values))
+    return tuple(
+        sorted(derivatives, key=lambda total: (total.function, total.design_variable))
+    )
+
+
+def _replay_id(
+    request: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    adjoints: tuple[DAFoamAdjointEvidence, ...],
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "dafoam-realization",
+            "request_id": request["request_id"],
+            "runtime_sha256": payload["runtime_sha256"],
+            "state_sha256": payload["state_sha256"],
+            "mesh_sha256": payload["mesh_sha256"],
+            "design_sha256": payload["design_sha256"],
+            "adjoints": sorted([a.function, a.adjoint_sha256] for a in adjoints),
+        }
+    )
+
+
 def run_dafoam(
     runtime: DAFoamRuntime,
     *,
     case_files: Mapping[str, bytes],
     options: Mapping,
-    design: Mapping[str, Sequence[float]],
+    design: Mapping[str, Any],
     geometry_source: str,
     total_adjoint: bool = False,
     timeout: float = 1800,
@@ -314,9 +397,11 @@ def run_dafoam(
 ) -> DAFoamResult:
     """Run a declared, prepared serial OpenFOAM case and optional total adjoints.
 
-    A volCoord design is the complete ordered volume-coordinate vector; its
-    totals are with respect to those coordinates, not a pretend CAD/FFD map.
-    Patch inputs use DAFoam's declared units/order (patchVelocity: speed, degrees).
+    Each design value is an array whose flattened C-order values form DAFoam's
+    input vector; its total derivatives keep that array's shape. A volCoord
+    design is the complete ordered volume-coordinate vector; its totals are with
+    respect to those coordinates, not a pretend CAD/FFD map. Patch inputs use
+    DAFoam's declared units/order (patchVelocity: speed, degrees).
     OpenFOAM dictionaries can load native code and are trusted executable inputs.
     All model files are staged privately; no caller script or callback is run.
     """
@@ -349,13 +434,15 @@ def run_dafoam(
     ):
         raise ValueError("DAFoam runtime identity does not match its pin.")
     functions = tuple(
-        (name, float(value)) for name, value in payload["functions"].items()
+        (name, float(value)) for name, value in sorted(payload["functions"].items())
     )
-    derivatives = tuple(
-        DAFoamTotalDerivative(t["function"], t["design_variable"], tuple(t["values"]))
-        for t in payload["total_derivatives"]
+    derivatives = _total_derivatives(payload, request)
+    adjoints = tuple(
+        sorted(
+            (DAFoamAdjointEvidence(**a) for a in payload["adjoints"]),
+            key=lambda adjoint: adjoint.function,
+        )
     )
-    adjoints = tuple(DAFoamAdjointEvidence(**a) for a in payload["adjoints"])
     if payload["design_sha256"] != canonical_fingerprint(request["design"]):
         raise ValueError("DAFoam evaluated a different declared design.")
     if not payload["failure_reason"]:
@@ -378,20 +465,11 @@ def run_dafoam(
                 raise ValueError(
                     "DAFoam omitted per-functional adjoint convergence evidence."
                 )
-            if any(
-                len(t.values) != len(request["design"][t.design_variable])
-                for t in derivatives
-            ):
-                raise ValueError(
-                    "DAFoam total derivative has the wrong design dimension."
-                )
     if not total_adjoint and (derivatives or adjoints):
         raise ValueError(
             "Unrequested adjoint evidence cannot be attached to a primal-only run."
         )
-    if any(not math.isfinite(v) for _, v in functions) or any(
-        not math.isfinite(v) for t in derivatives for v in t.values
-    ):
+    if any(not math.isfinite(v) for _, v in functions):
         raise ValueError("DAFoam returned nonfinite physics/derivatives.")
     if functions and (not payload["state_accepted"] or not payload["mesh_accepted"]):
         raise ValueError("Failed primal/mesh cannot expose accepted function values.")
@@ -430,14 +508,177 @@ def run_dafoam(
         adjoints,
         "external-total-adjoint" if total_adjoint else "none",
         payload["failure_reason"],
+        _replay_id(request, payload, adjoints),
         run,
         artifact,
     )
 
 
+def _dafoam_output_schema(
+    options: Mapping[str, Any], /
+) -> tuple[ExternalTensorSpec, ...]:
+    functions = options.get("function")
+    if not functions:
+        raise ValueError("Declare functions, designSurfaces and mesh-quality thresholds.")
+    return tuple(ExternalTensorSpec(name, (), np.float64) for name in sorted(functions))
+
+
+@final
+class DAFoamAdjointAction(ExternalAdjointAction):
+    """Staged same-realization DAFoam total adjoint of one prepared case.
+
+    The staged sequence has six steps:
+
+    1. Declare every design variable with its shape. The input schema orders
+       them by name and the output schema orders the scalar functions by name.
+    2. `stage_primal(*design)` runs the primal and every per-functional total
+       adjoint in one pinned run (`run_dafoam(..., total_adjoint=True)`).
+    3. Mesh, state, and every adjoint must be accepted; otherwise the stage
+       records the failure and evidence and exposes no outputs.
+    4. An accepted stage holds the functions, the shape-preserving totals, and
+       the run's `replay_id` as its realization.
+    5. `apply_adjoint(stage, *ȳ)` refuses a stage of another action or
+       realization and a failed stage.
+    6. It returns `Jᵀȳ = Σ_f ȳ[f]·totals[f, var]` for every design variable, in
+       the variable's declared shape.
+
+    The action is host-only; it never differentiates through the process.
+    """
+
+    runtime: DAFoamRuntime
+    case_files: Mapping[str, bytes]
+    options: Mapping[str, Any]
+    geometry_source: str
+    timeout: float
+    max_output_bytes: int
+    environment: Mapping[str, str] | None
+
+    def __init__(
+        self,
+        runtime: DAFoamRuntime,
+        *,
+        case_files: Mapping[str, bytes],
+        options: Mapping[str, Any],
+        design_shapes: Mapping[str, Sequence[int]],
+        geometry_source: str,
+        timeout: float = 1800,
+        max_output_bytes: int = 128 * 1024 * 1024,
+        environment: Mapping[str, str] | None = None,
+    ):
+        _host_only(case_files, options, design_shapes, timeout)
+        if not isinstance(runtime, DAFoamRuntime):
+            raise TypeError("runtime must be a DAFoamRuntime.")
+        # Validate the case and options once against a placeholder design.
+        _, request = _request(
+            case_files,
+            options,
+            {name: np.zeros(tuple(shape)) for name, shape in design_shapes.items()},
+            geometry_source,
+            True,
+            max_output_bytes,
+        )
+        super().__init__(
+            provider="DAFoam",
+            version=runtime.version,
+            input_schema=tuple(
+                ExternalTensorSpec(name, tuple(shape), np.float64)
+                for name, shape in request["design_shapes"].items()
+            ),
+            output_schema=_dafoam_output_schema(request["options"]),
+            configuration_id=canonical_fingerprint(
+                {
+                    "runtime": dict(runtime.implementation_files),
+                    "case_sha256": request["case_sha256"],
+                    "options": request["options"],
+                    "geometry_source": geometry_source,
+                }
+            ),
+        )
+        self.runtime = runtime
+        self.case_files = dict(case_files)
+        self.options = request["options"]
+        self.geometry_source = geometry_source
+        self.timeout = timeout
+        self.max_output_bytes = max_output_bytes
+        self.environment = None if environment is None else dict(environment)
+
+    def _primal(self, inputs: tuple[np.ndarray, ...], /) -> ExternalPrimalStage:
+        result = run_dafoam(
+            self.runtime,
+            case_files=self.case_files,
+            options=self.options,
+            design={
+                spec.name: value
+                for spec, value in zip(self.input_schema, inputs, strict=True)
+            },
+            geometry_source=self.geometry_source,
+            total_adjoint=True,
+            timeout=self.timeout,
+            max_output_bytes=self.max_output_bytes,
+            environment=self.environment,
+        )
+        evidence = (
+            ("artifact", result.artifact.artifact_id),
+            ("design_sha256", result.design_sha256),
+            ("mesh_sha256", result.mesh_sha256),
+            ("run", result.run.artifact.artifact_id),
+            ("state_sha256", result.state_sha256),
+            *((f"adjoint:{a.function}", a.adjoint_sha256) for a in result.adjoints),
+        )
+        if not result.accepted:
+            return ExternalPrimalStage(
+                self.action_id,
+                inputs,
+                (),
+                result.replay_id,
+                evidence=evidence,
+                failure_reason=result.failure_reason or "DAFoam acceptance failed.",
+            )
+        totals = {
+            (total.function, total.design_variable): total.values
+            for total in result.total_derivatives
+        }
+        return ExternalPrimalStage(
+            self.action_id,
+            inputs,
+            tuple(np.asarray(value, dtype=np.float64) for _, value in result.functions),
+            result.replay_id,
+            replay_data=tuple(
+                (
+                    f"totals:{spec.name}",
+                    np.stack(
+                        [
+                            totals[function.name, spec.name]
+                            for function in self.output_schema
+                        ]
+                    ),
+                )
+                for spec in self.input_schema
+            ),
+            evidence=evidence,
+        )
+
+    def _adjoint(
+        self,
+        stage: ExternalPrimalStage,
+        output_cotangents: tuple[np.ndarray, ...],
+        /,
+    ) -> tuple[tuple[np.ndarray, ...], str]:
+        weights = np.stack(output_cotangents)
+        cotangents = []
+        for spec in self.input_schema:
+            totals = stage.replay(f"totals:{spec.name}")
+            cotangents.append(
+                (weights @ totals.reshape(weights.size, -1)).reshape(spec.shape)
+            )
+        return tuple(cotangents), stage.realization_id
+
+
 __all__ = [
+    "DAFoamAdjointAction",
     "DAFoamAdjointEvidence",
     "DAFoamConvergenceError",
+    "DAFoamDesignVariableKind",
     "DAFoamResult",
     "DAFoamRuntime",
     "DAFoamTotalDerivative",

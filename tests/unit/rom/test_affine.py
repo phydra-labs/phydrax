@@ -151,6 +151,16 @@ def test_affine_rom_archive_and_certificate_are_content_bound(tmp_path):
             model,
             analysis_plan_id="another-analysis",
         )
+    _, rebuilt = _affine_model()
+    _, rescaled = _affine_model(basis_matrix=[[2.0, 0.0], [0.0, 0.5], [0.0, 0.0]])
+    assert rebuilt.numeric_revision.revision_id == model.numeric_revision.revision_id
+    assert rescaled.numeric_revision.revision_id != model.numeric_revision.revision_id
+    with pytest.raises(ValueError, match="lifecycle identity"):
+        phx.rom.read_affine_linear_rom(
+            path,
+            rescaled,
+            analysis_plan_id="affine-test-analysis",
+        )
 
     residual = phx.rom.prepare_residual_dual_norm(problem, model)
     stability = phx.rom.ArrayAffineStabilityBound(

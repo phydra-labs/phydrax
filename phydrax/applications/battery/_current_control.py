@@ -16,8 +16,9 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...control import (
     ControlProblem,
     ControlResult,
@@ -671,15 +672,15 @@ class BatteryCurrentControlReplayEvidence(StrictModule):
         return self.feasible
 
 
-class PreparedBatteryCurrentControl(StrictModule, NonTrainableState):
+class PreparedBatteryCurrentControl(StrictModule):
     """Native control problem, lowering, and independent replay binding."""
 
     plan: BatteryCurrentControlPlan
-    initial_state: Array
-    phase_time_grid: TimeGrid
+    initial_state: Array = fixed_field()
+    phase_time_grid: TimeGrid = fixed_field()
     parameterization: PiecewiseConstantControlParameterization
     control_problem: ControlProblem
-    replay_output_indices: Array
+    replay_output_indices: Array = fixed_field()
     path_constraint_names: tuple[str, ...] = eqx.field(static=True)
     terminal_constraint_names: tuple[str, str] = eqx.field(static=True)
     replay_plan_id: str = eqx.field(static=True)
@@ -741,7 +742,7 @@ class PreparedBatteryCurrentControl(StrictModule, NonTrainableState):
             parameters=current.coefficients,
             sampled_loss=sampled_loss,
             feasibility=feasibility,
-            result_id=f"control-result:{self.control_problem.problem_id}",
+            result_namespace=f"control-result:{self.control_problem.problem_id}",
             method_id=trajectory.method_id,
         )
 
@@ -758,9 +759,7 @@ def prepare_battery_current_control(
         raise TypeError("plan must be BatteryCurrentControlPlan.")
     experiment = plan.experiment
     protocol = experiment.plan.protocol
-    dtype = jnp.result_type(
-        protocol.boundary_times_s, plan.terminal_target.value, jnp.float64
-    )
+    dtype = inexact_result_type(protocol.boundary_times_s, plan.terminal_target.value)
     zero_values = BatteryProtocolValues(
         protocol,
         jnp.zeros((protocol.current_step_count,), dtype=dtype),

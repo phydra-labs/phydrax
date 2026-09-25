@@ -197,7 +197,10 @@ class NucleotideGDescriptor(StrictModule, NonTrainableState):
         )
 
 
-class ERMSDCollectiveVariableProgram(AbstractCollectiveVariableProgram):
+class ERMSDCollectiveVariableProgram(
+    AbstractCollectiveVariableProgram,
+    NonTrainableState,
+):
     descriptor: NucleotideGDescriptor
     reference: Array
     output_size: int = eqx.field(static=True, default=1)

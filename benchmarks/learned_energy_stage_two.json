@@ -1,12 +1,12 @@
 {
   "accepted_update_count": 6,
   "artifact": {
-    "artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-    "numeric_revision_id": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
+    "artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+    "numeric_revision_id": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
     "path": "benchmarks/learned_energy_stage_two.phxml",
-    "prepared_binding_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02"
+    "prepared_binding_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9"
   },
-  "artifact_id": "cf70b847f212e4ad687dbbee222c70b661dac87c2a3e34965587f55f29a6fc35",
+  "artifact_id": "08082a04f8ab7a30c151d90dba2829fba8333c4ea50ed7040de912c8dcebd982",
   "attempt_count": 6,
   "curriculum": [
     1,
@@ -28,23 +28,23 @@
     "trained_no_regression": true
   },
   "identities": {
-    "checkpoint_state_id": "6a3cb52c863a9116d5196e1da620f724e03d84af9ead569e5736c8c76b6eb4cc",
-    "final_model_revision_id": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
+    "checkpoint_state_id": "03c0fd9a972d61c1cfcfe0f1850c722e96923ec54acee8edca16b6db005e27a2",
+    "final_model_revision_id": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
     "normalizer_id": "af380d4ebba3c9e63fe5ad9683ae69147aaeda00f159af8d4b20c49463d39663",
-    "rollout_preparation_id": "dac7c349f52b800e778edaa339d21e3aa27d35331f6ab1f148a238ca44873a85",
-    "runtime_id": "36f879043b007d35181655d92f6b2b7801b23b88082e7fe5fcfced555a629c10",
-    "stage_one_artifact_id": "4bbf067759323e62ef1f48ec91fbcc04d9b43b66d10f4f9b81fd0f7d79f6a1b7",
-    "stage_one_model_revision_id": "55051b97cbde9e8b4945e5a952e62d8673fd30b7060102fcc2d4e8aaa234485d",
-    "stage_two_artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-    "stage_two_binding_plan_id": "8c740a2231b9cb24c760fab77722d829a1f4d5268c0545fb59d34fd0caf094f3",
-    "stage_two_prepared_binding_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-    "stage_two_semantic_id": "cee4ba6187b2e57e1202d8361e160ae3bc892770ff5fc26d4dabe25a00348101",
-    "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176",
-    "training_plan_id": "07a98e7b49495e6b3c3d2ce34f53c0fe1091bd3b5745583a0fc200845d58ed17"
+    "rollout_preparation_id": "691525564fe6bcc419c62186f15a3f9e1c6272d182f5c0caca26f90e6ebbbb22",
+    "runtime_id": "889b5e3e83884178d87256cbc2105ed97979ddfc0d045dd7637717f99b0a61e2",
+    "stage_one_artifact_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
+    "stage_one_model_revision_id": "9e06dd790298a996cc0ee12d5e2e98ad62e9860528d4368fe8b656cfb144c8d6",
+    "stage_two_artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+    "stage_two_binding_plan_id": "4696c861aa6173815e034ddf3f6dccc6ebb0bb4e80fe5fdf0d887cf8608948f0",
+    "stage_two_prepared_binding_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+    "stage_two_semantic_id": "6099df26a77c314633b3756b8e278386e79b7607b96b70533eef00c5ef1149d5",
+    "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d",
+    "training_plan_id": "1d55cc5ffdc93905e7f2277228b055bcde4e07fd6112c049e49682fcbd312a1b"
   },
   "kind": "learned-energy-stage-two-qualification",
   "late_start_anchor": 6,
-  "maximum_scaled_flux_error": 0.0027883027939627596,
+  "maximum_scaled_flux_error": 0.0027883031799679162,
   "passed": true,
   "rejection_count": 0,
   "replay": {
@@ -273,6 +273,6 @@
     "absolute_loss": 1e-12,
     "maximum_relative_gradient": 1e-10
   },
-  "selected_stage_two_loss": 0.022937681248334858,
+  "selected_stage_two_loss": 0.022937857856236615,
   "stage_one_baseline_loss": 0.02436623549684959
 }

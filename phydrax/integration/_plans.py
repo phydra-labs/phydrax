@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
 from .._numerics import normalize_anisotropy, normalize_axis_rules, SmolyakAxisRule
+from .._precision import inexact_result_type
 from .._sampling import (
     AntitheticDesign,
     IIDDesign,
@@ -173,7 +174,7 @@ class DiffraxCollocationQuadraturePlan(StrictModule, NonTrainableState):
         if not solver_id:
             raise ValueError("solver_id must be nonempty.")
         self.nodes = nodes_
-        self.weights = weights_.astype(jnp.result_type(weights_, jnp.float64))
+        self.weights = weights_.astype(inexact_result_type(weights_))
         self.active = active_
         self.solver_successful = jnp.asarray(solver_successful, dtype=jnp.bool_).reshape(
             ()

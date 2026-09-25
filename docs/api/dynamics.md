@@ -60,6 +60,13 @@ input layout is present and `callback(coordinate, state, args)` otherwise. Input
 supplied by an explicit `AbstractInputPolicy`; they are not captured from a global
 schedule.
 
+`StateLayout.value_port(role=...)` derives the canonical `ValuePort` of the stored
+state point (`role="point"`, with `state-layout:<layout_id>` axis keys and the geometry
+ID as its space) or of one differential role (`"local"`, `"tangent"`,
+`"local_cotangent"`, `"cotangent"`) in the flattened coordinates of its declared space,
+so point, local, tangent, and cotangent values never share a port.
+`InputLayout.value_port()` describes the exogenous input array under its layout ID.
+
 `continuous_model_system` binds an `AbstractArrayModel` into this system contract
 without capturing trainable leaves in a closure. A flat model is state-only; a
 structured `(state, input)` model requires a matching `InputLayout`. Input/output
@@ -73,6 +80,25 @@ and declares the coordinate step that the map learned. `DiscreteEvolution`
 rejects intervals outside that step contract before calling the model. Axis
 models and variable-duration or stochastic transitions require different
 contracts and are not inferred from array inheritance.
+
+A model declaring intrinsic ports (for example a `phx.ml.fit` result whose
+`FeatureSchema.from_ports` and `TargetSchema.from_port` name these owner ports)
+binds only through an explicit `port_mapping: PortMapping`; a model without
+intrinsic ports takes no mapping and keeps the size checks above as its contract.
+Owner input ports follow the exact order the adapter passes values: the state
+`value_port(role="point")`, then any step-time ports, then
+`InputLayout.value_port()`. The continuous owner output is the state
+`value_port(role="tangent")`; the discrete owner output is the state
+`value_port(role="point")`. The mapping must bind the model's ordered ports to
+exactly that order — values are never repacked — and dimensions, axes, frames,
+normalizations, and spaces must agree whenever both sides declare them. The
+resulting `PortBindingEvidence`, including every aspect left unverified, is
+`ContinuousModelVectorField.port_binding` or `DiscreteModelTransition.port_binding`
+(`None` for portless models). Step-time ports are scalar, neutral, representation
+`"step-time"`, and declare nothing else; each has one component named by its
+semantic-ID suffix: `input_mode="duration"` adds `"discrete-step:duration"`, and
+`input_mode="interval"` adds `"discrete-step:source-time"` then
+`"discrete-step:target-time"`.
 
 `TimeGrid` requires finite, strictly increasing physical times. `IterationGrid` requires
 strictly increasing integer iteration labels. Both are `EvolutionGrid` contracts, but
@@ -233,22 +259,37 @@ deterministic reference-branch, and residual objectives share one authored
 recurrent step. Full, prefix, chunked, rematerialized, and resumed execution are
 required to agree; no JAXPR transformation or inferred carry is involved.
 
-`gradient_accumulation=K` evaluates `K` independently keyed window batches at
-fixed model, optimizer, target, and rollout-schedule state. Each objective emits
-an evidence-weighted numerator and support; numerator gradients and supports are
-summed and normalized once before the Optax update. This is exactly equivalent
+`gradient_accumulation=K` evaluates `K` window batches at fixed model,
+optimizer, target, and rollout-schedule state. Each batch emits an
+evidence-weighted numerator and support; numerator gradients and supports are
+merged and normalized once before the Optax update. This is exactly equivalent
 to the pooled evidence-weighted objective for unequal batches and final epoch
-tails. A zero-support group is consumed without advancing optimizer, target,
-validation, callback, history, or checkpoint state. `steps` counts accepted
-optimizer updates, while `TrainingProgress.microstep` counts consumed batches.
+tails. `steps` counts accepted optimizer updates, while
+`TrainingProgress.microstep` counts consumed batches.
+
+Training runs on PhydraX's internal accepted-update training kernel with MODEL
+authority and one unrolled rollout objective. Every window closes in one of
+three outcomes. An accepted update commits parameters, optimizer state, targets,
+and the accepted cursor together. A zero-support window is a skip: it is
+consumed without advancing optimizer, target, validation, callback, history, or
+checkpoint state, and any number of skips is allowed. A nonfinite or failed
+model, reference, target, or residual rollout, loss, gradient, or optimizer
+state rolls every training quantity back and raises `FloatingPointError`; no
+partial update is ever committed. Rollout randomness uses semantic
+`SampleAddress` keys addressed by the attempt, window parent, start, and depth;
+validation keys are addressed by the accepted update.
 
 The first training contract accepts real `float32` or `float64` pointwise
 models and Euclidean state layouts. Variable steps, stochastic transitions,
 non-Euclidean discrepancies, and low-precision parameters are rejected rather
-than assigned implicit semantics.
+than assigned implicit semantics. The model must have at least one PARAMETER
+leaf, and callables reachable from objectives must not hide inexact arrays.
 Checkpointed fits require a stable `model_id`; array shapes and Python type
 alone are not accepted as the identity of static activations, bindings, or
-architecture hyperparameters.
+architecture hyperparameters. A checkpoint is written only at a closed
+accumulation window and holds the kernel payload (parameters, optimizer state,
+targets, root key, cursors, identities) plus the best model; checkpoints from
+earlier releases fail closed.
 
 
 ::: phydrax.dynamics.identification.DiscreteModelRolloutPolicy
@@ -292,6 +333,14 @@ detailed-balance evidence.
 ::: phydrax.dynamics.identification.MarkovStateModel
 
 ::: phydrax.dynamics.identification.VariationalKineticTrainingPolicy
+
+`fit_variational_kinetic_model` trains its encoder on the same internal
+training kernel with a full-batch DATA_FIT objective. An unsuccessful score
+evaluation (a failed covariance factorization, a nonfinite score, or no active
+pairs) rolls the attempted update back: parameters, optimizer state, and the
+update count are unchanged. The fit then records one invalid history entry and
+stops with an infeasible or nonfinite status. Unsuccessful updates are never
+committed.
 
 ::: phydrax.dynamics.identification.fit_variational_kinetic_model
 
@@ -775,6 +824,24 @@ meaning assigned to its output. `DirectDiscreteModelRolloutTransition` preserves
 the ordinary next-state behavior. Domain transitions may instead interpret a
 model output as a source, flux, stress, control, or correction and return
 `DiscreteModelRolloutTransitionResult`.
+
+`AbstractDiscreteModelRolloutTransition` is a `MODEL`-authority component slot
+(`slot_contract()`, slot ID `dynamics.discrete-model-rollout-transition`). The
+model supplied at evaluation is bound to that slot: the result header's
+`evidence_id` names the bound component contract, and its `model_id` is the
+model's declared semantic provenance (a marked contract fingerprint when
+undeclared). Built-in transitions are fixed interpretations holding no learned
+component. A learned correction of a native fixed-step method is instead a
+`DISCRETIZATION` slot, `phydrax.solver.LearnedStepCorrection` (see
+[Time integrators](solver/time_integrators.md#accepted-step-transforms-and-learned-step-correction)).
+
+Every transition derives `owner_ports()` from its layouts, in the order it
+packs model values: `DirectDiscreteModelRolloutTransition` uses the state point
+port (then the input layout port) as inputs and the state point port as the
+output. The model is bound through `component_binding(model)`, in
+`validate_model` and at every evaluation, so a model declaring ports needs the
+transition's explicit `port_mapping` binding its ordered ports to exactly that
+order.
 
 The result keeps candidate state, accepted training state, training usability,
 physical convergence, status, residual, and work count separate.

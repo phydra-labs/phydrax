@@ -8,7 +8,9 @@ import base64
 import dataclasses
 import enum
 import hashlib
+import sys
 from collections.abc import Mapping, Sequence
+from types import CodeType, FunctionType, ModuleType
 from typing import Any
 
 import equinox as eqx
@@ -17,6 +19,7 @@ import numpy as np
 
 from ._fingerprint import canonical_fingerprint, canonical_json
 from ._strict import StrictModule
+from ._trainable import _global_reads, _hidden_arrays
 
 
 RecordInput = Mapping[str, Any] | Sequence[tuple[str, Any]]
@@ -134,11 +137,130 @@ def _static_payload(value: Any, path: str, /) -> Any:
                 for index, item in enumerate(value)
             ],
         }
+    if _is_plain_function(value):
+        return _function_payload(value, path)
     if callable(value):
         raise TypeError(
             f"Opaque callable {path} requires explicit semantic and numeric IDs."
         )
     raise TypeError(f"Identity field {path} has unsupported type {type(value).__name__}.")
+
+
+def _is_plain_function(value: Any, /) -> bool:
+    """Return whether ``value`` is a stateless function importable by its name.
+
+    Closures, lambdas, nested functions, methods, and rebound names are opaque:
+    their behavior is not determined by module, name, and code alone. So is a
+    function whose defaults or read module globals (transitively, through the
+    same-module functions and the objects they reach) hold a numeric array:
+    array values are numeric state its code does not determine.
+    """
+    if not isinstance(value, FunctionType) or value.__closure__ is not None:
+        return False
+    if value.__qualname__ != value.__name__:
+        return False
+    module = sys.modules.get(value.__module__)
+    if module is None or vars(module).get(value.__name__) is not value:
+        return False
+    return not _hidden_arrays(value, eqx.is_array)
+
+
+def _global_payload(value: Any, path: str, /) -> Any:
+    """Identify one module global a plain function reads.
+
+    Scalar and container constants contribute their values; modules, classes,
+    and other objects contribute a reference. Numeric arrays never reach here
+    (`_is_plain_function` refuses functions that read them).
+    """
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, np.generic):
+        return _global_payload(value.item(), path)
+    if isinstance(value, float):
+        # Hex keeps non-finite sentinels (inf, nan) exact and encodable.
+        return {"kind": "float", "value": value.hex()}
+    if isinstance(value, complex):
+        return {"kind": "complex", "real": value.real.hex(), "imag": value.imag.hex()}
+    if isinstance(value, (bytes, enum.Enum, np.dtype)):
+        return _static_payload(value, path)
+    if isinstance(value, ModuleType):
+        return {"kind": "module", "name": value.__name__}
+    if isinstance(value, type):
+        return {"kind": "type", "name": f"{value.__module__}.{value.__qualname__}"}
+    if isinstance(value, FunctionType):
+        return {
+            "kind": "function-reference",
+            "module": value.__module__,
+            "qualname": value.__qualname__,
+        }
+    if isinstance(value, (tuple, list)):
+        return {
+            "kind": type(value).__name__,
+            "items": [
+                _global_payload(item, f"{path}[{index}]")
+                for index, item in enumerate(value)
+            ],
+        }
+    if isinstance(value, (frozenset, set)):
+        items = [_global_payload(item, path) for item in value]
+        return {"kind": "set", "items": sorted(items, key=canonical_json)}
+    if isinstance(value, Mapping):
+        items = [
+            [_global_payload(key, path), _global_payload(item, f"{path}[{key!r}]")]
+            for key, item in value.items()
+        ]
+        return {"kind": "mapping", "items": sorted(items, key=canonical_json)}
+    return {"kind": "reference", "type": _type_id(value)}
+
+
+def _code_constant_payload(value: Any, path: str, /) -> Any:
+    if isinstance(value, CodeType):
+        return _code_payload(value, path)
+    if isinstance(value, tuple):
+        return {
+            "kind": "tuple",
+            "items": [_code_constant_payload(item, path) for item in value],
+        }
+    if isinstance(value, frozenset):
+        items = [_code_constant_payload(item, path) for item in value]
+        return {"kind": "frozenset", "items": sorted(items, key=canonical_json)}
+    return _static_payload(value, path)
+
+
+def _code_payload(code: CodeType, path: str, /) -> dict[str, Any]:
+    # File names and line tables are excluded so identity follows behavior,
+    # not source position.
+    return {
+        "bytecode": code.co_code.hex(),
+        "constants": [
+            _code_constant_payload(value, f"{path}.constants") for value in code.co_consts
+        ],
+        "names": list(code.co_names),
+        "variables": list(code.co_varnames),
+        "free_variables": list(code.co_freevars),
+        "cell_variables": list(code.co_cellvars),
+        "argument_count": code.co_argcount,
+        "positional_only_count": code.co_posonlyargcount,
+        "keyword_only_count": code.co_kwonlyargcount,
+        "flags": code.co_flags,
+    }
+
+
+def _function_payload(value: FunctionType, path: str, /) -> dict[str, Any]:
+    return {
+        "kind": "function",
+        "module": value.__module__,
+        "qualname": value.__qualname__,
+        "code": canonical_fingerprint(_code_payload(value.__code__, f"{path}.code")),
+        "defaults": _static_payload(value.__defaults__, f"{path}.defaults"),
+        "keyword_defaults": _static_payload(
+            value.__kwdefaults__, f"{path}.keyword_defaults"
+        ),
+        "globals": [
+            [name, _global_payload(referenced, f"{path}.globals.{name}")]
+            for name, referenced in _global_reads(value)
+        ],
+    }
 
 
 def _static_module_payload(module: StrictModule, path: str, /) -> dict[str, Any]:
@@ -243,6 +365,8 @@ def _dynamic_payload(value: Any, path: str, /) -> tuple[Any, Any]:
             {"kind": kind, "items": semantic_items},
             {"kind": kind, "items": numeric_items},
         )
+    if _is_plain_function(value):
+        return _function_payload(value, path), None
     if callable(value):
         raise TypeError(
             f"Opaque callable {path} requires explicit semantic and numeric IDs."
@@ -287,8 +411,15 @@ def callable_payload(
 ) -> dict[str, Any]:
     """Identify a callable without falling back to its Python class or name.
 
-    Callable StrictModules are content-addressed from their fields. Other
-    callables are opaque and therefore require both identities explicitly.
+    Callable StrictModules are content-addressed from their fields. A plain
+    stateless function (module-level, importable by its name, without closure
+    cells, and reading no numeric array through its defaults or module globals)
+    is content-addressed from its module, name, position-independent code,
+    static defaults, and the values of the scalar constants and references of
+    the module globals it reads, unless the caller declares both identities.
+    Every other callable (closure, lambda, nested function, method, partial,
+    foreign callable object, or function reading array state) is opaque and
+    requires both identities explicitly.
     """
     if not callable(value):
         raise TypeError("callable_payload requires a callable value.")
@@ -298,9 +429,28 @@ def callable_payload(
                 "Content-addressed StrictModule callables do not accept ID overrides."
             )
         return strict_module_payload(value)
+    if semantic_id is None and numeric_id is None and _is_plain_function(value):
+        semantic = _function_payload(value, "callable")
+        semantic_content_id = canonical_fingerprint(
+            {"kind": "function-semantic-content", "payload": semantic}
+        )
+        return {
+            "semantic_payload": semantic,
+            "numeric_payload": None,
+            "semantic_content_id": semantic_content_id,
+            "numeric_content_id": canonical_fingerprint(
+                {
+                    "kind": "function-numeric-content",
+                    "semantic_content_id": semantic_content_id,
+                    "payload": None,
+                }
+            ),
+        }
     if semantic_id is None or numeric_id is None:
         raise TypeError(
-            "Opaque callables require explicit semantic_id and numeric_id values."
+            "Opaque callables require explicit semantic_id and numeric_id values; "
+            "a function is opaque when it closes over state or reads a numeric "
+            "array from its defaults or module globals."
         )
     semantic_id_ = _identifier(semantic_id, "semantic_id")
     numeric_id_ = _identifier(numeric_id, "numeric_id")
@@ -446,6 +596,16 @@ def _fact_records(value: RecordInput, name: str, /) -> tuple[tuple[str, str], ..
     )
 
 
+def _static_callable_records(value: RecordInput, /) -> tuple[tuple[str, str, str], ...]:
+    records: list[tuple[str, str, str]] = []
+    for name, component in _named_records(value, "static_callables"):
+        payload = callable_payload(component)
+        records.append(
+            (name, payload["semantic_content_id"], payload["numeric_content_id"])
+        )
+    return tuple(records)
+
+
 class ExecutableSignature(StrictModule):
     """Static compilation identity with no dynamic numeric realization values."""
 
@@ -456,6 +616,7 @@ class ExecutableSignature(StrictModule):
     capacities: tuple[tuple[str, int], ...] = eqx.field(static=True)
     algorithm_facts: tuple[tuple[str, str], ...] = eqx.field(static=True)
     backend_facts: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    static_callables: tuple[tuple[str, str, str], ...] = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
 
     def __init__(
@@ -468,7 +629,15 @@ class ExecutableSignature(StrictModule):
         capacities: RecordInput = (),
         algorithm_facts: RecordInput = (),
         backend_facts: RecordInput = (),
+        static_callables: RecordInput = (),
     ):
+        """Build the signature from static facts.
+
+        `static_callables` names callables compiled into the executable. Each is
+        identified by `callable_payload`: weights held statically by a callable
+        are part of the executable, so its semantic and numeric content IDs
+        both enter the signature, while opaque callables must declare them.
+        """
         shapes_ = _shape_records(shapes)
         dtypes_ = _dtype_records(dtypes)
         spaces_ = _identifier_records(space_ids, "space_ids")
@@ -476,6 +645,7 @@ class ExecutableSignature(StrictModule):
         capacities_ = _capacity_records(capacities)
         algorithms_ = _fact_records(algorithm_facts, "algorithm_facts")
         backend_ = _fact_records(backend_facts, "backend_facts")
+        callables_ = _static_callable_records(static_callables)
         payload = {
             "kind": "executable-signature",
             "shapes": [[name, list(shape)] for name, shape in shapes_],
@@ -485,6 +655,7 @@ class ExecutableSignature(StrictModule):
             "capacities": [list(record) for record in capacities_],
             "algorithm_facts": [list(record) for record in algorithms_],
             "backend_facts": [list(record) for record in backend_],
+            "static_callables": [list(record) for record in callables_],
         }
         self.shapes = shapes_
         self.dtypes = dtypes_
@@ -493,10 +664,92 @@ class ExecutableSignature(StrictModule):
         self.capacities = capacities_
         self.algorithm_facts = algorithms_
         self.backend_facts = backend_
+        self.static_callables = callables_
         self.signature_id = canonical_fingerprint(payload)
 
 
+_BINDING_FIELDS = frozenset(
+    {"semantic_id", "numeric_revision_id", "executable_signature_id", "binding_id"}
+)
+
+
+class ArtifactBindingIdentity(StrictModule):
+    """Semantic, numeric, and executable identity of one bound artifact model.
+
+    A frozen or published model is identified by all three IDs together: its
+    `SemanticProvenance`, the `NumericRevision` of its dynamic numeric content,
+    and the `ExecutableSignature` of its static compilation. `binding_id`
+    content-addresses the triple.
+    """
+
+    semantic_id: str = eqx.field(static=True)
+    numeric_revision_id: str = eqx.field(static=True)
+    executable_signature_id: str = eqx.field(static=True)
+    binding_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        semantic: SemanticProvenance | str,
+        numeric_revision: NumericRevision | str,
+        executable_signature: ExecutableSignature | str,
+        /,
+    ):
+        semantic_id = (
+            semantic.semantic_id
+            if isinstance(semantic, SemanticProvenance)
+            else _identifier(semantic, "semantic_id")
+        )
+        if isinstance(numeric_revision, NumericRevision):
+            if numeric_revision.semantic_id != semantic_id:
+                raise ValueError(
+                    "numeric_revision is bound to another semantic provenance."
+                )
+            numeric_id = numeric_revision.revision_id
+        else:
+            numeric_id = _identifier(numeric_revision, "numeric_revision_id")
+        executable_id = (
+            executable_signature.signature_id
+            if isinstance(executable_signature, ExecutableSignature)
+            else _identifier(executable_signature, "executable_signature_id")
+        )
+        self.semantic_id = semantic_id
+        self.numeric_revision_id = numeric_id
+        self.executable_signature_id = executable_id
+        self.binding_id = canonical_fingerprint(
+            {
+                "kind": "artifact-binding-identity",
+                "semantic_id": semantic_id,
+                "numeric_revision_id": numeric_id,
+                "executable_signature_id": executable_id,
+            }
+        )
+
+    def to_record(self) -> dict[str, str]:
+        """Return the JSON record read back by `from_record`."""
+        return {
+            "semantic_id": self.semantic_id,
+            "numeric_revision_id": self.numeric_revision_id,
+            "executable_signature_id": self.executable_signature_id,
+            "binding_id": self.binding_id,
+        }
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any], /) -> "ArtifactBindingIdentity":
+        """Rebuild a binding identity, failing closed on any field or ID mismatch."""
+        if not isinstance(record, Mapping) or set(record) != _BINDING_FIELDS:
+            raise ValueError("Artifact binding identity record fields do not match.")
+        identity = cls(
+            record["semantic_id"],
+            record["numeric_revision_id"],
+            record["executable_signature_id"],
+        )
+        if identity.binding_id != record["binding_id"]:
+            raise ValueError("Artifact binding identity record is corrupt.")
+        return identity
+
+
 __all__ = [
+    "ArtifactBindingIdentity",
     "callable_payload",
     "ExecutableSignature",
     "NumericRevision",

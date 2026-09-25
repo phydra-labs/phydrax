@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._probability import _event_axes, _leading_shape
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ._jump import AbstractJumpProcess
 from ._process import AbstractPathwiseTransition
 from ._state_space import (
@@ -240,7 +241,7 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
     solver: Any
     stepsize_controller: Any
     adjoint: Any
-    dt0: Array | None
+    dt0: Array | None = fixed_field()
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
@@ -499,7 +500,7 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
     wiener_terms: tuple[Any, ...]
     solver: Any
     stepsize_controller: Any
-    dt0: Array | None
+    dt0: Array | None = fixed_field()
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)

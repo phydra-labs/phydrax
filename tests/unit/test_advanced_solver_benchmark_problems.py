@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from benchmarks.advanced_solvers.campaign import build_cases, CampaignConfig
 from benchmarks.advanced_solvers.certificates import independent_certificate
@@ -169,17 +170,38 @@ def test_optimization_certificates_use_independent_stationarity_and_kkt_relation
     assert proximal_certificate["residual_norm"] < 1e-15
 
 
-def test_mathematical_program_certificates_cover_lp_qp_and_socp():
-    problems = (
-        bounded_linear_program(size=8, seed=22),
-        bounded_quadratic_program(size=8, seed=23),
-        active_second_order_cone_program(seed=24),
+def _exact_bound_duals(problem):
+    gradient = problem.gradient(problem.optimum)
+    return {
+        "equality_dual": np.zeros(problem.equality_rhs.shape),
+        "inequality_dual": np.zeros(problem.inequality_rhs.shape),
+        "lower_bound_dual": np.maximum(gradient, 0.0),
+        "upper_bound_dual": np.maximum(-gradient, 0.0),
+    }
+
+
+def test_mathematical_program_certificates_require_duals_for_lp_qp_and_socp():
+    linear = bounded_linear_program(size=8, seed=22)
+    quadratic = bounded_quadratic_program(size=8, seed=23)
+    cases = (
+        (linear, _exact_bound_duals(linear)),
+        (quadratic, _exact_bound_duals(quadratic)),
+        (
+            active_second_order_cone_program(seed=24),
+            {
+                "cone_dual": np.asarray([1.0, -1.0, 0.0]),
+                "lower_bound_dual": np.zeros(2),
+                "upper_bound_dual": np.zeros(2),
+            },
+        ),
     )
-    for problem in problems:
-        certificate = independent_certificate(problem, problem.optimum, {})
+    for problem, duals in cases:
+        certificate = independent_certificate(problem, problem.optimum, duals)
         assert certificate["kind"] == "optimization-program-kkt"
         assert certificate["residual_norm"] < 1e-12
         assert certificate["details"]["objective_gap"] == 0.0
+        with pytest.raises(ValueError, match="duals"):
+            independent_certificate(problem, problem.optimum, {})
 
     central_path_qp = MathematicalProgramProblem(
         name="central-path-bound",
@@ -196,7 +218,6 @@ def test_mathematical_program_certificates_cover_lp_qp_and_socp():
         optimum=np.zeros(1),
     )
     central_point = np.asarray([1e-4])
-    fallback = independent_certificate(central_path_qp, central_point, {})
     primal_dual = independent_certificate(
         central_path_qp,
         central_point,
@@ -208,7 +229,6 @@ def test_mathematical_program_certificates_cover_lp_qp_and_socp():
         },
     )
 
-    assert fallback["residual_norm"] == 1e-4
     assert primal_dual["residual_norm"] == 1e-8
     assert primal_dual["details"]["dual_stationarity_norm"] == 0.0
 

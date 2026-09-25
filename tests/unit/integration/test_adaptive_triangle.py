@@ -38,6 +38,18 @@ def test_adaptive_triangle_polynomial_converges_on_initial_partition():
     )
 
 
+def test_adaptive_triangle_domain_targets_require_declared_domain_functions():
+    _, boundary = _problem()
+    plan = phx.integration.AdaptiveTrianglePlan(max_cells=16)
+
+    def undeclared(x=jnp.ones((3,)), *, key=None):
+        del key
+        return jnp.sum(x * x)
+
+    with pytest.raises(TypeError, match=r"domain\.Function\(\*labels\)\(callable\)"):
+        phx.integration.integrate(undeclared, phx.integration.over(boundary), plan)
+
+
 def test_adaptive_callable_triangles_reuse_partition_and_diagnostics():
     triangles = jnp.asarray(
         [[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]],

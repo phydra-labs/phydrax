@@ -32,6 +32,8 @@ Training can combine independently normalized terms:
 
 Every term has its own valid count. A batch with no valid support fails rather than contributing zero loss. Incompressibility is not a default regularizer because image displacement need not satisfy a two-dimensional incompressible flow model.
 
+`fit_learned_piv` runs each update as one attempt of Phydrax's shared accepted-update training kernel, with the model trained as a surrogate on a direct data-fit objective. The case batch of accepted update `k` is sampled from the fit key at the semantic training address of `k`, so the batch sequence depends only on the key, the dataset, and the configuration. An update whose loss, gradient, or optimizer step is nonfinite is rolled back and the fit raises; parameters and optimizer state never absorb it. A batch without valid support also stops the fit.
+
 ## Scenario leakage and qualification
 
 Splits operate on scenario family IDs. All temporal frames and augmentations derived from one latent flow/particle realization remain in one split. Qualification covers no motion, translation, affine deformation, spatial-frequency response, boundaries, dropout/occlusion, illumination, density, diameter, and noise.

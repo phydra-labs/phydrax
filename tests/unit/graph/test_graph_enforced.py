@@ -235,7 +235,7 @@ def _cochain_complex_with_interior_vertex():
 
 
 class _TrainableCellValues(eqx.Module):
-    values: jax.Array
+    values: jax.Array = phx.parameter_field()
 
     def __call__(self, graph):
         nodes = dict(graph.nodes)

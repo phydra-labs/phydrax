@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def test_exact_fit_preserves_unsorted_nodes_payloads_and_derivatives():
@@ -195,8 +194,8 @@ def test_domain_function_adapter_is_fixed_jittable_and_differentiable():
     def evaluate(value):
         return approximation({"x": value}).data
 
-    trainable, _ = partition_trainable(approximation)
-    leaves = jax.tree.leaves(trainable)
+    parameters, _, _ = phx.partition_parameters(approximation)
+    leaves = jax.tree.leaves(parameters)
     actual = eqx.filter_jit(evaluate)(query)
     jacobian = jax.jacrev(evaluate)(query)
 

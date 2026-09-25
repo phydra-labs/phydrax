@@ -16,18 +16,27 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._frozendict import frozendict
 from phydrax._strict import StrictModule
 from phydrax.geometry.operator import TensorGridLatentGeometry
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
+from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.layers._measure_attention import (
     AttentionExecution,
     AttentionKernel,
     MeasureAwareAttention,
 )
+from phydrax.nn.operator.architectures.attention._upt import _feature_norm_regularity
 from phydrax.nn.operator.architectures.spectral._fno import Factorization, SpectralConvND
 from phydrax.nn.operator.data import (
     FunctionSamples,
@@ -38,7 +47,10 @@ from phydrax.nn.operator.data import (
 )
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 from phydrax.nn.operator.field import OperatorFieldSpec
-from phydrax.nn.operator.layers._attention import CodomainAttention
+from phydrax.nn.operator.layers._attention import (
+    _measure_attention_regularity,
+    CodomainAttention,
+)
 
 
 def _named_key(key: Key[Array, ""], label: str, /) -> Key[Array, ""]:
@@ -231,6 +243,34 @@ class CoDABlock(StrictModule):
             jnn.silu(self.gate(normalized)) * self.value(normalized)
         )
         return (hidden + feed_forward) * sample_mask[..., None]
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # The Fourier domain mixer is linear; field masks are fixed data.
+        mixed = compose_regularity(
+            _feature_norm_regularity(self.domain_norm),
+            sum_regularity((AFFINE, self.pointwise._value_regularity())),
+        )
+        attended = compose_regularity(
+            _feature_norm_regularity(self.codomain_norm),
+            self.codomain_attention._value_regularity(),
+        )
+        feed_forward = compose_regularity(
+            _feature_norm_regularity(self.feed_forward_norm),
+            product_regularity(
+                (
+                    compose_regularity(
+                        self.gate._value_regularity(), activation_regularity(jnn.silu)
+                    ),
+                    self.value._value_regularity(),
+                )
+            ),
+            self.output._value_regularity(),
+        )
+        return compose_regularity(
+            sum_regularity((AFFINE, mixed)),
+            sum_regularity((AFFINE, attended)),
+            sum_regularity((AFFINE, feed_forward)),
+        )
 
 
 def _predict_codano(
@@ -661,6 +701,44 @@ class CoDANO(AbstractEncodedOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("CoDANO requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # A case bounding box moves the latent grid through coordinate min/max.
+        latent = (
+            DerivativeRegularity.piecewise_polynomial(continuity=0, degree_bound=1)
+            if self.latent_geometry.bounds_policy == "case_bbox"
+            else AFFINE
+        )
+        latent_query = compose_regularity(
+            latent, self.latent_query_lift._value_regularity()
+        )
+        transferred = (
+            compose_regularity(
+                sum_regularity((lift._value_regularity(), latent_query)),
+                _measure_attention_regularity(attention),
+            )
+            for lift, attention in zip(
+                self.source_lifts, self.source_transfer, strict=True
+            )
+        )
+        state = compose_regularity(
+            sum_regularity((latent_query, *transferred)),
+            *(block._value_regularity() for block in self.blocks),
+        )
+        decoded = []
+        for lift, attention, projection in zip(
+            self.decode_query_lifts, self.decoders, self.projections, strict=True
+        ):
+            query = lift._value_regularity()
+            attended = compose_regularity(
+                sum_regularity((state, query)), _measure_attention_regularity(attention)
+            )
+            decoded.append(
+                compose_regularity(
+                    sum_regularity((query, attended)), projection._value_regularity()
+                )
+            )
+        return sum_regularity(decoded)
 
 
 __all__ = ["CoDABlock", "CoDANO", "CoDAOperatorState"]

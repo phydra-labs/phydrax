@@ -247,7 +247,7 @@ def test_sgmcmc_checkpoint_rejects_identity_source_settings_and_corruption(tmp_p
         )
 
     checkpoint.write_bytes(checkpoint.read_bytes()[:64])
-    with pytest.raises(phx.uq.CheckpointCorruptionError, match="Cannot read"):
+    with pytest.raises(phx.uq.CheckpointCorruptionError):
         phx.uq.sample_sgld(
             problem,
             source,

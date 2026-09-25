@@ -18,7 +18,6 @@ from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
 from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._mac_adaptive import (
@@ -111,7 +110,7 @@ class MACTerminalVJPResult(StrictModule):
     sensitivity_id: str = eqx.field(static=True)
 
 
-class MACFixedGridSensitivityPlan(StrictModule, NonTrainableState):
+class MACFixedGridSensitivityPlan(StrictModule):
     """Checkpointed discrete differentiation on one frozen accepted grid."""
 
     replay_plan: MACFrozenGridReplayPlan
@@ -333,7 +332,7 @@ class MACShadowingSensitivityResult(StrictModule):
     shadowing_id: str = eqx.field(static=True)
 
 
-class MACSegmentedShadowingPlan(StrictModule, NonTrainableState):
+class MACSegmentedShadowingPlan(StrictModule):
     """QR-stabilized segmented LSS/NILSS-style MAC sensitivity solve."""
 
     sensitivity_plan: MACFixedGridSensitivityPlan

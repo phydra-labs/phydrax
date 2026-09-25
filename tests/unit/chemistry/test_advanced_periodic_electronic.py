@@ -27,12 +27,12 @@ def _manifest(source_id):
 
 def _pencil(*, generalized=False, reference_electron_count=2.0):
     cell = _cell()
-    basis = periodic.PeriodicOrbitalBasisPlan(
+    basis = phx.operators.periodic.PeriodicOrbitalBasisPlan(
         cell,
         ("lower", "upper"),
         [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0]],
         phx.units.ANGSTROM,
-        periodic.PeriodicBlochGauge("lattice"),
+        phx.operators.periodic.PeriodicBlochGauge("lattice"),
     )
     h_blocks = np.asarray([[[[[-1.0], [0.0]]], [[[0.0], [0.8]]]]]).reshape(
         (1, 2, 1, 2, 1)
@@ -47,7 +47,7 @@ def _pencil(*, generalized=False, reference_electron_count=2.0):
         s = phx.operators.periodic.periodic_translation_family_from_dense_blocks(
             [[0, 0, 0]], s_blocks
         )
-        pencil = periodic.PeriodicOrbitalPencilPlan(
+        pencil = phx.operators.periodic.PeriodicOrbitalPencilPlan(
             basis,
             h.plan,
             h.state,
@@ -56,7 +56,7 @@ def _pencil(*, generalized=False, reference_electron_count=2.0):
             phx.units.ELECTRONVOLT,
         ).prepare()
     else:
-        pencil = periodic.PeriodicOrbitalPencilPlan.orthonormal(
+        pencil = phx.operators.periodic.PeriodicOrbitalPencilPlan.orthonormal(
             basis, h.plan, h.state, phx.units.ELECTRONVOLT
         ).prepare()
     mean_field = periodic.PeriodicHubbardMeanFieldPlan(

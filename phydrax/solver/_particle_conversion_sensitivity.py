@@ -13,7 +13,12 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, PyTree
 
-from .._hybrid_sensitivity import HybridSensitivityMode
+from .._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle import (
@@ -24,18 +29,19 @@ from ..equations import ParticleConversionEvaluation
 
 
 class ParticleConversionSensitivityPolicy(StrictModule, NonTrainableState):
-    mode: HybridSensitivityMode = eqx.field(static=True)
+    mode: BranchDifferentiationPolicy = eqx.field(static=True)
     species_margin: float = eqx.field(static=True)
     porosity_margin: float = eqx.field(static=True)
     scale_margin: float = eqx.field(static=True)
     temperature_margin: float = eqx.field(static=True)
     phase_margin: float = eqx.field(static=True)
     reaction_margin: float = eqx.field(static=True)
+    derivative_contract: DerivativeContract
 
     def __init__(
         self,
         *,
-        mode: HybridSensitivityMode = HybridSensitivityMode.SHARP_BRANCHWISE,
+        mode: BranchDifferentiationPolicy = BranchDifferentiationPolicy.BRANCHWISE,
         species_margin: float = 1.0e-10,
         porosity_margin: float = 1.0e-8,
         scale_margin: float = 1.0e-10,
@@ -43,8 +49,20 @@ class ParticleConversionSensitivityPolicy(StrictModule, NonTrainableState):
         phase_margin: float = 1.0e-10,
         reaction_margin: float = 1.0e-10,
     ):
-        if not isinstance(mode, HybridSensitivityMode):
-            raise TypeError("mode must be a HybridSensitivityMode.")
+        if not isinstance(mode, BranchDifferentiationPolicy):
+            raise TypeError("mode must be a BranchDifferentiationPolicy.")
+        match mode:
+            case (
+                BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+                | BranchDifferentiationPolicy.EVENT_AWARE
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "ParticleConversionSensitivityPolicy supports BRANCHWISE, "
+                    f"SMOOTH_SURROGATE, or EVENT_AWARE; got {mode.name}."
+                )
         values = tuple(
             float(value)
             for value in (
@@ -61,6 +79,9 @@ class ParticleConversionSensitivityPolicy(StrictModule, NonTrainableState):
                 "Conversion sensitivity margins must be finite and nonnegative."
             )
         self.mode = mode
+        self.derivative_contract = branch_policy_contract(
+            mode, surfaces=(DerivativeSurface.PHYSICAL_PARAMETER,)
+        )
         (
             self.species_margin,
             self.porosity_margin,
@@ -87,7 +108,8 @@ class ParticleConversionSensitivityResult(StrictModule):
     sensitivity: Any
     certificate: ParticleConversionValidityCertificate
     usable: Array
-    mode: HybridSensitivityMode = eqx.field(static=True)
+    derivative_contract: DerivativeContract
+    mode: BranchDifferentiationPolicy = eqx.field(static=True)
 
 
 class ParticleConversionSurrogateBiasCertificate(StrictModule):
@@ -154,6 +176,20 @@ def particle_conversion_validity_certificate(
     )
 
 
+def _require_branchwise(
+    policy: ParticleConversionSensitivityPolicy, owner: str, /
+) -> None:
+    if not isinstance(policy, ParticleConversionSensitivityPolicy):
+        raise TypeError("policy must be ParticleConversionSensitivityPolicy.")
+    match policy.mode:
+        case BranchDifferentiationPolicy.BRANCHWISE:
+            return
+        case _:
+            raise ValueError(
+                f"{owner} supports only the BRANCHWISE policy; got {policy.mode.name}."
+            )
+
+
 def sharp_particle_conversion_jvp(
     function: Callable[[PyTree[Any]], PyTree[Any]],
     parameters: PyTree[Any],
@@ -163,14 +199,18 @@ def sharp_particle_conversion_jvp(
     policy: ParticleConversionSensitivityPolicy,
     /,
 ) -> ParticleConversionSensitivityResult:
-    if policy.mode is not HybridSensitivityMode.SHARP_BRANCHWISE:
-        raise ValueError("sharp_particle_conversion_jvp requires branchwise mode.")
+    _require_branchwise(policy, "sharp_particle_conversion_jvp")
     primal, sensitivity = jax.jvp(function, (parameters,), (direction,))
     certificate = particle_conversion_validity_certificate(state, evaluation, policy)
     usable = certificate.locally_valid & certificate.successful
     sensitivity = _mask_sensitivity(sensitivity, usable)
     return ParticleConversionSensitivityResult(
-        primal, sensitivity, certificate, usable, policy.mode
+        primal,
+        sensitivity,
+        certificate,
+        usable,
+        policy.derivative_contract,
+        policy.mode,
     )
 
 
@@ -183,15 +223,19 @@ def sharp_particle_conversion_vjp(
     policy: ParticleConversionSensitivityPolicy,
     /,
 ) -> ParticleConversionSensitivityResult:
-    if policy.mode is not HybridSensitivityMode.SHARP_BRANCHWISE:
-        raise ValueError("sharp_particle_conversion_vjp requires branchwise mode.")
+    _require_branchwise(policy, "sharp_particle_conversion_vjp")
     primal, pullback = jax.vjp(function, parameters)
     sensitivity = pullback(cotangent)[0]
     certificate = particle_conversion_validity_certificate(state, evaluation, policy)
     usable = certificate.locally_valid & certificate.successful
     sensitivity = _mask_sensitivity(sensitivity, usable)
     return ParticleConversionSensitivityResult(
-        primal, sensitivity, certificate, usable, policy.mode
+        primal,
+        sensitivity,
+        certificate,
+        usable,
+        policy.derivative_contract,
+        policy.mode,
     )
 
 

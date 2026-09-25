@@ -157,6 +157,20 @@ not a distributional derivative. Backsolve, checkpointed reverse, forward-mode,
 and bidirectional direct routes therefore remain distinguishable in persisted
 evidence.
 
+`TemporalDifferentiationEvidence.derivative_contract` restates those semantics
+as a canonical `DerivativeContract` on the initial state (`PRIMAL_STATE`) and
+problem arguments (`PHYSICAL_PARAMETER`). Discretize-then-optimize routes are
+unrolled, an implicit solution map is implicit with the `steady-state-reached`
+condition, and backsolve is an `external-adjoint` route with the
+`continuous-adjoint-approximation` condition. Frozen adaptive schedules,
+unqualified branchwise events, and implicit event replay contribute the
+`FROZEN_DECISION`, `BRANCHWISE`, and `EVENT_AWARE` branch-policy contracts;
+fixed-realization stochastic solves add `fixed-realization`, and an unverified
+classification lowers every surface to conditional with
+`derivative-classification-unverified`. Unknown forms or semantics, empty
+orientations, and unsupported events give a stopped contract. Regularity stays
+undeclared because the vector field's regularity is not known to the solve.
+
 `TemporalPrecisionPolicy` separates coefficient, stored-state, stage, accumulation,
 residual, acceptance-decision, checkpoint, and returned-output precision. The
 Phydrax SSP, Rosenbrock-W, Gauss--Legendre IRK, multirate, generalized-alpha, and
@@ -383,10 +397,15 @@ than imputed. Stable `case_ids` and `data_id` retain data provenance.
 `neural_cde_loss` solves each selected case through `solve_diffrax_cde` at its
 own valid physical observation times and returns mean squared error over valid
 state scalars. `solve_options` cannot override those save times.
-`train_neural_cde` applies deterministic Optax mini-batches and returns
-`NeuralCDETrainingState`, including the vector field, optimizer state, last
-loss, exact epoch/batch/update position, ordering algorithm, and data,
-optimizer, solver-configuration, and dynamics IDs.
+`train_neural_cde` applies deterministic Optax mini-batches through PhydraX's
+internal training kernel. It uses MODEL authority and one unrolled rollout
+objective. It returns `NeuralCDETrainingState`: the vector field, the kernel
+`training` state (`optimizer_state` reads its Optax state), the last loss, the
+exact epoch/batch/update position, the ordering algorithm, and the data,
+optimizer, solver-configuration, and dynamics IDs. A nonfinite loss or gradient
+rolls the update back and raises `TrainingRejectionBudgetError`, so no
+nonfinite parameters or optimizer state are ever committed. A failed solve still
+raises before the optimizer runs.
 
 Start training with `vector_field=...` and no `state`. Resume with
 `state=previous_state` and no `vector_field`; changing batch size, seed,
@@ -476,7 +495,11 @@ Resume only from `solution.checkpoint`, with the same method ID,
 factorization, state shape, and explicit nominal `step_size`; the resumed
 problem must start at the checkpoint time. Adaptive solves do not resume
 through this fixed-step checkpoint route. Provenance mismatches fail rather
-than restart or reinterpret a checkpoint.
+than restart or reinterpret a checkpoint. The checkpoint binds the drift through
+the canonical callable payload: StrictModule drifts and plain module-level
+functions are identified by content, while opaque drifts (lambdas, closures,
+methods, partials) require `drift_semantic_id` and `drift_numeric_id`; omitting
+them raises `TypeError`.
 
 ::: phydrax.solver.ProbabilisticODEMethod
 

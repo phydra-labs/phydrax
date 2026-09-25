@@ -28,7 +28,6 @@ from ...atomistic._potential import (
     AbstractAtomisticPotential,
     AtomisticPotentialCapabilities,
     AtomisticSpeciesKind,
-    initialize_atomistic_potential_identity,
 )
 from ...atomistic._types import (
     AtomicStructure,
@@ -206,8 +205,6 @@ class PaiNNPotential(AbstractAtomisticPotential):
     scale: AtomisticScaleContract
     precision: AtomisticPrecisionPolicy
     architecture_id: str = eqx.field(static=True)
-    parameter_state_id: str = eqx.field(static=True)
-    potential_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -303,24 +300,12 @@ class PaiNNPotential(AbstractAtomisticPotential):
             }
         )
         self.method_id = "negative-position-gradient-of-total-painn-energy"
-        (
-            self.parameter_state_id,
-            self.potential_id,
-        ) = initialize_atomistic_potential_identity(self)
 
     @property
     def capabilities(self) -> AtomisticPotentialCapabilities:
         return AtomisticPotentialCapabilities(
             species_kind=self.configuration.species_kind
         )
-
-    def parameter_state_tree(self, /) -> Any:
-        return {
-            "embedding": self.embedding,
-            "interactions": self.interactions,
-            "readout_hidden": self.readout_hidden,
-            "readout_energy": self.readout_energy,
-        }
 
     def _validate_batch(self, batch: AtomisticBatch, /) -> None:
         if not isinstance(batch, AtomisticBatch):

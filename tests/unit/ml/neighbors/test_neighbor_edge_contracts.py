@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeSurface, GradientLevel
 from phydrax._model import FrozenModel
 from phydrax.ml import (
     fit,
@@ -64,6 +65,18 @@ def _assert_prediction_parameter_gradient(model, query):
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)
 
 
+def _levels(result, *surfaces):
+    return tuple(result.derivative_contract.level(surface) for surface in surfaces)
+
+
+_FIT_SURFACES = (
+    DerivativeSurface.FIT_FEATURES,
+    DerivativeSurface.FIT_TARGETS,
+    DerivativeSurface.FIT_WEIGHTS,
+    DerivativeSurface.FIT_HYPERPARAMETERS,
+)
+
+
 def test_exact_neighbors_select_unmasked_geometry_preserve_target_axes_and_freeze():
     features = jnp.array([[0.0], [2.0], [5.0]])
     targets = jnp.array([[0.0, 10.0], [20.0, 30.0], [50.0, 60.0]])
@@ -85,8 +98,13 @@ def test_exact_neighbors_select_unmasked_geometry_preserve_target_axes_and_freez
     assert jnp.array_equal(indices[..., 0], jnp.array([[0, 2]]))
     assert jnp.allclose(distances[..., 0], jnp.array([[1.9, 0.2]]), atol=1e-6)
     assert jnp.allclose(model(query), jnp.array([[[0.0, 10.0], [50.0, 60.0]]]))
-    assert result.gradient_contract.prediction_inputs == "almost-everywhere"
-    assert result.gradient_contract.prediction_parameters == "almost-everywhere"
+    # Averages of hard-selected targets are locally constant: no input derivative.
+    assert _levels(
+        result, DerivativeSurface.INPUT, DerivativeSurface.MODEL_PARAMETER
+    ) == (GradientLevel.NONE, GradientLevel.ALMOST_EVERYWHERE)
+    regularity = result.derivative_contract.regularity
+    assert (regularity.continuity, regularity.degree_bound) == (-1, 0)
+    assert model.model_execution_contract().regularity == regularity
     _assert_finite(jax.grad(lambda point: jnp.sum(model(point)))(jnp.array([1.7])))
     _assert_prediction_parameter_gradient(model, jnp.array([[1.7], [4.6]]))
 
@@ -147,12 +165,12 @@ def test_kernel_density_normalization_capacity_and_weight_gradients():
     result = KernelDensityRecipe(0.55).fit_batch(
         MLBatch(features, measure_weight=weights)
     )
-    contract = result.gradient_contract
-    assert (
-        contract.fit_features,
-        contract.fit_weights,
-        contract.fit_hyperparameters,
-    ) == ("smooth", "smooth", "smooth")
+    assert _levels(
+        result,
+        DerivativeSurface.FIT_FEATURES,
+        DerivativeSurface.FIT_WEIGHTS,
+        DerivativeSurface.FIT_HYPERPARAMETERS,
+    ) == (GradientLevel.SMOOTH, GradientLevel.SMOOTH, GradientLevel.SMOOTH)
     _assert_prediction_parameter_gradient(result.as_trainable(), query[None, :])
 
     exhausted = KernelDensityRecipe(0.55, capacity=3).fit_batch(MLBatch(features))
@@ -181,12 +199,7 @@ def test_smooth_neighbor_and_centroid_fit_gradients_match_contracts():
     )
     _assert_finite(reg_gradients)
     reg_result = reg_base.fit_batch(MLBatch(features, targets, sample_weight=weights))
-    assert (
-        reg_result.gradient_contract.fit_features,
-        reg_result.gradient_contract.fit_targets,
-        reg_result.gradient_contract.fit_weights,
-        reg_result.gradient_contract.fit_hyperparameters,
-    ) == ("smooth", "smooth", "smooth", "smooth")
+    assert _levels(reg_result, *_FIT_SURFACES) == (GradientLevel.SMOOTH,) * 4
     _assert_prediction_parameter_gradient(reg_result.as_trainable(), query[None, :])
 
     cls_base = KernelNeighborsClassifierRecipe(class_count=2, temperature=0.65)
@@ -203,10 +216,12 @@ def test_smooth_neighbor_and_centroid_fit_gradients_match_contracts():
     )
     _assert_finite(cls_gradients)
     cls_result = cls_base.fit_batch(MLBatch(features, labels, sample_weight=weights))
-    assert cls_result.gradient_contract.fit_targets == "none"
-    assert cls_result.gradient_contract.fit_features == "smooth"
-    assert cls_result.gradient_contract.fit_weights == "smooth"
-    assert cls_result.gradient_contract.fit_hyperparameters == "smooth"
+    assert _levels(cls_result, *_FIT_SURFACES) == (
+        GradientLevel.SMOOTH,
+        GradientLevel.NONE,
+        GradientLevel.SMOOTH,
+        GradientLevel.SMOOTH,
+    )
 
     centroid_base = NearestCentroidRecipe(class_count=2, temperature=0.6)
 
@@ -221,8 +236,11 @@ def test_smooth_neighbor_and_centroid_fit_gradients_match_contracts():
     centroid_result = centroid_base.fit_batch(
         MLBatch(features, labels, sample_weight=weights)
     )
-    assert centroid_result.gradient_contract.fit_features == "smooth"
-    assert centroid_result.gradient_contract.fit_weights == "conditional"
+    assert _levels(
+        centroid_result,
+        DerivativeSurface.FIT_FEATURES,
+        DerivativeSurface.FIT_WEIGHTS,
+    ) == (GradientLevel.SMOOTH, GradientLevel.CONDITIONAL)
     _assert_prediction_parameter_gradient(centroid_result.as_trainable(), query[None, :])
 
 
@@ -261,12 +279,12 @@ def test_metric_learning_exercises_declared_fit_and_parameter_gradients():
     )
     _assert_finite(nca_gradients)
     nca_result = nca_base.fit_batch(MLBatch(features, labels, sample_weight=weights))
-    assert (
-        nca_result.gradient_contract.fit_features,
-        nca_result.gradient_contract.fit_targets,
-        nca_result.gradient_contract.fit_weights,
-        nca_result.gradient_contract.fit_hyperparameters,
-    ) == ("smooth", "none", "conditional", "smooth")
+    assert _levels(nca_result, *_FIT_SURFACES) == (
+        GradientLevel.SMOOTH,
+        GradientLevel.NONE,
+        GradientLevel.CONDITIONAL,
+        GradientLevel.SMOOTH,
+    )
     _assert_prediction_parameter_gradient(nca_result.as_trainable(), query)
 
     metric_base = MahalanobisMetricRecipe(ridge=0.05, component_count=2)
@@ -285,9 +303,15 @@ def test_metric_learning_exercises_declared_fit_and_parameter_gradients():
     metric_result = metric_base.fit_batch(
         MLBatch(features, labels, sample_weight=weights)
     )
-    assert metric_result.gradient_contract.fit_features == "conditional"
-    assert metric_result.gradient_contract.fit_weights == "conditional"
-    assert metric_result.gradient_contract.fit_hyperparameters == "conditional"
+    assert (
+        _levels(
+            metric_result,
+            DerivativeSurface.FIT_FEATURES,
+            DerivativeSurface.FIT_WEIGHTS,
+            DerivativeSurface.FIT_HYPERPARAMETERS,
+        )
+        == (GradientLevel.CONDITIONAL,) * 3
+    )
     _assert_prediction_parameter_gradient(metric_result.as_trainable(), query)
 
 
@@ -374,7 +398,7 @@ def test_hard_neighbor_failures_and_case_query_geometry_are_explicit():
     _assert_prediction_parameter_gradient(lof_model, query)
 
     radius = RadiusNeighborsRegressorRecipe(0.8).fit_batch(MLBatch(features, targets))
-    assert radius.gradient_contract.prediction_inputs == "almost-everywhere"
+    assert radius.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
     _assert_finite(
         jax.grad(lambda point: jnp.nan_to_num(radius.as_trainable()(point)) ** 2)(
             query[0]

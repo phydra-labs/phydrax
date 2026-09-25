@@ -11,6 +11,12 @@ import phydrax as phx
 from phydrax._model import AbstractArrayModel, FrozenModel, ModelBinding
 
 
+_INPUT = phx.DerivativeSurface.INPUT
+_PARAMETER = phx.DerivativeSurface.MODEL_PARAMETER
+_FIT_TARGETS = phx.DerivativeSurface.FIT_TARGETS
+_FIT_HYPERPARAMETERS = phx.DerivativeSurface.FIT_HYPERPARAMETERS
+
+
 class _ScaleModel(AbstractArrayModel):
     scale: jax.Array
     in_size: int = eqx.field(static=True)
@@ -69,7 +75,14 @@ class _ScaleRecipe(phx.ml.AbstractRecipe):
             valid=True,
             status=phx.ml.ML_SUCCESS,
             method="weighted-mean-scale",
-            gradient_contract=phx.ml.GradientContract.direct(),
+            derivative_contract=phx.DerivativeContract(
+                (
+                    phx.SurfaceDerivative(_INPUT, phx.GradientLevel.SMOOTH),
+                    phx.SurfaceDerivative(_PARAMETER, phx.GradientLevel.SMOOTH),
+                    phx.SurfaceDerivative(_FIT_TARGETS, phx.GradientLevel.CONDITIONAL),
+                ),
+                route=phx.DerivativeRoute.DIRECT,
+            ),
         )
 
 
@@ -129,7 +142,43 @@ def test_fit_is_pure_frozen_and_remains_differentiable_when_called():
     assert result.as_trainable() is result.model.model
     gradient = jax.grad(lambda value: jnp.sum(result.model(value)))(jnp.array([2.0]))
     assert jnp.allclose(gradient, jnp.array([1.5]))
-    assert result.gradient_contract.fit_mode == "direct"
+
+
+def test_fit_result_admits_declared_derivatives_and_rejects_undeclared_surfaces():
+    result = phx.ml.fit(_ScaleRecipe(), jnp.ones((3, 1)), jnp.array([1.0, 2.0, 5.0]))
+
+    mixed = phx.DifferentiationRequest((_FIT_TARGETS, _PARAMETER, _INPUT))
+    admission = result.require_derivative(mixed)
+    assert admission.status == phx.DERIVATIVE_SUPPORTED
+    assert admission.route is phx.DerivativeRoute.DIRECT
+    assert admission.level(_INPUT) is phx.GradientLevel.SMOOTH
+    assert admission.level(_FIT_TARGETS) is phx.GradientLevel.CONDITIONAL
+    assert "regularity-undeclared" in admission.conditions
+
+    surrogate = phx.DifferentiationRequest(
+        (_INPUT,), authority=phx.ComponentAuthority.SURROGATE
+    )
+    assert not result.derivative_admission(surrogate).supported
+    permitted = result.derivative_admission(
+        surrogate, policy=phx.RegularityPolicy(allow_undeclared=True)
+    )
+    assert permitted.level(_INPUT) is phx.GradientLevel.SMOOTH
+
+    undeclared = phx.DifferentiationRequest((_PARAMETER, _FIT_HYPERPARAMETERS))
+    rejected = result.derivative_admission(undeclared)
+    assert rejected.status == phx.DERIVATIVE_UNSUPPORTED
+    assert rejected.level(_PARAMETER) is phx.GradientLevel.SMOOTH
+    assert rejected.level(_FIT_HYPERPARAMETERS) is phx.GradientLevel.NONE
+    assert rejected.reasons == ("surface-unsupported:fit-hyperparameters",)
+    with pytest.raises(ValueError, match="derivative-unsupported"):
+        result.require_derivative(undeclared)
+    with pytest.raises(ValueError, match="derivative-unsupported"):
+        phx.ml.fit(
+            _ScaleRecipe(),
+            jnp.ones((3, 1)),
+            jnp.array([1.0, 2.0, 5.0]),
+            derivative_request=undeclared,
+        )
 
 
 def test_frozen_model_preserves_binding_and_prediction_capabilities():

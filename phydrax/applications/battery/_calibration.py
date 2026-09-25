@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...observation import (
@@ -509,7 +510,7 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
         self.channel_scales = scales_array
         self.covariance_action = covariance_action
         self.precision_cholesky = precision_cholesky
-        dtype = jnp.result_type(self.observed_values, jnp.float64)
+        dtype = inexact_result_type(self.observed_values)
         self.gaussian_log_normalizer = jax.lax.stop_gradient(
             jnp.asarray(
                 0.5 * (residual_size * np.log(2.0 * np.pi) + logdet),

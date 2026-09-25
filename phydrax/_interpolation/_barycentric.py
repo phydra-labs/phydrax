@@ -9,6 +9,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
+
 
 def _nodes(nodes: ArrayLike, name: str, /) -> Array:
     raw = jnp.asarray(nodes)
@@ -16,7 +18,7 @@ def _nodes(nodes: ArrayLike, name: str, /) -> Array:
         raise TypeError(f"{name} must be real-valued.")
     if raw.ndim != 1 or raw.shape[0] == 0:
         raise ValueError(f"{name} must be a nonempty rank-one array.")
-    values = raw.astype(jnp.result_type(raw.dtype, jnp.float64))
+    values = raw.astype(inexact_result_type(raw.dtype))
     duplicate = jnp.any(jnp.diff(jnp.sort(values)) == 0.0)
     return eqx.error_if(
         values,

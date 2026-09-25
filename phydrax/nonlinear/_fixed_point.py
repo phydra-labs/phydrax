@@ -16,6 +16,7 @@ from jaxtyping import Array, PyTree
 from .._fingerprint import canonical_fingerprint
 from .._iteration import IterationPlan
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from .._tree_math import (
     tree_add_scaled,
     tree_allfinite,
@@ -993,7 +994,13 @@ def _picard_candidate(
 
 
 class PicardUpdate(AbstractNonlinearUpdate):
-    """One preconditioned Picard correction as a finite nonlinear update."""
+    """One preconditioned Picard correction as a finite nonlinear update.
+
+    ``inverse_action`` is an `AbstractPreconditioner` (an `ACCELERATOR` slot
+    whose learned implementations keep their PARAMETER arrays) or a stateless
+    operation or callable module held as a dynamic child; arrays hidden in
+    closures are rejected at training and artifact boundaries.
+    """
 
     inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner
     damping: float = eqx.field(static=True)
@@ -1175,7 +1182,7 @@ class PicardIteration(StrictModule):
 
     inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner
     damping: float = eqx.field(static=True)
-    acceleration: AndersonAcceleration | None
+    acceleration: AndersonAcceleration | None = fixed_field()
     precision: NonlinearPrecisionPolicy
 
     def __init__(

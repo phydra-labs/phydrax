@@ -6,7 +6,6 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 
 
 def test_signal_namespace_is_public_and_old_resampling_export_is_removed():
@@ -18,11 +17,11 @@ def test_signal_namespace_is_public_and_old_resampling_export_is_removed():
 
 def test_signal_plans_are_fixed_but_carried_history_remains_differentiable():
     fir_plan = phx.signal.FIRFilterPlan(3)
-    fir_parameters, _ = partition_trainable(fir_plan)
+    fir_parameters, _, _ = phx.partition_parameters(fir_plan)
     fir_state = fir_plan.initial_state((8,), dtype=jnp.float64)
 
     resampling_plan = phx.signal.RationalResamplingPlan(3, 2, 7, 4)
-    resampling_parameters, _ = partition_trainable(resampling_plan)
+    resampling_parameters, _, _ = phx.partition_parameters(resampling_plan)
     resampling_state = resampling_plan.initial_state((4,), dtype=jnp.float64)
 
     assert not jax.tree.leaves(fir_parameters)

@@ -388,7 +388,7 @@ class PreparedOnePhaseFreeSurfaceALE(StrictModule):
         return rates
 
 
-class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod):
+class OnePhaseFreeSurfaceALEMethod(AbstractFixedStepMethod, NonTrainableState):
     """Strongly coupled explicit-midpoint graph-surface ALE step."""
 
     hydrodynamics: PreparedOnePhaseFreeSurfaceALE

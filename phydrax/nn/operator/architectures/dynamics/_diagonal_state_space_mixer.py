@@ -14,7 +14,9 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax.nn._contracts import SMOOTH
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers import (
@@ -612,6 +614,11 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
             initial_state=initial_state,
             execution=selected,
         )
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Linear in the values with exact exponential (phi) coefficients that are
+        # analytic in the sample times; masks are fixed schedule data.
+        return SMOOTH
 
 
 __all__ = ["DiagonalStateSpaceMixer"]

@@ -14,6 +14,7 @@ from jaxtyping import Array, Key, PyTree
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._weight_space_recurrence import (
@@ -100,7 +101,7 @@ class FunctionalStateDecoder(StrictModule):
         return decoded.reshape(case_shape + decoded.shape[1:])
 
 
-class WeightSpaceRecurrentModel(StrictModule):
+class WeightSpaceRecurrentModel(StrictModule, ParameterOwner):
     """Recurrent parameter-state model with coordinate-wise root-function decoding."""
 
     decoder: FunctionalStateDecoder

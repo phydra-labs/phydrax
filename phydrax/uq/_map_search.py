@@ -110,7 +110,7 @@ class MAPSearchResult(StrictModule):
     def valid(self) -> bool:
         return (
             bool(jnp.isfinite(self.objective))
-            and self.termination_reason != "no_finite_candidates"
+            and self.termination_reason != "no_valid_candidates"
         )
 
 

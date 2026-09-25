@@ -12,14 +12,22 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from ...linalg import FactorizationPolicy, pseudoinverse, RankPolicy
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
@@ -27,6 +35,32 @@ from .._contracts import (
 )
 from .._numerics import effective_sample_size, solve_weighted_least_squares
 from .._numerics._spectral import _canonicalize_rows
+from .._schema import AbstractFittedModel
+
+
+def _contract(*conditions: str) -> DerivativeContract:
+    # Both encoders are centered affine projections of the input.
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        ),
+        route=DerivativeRoute.SPECTRAL,
+        regularity=DerivativeRegularity.smooth(degree_bound=1),
+        conditions=conditions,
+    )
+
+
+_CCA_CONTRACT = _contract(
+    "canonical subspace gradients require separated singular subspaces",
+    "basis gradients additionally require non-repeated canonical correlations",
+)
+_PLS_CONTRACT = _contract(
+    "PLS weight gradients require separated cross-covariance spectrum",
+)
 
 
 def _reconstruction_pseudoinverse(matrix: Array, /) -> Array:
@@ -149,11 +183,11 @@ def _apply_matrix(
     return result.reshape(leading + (matrix.shape[-1],))
 
 
-class CCAModel(AbstractArrayModel):
+class CCAModel(AbstractFittedModel):
     """Canonical correlation encoder with paired target coordinates."""
 
-    x_mean: Array
-    y_mean: Array
+    x_mean: Array = fixed_field()
+    y_mean: Array = fixed_field()
     x_rotations: Array
     y_rotations: Array
     canonical_correlations: Array
@@ -182,6 +216,9 @@ class CCAModel(AbstractArrayModel):
         self.target_size = self.y_mean.shape[-1]
         self.out_size = self.x_rotations.shape[-1]
         self.case_shape = tuple(self.x_mean.shape[:-1])
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _CCA_CONTRACT
 
     def _apply(self, value: Array, mean: Array, rotations: Array, width: int, /) -> Array:
         if value.shape[-1:] != (width,):
@@ -352,24 +389,15 @@ class CCA(AbstractRecipe):
             valid=valid,
             status=status,
             method="regularized-cca-svd",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_mode="spectral",
-                conditions=(
-                    "canonical subspace gradients require separated singular subspaces",
-                    "basis gradients additionally require non-repeated canonical correlations",
-                ),
-            ),
+            derivative_contract=_CCA_CONTRACT,
         )
 
 
-class PLSModel(AbstractArrayModel):
+class PLSModel(AbstractFittedModel):
     """Two-block PLS latent encoder, decoder, and target predictor."""
 
-    x_mean: Array
-    y_mean: Array
+    x_mean: Array = fixed_field()
+    y_mean: Array = fixed_field()
     x_weights: Array
     x_decoder: Array
     y_loadings: Array
@@ -391,6 +419,9 @@ class PLSModel(AbstractArrayModel):
         self.target_size = self.y_mean.shape[-1]
 
         self.case_shape = tuple(self.x_mean.shape[:-1])
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _PLS_CONTRACT
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -549,15 +580,7 @@ class PLS(AbstractRecipe):
             valid=valid,
             status=status,
             method="two-block-pls-svd",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_mode="spectral",
-                conditions=(
-                    "PLS weight gradients require separated cross-covariance spectrum",
-                ),
-            ),
+            derivative_contract=_PLS_CONTRACT,
         )
 
 

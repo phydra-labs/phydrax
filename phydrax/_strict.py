@@ -6,9 +6,13 @@ Phydrax-specific deviations (kept intentionally):
 - Treats `Abstract*` / `_Abstract*`-named classes as abstract, even without declared abstract elements.
 - Allows Equinox internal wrapper classes (`equinox.*`) to subclass concrete strict classes.
 - Allows overriding dunder methods (e.g. `__repr__`) from strict bases.
+- Resolves `eqx.AbstractVar[T]` / `eqx.AbstractClassVar[T]` annotations that
+  `from __future__ import annotations` stringified. Equinox only inspects the raw
+  annotation, so without this they silently become concrete dataclass fields.
 """
 
 import abc
+import re
 from typing import Any
 
 import equinox as eqx
@@ -113,9 +117,21 @@ class _StrictMeta(abc.ABCMeta):
 
         instance = super().__call__(*args, **kwargs)
 
-        object.__setattr__(instance, "_strict_initialized", True)
+        mark_strict_initialized(instance)
 
         return instance
+
+
+def mark_strict_initialized(instance: Any, /) -> None:
+    """Complete the freeze transition of one strict instance.
+
+    Equinox modules are already frozen by Equinox and must not carry the flag:
+    Equinox flattens any non-field `__dict__` entry as wrapper metadata, so every
+    unflattened copy would grow `__name__`/`__qualname__` set to its MISSING
+    sentinel and break `filter_jit` naming.
+    """
+    if not isinstance(instance, eqx.Module):
+        object.__setattr__(instance, "_strict_initialized", True)
 
 
 class Strict(metaclass=_StrictMeta):
@@ -154,10 +170,28 @@ class Strict(metaclass=_StrictMeta):
         super().__delattr__(name)
 
 
+_STRINGIFIED_ABSTRACT = re.compile(
+    r"(?:eqx\.|equinox\.)?(AbstractVar|AbstractClassVar)\[(.*)\]", re.DOTALL
+)
+
+
 class _StrictEqxMeta(_StrictMeta, type(eqx.Module)):
     def __new__(mcs, name, bases, namespace, **kwargs):
+        annotations = namespace.get("__annotations__", {})
+        for field_name, annotation in annotations.items():
+            if isinstance(annotation, str) and (
+                match := _STRINGIFIED_ABSTRACT.fullmatch(annotation.strip())
+            ):
+                marker = getattr(eqx, match[1])
+                annotations[field_name] = marker[match[2]]
         return super().__new__(mcs, name, bases, namespace, **kwargs)
 
 
 class StrictModule(eqx.Module, Strict, metaclass=_StrictEqxMeta):
-    pass
+    # Equinox freezes assignment; deletion must be refused here because modules
+    # never carry `_strict_initialized` (see `mark_strict_initialized`).
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(
+            f"Cannot delete attribute '{name}' on frozen instance "
+            f"of {type(self).__name__}. strict objects are immutable."
+        )

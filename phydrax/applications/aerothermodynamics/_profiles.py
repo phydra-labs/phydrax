@@ -30,7 +30,7 @@ from ...solver._thermochemical_source import FixedWorkThermochemicalSourcePlan
 from ._wall import ReactingPlasmaWallPlan
 
 
-class IonizedContinuumProfile(StrictModule, NonTrainableState):
+class IonizedContinuumProfile(StrictModule):
     system: IonizedMultitemperatureEulerSystem | IonizedMultitemperatureNavierStokesSystem
     thermochemical_source: FixedWorkThermochemicalSourcePlan
     plasma_transport: AmbipolarPlasmaTransportPlan
@@ -75,7 +75,7 @@ class IonizedContinuumProfile(StrictModule, NonTrainableState):
         )
 
 
-class RadiatingContinuumProfile(StrictModule, NonTrainableState):
+class RadiatingContinuumProfile(StrictModule):
     continuum: IonizedContinuumProfile
     radiation: MultigroupRadiationMatterProcessPlan
     profile_id: str = eqx.field(static=True)
@@ -104,7 +104,7 @@ class RadiatingContinuumProfile(StrictModule, NonTrainableState):
         )
 
 
-class AblatingEntryProfile(StrictModule, NonTrainableState):
+class AblatingEntryProfile(StrictModule):
     radiating: RadiatingContinuumProfile
     wall: ReactingPlasmaWallPlan
     material: PorousAblatingMaterialPlan
@@ -153,7 +153,7 @@ class RarefiedDSMCProfile(StrictModule, NonTrainableState):
         )
 
 
-class FixedContinuumDSMCProfile(StrictModule, NonTrainableState):
+class FixedContinuumDSMCProfile(StrictModule):
     continuum: IonizedContinuumProfile
     rarefied: RarefiedDSMCProfile
     interface: ContinuumDSMCInterfacePlan
@@ -180,7 +180,7 @@ class FixedContinuumDSMCProfile(StrictModule, NonTrainableState):
         )
 
 
-class DynamicContinuumDSMCProfile(StrictModule, NonTrainableState):
+class DynamicContinuumDSMCProfile(StrictModule):
     fixed: FixedContinuumDSMCProfile
     ownership: HybridOwnershipEpochPlan
     profile_id: str = eqx.field(static=True)

@@ -139,3 +139,43 @@ def test_variational_training_checkpoint_roundtrip(tmp_path):
             checkpoint_path=checkpoint,
             resume=True,
         )
+
+
+class _UnsupportedEncoder(AbstractArrayModel):
+    weight: jax.Array
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    def __init__(self):
+        self.weight = jnp.asarray([[0.2], [1.0]], dtype=jnp.float64)
+        self.in_size = 2
+        self.out_size = 1
+
+    def __call__(self, value, /, *, key=None):
+        del key
+        return value @ self.weight * jnp.nan
+
+
+def test_unsuccessful_score_commits_no_update_and_stops_infeasible():
+    data = _data(40)
+    encoder = _UnsupportedEncoder()
+    policy = phx.dynamics.identification.VariationalKineticTrainingPolicy(
+        maximum_steps=3,
+        validation_interval=2,
+        maximum_transitions=100,
+    )
+
+    result = phx.dynamics.identification.fit_variational_kinetic_model(
+        encoder,
+        data,
+        jax.random.key(3),
+        model_id="unsupported-encoder",
+        policy=policy,
+        n_modes=1,
+    )
+
+    assert result.progress.update_step == 0
+    assert jnp.array_equal(result.model.weight, encoder.weight)
+    assert not bool(result.valid)
+    assert result.history.steps.tolist() == [0, 1]
+    assert not bool(result.history.valid[-1])

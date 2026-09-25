@@ -9,7 +9,9 @@ from typing import Literal
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax.nn._contracts import model_regularity
 from phydrax.nn._keys import EvalKey
 from phydrax.nn.layers import RecurrentBatch
 from phydrax.nn.models import WeightSpaceRecurrentModel
@@ -181,6 +183,9 @@ class WeightSpaceOperator(AbstractOperatorModel):
         ):
             raise TypeError("WeightSpaceOperator requires (RecurrentBatch, queries).")
         return self.evaluate_trajectory(x[0], x[1], key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return model_regularity(self.model)
 
 
 __all__ = ["WeightSpaceOperator"]

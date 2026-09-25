@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...linalg import (
     AbstractLinearOperator,
     AbstractPreconditioner,
@@ -77,7 +78,10 @@ class FastDiagonalizationEligibility(StrictModule):
         )
 
 
-class TensorFastDiagonalizationPreconditioner(AbstractPreconditioner):
+class TensorFastDiagonalizationPreconditioner(
+    AbstractPreconditioner,
+    NonTrainableState,
+):
     """Physical tensor inverse delegated to Phydrax structured direct solve."""
 
     prepared: PreparedLinearSolve

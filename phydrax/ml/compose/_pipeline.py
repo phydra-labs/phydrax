@@ -9,11 +9,15 @@ from typing import Any, Literal
 
 import equinox as eqx
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+)
+from ..._model import AbstractArrayModel, ModelBinding, ValuePort
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract
-from .._schema import FeatureSchema
+from .._contracts import AbstractRecipe, FitResult
+from .._schema import AbstractFittedModel, FeatureSchema
 from ._common import (
+    _combine_models,
     _combine_results,
     _composition_binding,
     _normalize_recipe_specs,
@@ -27,7 +31,7 @@ from ._common import (
 )
 
 
-class FittedPipeline(AbstractArrayModel):
+class FittedPipeline(AbstractFittedModel):
     """Immutable ordered fitted stages with their complete fit provenance."""
 
     steps: tuple[tuple[str, AbstractArrayModel], ...]
@@ -36,10 +40,17 @@ class FittedPipeline(AbstractArrayModel):
     stage_output_schemas: tuple[FeatureSchema, ...]
     feature_schema: FeatureSchema
     final_feature_schema: FeatureSchema
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     in_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        final = self.steps[-1][1]
+        if not isinstance(final, AbstractFittedModel):
+            return ()
+        bound = final.bind_schemas(self.final_feature_schema, self.target_schema)
+        return bound.output_ports()
 
     def __init__(
         self,
@@ -51,7 +62,7 @@ class FittedPipeline(AbstractArrayModel):
         *,
         feature_schema: FeatureSchema,
         final_feature_schema: FeatureSchema,
-        gradient_contract: GradientContract,
+        derivative_contract: DerivativeContract,
     ):
         steps_ = tuple(steps)
         results_ = tuple(fit_results)
@@ -78,7 +89,7 @@ class FittedPipeline(AbstractArrayModel):
         self.stage_output_schemas = output_schemas_
         self.feature_schema = feature_schema
         self.final_feature_schema = final_feature_schema
-        self.gradient_contract = gradient_contract
+        self.derivative_contract = derivative_contract
         self.in_size = models[0].in_size
         self.out_size = models[-1].out_size
         self._input_binding = _composition_binding(models)
@@ -86,6 +97,9 @@ class FittedPipeline(AbstractArrayModel):
     @property
     def fit_results(self) -> tuple[FitResult, ...]:
         return self.provenance.results
+
+    def _prediction_contract(self) -> DerivativeContract | None:
+        return _combine_models(tuple(model for _, model in self.steps), sequential=True)
 
     def __call__(self, x: Any, /, *, key: Any = None):
         keys = _split_key(key, len(self.steps))
@@ -147,7 +161,7 @@ class Pipeline(AbstractRecipe):
                 current = _transform_batch(model, current, key=keys[2 * index + 1])
                 output_schemas.append(current.feature_schema)
 
-        valid, status, contract = _combine_results(results)
+        valid, status, contract = _combine_results(results, sequential=True)
         fitted = FittedPipeline(
             fitted_steps,
             results,
@@ -155,7 +169,7 @@ class Pipeline(AbstractRecipe):
             output_schemas,
             feature_schema=batch.feature_schema,
             final_feature_schema=current.feature_schema,
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
         diagnostics = CompositionDiagnostics(
             tuple(name for name, _ in self.steps),
@@ -169,7 +183,7 @@ class Pipeline(AbstractRecipe):
             valid=valid,
             status=status,
             method="pipeline",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

@@ -14,8 +14,9 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, parameter_field
 from ...dynamics import HeldInputPolicy, InputLayout
 
 
@@ -429,8 +430,8 @@ class BatteryProtocolPlan(StrictModule, NonTrainableState):
 class BatteryProtocolValues(StrictModule):
     """Dynamic trainable current amplitudes and stop thresholds for one topology."""
 
-    current_amplitudes_a: Array
-    stop_thresholds: Array
+    current_amplitudes_a: Array = parameter_field()
+    stop_thresholds: Array = parameter_field()
     protocol_id: str = eqx.field(static=True)
 
     def __init__(
@@ -446,7 +447,7 @@ class BatteryProtocolValues(StrictModule):
         threshold_input = jnp.asarray(stop_thresholds)
         if jnp.iscomplexobj(current_input) or jnp.iscomplexobj(threshold_input):
             raise TypeError("Battery protocol values must be real-valued.")
-        dtype = jnp.result_type(current_input, threshold_input, jnp.float64)
+        dtype = inexact_result_type(current_input, threshold_input)
         currents = current_input.astype(dtype)
         thresholds = threshold_input.astype(dtype)
         if currents.shape != (protocol.current_step_count,):

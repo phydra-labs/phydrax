@@ -12,6 +12,7 @@ import equinox as eqx
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import NonTrainableState
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator
@@ -29,7 +30,7 @@ from ._sparse_factorizations import (
 )
 
 
-class SparseFactorizationPreconditioner(AbstractPreconditioner):
+class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Sparse exact or incomplete factor solve through the preconditioner API."""
 
     factorization: PreparedSparseFactorization

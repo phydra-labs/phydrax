@@ -111,27 +111,25 @@ _Component = Any
 
 
 def _component_lineage(value, /) -> tuple | None:
+    # Reduced free energies add only on one unit system and inverse-temperature
+    # normalization, one sampling-bias contract, one mapping, and one orientation.
+    # Legs of a thermodynamic cycle come from separate analyses of distinct
+    # systems, so dataset, analysis, qualification, and measure identity differ.
     if isinstance(value, FreeEnergyStateResult):
         return (
-            value.dataset_id,
-            value.analysis_id,
-            value.qualification_id,
+            value.unit_system_id,
+            (value.inverse_temperature,),
             value.sampling_exact,
             value.sampling_bias_bound,
-            value.unit_system_id,
-            value.measure_id,
             None,
             None,
         )
     if isinstance(value, FreeEnergyProtocolLegResult):
         return (
-            value.dataset_id,
-            value.analysis_id,
-            value.qualification_id,
+            value.unit_system_id,
+            (value.source_inverse_temperature, value.destination_inverse_temperature),
             value.sampling_exact,
             value.sampling_bias_bound,
-            value.unit_system_id,
-            (value.source_measure_id, value.destination_measure_id),
             value.mapping_id,
             value.orientation,
         )
@@ -162,7 +160,7 @@ def _combine(
     )
     if lineages and any(value != lineages[0] for value in lineages[1:]):
         raise ValueError(
-            "Free-energy protocol components must share dataset, analysis, qualification, sampling, unit, measure, mapping, and orientation lineage."
+            "Free-energy protocol components must share unit system, inverse temperature, sampling exactness and bias bound, mapping, and orientation."
         )
     if len(names) != count or factors.shape != (count,):
         raise ValueError("Protocol component names and weights must align.")

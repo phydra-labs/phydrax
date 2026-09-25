@@ -13,8 +13,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import compose_regularity, sum_regularity
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
@@ -27,10 +29,13 @@ from phydrax.nn.operator.architectures.attention._upt import (
     _feature_norm,
     _flatten_function_values,
     _flatten_geometry,
+    _pooled_tokens_regularity,
+    _query_decoder_regularity,
     LatentTokenProcessor,
 )
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
+from phydrax.nn.operator.layers._attention import _measure_attention_regularity
 from phydrax.nn.operator.prompt import OperatorPrompt, PromptedOperatorBatch
 
 
@@ -481,6 +486,37 @@ class InContextOperator(AbstractEncodedOperatorModel):
             raise TypeError("InContextOperator requires a PromptedOperatorBatch.")
         state = self.encode_inputs(x, key=key)
         return self.decode_query(state, x.batch.require_single_query(), key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        memory = compose_regularity(
+            sum_regularity(
+                (
+                    _pooled_tokens_regularity(
+                        self.source_lift, self.prompt_source_attention
+                    ),
+                    _pooled_tokens_regularity(
+                        self.target_lift, self.prompt_target_attention
+                    ),
+                )
+            ),
+            self.prompt_processor._value_regularity(),
+        )
+        current = _pooled_tokens_regularity(self.source_lift, self.current_attention)
+        context = compose_regularity(
+            sum_regularity((current, memory)),
+            _measure_attention_regularity(self.context_attention),
+        )
+        processed = compose_regularity(
+            sum_regularity((current, context)),
+            self.current_processor._value_regularity(),
+        )
+        return _query_decoder_regularity(
+            processed,
+            self.query_lift,
+            self.decoder_attention,
+            self.decoder_norm,
+            self.projection,
+        )
 
 
 __all__ = [

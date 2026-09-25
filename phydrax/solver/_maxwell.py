@@ -7,7 +7,6 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 from dataclasses import fields, is_dataclass
-from types import FunctionType
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -21,6 +20,7 @@ from .._fingerprint import (
     array_tree_signature,
     canonical_fingerprint,
 )
+from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
@@ -1791,24 +1791,17 @@ def _maxwell_static_semantics(value: Any, /) -> Any:
         return value
     if isinstance(value, tuple):
         return tuple(_maxwell_static_semantics(item) for item in value)
-    if isinstance(value, FunctionType):
-        code = value.__code__
-        return (
-            "function",
-            value.__module__,
-            value.__qualname__,
-            code.co_firstlineno,
-            code.co_code.hex(),
-        )
-    if callable(value):
-        return ("callable", type(value).__module__, type(value).__qualname__)
     if is_dataclass(value):
         entries: list[tuple[str, Any]] = []
         for field in fields(value):
             if field.name.endswith("_id"):
                 continue
             child = getattr(value, field.name)
-            if field.metadata.get("static", False):
+            if isinstance(value, PreparedMaxwellSource) and field.name == "envelope":
+                # Source plans identify envelopes once; opaque envelopes are
+                # identifiable only through their declared semantic identity.
+                entries.append((field.name, value.envelope_semantic_content_id))
+            elif field.metadata.get("static", False):
                 entries.append((field.name, _maxwell_static_semantics(child)))
             elif is_dataclass(child):
                 entries.append((field.name, _maxwell_static_semantics(child)))
@@ -1826,6 +1819,8 @@ def _maxwell_static_semantics(value: Any, /) -> Any:
             type(value).__qualname__,
             tuple(entries),
         )
+    if callable(value):
+        return ("callable", callable_payload(value)["semantic_content_id"])
     return ("value", type(value).__module__, type(value).__qualname__, str(value))
 
 
@@ -2054,10 +2049,7 @@ def refresh_compatible_maxwell(
     ):
         raise TypeError("Maxwell refresh requires a runtime and refresh specification.")
     refreshed = spec.plan.prepare()
-    if len(runtime.sources) != len(refreshed.sources) or any(
-        previous.envelope is not current.envelope
-        for previous, current in zip(runtime.sources, refreshed.sources, strict=True)
-    ):
+    if len(runtime.sources) != len(refreshed.sources):
         raise ValueError("Maxwell refresh changed the executable step signature.")
     previous = _fixed_step(runtime, spec.step_size, np.dtype(spec.dtype))
     updated = _fixed_step(refreshed, spec.step_size, np.dtype(spec.dtype))

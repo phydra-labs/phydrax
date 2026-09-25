@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem
@@ -309,12 +310,11 @@ class BrosaPlanellaSpmeSeiState(StrictModule):
         leading_shape = base.negative_amount_mol.shape[:-1]
         if porosity.shape[:-1] != leading_shape:
             raise ValueError("Porosity and particle state leading axes must match.")
-        dtype = jnp.result_type(
+        dtype = inexact_result_type(
             base.negative_amount_mol,
             base.positive_amount_mol,
             base.electrolyte_amount_mol,
             porosity,
-            jnp.float64,
         )
         self.negative_amount_mol = base.negative_amount_mol.astype(dtype)
         self.positive_amount_mol = base.positive_amount_mol.astype(dtype)
@@ -1114,7 +1114,7 @@ def _evaluate(
         * sei_overpotential
         / (_GAS_CONSTANT_J_MOL_K * spm.temperature_k)
     )
-    dtype = jnp.result_type(exponent, jnp.float64)
+    dtype = inexact_result_type(exponent)
     exponent_limit = jnp.log(jnp.asarray(jnp.finfo(dtype).max, dtype=dtype)) - 4.0
     exponent_domain = jnp.all(
         jnp.isfinite(exponent) & (exponent < exponent_limit), axis=-1

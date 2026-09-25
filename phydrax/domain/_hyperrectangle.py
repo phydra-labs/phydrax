@@ -46,7 +46,6 @@ class HyperRectangle(AbstractGeometry):
     lower: Array
     upper: Array
     _label: str
-    adf: Callable[[Array], Array]
 
     def __init__(
         self,

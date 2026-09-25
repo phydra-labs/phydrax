@@ -150,7 +150,7 @@ class TwoPhaseContinuationState(StrictModule):
     evidence: TwoPhaseStepEvidence | None
 
 
-class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
+class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod, NonTrainableState):
     """Conservative VOF/mass/momentum step with variable-density projection."""
 
     two_phase: PreparedIncompressibleTwoPhaseVOF

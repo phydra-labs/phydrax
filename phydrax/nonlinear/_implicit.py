@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from .._tree_math import validate_inexact_tree
 from ..linalg import (
     AbstractVectorSpace,
     FGMRES,
@@ -25,10 +26,13 @@ from ..linalg import (
     transpose,
 )
 from ..linalg._runtime import _callable_gmres_for_policy
+from ._components import admit_callable_components, admit_residual_components
+from ._fixed_point import FixedPointIteration
 from ._newton import NewtonKrylov, NewtonTrustRegion
 from ._prepared import PreparedNonlinearSolve, solve_prepared_nonlinear
 from ._types import (
     AbstractNonlinearMethod,
+    FixedPointProblem,
     NonlinearDiagnostics,
     NonlinearResult,
     NonlinearStatus,
@@ -38,6 +42,9 @@ from ._types import (
 
 
 _DEFAULT_ARGS = object()
+_FAILED_ROOT_MESSAGE = (
+    "Implicit nonlinear root solve failed; inspect an explicit root result first."
+)
 
 
 class ImplicitRootDerivativePolicy(StrictModule):
@@ -77,6 +84,10 @@ class ImplicitRootDerivativePolicy(StrictModule):
         """Resolve tangent and adjoint policies against one nonlinear method."""
         if not isinstance(method, AbstractNonlinearMethod):
             raise TypeError("method must be an AbstractNonlinearMethod.")
+        if not method.capabilities.implicit_differentiation:
+            raise ValueError(
+                "The nonlinear method does not support implicit root differentiation."
+            )
         tangent = self.tangent_linear_policy
         if tangent is None:
             if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
@@ -159,9 +170,28 @@ def _checked_root_state(
     coordinates = eqx.error_if(
         coordinates,
         result.status != int(NonlinearStatus.SUCCESS),
-        "Implicit nonlinear root solve failed; inspect an explicit root result first.",
+        _FAILED_ROOT_MESSAGE,
     )
     return space.unflatten(coordinates)
+
+
+def _stop_gradient(tree: Any, /) -> Any:
+    return jax.tree.map(
+        lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
+        tree,
+    )
+
+
+def _root_evidence(
+    result: NonlinearResult,
+    dtype,
+    /,
+) -> tuple[Array, NonlinearDiagnostics, Any]:
+    return (
+        result.status.astype(dtype),
+        _cast_diagnostic_counts(result.diagnostics, dtype),
+        result.provenance,
+    )
 
 
 def _checked_tangent_solve(
@@ -261,6 +291,13 @@ def implicit_root_result(
     nondifferentiable evidence, while state, residual, and auxiliary values are
     evaluated at the implicitly differentiated root. A failed solve remains a failed
     result; implicit derivatives are meaningful only when ``successful`` is true.
+
+    Before solving, the residual's model components (in a structured residual
+    callable or in ``args``) are admitted for the implicit root map: their
+    randomness must be deterministic or a `FrozenRealization`, and their value
+    regularity classical ``C^1`` (or certified by a branch margin). The result's
+    ``component_evidence`` records the admission, and an opaque residual closure
+    as undeclared determinism and regularity.
     """
     if isinstance(problem_or_prepared, PreparedNonlinearSolve):
         if initial_state is not None or method is not None or termination is not None:
@@ -297,6 +334,7 @@ def implicit_root_result(
         method_,
         derivative_policy,
     )
+    component_evidence = admit_residual_components(problem, runtime_args, implicit=True)
 
     initial_residual = problem.residual(initial, runtime_args)
     source = PyTreeSpace(initial) if problem.state_space is None else problem.state_space
@@ -309,22 +347,16 @@ def implicit_root_result(
         raise ValueError("Implicit root differentiation requires a square Jacobian.")
     initial_coordinates = source.flatten(initial)
 
-    def stop_gradient(tree):
-        return jax.tree.map(
-            lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
-            tree,
-        )
-
     if prepared is None:
         primal_result = method_.solve(
-            stop_gradient(problem),
-            stop_gradient(initial),
+            _stop_gradient(problem),
+            _stop_gradient(initial),
             termination=termination_,
-            args=stop_gradient(runtime_args),
+            args=_stop_gradient(runtime_args),
         )
     else:
-        primal_result = solve_prepared_nonlinear(stop_gradient(prepared))
-    primal_result = stop_gradient(primal_result)
+        primal_result = solve_prepared_nonlinear(_stop_gradient(prepared))
+    primal_result = _stop_gradient(primal_result)
 
     def coordinate_residual(coordinates):
         state = source.unflatten(coordinates)
@@ -336,12 +368,7 @@ def implicit_root_result(
             raise ValueError(
                 "Implicit root results do not support transformed nonlinear evidence."
             )
-        evidence = (
-            result.status.astype(coordinates.dtype),
-            _cast_diagnostic_counts(result.diagnostics, coordinates.dtype),
-            result.provenance,
-        )
-        return source.flatten(result.state), evidence
+        return source.flatten(result.state), _root_evidence(result, coordinates.dtype)
 
     def tangent_solve(linearized, right_hand_side):
         root_state = _checked_root_state(primal_result, source)
@@ -397,6 +424,7 @@ def implicit_root_result(
         status=status,
         diagnostics=_restore_diagnostic_types(diagnostics),
         provenance=provenance,
+        component_evidence=component_evidence,
     )
 
 
@@ -424,8 +452,132 @@ def implicit_root(
     return _checked_root_state(result, source)
 
 
+def implicit_fixed_point_result(
+    problem: FixedPointProblem,
+    initial_state: PyTree[Any],
+    /,
+    *,
+    method: FixedPointIteration | None = None,
+    termination: NonlinearTermination | None = None,
+    derivative_policy: ImplicitRootDerivativePolicy,
+    args: Any = None,
+) -> NonlinearResult:
+    """Return one fixed-point result whose state has implicit derivatives.
+
+    The primal is one stopped damped Picard or Anderson `FixedPointIteration`
+    solve of ``x = g(x, args)``; it never switches to a Newton primal. The
+    fixed point is then the root of ``g(x, args) - x``, so tangent and adjoint
+    derivatives solve with ``I - dg/dx`` matrix-free under the policies of
+    ``derivative_policy``. The tangent policy is required because fixed-point
+    iteration owns no linear policy; the adjoint policy defaults to it. A
+    derivative solve that does not resolve, for example because ``dg/dx`` has an
+    eigenvalue one at the fixed point, raises instead of returning a derivative.
+
+    Status, diagnostics, provenance, and precision evidence are those of the
+    primal iteration. A failed iteration remains a failed result, and implicit
+    derivatives are meaningful only when ``successful`` is true; differentiating
+    a failed result raises. Before iterating, the model components of a
+    structured mapping callable and of ``args`` are admitted for the implicit
+    map: deterministic or a `FrozenRealization` randomness, and classical ``C^1``
+    value regularity or a branch-margin certificate. ``component_evidence``
+    records the admission, and an opaque mapping closure as
+    ``"mapping:determinism-undeclared"`` and ``"mapping:regularity-undeclared"``.
+    """
+    if not isinstance(problem, FixedPointProblem):
+        raise TypeError("problem must be a FixedPointProblem.")
+    method_ = FixedPointIteration() if method is None else method
+    if not isinstance(method_, FixedPointIteration):
+        raise TypeError(
+            "method must be FixedPointIteration or None; implicit fixed points "
+            "never switch to another nonlinear method."
+        )
+    termination_ = NonlinearTermination() if termination is None else termination
+    if not isinstance(termination_, NonlinearTermination):
+        raise TypeError("termination must be NonlinearTermination or None.")
+    if not isinstance(derivative_policy, ImplicitRootDerivativePolicy):
+        raise TypeError("derivative_policy must be ImplicitRootDerivativePolicy.")
+    tangent_policy = derivative_policy.tangent_linear_policy
+    if tangent_policy is None:
+        raise ValueError(
+            "Implicit fixed-point differentiation requires a tangent linear policy."
+        )
+    adjoint_policy = (
+        tangent_policy
+        if derivative_policy.adjoint_linear_policy is None
+        else derivative_policy.adjoint_linear_policy
+    )
+    component_evidence = admit_callable_components(
+        "mapping", problem.mapping_function, args, implicit=True
+    )
+    initial = validate_inexact_tree(initial_state, name="initial fixed-point state")
+    space = PyTreeSpace(initial)
+    primal_result = _stop_gradient(
+        method_.solve(
+            _stop_gradient(problem),
+            _stop_gradient(initial),
+            termination=termination_,
+            args=_stop_gradient(args),
+        )
+    )
+
+    def coordinate_residual(coordinates):
+        mapped = problem.mapping(space.unflatten(coordinates), args)
+        return space.flatten(mapped) - coordinates
+
+    def primal_solve(_, coordinates):
+        return (
+            space.flatten(primal_result.state),
+            _root_evidence(primal_result, coordinates.dtype),
+        )
+
+    def derivative_solve(policy):
+        # The linearized residual is dg/dx - I. The failed-primal check sits on
+        # the solve input so that no derivative is formed for a failed iteration.
+        def solve(action, right_hand_side):
+            checked = eqx.error_if(
+                right_hand_side,
+                primal_result.status != int(NonlinearStatus.SUCCESS),
+                _FAILED_ROOT_MESSAGE,
+            )
+            return _checked_tangent_solve(action, checked, policy, space)
+
+        return solve
+
+    def tangent_solve(linearized, right_hand_side):
+        return jax.lax.custom_linear_solve(
+            linearized,
+            right_hand_side,
+            solve=derivative_solve(tangent_policy),
+            transpose_solve=derivative_solve(adjoint_policy),
+        )
+
+    coordinates, evidence = jax.lax.custom_root(
+        coordinate_residual,
+        space.flatten(initial),
+        solve=primal_solve,
+        tangent_solve=tangent_solve,
+        has_aux=True,
+    )
+    status, diagnostics, provenance = evidence
+    state = space.unflatten(coordinates)
+    residual = jax.tree.map(
+        lambda mapped, value: mapped - value, problem.mapping(state, args), state
+    )
+    return NonlinearResult(
+        state=state,
+        residual=residual,
+        auxiliary=None,
+        status=status,
+        diagnostics=_restore_diagnostic_types(diagnostics),
+        provenance=provenance,
+        precision_evidence=primal_result.precision_evidence,
+        component_evidence=component_evidence,
+    )
+
+
 __all__ = [
     "ImplicitRootDerivativePolicy",
+    "implicit_fixed_point_result",
     "implicit_root",
     "implicit_root_result",
 ]

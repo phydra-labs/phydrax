@@ -50,11 +50,13 @@ from ..linalg import (
 )
 from ..nonlinear import (
     AbstractNonlinearMethod,
+    implicit_root_result,
     ImplicitRootDerivativePolicy,
     NewtonKrylov,
     NewtonTrustRegion,
     NonlinearProvenance,
     NonlinearResult,
+    NonlinearStatus,
     NonlinearSystemProblem,
     NonlinearTermination,
     prepare_nonlinear,
@@ -4948,6 +4950,91 @@ def continue_branch(
     return run_continuation(prepared, session=session)
 
 
+class _FixedCoordinateResidual(StrictModule):
+    """Execution-coordinate residual of one curve problem at a fixed coordinate."""
+
+    problem: ContinuationCurveProblem
+    geometry: ContinuationGeometry
+    coordinate: Array
+
+    def __call__(self, state: PyTree[Any], args: Any, /) -> PyTree[Array]:
+        return _execution_residual(
+            self.problem, self.geometry, state, self.coordinate, args
+        )
+
+
+def accepted_point_sensitivity(
+    problem: ContinuationCurveProblem | AbstractContinuationAdapter,
+    point: BranchPoint,
+    /,
+    *,
+    args: Any = None,
+    corrector: AbstractNonlinearMethod | None = None,
+    termination: NonlinearTermination | None = None,
+    derivative_policy: ImplicitRootDerivativePolicy | None = None,
+) -> NonlinearResult:
+    """Return an accepted branch point whose state has implicit derivatives in ``args``.
+
+    The branch coordinate of ``point`` is held fixed: the result is the implicit
+    root of ``F(x, gamma(s), args) = 0`` at ``s = point.coordinate``, re-corrected
+    once from ``point.state`` by ``corrector`` (the continuation default when
+    omitted) through `implicit_root_result`. The solve and its derivatives run in
+    the problem's real execution coordinates, and the returned state and residual
+    are public. No derivative flows through the continuation path, step-size,
+    predictor, or acceptance decisions that produced ``point``, and the
+    derivative is meaningful only away from folds, where the fixed-coordinate
+    Jacobian is nonsingular; a derivative solve that does not resolve raises.
+    Status and evidence are those of `implicit_root_result`.
+    """
+    problem_, _ = _resolve_continuation_adapter(problem)
+    if not isinstance(point, BranchPoint):
+        raise TypeError("point must be a BranchPoint.")
+    if int(point.status) != int(NonlinearStatus.SUCCESS):
+        raise ValueError(
+            "Accepted-point sensitivity requires a successfully corrected branch point."
+        )
+    if not bool(problem_.contains_coordinate(point.coordinate)):
+        raise ValueError("The branch point lies outside the continuation interval.")
+    corrector_, termination_, derivative_ = _validated_corrector(
+        corrector, termination, derivative_policy
+    )
+    # Only the residual structure resolves the geometry, so parameters traced
+    # for differentiation never reach its host-side finiteness check.
+    residual_template = jax.tree.map(
+        lambda leaf: jnp.zeros(leaf.shape, dtype=leaf.dtype),
+        jax.eval_shape(lambda: problem_.residual(point.state, point.coordinate, args)),
+    )
+    declared_state_space, declared_residual_space = problem_.declared_spaces()
+    geometry = ContinuationGeometry.resolve(
+        point.state,
+        residual_template,
+        state_space=declared_state_space,
+        residual_space=declared_residual_space,
+        representation=problem_.representation_policy(),
+    )
+    result = implicit_root_result(
+        NonlinearSystemProblem(
+            _FixedCoordinateResidual(problem_, geometry, point.coordinate),
+            state_space=geometry.execution_state_space,
+            residual_space=geometry.execution_residual_space,
+            problem_id=f"{problem_.problem_id}/fixed-coordinate-corrector",
+        ),
+        geometry.state_to_execution(point.state),
+        method=corrector_,
+        termination=termination_,
+        derivative_policy=derivative_,
+        args=args,
+    )
+    return eqx.tree_at(
+        lambda value: (value.state, value.residual),
+        result,
+        (
+            geometry.state_from_execution(result.state),
+            geometry.residual_from_execution(result.residual),
+        ),
+    )
+
+
 def propose_branch_seeds(
     branch: ContinuationBranch,
     hooks: Sequence[AbstractBranchSwitchHook],
@@ -4976,6 +5063,7 @@ __all__ = [
     "AbstractBranchMonitor",
     "AbstractBranchSwitchHook",
     "AbstractContinuationMethod",
+    "accepted_point_sensitivity",
     "ContinuationIterationMetrics",
     "AbstractStabilityAnalyzer",
     "ContinuationCurveProblem",

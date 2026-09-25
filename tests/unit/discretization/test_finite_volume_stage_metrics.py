@@ -984,14 +984,16 @@ def test_active_face_routes_must_own_only_active_cells():
     ),
 )
 def test_stage_metrics_reject_noncanonical_static_ids(field, value):
-    with pytest.raises(ValueError, match="canonical stripped string"):
+    with pytest.raises(ValueError, match=f"{field} must be a non-empty canonical"):
         _stage_metrics(**{field: value})
 
-    with pytest.raises(ValueError, match="canonical stripped string"):
+    with pytest.raises(ValueError, match="policy_id must be a non-empty canonical"):
         _geometry_evidence(policy_id=" policy")
-    with pytest.raises(ValueError, match="canonical stripped string"):
+    with pytest.raises(ValueError, match="block_id must be a non-empty canonical"):
         _face_block(block_id="face-block ")
-    with pytest.raises(ValueError, match="canonical stripped string"):
+    with pytest.raises(
+        ValueError, match="topology_epoch_id must be a non-empty canonical"
+    ):
         lower_static_unstructured_stage_metrics(
             _unstructured(),
             topology_epoch_id=" epoch",

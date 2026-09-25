@@ -214,7 +214,6 @@ from ._dem_sensitivity import (
     DEMSensitivityPolicy,
     DEMSensitivityResult,
     DEMTrainableMaterialParameters,
-    HybridSensitivityMode,
     sharp_branchwise_jvp,
     sharp_branchwise_vjp,
 )
@@ -1102,7 +1101,6 @@ __all__ = [
     "DEMLocalValidityCertificate",
     "DEMReplayRecord",
     "DEMReplayResult",
-    "HybridSensitivityMode",
     "DEMSensitivityPolicy",
     "DEMSensitivityResult",
     "DEMTrainableMaterialParameters",

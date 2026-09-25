@@ -15,7 +15,6 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec
 from ..._execution_runtime import ExecutionGroup
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
-from ..._trainable import place_array_leaves
 from .data import (
     FunctionSamples,
     OperatorAxis,
@@ -346,8 +345,9 @@ def shard_operator_case_array(
 
 
 def replicate_operator_model(model, policy: OperatorShardingPolicy, /):
-    """Replicate every array leaf of a model on the policy mesh."""
-    return place_array_leaves(model, policy.replicated)
+    """Replicate every array leaf of a model on the policy mesh, whatever its role."""
+    arrays, rest = eqx.partition(model, eqx.is_array)
+    return eqx.combine(jax.device_put(arrays, policy.replicated), rest)
 
 
 __all__ = [

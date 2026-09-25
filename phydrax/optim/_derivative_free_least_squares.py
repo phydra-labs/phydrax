@@ -485,7 +485,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             residual, _ = problem.value(candidate, args)
             return residual
 
-        run = _run_least_squares_iterations(
+        run, _, _, _ = _run_least_squares_iterations(
             self,
             residual_function,
             parameters,

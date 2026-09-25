@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import TimeGrid
 from ...linalg import (
@@ -262,7 +263,7 @@ def _finite_inputs(
             "noise_covariances",
         ),
     ]
-    dtype = jnp.result_type(*values, jnp.float64)
+    dtype = inexact_result_type(*values)
     zeros = lambda shape: jnp.zeros(shape, dtype=dtype)
     c = (
         zeros(case_shape + (horizon, n))

@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..series import CoordinateKind, SampledSeries, SeriesPairView, SeriesSupport
 from ._layout import InputLayout, StateLayout
@@ -171,7 +172,7 @@ class TrajectoryData(StrictModule):
         if jnp.issubdtype(coordinate_values.dtype, jnp.complexfloating):
             raise TypeError("Trajectory coordinates must be real-valued.")
         coordinate_values = coordinate_values.astype(
-            jnp.result_type(coordinate_values, jnp.float64)
+            inexact_result_type(coordinate_values)
         )
         coordinates_full = jnp.broadcast_to(coordinate_values, cases + (capacity,))
 

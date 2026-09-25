@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from .._trainable import fixed_field
 from ..linalg import (
     DenseLinearOperator,
     FunctionLinearOperator,
@@ -47,8 +48,8 @@ class ASPIN(AbstractNonlinearMethod):
     """Additive-Schwarz preconditioned Newton with prepared local solves."""
 
     schwarz: NonlinearAdditiveSchwarz
-    outer: NewtonKrylov
-    local_linear_policy: LinearSolvePolicy
+    outer: NewtonKrylov = fixed_field()
+    local_linear_policy: LinearSolvePolicy = fixed_field()
 
     def __init__(
         self,

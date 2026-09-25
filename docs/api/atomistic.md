@@ -41,7 +41,7 @@ distributed execution are documented on the split
 
 ::: phydrax.atomistic.AbstractAtomisticPotential
 
-::: phydrax.atomistic.checkpoint_atomistic_potential
+::: phydrax.atomistic.atomistic_potential_revision
 
 ::: phydrax.nn.atomistic.PaiNNPotential
 
@@ -148,6 +148,16 @@ distributed execution are documented on the split
 ::: phydrax.atomistic.VarianceConstrainedSemiGrandPlan
 
 ## Typed training and rMD17
+
+`fit_atomistic_potential` runs every full-batch Adam update as one attempt of the
+shared accepted-update training kernel, with `MODEL` root authority and one
+energy/force data-fit objective. A nonfinite training loss or gradient rolls the
+attempt back; an update whose post-update training loss is nonfinite is discarded
+too. Either way the run ends with `AtomisticStatus.NONFINITE` and `potential` is
+the last finite accepted state. `AtomisticTrainingResult.training_state` holds the
+committed kernel state (parameters, Adam state, root key, and cursors); a
+continuation resumes it after checking the problem, policy, normalization, and
+kernel identities.
 
 ::: phydrax.atomistic.AtomisticTrainingProblem
 

@@ -117,15 +117,18 @@ def test_trajectory_trapezoid_handles_nonuniform_time_grid_and_invalid_paths():
 
 def test_query_conditioned_brownian_value_control_and_terminal_query():
     problem = _brownian_problem()
+    # The martingale estimator Y_{t1} dW_0 / dt has per-antithetic-pair variance
+    # 2 + (N - 1) = 9 for N = 8 steps here, so its standard error is 3 / sqrt(pairs):
+    # 32768 pairs give 0.0166, making the 8e-2 control tolerance 4.8 standard errors.
     plan = FeynmanKacSamplingPlan(
         initial_time=0.0,
         terminal_time=1.0,
         sampling_mode="queries",
-        num_paths_per_query=4096,
+        num_paths_per_query=65536,
         num_time_steps=8,
         control_target_mode="martingale",
         antithetic=True,
-        path_chunk_size=512,
+        path_chunk_size=8192,
     )
     times = jnp.asarray([0.0, 0.6, 1.0])
     states = jnp.asarray([[0.2], [-0.4], [0.7]])
@@ -141,15 +144,15 @@ def test_query_conditioned_brownian_value_control_and_terminal_query():
     assert isinstance(result, tuple)
     labels, paths = result
 
-    assert paths.states.shape == (3, 4096, 9, 1)
+    assert paths.states.shape == (3, 65536, 9, 1)
     assert labels.control_targets is not None
     assert labels.control_valid is not None
     assert jnp.allclose(labels.value_targets[:, 0], states[:, 0], atol=2e-2)
     assert jnp.allclose(labels.control_targets[:2, 0, 0], 1.0, atol=8e-2)
     assert jnp.allclose(labels.value_targets[2, 0], states[2, 0])
     assert not labels.control_valid[2]
-    assert labels.source_path_count == 2048
-    assert labels.metadata["path_chunk_size"] == 512
+    assert labels.source_path_count == 32768
+    assert labels.metadata["path_chunk_size"] == 8192
 
 
 def test_query_sampling_replays_and_rejects_out_of_interval_queries():
@@ -245,10 +248,11 @@ def test_stochastic_source_keys_replay_across_path_chunk_sizes():
         process_id=base.process_id,
     )
     domain = phx.domain.Interval1d(-5.0, 5.0) @ phx.domain.TimeInterval(0.0, 1.0)
-    source_value = domain.Function("t", "x")(
+    keyed = phx.domain.FunctionBinding(pass_key=True)
+    source_value = domain.Function("t", "x", binding=keyed)(
         lambda _time, _state, *, key: jr.normal(key, (1,))
     )
-    source_control = domain.Function("t", "x")(
+    source_control = domain.Function("t", "x", binding=keyed)(
         lambda _time, _state, *, key: jr.normal(key, (1, 1))
     )
     common = {

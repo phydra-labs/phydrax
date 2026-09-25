@@ -239,10 +239,12 @@ it accepts only a conservative, post-collision-realizable candidate and otherwis
 retains the complete input state.
 
 Learned parameters never enter the prepared kinetic method, which is
-`NonTrainableState`. `LearnedEnergyEquilibriumBindingPlan` binds the ordered
-four-component state schema, exact D2V quadrature and ideal-gas material,
-train-only normalizer, primitive-state support, semantic lineage, and numeric
-model revision. Its prepared deployment freezes a `4 -> 2` pointwise model.
+`NonTrainableState`, so its arrays are FIXED. `LearnedEnergyEquilibriumBindingPlan`
+binds the ordered four-component state schema, exact D2V quadrature and ideal-gas
+material, train-only normalizer, primitive-state support, semantic lineage, and
+numeric model revision. Its prepared deployment freezes a `4 -> 2` pointwise model
+in a `FrozenModel`, an `ExplicitFreeze` holder, so the deployment is legal FIXED
+state and none of the model's arrays train.
 Predictions outside the qualified density, velocity, temperature, Mach,
 energy-hull, or particle-equilibrium support are explicit failures.
 `write_learned_energy_equilibrium_artifact` and
@@ -287,9 +289,17 @@ declared moments. It never claims integer streaming or high-Mach support.
 
 Smooth-compressible rollout datasets partition complete parent trajectories
 before deriving contiguous windows. Stage-two training differentiates only the
-unfrozen dual model through the physical D2V17 recurrence, uses checkpointed
-replay, and transactionally rejects an optimizer proposal when its rollout or
-guard batch fails. Exact energy, particle stress, support, conservation, and
+unfrozen dual model through the physical D2V17 recurrence and uses checkpointed
+replay. Each attempt runs on PhydraX's internal training kernel with MODEL
+authority and one unrolled rollout objective. The update rule proposes an Adam
+step and accepts it only when the candidate's guard rollout succeeds. Acceptance
+commits the model and optimizer together. A failed guard, a nonfinite proposal,
+or a failed rollout commits neither; only the attempt and rejection counts and
+the guard evidence advance. More than the plan's `rejection_budget` consecutive
+rejections (default 64) raise `TrainingRejectionBudgetError`. Training and guard
+batch offsets use semantic keys addressed by the attempt, so a rejected attempt
+draws fresh batches. The curriculum and best-model selection remain owned by
+the rollout frontend. Exact energy, particle stress, support, conservation, and
 positivity are gates rather than compensating loss terms.
 
 Production shock ownership remains finite-volume. The static hybrid evaluates a
@@ -366,11 +376,16 @@ Objects, callbacks, dynamic geometry, and undeclared leaves are outside the ABI.
 
 `SmoothCompressibleD2VCheckpointPlan` writes only accepted f/g state and
 future-affecting boundary/source history. The frozen model remains in its
-separate `.phxml` artifact and is bound by identity. `DiscreteVelocityIREEContract`
-exports frozen equilibrium, one-step, or fixed-horizon forward execution with
-ordered heterogeneous outputs for accepted f/g, status, rollback, first failure,
-and compact diagnostics. The DVM exporter does not reuse the LBM exporter and
-does not export a training loop or reverse mode.
+separate `.phxml` artifact and is bound by identity. Stage-two training
+checkpoints are separate: `write_kinetic_rollout_checkpoint` writes a checkpoint
+directory with the training-kernel payload (parameters, optimizer and guard
+state, root key, cursors, identities), the best model, and the curriculum
+cursors. Checkpoints from earlier releases fail closed.
+`DiscreteVelocityIREEContract` exports frozen equilibrium, one-step, or
+fixed-horizon forward execution with ordered heterogeneous outputs for accepted
+f/g, status, rollback, first failure, and compact diagnostics. The DVM exporter
+does not reuse the LBM exporter and does not export a training loop or reverse
+mode.
 
 ## General AMR and replay
 

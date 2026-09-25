@@ -532,6 +532,16 @@ class FiniteElementMeshImport(StrictModule, NonTrainableState):
         return _named_group(self.boundary_groups, name, "boundary")
 
 
+_VOLUME_CELL_DIMENSIONS = {
+    "triangle": 2,
+    "quadrilateral": 2,
+    "tetrahedron": 3,
+    "hexahedron": 3,
+    "prism": 3,
+    "pyramid": 3,
+}
+
+
 def _geometry_permutation(cell_type: str, cell_kind: str, order: int, /) -> np.ndarray:
     target = np.asarray(lagrange_element(cell_kind, order).reference_nodes)
     return reference_node_permutation(cell_type, target)
@@ -574,14 +584,18 @@ def read_finite_element_mesh(
                 output.write(chunk)
         source = meshio.read(staged, file_format=profile.meshio_format)
         source_manifest_id = resource.manifest.manifest_id
-    volume_blocks = []
-    for source_index, cell_block in enumerate(source.cells):
-        if cell_block.type in MESHIO_CELL_TYPES:
-            volume_blocks.append((source_index, cell_block))
+    # The shared meshio table also lists interval cells; finite-element volume
+    # import admits only two- and three-dimensional cell kinds.
+    volume_blocks = [
+        (source_index, cell_block)
+        for source_index, cell_block in enumerate(source.cells)
+        if cell_block.type in MESHIO_CELL_TYPES
+        and MESHIO_CELL_TYPES[cell_block.type][0] in _VOLUME_CELL_DIMENSIONS
+    ]
     if not volume_blocks:
         raise ValueError("Mesh contains no supported finite-element volume cells.")
     topological_dimensions = {
-        2 if MESHIO_CELL_TYPES[block.type][0] in ("triangle", "quadrilateral") else 3
+        _VOLUME_CELL_DIMENSIONS[MESHIO_CELL_TYPES[block.type][0]]
         for _index, block in volume_blocks
     }
     if len(topological_dimensions) != 1:

@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -17,22 +16,12 @@ from jaxtyping import Array, Key
 
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
+from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
+from .._identity import callable_payload
 from .._strict import StrictModule
 from ..discretization import CochainFieldSpec
 from ._ir import GraphIR
-
-
-def _callable_identity(fn: Callable, explicit: str | None, /) -> str:
-    if explicit is not None:
-        identity = str(explicit)
-        if not identity:
-            raise ValueError("Cochain residual program identity must be non-empty.")
-        return identity
-    if inspect.isfunction(fn) or inspect.ismethod(fn):
-        return f"{fn.__module__}.{fn.__qualname__}"
-    fn_type = type(fn)
-    return f"{fn_type.__module__}.{fn_type.__qualname__}"
 
 
 def _validate_specs(
@@ -109,6 +98,9 @@ class CochainResidualProgram(StrictModule):
     ``residual_fn(graph, fields, *, key=...)`` receives a canonical ``GraphIR`` and
     degree-masked full-cell arrays. It must return a mapping containing exactly the
     declared outputs. Returned arrays are shape-checked and degree-masked again.
+    StrictModule and plain module-level residual functions are identified by
+    content; opaque callables (closures, lambdas, methods, partials) require
+    ``residual_semantic_id`` and ``residual_numeric_id``.
     """
 
     input_specs: frozendict[str, CochainFieldSpec]
@@ -122,13 +114,24 @@ class CochainResidualProgram(StrictModule):
         inputs: Mapping[str, CochainFieldSpec],
         outputs: Mapping[str, CochainFieldSpec],
         residual_fn: Callable[..., Mapping[str, Any]],
-        identity: str | None = None,
+        residual_semantic_id: str | None = None,
+        residual_numeric_id: str | None = None,
     ):
         if not callable(residual_fn):
             raise TypeError("CochainResidualProgram residual_fn must be callable.")
         self.input_specs = _validate_specs("input", inputs)
         self.output_specs = _validate_specs("output", outputs)
-        self.identity = _callable_identity(residual_fn, identity)
+        residual_identity = callable_payload(
+            residual_fn,
+            semantic_id=residual_semantic_id,
+            numeric_id=residual_numeric_id,
+        )
+        self.identity = canonical_fingerprint(
+            {
+                "semantic": residual_identity["semantic_content_id"],
+                "numeric": residual_identity["numeric_content_id"],
+            }
+        )
         self.residual_fn = _ensure_special_kwonly_args(residual_fn)
 
     @property

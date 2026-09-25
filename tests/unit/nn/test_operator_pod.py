@@ -74,7 +74,7 @@ def test_operator_pod_uses_physical_kernel_preserves_layout_and_reconstructs_cen
     )
     assert fitted.diagnostics.centering_provenance == "fixed-spatial-snapshot-mean"
     assert fitted.diagnostics.weighted_orthogonality_error < 3e-5
-    assert fitted.gradient_contract.fit_mode == "spectral"
+    assert fitted.derivative_contract.route is phx.DerivativeRoute.SPECTRAL
     assert fitted.diagnostics.basis_gradient_supported == (
         fitted.valid & ~fitted.diagnostics.repeated_spectrum
     )

@@ -6,11 +6,13 @@ import json
 import subprocess
 import sys
 
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
 import phydrax as phx
+from phydrax._trainable import combine_parameters, partition_parameters
 
 
 def _batch(*, cases=2, size=8):
@@ -117,28 +119,38 @@ def _fixed_task():
     )
 
 
+def _solution_binding(task):
+    port = task.field_by_name["solution"].value_port()
+    return {
+        "output_ports": {"output": port},
+        "port_mapping": phx.PortMapping(outputs=((port.port_id, port.port_id),)),
+    }
+
+
 def _trained(
     *,
+    model=None,
     revision="1",
     output_pipeline=None,
     compilation_strategy="eager",
     dtype_policy=None,
 ):
-    model = phx.nn.operator.architectures.FNO(
-        n_modes=(3,),
-        width=4,
-        depth=1,
-        coordinate_embedding=False,
-        source_key="u",
-        key=jr.key(12),
-    )
+    if model is None:
+        model = phx.nn.operator.architectures.FNO(
+            n_modes=(3,),
+            width=4,
+            depth=1,
+            coordinate_embedding=False,
+            source_key="u",
+            key=jr.key(12),
+        )
     return phx.nn.operator.training.TrainedOperator(
         model,
         _task(revision=revision),
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task(revision=revision)),
         output_pipeline=output_pipeline,
         dtype_policy=dtype_policy,
         compilation_strategy=compilation_strategy,
@@ -359,11 +371,16 @@ def test_trained_operator_preserves_multiple_named_outputs_and_queries():
             for name in ("spatial", "sensors")
         ),
     )
+    ports = {name: task.field_by_name[name].value_port() for name in ("state", "flux")}
     trained = phx.nn.operator.training.TrainedOperator(
         model,
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
+        ),
+        output_ports=ports,
+        port_mapping=phx.PortMapping(
+            outputs=tuple((port.port_id, port.port_id) for port in ports.values())
         ),
     )
 
@@ -383,7 +400,7 @@ def test_fixed_query_geometry_is_shared_and_persistently_bound(tmp_path):
         _trained().execution_model,
         task,
         training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
-        output_field_map={"output": "solution"},
+        **_solution_binding(task),
         fixed_query_fingerprints={"solution-query": fingerprint},
     )
 
@@ -474,6 +491,85 @@ def test_operator_artifact_manifest_rejects_noncanonical_fields(tmp_path):
 
     with pytest.raises(ValueError, match="current canonical fields"):
         phx.nn.operator.training.load_trained_operator(tmp_path)
+
+
+def test_operator_artifact_binding_tracks_parameters_and_fails_closed(tmp_path):
+    base = _trained()
+    parameters, model_state, fixed = partition_parameters(base.execution_model)
+    updated = _trained(
+        model=combine_parameters(
+            jax.tree.map(lambda leaf: leaf + 1.0, parameters), model_state, fixed
+        )
+    )
+    base_path = phx.nn.operator.training.save_operator_artifact(
+        tmp_path / "base", base
+    )
+    updated_path = phx.nn.operator.training.save_operator_artifact(
+        tmp_path / "updated", updated
+    )
+    base_binding = phx.nn.operator.training.load_operator_artifact_manifest(
+        base_path
+    ).binding
+    updated_binding = phx.nn.operator.training.load_operator_artifact_manifest(
+        updated_path
+    ).binding
+    assert base_binding["semantic_id"] == updated_binding["semantic_id"]
+    assert base_binding["numeric_revision_id"] != updated_binding["numeric_revision_id"]
+    assert (
+        base_binding["executable_signature_id"]
+        == updated_binding["executable_signature_id"]
+    )
+    phx.nn.operator.training.load_trained_operator(base_path)
+
+    manifest_path = updated_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["binding"] = dict(base_binding)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="binding numeric_revision_id"):
+        phx.nn.operator.training.load_trained_operator(updated_path)
+
+    manifest["binding"] = dict(base_binding, binding_id="0" * 64)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="corrupt"):
+        phx.nn.operator.training.load_trained_operator(updated_path)
+
+    del manifest["binding"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="current canonical fields"):
+        phx.nn.operator.training.load_trained_operator(updated_path)
+
+
+def test_operator_artifact_round_trips_the_port_binding_and_fails_closed(tmp_path):
+    task = _task()
+    target = task.field_by_name["solution"].value_port()
+    # A dimensionless-by-omission declaration leaves aspects unverified.
+    declared = phx.ValuePort(
+        "solution", event_shape=(), component_ids=("solution",), representation="scalar"
+    )
+    trained = phx.nn.operator.training.TrainedOperator(
+        _trained().execution_model,
+        task,
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+        output_ports={"output": declared},
+        port_mapping=phx.PortMapping(outputs=((declared.port_id, target.port_id),)),
+    )
+    destination = phx.nn.operator.training.save_operator_artifact(
+        tmp_path / "artifact", trained
+    )
+    restored = phx.nn.operator.training.load_trained_operator(destination)
+
+    assert restored.port_binding.outputs == ((declared.port_id, target.port_id),)
+    assert restored.port_binding.unverified == trained.port_binding.unverified
+    assert ("output", declared.port_id, "dimensions") in restored.port_binding.unverified
+    assert restored.output_ports["output"].port_id == declared.port_id
+    assert restored.contract_fingerprint == trained.contract_fingerprint
+
+    manifest_path = destination / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["port_binding"]["output_ports"]["output"]["frame_id"] = "rotated"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="output ports are invalid"):
+        phx.nn.operator.training.load_trained_operator(destination)
 
 
 def test_operator_artifact_rejects_inconsistent_precision_evidence(tmp_path):
@@ -569,7 +665,7 @@ def test_periodic_fourier_cno_artifacts_round_trip_with_semantic_ids(
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task()),
     )
     batch = _periodic_fourier_batch()
     expected = trained.predict(batch).field("solution").values
@@ -628,7 +724,7 @@ def test_periodic_fourier_cno_artifacts_reject_legacy_ids(
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task()),
     )
     destination = phx.nn.operator.training.save_operator_artifact(
         tmp_path / type(model).__name__,
@@ -676,7 +772,7 @@ def test_wavelet_operator_artifacts_round_trip_without_model_templates(tmp_path)
             training_evidence=phx.nn.operator.OperatorTrainingEvidence(
                 regime="task_specific"
             ),
-            output_field_map={"output": "solution"},
+            **_solution_binding(_task()),
         )
         expected = trained.predict(batch).field("solution").values
         destination = phx.nn.operator.training.save_operator_artifact(
@@ -767,7 +863,7 @@ def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
         training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
-        output_field_map={"output": "solution"},
+        **_solution_binding(task),
         fixed_query_fingerprints={
             "solution-query": batch.query("solution-query").geometry_fingerprint()
         },
@@ -868,7 +964,7 @@ def test_operator_artifact_rejects_manifest_member_path_escape(tmp_path):
         phx.nn.operator.training.load_trained_operator(tmp_path / "artifact")
 
 
-def test_external_checkpoint_enters_the_same_task_bound_runtime(tmp_path):
+def _external_manifest(tmp_path):
     checkpoint = tmp_path / "external.bin"
     checkpoint.write_bytes(b"verified-external-state")
     manifest = phx.nn.operator.adapters.OperatorCheckpointManifest(
@@ -888,24 +984,74 @@ def test_external_checkpoint_enters_the_same_task_bound_runtime(tmp_path):
     )
     manifest_path = tmp_path / "external.json"
     phx.nn.operator.adapters.save_operator_manifest(manifest_path, manifest)
+    return manifest_path, checkpoint
 
-    trained = phx.nn.operator.training.load_external_trained_operator(
+
+def _external_trained(manifest_path, checkpoint, runner, capabilities, **options):
+    return phx.nn.operator.training.load_external_trained_operator(
         manifest_path,
         checkpoint,
-        lambda external_manifest, checkpoint_path: lambda payload, key: 2.0 * payload,
+        lambda external_manifest, checkpoint_path: runner,
         _task(),
         phx.nn.operator.OperatorTrainingEvidence(regime="task_specific"),
         input_adapter=lambda batch, external_manifest: batch.input("u").values,
         output_adapter=lambda output, batch, external_manifest: output,
+        capabilities=capabilities,
         in_size="scalar",
         out_size="scalar",
-        output_field_map={"output": "solution"},
+        **_solution_binding(_task()),
+        **options,
+    )
+
+
+def test_external_checkpoint_enters_the_same_task_bound_runtime(tmp_path):
+    manifest_path, checkpoint = _external_manifest(tmp_path)
+    trained = _external_trained(
+        manifest_path,
+        checkpoint,
+        lambda payload, key: 2.0 * payload,
+        phx.ExecutionCapabilities("functional-jax"),
     )
     values = _batch().input("u").values
     assert jnp.allclose(
         trained.predict(_batch()).field("solution").values,
         3.0 * values + 1.0,
     )
+
+
+def test_host_only_external_checkpoint_runs_eagerly_and_refuses_compilation(tmp_path):
+    manifest_path, checkpoint = _external_manifest(tmp_path)
+    calls = []
+
+    def runner(payload, key):
+        calls.append(key)
+        return 2.0 * payload
+
+    host_only = phx.ExecutionCapabilities("host-inference", host_only=True)
+    with pytest.raises(ValueError, match="compiled strategy requires jit"):
+        phx.nn.operator.training.TrainedOperator(
+            _external_trained(
+                manifest_path, checkpoint, runner, host_only
+            ).execution_model,
+            _task(),
+            training_evidence=phx.nn.operator.OperatorTrainingEvidence(
+                regime="task_specific"
+            ),
+            compilation_strategy="compiled",
+            **_solution_binding(_task()),
+        )
+    trained = _external_trained(manifest_path, checkpoint, runner, host_only)
+    values = _batch().input("u").values
+    assert jnp.allclose(
+        trained.predict(_batch()).field("solution").values, 3.0 * values + 1.0
+    )
+    assert len(calls) == 1
+    prepared = trained.prepare(_batch())
+    with pytest.raises(TypeError, match="JAX transformations"):
+        jax.jit(
+            lambda: trained.predict_prepared(prepared).field("solution").values
+        )()
+    assert len(calls) == 1
 
 
 def test_training_checkpoint_uses_only_current_manifest(tmp_path):

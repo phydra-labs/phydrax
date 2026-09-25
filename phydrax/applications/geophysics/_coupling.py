@@ -18,6 +18,7 @@ from ..._array_archive import (
 )
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...discretization import DiscreteFieldSpace, DiscreteMeasure, EntityDofLayout
 from ...linalg import ArraySpace
 from ...solver._partitioned_coupling_types import (
@@ -122,7 +123,7 @@ class SlabReservoirState(StrictModule):
     water_mass: Array
 
 
-class SlabReservoir(AbstractCouplingSubsystem):
+class SlabReservoir(AbstractCouplingSubsystem, NonTrainableState):
     """Finite heat/water reservoir proposing the sole outgoing interface flux.
 
     Surface heat capacity is dry_heat_capacity + water_heat_capacity * water_mass.

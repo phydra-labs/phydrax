@@ -10,11 +10,12 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume._riemann import (
     _normal_ale_inputs,
-    AbstractArbitraryNormalNumericalFluxPlan,
+    AbstractArbitraryNormalALENumericalFluxPlan,
     HLLFluxPlan,
     NumericalFluxResult,
 )
@@ -59,18 +60,18 @@ def _hll_flux(
     return NumericalFluxResult(flux, jnp.asarray(stability_speed))
 
 
-class AllSpeedHLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan, NonTrainableState):
+class AllSpeedHLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState):
     """HLL flux whose acoustic dissipation follows one explicit all-speed policy."""
 
     policy: AllSpeedCompressiblePolicy
     flux_id: str = eqx.field(static=True)
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
 
     def __init__(self, policy: AllSpeedCompressiblePolicy, /):
         if not isinstance(policy, AllSpeedCompressiblePolicy):
             raise TypeError("policy must be AllSpeedCompressiblePolicy.")
         self.policy = policy
-        self.differentiability = "almost_everywhere"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {
                 "kind": "all-speed-hll-flux",
@@ -185,21 +186,22 @@ class AllSpeedHLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan, NonTrainable
 
 
 class ShockAwareAllSpeedFluxPlan(
-    AbstractArbitraryNormalNumericalFluxPlan, NonTrainableState
+    AbstractArbitraryNormalALENumericalFluxPlan,
+    NonTrainableState,
 ):
     """All-speed primary flux with explicit pressure-sensor generic-HLL dispatch."""
 
     policy: ShockResolvingPolicy
     primary: AllSpeedHLLFluxPlan
     flux_id: str = eqx.field(static=True)
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
 
     def __init__(self, policy: ShockResolvingPolicy, /):
         if not isinstance(policy, ShockResolvingPolicy):
             raise TypeError("policy must be ShockResolvingPolicy.")
         self.policy = policy
         self.primary = AllSpeedHLLFluxPlan(policy.all_speed)
-        self.differentiability = "branchwise"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.flux_id = canonical_fingerprint(
             {
                 "kind": "shock-aware-all-speed-flux",

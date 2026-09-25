@@ -154,7 +154,7 @@ class MassConservingEHLSolver:
         film = self.undeformed_gap_m + self.elastic_compliance_m_pa @ (
             pressure - self.cavitation_pressure_pa
         )
-        saturation = content / film
+        saturation = jnp.minimum(content / film, 1.0)
         target = self.cavitation_pressure_pa + self.bulk_modulus_pa * jnp.maximum(
             content / film - 1.0, 0
         )

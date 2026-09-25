@@ -20,6 +20,7 @@ from ..._array_archive import (
 )
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...equations._ksgs import KSGSState, replace_ksgs_kinetic_energy
 from ...solver import AbstractFixedStepMethod, FixedStepResult
 from ._boussinesq import PreparedCartesianBoussinesqOcean
@@ -67,7 +68,7 @@ class OceanBoussinesqContinuationState(StrictModule):
         )
 
 
-class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod):
+class OceanBoussinesqSSPRK33Method(AbstractFixedStepMethod, NonTrainableState):
     """Fail-closed coupled SSPRK3 with accepted budget quadrature."""
 
     ocean: PreparedCartesianBoussinesqOcean

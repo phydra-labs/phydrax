@@ -10,17 +10,26 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
-from .._contracts import AbstractRecipe, FitResult, GradientContract
+from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
+from .._schema import AbstractFittedModel
 from ._subspace import _fit_subspace, SubspaceModel
 
 
-class IncrementalPCAModel(AbstractArrayModel):
+class IncrementalPCAModel(AbstractFittedModel):
     """Principal subspace summary that can be immutably merged with later batches."""
 
     subspace: SubspaceModel
-    total_weight: Array
+    total_weight: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -91,6 +100,9 @@ class IncrementalPCAModel(AbstractArrayModel):
     def singular_values(self) -> Array:
         return self.subspace.singular_values
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return self.subspace._prediction_contract()
+
     def transform(self, x, /) -> Array:
         return self.subspace.transform(x)
 
@@ -143,10 +155,17 @@ def _wrap_incremental(
         valid=result.valid,
         status=result.status,
         method="incremental-pca-merge-svd",
-        gradient_contract=GradientContract(
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_mode="spectral",
+        derivative_contract=prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             conditions=(
                 "each merge differentiates through its rank-truncated covariance summary",
                 "projector gradients require retained/discarded spectral separation at every merge",

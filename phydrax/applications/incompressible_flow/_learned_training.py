@@ -13,13 +13,28 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._admissibility import (
+    AdmissibilityReason,
+    DOMAIN_REASON_SHIFT,
+    reason_bits_where,
+)
+from ..._differentiation import (
+    branch_policy_contract,
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._fingerprint import canonical_fingerprint
-from ..._model import AbstractArrayModel
+from ..._model import AbstractArrayModel, ModelPorts, PortMapping
 from ..._numerics._ssp_runge_kutta import (
     ssprk33_step_with_evidence,
     StageTransformResult,
 )
 from ..._strict import StrictModule
+from ..._trainable import fixed_field, NonTrainableState
 from ...discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ...dynamics import DiscreteStepContext, InputLayout, StateLayout
 from ...dynamics.identification._neural_transition import (
@@ -31,6 +46,24 @@ from ...equations._mac_incompressible import CompiledMACIncompressibleDynamics
 from ...linalg import LinearSolveControl, LinearSolveStatus
 from ...nn.operator.data import FunctionSamples, OperatorBatch
 from ...nn.operator.engine import AbstractOperatorModel
+
+
+# Domain reason bits of the incompressible learned transitions.
+_STAGE_FAILURE = 1 << DOMAIN_REASON_SHIFT
+_BOUNDARY_FAILURE = 1 << (DOMAIN_REASON_SHIFT + 1)
+_PROJECTION_FAILURE = 1 << (DOMAIN_REASON_SHIFT + 2)
+
+# Algorithmic derivatives through the iterative projection with the
+# converged/candidate selection frozen.
+_MAC_DERIVATIVE_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.PRIMAL_STATE, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.UNROLLED,
+    regularity=DerivativeRegularity.smooth(),
+    conditions=("decisions-frozen",),
+)
 
 
 class FixedGridStressOperatorModel(AbstractArrayModel):
@@ -113,8 +146,8 @@ class FixedGridStressOperatorModel(AbstractArrayModel):
 
 class _CurrentStressPredictor(StrictModule):
     model: AbstractArrayModel
-    key: Array | None
-    iteration: Array | None
+    key: Array | None = fixed_field()
+    iteration: Array | None = fixed_field()
     output_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(
@@ -144,11 +177,20 @@ class _CurrentStressPredictor(StrictModule):
         return jnp.asarray(values).reshape(self.output_shape)
 
 
-class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransition):
-    """SSPRK(3,3) periodic dynamics with learned stress at every stage."""
+class PeriodicLearnedStressRolloutTransition(
+    AbstractDiscreteModelRolloutTransition, NonTrainableState
+):
+    """SSPRK(3,3) periodic dynamics with learned stress at every stage.
+
+    The model is the stage stress predictor: its owner ports are the prepared
+    plan's feature port (input) and stress port (output), as for
+    `PreparedLearnedStressBinding`. A model declaring ports requires
+    `port_mapping` binding them in that order.
+    """
 
     prepared_stress: PreparedPeriodicLearnedStress
     coordinates: HermitianSpectralCoordinates
+    port_mapping: PortMapping | None
     base_rate: Callable = eqx.field(static=True)
     base_rate_id: str = eqx.field(static=True)
 
@@ -165,6 +207,7 @@ class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransit
         step_size: float,
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
+        port_mapping: PortMapping | None = None,
     ):
         if not isinstance(prepared_stress, PreparedPeriodicLearnedStress):
             raise TypeError("prepared_stress must be PreparedPeriodicLearnedStress.")
@@ -189,7 +232,10 @@ class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransit
             raise ValueError("step_size must be finite and positive.")
         if not np.isfinite(rtol) or rtol < 0.0 or not np.isfinite(atol) or atol < 0.0:
             raise ValueError("Step tolerances must be finite and nonnegative.")
+        if port_mapping is not None and not isinstance(port_mapping, PortMapping):
+            raise TypeError("port_mapping must be a PortMapping or None.")
         self.prepared_stress = prepared_stress
+        self.port_mapping = port_mapping
         self.coordinates = coordinates
         self.base_rate = base_rate
         self.base_rate_id = rate_id
@@ -213,6 +259,13 @@ class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransit
             }
         )
 
+    def owner_ports(self) -> ModelPorts:
+        plan = self.prepared_stress.binding.plan
+        return ModelPorts(
+            inputs=(plan.feature_schema.value_port(),),
+            outputs=(plan.output_contract.value_port(),),
+        )
+
     def validate_model(self, model: AbstractArrayModel, /) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("Learned stress transitions require AbstractArrayModel.")
@@ -222,6 +275,7 @@ class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransit
             raise ValueError(
                 "Learned stress model sizes do not match the prepared feature/output ABI."
             )
+        self.component_binding(model)
 
     def evaluate(
         self,
@@ -289,7 +343,8 @@ class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransit
         finite = jnp.all(jnp.isfinite(result.state))
         successful = result.successful & finite
         accepted = jnp.where(successful, result.state, jnp.zeros_like(result.state))
-        return DiscreteModelRolloutTransitionResult(
+        return self._evidenced_result(
+            model,
             result.state,
             accepted,
             training_usable=successful,
@@ -297,14 +352,32 @@ class PeriodicLearnedStressRolloutTransition(AbstractDiscreteModelRolloutTransit
             status=jnp.where(successful, 0, 1),
             residual=result.correction_norm,
             iterations=jnp.asarray(3, dtype=jnp.int32),
-            transition_id=self.transition_id,
+            reason_bits=reason_bits_where(finite, AdmissibilityReason.NONFINITE)
+            | reason_bits_where(result.successful, _STAGE_FAILURE),
+            derivative_contract=branch_policy_contract(
+                self.prepared_stress.binding.plan.differentiation_semantics,
+                surfaces=(
+                    DerivativeSurface.PRIMAL_STATE,
+                    DerivativeSurface.MODEL_PARAMETER,
+                ),
+            ),
+            derivative_valid=successful,
+            dependencies=(state, inputs),
         )
 
 
-class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
-    """Explicit MAC transition with a learned rate and controlled projection."""
+class MACLearnedRateRolloutTransition(
+    AbstractDiscreteModelRolloutTransition, NonTrainableState
+):
+    """Explicit MAC transition with a learned rate and controlled projection.
+
+    The model maps the state point (`state_layout.value_port(role="point")`) to
+    the learned rate coordinates (`state_layout.value_port(role="tangent")`);
+    a model declaring ports requires `port_mapping` binding them in that order.
+    """
 
     dynamics: CompiledMACIncompressibleDynamics
+    port_mapping: PortMapping | None
     coarse_relative_residual: float = eqx.field(static=True)
 
     def __init__(
@@ -317,6 +390,7 @@ class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
         coarse_relative_residual: float = 1.0,
         step_rtol: float = 1e-7,
         step_atol: float = 1e-12,
+        port_mapping: PortMapping | None = None,
     ):
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
             raise TypeError("dynamics must be CompiledMACIncompressibleDynamics.")
@@ -346,7 +420,10 @@ class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
             raise ValueError("step_size must be finite and positive.")
         if not np.isfinite(rtol) or rtol < 0.0 or not np.isfinite(atol) or atol < 0.0:
             raise ValueError("Step tolerances must be finite and nonnegative.")
+        if port_mapping is not None and not isinstance(port_mapping, PortMapping):
+            raise TypeError("port_mapping must be a PortMapping or None.")
         self.dynamics = dynamics
+        self.port_mapping = port_mapping
         self.coarse_relative_residual = residual
         self.state_layout = state_layout
         self.input_layout = None
@@ -372,6 +449,12 @@ class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
     def supports_linear_refinement(self) -> bool:
         return True
 
+    def owner_ports(self) -> ModelPorts:
+        return ModelPorts(
+            inputs=(self.state_layout.value_port(role="point"),),
+            outputs=(self.state_layout.value_port(role="tangent"),),
+        )
+
     def validate_model(self, model: AbstractArrayModel, /) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("MAC learned rates require AbstractArrayModel.")
@@ -382,6 +465,7 @@ class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
             raise ValueError(
                 "MAC learned-rate model input and output must match the state layout."
             )
+        self.component_binding(model)
 
     def evaluate(
         self,
@@ -460,15 +544,14 @@ class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
             target_boundary,
         )
         candidate = operators.velocity_space.flatten(candidate_velocity)
-        finite = (
-            boundary.successful
-            & target_boundary.successful
-            & jnp.all(jnp.isfinite(candidate))
-        )
+        finite_candidate = jnp.all(jnp.isfinite(candidate))
+        boundaries = boundary.successful & target_boundary.successful
+        finite = boundaries & finite_candidate
         training_usable = usable_projection & finite
         physically_converged = projected.converged & finite
         accepted = jnp.where(training_usable, candidate, jnp.zeros_like(candidate))
-        return DiscreteModelRolloutTransitionResult(
+        return self._evidenced_result(
+            model,
             candidate,
             accepted,
             training_usable=training_usable,
@@ -476,7 +559,13 @@ class MACLearnedRateRolloutTransition(AbstractDiscreteModelRolloutTransition):
             status=linear.status,
             residual=relative_residual,
             iterations=linear.diagnostics.iterations,
-            transition_id=self.transition_id,
+            reason_bits=reason_bits_where(finite_candidate, AdmissibilityReason.NONFINITE)
+            | reason_bits_where(~incomplete, AdmissibilityReason.CAPACITY_INSUFFICIENT)
+            | reason_bits_where(boundaries, _BOUNDARY_FAILURE)
+            | reason_bits_where(projected.converged | incomplete, _PROJECTION_FAILURE),
+            derivative_contract=_MAC_DERIVATIVE_CONTRACT,
+            derivative_valid=training_usable,
+            dependencies=(state,),
         )
 
 

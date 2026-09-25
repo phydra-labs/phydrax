@@ -11,12 +11,13 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from .._trainable import ParameterOwner
 from ..discretization import SpectralDecomposition
 from ._base import _as_point, _as_points
 from ._finite_feature import AbstractFiniteFeatureKernel
 
 
-class AbstractSpectralMultiplier(StrictModule):
+class AbstractSpectralMultiplier(StrictModule, ParameterOwner):
     """Nonnegative Laplacian covariance law evaluated in log space."""
 
     @abstractmethod

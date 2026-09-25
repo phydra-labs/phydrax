@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import ClassVar
 
 import equinox as eqx
 import jax.nn as jnn
@@ -13,10 +14,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike
 
+from phydrax._differentiation import AbstractConstructionCertificate
 from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
-from phydrax._trainable import NonTrainableState
+from phydrax._trainable import NonTrainableState, parameter_field
 from phydrax.ein import contract
 from phydrax.metrix.clifford import (
     CliffordProductPlan,
@@ -30,9 +32,10 @@ from phydrax.nn.operator.representations import (
 )
 
 
-class CliffordEquivarianceCertificate(StrictModule, NonTrainableState):
+class CliffordEquivarianceCertificate(AbstractConstructionCertificate):
     """By-construction equivariance claim for one Clifford neural primitive."""
 
+    capability_id: ClassVar[str] = "clifford-equivariance"
     algebra_id: str = eqx.field(static=True)
     input_representation_id: str = eqx.field(static=True)
     output_representation_id: str = eqx.field(static=True)
@@ -87,8 +90,8 @@ class CliffordGradeLinear(StrictModule):
 
     input_representation: CliffordGradeRepresentation
     output_representation: CliffordGradeRepresentation
-    weights: tuple[Array | None, ...]
-    scalar_bias: Array | None
+    weights: tuple[Array | None, ...] = parameter_field()
+    scalar_bias: Array | None = parameter_field()
     certificate: CliffordEquivarianceCertificate
 
     def __init__(
@@ -183,7 +186,7 @@ class CliffordGeometricProductLayer(StrictModule):
     pair_grades: tuple[tuple[int, int], ...]
     pair_plans: tuple[CliffordProductPlan, ...]
     routes: tuple[tuple[int, int], ...]
-    route_weights: Array
+    route_weights: Array = parameter_field()
     certificate: CliffordEquivarianceCertificate
 
     def __init__(

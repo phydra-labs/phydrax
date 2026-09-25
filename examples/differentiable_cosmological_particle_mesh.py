@@ -90,7 +90,14 @@ def build_workflow():
         physics_policy_id="linear-cold-baryon-power",
         scale_id=scale.scale_id,
         source_kind="native",
-        differentiation="native-parameter",
+        differentiation=phx.DerivativeContract.smooth(
+            (
+                phx.DerivativeSurface.INPUT,
+                phx.DerivativeSurface.MODEL_PARAMETER,
+                phx.DerivativeSurface.PHYSICAL_PARAMETER,
+                phx.DerivativeSurface.STORED_VALUES,
+            )
+        ),
     )
     coordinates = tuple(
         (jnp.arange(count_, dtype="float64") + 0.5) / count_ for count_ in shape

@@ -182,10 +182,14 @@ def test_thermochemical_source_certifies_each_backward_euler_substep():
         system.thermodynamics.base.heavy_thermodynamics,
         (reaction,),
     ).prepare()
+    # Each ionization deposits one electron's translational energy at the incoming
+    # 10000 K electron temperature; energy-free electrons would drive T_e below the
+    # mode's admissible minimum and the solve would correctly reject the candidate.
+    electron_energy = 1.5 * phx.equations.UNIVERSAL_GAS_CONSTANT * 10000.0
     plasma = phx.equations.PreparedPlasmaMechanism(
         mechanism,
         (phx.equations.ReactionTemperatureSpec("electron"),),
-        mode_energy_per_progress=jnp.zeros((1, system.mode_count)),
+        mode_energy_per_progress=jnp.asarray([[0.0, electron_energy]]),
     )
     source = phx.solver.FixedWorkThermochemicalSourcePlan(
         plasma,

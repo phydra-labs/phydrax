@@ -4,16 +4,29 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar, final
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
+from .._fingerprint import canonical_fingerprint
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from .._trainable import combine_parameters
+from .._training_kernel import (
+    AbstractKernelUpdateRule,
+    KernelObjective,
+    KernelUpdateContext,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingAttemptOutcome,
+    TrainingKernelSpec,
+)
+from .._training_objective import _ObjectiveContribution
 from ..geometry.complex import (
     HypersurfaceKahlerEvaluation,
     HypersurfaceKahlerGeometry,
@@ -161,30 +174,62 @@ class CalabiYauMetricResult(StrictModule):
         return geometry.evaluate(homogeneous_point)
 
 
-def _objective(
-    hypersurface: ProjectiveHypersurface,
-    samples: ProjectiveLineSamples,
-    weights: Array,
-    normalization: Array,
-    positivity_floor: float,
-    potential_model: Any,
-    precision: GeometryPrecisionPolicy,
-):
+class _CalabiYauPayload(StrictModule):
+    """Attempt payload: the problem data the objective and the step guard read."""
+
+    hypersurface: ProjectiveHypersurface
+    homogeneous_points: Array
+    weights: Array
+    normalization: Array
+    precision: GeometryPrecisionPolicy
+    chart_indices: tuple[int, ...] = eqx.field(static=True)
+    pivot_indices: tuple[int, ...] = eqx.field(static=True)
+    positivity_floor: float = eqx.field(static=True)
+
+    def __init__(self, problem: CalabiYauMetricProblem, /):
+        self.hypersurface = problem.hypersurface
+        self.homogeneous_points = problem.samples.homogeneous_points
+        self.weights = problem.weights
+        self.normalization = problem.normalization
+        self.precision = problem.precision
+        self.chart_indices = tuple(
+            int(index) for index in jax.device_get(problem.samples.chart_indices)
+        )
+        self.pivot_indices = tuple(
+            int(index) for index in jax.device_get(problem.samples.pivot_indices)
+        )
+        self.positivity_floor = problem.positivity_floor
+
+
+class _CalabiYauDiagnostics(StrictModule):
+    """Weighted Monge-Ampere residual norm, minimum positivity margin, validity."""
+
+    residual: Array
+    margin: Array
+    valid: Array
+
+
+def _calabi_yau_terms(
+    potential_model: Any, payload: _CalabiYauPayload, /
+) -> tuple[Array, _CalabiYauDiagnostics]:
+    precision = payload.precision
     geometry = HypersurfaceKahlerGeometry(
-        hypersurface,
+        payload.hypersurface,
         potential_model,
-        normalization=normalization,
-        positivity_floor=positivity_floor,
+        normalization=payload.normalization,
+        positivity_floor=payload.positivity_floor,
     )
     residuals = []
     margins = []
     potentials = []
     valid = []
-    for index in range(samples.homogeneous_points.shape[0]):
+    for index, (chart, pivot) in enumerate(
+        zip(payload.chart_indices, payload.pivot_indices, strict=True)
+    ):
         evaluation = geometry.evaluate(
-            samples.homogeneous_points[index],
-            chart_index=int(samples.chart_indices[index]),
-            pivot_index=int(samples.pivot_indices[index]),
+            payload.homogeneous_points[index],
+            chart_index=chart,
+            pivot_index=pivot,
         )
         residuals.append(evaluation.monge_ampere_residual)
         margins.append(evaluation.positivity_margin)
@@ -194,12 +239,142 @@ def _objective(
     margin = precision.decision(jnp.stack(margins))
     potential = precision.compute(jnp.stack(potentials))
     validity = jnp.stack(valid)
-    accumulated_weights = precision.accumulation(weights)
+    accumulated_weights = precision.accumulation(payload.weights)
     mean_potential = jnp.sum(accumulated_weights * precision.accumulation(potential))
     equation = jnp.sum(accumulated_weights * precision.accumulation(residual**2))
     gauge = mean_potential**2
     objective = precision.decision(equation + gauge)
-    return objective, (jnp.sqrt(equation), jnp.min(margin), jnp.all(validity))
+    return objective, _CalabiYauDiagnostics(
+        jnp.sqrt(equation), jnp.min(margin), jnp.all(validity)
+    )
+
+
+def _calabi_yau_objective(parameters, model_state, fixed, payload, keys, /):
+    """Kernel objective: squared Monge-Ampere residual plus the potential gauge."""
+    del keys
+    objective, diagnostics = _calabi_yau_terms(
+        combine_parameters(parameters, model_state, fixed), payload
+    )
+    contribution = _ObjectiveContribution(
+        objective,
+        jnp.ones((), objective.dtype),
+        jnp.zeros((), objective.dtype),
+    )
+    return contribution, model_state, diagnostics
+
+
+class _CalabiYauStepState(StrictModule):
+    """Objective, residual norm, and margin measured at the last accepted trial."""
+
+    value: Array
+    residual: Array
+    margin: Array
+
+
+def _step_state(value: Array, diagnostics: _CalabiYauDiagnostics, /):
+    return _CalabiYauStepState(
+        jnp.asarray(value, jnp.float64),
+        jnp.asarray(diagnostics.residual, jnp.float64),
+        jnp.asarray(diagnostics.margin, jnp.float64),
+    )
+
+
+@final
+class _CalabiYauBacktrackingRule(AbstractKernelUpdateRule):
+    """Monotone gradient step with a geometry-validity guarded backtracking search.
+
+    Each attempt tries `learning_rate * contraction**k` for
+    `k <= maximum_backtracks` along the negative gradient and accepts the first
+    trial whose objective does not exceed the current value, whose every sample
+    evaluates to a valid chart point, and whose minimum positivity margin exceeds
+    the positivity floor. The trial value comes from the kernel objective; the
+    validity and margin come from the rule's guard evaluation of the payload.
+    Every attempt restarts at the learning rate, so nothing commits on a finite
+    rejection. The accepted state records the accepted trial's measurements.
+    """
+
+    rejection_commit_policy: ClassVar[tuple[str, ...]] = ()
+    learning_rate: float = eqx.field(static=True)
+    contraction: float = eqx.field(static=True)
+    maximum_backtracks: int = eqx.field(static=True)
+    rule_id: str = eqx.field(static=True)
+
+    def __init__(self, policy: CalabiYauSolvePolicy, /):
+        self.learning_rate = policy.learning_rate
+        self.contraction = policy.contraction
+        self.maximum_backtracks = policy.maximum_backtracks
+        self.rule_id = canonical_fingerprint(
+            {
+                "kind": "calabi-yau-guarded-backtracking",
+                "learning_rate": self.learning_rate,
+                "contraction": self.contraction,
+                "maximum_backtracks": self.maximum_backtracks,
+            }
+        )
+
+    @property
+    def reads_payload(self) -> bool:
+        return True
+
+    def init(self, parameters: Any, /) -> _CalabiYauStepState:
+        del parameters
+        zero = jnp.zeros((), jnp.float64)
+        return _CalabiYauStepState(zero, zero, zero)
+
+    def propose(
+        self,
+        parameters: Any,
+        gradients: Any,
+        value: Array,
+        rule_state: _CalabiYauStepState,
+        context: KernelUpdateContext,
+        /,
+    ) -> tuple[Any, _CalabiYauStepState, _CalabiYauStepState, Array]:
+        payload = context.payload
+        floor = payload.precision.decision(payload.positivity_floor)
+
+        def descend(step: Array) -> Any:
+            return jax.tree.map(
+                lambda parameter, gradient: (
+                    parameter - (step * gradient).astype(parameter.dtype)
+                ),
+                parameters,
+                gradients,
+            )
+
+        def search(carry):
+            index, _, accepted, _ = carry
+            return (index <= self.maximum_backtracks) & ~accepted
+
+        def trial(carry):
+            index, step, _, _ = carry
+            candidate = descend(step)
+            trial_value = context.objective_value(candidate)
+            _, diagnostics = _calabi_yau_terms(
+                combine_parameters(candidate, context.model_state, context.fixed),
+                payload,
+            )
+            accepted = (
+                (trial_value <= value) & diagnostics.valid & (diagnostics.margin > floor)
+            )
+            return (
+                index + 1,
+                jnp.where(accepted, step, step * self.contraction),
+                accepted,
+                _step_state(trial_value, diagnostics),
+            )
+
+        _, step, accepted, measured = jax.lax.while_loop(
+            search,
+            trial,
+            (
+                jnp.zeros((), jnp.int32),
+                jnp.asarray(self.learning_rate, jnp.float64),
+                jnp.asarray(False),
+                rule_state,
+            ),
+        )
+        return descend(step), measured, rule_state, accepted
 
 
 def solve_calabi_yau_metric(
@@ -208,101 +383,73 @@ def solve_calabi_yau_metric(
     *,
     policy: CalabiYauSolvePolicy | None = None,
 ) -> CalabiYauMetricResult:
+    """Fit the Kahler potential by guarded gradient descent on the training kernel.
+
+    Each iteration is one kernel attempt (SURROGATE potential trained on its
+    physical residual). An accepted attempt records the accepted trial's objective,
+    residual, and margin; a rejected attempt (no admissible backtrack, or a
+    nonfinite evaluation that the kernel rolls back) keeps the parameters and
+    records the current ones. Rejections never stop the run: the budget equals the
+    iteration count. The run stops early once the gradient norm at the attempt's
+    parameters is within `gradient_tolerance`.
+    """
     if not isinstance(problem, CalabiYauMetricProblem):
         raise TypeError("problem must be a CalabiYauMetricProblem.")
     policy_ = CalabiYauSolvePolicy() if policy is None else policy
     if not isinstance(policy_, CalabiYauSolvePolicy):
         raise TypeError("policy must be a CalabiYauSolvePolicy.")
-    model = problem.potential_model
+    kernel = prepare_training_kernel(
+        problem.potential_model,
+        (
+            KernelObjective(
+                objective_id="calabi-yau-metric",
+                kind=ObjectiveKind.PHYSICAL_RESIDUAL,
+                route=DerivativeRoute.DIRECT,
+                fn=_calabi_yau_objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            _CalabiYauBacktrackingRule(policy_),
+            context="solve_calabi_yau_metric",
+            rejection_budget=policy_.iterations,
+        ),
+        root_authority=ComponentAuthority.SURROGATE,
+    )
+    # The Calabi-Yau objective draws no training randomness; the root key only
+    # completes the kernel state.
+    state = kernel.init(problem.potential_model, jax.random.key(0))
+    payload = _CalabiYauPayload(problem)
+    tolerance = problem.precision.decision(policy_.gradient_tolerance)
     objectives = []
     residuals = []
     margins = []
     accepted = []
     converged = False
-
-    def objective(candidate):
-        return _objective(
-            problem.hypersurface,
-            problem.samples,
-            problem.weights,
-            problem.normalization,
-            problem.positivity_floor,
-            candidate,
-            problem.precision,
-        )
-
-    value_and_grad = eqx.filter_value_and_grad(objective, has_aux=True)
     for _ in range(policy_.iterations):
-        (value, auxiliary), gradient = value_and_grad(model)
-        residual, margin, validity = auxiliary
-        gradient_norm = problem.precision.decision(
-            jnp.sqrt(
-                sum(
-                    jnp.real(
-                        jnp.vdot(
-                            problem.precision.accumulation(leaf),
-                            problem.precision.accumulation(leaf),
-                        )
-                    )
-                    for leaf in jax.tree.leaves(eqx.filter(gradient, eqx.is_array))
-                )
-            )
-        )
-        step = policy_.learning_rate
-        candidate = model
-        candidate_value = value
-        candidate_auxiliary = auxiliary
-        did_accept = False
-        for _ in range(policy_.maximum_backtracks + 1):
-            candidate = eqx.apply_updates(
-                model,
-                jax.tree.map(
-                    lambda leaf: None if leaf is None else -step * leaf,
-                    gradient,
-                    is_leaf=lambda leaf: leaf is None,
-                ),
-            )
-            candidate_value, candidate_auxiliary = objective(candidate)
-            if bool(
-                jax.device_get(
-                    (
-                        problem.precision.decision(candidate_value)
-                        <= problem.precision.decision(value)
-                    )
-                    & candidate_auxiliary[2]
-                    & (
-                        candidate_auxiliary[1]
-                        > problem.precision.decision(problem.positivity_floor)
-                    )
-                )
-            ):
-                did_accept = True
-                break
-            step *= policy_.contraction
-        if did_accept:
-            model = candidate
-            value = candidate_value
-            residual, margin, _ = candidate_auxiliary
-        objectives.append(value)
-        residuals.append(residual)
-        margins.append(margin)
+        state, evidence = run_training_attempt(kernel, state, payload)
+        (diagnostics,) = evidence.diagnostics
+        did_accept = evidence.outcome == TrainingAttemptOutcome.ACCEPTED
+        measured = state.rule_state
+        objectives.append(jnp.where(did_accept, measured.value, evidence.value))
+        residuals.append(jnp.where(did_accept, measured.residual, diagnostics.residual))
+        margins.append(jnp.where(did_accept, measured.margin, diagnostics.margin))
         accepted.append(did_accept)
         if bool(
             jax.device_get(
-                gradient_norm <= problem.precision.decision(policy_.gradient_tolerance)
+                problem.precision.decision(evidence.gradient_norm) <= tolerance
             )
         ):
             converged = True
             break
     return CalabiYauMetricResult(
-        model,
+        kernel.tree(state),
         problem.normalization,
         problem.precision.output(
             jnp.stack(objectives) if objectives else jnp.zeros((0,))
         ),
         problem.precision.output(jnp.stack(residuals) if residuals else jnp.zeros((0,))),
         problem.precision.output(jnp.stack(margins) if margins else jnp.zeros((0,))),
-        jnp.asarray(accepted),
+        jnp.asarray(accepted, dtype=jnp.bool_),
         converged=converged,
         hypersurface_id=problem.hypersurface.hypersurface_id,
         precision_evidence=problem.precision.evidence_for(problem.weights),

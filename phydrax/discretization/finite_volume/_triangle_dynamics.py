@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array
 
 import phydrax.linalg as la
 
@@ -23,7 +23,9 @@ from .._conservation_boundary import (
     ConstantStateBoundary,
     ExtrapolationBoundary,
     PrescribedStateBoundary,
+    SourceFunction,
 )
+from ._closure import AbstractFaceClosurePlan, FaceFluxContext
 from ._physical_boundaries import (
     NoSlipAdiabaticWallBoundary,
     NoSlipIsothermalWallBoundary,
@@ -32,22 +34,16 @@ from ._physical_boundaries import (
     SupersonicInflowBoundary,
     SupersonicOutflowBoundary,
 )
-from ._positivity import EinfeldtHLLFluxPlan
 from ._precision import FiniteVolumePrecisionPolicy
 from ._reconstruction import PiecewiseConstantReconstruction
 from ._riemann import (
+    AbstractArbitraryNormalNumericalFluxPlan,
     AbstractNumericalFluxPlan,
-    HLLCFluxPlan,
-    HLLFluxPlan,
-    RusanovFluxPlan,
 )
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
 from ._triangle_polynomial import TriangleKExactReconstructionPlan
 from ._triangle_reconstruction import TriangleMUSCLReconstructionPlan
 from ._triangle_viscous import TriangleViscousFluxPlan
-
-
-SourceFunction = Callable[[Array, Array, Array, Any], ArrayLike]
 
 
 class TriangleFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
@@ -95,14 +91,15 @@ class TriangleFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
         )
 
 
-class TriangleFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
+class TriangleFiniteVolumeMethodPlan(StrictModule):
     reconstruction: (
         PiecewiseConstantReconstruction
         | TriangleMUSCLReconstructionPlan
         | TriangleKExactReconstructionPlan
     )
-    interface_solver: RusanovFluxPlan | HLLFluxPlan | HLLCFluxPlan | EinfeldtHLLFluxPlan
+    interface_solver: AbstractArbitraryNormalNumericalFluxPlan
     viscous: TriangleViscousFluxPlan | None
+    closure: AbstractFaceClosurePlan | None
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -112,12 +109,11 @@ class TriangleFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             | TriangleMUSCLReconstructionPlan
             | TriangleKExactReconstructionPlan
         ),
-        interface_solver: (
-            RusanovFluxPlan | HLLFluxPlan | HLLCFluxPlan | EinfeldtHLLFluxPlan
-        ),
+        interface_solver: AbstractArbitraryNormalNumericalFluxPlan,
         /,
         *,
         viscous: TriangleViscousFluxPlan | None = None,
+        closure: AbstractFaceClosurePlan | None = None,
     ):
         if not isinstance(
             reconstruction,
@@ -130,27 +126,23 @@ class TriangleFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Triangle FV reconstruction must be piecewise constant, MUSCL, or k-exact."
             )
-        if not isinstance(
-            interface_solver,
-            (
-                RusanovFluxPlan,
-                HLLFluxPlan,
-                HLLCFluxPlan,
-                EinfeldtHLLFluxPlan,
-            ),
-        ):
-            raise TypeError("Triangle FV supports Rusanov, HLL, or HLLC flux.")
+        if not isinstance(interface_solver, AbstractArbitraryNormalNumericalFluxPlan):
+            raise TypeError("Triangle FV requires an arbitrary-normal numerical flux.")
         if viscous is not None and not isinstance(viscous, TriangleViscousFluxPlan):
             raise TypeError("viscous must be TriangleViscousFluxPlan or None.")
+        if closure is not None and not isinstance(closure, AbstractFaceClosurePlan):
+            raise TypeError("closure must be an AbstractFaceClosurePlan or None.")
         self.reconstruction = reconstruction
         self.interface_solver = interface_solver
         self.viscous = viscous
+        self.closure = closure
         self.method_id = canonical_fingerprint(
             {
                 "kind": "triangle-fv-method",
                 "reconstruction": reconstruction.plan_id,
                 "flux": interface_solver.flux_id,
                 "viscous": None if viscous is None else viscous.plan_id,
+                **({} if closure is None else {"closure": closure.closure_id}),
             }
         )
 
@@ -202,6 +194,8 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
             raise ValueError(
                 "Triangle FV system dimension/components do not match geometry."
             )
+        if method.closure is not None:
+            method.closure.admit_system(system)
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
         source_identifier = None if source_id is None else str(source_id)
@@ -321,6 +315,34 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
             right = jnp.where(patch_mask[:, None, None], exterior, right)
         return left, right, normal
 
+    def _normal_flux(
+        self, left: Array, right: Array, normal: Array, args: Any, /
+    ) -> tuple[Array, Array]:
+        """Baseline normal flux with the closure applied at every face site."""
+        left_ = self.precision.flux(left)
+        right_ = self.precision.flux(right)
+        normal_ = self.precision.flux(normal)
+        result = self.method.interface_solver.normal_face_flux(
+            self.system, left_, right_, normal_, args
+        )
+        normal_flux = result.normal_flux
+        if self.method.closure is not None:
+            measures = self.discretization.face_measures
+            context = FaceFluxContext(
+                normal_,
+                self.precision.flux(
+                    jnp.broadcast_to(
+                        measures.reshape(measures.shape + (1,) * (normal_.ndim - 2)),
+                        normal_.shape[:-1],
+                    )
+                ),
+                geometry_id=self.discretization.prepared_id,
+            )
+            normal_flux = self.method.closure.apply(
+                self.system, left_, right_, normal_flux, context, args
+            )
+        return normal_flux, result.max_speed
+
     def face_fluxes(
         self, time: Array, state: Array, args: Any = None, /
     ) -> tuple[Array, Array]:
@@ -332,37 +354,23 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         self.precision.validate_state(value)
         if isinstance(self.method.reconstruction, TriangleKExactReconstructionPlan):
             left, right, normal = self._quadrature_face_states(time, value, args)
-            result = self.method.interface_solver.normal_face_flux(
-                self.system,
-                self.precision.flux(left),
-                self.precision.flux(right),
-                self.precision.flux(normal),
-                args,
-            )
+            normal_flux, max_speed = self._normal_flux(left, right, normal, args)
             weights = self.precision.reduction(
                 self.discretization.face_quadrature_weights
             )
             integrated = jnp.sum(
-                weights[..., None] * self.precision.reduction(result.normal_flux),
+                weights[..., None] * self.precision.reduction(normal_flux),
                 axis=1,
             )
             average_flux = integrated / self.precision.reduction(
                 self.discretization.face_measures[:, None]
             )
             return self.precision.flux(average_flux), self.precision.decision(
-                jnp.max(result.max_speed, axis=1)
+                jnp.max(max_speed, axis=1)
             )
         left, right, normal = self._face_states(time, value, args)
-        result = self.method.interface_solver.normal_face_flux(
-            self.system,
-            self.precision.flux(left),
-            self.precision.flux(right),
-            self.precision.flux(normal),
-            args,
-        )
-        return self.precision.flux(result.normal_flux), self.precision.decision(
-            result.max_speed
-        )
+        normal_flux, max_speed = self._normal_flux(left, right, normal, args)
+        return self.precision.flux(normal_flux), self.precision.decision(max_speed)
 
     def residual_from_fluxes(self, normal_flux: Array, /) -> Array:
         integrated = self.precision.reduction(normal_flux) * self.precision.reduction(

@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._precision import inexact_result_type
 from ..discretization.spectral import SphericalSpectralDiscretization
 from ..metrix import SphereLaplacianLevels
 from ._base import _as_real_array, AbstractPositiveDefiniteKernel
@@ -367,7 +368,7 @@ class AbstractHomogeneousPolynomialKernel(AbstractPositiveDefiniteKernel):
 
     def _series(self, similarity: Array, /) -> Array:
         coefficients = self._coefficients()
-        value = jnp.zeros_like(similarity, dtype=jnp.result_type(similarity, jnp.float64))
+        value = jnp.zeros_like(similarity, dtype=inexact_result_type(similarity))
         for coefficient in coefficients[::-1]:
             value = coefficient + similarity * value
         return value

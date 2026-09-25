@@ -14,7 +14,7 @@ from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field, NonTrainableState
 from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
 from ..equations import EulerSystem, IdealMHDSystem, TabulatedCoolingCurve
 from ..nonlinear import (
@@ -143,8 +143,8 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
     plan: RadiativeCoolingProcessPlan
     transport: AbstractPreparedBalanceLawTransport
     dynamics: PreparedFiniteVolumeDynamics
-    problem: NonlinearSystemProblem
-    termination: NonlinearTermination
+    problem: NonlinearSystemProblem = fixed_field()
+    termination: NonlinearTermination = fixed_field()
     density_index: int = eqx.field(static=True)
     momentum_indices: tuple[int, ...] = eqx.field(static=True)
     energy_index: int = eqx.field(static=True)

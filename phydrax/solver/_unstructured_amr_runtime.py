@@ -13,7 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field, NonTrainableState
 from ..discretization import TopologyEpoch
 from ..discretization._conservation_ledger import (
     AcceptedConservationFluxIntegralBlock,
@@ -121,24 +121,28 @@ class UnstructuredAMRRefluxReport(StrictModule):
 class UnstructuredAMRAdvanceResult(StrictModule):
     """Result of one atomic coarse step and exactly-r fine substeps."""
 
-    runtime_state: UnstructuredAMRRuntimeState
-    accepted: Array
-    retries: Array
-    attempted_step_size: Array
-    accepted_step_size: Array
+    runtime_state: UnstructuredAMRRuntimeState = fixed_field()
+    accepted: Array = fixed_field()
+    retries: Array = fixed_field()
+    attempted_step_size: Array = fixed_field()
+    accepted_step_size: Array = fixed_field()
     coarse_advance: FiniteVolumeAdvanceResult | None
     fine_advances: tuple[FiniteVolumeAdvanceResult, ...]
-    coarse_accepted_flux_integrals: AcceptedConservationIntegralLedger | None
-    fine_accepted_flux_integrals: AcceptedConservationIntegralLedger | None
-    fine_substep_ledgers: tuple[AcceptedConservationIntegralLedger, ...]
-    reflux_register: UnstructuredAMRFluxRegister
-    reflux_report: UnstructuredAMRRefluxReport
-    composite_state: Array
-    composite_integral: Array
-    selection: UnstructuredAMRSelection
+    coarse_accepted_flux_integrals: AcceptedConservationIntegralLedger | None = (
+        fixed_field()
+    )
+    fine_accepted_flux_integrals: AcceptedConservationIntegralLedger | None = (
+        fixed_field()
+    )
+    fine_substep_ledgers: tuple[AcceptedConservationIntegralLedger, ...] = fixed_field()
+    reflux_register: UnstructuredAMRFluxRegister = fixed_field()
+    reflux_report: UnstructuredAMRRefluxReport = fixed_field()
+    composite_state: Array = fixed_field()
+    composite_integral: Array = fixed_field()
+    selection: UnstructuredAMRSelection = fixed_field()
     topology_event_request: FiniteVolumeTopologyEventRequest | None
     successor_runtime: Any = eqx.field(default=None)
-    regrid_committed: Array = eqx.field(default=False)
+    regrid_committed: Array = fixed_field(default=False)
     orchestration_failure: str | None = eqx.field(static=True, default=None)
 
     @property
@@ -221,7 +225,7 @@ class _AMRCoarseTemporalStageTrace(StrictModule, NonTrainableState):
         return jnp.where(mask, state, trace)
 
 
-class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
+class PreparedUnstructuredAMRRuntime(StrictModule):
     """Single-device fixed-hierarchy AMR orchestration over prepared FV runtimes.
 
     The level runtimes continue to own their SSPRK stages, positivity and retry

@@ -556,7 +556,12 @@ def reduce_axes(
 
 
 def cmap(function=None, /, *, out_axes: str = "leading"):
-    """Map one positional kernel over the union of bound array axes."""
+    """Map one positional kernel over the union of bound array axes.
+
+    Every array output is an `AxisArray` whose leading axes are the mapped bound
+    axes; with no `AxisArray` inputs nothing is mapped and all output axes are
+    unbound.
+    """
     if out_axes != "leading":
         raise ValueError("Native cmap supports out_axes='leading'.")
 
@@ -568,8 +573,6 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
                 is_leaf=lambda value: isinstance(value, AxisArray),
             )
             fields = [leaf for leaf in leaves if isinstance(leaf, AxisArray)]
-            if not fields:
-                return fn(*args, **kwargs)
             references = tuple(
                 dict.fromkeys(
                     reference for field in fields for reference in field.layout.named_axes

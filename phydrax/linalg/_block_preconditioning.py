@@ -11,6 +11,7 @@ import jax
 from jaxtyping import ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import fixed_field
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import (
@@ -341,7 +342,7 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
     schur_operator: SchurComplementLinearOperator
     schur_action: AbstractPreconditioner
     form: BlockFactorizationForm = eqx.field(static=True)
-    space: BlockSpace
+    space: BlockSpace = fixed_field()
     __hash__ = object.__hash__
 
     def __init__(
@@ -510,8 +511,8 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
     pivot_solver: PreconditionerSource
     schur_solver: PreconditionerSource
     form: BlockFactorizationForm = eqx.field(static=True)
-    schur_setup_operator: AbstractLinearOperator | None
-    properties: PreconditionerProperties | None
+    schur_setup_operator: AbstractLinearOperator | None = fixed_field()
+    properties: PreconditionerProperties | None = fixed_field()
     _builder_id: str = eqx.field(static=True)
 
     def __init__(

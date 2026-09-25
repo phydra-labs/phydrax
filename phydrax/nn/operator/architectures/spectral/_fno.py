@@ -18,9 +18,11 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import AFFINE, compose_regularity, SMOOTH, sum_regularity
 from phydrax.nn._dependency import OperatorDependencySupport
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._scan import (
@@ -29,25 +31,29 @@ from phydrax.nn._scan import (
     stack_scan_dynamics,
 )
 from phydrax.nn._utils import _get_size
+from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers._dropout import _dropout_probabilities, Dropout
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
+from ....._precision import inexact_result_type
+
 
 Factorization = Literal["dense", "cp", "tucker"]
 Activation = Literal["gelu", "silu", "tanh"]
+_ACTIVATIONS = {"gelu": jax.nn.gelu, "silu": jax.nn.silu, "tanh": jnp.tanh}
 
 
 def _activation(name: Activation, value: Array, /) -> Array:
-    if name == "gelu":
-        return jax.nn.gelu(value)
-    if name == "silu":
-        return jax.nn.silu(value)
-    if name == "tanh":
-        return jnp.tanh(value)
-    raise ValueError("activation must be 'gelu', 'silu', or 'tanh'.")
+    if name not in _ACTIVATIONS:
+        raise ValueError("activation must be 'gelu', 'silu', or 'tanh'.")
+    return _ACTIVATIONS[name](value)
+
+
+def _activation_regularity(name: Activation, /) -> DerivativeRegularity | None:
+    return activation_regularity(_ACTIVATIONS[name])
 
 
 def _mode_tuple(modes: int | Sequence[int], ndim: int | None = None) -> tuple[int, ...]:
@@ -397,7 +403,7 @@ class MultiScaleSpectralConvND(StrictModule):
         spatial_axes = tuple(range(array.ndim - ndim - 1, array.ndim - 1))
         output = jnp.zeros(
             (*array.shape[:-1], self.out_channels),
-            dtype=jnp.result_type(array.dtype, jnp.float64),
+            dtype=inexact_result_type(array.dtype),
         )
         for gain, scale, branch in zip(
             self.branch_gain, self.scales, self.branches, strict=True
@@ -434,6 +440,9 @@ class _ChannelNorm(StrictModule):
         variance = jnp.mean(jnp.abs(values - mean) ** 2, axis=-1, keepdims=True)
         normalized = (values - mean) * jax.lax.rsqrt(variance + self.eps)
         return normalized * self.scale + self.bias
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return SMOOTH if self.eps > 0.0 else None
 
 
 class _AxialSpectralConvND(StrictModule):
@@ -553,6 +562,15 @@ class _FNOResidualStep(StrictModule):
         hidden = self.normalization(self.spectral(x) + self.pointwise(x))
         hidden = self.dropout(_activation(self.activation, hidden), key=key)
         return x + hidden if self.residual else hidden
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Fourier convolutions are linear, so the pre-normalization sum is affine.
+        hidden = compose_regularity(
+            sum_regularity((AFFINE, self.pointwise._value_regularity())),
+            self.normalization._value_regularity(),
+            _activation_regularity(self.activation),
+        )
+        return sum_regularity((AFFINE, hidden)) if self.residual else hidden
 
 
 def _fno_contract_configuration(model):
@@ -850,6 +868,20 @@ class _AbstractFNO(AbstractOperatorModel):
             return output[..., 0]
         return output
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        activation = _activation_regularity(self.activation)
+        return compose_regularity(
+            self.lift._value_regularity(),
+            activation,
+            self._hidden_regularity(),
+            self.projection_hidden._value_regularity(),
+            activation,
+            self.projection._value_regularity(),
+        )
+
+    def _hidden_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(*(block._value_regularity() for block in self.blocks))
+
     @abstractmethod
     def _execute_hidden(
         self,
@@ -1093,6 +1125,11 @@ class IFNO(_AbstractFNO):
             source_key=source_key,
             scan=False,
             key=key,
+        )
+
+    def _hidden_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(
+            *(self.blocks[0]._value_regularity(),) * self.iterations
         )
 
     def _fixed_point_iteration(

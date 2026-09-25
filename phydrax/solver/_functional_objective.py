@@ -10,9 +10,9 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 
 from .._frozendict import frozendict
+from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm, AbstractScalarTerm, evaluate
 from ..enforcement import EnforcementProgram
@@ -26,6 +26,25 @@ from ..terms._integrated import prepare_term_realization
 from ..terms._moment import MomentPenalty
 from ..terms._residual import ResidualPenalty
 from ._model_losses import function_model_loss_values
+
+
+# Term-level substreams of the FunctionalSolver objective, addressed by each
+# term's original objective index.
+_TERM_EVALUATION_ADDRESS = SampleAddress(
+    "functional-objective", "term", role="evaluation"
+)
+_TERM_SAMPLING_ADDRESS = SampleAddress("functional-objective", "term", role="sampling")
+_TERM_COLLOCATION_ADDRESS = SampleAddress(
+    "functional-objective", "term", role="collocation"
+)
+_TERM_REFRESH_ADDRESS = SampleAddress("functional-objective", "term", role="refresh")
+_TERM_SETTLE_ADDRESS = SampleAddress("functional-objective", "term", role="settle")
+_OBJECTIVE_EVALUATION_ADDRESS = SampleAddress(
+    "functional-objective", "objective", role="evaluation"
+)
+_OBJECTIVE_SAMPLING_ADDRESS = SampleAddress(
+    "functional-objective", "objective", role="sampling"
+)
 
 
 @runtime_checkable
@@ -236,6 +255,20 @@ class _ObjectiveValues(StrictModule):
         return jnp.concatenate((self.component_values, self.model_loss_values), axis=0)
 
 
+def _prepared_keys(
+    evaluation_key: Any, sampling_key: Any, indices: tuple[int, ...], /
+) -> tuple[tuple[Any, ...], tuple[Any, ...], Any]:
+    return (
+        tuple(derive_key(evaluation_key, _TERM_EVALUATION_ADDRESS, i) for i in indices),
+        tuple(derive_key(sampling_key, _TERM_SAMPLING_ADDRESS, i) for i in indices),
+        derive_key(evaluation_key, _OBJECTIVE_EVALUATION_ADDRESS),
+    )
+
+
+# One compiled dispatch derives every term key of one prepared objective.
+_compiled_prepared_keys = eqx.filter_jit(_prepared_keys)
+
+
 def _prepare_slots(
     slots: Sequence[_ObjectiveTerm],
     /,
@@ -247,16 +280,15 @@ def _prepare_slots(
     enforcement: EnforcementProgram | None,
     evaluation_kwargs: Mapping[str, Any] | None = None,
 ) -> _PreparedObjective:
-    selected = tuple(slots[index] for index in selection.indices)
-    evaluation_keys = jr.split(evaluation_key, len(selected))
-    sampling_keys = jr.split(sampling_key, len(selected))
+    # Each term's keys are addressed by its original objective index, so a term
+    # draws the same realization whichever subset of terms is selected.
+    indices = tuple(int(index) for index in selection.indices)
+    term_keys, sample_keys, objective_key = _compiled_prepared_keys(
+        evaluation_key, sampling_key, indices
+    )
     prepared: list[_PreparedTerm] = []
-    for slot, term_key, sample_key in zip(
-        selected,
-        evaluation_keys,
-        sampling_keys,
-        strict=True,
-    ):
+    for index, term_key, sample_key in zip(indices, term_keys, sample_keys, strict=True):
+        slot = slots[index]
         if slot.mode == "adaptive_population":
             policy = _adaptive_policy(slot.term)
             if isinstance(slot.term, IntegralFunctional):
@@ -296,7 +328,7 @@ def _prepare_slots(
     return _PreparedObjective(
         tuple(prepared),
         selection,
-        jr.fold_in(evaluation_key, len(selected)),
+        objective_key,
         iteration,
         enforcement,
     )
@@ -469,20 +501,20 @@ class _FunctionalObjective(StrictModule):
         if enforcement is not None and not isinstance(enforcement, EnforcementProgram):
             raise TypeError("enforcement must be an EnforcementProgram or None.")
 
-        keys = jr.split(collocation_key, len(training_terms))
         self.training = tuple(
             _ObjectiveTerm(
                 term,
                 (
-                    _adaptive_policy(term).initialize(term, key=term_key)
+                    _adaptive_policy(term).initialize(
+                        term,
+                        key=derive_key(collocation_key, _TERM_COLLOCATION_ADDRESS, index),
+                    )
                     if _term_mode(term) == "adaptive_population"
                     else None
                 ),
                 index=index,
             )
-            for index, (term, term_key) in enumerate(
-                zip(training_terms, keys, strict=True)
-            )
+            for index, term in enumerate(training_terms)
         )
         self.evaluation = tuple(
             _ObjectiveTerm(term, None, index=index)
@@ -537,7 +569,7 @@ class _FunctionalObjective(StrictModule):
             self.evaluation,
             selection=selection,
             evaluation_key=key,
-            sampling_key=jr.fold_in(key, 1),
+            sampling_key=derive_key(key, _OBJECTIVE_SAMPLING_ADDRESS),
             iteration=iteration,
             enforcement=self.enforcement,
             evaluation_kwargs=evaluation_kwargs,
@@ -572,21 +604,21 @@ class _FunctionalObjective(StrictModule):
         key: Any,
     ) -> "_FunctionalObjective":
         appended_terms = _terms_tuple(terms, name="terms")
-        keys = jr.split(key, len(appended_terms))
         start = len(self.training)
         appended = tuple(
             _ObjectiveTerm(
                 term,
                 (
-                    _adaptive_policy(term).initialize(term, key=term_key)
+                    _adaptive_policy(term).initialize(
+                        term,
+                        key=derive_key(key, _TERM_COLLOCATION_ADDRESS, start + offset),
+                    )
                     if _term_mode(term) == "adaptive_population"
                     else None
                 ),
                 index=start + offset,
             )
-            for offset, (term, term_key) in enumerate(
-                zip(appended_terms, keys, strict=True)
-            )
+            for offset, term in enumerate(appended_terms)
         )
         return eqx.tree_at(
             lambda objective: objective.training,
@@ -617,12 +649,12 @@ class _FunctionalObjective(StrictModule):
             if self.enforcement is None
             else self.enforcement.apply(functions, key=key)
         )
-        keys = jr.split(key, len(self.training))
         updated = []
-        for slot, term_key in zip(self.training, keys, strict=True):
+        for slot in self.training:
             if slot.mode != "adaptive_population":
                 updated.append(slot)
                 continue
+            term_key = derive_key(key, _TERM_REFRESH_ADDRESS, slot.index)
             policy = _adaptive_policy(slot.term)
             population = slot.population
             if bool(policy.should_refresh(population, iter_)):
@@ -650,12 +682,12 @@ class _FunctionalObjective(StrictModule):
             if self.enforcement is None
             else self.enforcement.apply(functions, key=key)
         )
-        keys = jr.split(key, len(self.training))
         updated = []
-        for slot, term_key in zip(self.training, keys, strict=True):
+        for slot in self.training:
             if slot.mode != "adaptive_population":
                 updated.append(slot)
                 continue
+            term_key = derive_key(key, _TERM_SETTLE_ADDRESS, slot.index)
             policy = _adaptive_policy(slot.term)
             if isinstance(policy, ControlledCollocationPolicy):
                 population = policy.settle(

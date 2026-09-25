@@ -47,7 +47,6 @@ boundaries.
     ```
 """
 
-from .._hybrid_sensitivity import HybridSensitivityMode
 from . import advanced, coupling, maxwell
 from ._adaptive_tdvp import (
     AdaptiveTDVPPlan,
@@ -268,6 +267,11 @@ from ._compatible_systems import (
     CompatibleThermoelasticState,
     CompatibleVariableDensityProjection,
     IncompressibleProjectionResult,
+)
+from ._component_training import (
+    ComponentOptimizer,
+    ComponentTrainingResult,
+    train_components,
 )
 from ._compressible_kinetic import CompressibleKineticFixedStepMethod
 from ._compressible_kinetic_output import (
@@ -810,6 +814,8 @@ from ._fixed_step import (
     FixedStepStatus,
     IdentityAcceptedStepTransform,
     IdentitySSPRKStageTransform,
+    LearnedStepCorrection,
+    LearnedStepCorrectionReason,
     prepare_replay_schedule,
     PreparedReplaySchedule,
     RetriedFixedStepResult,
@@ -2226,6 +2232,18 @@ from ._separated_fokker_planck import (
     solve_separated_fokker_planck,
 )
 from ._smooth_compressible_d2v import OracleSmoothCompressibleD2V17FixedStepMethod
+from ._solver_objective import (
+    AbstractSolverObjective,
+    AcceptedResultPolicy,
+    algorithmic_work_loss,
+    AlgorithmicWorkObjective,
+    AlgorithmicWorkResult,
+    RolloutObjective,
+    SolverCaseResult,
+    SolverObjective,
+    SolverObjectiveAdmission,
+    SolverObjectiveEvaluation,
+)
 from ._sparse_flip import (
     SparseMACFreeSurfaceProjectionPlan,
     SparseMACFreeSurfaceProjectionResult,
@@ -2524,11 +2542,8 @@ _FUNCTIONAL_DECOMPOSITION_EXPORTS = frozenset(
         "FunctionalDecompositionProblem",
         "FunctionalDecompositionResult",
         "FunctionalDecompositionState",
-        "FunctionalUpdateEvidence",
-        "FunctionalUpdateKernel",
         "HybridFunctionalDecomposition",
         "FunctionalDecompositionIterationMetrics",
-        "FunctionalUpdateState",
         "GlobalScope",
         "JointDecompositionTraining",
         "PairScope",
@@ -3662,10 +3677,7 @@ __all__ = [
     "FunctionalHierarchyPlan",
     "FunctionalHierarchyResult",
     "FunctionalDecompositionState",
-    "FunctionalUpdateEvidence",
     "HybridFunctionalDecomposition",
-    "FunctionalUpdateKernel",
-    "FunctionalUpdateState",
     "GlobalScope",
     "JointDecompositionTraining",
     "PairScope",
@@ -3947,6 +3959,8 @@ __all__ = [
     "FixedStepSolution",
     "IdentityAcceptedStepTransform",
     "IdentitySSPRKStageTransform",
+    "LearnedStepCorrection",
+    "LearnedStepCorrectionReason",
     "SSPRK33FixedStepMethod",
     "SSPRK54FixedStepMethod",
     "StageTransformResult",
@@ -4016,7 +4030,6 @@ __all__ = [
     "NumericalEventResult",
     "localize_hybrid_event_root",
     "localize_numerical_event",
-    "HybridSensitivityMode",
     "particle_conversion_surrogate_bias",
     "particle_conversion_validity_certificate",
     "ParticleConversionSensitivityPolicy",
@@ -4690,4 +4703,20 @@ __all__ += [
     "finalize_dark_sector_epoch",
     "replace_dark_sector_conservation",
     "replace_dark_sector_pool",
+]
+
+__all__ += [
+    "AbstractSolverObjective",
+    "AcceptedResultPolicy",
+    "AlgorithmicWorkObjective",
+    "AlgorithmicWorkResult",
+    "ComponentOptimizer",
+    "ComponentTrainingResult",
+    "RolloutObjective",
+    "SolverCaseResult",
+    "SolverObjective",
+    "SolverObjectiveAdmission",
+    "SolverObjectiveEvaluation",
+    "algorithmic_work_loss",
+    "train_components",
 ]

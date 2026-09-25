@@ -626,7 +626,7 @@ def almonacid_2024_setup_operator(model, coordinates, control):
     )
 
 
-class _SparseDirectPreconditioner(AbstractPreconditioner):
+class _SparseDirectPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Native JAX-CPU sparse solve used as a fixed linear action."""
 
     prepared: PreparedLinearSolve
@@ -649,7 +649,7 @@ class _SparseDirectPreconditioner(AbstractPreconditioner):
         )
 
 
-class _MechanicalPatchPreconditioner(AbstractPreconditioner):
+class _MechanicalPatchPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Weighted element-Schwarz action and its exact coordinate transpose."""
 
     local_inverse: LocalBlockPreconditioner
@@ -689,7 +689,7 @@ class _MechanicalPatchPreconditioner(AbstractPreconditioner):
         return jnp.zeros_like(right_hand_side).at[self.gathers].add(correction)
 
 
-class _MechanicalSweepPreconditioner(AbstractPreconditioner):
+class _MechanicalSweepPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Repeated two-triangle corrections with an exact coordinate transpose."""
 
     operator: SparseCoordinateOperator

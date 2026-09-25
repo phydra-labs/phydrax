@@ -10,6 +10,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
+from .._identity import ArtifactBindingIdentity, NumericRevision
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -22,51 +23,58 @@ PayloadRecord: TypeAlias = tuple[str, str]
 ResultFieldRecord: TypeAlias = tuple[str, str, str]
 
 
-class NumericRevision(StrictModule, NonTrainableState):
-    """Immutable numeric-content identity and optional direct lineage."""
+class RevisionLineage(StrictModule, NonTrainableState):
+    """Lifecycle ancestry of one canonical `phydrax.NumericRevision`.
 
-    content_digest: str = eqx.field(static=True)
-    label: str = eqx.field(static=True)
-    parent_digest: str | None = eqx.field(static=True)
-    parent_revision_id: str | None = eqx.field(static=True)
-    metadata: MetadataRecord = eqx.field(static=True)
+    The lineage references the revision by its canonical `semantic_id` and
+    `revision_id`; it adds a label, string metadata, and at most one direct
+    parent lineage named by its canonical revision ID and lineage ID.
+    """
+
+    semantic_id: str = eqx.field(static=True)
     revision_id: str = eqx.field(static=True)
+    label: str = eqx.field(static=True)
+    parent_revision_id: str | None = eqx.field(static=True)
+    parent_lineage_id: str | None = eqx.field(static=True)
+    metadata: MetadataRecord = eqx.field(static=True)
+    lineage_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        content_digest: str,
+        revision: NumericRevision,
         /,
         *,
         label: str = "",
-        parent_digest: str | None = None,
         parent_revision_id: str | None = None,
+        parent_lineage_id: str | None = None,
         metadata: Mapping[str, str] | Sequence[tuple[str, str]] = (),
     ):
-        digest = _digest("content_digest", content_digest)
+        if not isinstance(revision, NumericRevision):
+            raise TypeError("revision must be a canonical phydrax.NumericRevision.")
         label_ = str(label).strip()
-        parent = (
-            None if parent_digest is None else _digest("parent_digest", parent_digest)
-        )
         parent_revision = _optional_identifier("parent_revision_id", parent_revision_id)
+        parent_lineage = _optional_identifier("parent_lineage_id", parent_lineage_id)
         metadata_ = _metadata(metadata)
-        if (parent is None) != (parent_revision is None):
+        if (parent_revision is None) != (parent_lineage is None):
             raise ValueError(
-                "Numeric revision parent digest and revision identity must be supplied together."
+                "Revision lineage parent revision and lineage identity must be supplied together."
             )
-        if parent == digest:
-            raise ValueError("A numeric revision cannot parent its own content.")
-        self.content_digest = digest
+        if parent_revision == revision.revision_id:
+            raise ValueError("A revision lineage cannot parent its own revision.")
+        self.semantic_id = revision.semantic_id
+        self.revision_id = revision.revision_id
         self.label = label_
-        self.parent_digest = parent
         self.parent_revision_id = parent_revision
+        self.parent_lineage_id = parent_lineage
         self.metadata = metadata_
-        self.revision_id = canonical_fingerprint(
+        self.lineage_id = canonical_fingerprint(
             {
-                "kind": "numeric-revision",
-                "content_digest": digest,
+                "kind": "revision-lineage",
+                "semantic_id": revision.semantic_id,
+                "revision_id": revision.revision_id,
                 "label": label_,
-                "parent_digest": parent,
                 "parent_revision_id": parent_revision,
+                "parent_lineage_id": parent_lineage,
                 "metadata": [list(record) for record in metadata_],
             }
         )
@@ -320,7 +328,12 @@ class RunRecord(StrictModule, NonTrainableState):
 
 
 class ModelManifest(StrictModule, NonTrainableState):
-    """Model payload identity bound to an analysis and numeric revision."""
+    """Model payload identity bound to an analysis and numeric revision.
+
+    `binding` is the model's complete `ArtifactBindingIdentity` (semantic,
+    numeric, and executable IDs together) or `None`; when present, its numeric
+    revision must be `numeric_revision_id`.
+    """
 
     model_id: str = eqx.field(static=True)
     analysis_plan_id: str = eqx.field(static=True)
@@ -328,6 +341,7 @@ class ModelManifest(StrictModule, NonTrainableState):
     payloads: tuple[PayloadRecord, ...] = eqx.field(static=True)
     unit_contract_id: str | None = eqx.field(static=True)
     association_ids: tuple[str, ...] = eqx.field(static=True)
+    binding: ArtifactBindingIdentity | None
     manifest_id: str = eqx.field(static=True)
 
     def __init__(
@@ -340,6 +354,7 @@ class ModelManifest(StrictModule, NonTrainableState):
         *,
         unit_contract_id: str | None = None,
         association_ids: Sequence[str] = (),
+        binding: ArtifactBindingIdentity | None = None,
     ):
         model = _identifier("model_id", model_id)
         analysis = _identifier("analysis_plan_id", analysis_plan_id)
@@ -349,12 +364,20 @@ class ModelManifest(StrictModule, NonTrainableState):
         associations = _identifiers("association_ids", association_ids)
         if not payloads_:
             raise ValueError("ModelManifest requires at least one payload.")
+        if binding is not None:
+            if not isinstance(binding, ArtifactBindingIdentity):
+                raise TypeError("binding must be an ArtifactBindingIdentity or None.")
+            if binding.numeric_revision_id != revision:
+                raise ValueError(
+                    "ModelManifest binding must name the manifest numeric revision."
+                )
         self.model_id = model
         self.analysis_plan_id = analysis
         self.numeric_revision_id = revision
         self.payloads = payloads_
         self.unit_contract_id = units
         self.association_ids = associations
+        self.binding = binding
         self.manifest_id = canonical_fingerprint(
             {
                 "kind": "model-manifest",
@@ -364,6 +387,7 @@ class ModelManifest(StrictModule, NonTrainableState):
                 "payloads": [list(record) for record in payloads_],
                 "unit_contract_id": units,
                 "association_ids": list(associations),
+                **({} if binding is None else {"binding": binding.binding_id}),
             }
         )
 
@@ -566,11 +590,11 @@ __all__ = [
     "CheckpointShard",
     "MetadataRecord",
     "ModelManifest",
-    "NumericRevision",
     "PayloadRecord",
     "ResultFieldRecord",
     "ResultManifest",
     "ResultRevision",
+    "RevisionLineage",
     "RunRecord",
     "RunStatus",
 ]

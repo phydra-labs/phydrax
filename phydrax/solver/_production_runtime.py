@@ -1947,7 +1947,7 @@ class ProductionRunResult(StrictModule):
     iteration_session_state: IterationSessionState | None = eqx.field(static=True)
 
 
-class ProductionRunPlan(StrictModule, NonTrainableState):
+class ProductionRunPlan(StrictModule):
     method: AbstractFixedStepMethod
     retry_policy: RobustRetryPolicy
     output_schedule: ExactTimeSchedule | None

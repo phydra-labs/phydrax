@@ -9,6 +9,11 @@ through aggregate facades. Underscore module paths are implementation details.
 `phydrax.StrictModule` is the supported base for user-defined immutable Phydrax
 modules.
 
+The root namespace also owns the shared derivative vocabulary (surfaces, gradient
+levels, routes, regularity, contracts, admission, branch policies, component
+authority, capability evidence) and explicit scientific value ports; see
+[Derivative contracts and ports](differentiation.md).
+
 - `phydrax.domain`: domains, geometry, sampling, and domain functions
 - `phydrax.discretization`: finite topology, support, field spaces, measures,
   prepared tensor/spectral/cochain/FEM/FV methods, transfers, temporal meshes,
@@ -88,6 +93,240 @@ modules.
 - `phydrax.uq`: posterior inference, uncertainty propagation, calibration, filtering,
   smoothing, and sensitivity analysis
 - `phydrax.export`: deployment helpers for learned inference functions
+
+## Array roles and lanes
+
+Every array leaf of a model PyTree has one training role: `ArrayRole.PARAMETER`
+(differentiated and updated), `ArrayRole.FIXED` (never updated), or
+`ArrayRole.MODEL_STATE` (carried forward by the model itself). Trainability is
+declared, never inferred from dtype. `resolve_array_roles(tree)` reads the
+declarations with a path-aware walk (Equinox field metadata is invisible to an
+`eqx.partition` `is_leaf`) and returns a static `RoleResolution` whose `paths`
+and `roles` follow `jax.tree_util` leaf order; it never raises. Precedence,
+top-down:
+
+1. `Domain`, `NonTrainableState` and `ExplicitFreeze` nodes are terminal: every
+   leaf below them is FIXED.
+2. `parameter_field`, `fixed_field` and `model_state_field` declare the role of a
+   module field's whole value subtree; the nearest declaration wins.
+3. A `parameter_field` or `model_state_field` holding a terminal node is a
+   `role-field-on-terminal-value` violation: declarations never unfreeze.
+4. Outside terminal nodes, containers inherit their field's role, and
+   unannotated inexact arrays below a `ParameterOwner` are PARAMETER.
+5. Below a plain `NonTrainableState`, a trainable `ParameterOwner` or a
+   `parameter_field` is a `parameter-under-fixed-ancestor` violation (a silent
+   freeze). An `ExplicitFreeze` holder such as `FrozenModel` ends this audit for
+   its subtree; a nested plain `NonTrainableState` continues it.
+6. Any remaining inexact array is unclassified. Integer arrays and non-array
+   leaves are FIXED unless declared MODEL_STATE.
+
+Role fields accept the keyword arguments of `equinox.field`; combining them with
+`static=True` is a `TypeError` because static fields are structure, not arrays.
+Training boundaries call `require_parameter_roles(tree, context=...)`, which
+raises a `ValueError` naming every violation and unclassified path with its
+remedy. It also rejects callables that hide inexact arrays from the tree: a
+callable reachable in a training tree must be a stateless function (no inexact
+array in its closure cells, defaults, bound arguments, or the module globals its
+code reads; modules, classes, and scalar constants are fine), a visible module
+whose arrays are role-declared leaves, a provider below an `ExplicitFreeze`
+holder, or a host-only callback that captures no inexact array. Arrays hidden in
+static fields are rejected the same way, below plain `NonTrainableState` holders
+too: only `ExplicitFreeze` authorizes hidden numeric state. `partition_parameters` applies the role check
+and splits a tree into `(parameters, model_state, fixed)` lanes with `None`
+holes (terminal nodes stay whole in `fixed`); `combine_parameters` restores the
+tree. An explicit
+`phydrax.nn.parameters.ParameterSubspace` selection is itself a role
+declaration for one request.
+
+```python
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import phydrax as phx
+
+
+class ScaledFeature(phx.StrictModule, phx.ParameterOwner):
+    weight: jax.Array
+    shift: jax.Array = phx.fixed_field()
+    calls: jax.Array = phx.model_state_field()
+
+    def __call__(self, x):
+        return self.weight * (x - self.shift)
+
+
+model = ScaledFeature(jnp.ones(3), jnp.zeros(3), jnp.zeros((), jnp.int32))
+parameters, model_state, fixed = phx.partition_parameters(model)
+assert eqx.tree_equal(phx.combine_parameters(parameters, model_state, fixed), model)
+```
+
+`LaneLayout` declares, independently of roles, which leaves carry a leading lane
+axis for items, cases, or ensemble members. Roles decide what is differentiated
+and committed; the layout decides what is mapped, so FIXED data such as
+per-member normalizers may be mapped while parameters are shared. `in_axes`
+returns an `equinox.filter_vmap` axis tree after checking that every mapped leaf
+exists and shares one lane size.
+
+```python
+shifts = jnp.stack([jnp.full(3, float(member)) for member in range(4)])
+members = eqx.tree_at(lambda m: m.shift, model, shifts)
+layout = phx.LaneLayout("member", (".shift",))
+outputs = eqx.filter_vmap(
+    lambda member, x: member(x),
+    in_axes=(layout.in_axes(members), None),
+)(members, jnp.linspace(0.0, 1.0, 3))
+assert outputs.shape == (4, 3)
+```
+
+::: phydrax.ArrayRole
+
+---
+
+::: phydrax.NonTrainableState
+
+---
+
+::: phydrax.ExplicitFreeze
+
+---
+
+::: phydrax.ParameterOwner
+
+---
+
+::: phydrax.parameter_field
+
+---
+
+::: phydrax.fixed_field
+
+---
+
+::: phydrax.model_state_field
+
+---
+
+::: phydrax.RoleResolution
+
+---
+
+::: phydrax.resolve_array_roles
+
+---
+
+::: phydrax.require_parameter_roles
+
+---
+
+::: phydrax.partition_parameters
+
+---
+
+::: phydrax.combine_parameters
+
+---
+
+::: phydrax.LaneLayout
+
+## Identity, revisions, and plugin registration
+
+Every learned or prepared component has three independent identities.
+`SemanticProvenance` content-addresses what the component means (static
+descriptors plus named external resources). `NumericRevision` content-addresses
+its dynamic numeric realization, bound to one semantic ID: a training update
+produces a new revision and nothing else. `ExecutableSignature` identifies what
+is compiled: shapes, dtypes, spaces, topology, capacities, and algorithm and
+backend facts, with no dynamic values. Callables compiled into an executable are
+named in `static_callables` and identified through `callable_payload`, so
+weights a callable holds statically are part of the executable while weights
+passed as arguments are not. `ArtifactBindingIdentity` binds all three for a
+frozen or published model; artifacts, checkpoints, and lifecycle
+`ModelManifest`s carry it whole or not at all, and loading recomputes it from the
+loaded content and fails closed on a mismatch.
+
+`phydrax.lifecycle.RevisionLineage` records ancestry only: it references a
+canonical revision by `semantic_id` and `revision_id`, adds a label and string
+metadata, and names at most one parent by its revision and lineage IDs. A
+lifecycle archive of a lineage stores the revision's numeric content as its
+payload and recomputes the canonical revision on open. Archives written with the
+retired lifecycle numeric-revision record are refused.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+semantic = phx.SemanticProvenance({"kind": "affine-response"})
+signature = phx.ExecutableSignature(shapes={"weight": (2,)}, dtypes={"weight": "f4"})
+before = phx.NumericRevision(semantic, {"weight": jnp.asarray([1.0, 2.0])})
+after = phx.NumericRevision(semantic, {"weight": jnp.asarray([1.5, 2.0])})
+first = phx.ArtifactBindingIdentity(semantic, before, signature)
+second = phx.ArtifactBindingIdentity(semantic, after, signature)
+assert first.executable_signature_id == second.executable_signature_id
+assert first.numeric_revision_id != second.numeric_revision_id
+lineage = phx.lifecycle.RevisionLineage(
+    after,
+    label="round-2",
+    parent_revision_id=before.revision_id,
+    parent_lineage_id=phx.lifecycle.RevisionLineage(before).lineage_id,
+)
+```
+
+Portable artifacts identify types and callables through explicit registrations
+exported here once. `register_artifact_value` binds one path-independent ID to
+one object, resolved by object identity (`artifact_value_id`) and by ID
+(`artifact_value`). `register_operator_architecture_codec` binds an
+`OperatorArchitectureCodec` ID to one exact model type;
+`operator_architecture_codec_for` never falls back to a base class, a class
+name, or an installed entry point, and conflicting registrations are rejected.
+
+::: phydrax.SemanticProvenance
+
+---
+
+::: phydrax.NumericRevision
+
+---
+
+::: phydrax.ExecutableSignature
+
+---
+
+::: phydrax.ArtifactBindingIdentity
+
+---
+
+::: phydrax.callable_payload
+
+---
+
+::: phydrax.lifecycle.RevisionLineage
+
+---
+
+::: phydrax.OperatorArchitectureCodec
+
+---
+
+::: phydrax.register_operator_architecture_codec
+
+---
+
+::: phydrax.operator_architecture_codec
+
+---
+
+::: phydrax.operator_architecture_codec_for
+
+---
+
+::: phydrax.register_artifact_value
+
+---
+
+::: phydrax.artifact_value
+
+---
+
+::: phydrax.artifact_value_id
 
 ## Sparse execution substrate
 
@@ -450,11 +689,24 @@ an immutable `ClosureAnalysisDAG`. `ChunkedClosureDatasetManifest` verifies comp
 non-overlapping sample/byte coverage and delegates storage only through
 `ClosureArtifactRepository`.
 
+`FlowStateSchema.value_port(representation=...)` derives the per-point `ValuePort`
+of a snapshot representation: component IDs are the declared component names, each
+dimension is resolved from the declared unit with `phydrax.units.parse_unit`, and
+nondimensional values carry the reference-scale fingerprint as their normalization.
+
 `LeakageSafePartitionPlan` groups by declared case/trajectory/realization/time-block
 identity. `TrainOnlyNormalizer` records the exact training assignments used for its
 statistics. `LearnedClosureBindingPlan` binds predictor ABI, model artifact, component
-ordering, normalizer provenance, and differentiability. Conservative-face deployment
-uses the finite-volume closure owner. Spectral drift is explicitly dealiased,
+ordering, normalizer provenance, and differentiability. It is the frozen deployment
+artifact (`ExplicitFreeze`): its predictor never trains through a deployment.
+`as_trainable_binding()` returns a new `TrainableLearnedClosureBinding` whose
+predictor is a PARAMETER child and whose ABI, provenance, and `binding_id` are those
+of the artifact. Every deployment holds its binding, so each keeps its role.
+Conservative-face deployment binds the verified predictor revision
+(`conservative_face_numeric_revision`) as an `ArbitraryNormalFaceClosurePlan` whose
+correction is the binding itself: a frozen deployment stays `FIXED` inside the
+finite-volume tree, a trainable one exposes only its predictor as `PARAMETER`, and
+weights never change the method identity. Spectral drift is explicitly dealiased,
 projected, Hermitian constrained, and energy checked; invalid prediction produces zero
 drift together with a `SpectralFallbackArtifact`, never a hidden fallback.
 
@@ -487,6 +739,14 @@ drift together with a `SpectralFallbackArtifact`, never a hidden fallback.
 ---
 
 ::: phydrax.closure_data.LearnedClosureBindingPlan
+
+---
+
+::: phydrax.closure_data.conservative_face_numeric_revision
+
+---
+
+::: phydrax.closure_data.TrainableLearnedClosureBinding
 
 ---
 

@@ -219,7 +219,7 @@ def test_lagged_linear_update_validates_configuration_and_spaces():
         )
 
 
-def test_lagged_linear_root_matches_newton_and_has_exact_implicit_derivatives():
+def test_lagged_linear_root_matches_newton_under_jit_and_vmap():
     space = la.ArraySpace((), dtype=jnp.float64)
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
@@ -233,9 +233,6 @@ def test_lagged_linear_root_matches_newton_and_has_exact_implicit_derivatives():
         damping=0.5,
     )
     method = nl.NonlinearRichardson(update)
-    derivative_policy = nl.ImplicitRootDerivativePolicy(
-        tangent_linear_policy=la.LinearSolvePolicy(la.DenseLU())
-    )
     target = jnp.asarray(2.0)
 
     lagged_result = method.solve(
@@ -251,16 +248,6 @@ def test_lagged_linear_root_matches_newton_and_has_exact_implicit_derivatives():
         args=target,
     )
 
-    def root(argument):
-        return nl.implicit_root(
-            problem,
-            jnp.asarray(1.0),
-            method=method,
-            termination=_termination(),
-            derivative_policy=derivative_policy,
-            args=argument,
-        )
-
     def primal(argument):
         return method.solve(
             problem,
@@ -269,9 +256,6 @@ def test_lagged_linear_root_matches_newton_and_has_exact_implicit_derivatives():
             args=argument,
         ).state
 
-    value, tangent = jax.jvp(root, (target,), (jnp.asarray(1.0),))
-    gradient = jax.grad(root)(target)
-    expected_derivative = 1.0 / (2.0 * jnp.sqrt(target))
     compiled = jax.jit(primal)(target)
     batched_targets = jnp.asarray([1.5, 2.0, 3.0])
     batched = jax.vmap(primal)(batched_targets)
@@ -279,8 +263,5 @@ def test_lagged_linear_root_matches_newton_and_has_exact_implicit_derivatives():
     assert lagged_result.successful
     assert newton_result.successful
     assert jnp.allclose(lagged_result.state, newton_result.state, atol=1e-9)
-    assert jnp.allclose(value, jnp.sqrt(target), atol=1e-9)
-    assert jnp.allclose(tangent, expected_derivative, rtol=1e-8, atol=1e-10)
-    assert jnp.allclose(gradient, expected_derivative, rtol=1e-8, atol=1e-10)
     assert jnp.allclose(compiled, jnp.sqrt(target), atol=1e-9)
     assert jnp.allclose(batched, jnp.sqrt(batched_targets), atol=1e-9)

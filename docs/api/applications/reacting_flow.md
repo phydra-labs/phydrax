@@ -24,6 +24,8 @@
 
 ::: phydrax.applications.reacting_flow.LearnedChemicalTransitionPlan
 
+::: phydrax.applications.reacting_flow.TrainableLearnedChemicalTransitionPlan
+
 ::: phydrax.applications.reacting_flow.reacting_flow_candidate_profiles
 
 ::: phydrax.applications.reacting_flow.reacting_flow_candidate_campaigns

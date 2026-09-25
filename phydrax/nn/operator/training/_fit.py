@@ -4,15 +4,16 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
-from math import ceil
+from math import ceil, inf, isfinite, isnan, log, nan
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, final, Literal, NamedTuple
 
 import equinox as eqx
 import jax
@@ -20,26 +21,55 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 
+from ...._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ...._execution_runtime import ExecutionGroup
+from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict
 from ...._iteration import IterationSession
-from ...._trainable import combine_trainable, partition_trainable
+from ...._model._ports import PortBindingEvidence, PortMapping, ValuePort
+from ...._sampling._addressing import derive_key, SampleAddress
+from ...._strict import StrictModule
+from ...._trainable import (
+    combine_parameters,
+    ExplicitFreeze,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ...._training import (
     _update_validation_selection,
     DelayedTargetPolicy,
     EvaluationParametersFn,
     ExponentialMovingAverageTargetPolicy,
     resolve_evaluation_parameters,
-    TargetParameterState,
     TensorBoardLogger,
     TrainingController,
     TrainingIterationKind,
     TrainingProgress,
     TrainingSignalGuard,
 )
+from ...._training_checkpoint import (
+    load_training_checkpoint,
+    read_training_checkpoint_metadata,
+    save_training_checkpoint,
+)
+from ...._training_kernel import (
+    AbstractKernelUpdateRule,
+    build_training_checkpoint,
+    enforce_rejection_budget,
+    KernelObjective,
+    KernelUpdateContext,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    SubspaceTrainingTree,
+    training_accepted_site_key,
+    TrainingAttemptOutcome,
+    TrainingKernelSpec,
+    TrainingKernelState,
+    TrainingKeys,
+    TrainingRejectionBudgetError,
+)
 from ...._training_objective import (
     _combine_objective_contributions,
-    _GradientAccumulationState,
     _ObjectiveAccumulator,
     _ObjectiveContribution,
 )
@@ -83,18 +113,17 @@ from ..sharding import (
     shard_operator_targets,
 )
 from ..task import OperatorTask
-from ._checkpoint import (
-    _read_operator_training_manifest,
-    load_operator_training_checkpoint,
-    save_operator_training_checkpoint,
-)
 from ._dataset import OperatorDataset
 from ._dtype import OperatorDTypePolicy, OperatorPrecisionEvidence
 from ._execution import (
     _evaluate_operator_step,
+    _operator_output_routes,
     _operator_prediction,
+    _port_binding_record,
+    bind_operator_outputs,
     nondimensionalize_batch,
     nondimensionalize_targets,
+    OperatorOutputRoutes,
 )
 from ._fingerprint import operator_fit_schema
 from ._loader import (
@@ -102,11 +131,7 @@ from ._loader import (
     OperatorBatchLoader,
     OperatorTrainingBatch,
 )
-from ._loss_scale import (
-    OperatorLossScalePolicy,
-    OperatorLossScaleState,
-    tree_all_finite,
-)
+from ._loss_scale import OperatorLossScalePolicy, OperatorLossScaleState
 from ._losses import (
     _case_mean_contribution,
     _weighted_case_reduction,
@@ -124,7 +149,6 @@ from ._physics import OperatorOutputPipeline
 from ._privacy import prepare_private_operator_batch
 from ._rollout import (
     _operator_rollout_scan,
-    _ROLLOUT_MODEL_KEY_DOMAIN,
     _validate_rollout_route,
     OperatorRolloutPolicy,
     OperatorRolloutRoute,
@@ -136,11 +160,38 @@ from ._trained_operator import (
 )
 
 
-_LOSS_TERM_KEY_DOMAIN = 200
-_RESIDUAL_ROLLOUT_KEY_DOMAIN = 300
-_MODEL_OBJECTIVE_KEY_DOMAIN = 400
-_PRIVACY_NOISE_KEY_DOMAIN = 700
-_PRIVACY_SAMPLER_KEY_DOMAIN = 701
+_FIT_OBJECTIVE_ID = "operator-fit"
+_FIT_CHECKPOINT_FORMAT = "phydrax-operator-fit-checkpoint"
+_LOSS_KEY_SITE = "loss"
+_PRIVACY_NOISE_KEY_SITE = "privacy-noise"
+_MODEL_ADDRESS = SampleAddress(_FIT_OBJECTIVE_ID, "model")
+_TARGET_MODEL_ADDRESS = SampleAddress(_FIT_OBJECTIVE_ID, "target-model")
+_MODEL_LOSS_ADDRESS = SampleAddress(_FIT_OBJECTIVE_ID, "model-loss")
+_PREFLIGHT_ADDRESS = SampleAddress(
+    "training", _FIT_OBJECTIVE_ID, target=("output-pipeline",), role="preflight"
+)
+_PRIVACY_NOISE_ADDRESS = SampleAddress(
+    "training", _FIT_OBJECTIVE_ID, target=("privacy-noise",), role="mechanism"
+)
+_PRIVACY_SAMPLER_ADDRESS = SampleAddress(
+    "training", _FIT_OBJECTIVE_ID, target=("privacy-sampler",), role="seed"
+)
+# Semantic randomness of one fit, recorded in the fit contract so a resume under
+# a different addressing scheme fails closed.
+_FIT_KEY_SITES = {
+    "objective": _FIT_OBJECTIVE_ID,
+    "attempt_sites": [_LOSS_KEY_SITE, _PRIVACY_NOISE_KEY_SITE],
+    "evaluation_site": "metrics/<split>",
+    "loss_addresses": [
+        "model",
+        "target-model",
+        "model-loss",
+        "loss-term/<name>",
+        "residual-rollout/<name>/<depth>",
+    ],
+    "rollout_step": "operator-rollout/model/<step>",
+    "privacy": ["privacy-noise/mechanism", "privacy-sampler/seed"],
+}
 
 
 @dataclass(frozen=True)
@@ -195,7 +246,7 @@ class OperatorFitResult:
     execution_model: AbstractOperatorModel
     last_execution_model: AbstractOperatorModel
     trained_operator: TrainedOperator | None
-    output_field_map: frozendict[str, str]
+    port_binding: PortBindingEvidence | None
     output_pipeline: OperatorOutputPipeline | None
     history: OperatorFitHistory
     normalization: OperatorNormalizationPolicy | None
@@ -252,6 +303,32 @@ def _canonical_hash(value: Any, /) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+_NONFINITE_METRICS = {"nan": nan, "inf": inf, "-inf": -inf}
+
+
+def _encode_metrics(metrics: Mapping[str, float], /) -> dict[str, Any]:
+    """Encode one metric record for JSON checkpoints, tagging nonfinite values.
+
+    Overflowed (discarded) updates record nonfinite losses; resume must restore
+    the identical history, so nonfinite values are kept rather than dropped.
+    """
+    return {
+        name: value
+        if isfinite(value)
+        else {"nonfinite": "nan" if isnan(value) else ("inf" if value > 0 else "-inf")}
+        for name, value in metrics.items()
+    }
+
+
+def _decode_metrics(metrics: Mapping[str, Any], /) -> dict[str, float]:
+    return {
+        name: _NONFINITE_METRICS[value["nonfinite"]]
+        if isinstance(value, dict)
+        else float(value)
+        for name, value in metrics.items()
+    }
 
 
 def _raw_loader(
@@ -399,55 +476,45 @@ def _place_batch(
     )
 
 
-def _resolve_output_map(
+def _resolve_output_binding(
     model: AbstractOperatorModel,
-    targets: OperatorTargetBatch,
-    output_field_map: Mapping[str, str] | None,
     task: OperatorTask | None,
+    output_ports: Mapping[str, ValuePort] | None,
+    port_mapping: PortMapping | None,
     /,
-) -> dict[str, str]:
-    declared = tuple(model.operator_output_specs)
-    target_names = (
-        tuple(field.name for field in task.target_fields)
-        if task is not None
-        else (tuple(targets.fields) if targets.fields else declared)
-    )
-    if output_field_map is None:
-        if set(declared) == set(target_names):
-            resolved = {name: name for name in declared}
-        elif len(declared) == len(target_names) == 1:
-            resolved = {declared[0]: target_names[0]}
-        else:
+) -> tuple[frozendict[str, ValuePort], PortBindingEvidence] | None:
+    if task is None:
+        if output_ports is not None or port_mapping is not None:
             raise ValueError(
-                "output_field_map is required when model outputs and physical output "
-                "fields do not have identical names."
+                "output_ports and port_mapping bind model outputs to task target "
+                "fields; they require a task-bound fit."
             )
-    else:
-        resolved = {
-            str(model_name): str(target_name)
-            for model_name, target_name in output_field_map.items()
-        }
-    if set(resolved) != set(declared) or set(resolved.values()) != set(target_names):
-        raise ValueError(
-            "output_field_map must bijectively map every model output to a physical output field."
-        )
-    return resolved
+        return None
+    return bind_operator_outputs(model, task, output_ports, port_mapping)
 
 
 def _default_losses(
-    output_map: Mapping[str, str],
+    model: AbstractOperatorModel,
+    routes: OperatorOutputRoutes | None,
     /,
-    *,
-    physical_names: bool,
 ) -> tuple[SupervisedOperatorLoss, ...]:
-    multiple = len(output_map) > 1
+    """Supervise every task target, or every raw model output of a taskless fit."""
+    if routes is None:
+        names = tuple(model.operator_output_specs)
+        return tuple(
+            SupervisedOperatorLoss(
+                name=f"supervised_l2/{name}" if len(names) > 1 else "supervised_l2",
+                prediction_field=name,
+            )
+            for name in names
+        )
     return tuple(
         SupervisedOperatorLoss(
-            name=f"supervised_l2/{target_name}" if multiple else "supervised_l2",
-            prediction_field=target_name if physical_names else model_name,
-            target_field=target_name,
+            name=f"supervised_l2/{target.name}" if len(routes) > 1 else "supervised_l2",
+            prediction_field=target.name,
+            target_field=target.name,
         )
-        for model_name, target_name in output_map.items()
+        for _, target in routes
     )
 
 
@@ -569,6 +636,309 @@ def _scan_step_value(tree: Any, index: int, /) -> Any:
     )
 
 
+def _typed_root_key(key: Any, /) -> Any:
+    """Return `key` as one typed JAX PRNG key (raw threefry words are wrapped)."""
+    array = jnp.asarray(key)
+    if jax.dtypes.issubdtype(array.dtype, jax.dtypes.prng_key):
+        return array
+    return jr.wrap_key_data(array.astype(jnp.uint32))
+
+
+def _private_sampler_seed(root_key: Any, /) -> int:
+    sampler_key = derive_key(root_key, _PRIVACY_SAMPLER_ADDRESS)
+    return int(
+        jax.device_get(
+            jr.randint(
+                sampler_key,
+                (),
+                minval=0,
+                maxval=jnp.iinfo(jnp.int32).max,
+                dtype=jnp.int32,
+            )
+        )
+    )
+
+
+def _loss_scale_rejection_budget(policy: OperatorLossScalePolicy | None, /) -> int:
+    """Consecutive nonfinite windows a dynamic loss scale may absorb.
+
+    Each overflow backs the scale off once. After
+    `ceil(log(maximum / minimum) / log(1 / backoff))` consecutive backoffs the
+    scale sits at its minimum from any start; one more window is tried there,
+    and a further nonfinite window is not an overflow the scale can cure.
+    Without dynamic scaling every nonfinite window is a domain error.
+    """
+    if policy is None or not policy.dynamic:
+        return 0
+    backoffs = ceil(
+        log(policy.maximum_scale / policy.minimum_scale) / -log(policy.backoff_factor)
+    )
+    return backoffs + 1
+
+
+@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
+def _loss_scaled(
+    policy: OperatorLossScalePolicy, numerator: jax.Array, scale: jax.Array
+) -> jax.Array:
+    """Identity whose backward pass seeds the loss-scaled cotangent."""
+    del policy, scale
+    return numerator
+
+
+def _loss_scaled_forward(policy, numerator, scale):
+    del policy
+    return numerator, scale
+
+
+def _loss_scaled_backward(policy, scale, cotangent):
+    return (
+        policy.scale_loss(cotangent, OperatorLossScaleState(scale)),
+        jnp.zeros_like(scale),
+    )
+
+
+_loss_scaled.defvjp(_loss_scaled_forward, _loss_scaled_backward)
+
+
+@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
+def _loss_unscaled(
+    policy: OperatorLossScalePolicy, parameters: Any, scale: jax.Array
+) -> Any:
+    """Identity whose backward pass unscales the parameter cotangents."""
+    del policy, scale
+    return parameters
+
+
+def _loss_unscaled_forward(policy, parameters, scale):
+    del policy
+    return parameters, scale
+
+
+def _loss_unscaled_backward(policy, scale, cotangents):
+    return (
+        policy.unscale_gradients(cotangents, OperatorLossScaleState(scale)),
+        jnp.zeros_like(scale),
+    )
+
+
+_loss_unscaled.defvjp(_loss_unscaled_forward, _loss_unscaled_backward)
+
+
+@jax.custom_vjp
+def _prescribed_gradient(value: jax.Array, parameters: Any, gradient: Any) -> jax.Array:
+    """`value`, whose derivative with respect to `parameters` is `gradient`.
+
+    Used by objectives whose training direction is not the plain derivative of
+    their numerator (conflict-free composition, clipped and noised private
+    gradients); `value` and `gradient` are evaluated at stopped parameters.
+    """
+    del parameters, gradient
+    return value
+
+
+def _prescribed_gradient_forward(value, parameters, gradient):
+    del parameters
+    return value, gradient
+
+
+def _prescribed_gradient_backward(gradient, cotangent):
+    return (
+        jnp.zeros_like(cotangent),
+        jax.tree.map(lambda leaf: cotangent.astype(leaf.dtype) * leaf, gradient),
+        jax.tree.map(jnp.zeros_like, gradient),
+    )
+
+
+_prescribed_gradient.defvjp(_prescribed_gradient_forward, _prescribed_gradient_backward)
+
+
+class _OperatorFitPayload(NamedTuple):
+    """Arrays of one fit microbatch plus the attempt's loss scale and targets."""
+
+    batch: OperatorBatch
+    targets: OperatorTargetBatch
+    physical_batch: OperatorBatch
+    physical_targets: OperatorTargetBatch
+    case_log_weights: Any
+    case_mask: Any
+    sampling_probabilities: Any
+    is_padding_example: Any
+    step: Any
+    target_parameters: Any
+    loss_scale: Any
+    active_horizon: int | None
+
+
+@final
+class _OperatorFitObjective(StrictModule, ExplicitFreeze):
+    """Kernel objective of one operator fit.
+
+    The evaluation closes over the fit's configuration (task, output routes and
+    pipeline, normalization, loss terms, privacy mechanism), which is frozen on
+    purpose; trained arrays reach it only through the kernel's parameter,
+    model-state, and fixed lanes.
+    """
+
+    evaluate: Callable[..., Any] = eqx.field(static=True)
+
+    def __call__(
+        self,
+        parameters: Any,
+        model_state: Any,
+        fixed: Any,
+        payload: _OperatorFitPayload,
+        keys: TrainingKeys,
+    ) -> tuple[_ObjectiveContribution, Any, Any]:
+        return self.evaluate(parameters, model_state, fixed, payload, keys)
+
+
+_ALIGNMENT_UPDATE_METRICS = (
+    "update_alignment/raw_conflict",
+    "update_alignment/applied_conflict",
+    "update_alignment/projected",
+    "update_alignment/relative_correction",
+    "update_alignment/metric_correction_norm",
+    "update_alignment/active_constraints",
+    "update_alignment/pareto_stationary",
+    "update_alignment/kkt_residual",
+    "update_alignment/status",
+)
+
+
+@final
+class _AlignedUpdateState(StrictModule):
+    """Optimizer state, cumulative alignment evidence, and the last update's."""
+
+    optimizer_state: Any
+    statistics: ConflictFreeUpdateStatistics
+    last_update: jax.Array
+
+
+@final
+class _AlignedOptaxUpdateRule(AbstractKernelUpdateRule):
+    """Optax proposal projected against every supported explicit loss-term gradient.
+
+    The objective reports its component gradients and active mask as
+    diagnostics. A proposal that cannot be aligned is a runtime error; nothing
+    commits on a finite rejection.
+    """
+
+    rejection_commit_policy: ClassVar[tuple[str, ...]] = ()
+    optimizer: optax.GradientTransformation = eqx.field(static=True)
+    policy: ConflictFreeUpdatePolicy
+    evaluation_view: EvaluationParametersFn | None = eqx.field(static=True)
+    rule_id: str = eqx.field(static=True)
+    statistics_dtype: str = eqx.field(static=True)
+
+    def init(self, parameters: Any, /) -> _AlignedUpdateState:
+        dtype = jnp.dtype(self.statistics_dtype)
+        return _AlignedUpdateState(
+            self.optimizer.init(parameters),
+            ConflictFreeUpdateStatistics.zeros(dtype),
+            jnp.zeros((len(_ALIGNMENT_UPDATE_METRICS),), dtype=dtype),
+        )
+
+    def evaluation_parameters(
+        self, rule_state: _AlignedUpdateState, parameters: Any, /
+    ) -> Any:
+        return resolve_evaluation_parameters(
+            self.evaluation_view, rule_state.optimizer_state, parameters
+        )
+
+    def propose(
+        self,
+        parameters: Any,
+        gradients: Any,
+        value: jax.Array,
+        rule_state: _AlignedUpdateState,
+        context: KernelUpdateContext,
+        /,
+    ) -> tuple[Any, _AlignedUpdateState, _AlignedUpdateState, jax.Array]:
+        del value
+        diagnostics = context.diagnostics[0]
+        component_gradients = diagnostics["component_gradients"]
+        updates, optimizer_state = self.optimizer.update(
+            gradients, rule_state.optimizer_state, parameters
+        )
+        result = project_conflict_free_direction(
+            tree_negative(updates),
+            component_gradients,
+            active=diagnostics["active"],
+            policy=self.policy,
+        )
+        updates = tree_where(result.projected, tree_negative(result.direction), updates)
+        updates = jax.tree.map(
+            lambda leaf: eqx.error_if(
+                leaf,
+                ~result.successful,
+                "Operator optimizer proposal could not be aligned.",
+            ),
+            updates,
+        )
+        gradient_conflict, constructed_conflict = _alignment_conflicts(
+            component_gradients, gradients, result, self.policy
+        )
+        statistics = jax.tree.map(
+            lambda updated, previous: updated.astype(previous.dtype),
+            rule_state.statistics.update(
+                result,
+                gradient_conflict=gradient_conflict,
+                constructed_conflict=constructed_conflict,
+            ),
+            rule_state.statistics,
+        )
+        dtype = rule_state.last_update.dtype
+        last_update = jnp.stack(
+            tuple(
+                jnp.asarray(metric).astype(dtype)
+                for metric in (
+                    jnp.any(result.raw_conflicts),
+                    jnp.any(result.aligned_conflicts),
+                    result.projected,
+                    result.relative_correction,
+                    result.metric_correction_norm,
+                    result.active_constraint_count,
+                    result.pareto_stationary,
+                    result.kkt_residual_norm,
+                    result.status,
+                )
+            )
+        )
+        candidate = eqx.apply_updates(parameters, updates)
+        return (
+            candidate,
+            _AlignedUpdateState(optimizer_state, statistics, last_update),
+            rule_state,
+            result.successful,
+        )
+
+
+def _alignment_metrics(state: _AlignedUpdateState, /) -> dict[str, float]:
+    statistics = state.statistics
+    last_update, *rates = jax.device_get(
+        (
+            state.last_update,
+            statistics.gradient_conflict_rate,
+            statistics.constructed_conflict_rate,
+            statistics.proposal_conflict_rate,
+            statistics.applied_conflict_rate,
+        )
+    )
+    metrics = {
+        name: float(value)
+        for name, value in zip(_ALIGNMENT_UPDATE_METRICS, last_update, strict=True)
+    }
+    metrics.update(
+        {
+            f"update_alignment/{name}_conflict_rate": float(rate)
+            for name, rate in zip(
+                ("gradient", "constructed", "proposal", "applied"), rates, strict=True
+            )
+        }
+    )
+    return metrics
+
+
 def _resolve_operator_fit_execution(
     model: AbstractOperatorModel,
     /,
@@ -592,7 +962,7 @@ def _resolve_operator_fit_execution(
 ) -> tuple[Any, OperatorShardingPolicy | None]:
     if not isinstance(model, AbstractOperatorModel):
         raise TypeError("fit_operator requires a PhydraX operator model.")
-    master_key = jr.key(seed) if key is None else key
+    root_key = jr.key(seed) if key is None else _typed_root_key(key)
     if privacy is not None:
         if not isinstance(privacy, PrivateTrainingPlan):
             raise TypeError("privacy must be a PrivateTrainingPlan or None.")
@@ -653,7 +1023,7 @@ def _resolve_operator_fit_execution(
                 "Multi-process fitting requires an explicit fitted normalization "
                 "policy; normalization='fit' would materialize global source data."
             )
-    return master_key, sharding_policy
+    return root_key, sharding_policy
 
 
 def _resolve_operator_parameter_paths(
@@ -667,6 +1037,7 @@ def _resolve_operator_parameter_paths(
             raise ValueError(
                 "Low-rank operator fitting requires an explicit parameter_subspace."
             )
+        require_parameter_roles(model, context="fit_operator")
     else:
         if not isinstance(parameter_subspace, ParameterSubspace):
             raise TypeError("parameter_subspace must be a ParameterSubspace or None.")
@@ -826,7 +1197,8 @@ def fit_operator(
     validation: FitInput | None = None,
     task: OperatorTask | None = None,
     training_evidence: OperatorTrainingEvidence | None = None,
-    output_field_map: Mapping[str, str] | None = None,
+    output_ports: Mapping[str, ValuePort] | None = None,
+    port_mapping: PortMapping | None = None,
     loss_terms: Sequence[AbstractOperatorLossTerm] | None = None,
     output_pipeline: OperatorOutputPipeline | None = None,
     rollout_route: OperatorRolloutRoute | None = None,
@@ -888,12 +1260,16 @@ def fit_operator(
     maximum ``rollout_policy``; future targets remain aliases rather than model
     outputs.
 
+    Task-bound fits require ``output_ports`` (the ``ValuePort`` of each named
+    model output) and a ``port_mapping`` binding those ports to task target field
+    ports; taskless fits train in raw model coordinates and bind no ports.
+
     Experimental ``update_alignment`` projects the exact emitted optimizer
     proposal against every supported explicit loss term before parameter
     application. It requires one microstep, excludes attached model losses and
     loss scaling, and checkpoints cumulative mismatch evidence.
     """
-    master_key, sharding_policy = _resolve_operator_fit_execution(
+    root_key, sharding_policy = _resolve_operator_fit_execution(
         model,
         key=key,
         seed=seed,
@@ -933,6 +1309,10 @@ def fit_operator(
             update_alignment=update_alignment,
             target_policy=target_policy,
         )
+    )
+    output_binding = _resolve_output_binding(model, task, output_ports, port_mapping)
+    output_routes = (
+        None if output_binding is None else _operator_output_routes(task, *output_binding)
     )
     target_aliases, optimizer, resolved_optimizer_id = _resolve_operator_fit_optimizer(
         model,
@@ -975,37 +1355,26 @@ def fit_operator(
     )
     private_prepared: _PreparedPrivateGradient | None = None
     if privacy is not None:
-        privacy_noise_key = jr.fold_in(master_key, _PRIVACY_NOISE_KEY_DOMAIN)
-        sampler_key = jr.fold_in(master_key, _PRIVACY_SAMPLER_KEY_DOMAIN)
-        sampler_seed = int(
-            jax.device_get(
-                jr.randint(
-                    sampler_key,
-                    (),
-                    minval=0,
-                    maxval=jnp.iinfo(jnp.int32).max,
-                    dtype=jnp.int32,
-                )
-            )
-        )
         private_prepared = _prepare_private_gradient(
             privacy,
-            noise_key=privacy_noise_key,
-            sampler_seed=sampler_seed,
+            noise_key=derive_key(root_key, _PRIVACY_NOISE_ADDRESS),
+            sampler_seed=_private_sampler_seed(root_key),
         )
     checkpoint = None if checkpoint_path is None else Path(checkpoint_path)
-    resume_manifest: dict[str, Any] | None = None
+    resume_metadata: dict[str, Any] | None = None
     resume_probe: tuple[int, int] | None = None
     if checkpoint is not None and resume and (checkpoint / "manifest.json").is_file():
-        resume_manifest, _ = _read_operator_training_manifest(checkpoint)
+        resume_metadata = read_training_checkpoint_metadata(
+            checkpoint, format=_FIT_CHECKPOINT_FORMAT
+        )
     current_data_contract = {
         "train_loader_fingerprint": raw_train_loader.fingerprint,
         "validation_loader_fingerprint": (
             None if raw_validation_loader is None else raw_validation_loader.fingerprint
         ),
     }
-    if resume_manifest is not None:
-        metadata = resume_manifest["metadata"]
+    if resume_metadata is not None:
+        metadata = resume_metadata
         data_contract = metadata.get("data_contract")
         if data_contract != current_data_contract:
             raise ValueError("Operator fit checkpoint data contract mismatch.")
@@ -1084,27 +1453,14 @@ def fit_operator(
         effective_parameter_dtypes = effective_subspace.leaf_dtypes
         effective_parameter_dimension = effective_subspace.total_dimension
 
-    def partition_fit_model(current_model):
-        if parameter_paths is None:
-            return partition_trainable(current_model)
-        current_subspace = ParameterSubspace.from_leaf_paths(
-            current_model,
-            parameter_paths,
-            alias_groups=effective_subspace.alias_groups,
-        )
-        if current_subspace.leaf_shapes != effective_parameter_shapes:
-            raise ValueError("Operator fit parameter-subspace shapes changed.")
-        if current_subspace.leaf_dtypes != effective_parameter_dtypes:
-            raise ValueError("Operator fit parameter-subspace dtypes changed.")
-        validate_low_rank_subspace(current_model, current_subspace)
-        return current_subspace.initial, current_subspace
+    training_tree = (
+        model
+        if parameter_paths is None
+        else SubspaceTrainingTree.from_subspace(effective_subspace)
+    )
 
-    def reconstruct_fit_model(current_parameters, current_fixed):
-        if parameter_paths is None:
-            return combine_trainable(current_parameters, current_fixed)
-        if not isinstance(current_fixed, ParameterSubspace):
-            raise TypeError("Low-rank fit fixed state must be ParameterSubspace.")
-        return current_fixed.reconstruct(current_parameters)
+    def fit_model(tree):
+        return tree.model() if isinstance(tree, SubspaceTrainingTree) else tree
 
     if normalization == "fit":
         if not isinstance(train, OperatorDataset):
@@ -1208,20 +1564,12 @@ def fit_operator(
                     "Validation fixed queries differ from the training discretization."
                 )
 
-    resolved_output_map = _resolve_output_map(
-        model,
-        first.targets,
-        output_field_map,
-        task,
-    )
     if loss_terms is None and not first.targets.fields:
         raise ValueError(
             "Targetless operator fitting requires explicit physics loss_terms."
         )
     terms = (
-        _default_losses(resolved_output_map, physical_names=task is not None)
-        if loss_terms is None
-        else specified_terms
+        _default_losses(model, output_routes) if loss_terms is None else specified_terms
     )
     if not terms:
         raise ValueError("fit_operator requires at least one operator loss term.")
@@ -1240,10 +1588,11 @@ def fit_operator(
         assert task is not None
         assert rollout_route is not None
         assert rollout_policy is not None
+        assert output_binding is not None
         _validate_rollout_route(
             rollout_route,
             task,
-            resolved_output_map,
+            *output_binding,
             physical_first,
         )
 
@@ -1277,12 +1626,13 @@ def fit_operator(
                 resolved_dtype,
             )
             return raw_prediction, raw_prediction
+        assert output_routes is not None
         return _evaluate_operator_step(
             evaluated_model,
             batch,
             physical_batch,
             task,
-            resolved_output_map,
+            output_routes,
             output_pipeline,
             resolved_normalization,
             resolved_dtype,
@@ -1294,10 +1644,10 @@ def fit_operator(
             inference_mode(model),
             first.batch,
             physical_first,
-            jr.key(seed),
+            derive_key(root_key, _PREFLIGHT_ADDRESS),
         )
 
-    parameters, fixed = partition_fit_model(model)
+    parameters = partition_parameters(training_tree)[0]
     if private_prepared is not None:
         assert privacy is not None
         parameter_arrays = tuple(
@@ -1313,6 +1663,7 @@ def fit_operator(
             raise ValueError(
                 "Every private trainable parameter must use the mechanism dtype."
             )
+    compression_record = None
     if optimizer_state_compression is not None:
         if not isinstance(
             optimizer_state_compression,
@@ -1321,48 +1672,29 @@ def fit_operator(
             raise TypeError(
                 "optimizer_state_compression must be OptimizerStateCompressionPolicy."
             )
-        optimizer = prepare_compressed_optimizer(
+        compressed = prepare_compressed_optimizer(
             optimizer,
             parameters,
             optimizer_state_compression,
             transformation_id=resolved_optimizer_id,
         )
-    optimizer_state = optimizer.init(parameters)
-    evaluated_parameters = resolve_evaluation_parameters(
-        evaluation_parameters,
-        optimizer_state,
-        parameters,
-    )
-    initial_target_parameters = (
-        evaluated_parameters
-        if isinstance(target_policy, ExponentialMovingAverageTargetPolicy)
-        and target_policy.source == "evaluation"
-        else parameters
-    )
-    target_state = (
-        None
-        if target_policy is None
-        else TargetParameterState.initialize(initial_target_parameters, target_policy)
-    )
-    evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
+        transformation_type = (
+            optax.GradientTransformationExtraArgs
+            if isinstance(optimizer, optax.GradientTransformationExtraArgs)
+            else optax.GradientTransformation
+        )
+        optimizer = transformation_type(compressed.init, compressed.update)
+        compression_record = {
+            "format": repr(optimizer_state_compression.format),
+            "block_axes": optimizer_state_compression.block_axes,
+            "exact_roles": optimizer_state_compression.exact_roles,
+            "overflow": optimizer_state_compression.overflow,
+        }
     reduction_dtype = jnp.dtype(resolved_dtype.reduction_dtype)
-    update_alignment_statistics = (
-        None
-        if update_alignment is None
-        else ConflictFreeUpdateStatistics.zeros(reduction_dtype)
-    )
-    gradient_accumulator = _GradientAccumulationState.empty(
-        parameters,
-        accumulation_dtype=reduction_dtype,
-    )
-    accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
     loss_scale_state = (
         OperatorLossScaleState(jnp.asarray(1.0, dtype=reduction_dtype))
         if loss_scale_policy is None
         else loss_scale_policy.initial_state(reduction_dtype)
-    )
-    privacy_noise_state = (
-        None if private_prepared is None else private_prepared.init_noise(parameters)
     )
 
     def loss_components(
@@ -1384,6 +1716,7 @@ def fit_operator(
         storage_model = current_model if training else inference_mode(current_model)
         evaluated_model = resolved_dtype.compute_model(storage_model)
         scanned = None
+        model_key = derive_key(key, _MODEL_ADDRESS)
         if rollout_terms:
             assert task is not None
             assert rollout_route is not None
@@ -1396,12 +1729,12 @@ def fit_operator(
                 rollout_route,
                 rollout_policy,
                 task,
-                resolved_output_map,
+                output_routes,
                 output_pipeline,
                 resolved_normalization,
                 resolved_dtype,
                 sharding_policy,
-                key,
+                model_key,
                 active_horizon=active_rollout_horizon,
             )
             (
@@ -1417,7 +1750,7 @@ def fit_operator(
                 evaluated_model,
                 batch,
                 physical_batch,
-                key,
+                model_key,
             )
         if target_model is None:
             target_execution_prediction = None
@@ -1430,7 +1763,7 @@ def fit_operator(
                 resolved_dtype.compute_model(inference_mode(target_model)),
                 batch,
                 physical_batch,
-                jr.fold_in(key, 991),
+                derive_key(key, _TARGET_MODEL_ADDRESS),
             )
         context = OperatorLossContext(
             execution_prediction=execution_prediction,
@@ -1448,7 +1781,7 @@ def fit_operator(
             target_physical_prediction=target_physical_prediction,
         )
 
-        def recurrent_contribution(term, term_index):
+        def recurrent_contribution(term):
             assert scanned is not None
             assert rollout_policy is not None
             assert rollout_route is not None
@@ -1526,9 +1859,14 @@ def fit_operator(
                         physical_step_prediction,
                         physical_step_batch,
                         empty_targets,
-                        key=jr.fold_in(
-                            jr.fold_in(key, _RESIDUAL_ROLLOUT_KEY_DOMAIN),
-                            term_index * int(rollout_policy.maximum_horizon) + depth,
+                        key=derive_key(
+                            key,
+                            SampleAddress(
+                                _FIT_OBJECTIVE_ID,
+                                "residual-rollout",
+                                target=(term.name,),
+                            ),
+                            depth,
                         ),
                         step=step,
                         training=training,
@@ -1551,7 +1889,7 @@ def fit_operator(
 
         term_contributions = tuple(
             (
-                recurrent_contribution(term, index)
+                recurrent_contribution(term)
                 if isinstance(
                     term,
                     (SupervisedOperatorRolloutLoss, ResidualOperatorRolloutLoss),
@@ -1561,16 +1899,18 @@ def fit_operator(
                     physical_prediction,
                     physical_batch,
                     physical_targets,
-                    key=jr.fold_in(
-                        jr.fold_in(key, _LOSS_TERM_KEY_DOMAIN),
-                        index,
+                    key=derive_key(
+                        key,
+                        SampleAddress(
+                            _FIT_OBJECTIVE_ID, "loss-term", target=(term.name,)
+                        ),
                     ),
                     step=step,
                     training=training,
                     context=context,
                 )
             )
-            for index, term in enumerate(terms)
+            for term in terms
         )
         attached = (
             tuple(
@@ -1580,7 +1920,7 @@ def fit_operator(
                 )
                 for value in model_loss_values(
                     evaluated_model,
-                    key=jr.fold_in(key, _MODEL_OBJECTIVE_KEY_DOMAIN),
+                    key=derive_key(key, _MODEL_LOSS_ADDRESS),
                     iter_=step,
                 )
             )
@@ -1604,362 +1944,348 @@ def fit_operator(
     _, private_physical_targets_static = eqx.partition(physical_targets, eqx.is_array)
     private_execution_schema = operator_fit_schema(first.batch, target=first.targets)
     private_physical_schema = operator_fit_schema(physical_first, target=physical_targets)
+    has_targets = target_policy is not None
 
-    def private_objective(
-        current_parameters,
-        target_parameters,
-        case_indices,
-        batch_arrays,
-        target_arrays,
-        physical_batch_arrays,
-        physical_target_arrays,
-        case_log_weights,
-        case_mask,
-        sampling_probabilities,
-        key,
-        step,
-        active_rollout_horizon,
-    ):
-        batch = eqx.combine(batch_arrays, private_batch_static)
-        targets = eqx.combine(target_arrays, private_targets_static)
-        physical_batch = eqx.combine(physical_batch_arrays, private_physical_batch_static)
-        physical_targets_ = eqx.combine(
-            physical_target_arrays, private_physical_targets_static
-        )
-        one_batch = slice_operator_batch(batch, case_indices, axis=0)
-        one_targets = targets.take(case_indices, axis=0)
-        one_physical_batch = slice_operator_batch(physical_batch, case_indices, axis=0)
-        one_physical_targets = physical_targets_.take(case_indices, axis=0)
-        current_model = reconstruct_fit_model(current_parameters, fixed)
+    def payload_models(parameters_, model_state, fixed, payload):
+        current_model = fit_model(combine_parameters(parameters_, model_state, fixed))
         target_model = (
-            reconstruct_fit_model(target_parameters, fixed)
-            if target_state is not None
-            else None
+            None
+            if payload.target_parameters is None
+            else fit_model(
+                combine_parameters(payload.target_parameters, model_state, fixed)
+            )
         )
-        total, _ = loss_components(
+        return current_model, target_model
+
+    def payload_components(parameters_, model_state, fixed, payload, key):
+        current_model, target_model = payload_models(
+            parameters_, model_state, fixed, payload
+        )
+        return loss_components(
             current_model,
             target_model,
-            one_batch,
-            one_targets,
-            one_physical_batch,
-            one_physical_targets,
-            jnp.take(case_log_weights, case_indices, axis=0),
-            jnp.take(case_mask, case_indices, axis=0),
-            jnp.take(sampling_probabilities, case_indices, axis=0),
+            payload.batch,
+            payload.targets,
+            payload.physical_batch,
+            payload.physical_targets,
+            payload.case_log_weights,
+            payload.case_mask,
+            payload.sampling_probabilities,
+            key,
+            payload.step,
+            payload.active_horizon,
+            training=True,
+        )
+
+    def contribution_diagnostics(total, components):
+        return {
+            "total": (total.numerator, total.support, total.log_scale),
+            "components": tuple(
+                (component.numerator, component.support, component.log_scale)
+                for component in components
+            ),
+        }
+
+    def direct_contribution(parameters_, model_state, fixed, payload, keys):
+        candidate = (
+            parameters_
+            if loss_scale_policy is None
+            else _loss_unscaled(loss_scale_policy, parameters_, payload.loss_scale)
+        )
+        total, components = payload_components(
+            candidate, model_state, fixed, payload, keys.attempt_key(_LOSS_KEY_SITE)
+        )
+        numerator = (
+            total.numerator
+            if loss_scale_policy is None
+            else _loss_scaled(loss_scale_policy, total.numerator, payload.loss_scale)
+        )
+        return (
+            _ObjectiveContribution(numerator, total.support, total.log_scale),
+            model_state,
+            contribution_diagnostics(total, components),
+        )
+
+    def component_contribution(parameters_, model_state, fixed, payload, keys):
+        key = keys.attempt_key(_LOSS_KEY_SITE)
+
+        def component_objective(candidate):
+            total, components = payload_components(
+                candidate, model_state, fixed, payload, key
+            )
+            values = jnp.stack(tuple(component.value for component in components))
+            active_ = jnp.stack(
+                tuple(component.support > 0.0 for component in components)
+            )
+            return (total.numerator, values), (
+                contribution_diagnostics(total, components),
+                active_,
+            )
+
+        (
+            (total_numerator, component_values),
+            pullback,
+            (diagnostics, active),
+        ) = eqx.filter_vjp(
+            component_objective,
+            jax.lax.stop_gradient(parameters_),
+            has_aux=True,
+        )
+        component_gradients = tuple(
+            pullback(
+                (
+                    jnp.zeros_like(total_numerator),
+                    jnp.zeros_like(component_values).at[index].set(1.0),
+                )
+            )[0]
+            for index in range(component_values.shape[0])
+        )
+        if gradient_composition is None:
+            direction = pullback(
+                (jnp.ones_like(total_numerator), jnp.zeros_like(component_values))
+            )[0]
+        else:
+            composition = conflict_free_gradient(
+                component_gradients,
+                active=active,
+                policy=gradient_composition,
+            )
+            direction = jax.tree.map(
+                lambda leaf: eqx.error_if(
+                    leaf,
+                    ~composition.successful,
+                    "Operator objectives do not admit a conflict-free direction.",
+                ),
+                composition.direction,
+            )
+        numerator, support, log_scale = diagnostics["total"]
+        return (
+            _ObjectiveContribution(
+                _prescribed_gradient(numerator, parameters_, direction),
+                support,
+                log_scale,
+            ),
+            model_state,
+            {
+                **diagnostics,
+                "component_gradients": component_gradients,
+                "active": active,
+            },
+        )
+
+    def private_contribution(parameters_, model_state, fixed, payload, keys):
+        assert private_prepared is not None
+
+        def private_objective(
+            current_parameters,
+            target_parameters,
+            case_indices,
+            batch_arrays,
+            target_arrays,
+            physical_batch_arrays,
+            physical_target_arrays,
+            case_log_weights,
+            case_mask,
+            sampling_probabilities,
             key,
             step,
             active_rollout_horizon,
-            training=True,
-        )
-        return total.numerator
+        ):
+            batch = eqx.combine(batch_arrays, private_batch_static)
+            targets = eqx.combine(target_arrays, private_targets_static)
+            physical_batch = eqx.combine(
+                physical_batch_arrays, private_physical_batch_static
+            )
+            physical_targets_ = eqx.combine(
+                physical_target_arrays, private_physical_targets_static
+            )
+            current_model = fit_model(
+                combine_parameters(current_parameters, model_state, fixed)
+            )
+            target_model = (
+                fit_model(combine_parameters(target_parameters, model_state, fixed))
+                if has_targets
+                else None
+            )
+            total, _ = loss_components(
+                current_model,
+                target_model,
+                slice_operator_batch(batch, case_indices, axis=0),
+                targets.take(case_indices, axis=0),
+                slice_operator_batch(physical_batch, case_indices, axis=0),
+                physical_targets_.take(case_indices, axis=0),
+                jnp.take(case_log_weights, case_indices, axis=0),
+                jnp.take(case_mask, case_indices, axis=0),
+                jnp.take(sampling_probabilities, case_indices, axis=0),
+                key,
+                step,
+                active_rollout_horizon,
+                training=True,
+            )
+            return total.numerator
 
-    private_clipped_gradient = (
-        None
-        if private_prepared is None
-        else private_prepared.clipped_grad(
+        clipped_gradient_fn = private_prepared.clipped_grad(
             private_objective,
             argnums=0,
             batch_argnums=2,
             keep_batch_dim=True,
             prng_argnum=10,
         )
+        padding = jnp.asarray(payload.is_padding_example, dtype=jnp.bool_)
+        real = ~padding
+        case_mask = eqx.error_if(
+            jnp.asarray(payload.case_mask, dtype=jnp.bool_),
+            jnp.any(real & ~jnp.asarray(payload.case_mask, dtype=jnp.bool_)),
+            "The initial private profile requires every sampled case active.",
+        )
+        case_log_weights = eqx.error_if(
+            jnp.asarray(payload.case_log_weights),
+            jnp.any(
+                real
+                & (
+                    ~jnp.isfinite(payload.case_log_weights)
+                    | (jnp.asarray(payload.case_log_weights) != 0.0)
+                )
+            ),
+            "The initial private profile requires uniform case weights.",
+        )
+        sampling_probabilities = eqx.error_if(
+            jnp.asarray(payload.sampling_probabilities),
+            jnp.any(
+                real
+                & (
+                    ~jnp.isfinite(payload.sampling_probabilities)
+                    | (jnp.asarray(payload.sampling_probabilities) != 1.0)
+                )
+            ),
+            "The private sampler owns inclusion probabilities.",
+        )
+        stopped = jax.lax.stop_gradient(parameters_)
+        clipped_gradient = clipped_gradient_fn(
+            stopped,
+            stopped if payload.target_parameters is None else payload.target_parameters,
+            jnp.arange(payload.batch.case_shape[0], dtype=jnp.int32),
+            eqx.filter(payload.batch, eqx.is_array),
+            eqx.filter(payload.targets, eqx.is_array),
+            eqx.filter(payload.physical_batch, eqx.is_array),
+            eqx.filter(payload.physical_targets, eqx.is_array),
+            case_log_weights,
+            case_mask,
+            sampling_probabilities,
+            keys.attempt_key(_LOSS_KEY_SITE),
+            payload.step,
+            payload.active_horizon,
+            is_padding_example=payload.is_padding_example,
+        )
+        gradient = private_prepared.privatize(
+            clipped_gradient, keys.attempt_key(_PRIVACY_NOISE_KEY_SITE)
+        )
+        zero = jnp.asarray(0.0, dtype=reduction_dtype)
+        one = jnp.asarray(1.0, dtype=reduction_dtype)
+        return (
+            _ObjectiveContribution(
+                _prescribed_gradient(zero, parameters_, gradient), one, zero
+            ),
+            model_state,
+            {
+                "total": (zero, one, zero),
+                "components": tuple((zero, one, zero) for _ in terms),
+            },
+        )
+
+    def operator_objective(parameters_, model_state, fixed, payload, keys):
+        if private_prepared is not None:
+            return private_contribution(parameters_, model_state, fixed, payload, keys)
+        if gradient_composition is not None or update_alignment is not None:
+            return component_contribution(parameters_, model_state, fixed, payload, keys)
+        return direct_contribution(parameters_, model_state, fixed, payload, keys)
+
+    rule_id = canonical_fingerprint(
+        {
+            "kind": "operator-fit-update-rule",
+            "optimizer_id": resolved_optimizer_id,
+            "optimizer_state_compression": compression_record,
+            "evaluation_parameters_id": resolved_evaluation_parameters_id,
+            "update_alignment": (
+                None if update_alignment is None else update_alignment.policy_id
+            ),
+        }
     )
-
-    def gradient_fn(
-        current_parameters,
-        target_parameters,
-        batch,
-        targets,
-        physical_batch,
-        physical_targets,
-        case_log_weights,
-        case_mask,
-        sampling_probabilities,
-        is_padding_example,
-        key,
-        step,
-        active_rollout_horizon,
-        loss_scale_state_,
-        privacy_noise_state_,
-    ):
-        if private_clipped_gradient is not None:
-            assert private_prepared is not None
-            padding = jnp.asarray(is_padding_example, dtype=jnp.bool_)
-            real = ~padding
-            case_mask = eqx.error_if(
-                jnp.asarray(case_mask, dtype=jnp.bool_),
-                jnp.any(real & ~jnp.asarray(case_mask, dtype=jnp.bool_)),
-                "The initial private profile requires every sampled case active.",
-            )
-            case_log_weights = eqx.error_if(
-                jnp.asarray(case_log_weights),
-                jnp.any(
-                    real
-                    & (
-                        ~jnp.isfinite(case_log_weights)
-                        | (jnp.asarray(case_log_weights) != 0.0)
-                    )
-                ),
-                "The initial private profile requires uniform case weights.",
-            )
-            sampling_probabilities = eqx.error_if(
-                jnp.asarray(sampling_probabilities),
-                jnp.any(
-                    real
-                    & (
-                        ~jnp.isfinite(sampling_probabilities)
-                        | (jnp.asarray(sampling_probabilities) != 1.0)
-                    )
-                ),
-                "The private sampler owns inclusion probabilities.",
-            )
-            batch_arrays, _ = eqx.partition(batch, eqx.is_array)
-            target_arrays, _ = eqx.partition(targets, eqx.is_array)
-            physical_batch_arrays, _ = eqx.partition(physical_batch, eqx.is_array)
-            physical_target_arrays, _ = eqx.partition(physical_targets, eqx.is_array)
-            case_indices = jnp.arange(batch.case_shape[0], dtype=jnp.int32)
-            clipped_gradient = private_clipped_gradient(
-                current_parameters,
-                target_parameters,
-                case_indices,
-                batch_arrays,
-                target_arrays,
-                physical_batch_arrays,
-                physical_target_arrays,
-                case_log_weights,
-                case_mask,
-                sampling_probabilities,
-                key,
-                step,
-                active_rollout_horizon,
-                is_padding_example=is_padding_example,
-            )
-            gradient, next_privacy_noise_state = private_prepared.privatize(
-                clipped_gradient,
-                privacy_noise_state_,
-            )
-            zero = jnp.asarray(0.0, dtype=reduction_dtype)
-            one = jnp.asarray(1.0, dtype=reduction_dtype)
-            total_arrays = (zero, one, zero)
-            component_arrays = tuple((zero, one, zero) for _ in terms)
-            finite = tree_all_finite(gradient)
-            return (
-                total_arrays,
-                component_arrays,
-                gradient,
-                (),
-                jnp.zeros((0,), dtype=jnp.bool_),
-                finite,
-                next_privacy_noise_state,
-            )
-
-        def objective(candidate):
-            current_model = reconstruct_fit_model(candidate, fixed)
-            target_model = (
-                reconstruct_fit_model(target_parameters, fixed)
-                if target_state is not None
-                else None
-            )
-            total, components = loss_components(
-                current_model,
-                target_model,
-                batch,
-                targets,
-                physical_batch,
-                physical_targets,
-                case_log_weights,
-                case_mask,
-                sampling_probabilities,
-                key,
-                step,
-                active_rollout_horizon,
-                training=True,
-            )
-            scaled = (
-                total.numerator
-                if loss_scale_policy is None
-                else loss_scale_policy.scale_loss(
-                    total.numerator,
-                    loss_scale_state_,
-                )
-            )
-            total_arrays = (total.numerator, total.support, total.log_scale)
-            component_arrays = tuple(
-                (component.numerator, component.support, component.log_scale)
-                for component in components
-            )
-            return scaled, (total_arrays, component_arrays)
-
-        if gradient_composition is None and update_alignment is None:
-            (_, (total_arrays, component_arrays)), gradient = eqx.filter_value_and_grad(
-                objective,
-                has_aux=True,
-            )(current_parameters)
-            if loss_scale_policy is not None:
-                gradient = loss_scale_policy.unscale_gradients(
-                    gradient,
-                    loss_scale_state_,
-                )
-            component_gradients = ()
-            active = jnp.zeros((0,), dtype=jnp.bool_)
-            composition_finite = jnp.asarray(True)
-        else:
-
-            def component_objective(candidate):
-                current_model = reconstruct_fit_model(candidate, fixed)
-                target_model = (
-                    reconstruct_fit_model(target_parameters, fixed)
-                    if target_state is not None
-                    else None
-                )
-                total, components = loss_components(
-                    current_model,
-                    target_model,
-                    batch,
-                    targets,
-                    physical_batch,
-                    physical_targets,
-                    case_log_weights,
-                    case_mask,
-                    sampling_probabilities,
-                    key,
-                    step,
-                    active_rollout_horizon,
-                    training=True,
-                )
-                values = jnp.stack(tuple(component.value for component in components))
-                total_arrays_ = (total.numerator, total.support, total.log_scale)
-                component_arrays_ = tuple(
-                    (component.numerator, component.support, component.log_scale)
-                    for component in components
-                )
-                active_ = jnp.stack(
-                    tuple(component.support > 0.0 for component in components)
-                )
-                return (total.numerator, values), (
-                    total_arrays_,
-                    component_arrays_,
-                    active_,
-                )
-
+    rule: AbstractKernelUpdateRule = (
+        OptaxUpdateRule(
+            optimizer, rule_id=rule_id, evaluation_parameters=evaluation_parameters
+        )
+        if update_alignment is None
+        else _AlignedOptaxUpdateRule(
+            optimizer=optimizer,
+            policy=update_alignment,
+            evaluation_view=evaluation_parameters,
+            rule_id=rule_id,
+            statistics_dtype=reduction_dtype.name,
+        )
+    )
+    kernel = None
+    kernel_state: TrainingKernelState | None = None
+    if _has_trainable_arrays(parameters):
+        kind, route = (
+            (ObjectiveKind.ROLLOUT, DerivativeRoute.UNROLLED)
+            if rollout_terms
+            else (ObjectiveKind.DATA_FIT, DerivativeRoute.DIRECT)
+        )
+        kernel = prepare_training_kernel(
+            training_tree,
             (
-                (total_numerator, component_values),
-                pullback,
-                auxiliary,
-            ) = eqx.filter_vjp(
-                component_objective,
-                current_parameters,
-                has_aux=True,
-            )
-            total_arrays, component_arrays, active = auxiliary
-            component_gradients = tuple(
-                pullback(
-                    (
-                        jnp.zeros_like(total_numerator),
-                        jnp.zeros_like(component_values).at[index].set(1.0),
-                    )
-                )[0]
-                for index in range(component_values.shape[0])
-            )
-            if gradient_composition is None:
-                gradient = pullback(
-                    (
-                        jnp.ones_like(total_numerator),
-                        jnp.zeros_like(component_values),
-                    )
-                )[0]
-                composition_finite = jnp.asarray(True)
-            else:
-                composition = conflict_free_gradient(
-                    component_gradients,
-                    active=active,
-                    policy=gradient_composition,
-                )
-                gradient = jax.tree.map(
-                    lambda leaf: eqx.error_if(
-                        leaf,
-                        ~composition.successful,
-                        "Operator objectives do not admit a conflict-free direction.",
-                    ),
-                    composition.direction,
-                )
-                composition_finite = composition.successful
-        finite = tree_all_finite(
-            (gradient, total_arrays, component_arrays, component_gradients)
-        )
-        finite = finite & composition_finite
-        if sharding_policy is not None:
-            finite = eqx.filter_shard(finite, sharding_policy.replicated)
-        return (
-            total_arrays,
-            component_arrays,
-            gradient,
-            component_gradients,
-            active,
-            finite,
-            privacy_noise_state_,
-        )
-
-    def update_fn(
-        current_parameters,
-        current_state,
-        gradient,
-        component_gradients,
-        active,
-    ):
-        updates, next_state = optimizer.update(
-            gradient,
-            current_state,
-            current_parameters,
-        )
-        alignment_result = None
-        gradient_conflict = None
-        constructed_conflict = None
-        if update_alignment is not None:
-            proposal = tree_negative(updates)
-            alignment_result = project_conflict_free_direction(
-                proposal,
-                component_gradients,
-                active=active,
-                policy=update_alignment,
-            )
-            aligned_updates = tree_negative(alignment_result.direction)
-            updates = tree_where(
-                alignment_result.projected,
-                aligned_updates,
-                updates,
-            )
-            updates = jax.tree.map(
-                lambda leaf: eqx.error_if(
-                    leaf,
-                    ~alignment_result.successful,
-                    "Operator optimizer proposal could not be aligned.",
+                KernelObjective(
+                    objective_id=_FIT_OBJECTIVE_ID,
+                    kind=kind,
+                    route=route,
+                    fn=_OperatorFitObjective(operator_objective),
                 ),
-                updates,
-            )
-            gradient_conflict, constructed_conflict = _alignment_conflicts(
-                component_gradients,
-                gradient,
-                alignment_result,
-                update_alignment,
-            )
-        next_parameters = eqx.apply_updates(current_parameters, updates)
-        finite = tree_all_finite((next_parameters, next_state))
-        if alignment_result is not None:
-            finite = finite & alignment_result.successful
-        if sharding_policy is not None:
-            finite = eqx.filter_shard(finite, sharding_policy.replicated)
-        return (
-            next_parameters,
-            next_state,
-            finite,
-            alignment_result,
-            gradient_conflict,
-            constructed_conflict,
+            ),
+            TrainingKernelSpec(
+                rule,
+                context="fit_operator",
+                rejection_budget=_loss_scale_rejection_budget(loss_scale_policy),
+                target_policy=target_policy,
+                accumulation_dtype=reduction_dtype,
+            ),
+            root_authority=ComponentAuthority.SURROGATE,
         )
+        kernel_state = kernel.init(training_tree, root_key)
+    elif checkpoint is not None:
+        raise ValueError("Checkpointed operator fits require trainable parameters.")
 
-    run_gradient_fn = eqx.filter_jit(gradient_fn) if jit else gradient_fn
-    run_update_fn = eqx.filter_jit(update_fn) if jit else update_fn
+    def evaluation_model_of(state):
+        if kernel is None:
+            return model
+        evaluated = kernel.rule.evaluation_parameters(state.rule_state, state.parameters)
+        return fit_model(combine_parameters(evaluated, state.model_state, kernel.fixed))
+
+    def target_model_of(state):
+        if not has_targets:
+            return None
+        return model if kernel is None else fit_model(kernel.target_tree(state))
+
+    def attempt(kernel_, state, payload):
+        return kernel_.attempt(state, payload)
+
+    def accumulate(kernel_, state, payload):
+        return kernel_.accumulate_with_diagnostics(state, payload)
+
+    run_attempt = eqx.filter_jit(attempt) if jit else attempt
+    run_accumulation = eqx.filter_jit(accumulate) if jit else accumulate
+    evaluation_model = evaluation_model_of(kernel_state)
+
+    def add_window_metrics(accumulators, diagnostics):
+        if private_prepared is not None:
+            return accumulators
+        contributions = (_ObjectiveContribution(*diagnostics["total"]),) + tuple(
+            _ObjectiveContribution(*component) for component in diagnostics["components"]
+        )
+        return [
+            accumulator.add(contribution)
+            for accumulator, contribution in zip(accumulators, contributions, strict=True)
+        ]
 
     def prepared_epoch(
         loader: OperatorBatchLoader,
@@ -2064,15 +2390,10 @@ def fit_operator(
             )
         )
 
-    def evaluate(current_model, loader: OperatorBatchLoader, step: int):
+    def evaluate(current_model, target_model, loader: OperatorBatchLoader, step: int):
         metric_accumulators = [_ObjectiveAccumulator() for _ in metric_names]
         batch_count = 0
         active_rollout_horizon = resolved_active_horizon(step)
-        target_model = (
-            reconstruct_fit_model(target_state.target, fixed)
-            if target_state is not None
-            else None
-        )
         for batch_index, training_batch in enumerate(prepared_epoch(loader, 0)):
             total, components = loss_components(
                 current_model,
@@ -2092,7 +2413,13 @@ def fit_operator(
                 training_batch.case_log_weights,
                 training_batch.case_mask,
                 training_batch.sampling_probabilities,
-                jr.fold_in(jr.fold_in(master_key, int(step)), 1000 + batch_index),
+                training_accepted_site_key(
+                    root_key,
+                    objective_id=_FIT_OBJECTIVE_ID,
+                    site=f"metrics/{loader.split}",
+                    accepted=int(step),
+                    microstep=batch_index,
+                ),
                 jnp.asarray(step, dtype=jnp.float64),
                 active_rollout_horizon,
                 training=False,
@@ -2143,7 +2470,6 @@ def fit_operator(
     )
     control = TrainingController(
         total_steps=maximum_steps,
-        key=master_key,
         algorithm_id="operator-training",
         progress=progress,
         session=iteration_session,
@@ -2159,7 +2485,9 @@ def fit_operator(
     fit_contract_data = {
         "model_contract": operator_contract_fingerprint(model.operator_contract),
         "task_fingerprint": None if task is None else task.fingerprint,
-        "output_field_map": resolved_output_map,
+        "port_binding": (
+            None if output_binding is None else _port_binding_record(*output_binding)
+        ),
         "loss_terms": [term.fingerprint for term in terms],
         "objective_aggregation": "numerator_support",
         "rollout_route": (None if rollout_route is None else asdict(rollout_route)),
@@ -2177,26 +2505,10 @@ def fit_operator(
                 "qualification_profile_id": (private_prepared.qualification_profile_id()),
             }
         ),
-        "key_domains": {
-            "rollout_model": _ROLLOUT_MODEL_KEY_DOMAIN,
-            "loss_term": _LOSS_TERM_KEY_DOMAIN,
-            "residual_rollout": _RESIDUAL_ROLLOUT_KEY_DOMAIN,
-            "model_objective": _MODEL_OBJECTIVE_KEY_DOMAIN,
-            "privacy_noise": _PRIVACY_NOISE_KEY_DOMAIN,
-            "privacy_sampler": _PRIVACY_SAMPLER_KEY_DOMAIN,
-        },
+        "key_sites": _FIT_KEY_SITES,
         "optimizer_id": resolved_optimizer_id,
         "target_policy": (None if target_policy is None else asdict(target_policy)),
-        "optimizer_state_compression": (
-            None
-            if optimizer_state_compression is None
-            else {
-                "format": repr(optimizer_state_compression.format),
-                "block_axes": optimizer_state_compression.block_axes,
-                "exact_roles": optimizer_state_compression.exact_roles,
-                "overflow": optimizer_state_compression.overflow,
-            }
-        ),
+        "optimizer_state_compression": compression_record,
         "gradient_accumulation": int(gradient_accumulation),
         "parameter_subspace": (
             None
@@ -2258,124 +2570,81 @@ def fit_operator(
     if resolved_evaluation_parameters_id is not None:
         fit_contract_data["evaluation_parameters_id"] = resolved_evaluation_parameters_id
     fit_contract = _canonical_json(fit_contract_data)
+    sharding_identity = (
+        None
+        if sharding_policy is None
+        else canonical_fingerprint(fit_contract["sharding"])
+    )
     schema = {
         "fit": operator_fit_schema(first.batch, target=first.targets),
     }
+    expected_privacy_classification = None if private_prepared is None else "restricted"
 
     initial_metrics: dict[str, float]
-    if resume_manifest is not None:
+    if resume_metadata is not None:
         assert checkpoint is not None
-        if resume_manifest["metadata"].get("fit_contract") != fit_contract:
+        assert kernel is not None and kernel_state is not None
+        if resume_metadata.get("fit_contract") != fit_contract:
             raise ValueError("Operator fit checkpoint contract mismatch.")
-        if private_prepared is not None:
-            state_template = (
-                optimizer_state,
-                loss_scale_state,
-                target_state,
-                private_prepared.checkpoint_noise_state(privacy_noise_state),
-                jnp.asarray(private_prepared.sampler_seed, dtype=jnp.uint32),
-            )
-        elif update_alignment is None:
-            state_template = (optimizer_state, loss_scale_state, target_state)
-        else:
-            state_template = (
-                optimizer_state,
-                loss_scale_state,
-                target_state,
-                update_alignment_statistics,
-            )
-        restored = load_operator_training_checkpoint(
+        loaded = load_training_checkpoint(
             checkpoint,
-            (model, best_model),
-            state_template,
-            expected_schema=schema,
+            kernel,
+            kernel_state,
+            (best_model, loss_scale_state),
+            format=_FIT_CHECKPOINT_FORMAT,
+            sharding_identity=sharding_identity,
         )
-        if restored.metadata["fit_contract"] != fit_contract:
+        metadata = loaded.metadata
+        if metadata.get("fit_contract") != fit_contract:
             raise ValueError("Operator fit checkpoint contract mismatch.")
-        model, best_model = restored.model
-        if private_prepared is not None:
-            (
-                optimizer_state,
-                loss_scale_state,
-                target_state,
-                privacy_noise_checkpoint,
-                restored_sampler_seed,
-            ) = restored.optimizer_state
-            privacy_noise_state = private_prepared.restore_noise_state(
-                privacy_noise_checkpoint
-            )
-            private_prepared = replace(
-                private_prepared,
-                sampler_seed=int(jax.device_get(restored_sampler_seed)),
-            )
-        elif update_alignment is None:
-            optimizer_state, loss_scale_state, target_state = restored.optimizer_state
-        else:
-            (
-                optimizer_state,
-                loss_scale_state,
-                target_state,
-                update_alignment_statistics,
-            ) = restored.optimizer_state
-            if not isinstance(
-                update_alignment_statistics,
-                ConflictFreeUpdateStatistics,
-            ):
-                raise ValueError(
-                    "Operator checkpoint update-alignment statistics are invalid."
-                )
-        metadata = restored.metadata
-        if metadata.get("update_boundary") is not True:
-            raise ValueError(
-                "Operator fit checkpoints must publish at optimizer-update boundaries."
-            )
-        expected_privacy_classification = (
-            None if private_prepared is None else "restricted"
-        )
+        if metadata.get("schema") != schema:
+            raise ValueError("Operator fit checkpoint schema mismatch.")
         if metadata.get("privacy_classification") != expected_privacy_classification:
             raise ValueError("Operator checkpoint privacy classification changed.")
+        kernel_state = loaded.restored.state
+        best_model, loss_scale_state = loaded.extra
         progress = TrainingProgress(**metadata["progress"])
-        if progress.update_step != restored.step:
+        if progress.update_step != int(jax.device_get(kernel_state.accepted_cursor)):
             raise ValueError("Checkpoint progress disagrees with its update step.")
         if progress.update_step > maximum_steps:
             raise ValueError("Checkpoint step exceeds the requested training ceiling.")
+        root_key = kernel_state.root_key
+        if private_prepared is not None:
+            private_prepared = replace(
+                private_prepared, sampler_seed=_private_sampler_seed(root_key)
+            )
         control = TrainingController(
             total_steps=maximum_steps,
-            key=restored.key,
             algorithm_id="operator-training",
             progress=progress,
             session=iteration_session,
         )
-        master_key = restored.key
         control.best_payload = best_model
         train_steps = [int(value) for value in metadata["train_steps"]]
-        train_history = [dict(values) for values in metadata["train_metrics"]]
+        train_history = [_decode_metrics(values) for values in metadata["train_metrics"]]
         validation_steps = [int(value) for value in metadata["validation_steps"]]
-        validation_history = [dict(values) for values in metadata["validation_metrics"]]
-        initial_metrics = dict(metadata["initial_metrics"])
+        validation_history = [
+            _decode_metrics(values) for values in metadata["validation_metrics"]
+        ]
+        initial_metrics = _decode_metrics(metadata["initial_metrics"])
         prior_training_seconds = float(metadata["training_seconds"])
         resumed_from_step = progress.update_step
-        parameters, fixed = partition_fit_model(model)
-        gradient_accumulator = _GradientAccumulationState.empty(
-            parameters,
-            accumulation_dtype=reduction_dtype,
-        )
-        accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
-        evaluated_parameters = resolve_evaluation_parameters(
-            evaluation_parameters,
-            optimizer_state,
-            parameters,
-        )
-        evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
+        evaluation_model = evaluation_model_of(kernel_state)
     else:
         initial_metrics = (
             {}
             if private_prepared is not None
-            else evaluate(evaluation_model, raw_train_loader, 0)
+            else evaluate(
+                evaluation_model,
+                target_model_of(kernel_state),
+                raw_train_loader,
+                0,
+            )
         )
         if raw_validation_loader is not None:
             validation_metrics = evaluate(
                 evaluation_model,
+                target_model_of(kernel_state),
                 raw_validation_loader,
                 0,
             )
@@ -2393,9 +2662,13 @@ def fit_operator(
             )
             control.best_payload = evaluation_model
 
+    # Checkpoints publish accepted-update boundaries (or the untouched start) only.
+    at_accepted_boundary = True
+
     def save_progress(training_seconds: float, *, emit_event: bool = True) -> None:
-        if checkpoint is None or not gradient_accumulator.is_empty:
+        if checkpoint is None or not at_accepted_boundary:
             return
+        assert kernel is not None and kernel_state is not None
         primary = sharding_policy is None or sharding_policy.is_primary_process
         if not primary:
             sharding_policy.synchronize(
@@ -2407,45 +2680,26 @@ def fit_operator(
                 TrainingIterationKind.CHECKPOINT,
                 metrics={"step": control.progress.update_step},
             )
-        if private_prepared is not None:
-            checkpoint_state = (
-                optimizer_state,
-                loss_scale_state,
-                target_state,
-                private_prepared.checkpoint_noise_state(privacy_noise_state),
-                jnp.asarray(private_prepared.sampler_seed, dtype=jnp.uint32),
-            )
-        elif update_alignment is None:
-            checkpoint_state = (optimizer_state, loss_scale_state, target_state)
-        else:
-            checkpoint_state = (
-                optimizer_state,
-                loss_scale_state,
-                target_state,
-                update_alignment_statistics,
-            )
-        save_operator_training_checkpoint(
+        save_training_checkpoint(
             checkpoint,
-            (model, best_model),
-            checkpoint_state,
-            step=control.progress.update_step,
-            key=master_key,
-            normalization=resolved_normalization,
-            dtype_policy=resolved_dtype,
-            schema=schema,
+            build_training_checkpoint(
+                kernel, kernel_state, sharding_identity=sharding_identity
+            ),
+            (best_model, loss_scale_state),
+            format=_FIT_CHECKPOINT_FORMAT,
             metadata={
                 "fit_contract": fit_contract,
                 "data_contract": current_data_contract,
+                "schema": schema,
                 "progress": asdict(control.progress),
-                "update_boundary": True,
-                "privacy_classification": (
-                    None if private_prepared is None else "restricted"
-                ),
-                "initial_metrics": initial_metrics,
+                "privacy_classification": expected_privacy_classification,
+                "initial_metrics": _encode_metrics(initial_metrics),
                 "train_steps": train_steps,
-                "train_metrics": train_history,
+                "train_metrics": [_encode_metrics(values) for values in train_history],
                 "validation_steps": validation_steps,
-                "validation_metrics": validation_history,
+                "validation_metrics": [
+                    _encode_metrics(values) for values in validation_history
+                ],
                 "training_seconds": float(training_seconds),
             },
         )
@@ -2487,7 +2741,10 @@ def fit_operator(
     stopped_by_signal = False
     control.emit(TrainingIterationKind.RUN_START, metrics=initial_metrics)
     with logger_context as tensorboard, TrainingSignalGuard() as signal_guard:
-        if not control.progress.stopped_early and _has_trainable_arrays(parameters):
+        if not control.progress.stopped_early and kernel is not None:
+            assert kernel_state is not None
+            window_microsteps = 0
+            window_metrics = [_ObjectiveAccumulator() for _ in metric_names]
             for epoch in range(control.progress.epoch, int(epochs)):
                 if control.stop_requested or signal_guard.stop_requested:
                     break
@@ -2506,63 +2763,87 @@ def fit_operator(
                         break
                     if control.stop_requested or signal_guard.stop_requested:
                         break
-                    key = control.key_for(control.progress.microstep, site=0)
-                    (
-                        total,
-                        components,
-                        gradient,
-                        component_gradients,
-                        component_active,
-                        finite_array,
-                        next_privacy_noise_state,
-                    ) = run_gradient_fn(
-                        parameters,
-                        (target_state.target if target_state is not None else parameters),
-                        training_batch.batch,
-                        training_batch.targets,
-                        (
+                    update_step = control.progress.update_step + 1
+                    payload = _OperatorFitPayload(
+                        batch=training_batch.batch,
+                        targets=training_batch.targets,
+                        physical_batch=(
                             training_batch.batch
                             if training_batch.physical_batch is None
                             else training_batch.physical_batch
                         ),
-                        (
+                        physical_targets=(
                             training_batch.targets
                             if training_batch.physical_targets is None
                             else training_batch.physical_targets
                         ),
-                        training_batch.case_log_weights,
-                        training_batch.case_mask,
-                        training_batch.sampling_probabilities,
-                        training_batch.is_padding_example,
-                        key,
-                        jnp.asarray(control.progress.update_step + 1, dtype=jnp.float64),
-                        resolved_active_horizon(control.progress.update_step + 1),
-                        loss_scale_state,
-                        privacy_noise_state,
+                        case_log_weights=training_batch.case_log_weights,
+                        case_mask=training_batch.case_mask,
+                        sampling_probabilities=training_batch.sampling_probabilities,
+                        is_padding_example=training_batch.is_padding_example,
+                        step=jnp.asarray(update_step, dtype=jnp.float64),
+                        target_parameters=(
+                            None
+                            if kernel_state.targets is None
+                            else kernel_state.targets.target
+                        ),
+                        loss_scale=(
+                            None if loss_scale_policy is None else loss_scale_state.scale
+                        ),
+                        active_horizon=resolved_active_horizon(update_step),
                     )
-                    privacy_noise_state = next_privacy_noise_state
-                    total_contribution = _ObjectiveContribution(*total)
-                    component_contributions = tuple(
-                        _ObjectiveContribution(*component) for component in components
-                    )
-                    contributions = (total_contribution,) + component_contributions
-                    finite = bool(jax.device_get(finite_array))
                     control.progress = replace(
                         control.progress,
                         microstep=control.progress.microstep + 1,
                         next_batch_index=training_batch.batch_index + 1,
                     )
-                    if not finite:
-                        gradient_accumulator = _GradientAccumulationState.empty(
-                            parameters,
-                            accumulation_dtype=reduction_dtype,
+                    window_microsteps += 1
+                    at_accepted_boundary = False
+                    if (
+                        window_microsteps < int(gradient_accumulation)
+                        and training_batch.batch_index + 1 < batches_per_training_epoch
+                    ):
+                        kernel_state, diagnostics = run_accumulation(
+                            kernel, kernel_state, payload
                         )
-                        accumulated_metrics = [
-                            _ObjectiveAccumulator() for _ in metric_names
-                        ]
+                        window_metrics = add_window_metrics(
+                            window_metrics, diagnostics[0]
+                        )
+                        continue
+                    kernel_state, attempt_evidence = run_attempt(
+                        kernel, kernel_state, payload
+                    )
+                    closed_metrics = add_window_metrics(
+                        window_metrics, attempt_evidence.diagnostics[0]
+                    )
+                    window_microsteps = 0
+                    window_metrics = [_ObjectiveAccumulator() for _ in metric_names]
+                    outcome_array, supported, consecutive, attempt_cursor = (
+                        jax.device_get(
+                            (
+                                attempt_evidence.outcome,
+                                attempt_evidence.supported,
+                                kernel_state.consecutive_rejections,
+                                kernel_state.attempt_cursor,
+                            )
+                        )
+                    )
+                    outcome = TrainingAttemptOutcome(int(outcome_array))
+                    if outcome is TrainingAttemptOutcome.REJECTED_FINITE:
+                        # Optax rules accept every finite proposal, so a supported
+                        # finite rejection is a nonfinite update from a finite
+                        # evaluation; an unsupported window is skipped.
+                        if bool(supported):
+                            raise FloatingPointError(
+                                "Operator optimizer produced non-finite state from "
+                                "finite gradients; the update was rolled back."
+                            )
+                        continue
+                    if outcome is TrainingAttemptOutcome.NONFINITE:
                         if loss_scale_policy is None or not loss_scale_policy.dynamic:
                             raise FloatingPointError(
-                                "Non-finite operator loss or gradient encountered."
+                                "Non-finite operator loss or gradient encountered; "
+                                "the update was rolled back."
                             )
                         loss_scale_state = loss_scale_policy.on_nonfinite_microstep(
                             loss_scale_state
@@ -2578,72 +2859,19 @@ def fit_operator(
                                 ),
                             },
                         )
+                        try:
+                            enforce_rejection_budget(
+                                kernel, outcome_array, consecutive, attempt_cursor
+                            )
+                        except TrainingRejectionBudgetError as error:
+                            raise FloatingPointError(
+                                "Non-finite operator loss or gradient persists at the "
+                                "minimum loss scale; the fit was rolled back to its "
+                                "last accepted update."
+                            ) from error
                         continue
-                    gradient_accumulator = gradient_accumulator.add(
-                        gradient,
-                        total_contribution,
-                    )
-                    accumulated_metrics = [
-                        accumulator.add(contribution)
-                        for accumulator, contribution in zip(
-                            accumulated_metrics,
-                            contributions,
-                            strict=True,
-                        )
-                    ]
-                    if (
-                        gradient_accumulator.microsteps < int(gradient_accumulation)
-                        and training_batch.batch_index + 1 < batches_per_training_epoch
-                    ):
-                        continue
-                    if not bool(
-                        jax.device_get(gradient_accumulator.has_positive_support)
-                    ):
-                        gradient_accumulator = _GradientAccumulationState.empty(
-                            parameters,
-                            accumulation_dtype=reduction_dtype,
-                        )
-                        accumulated_metrics = [
-                            _ObjectiveAccumulator() for _ in metric_names
-                        ]
-                        continue
-
-                    averaged_gradient = gradient_accumulator.normalized_gradient(
-                        parameters
-                    )
-                    (
-                        candidate_parameters,
-                        candidate_optimizer_state,
-                        candidate_finite_array,
-                        update_alignment_result,
-                        gradient_conflict,
-                        constructed_conflict,
-                    ) = run_update_fn(
-                        parameters,
-                        optimizer_state,
-                        averaged_gradient,
-                        component_gradients,
-                        component_active,
-                    )
-                    if not bool(jax.device_get(candidate_finite_array)):
-                        raise FloatingPointError(
-                            "Operator optimizer produced non-finite state from finite gradients."
-                        )
-                    parameters = candidate_parameters
-                    optimizer_state = candidate_optimizer_state
-                    model = reconstruct_fit_model(parameters, fixed)
-                    update_step = control.progress.update_step + 1
+                    at_accepted_boundary = True
                     control.complete_update(update_step)
-                    if target_state is not None:
-                        target_state = target_state.update(
-                            parameters,
-                            accepted=True,
-                            evaluation_parameters=resolve_evaluation_parameters(
-                                evaluation_parameters,
-                                optimizer_state,
-                                parameters,
-                            ),
-                        )
                     metrics = (
                         {}
                         if private_prepared is not None
@@ -2651,93 +2879,15 @@ def fit_operator(
                             name: float(jax.device_get(accumulator.value))
                             for name, accumulator in zip(
                                 metric_names,
-                                accumulated_metrics,
+                                closed_metrics,
                                 strict=True,
                             )
                         }
                     )
-                    if update_alignment_result is not None:
-                        if update_alignment_statistics is None:
-                            raise RuntimeError(
-                                "Operator update-alignment statistics are missing."
-                            )
-                        update_alignment_statistics = update_alignment_statistics.update(
-                            update_alignment_result,
-                            gradient_conflict=gradient_conflict,
-                            constructed_conflict=constructed_conflict,
-                        )
-                        metrics.update(
-                            {
-                                "update_alignment/raw_conflict": float(
-                                    jax.device_get(
-                                        jnp.any(update_alignment_result.raw_conflicts)
-                                    )
-                                ),
-                                "update_alignment/applied_conflict": float(
-                                    jax.device_get(
-                                        jnp.any(update_alignment_result.aligned_conflicts)
-                                    )
-                                ),
-                                "update_alignment/projected": float(
-                                    jax.device_get(update_alignment_result.projected)
-                                ),
-                                "update_alignment/relative_correction": float(
-                                    jax.device_get(
-                                        update_alignment_result.relative_correction
-                                    )
-                                ),
-                                "update_alignment/metric_correction_norm": float(
-                                    jax.device_get(
-                                        update_alignment_result.metric_correction_norm
-                                    )
-                                ),
-                                "update_alignment/active_constraints": float(
-                                    jax.device_get(
-                                        update_alignment_result.active_constraint_count
-                                    )
-                                ),
-                                "update_alignment/pareto_stationary": float(
-                                    jax.device_get(
-                                        update_alignment_result.pareto_stationary
-                                    )
-                                ),
-                                "update_alignment/kkt_residual": float(
-                                    jax.device_get(
-                                        update_alignment_result.kkt_residual_norm
-                                    )
-                                ),
-                                "update_alignment/status": float(
-                                    jax.device_get(update_alignment_result.status)
-                                ),
-                                "update_alignment/gradient_conflict_rate": float(
-                                    jax.device_get(
-                                        update_alignment_statistics.gradient_conflict_rate
-                                    )
-                                ),
-                                "update_alignment/constructed_conflict_rate": float(
-                                    jax.device_get(
-                                        update_alignment_statistics.constructed_conflict_rate
-                                    )
-                                ),
-                                "update_alignment/proposal_conflict_rate": float(
-                                    jax.device_get(
-                                        update_alignment_statistics.proposal_conflict_rate
-                                    )
-                                ),
-                                "update_alignment/applied_conflict_rate": float(
-                                    jax.device_get(
-                                        update_alignment_statistics.applied_conflict_rate
-                                    )
-                                ),
-                            }
-                        )
+                    if update_alignment is not None:
+                        metrics.update(_alignment_metrics(kernel_state.rule_state))
                     train_steps.append(update_step)
                     train_history.append(metrics)
-                    gradient_accumulator = _GradientAccumulationState.empty(
-                        parameters,
-                        accumulation_dtype=reduction_dtype,
-                    )
-                    accumulated_metrics = [_ObjectiveAccumulator() for _ in metric_names]
                     if loss_scale_policy is not None:
                         loss_scale_state = loss_scale_policy.on_finite_update(
                             loss_scale_state
@@ -2759,17 +2909,10 @@ def fit_operator(
                         and validation_config is not None
                         and update_step % int(validation_config.every) == 0
                     ):
-                        evaluated_parameters = resolve_evaluation_parameters(
-                            evaluation_parameters,
-                            optimizer_state,
-                            parameters,
-                        )
-                        evaluation_model = reconstruct_fit_model(
-                            evaluated_parameters,
-                            fixed,
-                        )
+                        evaluation_model = evaluation_model_of(kernel_state)
                         validation_metrics = evaluate(
                             evaluation_model,
+                            target_model_of(kernel_state),
                             raw_validation_loader,
                             update_step,
                         )
@@ -2810,12 +2953,7 @@ def fit_operator(
         stopped_by_signal = signal_guard.stop_requested
 
     training_seconds = prior_training_seconds + time.perf_counter() - started
-    evaluated_parameters = resolve_evaluation_parameters(
-        evaluation_parameters,
-        optimizer_state,
-        parameters,
-    )
-    evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
+    evaluation_model = evaluation_model_of(kernel_state)
     if (
         raw_validation_loader is not None
         and validation_config is not None
@@ -2823,6 +2961,7 @@ def fit_operator(
     ):
         validation_metrics = evaluate(
             evaluation_model,
+            target_model_of(kernel_state),
             raw_validation_loader,
             control.progress.update_step,
         )
@@ -2839,6 +2978,7 @@ def fit_operator(
         if private_prepared is not None
         else evaluate(
             selected_model,
+            target_model_of(kernel_state),
             raw_train_loader,
             control.progress.update_step,
         )
@@ -2858,7 +2998,8 @@ def fit_operator(
             selected_model,
             task,
             training_evidence=evidence,
-            output_field_map=resolved_output_map,
+            output_ports=output_ports,
+            port_mapping=port_mapping,
             fixed_query_fingerprints=fixed_query_fingerprints,
             output_pipeline=output_pipeline,
             normalization=resolved_normalization,
@@ -2881,7 +3022,7 @@ def fit_operator(
         execution_model=selected_model,
         last_execution_model=evaluation_model,
         trained_operator=trained,
-        output_field_map=frozendict(resolved_output_map),
+        port_binding=None if output_binding is None else output_binding[1],
         output_pipeline=output_pipeline,
         history=history,
         normalization=resolved_normalization,
@@ -2892,7 +3033,11 @@ def fit_operator(
         resumed_from_step=resumed_from_step,
         training_seconds=training_seconds,
         checkpoint_path=checkpoint,
-        update_alignment_statistics=update_alignment_statistics,
+        update_alignment_statistics=(
+            None
+            if update_alignment is None or kernel_state is None
+            else kernel_state.rule_state.statistics
+        ),
         privacy_certificate=privacy_certificate,
         stopped_by_signal=stopped_by_signal,
         stopped_by_host_control=control.stop_requested

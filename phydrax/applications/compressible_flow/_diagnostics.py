@@ -15,7 +15,7 @@ import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field
 from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
@@ -63,7 +63,7 @@ class CompressibleBudget(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-class CompressibleBudgetPlan(StrictModule, NonTrainableState):
+class CompressibleBudgetPlan(StrictModule):
     """Conservative compressible totals and a complete named work ledger."""
 
     system: (
@@ -355,13 +355,13 @@ class CompressiblePlaneStatistics(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
+class CompressiblePlaneStatisticsPlan(StrictModule):
     """Plane Reynolds/Favre statistics, mode split, and wall thermal units."""
 
     system: (
         HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem
     )
-    wall_normal_coordinates: Array | None
+    wall_normal_coordinates: Array | None = fixed_field()
     dimension: int = eqx.field(static=True)
     species_count: int = eqx.field(static=True)
     wall_normal_axis: int | None = eqx.field(static=True)

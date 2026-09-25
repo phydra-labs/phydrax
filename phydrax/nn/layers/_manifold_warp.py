@@ -15,7 +15,9 @@ from jaxtyping import Array, Key
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey
 from ._linear import Linear
 
@@ -63,7 +65,7 @@ def sphere_retraction(points: Array, tangent: Array, /) -> Array:
     )
 
 
-class ManifoldMultiheadWarp(StrictModule):
+class ManifoldMultiheadWarp(StrictModule, ParameterOwner):
     """Learned tangent-space multihead warp on aligned manifold samples.
 
     The caller supplies the manifold's tangent projector and retraction. Sampling
@@ -178,7 +180,7 @@ class ManifoldMultiheadWarp(StrictModule):
             )
         case_shape = tuple(field.shape[:-2])
         count = field.shape[-2]
-        geometry = jnp.asarray(points, dtype=jnp.result_type(field.dtype, jnp.float64))
+        geometry = jnp.asarray(points, dtype=inexact_result_type(field.dtype))
         if geometry.shape == (count, self.ambient_dim):
             geometry = jnp.broadcast_to(
                 geometry,

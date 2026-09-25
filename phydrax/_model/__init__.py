@@ -11,6 +11,22 @@ from ._artifacts import (
     register_operator_architecture_codec,
 )
 from ._binding import ModelBatchMode, ModelBinding, ModelInputMode
+from ._component import (
+    AbstractComponentSlot,
+    admit_randomness,
+    bind_component,
+    CertificateRecord,
+    ComponentBinding,
+    ComponentContract,
+    ComponentPrecisionContract,
+    ComponentSlotContract,
+    ExecutionCapabilities,
+    ExecutionTier,
+    ModelExecutionContract,
+    RandomnessContract,
+    RandomnessMode,
+    supports_derivative,
+)
 from ._frozen import FrozenModel
 from ._kfac import KFACAffineBlock, KFACLayoutProvider
 from ._objectives import (
@@ -19,13 +35,25 @@ from ._objectives import (
     model_objective_values,
     ModelObjectiveProvider,
 )
+from ._ports import (
+    ModelPorts,
+    PortBindingEvidence,
+    PortMapping,
+    PortProvider,
+    PortVariance,
+    resolve_port_mapping,
+    ValuePort,
+)
 from ._protocols import (
     AxisModelEvaluator,
+    INPUT_CONVEX_CERTIFICATE_KEY,
     MODEL_CONSTRUCTION_CERTIFICATE_KEYS,
     ModelEvaluator,
     ModelMetadataProvider,
     StructuredDerivativeProvider,
+    TRIAL_SPACE_CERTIFICATE_KEY,
 )
+from ._realization import FrozenRealization
 from ._structure import (
     deserialize_model_leaf,
     model_from_structure_recipe,
@@ -36,6 +64,20 @@ from ._structure import (
 
 __all__ = [
     "AbstractArrayModel",
+    "AbstractComponentSlot",
+    "admit_randomness",
+    "bind_component",
+    "CertificateRecord",
+    "ComponentBinding",
+    "ComponentContract",
+    "ComponentPrecisionContract",
+    "ComponentSlotContract",
+    "ExecutionCapabilities",
+    "ExecutionTier",
+    "ModelExecutionContract",
+    "RandomnessContract",
+    "RandomnessMode",
+    "supports_derivative",
     "AxisModelEvaluator",
     "artifact_value",
     "artifact_value_id",
@@ -46,13 +88,16 @@ __all__ = [
     "register_artifact_value",
     "register_operator_architecture_codec",
     "iter_model_objective_providers",
+    "INPUT_CONVEX_CERTIFICATE_KEY",
     "KFACAffineBlock",
     "FrozenModel",
+    "FrozenRealization",
     "KFACLayoutProvider",
     "ModelBatchMode",
     "MODEL_CONSTRUCTION_CERTIFICATE_KEYS",
     "ModelBinding",
     "ModelEvaluator",
+    "ModelPorts",
     "ModelMetadataProvider",
     "ModelObjectiveProvider",
     "model_objective_labels",
@@ -60,6 +105,13 @@ __all__ = [
     "model_structure_recipe",
     "model_objective_values",
     "ModelInputMode",
+    "PortBindingEvidence",
+    "PortMapping",
+    "PortProvider",
+    "PortVariance",
+    "resolve_port_mapping",
     "serialize_model_leaf",
     "StructuredDerivativeProvider",
+    "TRIAL_SPACE_CERTIFICATE_KEY",
+    "ValuePort",
 ]

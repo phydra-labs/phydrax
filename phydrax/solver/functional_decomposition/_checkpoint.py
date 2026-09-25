@@ -38,8 +38,8 @@ def save_functional_decomposition_checkpoint(
         raise ValueError(
             "Joint decomposition uses FunctionalTrainingCheckpoint through its underlying FunctionalSolver."
         )
-    if len(state.optimizer_states) != len(prepared.problem.cover.patches):
-        raise ValueError("Checkpoint optimizer-state count does not match the cover.")
+    if len(state.kernel_states) != len(prepared.problem.cover.patches):
+        raise ValueError("Checkpoint kernel-state count does not match the cover.")
 
     destination = Path(path)
     state_path, checksum = _publish_state(
@@ -59,6 +59,7 @@ def save_functional_decomposition_checkpoint(
         "plan_id": prepared.plan.plan_id,
         "completed_sweeps": state.completed_sweeps,
         "strategy": state.strategy,
+        "kernel_checkpoint_ids": list(state.kernel_checkpoint_ids),
         "accepted_sweep_boundary": True,
     }
     _publish_manifest(destination / "manifest.json", manifest)
@@ -88,6 +89,7 @@ def load_functional_decomposition_checkpoint(
         "plan_id",
         "completed_sweeps",
         "strategy",
+        "kernel_checkpoint_ids",
         "accepted_sweep_boundary",
     }
     if not isinstance(manifest, dict):
@@ -110,6 +112,10 @@ def load_functional_decomposition_checkpoint(
         raise ValueError("Decomposition checkpoint plan identity mismatch.")
     if manifest["strategy"] != state_like.strategy:
         raise ValueError("Decomposition checkpoint strategy mismatch.")
+    if manifest["kernel_checkpoint_ids"] != list(state_like.kernel_checkpoint_ids):
+        raise ValueError(
+            "Decomposition checkpoint patch kernel identities do not match state_like."
+        )
     state_name = manifest["state_file"]
     with _open_verified_state(
         source,

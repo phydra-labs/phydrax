@@ -8,7 +8,6 @@ import math
 from collections.abc import Callable
 from typing import Literal
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
@@ -16,9 +15,18 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import combine_parameters, NonTrainableState
+from ..._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingKernelSpec,
+)
+from ..._training_objective import _ObjectiveContribution
 from ...geometry import regularized_heaviside_values
 
 
@@ -320,6 +328,16 @@ def probabilistic_stefan_moment_loss(
     )
 
 
+def _moment_objective(parameters, model_state, fixed, payload, keys, /):
+    """Kernel objective: the probabilistic Stefan total with unit support."""
+    del keys
+    batch, physical = payload
+    result = probabilistic_stefan_moment_loss(
+        combine_parameters(parameters, model_state, fixed), batch, physical
+    )
+    return _ObjectiveContribution(result.total, 1.0, 0.0), model_state, result
+
+
 def fit_probabilistic_level_set_stefan(
     model: ProbabilisticLevelSetStefan,
     batch: ProbabilisticStefanBatch,
@@ -330,33 +348,46 @@ def fit_probabilistic_level_set_stefan(
     optimizer: optax.GradientTransformation | None = None,
     jit: bool = True,
 ) -> ProbabilisticStefanFitResult:
-    """Fit a deep level set against relaxed probabilistic Stefan moments."""
+    """Fit a deep level set against relaxed probabilistic Stefan moments.
+
+    Every step is one accepted-update attempt of the shared training kernel (the
+    level set is a SURROGATE trained on the weak physical residual). A nonfinite
+    loss, gradient, or update is rolled back and fails the fit with
+    `TrainingRejectionBudgetError`.
+    """
 
     count = int(steps)
     if count < 0:
         raise ValueError("steps must be nonnegative.")
+    if not isinstance(model, ProbabilisticLevelSetStefan):
+        raise TypeError("model must be ProbabilisticLevelSetStefan.")
     transformation = optax.adam(1.0e-3) if optimizer is None else optimizer
-    trainable, fixed = eqx.partition(model, eqx.is_inexact_array)
-    state = transformation.init(trainable)
-
-    def step(current, optimizer_state):
-        objective = lambda value: (
-            probabilistic_stefan_moment_loss(
-                eqx.combine(value, fixed),
-                batch,
-                parameters,
-            ).total
-        )
-        loss, gradient = eqx.filter_value_and_grad(objective)(current)
-        updates, next_state = transformation.update(gradient, optimizer_state, current)
-        return optax.apply_updates(current, updates), next_state, loss
-
-    run_step = eqx.filter_jit(step) if jit else step
+    kernel = prepare_training_kernel(
+        model,
+        (
+            KernelObjective(
+                objective_id="probabilistic-stefan-moments",
+                kind=ObjectiveKind.PHYSICAL_RESIDUAL,
+                route=DerivativeRoute.DIRECT,
+                fn=_moment_objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(transformation, rule_id="probabilistic-stefan-optax"),
+            context="fit_probabilistic_level_set_stefan",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.SURROGATE,
+    )
+    # Paths and test moments arrive precomputed in the batch; the objective
+    # draws no training randomness.
+    state = kernel.init(model, jax.random.key(0))
+    payload = (batch, parameters)
     history = []
     for _ in range(count):
-        trainable, state, value = run_step(trainable, state)
-        history.append(value)
-    fitted = eqx.combine(trainable, fixed)
+        state, evidence = run_training_attempt(kernel, state, payload, jit=jit)
+        history.append(evidence.value)
+    fitted = kernel.tree(state)
     final = probabilistic_stefan_moment_loss(fitted, batch, parameters)
     return ProbabilisticStefanFitResult(
         model=fitted,

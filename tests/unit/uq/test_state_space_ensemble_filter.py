@@ -1,7 +1,12 @@
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
+from phydrax.nn.models import MLP
+from tests._ported_models import full_port, in_order, PortedAffine
 
 
 def _problem(*, mask=None):
@@ -112,6 +117,105 @@ def test_nonlinear_gaussian_observation_and_diagnostics():
     assert diagnostics.passed
     assert jnp.all(diagnostics.effective_rank <= 1)
     assert jnp.all(diagnostics.ensemble_spread >= 0.0)
+
+
+def _with_observation(base, location, /):
+    observation = phx.stochastic.GaussianObservationModel(
+        location,
+        jnp.asarray([[0.2]]),
+        state_shape=(1,),
+        observation_shape=(1,),
+    )
+    model = phx.stochastic.StateSpaceModel(
+        base.model.prior, base.model.transition, observation, model_id="learned"
+    )
+    return phx.stochastic.StateSpaceProblem(
+        model, base.observations, initial_time=0.0, problem_id="learned-problem"
+    )
+
+
+def test_learned_observation_location_runs_unchanged_etkf_numerics():
+    base = _problem()
+    network = MLP(in_size=1, out_size=1, width_size=4, depth=1, key=jr.key(3))
+    location = phx.stochastic.ModelObservationLocation(
+        network, state_shape=(1,), observation_shape=(1,)
+    )
+    learned = _with_observation(base, location)
+    reference = _with_observation(base, lambda state, time, context: network(state))
+
+    result = phx.uq.ensemble_transform_kalman_filter(jr.key(5), learned, ensemble_size=16)
+    expected = phx.uq.ensemble_transform_kalman_filter(
+        jr.key(5), reference, ensemble_size=16
+    )
+
+    assert jnp.array_equal(result.analysis_ensembles, expected.analysis_ensembles)
+    assert jnp.all(result.status == phx.uq.ENSEMBLE_FILTER_SUCCESS)
+    contract = location.component_contract()
+    assert contract.authority is phx.ComponentAuthority.MODEL
+
+    observation = learned.model.observation
+    parameters, model_state, fixed = phx.partition_parameters(observation)
+    assert {id(leaf) for leaf in jax.tree.leaves(parameters)} == {
+        id(leaf) for leaf in jax.tree.leaves(eqx.filter(network, eqx.is_array))
+    }
+    context = phx.stochastic.StateSpaceStepContext.empty()
+
+    def log_likelihood(parameters):
+        bound = phx.combine_parameters(parameters, model_state, fixed)
+        return bound.log_prob(
+            jnp.asarray([1.0]), jnp.asarray([0.3]), 0.5, jnp.asarray([True]), context
+        )
+
+    gradient = jax.grad(log_likelihood)(parameters)
+    assert all(jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(gradient))
+    assert any(jnp.any(leaf != 0.0) for leaf in jax.tree.leaves(gradient))
+
+
+def test_model_observation_location_requires_exact_pointwise_sizes():
+    network = MLP(in_size=2, out_size=1, width_size=4, depth=1, key=jr.key(4))
+    location = phx.stochastic.ModelObservationLocation(
+        network, state_shape=(1,), observation_shape=(1,), time_input=True
+    )
+    states = jnp.asarray([[0.1], [0.4], [-0.2]])
+
+    batched = location(states, 0.5, None)
+    single = jnp.stack([location(state, 0.5, None) for state in states])
+    assert batched.shape == (3, 1)
+    assert jnp.allclose(batched, single, rtol=1e-12, atol=1e-14)
+    with pytest.raises(ValueError, match="in_size must be 1"):
+        phx.stochastic.ModelObservationLocation(
+            network, state_shape=(1,), observation_shape=(1,)
+        )
+
+
+def test_port_declaring_observation_location_binds_declared_owner_ports():
+    owner = phx.ModelPorts(
+        inputs=(full_port("latent.state", (1,)), full_port("latent.time", ())),
+        outputs=(full_port("sensor.reading", (1,)),),
+    )
+    model = PortedAffine(owner, out_size=1, weight=jnp.asarray([[2.0, 1.0]]))
+    arguments = dict(state_shape=(1,), observation_shape=(1,), time_input=True)
+    with pytest.raises(ValueError, match="observation-model'.*owner_ports"):
+        phx.stochastic.ModelObservationLocation(model, **arguments)
+    with pytest.raises(ValueError, match="output ports must declare the event shapes"):
+        phx.stochastic.ModelObservationLocation(
+            model,
+            **arguments,
+            ports=phx.ModelPorts(
+                inputs=owner.inputs, outputs=(full_port("sensor.reading", (2,)),)
+            ),
+            port_mapping=in_order(owner, owner),
+        )
+
+    location = phx.stochastic.ModelObservationLocation(
+        model, **arguments, ports=owner, port_mapping=in_order(owner, owner)
+    )
+    evidence = location.component_contract().port_binding
+    assert evidence.inputs == tuple((port.port_id,) * 2 for port in owner.inputs)
+    assert evidence.unverified == ()
+    assert jnp.allclose(
+        location(jnp.asarray([[0.5], [1.0]]), 0.25, None), jnp.asarray([[1.25], [2.25]])
+    )
 
 
 def test_high_dimensional_path_uses_ensemble_rank_not_state_covariance():

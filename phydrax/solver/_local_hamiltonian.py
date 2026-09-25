@@ -18,6 +18,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..linalg import (
     AbstractLinearOperator,
@@ -267,7 +268,7 @@ class FixedGridLocalHamiltonian(StrictModule):
             raise TypeError("time_grid must be real.")
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("coefficients must be real.")
-        dtype = jnp.result_type(times, values, jnp.float64)
+        dtype = inexact_result_type(times, values)
         times = times.astype(dtype)
         values = values.astype(dtype)
         hbar_ = jnp.asarray(hbar, dtype=dtype)

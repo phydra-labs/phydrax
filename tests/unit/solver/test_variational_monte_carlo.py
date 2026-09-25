@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -8,7 +10,7 @@ import phydrax as phx
 
 
 class _TableModel(eqx.Module):
-    parameters: jax.Array
+    parameters: jax.Array = phx.parameter_field()
 
     def __call__(self, configuration):
         bits = (configuration > 0).astype(jnp.int32)
@@ -22,7 +24,7 @@ class _TableModel(eqx.Module):
 
 
 class _StaticTableModel(eqx.Module):
-    parameters: jax.Array
+    parameters: jax.Array = phx.parameter_field()
     offset: float = eqx.field(static=True)
 
     def __call__(self, configuration):
@@ -32,6 +34,34 @@ class _StaticTableModel(eqx.Module):
             self.parameters[index] + self.offset,
             1.0 + 0.0j,
         )
+
+
+class _ActivatedTableModel(eqx.Module):
+    parameters: jax.Array = phx.parameter_field()
+    activation: Callable[[jax.Array], jax.Array] = eqx.field(static=True)
+
+    def __call__(self, configuration):
+        bits = (configuration > 0).astype(jnp.int32)
+        index = 2 * bits[0] + bits[1]
+        return phx.operators.LogAmplitude(
+            self.activation(self.parameters[index]),
+            1.0 + 0.0j,
+        )
+
+
+def _identity_activation(value):
+    return value
+
+
+def _halved_activation(value):
+    return 0.5 * value
+
+
+def _scaled_activation(scale):
+    def activation(value):
+        return scale * value
+
+    return activation
 
 
 def _operator():
@@ -450,6 +480,80 @@ def test_vmc_checkpoint_resume_matches_uninterrupted_training(tmp_path):
         )
 
 
+def test_vmc_checkpoint_carries_attempt_cursor_and_rejects_cursorless_archive(
+    tmp_path,
+):
+    from phydrax.solver._variational_monte_carlo import (
+        _checkpoint_compatibility,
+        _VMC_CHECKPOINT_KIND,
+    )
+    from phydrax.uq._checkpoint import read_checkpoint_archive, write_checkpoint_archive
+
+    problem = phx.solver.VariationalMonteCarloProblem(
+        _TableModel(jnp.asarray([0.2, -0.1, 0.1, -0.2])),
+        _operator(),
+        _kernel(),
+        _initial_configurations(),
+    )
+    policy = phx.solver.VariationalMonteCarloPolicy(
+        num_iterations=1,
+        draws_per_iteration=12,
+        steps_per_draw=2,
+        final_evaluation_draws=8,
+        learning_rate=0.03,
+        damping=0.1,
+    )
+    initial = problem.initial_state(key=jr.key(23))
+    # A state after rejected attempts: two attempts consumed, none accepted.
+    retried = phx.solver.VariationalMonteCarloState(
+        model=initial.model,
+        parameter_coordinates=initial.parameter_coordinates,
+        markov_state=initial.markov_state,
+        iteration=0,
+        attempt_cursor=2,
+        root_key=initial.root_key,
+    )
+    checkpoint = tmp_path / "retried-vmc-state.zip"
+    phx.solver.write_variational_monte_carlo_checkpoint(
+        checkpoint, problem, policy, retried
+    )
+    restored = phx.solver.read_variational_monte_carlo_checkpoint(
+        checkpoint, problem, policy
+    )
+    assert int(restored.iteration) == 0
+    assert int(restored.attempt_cursor) == 2
+
+    resumed = phx.solver.solve_variational_monte_carlo(problem, policy, state=restored)
+    in_memory = phx.solver.solve_variational_monte_carlo(problem, policy, state=retried)
+    fresh = phx.solver.solve_variational_monte_carlo(problem, policy, state=initial)
+    assert int(resumed.final_state.attempt_cursor) == 3
+    assert jnp.array_equal(
+        resumed.final_state.parameter_coordinates,
+        in_memory.final_state.parameter_coordinates,
+    )
+    # The retry draws fresh samples instead of replaying attempt 0.
+    assert not jnp.array_equal(
+        resumed.final_state.markov_state.position,
+        fresh.final_state.markov_state.position,
+    )
+
+    compatibility = _checkpoint_compatibility(problem, policy)
+    state, arrays = read_checkpoint_archive(
+        checkpoint, kind=_VMC_CHECKPOINT_KIND, compatibility=compatibility
+    )
+    del state["attempt_cursor"]
+    cursorless = tmp_path / "cursorless-vmc-state.zip"
+    write_checkpoint_archive(
+        cursorless,
+        kind=_VMC_CHECKPOINT_KIND,
+        compatibility=compatibility,
+        state=state,
+        arrays=arrays,
+    )
+    with pytest.raises(ValueError, match="canonical fields"):
+        phx.solver.read_variational_monte_carlo_checkpoint(cursorless, problem, policy)
+
+
 def test_vmc_checkpoint_rejects_changed_static_model_configuration(tmp_path):
     parameters = jnp.asarray([0.2, -0.1, 0.1, -0.2])
     common = (_operator(), _kernel(), _initial_configurations())
@@ -482,6 +586,52 @@ def test_vmc_checkpoint_rejects_changed_static_model_configuration(tmp_path):
             changed,
             policy,
         )
+
+
+def test_vmc_checkpoint_identifies_model_callables_by_content(tmp_path):
+    parameters = jnp.asarray([0.2, -0.1, 0.1, -0.2])
+    common = (_operator(), _kernel(), _initial_configurations())
+    policy = phx.solver.VariationalMonteCarloPolicy(
+        num_iterations=0,
+        draws_per_iteration=2,
+        final_evaluation_draws=2,
+        final_chain_diagnostics=False,
+    )
+
+    def problem(activation):
+        return phx.solver.VariationalMonteCarloProblem(
+            _ActivatedTableModel(parameters, activation),
+            *common,
+            problem_id="callable-model-checkpoint",
+        )
+
+    original = problem(_identity_activation)
+    checkpoint = tmp_path / "callable-model-vmc.zip"
+    phx.solver.write_variational_monte_carlo_checkpoint(
+        checkpoint, original, policy, original.initial_state(key=jr.key(31))
+    )
+    restored = phx.solver.read_variational_monte_carlo_checkpoint(
+        checkpoint, problem(_identity_activation), policy
+    )
+    assert int(restored.iteration) == 0
+    with pytest.raises(phx.uq.CheckpointCompatibilityError):
+        phx.solver.read_variational_monte_carlo_checkpoint(
+            checkpoint, problem(_halved_activation), policy
+        )
+
+    for opaque in (_scaled_activation(1.0), lambda value: value):
+        opaque_problem = problem(opaque)
+        with pytest.raises(TypeError, match="Opaque callables"):
+            phx.solver.write_variational_monte_carlo_checkpoint(
+                tmp_path / "opaque-model-vmc.zip",
+                opaque_problem,
+                policy,
+                opaque_problem.initial_state(key=jr.key(31)),
+            )
+        with pytest.raises(TypeError, match="Opaque callables"):
+            phx.solver.read_variational_monte_carlo_checkpoint(
+                checkpoint, opaque_problem, policy
+            )
 
 
 def test_incremental_vmc_checkpoint_rebuilds_cache_and_resumes_exactly(tmp_path):

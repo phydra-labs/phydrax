@@ -1039,8 +1039,30 @@ def test_ladders_have_audited_physical_splits(quick_ladders):
         assert any(
             evaluation.shift == "in_distribution" for evaluation in split.evaluations
         )
-    assert any(audit.near_identity.detected for audit in audits)
-    assert any(not audit.near_identity.detected for audit in audits)
+
+    # Two millisecond Burgers steps barely move the state: nearest-neighbour
+    # persistence solves the operator, so the integrity gate must reject it.
+    persistence_control = split_operator_scenario(
+        periodic_burgers_scenario(
+            train_resolution=16,
+            test_resolution=24,
+            num_cases=8,
+            viscosity=2e-2,
+            dt=1e-3,
+            target_steps=2,
+            initial_condition="shock",
+            maximum_frequency=6,
+            seed=707,
+        ),
+        seed=1729,
+    )
+    control_audit = audit_operator_scenario(persistence_control, quick=True)
+    assert control_audit.near_identity.detected
+    assert not control_audit.passed
+    assert (
+        "near-identity baseline falls below the integrity threshold"
+        in control_audit.reasons
+    )
 
 
 def test_cochain_benchmarks_preserve_typed_fields_and_matched_architectures(
@@ -1052,7 +1074,7 @@ def test_cochain_benchmarks_preserve_typed_fields_and_matched_architectures(
     harmonic = split_operator_scenario(harmonic_ladder.levels[0], seed=1729)
     mixed_target = _target_batch(mixed.train_target)
     harmonic_target = _target_batch(harmonic.train_target)
-    assert tuple(mixed_target.fields) == ("pressure", "flux")
+    assert set(mixed_target.fields) == {"pressure", "flux"}
     assert tuple(harmonic_target.fields) == ("harmonic",)
     assert mixed.task is not None
     assert harmonic.task is not None
@@ -1080,7 +1102,7 @@ def test_cochain_benchmarks_preserve_typed_fields_and_matched_architectures(
     }
     for architecture in mixed_architectures:
         prediction = architecture.build(mixed, seed=7).evaluate(mixed.train_batch)
-        assert tuple(prediction.fields) == ("pressure", "flux")
+        assert set(prediction.fields) == {"pressure", "flux"}
         assert all(
             jnp.all(jnp.isfinite(field.values)) for field in prediction.fields.values()
         )
@@ -1775,7 +1797,7 @@ def test_pareto_front_reports_dominance_and_missing_metrics():
     lookup = {point.architecture: point for point in front.points}
     assert lookup["a"].nondominated is True
     assert lookup["b"].nondominated is False
-    assert lookup["b"].dominated_by == ("a",)
+    assert lookup["b"].dominated_by == ("a@1",)
 
     incomplete_rows = tuple(
         replace(row, compiler_estimated_memory_bytes_mean=None)

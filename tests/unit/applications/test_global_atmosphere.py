@@ -342,7 +342,7 @@ def test_moist_precipitation_budget_and_cadenced_restart(space, tmp_path):
     )
     restored = read_global_atmosphere_checkpoint(path, model, initial)
     other = _model(space, filter_rate=0.01)
-    with pytest.raises(ValueError, match="another runtime"):
+    with pytest.raises(ValueError, match="another prepared atmosphere runtime"):
         other.advance(first.continuation)
     with pytest.raises(ValueError, match="another prepared runtime"):
         other.view(first.continuation.state)

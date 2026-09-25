@@ -16,8 +16,21 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._sampling import derive_key, SampleAddress
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._strict import StrictModule
+from .._trainable import combine_parameters, ParameterOwner
+from .._training_kernel import (
+    build_training_checkpoint,
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    restore_training_checkpoint,
+    run_training_attempt,
+    TrainingKernelSpec,
+    TrainingKernelState,
+    TrainingRejectionBudgetError,
+)
+from .._training_objective import _ObjectiveContribution
 from ..kernels import AbstractPositiveDefiniteKernel
 from ._minibatch_posterior import (
     AbstractObservationFactor,
@@ -27,8 +40,11 @@ from ._minibatch_posterior import (
 from ._variational import VariationalConfig
 
 
-class SparseVariationalGaussianState(StrictModule):
-    """Whitened scalar inducing-point Gaussian variational state."""
+class SparseVariationalGaussianState(StrictModule, ParameterOwner):
+    """Whitened scalar inducing-point Gaussian variational state.
+
+    Inducing points, whitened mean and lower factor are all PARAMETER.
+    """
 
     inducing_points: Array
     mean: Array
@@ -208,31 +224,41 @@ class SparseVariationalGaussianProcessELBO(StrictModule):
 
 
 class SparseVariationalGaussianProcessResult(StrictModule):
-    """Resumable optimized SVGP state and objective trace."""
+    """Resumable optimized SVGP state and objective trace.
+
+    `training_state` is the committed training-kernel state (parameters,
+    optimizer state, root key, and attempt/accepted cursors) that a continuation
+    resumes; `training_checkpoint_id` names the kernel it belongs to.
+    """
 
     state: SparseVariationalGaussianState
-    optimizer_state: Any
+    training_state: TrainingKernelState
     objective_trace: Array
     final_step: int = eqx.field(static=True)
     source_fingerprint: str = eqx.field(static=True)
+    training_checkpoint_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         state: SparseVariationalGaussianState,
-        optimizer_state: Any,
+        training_state: TrainingKernelState,
         objective_trace: ArrayLike,
         final_step: int,
         source_fingerprint: str,
+        training_checkpoint_id: str,
     ):
         trace = jnp.asarray(objective_trace, dtype=jnp.float64)
         if trace.ndim != 1 or trace.size == 0:
             raise ValueError("objective_trace must be a nonempty vector.")
+        if not isinstance(training_state, TrainingKernelState):
+            raise TypeError("training_state must be a TrainingKernelState.")
         self.state = state
-        self.optimizer_state = optimizer_state
+        self.training_state = training_state
         self.objective_trace = trace
         self.final_step = int(final_step)
         self.source_fingerprint = str(source_fingerprint)
+        self.training_checkpoint_id = str(training_checkpoint_id)
 
     def predict(
         self,
@@ -241,6 +267,14 @@ class SparseVariationalGaussianProcessResult(StrictModule):
         /,
     ) -> tuple[Array, Array]:
         return elbo.predict(self.state, query_points)
+
+
+def _negative_elbo(parameters, model_state, fixed, payload, keys):
+    """Negative SVGP ELBO; the payload is `(elbo, batch)`."""
+    elbo, batch = payload
+    complete = combine_parameters(parameters, model_state, fixed)
+    value = -elbo(complete, batch, key=keys.attempt_key("expected-likelihood"))
+    return _ObjectiveContribution(value, 1.0), model_state, ()
 
 
 def fit_sparse_variational_gaussian_process(
@@ -254,7 +288,17 @@ def fit_sparse_variational_gaussian_process(
     optimizer: optax.GradientTransformation | None = None,
     continuation: SparseVariationalGaussianProcessResult | None = None,
 ) -> SparseVariationalGaussianProcessResult:
-    """Optimize a weighted SVGP ELBO with absolute-step deterministic batches."""
+    """Optimize a weighted SVGP ELBO with absolute-step deterministic batches.
+
+    Every step is one attempt of the shared training kernel (`MODEL` root
+    authority, one data-fit objective); step `k` consumes batch
+    `k % batches_per_epoch` of epoch `k // batches_per_epoch`. The likelihood
+    Monte Carlo key is attempt-addressed (`SampleAddress("training",
+    "svgp-negative-elbo", target=("expected-likelihood",), role="attempt")`). A
+    continuation resumes its committed kernel state, including its root key, so
+    `key` seeds fresh runs only. A nonfinite step rolls back and raises
+    `FloatingPointError`.
+    """
     if not callable(elbo):
         raise TypeError("elbo must be a callable sparse variational GP objective.")
     if not isinstance(initial_state, SparseVariationalGaussianState):
@@ -262,71 +306,84 @@ def fit_sparse_variational_gaussian_process(
     configuration = VariationalConfig() if config is None else config
     if not isinstance(configuration, VariationalConfig):
         raise TypeError("config must be VariationalConfig or None.")
-    transformation = (
-        optax.chain(
+    if optimizer is None:
+        transformation = optax.chain(
             optax.clip_by_global_norm(configuration.gradient_clip),
             optax.adam(configuration.learning_rate),
         )
-        if optimizer is None
-        else optimizer
-    )
-    if continuation is None:
-        state = initial_state
-        optimizer_state = transformation.init(eqx.filter(state, eqx.is_inexact_array))
-        start_step = 0
-        prior_trace = jnp.empty((0,), dtype=jnp.float64)
+        rule_id = (
+            "svgp-clipped-adam:"
+            f"{configuration.gradient_clip.hex()}:{configuration.learning_rate.hex()}"
+        )
     else:
+        transformation = optimizer
+        rule_id = "svgp-caller-optimizer"
+    if continuation is not None:
         if not isinstance(continuation, SparseVariationalGaussianProcessResult):
             raise TypeError("continuation must be an SVGP result or None.")
         if continuation.source_fingerprint != source.fingerprint:
             raise ValueError("SVGP continuation source fingerprint changed.")
-        state = continuation.state
-        optimizer_state = continuation.optimizer_state
-        start_step = continuation.final_step
-        prior_trace = continuation.objective_trace
-    address = SampleAddress(
-        "uq.svgp", "expected-likelihood", target=source.fingerprint, role="vi"
+    start = initial_state if continuation is None else continuation.state
+    kernel = prepare_training_kernel(
+        start,
+        (
+            KernelObjective(
+                objective_id="svgp-negative-elbo",
+                kind=ObjectiveKind.DATA_FIT,
+                route=DerivativeRoute.DIRECT,
+                fn=_negative_elbo,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(transformation, rule_id=rule_id),
+            context="fit_sparse_variational_gaussian_process",
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.MODEL,
     )
+    if continuation is None:
+        state = kernel.init(start, key)
+        prior_trace = jnp.empty((0,), dtype=jnp.float64)
+    else:
+        if continuation.training_checkpoint_id != kernel.checkpoint_id:
+            raise ValueError(
+                "SVGP continuation belongs to a different training configuration."
+            )
+        state = restore_training_checkpoint(
+            kernel,
+            build_training_checkpoint(
+                kernel, continuation.training_state, allow_intermediate=True
+            ),
+        ).state
+        prior_trace = continuation.objective_trace
+    start_step = int(state.accepted_cursor)
     batches: dict[int, tuple[LikelihoodBatch, ...]] = {}
     recorded: list[Array] = []
-    trainable = eqx.filter(state, eqx.is_inexact_array)
-    static = eqx.filter(state, lambda value: not eqx.is_inexact_array(value))
     for local_step in range(configuration.num_steps):
         step = start_step + local_step
         epoch = step // source.batches_per_epoch
         batch_index = step % source.batches_per_epoch
         if epoch not in batches:
             batches[epoch] = tuple(source.epoch(epoch))
-        batch = batches[epoch][batch_index]
-        step_key = derive_key(key, address, step)
-
-        def loss(trainable_state: Any) -> Array:
-            complete = eqx.combine(trainable_state, static)
-            return -elbo(complete, batch, key=step_key)
-
-        value, gradient = eqx.filter_value_and_grad(loss)(trainable)
-        updates, optimizer_state = transformation.update(
-            gradient, optimizer_state, trainable
-        )
-        trainable = optax.apply_updates(trainable, updates)
-        state = eqx.combine(trainable, static)
-        finite_leaves = [
-            jnp.all(jnp.isfinite(leaf))
-            for leaf in jax.tree_util.tree_leaves(trainable)
-            if eqx.is_array(leaf)
-        ]
-        finite = jnp.isfinite(value) & jnp.all(jnp.stack(finite_leaves))
-        if not bool(finite):
-            raise FloatingPointError("SVGP optimization produced nonfinite state.")
+        try:
+            state, evidence = run_training_attempt(
+                kernel, state, (elbo, batches[epoch][batch_index])
+            )
+        except TrainingRejectionBudgetError as error:
+            raise FloatingPointError(
+                "SVGP optimization produced a nonfinite update; the state was "
+                "rolled back to its last accepted step."
+            ) from error
         if (local_step + 1) % configuration.record_every == 0 or local_step == 0:
-            recorded.append(-value)
+            recorded.append(-evidence.value)
     trace = jnp.concatenate((prior_trace, jnp.stack(recorded)))
     return SparseVariationalGaussianProcessResult(
-        state=state,
-        optimizer_state=optimizer_state,
+        state=kernel.tree(state),
+        training_state=state,
         objective_trace=trace,
         final_step=start_step + configuration.num_steps,
         source_fingerprint=source.fingerprint,
+        training_checkpoint_id=kernel.checkpoint_id,
     )
 
 

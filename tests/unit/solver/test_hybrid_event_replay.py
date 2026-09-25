@@ -68,7 +68,7 @@ def test_full_hybrid_tape_preserves_last_committed_event():
         jnp.asarray(0.0),
         jnp.asarray(1.0),
     )
-    empty = empty_hybrid_event_tape(policy, jnp.asarray([0.0]), "full-tape")
+    empty = empty_hybrid_event_tape(policy, jnp.asarray([0.0]), schedule_id="full-tape")
     committed = record_hybrid_event(empty, policy, 0, localized)
 
     overflowed = record_hybrid_event(committed, policy, 0, localized)

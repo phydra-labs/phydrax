@@ -20,13 +20,14 @@ import optax
 from jax.flatten_util import ravel_pytree
 
 import phydrax as phx
-from phydrax._trainable import combine_trainable, partition_trainable
+from phydrax._trainable import require_parameter_roles
 from phydrax.operators.differential import laplacian, partial_n
 from phydrax.solver._functional_residual import (
     prepare_functional_residual,
     prepared_residual_jacobians,
     prepared_residual_loss_and_flat_gradient,
 )
+from phydrax.solver._functional_run import partition_functional_parameters
 
 
 CASES = (
@@ -265,7 +266,8 @@ def make_solver(case, *, width, depth, samples, seed):
 
 
 def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
-    params, non_trainable = partition_trainable(solver.functions)
+    require_parameter_roles(solver.functions, context="_solve_exact_ggn")
+    params, held = partition_functional_parameters(solver.functions)
     step_times: list[float] = []
     for step in range(int(steps)):
         step_started = time.perf_counter()
@@ -280,13 +282,13 @@ def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
         residual_map = prepare_functional_residual(
             prepared,
             params,
-            non_trainable,
+            held,
             solver.enforcement,
             require_all=True,
         )
         loss, gradient, unravel = prepared_residual_loss_and_flat_gradient(
             params,
-            non_trainable,
+            held,
             solver.enforcement,
             residual_map.terms,
             iteration=step + 1,
@@ -310,7 +312,7 @@ def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
     result = eqx.tree_at(
         lambda item: item.functions,
         solver,
-        combine_trainable(params, non_trainable),
+        eqx.combine(params, held),
     )
     first_step = step_times[0] if step_times else 0.0
     steady_step = (

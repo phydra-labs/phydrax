@@ -19,7 +19,8 @@ from benchmarks._runtime import (
     measure_repeated,
     measure_synchronized,
 )
-from phydrax._trainable import combine_trainable, partition_trainable
+from phydrax._model._ports import PortMapping
+from phydrax._trainable import combine_parameters, partition_parameters
 from phydrax.nn.operator import (
     AbstractOperatorModel,
     FunctionSamples,
@@ -174,7 +175,7 @@ class OperatorBenchmarkResult:
 
 
 def parameter_count(model) -> int:
-    trainable, _ = partition_trainable(model)
+    trainable, _, _ = partition_parameters(model)
     return sum(
         leaf.size * (2 if jnp.issubdtype(leaf.dtype, jnp.complexfloating) else 1)
         for leaf in jax.tree_util.tree_leaves(trainable)
@@ -290,12 +291,12 @@ def training_step_cost(
             generated_code_bytes=0,
             source="not-applicable",
         )
-    parameters, fixed = partition_trainable(model)
+    parameters, model_state, fixed = partition_parameters(model)
 
     @eqx.filter_jit
     def value_and_gradient(current_parameters):
         def objective(candidate):
-            current_model = combine_trainable(candidate, fixed)
+            current_model = combine_parameters(candidate, model_state, fixed)
             return _loss(
                 current_model,
                 scenario.train_batch,
@@ -400,7 +401,7 @@ def _train_operator_with_trace(
             prefix=f"{scenario.name}:validation",
         )
     )
-    trainable_leaves, _ = partition_trainable(model)
+    trainable_leaves, _, _ = partition_parameters(model)
     use_float64 = any(
         isinstance(leaf, jax.Array)
         and (leaf.dtype == jnp.float64 or leaf.dtype == jnp.complex128)
@@ -417,7 +418,20 @@ def _train_operator_with_trace(
         )
         for name in training_data.targets.fields
     )
-
+    # Task-backed benchmark models emit every task target field under its own
+    # name, so each output declares that field's port and binds to it.
+    output_ports = (
+        None
+        if scenario.task is None
+        else {field.name: field.value_port() for field in scenario.task.target_fields}
+    )
+    port_mapping = (
+        None
+        if output_ports is None
+        else PortMapping(
+            outputs=tuple((port.port_id, port.port_id) for port in output_ports.values())
+        )
+    )
     result = fit_operator(
         model,
         training_data,
@@ -425,6 +439,8 @@ def _train_operator_with_trace(
         loss_terms=loss_terms,
         include_model_losses=False,
         task=scenario.task,
+        output_ports=output_ports,
+        port_mapping=port_mapping,
         learning_rate=float(learning_rate),
         epochs=max(int(steps), 1),
         steps=int(steps) if trainable else 0,

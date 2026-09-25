@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import DerivativeContract, DerivativeSurface
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -107,7 +108,14 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
             physics_policy_id="flat-smooth-dark-energy-newtonian-growth",
             scale_id=background.scale.scale_id,
             source_kind="native",
-            differentiation="native-parameter",
+            differentiation=DerivativeContract.smooth(
+                (
+                    DerivativeSurface.INPUT,
+                    DerivativeSurface.MODEL_PARAMETER,
+                    DerivativeSurface.PHYSICAL_PARAMETER,
+                    DerivativeSurface.STORED_VALUES,
+                )
+            ),
         )
 
     def expansion_history(self, background: FLRWBackground, /) -> ExpansionHistory:

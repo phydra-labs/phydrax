@@ -14,21 +14,30 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ValuePort
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._numerics import run_fixed_iterations
-from .._schema import TargetSchema
+from .._schema import AbstractFittedModel, TargetSchema
 from .._sparse_features import SparseFeatures
 
 
@@ -38,6 +47,30 @@ def _product(shape: tuple[int, ...]) -> int:
 
 def _finite(value: Array) -> Array:
     return jnp.isfinite(jnp.real(value)) & jnp.isfinite(jnp.imag(value))
+
+
+# An affine predictor is a global polynomial of degree one in its input; the
+# sigmoid, softmax, and exponential links keep it smooth.
+_AFFINE = DerivativeRegularity.smooth(degree_bound=1)
+_SMOOTH = DerivativeRegularity.smooth()
+_HARD_LABELS = ("predict", "predict_indices")
+
+
+def _linear_contract(
+    regularity: DerivativeRegularity,
+    /,
+    *,
+    nondifferentiable_outputs: tuple[str, ...] = (),
+) -> DerivativeContract:
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        ),
+        route=DerivativeRoute.DIRECT,
+        regularity=regularity,
+        nondifferentiable_outputs=nondifferentiable_outputs,
+    )
 
 
 class Design(StrictModule):
@@ -379,7 +412,7 @@ def linear_prediction(
     return result.reshape(case_shape + sample_shape + target_shape)
 
 
-class AbstractLinearModel(AbstractArrayModel):
+class AbstractLinearModel(AbstractFittedModel):
     """Shared immutable affine state for linear model families."""
 
     coefficients: Array
@@ -388,6 +421,12 @@ class AbstractLinearModel(AbstractArrayModel):
     target_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _linear_contract(_AFFINE)
 
     def __init__(
         self,
@@ -434,7 +473,7 @@ class LinearRegressorModel(AbstractLinearRegressorModel):
 class AbstractLinearScoreClassifierModel(AbstractLinearModel):
     """Shared binary linear classifier state and hard-label operations."""
 
-    labels: Array
+    labels: Array = fixed_field()
 
     def __init__(
         self,
@@ -453,6 +492,9 @@ class AbstractLinearScoreClassifierModel(AbstractLinearModel):
             target_shape=target_shape,
         )
         self.labels = jnp.asarray(labels)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _linear_contract(_AFFINE, nondifferentiable_outputs=_HARD_LABELS)
 
     def decision_function(self, x: Any, /) -> Array:
         return self.linear_predictor(x)
@@ -475,6 +517,9 @@ class LinearScoreClassifierModel(AbstractLinearScoreClassifierModel):
 class LogisticClassifierModel(AbstractLinearScoreClassifierModel):
     """Binary/multilabel logistic model; calls return smooth positive-class probabilities."""
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _linear_contract(_SMOOTH, nondifferentiable_outputs=_HARD_LABELS)
+
     def positive_probability(self, x: Any, /) -> Array:
         return jax.nn.sigmoid(self.decision_function(x))
 
@@ -491,15 +536,21 @@ class LogisticClassifierModel(AbstractLinearScoreClassifierModel):
         return self.positive_probability(x)
 
 
-class MultinomialLogisticModel(AbstractArrayModel):
+class MultinomialLogisticModel(AbstractFittedModel):
     """Identified multiclass softmax model with explicit hard prediction methods."""
 
     coefficients: Array
     intercept: Array
-    labels: Array
+    labels: Array = fixed_field()
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.target_output_ports()
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _linear_contract(_SMOOTH, nondifferentiable_outputs=_HARD_LABELS)
 
     def __init__(
         self,
@@ -572,6 +623,9 @@ class AbstractGeneralizedLinearModel(AbstractLinearModel):
             raise ValueError(f"Unsupported inverse link {inverse_link!r}.")
         self.inverse_link = inverse_link
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _linear_contract(_AFFINE if self.inverse_link == "identity" else _SMOOTH)
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         eta = self.linear_predictor(x)
@@ -638,8 +692,10 @@ def iterative_fit(
     method: str,
     objective,
     model_factory,
-    gradient_contract: GradientContract,
     extra_valid: Array | bool = True,
+    nonsmooth: bool = False,
+    fit_targets: GradientLevel | None = None,
+    hard_outputs: tuple[str, ...] = (),
 ) -> FitResult:
     """Run a fixed differentiable optimization and package common diagnostics."""
     iteration = run_fixed_iterations(
@@ -697,26 +753,37 @@ def iterative_fit(
         valid=valid_cases,
         status=status_cases,
         method=method,
-        gradient_contract=gradient_contract,
+        derivative_contract=unrolled_contract(
+            model,
+            nonsmooth=nonsmooth,
+            fit_targets=fit_targets,
+            hard_outputs=hard_outputs,
+        ),
     )
 
 
 def unrolled_contract(
+    model: AbstractLinearModel | MultinomialLogisticModel,
+    /,
     *,
-    prediction_inputs: str = "smooth",
     nonsmooth: bool = False,
-    fit_targets: str | None = None,
+    fit_targets: GradientLevel | None = None,
     hard_outputs: tuple[str, ...] = (),
-) -> GradientContract:
-    level = "almost-everywhere" if nonsmooth else "smooth"
-    return GradientContract(
-        prediction_inputs=prediction_inputs,  # type: ignore[arg-type]
-        prediction_parameters=level,
-        fit_features=level,
-        fit_targets=level if fit_targets is None else fit_targets,  # type: ignore[arg-type]
-        fit_weights="conditional",
-        fit_hyperparameters=level,
-        fit_mode="unrolled",
+) -> DerivativeContract:
+    """Unrolled fit contract of `model`; `nonsmooth` fits are a.e. in the fit data."""
+    level = GradientLevel.ALMOST_EVERYWHERE if nonsmooth else GradientLevel.SMOOTH
+    return prediction_fit_contract(
+        model._prediction_contract(),
+        (
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, level),
+            SurfaceDerivative(
+                DerivativeSurface.FIT_TARGETS,
+                level if fit_targets is None else fit_targets,
+            ),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_HYPERPARAMETERS, level),
+        ),
+        route=DerivativeRoute.UNROLLED,
         nondifferentiable_outputs=hard_outputs,
         conditions=(
             "Masks, sparse index structure, and iteration count are fixed.",

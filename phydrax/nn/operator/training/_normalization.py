@@ -17,6 +17,7 @@ from jaxtyping import Array
 from ...._document_resource import decode_json_resource
 from ...._external_resource import read_bounded_resource, ResourceLimits
 from ...._publication import publish_bytes
+from ...._trainable import NonTrainableState
 from ..data import (
     FunctionSamples,
     OperatorAxis,
@@ -43,8 +44,8 @@ def _decode_numeric_array(value: Mapping[str, Any], /) -> Array:
 
 
 @dataclass(frozen=True)
-class AffineNormalizer:
-    """Persistable per-field affine normalization statistics."""
+class AffineNormalizer(NonTrainableState):
+    """Persistable per-field affine normalization statistics (FIXED)."""
 
     mean: Array
     scale: Array
@@ -227,8 +228,8 @@ def _quadrature_fit_weights(
 
 
 @dataclass(frozen=True)
-class OperatorNormalizationPolicy:
-    """Per-field, per-query training statistics for operator data."""
+class OperatorNormalizationPolicy(NonTrainableState):
+    """Per-field, per-query training statistics for operator data (FIXED)."""
 
     input_values: Mapping[str, AffineNormalizer]
     targets: Mapping[str, AffineNormalizer]

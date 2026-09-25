@@ -10,9 +10,9 @@ import numpy as np
 
 from phydrax._strict import StrictModule
 
+from ..sparse import EdgeRelation, gather_routes, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._kernels import segment_sum
 
 
 GraphPoolReduce = Literal["sum", "mean"]
@@ -39,49 +39,24 @@ def _mask_tree(tree: Any, mask: jnp.ndarray | None, /) -> Any:
     return jtu.tree_map(mask_leaf, tree)
 
 
-def _tree_segment_sum(tree: Any, segment_ids: jnp.ndarray, num_segments: int, /) -> Any:
-    return jtu.tree_map(lambda x: segment_sum(x, segment_ids, num_segments), tree)
-
-
-def _tree_segment_reduce(
-    tree: Any,
-    segment_ids: jnp.ndarray,
-    num_segments: int,
-    reduce: GraphPoolReduce,
-    /,
-) -> Any:
-    summed = _tree_segment_sum(tree, segment_ids, num_segments)
-    if reduce == "sum":
-        return summed
-    if reduce != "mean":
-        raise ValueError("Graph pool reduce must be 'sum' or 'mean'.")
-    counts = segment_sum(
-        jnp.ones((segment_ids.shape[0],), dtype=jnp.float64), segment_ids, num_segments
+def _membership_relation(
+    cluster_ids: jnp.ndarray, valid: jnp.ndarray, cluster_count: int, /
+) -> EdgeRelation:
+    """Route every fine entity onto its cluster; excluded entities stay inert."""
+    count = cluster_ids.shape[0]
+    return EdgeRelation(
+        jnp.arange(count, dtype=jnp.int32),
+        jnp.where(valid, cluster_ids, 0),
+        source_size=count,
+        target_size=cluster_count,
+        valid=valid,
     )
 
-    def divide(value):
-        scale = jnp.where(counts > 0, 1.0 / counts, 0.0)
-        while scale.ndim < value.ndim:
-            scale = jnp.expand_dims(scale, axis=-1)
-        return value * scale.astype(value.dtype)
 
-    return jtu.tree_map(divide, summed)
-
-
-def _tree_take(tree: Any, index: jnp.ndarray, /) -> Any:
-    return jtu.tree_map(lambda x: x[index], tree)
-
-
-def _filter_tree(tree: Any, mask: np.ndarray, /) -> Any:
-    mask_jnp = jnp.asarray(mask, dtype=jnp.bool_)
-    return jtu.tree_map(lambda x: jnp.asarray(x)[mask_jnp], tree)
-
-
-def _coalesce_tree(
-    tree: Any, inverse: np.ndarray, n_unique: int, reduce: GraphPoolReduce, /
-) -> Any:
-    inverse_jnp = jnp.asarray(inverse, dtype=jnp.int32)
-    return _tree_segment_reduce(tree, inverse_jnp, n_unique, reduce)
+def _pool_reduction(reduce: GraphPoolReduce, /) -> GraphPoolReduce:
+    if reduce not in ("sum", "mean"):
+        raise ValueError("Graph pool reduce must be 'sum' or 'mean'.")
+    return reduce
 
 
 def _valid_node_mask(graph: GraphIR, cluster_ids: jnp.ndarray, /) -> jnp.ndarray:
@@ -103,8 +78,13 @@ def pool_graph_by_cluster(
     """Pool a materialized graph into a coarse graph using node cluster ids.
 
     `cluster_ids[i]` gives the coarse node for fine node `i`; `-1` excludes a
-    node. This helper currently expects a single materialized graph.
+    node. Node payloads and coalesced edge payloads are reduced over fine-to-
+    coarse membership relations, so excluded nodes and masked edges are inert.
+    Coarse topology is prepared on the host; this helper expects a single
+    materialized graph.
     """
+    node_reduction = _pool_reduction(reduce_nodes)
+    edge_reduction = _pool_reduction(reduce_edges)
     graph = ensure_graph(graph, validate=False)
     if graph.n_node.shape[0] != 1:
         raise ValueError(
@@ -128,12 +108,10 @@ def pool_graph_by_cluster(
         raise ValueError("cluster_ids must select at least one node.")
     n_cluster = int(jnp.max(valid_cluster_ids)) + 1
 
-    valid_node_indices = jnp.where(valid_nodes)[0]
-    nodes = _tree_segment_reduce(
-        _tree_take(graph.nodes, valid_node_indices),
-        valid_cluster_ids,
-        n_cluster,
-        reduce_nodes,
+    nodes = route_reduce(
+        _membership_relation(cluster_ids, valid_nodes, n_cluster),
+        graph.nodes,
+        reduction=node_reduction,
     )
 
     coarse_senders = cluster_ids[graph.senders]
@@ -153,9 +131,7 @@ def pool_graph_by_cluster(
         receivers = jnp.zeros((0,), dtype=jnp.int32)
         edges = None
         if graph.edges is not None:
-            edges = _filter_tree(
-                graph.edges, np.zeros((graph.senders.shape[0],), dtype=np.bool_)
-            )
+            edges = jtu.tree_map(lambda x: jnp.asarray(x)[:0], graph.edges)
     else:
         keys = coarse_senders_np * n_cluster + coarse_receivers_np
         unique_keys, inverse = np.unique(keys, return_inverse=True)
@@ -163,9 +139,14 @@ def pool_graph_by_cluster(
         receivers = jnp.asarray(unique_keys % n_cluster, dtype=jnp.int32)
         edges = None
         if graph.edges is not None:
-            filtered_edges = _filter_tree(graph.edges, valid_edge_np)
-            edges = _coalesce_tree(
-                filtered_edges, inverse, unique_keys.shape[0], reduce_edges
+            coarse_edges = np.zeros(valid_edge_np.shape, dtype=np.int32)
+            coarse_edges[valid_edge_np] = inverse
+            edges = route_reduce(
+                _membership_relation(
+                    jnp.asarray(coarse_edges), edge_valid, unique_keys.shape[0]
+                ),
+                graph.edges,
+                reduction=edge_reduction,
             )
 
     return GraphIR(
@@ -190,18 +171,17 @@ def unpool_nodes_by_cluster(
     """Broadcast coarse node features back to fine nodes by cluster id."""
     cluster_ids = jnp.asarray(cluster_ids, dtype=jnp.int32)
     valid = cluster_ids >= 0
-    safe_ids = jnp.where(valid, cluster_ids, 0)
+    membership = _membership_relation(
+        cluster_ids, valid, _tree_leading_size(coarse_nodes)
+    )
+    lifted = gather_routes(membership.transpose(), coarse_nodes)
 
-    def unpool_leaf(value):
-        arr = jnp.asarray(value)
-        gathered = arr[safe_ids]
-        fill = jnp.asarray(fill_value, dtype=arr.dtype)
-        mask = valid
-        while mask.ndim < gathered.ndim:
-            mask = jnp.expand_dims(mask, axis=-1)
-        return jnp.where(mask, gathered, fill)
+    def fill_leaf(value):
+        fill = jnp.asarray(fill_value, dtype=value.dtype)
+        mask = valid.reshape(valid.shape + (1,) * (value.ndim - 1))
+        return jnp.where(mask, value, fill)
 
-    return jtu.tree_map(unpool_leaf, coarse_nodes)
+    return jtu.tree_map(fill_leaf, lifted)
 
 
 class GraphClusterPool(StrictModule):

@@ -28,6 +28,7 @@ from .._iteration import (
 )
 from ._binding import LinearSolveTemplate
 from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
+from ._initial_guess import _select_proposal, AbstractInitialGuessProvider
 from ._operators import AbstractLinearOperator, adjoint, transpose
 from ._plans import LinearSolvePlan, plan as make_plan
 from ._policies import (
@@ -51,6 +52,7 @@ from ._problems import (
     MinimumNormProblem,
 )
 from ._results import (
+    InitialGuessDiagnostics,
     LinearIterationMetrics,
     LinearPrecisionEvidence,
     LinearSolveCheckEvidence,
@@ -326,14 +328,19 @@ def _bind_for_template(
         raise ValueError("Numerical binding cannot change symbolic problem structure.")
     stop_arrays = selected_plan.policy.differentiation.mode in ("rhs-only", "none")
     execution_problem = _stop_problem_arrays(problem) if stop_arrays else problem
-    preparation_plan = (
-        jax.tree.map(
-            lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
-            selected_plan,
+    # Concrete plan arrays carry no tangent; evaluating stop_gradient eagerly
+    # keeps host symbolic data (sparse setup patterns) readable under traces.
+    with jax.ensure_compile_time_eval():
+        preparation_plan = (
+            jax.tree.map(
+                lambda value: (
+                    jax.lax.stop_gradient(value) if eqx.is_array(value) else value
+                ),
+                selected_plan,
+            )
+            if stop_arrays
+            else selected_plan
         )
-        if stop_arrays
-        else selected_plan
-    )
     preconditioning_state = prepare_preconditioner(
         preparation_plan.preconditioner_plan,
         execution_problem.operator,
@@ -618,11 +625,19 @@ def solve(
     *,
     policy: LinearSolvePolicy | LinearSolvePlan | None = None,
     rhs_layout: RHSLayout | None = None,
-    initial_guess: PyTree[Any] | None = None,
+    initial_guess: PyTree[Any] | AbstractInitialGuessProvider | None = None,
     control: LinearSolveControl | None = None,
     iteration: IterationPlan | None = None,
 ) -> LinearSolveResult:
-    """Solve one or many right-hand sides with explicit status evidence."""
+    """Solve one or many right-hand sides with explicit status evidence.
+
+    `initial_guess` is either a raw guess, used as given (its derivative follows
+    the differentiation policy), or an `AbstractInitialGuessProvider`. A
+    provider's proposal is checked on device against the native zero guess
+    before dispatch: it is used only when finite with a strictly smaller
+    residual, the selected guess is stopped, and `result.initial_guess` reports
+    the branch evidence per right-hand side.
+    """
     if control is not None and not isinstance(control, LinearSolveControl):
         raise TypeError("control must be a LinearSolveControl or None.")
     if iteration is not None and not isinstance(iteration, IterationPlan):
@@ -691,7 +706,16 @@ def solve(
         prepared.plan,
     )
     canonical_guess = None
-    if initial_guess is not None:
+    initial_guess_evidence: InitialGuessDiagnostics | None = None
+    if isinstance(initial_guess, AbstractInitialGuessProvider):
+        canonical_guess, initial_guess_evidence = _provider_initial_guess(
+            prepared,
+            problem,
+            canonical_rhs,
+            layout,
+            initial_guess,
+        )
+    elif initial_guess is not None:
         if not provider_for(prepared.plan.backend).accepts_initial_guess:
             raise ValueError("This provider does not accept an initial_guess.")
         canonical_guess, guess_layout = _pack_rhs(
@@ -999,7 +1023,51 @@ def solve(
         status_out,
         diagnostics,
         provenance,
+        differentiation=prepared.plan.policy.differentiation,
         iteration_evidence=iteration_evidence,
+        initial_guess=initial_guess_evidence,
+    )
+
+
+def _provider_initial_guess(
+    prepared: PreparedLinearSolve,
+    problem: AbstractLinearProblem,
+    canonical_rhs: Array,
+    layout: _PackedRHSLayout,
+    provider: AbstractInitialGuessProvider,
+    /,
+) -> tuple[Array, InitialGuessDiagnostics]:
+    if not provider_for(prepared.plan.backend).accepts_initial_guess:
+        raise ValueError("This provider does not accept an initial_guess.")
+    if isinstance(problem, MinimumNormProblem):
+        raise ValueError("MinimumNormProblem solves start from the zero guess.")
+    if layout.batch_shape:
+        raise ValueError("Initial-guess providers require an unbatched operator.")
+    source = problem.operator.source
+    target = problem.operator.target
+    baseline_state = source.zeros()
+
+    def propose(column):
+        proposal = provider.propose(target.unflatten(column), baseline_state)
+        return source.flatten(source.validate(proposal))
+
+    proposal = jax.lax.stop_gradient(
+        jax.vmap(propose, in_axes=-1, out_axes=-1)(canonical_rhs)
+    )
+    proposal_residual = _coordinate_norm(
+        target,
+        _canonical_action(prepared, problem, proposal) - canonical_rhs,
+    )
+    selected, evidence = _select_proposal(
+        proposal,
+        jnp.zeros_like(proposal),
+        proposal_residual,
+        _coordinate_norm(target, canonical_rhs),
+        jnp.all(jnp.isfinite(proposal), axis=-2),
+        provider_id=provider.provider_id,
+    )
+    return selected, jax.tree.map(
+        lambda value: _restore_rhs_axes(value, layout), evidence
     )
 
 
@@ -1008,7 +1076,7 @@ def solve_many(
     rhs: PyTree[Any],
     /,
     *,
-    initial_guess: PyTree[Any] | None = None,
+    initial_guess: PyTree[Any] | AbstractInitialGuessProvider | None = None,
     control: LinearSolveControl | None = None,
     iteration: IterationPlan | None = None,
 ) -> LinearSolveResult:
@@ -1122,7 +1190,7 @@ def solve_checked(
     policy: LinearSolvePolicy | LinearSolvePlan | None = None,
     check_policy: LinearSolveCheckPolicy | None = None,
     rhs_layout: RHSLayout | None = None,
-    initial_guess: PyTree[Any] | None = None,
+    initial_guess: PyTree[Any] | AbstractInitialGuessProvider | None = None,
     control: LinearSolveControl | None = None,
     iteration: IterationPlan | None = None,
 ) -> tuple[LinearSolveResult, LinearSolveCheckEvidence]:
@@ -1542,7 +1610,13 @@ def _solve_prepared_transformed(
         **_preconditioner_provenance(prepared),
         **_precision_provenance(prepared),
     )
-    return LinearSolveResult(value, status_out, diagnostics, provenance)
+    return LinearSolveResult(
+        value,
+        status_out,
+        diagnostics,
+        provenance,
+        differentiation=prepared.plan.policy.differentiation,
+    )
 
 
 def _transformed_problem(

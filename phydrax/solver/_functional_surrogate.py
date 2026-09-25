@@ -10,13 +10,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 from jaxtyping import Array, PyTree
 
 import phydrax.axes as cx
 
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
-from .._trainable import combine_trainable
 from ..domain import BatchEvaluator, DomainFunction, GridBatch, PointBatch
 from ..integration import (
     AdaptiveIntegration,
@@ -152,7 +151,7 @@ class PseudoTransientResidualTransform(StrictModule):
 
     def residual_override(self, params, residual, term):
         selected = self._policy(term.index)
-        current_functions = combine_trainable(params, residual.non_trainable)
+        current_functions = eqx.combine(params, residual.non_trainable)
         current = (
             current_functions
             if self.enforcement is None
@@ -281,7 +280,7 @@ class CausalResidualTransform(StrictModule):
 
     def residual_override(self, params, residual, term):
         if self.inner is None:
-            current_functions = combine_trainable(params, residual.non_trainable)
+            current_functions = eqx.combine(params, residual.non_trainable)
             current = (
                 current_functions
                 if residual.enforcement is None
@@ -361,7 +360,7 @@ def _causal_gate_fields(score, coefficient, time, schedule, /):
 
 
 def _prepare_causal_gates(residual, params, policies, inner, /):
-    current_functions = combine_trainable(params, residual.non_trainable)
+    current_functions = eqx.combine(params, residual.non_trainable)
     current = (
         current_functions
         if residual.enforcement is None
@@ -593,7 +592,7 @@ def _updated_balance_multipliers(
     else:
         traces = []
         errors = []
-        for index, reference in enumerate(policy.blocks):
+        for reference in policy.blocks:
             indices = _residual_reference_indices(residual.layout, reference)
 
             def block_roots(candidate, _indices=indices):
@@ -610,7 +609,18 @@ def _updated_balance_multipliers(
             )
             estimate = stochastic_trace(
                 ntk.kernel,
-                key=jr.fold_in(key, index),
+                key=derive_key(
+                    key,
+                    SampleAddress(
+                        "functional",
+                        "balance-ntk-trace",
+                        target=(
+                            f"term={reference.term_index}",
+                            f"block={reference.block_name or '*'}",
+                        ),
+                        role="probe",
+                    ),
+                ),
                 num_probes=policy.ntk_probes,
                 max_dimension=1,
             )
@@ -738,7 +748,7 @@ class PreparedFunctionalUpdate(StrictModule):
         non_trainable: PyTree[Any],
         /,
     ) -> Array:
-        functions = combine_trainable(params, non_trainable)
+        functions = eqx.combine(params, non_trainable)
         residual_value = (
             jnp.asarray(0.0, dtype=jnp.float64)
             if self.residual is None
@@ -754,7 +764,7 @@ class PreparedFunctionalUpdate(StrictModule):
         /,
     ) -> _ObjectiveValues:
         """Return the physical breakdown plus the optimizer-surrogate total."""
-        functions = combine_trainable(params, non_trainable)
+        functions = eqx.combine(params, non_trainable)
         physical = evaluate_prepared_objective(self.physical, functions)
         surrogate = self.surrogate_loss(params, non_trainable)
         return _ObjectiveValues(
@@ -813,7 +823,7 @@ def _adapt_pseudo_inverse_steps(
 ):
     if not policies:
         return tuple(inverse_steps)
-    current_functions = combine_trainable(params, residual.non_trainable)
+    current_functions = eqx.combine(params, residual.non_trainable)
     current = (
         current_functions
         if residual.enforcement is None

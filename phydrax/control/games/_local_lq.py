@@ -17,7 +17,9 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
+from ..._trainable import NonTrainableState
 from ...dynamics import (
     AbstractInputPolicy,
     DiscreteStepContext,
@@ -117,7 +119,7 @@ class _LocalQuadraticGame(StrictModule):
     method_id: str = eqx.field(static=True)
 
 
-class LocalAffineGamePolicy(AbstractInputPolicy):
+class LocalAffineGamePolicy(AbstractInputPolicy, NonTrainableState):
     """Physical local policy around one nominal trajectory.
 
     The stored ``feedback_gain`` and ``feedforward`` act on physical
@@ -216,7 +218,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
         values = (states, controls, gain, bias, scale)
         if any(jnp.issubdtype(value.dtype, jnp.complexfloating) for value in values):
             raise TypeError("Local game policies require real-valued arrays.")
-        dtype = jnp.result_type(*values, jnp.float64)
+        dtype = inexact_result_type(*values)
         scale = scale.astype(dtype)
         scale = eqx.error_if(
             scale,

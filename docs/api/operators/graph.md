@@ -373,8 +373,11 @@ same sparse kernels as the array-level functions above.
 `CochainResidualProgram` declares named input/output cochain schemas around one
 full-complex residual callable. The same program can be bound to a
 `phydrax.terms.CochainResidualTerm` for fixed-complex PINNs or operator training.
-Its fingerprint includes the explicit callable identity and every field
-semantic.
+Its fingerprint includes the canonical callable identity and every field
+semantic: StrictModule and plain module-level residual functions are identified
+by content, while opaque callables (closures, lambdas, methods, partials) must
+declare `residual_semantic_id` and `residual_numeric_id`; omitting them raises
+`TypeError`.
 
 `cochain_metric_reduce` first reduces each nonempty graph segment and then
 averages segments. `graph_mean` is an arithmetic cell mean, `metric_mean` is a
@@ -434,6 +437,59 @@ that applies a spectral graph operator without an eigendecomposition.
 ---
 
 ::: phydrax.graph.GraphChebyshevFilter
+
+## Native fixed-topology message passing
+
+Phydrax-native graph layers pass messages over `GraphIR.edge_relation()`, a
+`phydrax.sparse.EdgeRelation` whose routes are the graph edges and whose
+validity mask is `edge_mask`. Node payloads are gathered onto routes with
+`gather_routes` and messages are reduced onto targets with `route_reduce`
+(`"sum"`, `"mean"`, `"max"`, or `"min"`). Routes with `edge_mask=False` are
+inert in every gather, reduction, softmax, and degree normalization, so padded or
+boundary routes change neither node outputs nor gradients. This contract covers
+`MeshGraphNet`, `GraphAttentionOperator`, `GraphKernelIntegral` and
+`GraphNeuralOperator` (select the reduction with `reduction=`),
+`EquivariantGraphConvolution`, `RelationalGraphConvolution`,
+`HypergraphConvolution`, `SimplicialHodgeLaplacian`, the DEC operators, cluster
+pooling, and the edge-index layers `GCNConv`, `SAGEConv`, `GINConv`, and
+`MessagePassing` (`aggr="add"` is the route `"sum"`; empty targets reduce to
+zero).
+
+The jraph-compatible family (`GraphNetwork`, `InteractionNetwork`,
+`RelationNetwork`, `DeepSets`, `GraphNetGAT`, `GraphConvolution`, and
+`phydrax.graph.compat.jraph`) keeps pluggable aggregators with the jraph callback
+contract `(data, segment_ids, num_segments)` and `segment_sum` defaults. One-off
+index utilities such as `degree`, `coalesce`, and `Data` batching also keep
+direct segment reductions: they build or count topology once rather than
+repeatedly reducing over a prepared relation.
+
+`facet_adjacency` bridges a prepared mesh discretization to the same relation.
+An `UnstructuredFiniteVolumeDiscretization` contributes one owner-to-neighbor
+route per face; boundary faces (neighbor sentinel `-1`) and inactive faces keep
+their slot with safe index `0` and `valid=False`, so face payloads stay aligned
+with routes. A `FiniteElementDiscretization` contributes its interior-facet
+integration domain. `FacetAdjacency.topology_id` identifies the valid
+`(facet, owner, neighbor)` triples on the named cell and facet entity sets, so
+finite-volume and finite-element discretizations of one mesh share it.
+`GraphIR.from_edge_relation` builds a graph whose `edge_relation()` reproduces
+the relation and whose `edge_mask` is its validity mask, so a learned simulator
+and the physical residual reduce over one topology:
+
+```python
+adjacency = phx.graph.facet_adjacency(finite_volume)
+graph = phx.graph.GraphIR.from_edge_relation(
+    adjacency.relation,
+    nodes={"centers": finite_volume.cell_centers},
+    edges={"flux": face_flux},
+)
+residual = phx.graph.GraphFiniteVolumeDivergence(normalize_by_volume=False)(graph)
+```
+
+::: phydrax.graph.facet_adjacency
+
+---
+
+::: phydrax.graph.FacetAdjacency
 
 ## Learned graph simulator architectures
 

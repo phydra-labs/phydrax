@@ -294,19 +294,19 @@ def test_route_and_resource_failures_are_explicit_and_preallocation_bounded():
 
 def test_existing_chain_transport_profiles_bind_real_routes_and_exact_nonclaims():
     names_and_symbols = {
-        "semiconductor.quantum.chain-landauer": (
+        "semiconductor.quantum.chain-landauer.canonical": (
             semiconductor_quantum.integrate_coherent,
             "no-displacement-current-or-interacting-transport",
         ),
-        "semiconductor.quantum.chain-coherent-ac": (
+        "semiconductor.quantum.chain-coherent-ac.canonical": (
             semiconductor_quantum.finite_frequency_quantum_response,
             "no-scba-vertex-or-ballistic-dc-from-adiabatic-rate",
         ),
-        "semiconductor.quantum.chain-finite-lead-transient": (
+        "semiconductor.quantum.chain-finite-lead-transient.canonical": (
             semiconductor_quantum.solve_quantum_transient,
             "no-lindblad-or-general-interacting-transient-negf",
         ),
-        "semiconductor.quantum.chain-optical-phonon-scba": (
+        "semiconductor.quantum.chain-optical-phonon-scba.canonical": (
             semiconductor_quantum.solve_phonon_transport,
             "no-hartree-tadpole-numerical-eta-or-vertex-corrections",
         ),
@@ -322,11 +322,11 @@ def test_existing_chain_transport_profiles_bind_real_routes_and_exact_nonclaims(
         assert not profile.released
         assert profile.release_evidence == ()
 
-    landauer = profiles["semiconductor.quantum.chain-landauer"]
+    landauer = profiles["semiconductor.quantum.chain-landauer.canonical"]
     for name in (
-        "semiconductor.quantum.chain-coherent-ac",
-        "semiconductor.quantum.chain-finite-lead-transient",
-        "semiconductor.quantum.chain-optical-phonon-scba",
+        "semiconductor.quantum.chain-coherent-ac.canonical",
+        "semiconductor.quantum.chain-finite-lead-transient.canonical",
+        "semiconductor.quantum.chain-optical-phonon-scba.canonical",
     ):
         dependency = profiles[name].dependencies
         assert len(dependency) == 1
@@ -336,10 +336,10 @@ def test_existing_chain_transport_profiles_bind_real_routes_and_exact_nonclaims(
         )
 
     for removed_placeholder in (
-        "semiconductor.detector.carrier-packet-drift-diffusion",
-        "semiconductor.detector.carrier-packet-trapping",
-        "semiconductor.detector.carrier-packet-avalanche",
-        "semiconductor.detector.circuit-coupled-response",
+        "semiconductor.detector.carrier-packet-drift-diffusion.canonical",
+        "semiconductor.detector.carrier-packet-trapping.canonical",
+        "semiconductor.detector.carrier-packet-avalanche.canonical",
+        "semiconductor.detector.circuit-coupled-response.canonical",
     ):
         with pytest.raises(ValueError, match="Unknown semiconductor capability"):
             semiconductor_candidate_profile(removed_placeholder)

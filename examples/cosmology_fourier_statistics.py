@@ -30,7 +30,14 @@ def main() -> None:
         physics_policy_id="measured-total-matter-density-contrast",
         scale_id=background.scale.scale_id,
         source_kind="native",
-        differentiation=cosmo.DifferentiationContract.native(),
+        differentiation=phx.DerivativeContract.smooth(
+            (
+                phx.DerivativeSurface.INPUT,
+                phx.DerivativeSurface.MODEL_PARAMETER,
+                phx.DerivativeSurface.PHYSICAL_PARAMETER,
+                phx.DerivativeSurface.STORED_VALUES,
+            )
+        ),
     )
     estimator = cosmo.CosmologicalFieldSpectrumPlan(
         shells,

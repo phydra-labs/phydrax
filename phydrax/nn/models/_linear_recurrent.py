@@ -11,6 +11,7 @@ from jaxtyping import Array
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._linear_recurrent_unit import (
@@ -22,7 +23,7 @@ from ..layers._linear_recurrent_unit import (
 LinearRecurrentReturnMode = Literal["sequence", "final"]
 
 
-class LinearRecurrentModel(StrictModule):
+class LinearRecurrentModel(StrictModule, ParameterOwner):
     """Sequence-to-sequence or sequence-to-final model backed by an LRU."""
 
     unit: LinearRecurrentUnit

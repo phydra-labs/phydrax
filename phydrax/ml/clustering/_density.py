@@ -13,17 +13,26 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
+from .._schema import AbstractFittedModel
 from ._common import (
     active_data,
     ClusterDiagnostics,
@@ -35,14 +44,26 @@ from ._common import (
 )
 
 
-class DensityClusterModel(AbstractArrayModel):
+# Radius labels of the nearest core point are locally constant and stopped.
+_RADIUS_LABEL_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.NONE),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0),
+    nondifferentiable_outputs=("labels",),
+)
+
+
+class DensityClusterModel(AbstractFittedModel):
     """Fixed-capacity core-point model with hard radius labels and smooth memberships."""
 
-    core_points: Array
+    core_points: Array = fixed_field()
     core_labels: Array
     core_active: Array
     cluster_active: Array
-    radius: Array
+    radius: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: Literal["scalar"] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -70,6 +91,9 @@ class DensityClusterModel(AbstractArrayModel):
         self.case_shape = self.core_points.shape[:-2]
         self.cluster_capacity = self.cluster_active.shape[-1]
         self.method = str(method)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _RADIUS_LABEL_CONTRACT
 
     def core_distances(self, x: Any, /) -> Array:
         distance = distances_to_centers(
@@ -263,11 +287,10 @@ def _fit_density(
         degeneracy=exhausted | (core_count == 0),
         method=method,
     )
-    contract = GradientContract(
-        prediction_inputs="conditional",
-        prediction_parameters="conditional",
-        fit_mode="stopped",
-        nondifferentiable_outputs=("labels", "core mask", "connected components"),
+    contract = prediction_fit_contract(
+        model._prediction_contract(),
+        route=DerivativeRoute.STOPPED,
+        nondifferentiable_outputs=("core mask", "connected components"),
         conditions=(
             "soft_membership is smooth away from zero normalization",
             "hard radius labels are terminal",
@@ -280,7 +303,7 @@ def _fit_density(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=contract,
+        derivative_contract=contract,
     )
 
 

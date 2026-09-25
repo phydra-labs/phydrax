@@ -566,7 +566,8 @@ class LocalMetricResult(StrictModule, NonTrainableState):
                 "Local metrics require reference dimension no larger than physical dimension."
             )
         metric = ein.contract("cqdr,cqds->cqrs", jacobian_, jacobian_)
-        inverse_metric = ein.contract("cqrd,cqds->cqrs", inverse, inverse)
+        # G^{-1} = J^+ J^{+T}: contract the physical axis of both pseudo-inverses.
+        inverse_metric = ein.contract("cqrd,cqsd->cqrs", inverse, inverse)
         inverse_hessian_ = (
             jnp.empty((0,), dtype=points_.dtype)
             if inverse_hessian is None

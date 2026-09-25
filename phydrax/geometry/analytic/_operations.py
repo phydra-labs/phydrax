@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -355,15 +356,9 @@ class _RigidTransformKernel(GeometryKernel):
     @property
     def field_certificate(self):
         certificate = self.child.field_certificate
-        return FieldCertificate(
-            certificate.zero_set_accuracy,
-            certificate.sign_reliability,
-            certificate.distance_semantics,
-            certificate.regularity,
-            certificate.safe_step_factor,
-            certificate.validity_region,
-            certificate.parameter_differentiable,
-            (*certificate.provenance, "rigid_transform"),
+        return replace(
+            certificate,
+            provenance=(*certificate.provenance, "rigid_transform"),
         )
 
     def geometry_validity(self, state, /):
@@ -676,6 +671,12 @@ class _ScalingKernel(GeometryKernel):
                 *certificate.provenance,
                 "uniform_scale" if self.uniform else "nonuniform_scale",
             ),
+            # The scaled field min(s) phi(c + (x - c) / s) keeps the child's
+            # Lipschitz bound; only an exact zero evaluation error survives the
+            # state-dependent factor min(s).
+            lipschitz_upper_bound=certificate.lipschitz_upper_bound,
+            evaluation_error=0.0 if certificate.evaluation_error == 0.0 else None,
+            topology_identity=certificate.topology_identity,
         )
 
     def geometry_validity(self, state, /):

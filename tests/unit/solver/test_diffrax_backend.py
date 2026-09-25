@@ -487,7 +487,7 @@ def test_diffrax_contract_rejects_invalid_problem_realization_and_save_configura
     scalar_realization = _realization(0)
     batch_realization = _realization(0, sample_shape=(2,))
 
-    with pytest.raises(ValueError, match="requires t1 > t0"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="requires t1 > t0"):
         phx.solver.DifferentialProblem(
             lambda t, state, args: state,
             jnp.asarray([1.0]),

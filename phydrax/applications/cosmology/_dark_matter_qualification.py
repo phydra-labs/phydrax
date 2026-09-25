@@ -12,10 +12,10 @@ from typing import Literal
 
 import equinox as eqx
 
+from ..._differentiation import DerivativeContract, DerivativeRoute
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract
 from ...qualification import (
     PromotionState,
     QualificationRoleTrust,
@@ -918,10 +918,10 @@ def _definition_for_claim(claim: ScientificClaimProfile, /) -> _ClaimDefinition:
     return definition
 
 
-def _differentiation_contract() -> DifferentiationContract:
+def _differentiation_contract() -> DerivativeContract:
     """Withhold derivative rights until typed campaign evidence is verified."""
 
-    return DifferentiationContract.constant()
+    return DerivativeContract(route=DerivativeRoute.DIRECT)
 
 
 class PromotedDarkMatterClaim(StrictModule, NonTrainableState):
@@ -929,7 +929,7 @@ class PromotedDarkMatterClaim(StrictModule, NonTrainableState):
 
     claim: ScientificClaimProfile
     promotion: PromotionState = eqx.field(static=True)
-    differentiation: DifferentiationContract
+    differentiation: DerivativeContract
     qualification_level: DarkMatterQualificationLevel = eqx.field(static=True)
     unsupported_claims: tuple[str, ...] = eqx.field(static=True)
     refusal_reasons: tuple[str, ...] = eqx.field(static=True)
@@ -942,7 +942,7 @@ class PromotedDarkMatterClaim(StrictModule, NonTrainableState):
         self,
         claim: ScientificClaimProfile,
         promotion: PromotionState,
-        differentiation: DifferentiationContract,
+        differentiation: DerivativeContract,
         qualification_level: DarkMatterQualificationLevel,
         unsupported_claims: Sequence[str],
         refusal_reasons: Sequence[str],
@@ -955,8 +955,8 @@ class PromotedDarkMatterClaim(StrictModule, NonTrainableState):
             raise TypeError("claim must be ScientificClaimProfile.")
         if not isinstance(promotion, PromotionState):
             raise TypeError("promotion must be PromotionState.")
-        if not isinstance(differentiation, DifferentiationContract):
-            raise TypeError("differentiation must be DifferentiationContract.")
+        if not isinstance(differentiation, DerivativeContract):
+            raise TypeError("differentiation must be DerivativeContract.")
         unsupported = tuple(
             _identifier(value, "unsupported claim") for value in unsupported_claims
         )

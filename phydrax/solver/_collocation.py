@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.domain import ProbabilityDomain
 
 from .._frozendict import frozendict
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..integration._sparse_grid import _smolyak_rule
 from ..operators.interpolation._plans import SmolyakInterpolationRule
@@ -433,7 +434,7 @@ def _moments(
     selected_valid = valid[indices]
     output_shape = values.shape[1:]
     if not bool(jnp.all(selected_valid)) or bool(jnp.any(~jnp.isfinite(selected))):
-        dtype = jnp.result_type(values.dtype, jnp.float64)
+        dtype = inexact_result_type(values.dtype)
         invalid = jnp.full(output_shape, jnp.nan, dtype=dtype)
         return invalid, jnp.real(invalid), jnp.real(invalid)
     weight_shape = weights.shape + (1,) * len(output_shape)

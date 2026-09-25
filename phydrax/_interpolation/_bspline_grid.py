@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._numerics._quadrature_rules import gauss_legendre_data
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -66,7 +67,7 @@ class BSplineGrid(StrictModule, NonTrainableState):
             degree_ - int(np.count_nonzero(knots_host == knot)) for knot in interior
         )
 
-        dtype = jnp.result_type(knots_raw, jnp.float64)
+        dtype = inexact_result_type(knots_raw)
         self.knots = knots_raw.astype(dtype)
         self.breakpoints = jnp.asarray(breakpoints, dtype=dtype)
         self.degree = degree_
@@ -217,7 +218,7 @@ class TrainableBSplineGrid(StrictModule):
             raise ValueError(
                 "minimum_span must be positive and leave movable interval length."
             )
-        self.raw_span_logits = logits.astype(jnp.result_type(logits, jnp.float64))
+        self.raw_span_logits = logits.astype(inexact_result_type(logits))
         self.degree = degree_
         self.lower = lower
         self.upper = upper

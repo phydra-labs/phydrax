@@ -195,7 +195,7 @@ def test_operator_predictive_preserves_precision_through_wrappers():
     )
     predictive = phx.uq.PredictiveField(
         cx.AxisArray(
-            jnp.arange(48.0).reshape((2, 2, 2, 3)),
+            jnp.arange(24.0).reshape((2, 2, 2, 3)),
             dims=("epistemic", "input", "case", "x"),
         ),
         (

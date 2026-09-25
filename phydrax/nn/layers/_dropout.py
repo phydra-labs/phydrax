@@ -10,7 +10,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array
 
+from ..._differentiation import DerivativeRegularity
 from .._base import _AbstractBaseModel
+from .._contracts import AFFINE
 from .._keys import EvalKey, require_eval_key
 from .._utils import _canonical_size, _get_value_shape, SizeLike
 
@@ -86,6 +88,10 @@ class Dropout(_AbstractBaseModel):
                 mask_shape = (1,) * value.ndim
         keep = jr.bernoulli(rng, p=1.0 - self.p, shape=mask_shape)
         return jnp.where(keep, value / (1.0 - self.p), jnp.zeros((), value.dtype))
+
+    def _value_regularity(self) -> DerivativeRegularity:
+        # Inverted dropout scales a fixed mask, and inference mode is the identity.
+        return AFFINE
 
 
 def inference_mode(tree, value: bool = True):

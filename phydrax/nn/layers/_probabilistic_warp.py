@@ -13,6 +13,7 @@ from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey
 from ._linear import Linear
 from ._warp import MultiheadWarp, WarpBoundaryMode
@@ -23,7 +24,7 @@ from ._warp_geometry import (
 )
 
 
-class ProbabilisticMultiheadWarp(StrictModule):
+class ProbabilisticMultiheadWarp(StrictModule, ParameterOwner):
     """Multihead warp with a coherent Gaussian displacement-field route.
 
     Keyless evaluation follows the mean route. Supplying an evaluation key draws

@@ -139,7 +139,7 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
             raise ValueError(
                 "D2V17 boundary routing requires velocity*time_step/cell_spacing to be integer."
             )
-        offsets = tuple(tuple(row) for row in rounded)
+        offsets = tuple(tuple(row) for row in rounded.astype(np.int64).tolist())
         reach = tuple(max(abs(row[axis]) for row in offsets) for axis in range(2))
         if any(shape[axis] <= 2 * reach[axis] for axis in range(2)):
             raise ValueError(

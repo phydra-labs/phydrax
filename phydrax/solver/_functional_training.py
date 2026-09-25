@@ -12,19 +12,18 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from .._training import TargetParameterState, TrainingProgress
+from .._training import TrainingProgress
+from .._training_kernel import TrainingKernelState
 from ..domain import DomainFunction
 from ..enforcement import EnforcementState
 from ..optim._gradient_composition import ConflictFreeGradientPolicy
-from ..optim._update_alignment import (
-    ConflictFreeUpdatePolicy,
-    ConflictFreeUpdateStatistics,
-)
+from ..optim._update_alignment import ConflictFreeUpdatePolicy
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockLayout, ResidualBlockRef
 
@@ -34,25 +33,13 @@ BalanceMethod = Literal["gradient_norm", "ntk_trace"]
 CausalGateSignal = Literal["physical", "surrogate"]
 
 
-def _callable_identity(value: Callable[..., Any], /) -> str:
-    module = getattr(value, "__module__", type(value).__module__)
-    qualname = getattr(value, "__qualname__", type(value).__qualname__)
-    identity = f"{module}.{qualname}"
-    code = getattr(value, "__code__", None)
-    if code is None:
-        return identity
-    implementation = canonical_fingerprint(
-        {
-            "bytecode": code.co_code.hex(),
-            "constants": repr(code.co_consts),
-            "names": code.co_names,
-        }
-    )
-    return f"{identity}:{code.co_firstlineno}:{implementation}"
-
-
 class ResidualRelaxationMap(StrictModule, NonTrainableState):
-    """Map named physical fields into one residual's pseudo-time codomain."""
+    """Map named physical fields into one residual's pseudo-time codomain.
+
+    StrictModule operators and plain module-level functions are identified by
+    content. Opaque operators (lambdas, closures, methods, partials) require
+    ``operator_semantic_id`` and ``operator_numeric_id``.
+    """
 
     operator: Callable[..., DomainFunction] = eqx.field(static=True)
     fields: tuple[str, ...] = eqx.field(static=True)
@@ -66,7 +53,8 @@ class ResidualRelaxationMap(StrictModule, NonTrainableState):
         /,
         *,
         blocks: ResidualBlockLayout | None = None,
-        map_id: str | None = None,
+        operator_semantic_id: str | None = None,
+        operator_numeric_id: str | None = None,
     ):
         fields_ = (str(fields),) if isinstance(fields, str) else tuple(map(str, fields))
         if not fields_ or any(not field for field in fields_):
@@ -77,24 +65,25 @@ class ResidualRelaxationMap(StrictModule, NonTrainableState):
             raise TypeError("Relaxation operator must be callable.")
         if blocks is not None and not isinstance(blocks, ResidualBlockLayout):
             raise TypeError("blocks must be a ResidualBlockLayout or None.")
-        identifier = (
-            canonical_fingerprint(
-                {
-                    "kind": "residual-relaxation-map",
-                    "fields": fields_,
-                    "operator": _callable_identity(operator),
-                    "blocks": None if blocks is None else blocks.layout_id,
-                }
-            )
-            if map_id is None
-            else str(map_id)
+        operator_identity = callable_payload(
+            operator,
+            semantic_id=operator_semantic_id,
+            numeric_id=operator_numeric_id,
         )
-        if not identifier:
-            raise ValueError("map_id must be non-empty.")
         self.operator = operator
         self.fields = fields_
         self.blocks = blocks
-        self.map_id = identifier
+        self.map_id = canonical_fingerprint(
+            {
+                "kind": "residual-relaxation-map",
+                "fields": fields_,
+                "operator": {
+                    "semantic": operator_identity["semantic_content_id"],
+                    "numeric": operator_identity["numeric_content_id"],
+                },
+                "blocks": None if blocks is None else blocks.layout_id,
+            }
+        )
 
     def field(self, functions: Mapping[str, DomainFunction], /) -> DomainFunction:
         missing = tuple(name for name in self.fields if name not in functions)
@@ -594,19 +583,25 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
 
 
 class FunctionalTrainingState(StrictModule):
-    """Exact resumable state at an accepted functional update boundary."""
+    """Exact resumable state of one functional training run.
+
+    `kernel_state` is the training kernel's committed state: trained parameters,
+    model state, update-rule (optimizer) state, target parameters, root key, and
+    attempt/accepted cursors. `kernel_checkpoint_id` identifies the kernel that
+    produced it (roles, objective, rule, authorities); resuming under a different
+    kernel fails closed. `current_functions` is the committed functions view of
+    `kernel_state`; the remaining fields are frontend state.
+    """
 
     current_functions: PyTree[Any]
     best_functions: PyTree[Any]
     previous_functions: PyTree[Any] | None
-    optimizer_state: PyTree[Any]
-    target_state: TargetParameterState | None
+    kernel_state: TrainingKernelState
     enforcement_state: EnforcementState | None
-    key: Key[Array, ""]
     pseudo_inverse_steps: tuple[Array, ...]
     term_multipliers: Array
     previous_gradient: PyTree[Any] | None
-    update_alignment_statistics: ConflictFreeUpdateStatistics | None
+    kernel_checkpoint_id: str = eqx.field(static=True)
     progress: TrainingProgress = eqx.field(static=True)
     run_id: str = eqx.field(static=True)
     gradient_accumulation: int = eqx.field(static=True)
@@ -618,44 +613,35 @@ class FunctionalTrainingState(StrictModule):
         *,
         current_functions: PyTree[Any],
         best_functions: PyTree[Any],
-        optimizer_state: PyTree[Any],
-        key: Key[Array, ""],
+        kernel_state: TrainingKernelState,
+        kernel_checkpoint_id: str,
         progress: TrainingProgress,
         run_id: str,
         gradient_accumulation: int = 1,
-        target_state: TargetParameterState | None = None,
         enforcement_state: EnforcementState | None = None,
         previous_functions: PyTree[Any] | None = None,
         pseudo_inverse_steps: Sequence[ArrayLike] = (),
         term_multipliers: ArrayLike = (),
         previous_gradient: PyTree[Any] | None = None,
-        update_alignment_statistics: ConflictFreeUpdateStatistics | None = None,
         training_seconds: float = 0.0,
         resumed_from_step: int = 0,
     ):
         if not isinstance(progress, TrainingProgress):
             raise TypeError("progress must be a TrainingProgress.")
-        if target_state is not None and not isinstance(
-            target_state, TargetParameterState
-        ):
-            raise TypeError("target_state must be a TargetParameterState or None.")
+        if not isinstance(kernel_state, TrainingKernelState):
+            raise TypeError("kernel_state must be a TrainingKernelState.")
         if enforcement_state is not None and not isinstance(
             enforcement_state, EnforcementState
         ):
             raise TypeError("enforcement_state must be EnforcementState or None.")
-        if update_alignment_statistics is not None and not isinstance(
-            update_alignment_statistics,
-            ConflictFreeUpdateStatistics,
-        ):
-            raise TypeError(
-                "update_alignment_statistics must be ConflictFreeUpdateStatistics or None."
-            )
         identifier = str(run_id)
+        checkpoint_id = str(kernel_checkpoint_id)
         seconds = float(training_seconds)
         resumed = int(resumed_from_step)
         accumulation = int(gradient_accumulation)
         if (
             not identifier
+            or not checkpoint_id
             or not isfinite(seconds)
             or seconds < 0.0
             or resumed < 0
@@ -665,10 +651,8 @@ class FunctionalTrainingState(StrictModule):
         self.current_functions = current_functions
         self.best_functions = best_functions
         self.previous_functions = previous_functions
-        self.optimizer_state = optimizer_state
-        self.target_state = target_state
+        self.kernel_state = kernel_state
         self.enforcement_state = enforcement_state
-        self.key = key
         self.pseudo_inverse_steps = tuple(
             jnp.asarray(value) for value in pseudo_inverse_steps
         )
@@ -676,7 +660,7 @@ class FunctionalTrainingState(StrictModule):
             (-1,)
         )
         self.previous_gradient = previous_gradient
-        self.update_alignment_statistics = update_alignment_statistics
+        self.kernel_checkpoint_id = checkpoint_id
         self.progress = progress
         self.run_id = identifier
         self.gradient_accumulation = accumulation

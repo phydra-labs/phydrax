@@ -4,7 +4,12 @@ Geophysical interchange converts selected external scientific variables into
 immutable native values, explicit Boolean validity masks, and self-contained
 scientific descriptors. It does not introduce a data execution engine or a
 second archive format. Runtime storage remains a native `DiscreteFieldSpace`,
-`StateLayout`, or `OperatorTask`, identified by `GeophysicalFieldBinding`.
+`StateLayout`, or `OperatorTask`, identified by `GeophysicalFieldBinding`. The
+binding checks `quantity.unit.dimension` against the dimensions its owner's
+`ValuePort` declares for the bound components and raises `ValueError` on a
+mismatch; `binding.dimensions_verified` is `False` when the owner declares no
+dimensions (state layouts and discrete field spaces), so the check is recorded as
+unverified rather than inferred.
 
 ## Optional dependencies
 

@@ -57,7 +57,7 @@
       "minimum_dwell_steps": 2,
       "owned_hysteresis_cell_retained": true,
       "ownership_differentiability": "none",
-      "plan_id": "7f7e76270b0b97d38fe494fe99e991c08d3ce3cb5e9624175d8e4137057ca912",
+      "plan_id": "c46336e89f965603a18e3174e40f8a78c3ad584f2883cd85ccb1263c0f554c0a",
       "shock_forced_cell_owned": true,
       "shock_owner": "finite_volume",
       "unowned_hysteresis_cell_remained_kinetic": true
@@ -104,11 +104,11 @@
       },
       "checkpoint_restore": {
         "checkpoint_id": "dynamic-owned-accepted",
-        "learned_energy_artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
+        "learned_energy_artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
         "maximum_restore_error": 0.0,
         "ownership_history_exactly_restored": true,
-        "payload_id": "dbbdb86ad749f168ac70d2915e6154756fc51986df4b7cb9e7aaa398c013555d",
-        "plan_id": "827c67a40f918723e4bacc9ece9a6794efb1b961f262542c61e83b67a508930d",
+        "payload_id": "a47a453ee3e53413e1277568d092af7a4e8f0eb88d0c3a66284aff3182350494",
+        "plan_id": "3c7c5e55646cf9170c371134ae9263433601a7191bfc433e098f1e0e0b518a22",
         "state_exactly_restored": true
       },
       "initialization": {
@@ -130,7 +130,7 @@
             "u_x": 0.15000000000022737,
             "u_y": 0.15000000000022737
           },
-          "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+          "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
         }
       },
       "ownership_differentiability": "none",
@@ -151,14 +151,14 @@
           "u_x": 0.1440000000002183,
           "u_y": 0.15000000000022737
         },
-        "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+        "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
       },
-      "plan_id": "827c67a40f918723e4bacc9ece9a6794efb1b961f262542c61e83b67a508930d"
+      "plan_id": "3c7c5e55646cf9170c371134ae9263433601a7191bfc433e098f1e0e0b518a22"
     }
   },
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "e15a8da5ec856e2be80a1c0d091217b754d072306c890997f7196b9f5245c0f6",
+    "fingerprint": "ec41c30441f07b25c837334ba35cc0b82fb91e494a1d0d31f4b7129e5645457e",
     "jax": {
       "backend": "cpu",
       "devices": [
@@ -173,13 +173,14 @@
     "jaxlib_version": "0.9.2",
     "logical_cpus": 10,
     "machine": "arm64",
-    "numpy_version": "2.3.5",
-    "package_fingerprint": "4bda88d882aa903b470577337ebc748f5fa28cf542d71b9f76b24c1ba5e731a5",
+    "numpy_version": "2.4.6",
+    "package_fingerprint": "e19d913a0b85060f926d66a77c75a54d0b4afdd7efd8735c99fa82d679cca85f",
     "performance_environment": {
       "JAX_COMPILATION_CACHE_DIR": null,
       "JAX_PLATFORMS": null,
       "JAX_PLATFORM_NAME": null,
       "MKL_NUM_THREADS": null,
+      "NPROC": null,
       "OMP_NUM_THREADS": null,
       "OPENBLAS_NUM_THREADS": null,
       "VECLIB_MAXIMUM_THREADS": null,
@@ -217,22 +218,22 @@
     "three_phase_stage_fluxes_and_weights": true
   },
   "identities": {
-    "dynamic_ownership_plan": "827c67a40f918723e4bacc9ece9a6794efb1b961f262542c61e83b67a508930d",
-    "energy_plan": "e8aeae0ee5b21b368fc2a3410a1694ff8fcb3cf78c28c0d6d6ee172fb5c8d5db",
-    "finite_volume_runtime": "201e701daaca272b6f248f9b8ec74fea69c9dae0b25e5cfec9d302177dc0c90b",
-    "fixed_hybrid_runtime": "27527926c48a4fcc982968e35f0b567deca1f323dae3bf563baef80aaab07d76",
-    "kinetic_method": "edf09afb32dbafb777bc3dbef3a0a985439700f499f88ec634825ff69b8a362f",
-    "kinetic_spatial_runtime": "e8284eeb1ae384787bdf4dc5b2663dafd0ae07ff8146d1c6a6da4f8fa3ea2d3b",
+    "dynamic_ownership_plan": "3c7c5e55646cf9170c371134ae9263433601a7191bfc433e098f1e0e0b518a22",
+    "energy_plan": "b4cb8e1f0260cd96191636b31f2fa817f83c59e2c5a6375bedc7ce3765eaf189",
+    "finite_volume_runtime": "d8f92271252ed3b5d93f87d34a5eba96c90be231706ebe6823ab6dffd8f3b41b",
+    "fixed_hybrid_runtime": "1ef61d83825fc55db142bd5995fa019e163ea46972fe22ddc69fa2a6d10fbf9b",
+    "kinetic_method": "6199410282d847d6b25d7bf44a56144b92974898716efd9a22a781e3f218d2eb",
+    "kinetic_spatial_runtime": "833f77af151c52cac72b3bdd33eeb52d2de37e52e1d52708b9181a6acb82b5d2",
     "material": "2a9118f25ff3fa199ce1cd53ac2d948f42809a1728b021f1477dd5ae6bf05ea3",
-    "model_artifact": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-    "model_numeric_revision": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
-    "prepared_binding": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-    "quadrature": "dc679fee35dccbf283f88cbe6afc8bf2f350f2dc74c828c0fb82fd7e1f8676e9",
+    "model_artifact": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+    "model_numeric_revision": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
+    "prepared_binding": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+    "quadrature": "e98e367a69a4a752157e9b59c0ed86a14962bab97bb018bdfe919b7492ef05bf",
     "transport_closure": "2e968ac79dc0270cfa5a32b4e32f6b9eb950d099102738b02c4a2a39af3a2b31"
   },
   "initial_kinetic_state": {
     "learned_lift_successful": true,
-    "maximum_lift_conservation_residual": 4.440892098500626e-16,
+    "maximum_lift_conservation_residual": 2.220446049250313e-16,
     "support": {
       "all_finite": true,
       "all_model_outputs_finite": true,
@@ -249,7 +250,7 @@
         "u_x": 0.15000000000022737,
         "u_y": 0.15000000000022737
       },
-      "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+      "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
     }
   },
   "parents": {
@@ -272,38 +273,38 @@
       "support_matches_both_parents": true
     },
     "loaded_frozen_model": {
-      "artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-      "binding_plan_id": "8c740a2231b9cb24c760fab77722d829a1f4d5268c0545fb59d34fd0caf094f3",
-      "numeric_revision_id": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
-      "parent_artifact_id": "4bbf067759323e62ef1f48ec91fbcc04d9b43b66d10f4f9b81fd0f7d79f6a1b7",
-      "prepared_binding_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-      "semantic_id": "cee4ba6187b2e57e1202d8361e160ae3bc892770ff5fc26d4dabe25a00348101",
-      "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+      "artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+      "binding_plan_id": "4696c861aa6173815e034ddf3f6dccc6ebb0bb4e80fe5fdf0d887cf8608948f0",
+      "numeric_revision_id": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
+      "parent_artifact_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
+      "prepared_binding_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+      "semantic_id": "6099df26a77c314633b3756b8e278386e79b7607b96b70533eef00c5ef1149d5",
+      "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
     },
     "spatial": {
-      "model_artifact_id": "4bbf067759323e62ef1f48ec91fbcc04d9b43b66d10f4f9b81fd0f7d79f6a1b7",
-      "model_revision_id": "55051b97cbde9e8b4945e5a952e62d8673fd30b7060102fcc2d4e8aaa234485d",
+      "model_artifact_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
+      "model_revision_id": "9e06dd790298a996cc0ee12d5e2e98ad62e9860528d4368fe8b656cfb144c8d6",
       "path": "benchmarks/learned_energy_spatial.json",
-      "prepared_binding_id": "4bbf067759323e62ef1f48ec91fbcc04d9b43b66d10f4f9b81fd0f7d79f6a1b7",
-      "prepared_runtime_id": "b1872d7aa57b7aefdc3f8ebc6c51843facf72bb336b2123dbe78bf3a5224f7f0",
-      "qualification_id": "e1bc2bea38460367c07443afb911cecb2253f44fce8023569271e2f32a11ab34",
-      "transport_plan_id": "4280d7fffab30036760877ef1e30d7f7890ef1576096290650c682b1408877f5"
+      "prepared_binding_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
+      "prepared_runtime_id": "f73b1407688dd9342745c0b80c1bdd335b8dc57cd5eb268565a217131429cf90",
+      "qualification_id": "987e0043500a2af0af319ff56a8a97ffec8988fd3af7fd2d4e37d2bd87f1e8b3",
+      "transport_plan_id": "aabc5ec81f6596a837ff8089761d1de8d026beada59c9d6585f0f98224e8821e"
     },
     "stage_two": {
-      "binding_plan_id": "8c740a2231b9cb24c760fab77722d829a1f4d5268c0545fb59d34fd0caf094f3",
-      "model_artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-      "model_revision_id": "2833d2f3c07399cfa762ba129cea05fe8825e65f24eeeaa7f2bbcdbc33303bae",
+      "binding_plan_id": "4696c861aa6173815e034ddf3f6dccc6ebb0bb4e80fe5fdf0d887cf8608948f0",
+      "model_artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+      "model_revision_id": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
       "path": "benchmarks/learned_energy_stage_two.json",
-      "prepared_binding_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
-      "qualification_artifact_id": "cf70b847f212e4ad687dbbee222c70b661dac87c2a3e34965587f55f29a6fc35",
-      "rollout_preparation_id": "dac7c349f52b800e778edaa339d21e3aa27d35331f6ab1f148a238ca44873a85",
-      "semantic_id": "cee4ba6187b2e57e1202d8361e160ae3bc892770ff5fc26d4dabe25a00348101",
-      "training_plan_id": "07a98e7b49495e6b3c3d2ce34f53c0fe1091bd3b5745583a0fc200845d58ed17",
-      "training_runtime_id": "36f879043b007d35181655d92f6b2b7801b23b88082e7fe5fcfced555a629c10"
+      "prepared_binding_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+      "qualification_artifact_id": "08082a04f8ab7a30c151d90dba2829fba8333c4ea50ed7040de912c8dcebd982",
+      "rollout_preparation_id": "691525564fe6bcc419c62186f15a3f9e1c6272d182f5c0caca26f90e6ebbbb22",
+      "semantic_id": "6099df26a77c314633b3756b8e278386e79b7607b96b70533eef00c5ef1149d5",
+      "training_plan_id": "1d55cc5ffdc93905e7f2277228b055bcde4e07fd6112c049e49682fcbd312a1b",
+      "training_runtime_id": "889b5e3e83884178d87256cbc2105ed97979ddfc0d045dd7637717f99b0a61e2"
     }
   },
   "passed": true,
-  "qualification_id": "7b50860a9bbd4adf2475a6ee7ac6bf831cea94f161d957b16d45b242d93f2c71",
+  "qualification_id": "567c35a57d7723a06bda787aabbb07e25646adb4b9692dd8c084c13199332b15",
   "riemann_comparison": {
     "case": "low-amplitude Riemann-style discontinuity",
     "claim": "FV-owned low-amplitude fixed-region comparison only",
@@ -453,8 +454,8 @@
     "strong_shock_production_claimed": false,
     "support_maximum_mach": 0.2587745847536102,
     "whole_fv_grid": {
-      "maximum_absolute_state_error": 0.013363867294998055,
-      "relative_l2_error": 0.0018874016831750954
+      "maximum_absolute_state_error": 0.013363844182052276,
+      "relative_l2_error": 0.0018874005077573282
     }
   },
   "scope": {
@@ -481,11 +482,11 @@
   "static_hybrid": {
     "accepted_checkpoint_restore": {
       "checkpoint_id": "hybrid-fixed-accepted",
-      "learned_energy_artifact_id": "dc30a8dd0c2a30599c719c16d2298b722fb039fb47c59f422271aa17c3aeea02",
+      "learned_energy_artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
       "maximum_restore_error": 0.0,
-      "payload_id": "cb2e0f2cee45de2e3c28e8e5e9c36c54e3f53eb0be51fbfd601b80b801a1aa57",
+      "payload_id": "e591533f15221cb12f134bb7d51558e4fdb034f872319a9e18a87fff43601642",
       "restored_exactly": true,
-      "runtime_id": "27527926c48a4fcc982968e35f0b567deca1f323dae3bf563baef80aaab07d76",
+      "runtime_id": "1ef61d83825fc55db142bd5995fa019e163ea46972fe22ddc69fa2a6d10fbf9b",
       "state_kind": "jointly_accepted_only"
     },
     "deterministic_reexecution": {
@@ -493,7 +494,7 @@
       "last_result_exact": true,
       "records_exact": true,
       "replayed_final_state_id": {
-        "sha256": "15abd967d8ca2e022cac183d1ea54ee9fd89bc2f74d8c3ce2a61f341f8de397f",
+        "sha256": "9b9f2695e0a1e448c844be1b442bf8dbb7304dc7752e3b3699edadc29fa0a6ef",
         "signature": [
           {
             "dtype": "<f8",
@@ -667,7 +668,7 @@
       "status_name": "LEARNED_LIFT_REJECTED"
     },
     "final_state_id": {
-      "sha256": "15abd967d8ca2e022cac183d1ea54ee9fd89bc2f74d8c3ce2a61f341f8de397f",
+      "sha256": "9b9f2695e0a1e448c844be1b442bf8dbb7304dc7752e3b3699edadc29fa0a6ef",
       "signature": [
         {
           "dtype": "<f8",
@@ -840,7 +841,7 @@
       }
     },
     "ownership_differentiability": "none",
-    "runtime_id": "27527926c48a4fcc982968e35f0b567deca1f323dae3bf563baef80aaab07d76",
+    "runtime_id": "1ef61d83825fc55db142bd5995fa019e163ea46972fe22ddc69fa2a6d10fbf9b",
     "shock_owner": "finite_volume",
     "stage_weights": [
       0.16666666666666666,
@@ -855,31 +856,31 @@
           "all_model_outputs_finite": true,
           "all_primitive_supported": true,
           "all_successful": true,
-          "maximum_mach": 0.0068852006001224415,
-          "minimum_margin": 0.0006277649256212253,
+          "maximum_mach": 0.00688520107154041,
+          "minimum_margin": 0.000627764901877845,
           "minimum_margins": {
-            "hull": 1.9919400895549204,
-            "mach": 0.25188938415348777,
-            "particle_equilibrium": 0.0006277649256212253,
+            "hull": 1.9919400890235062,
+            "mach": 0.2518893836820698,
+            "particle_equilibrium": 0.000627764901877845,
             "rho": 0.19000000000025907,
-            "temperature": 0.0189781663668655,
-            "u_x": 0.14424289927749115,
+            "temperature": 0.018978166095445725,
+            "u_x": 0.14424289889790515,
             "u_y": 0.15000000000022737
           },
-          "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+          "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
         },
         "accepted_step_size": 0.01,
         "audit": {
-          "maximum_absolute_residual": 2.220446049250313e-16,
+          "maximum_absolute_residual": 6.916278124215539e-17,
           "maximum_finite_volume_ledger_residual": 6.776263578034403e-21,
-          "maximum_global_conservation_residual": 4.8878883254256655e-17,
-          "maximum_kinetic_moment_exchange_residual": 1.3552527156068805e-20
+          "maximum_global_conservation_residual": 6.916278124215539e-17,
+          "maximum_kinetic_moment_exchange_residual": 6.776263578034403e-21
         },
         "exact_step": true,
         "exchange": {
           "maximum_finite_volume_interface_residual": 6.776263578034403e-21,
-          "maximum_global_single_application_residual": 4.8878883254256655e-17,
-          "maximum_link_route_moment_residual": 1.3552527156068805e-20,
+          "maximum_global_single_application_residual": 6.916278124215539e-17,
+          "maximum_link_route_moment_residual": 6.776263578034403e-21,
           "maximum_unowned_outer_boundary_exchange": 0.0
         },
         "finite_volume_positive": true,
@@ -891,14 +892,14 @@
           "all_macroscopic_admissible": true,
           "all_populations_nonnegative": true,
           "minimum_density": 0.9899999999999862,
-          "minimum_particle_population": 0.0006355078124998788,
-          "minimum_pressure": 0.49400999999998196,
-          "minimum_temperature": 0.4989781663666381,
-          "minimum_total_energy_population": 0.0007980673168847354,
+          "minimum_particle_population": 0.0006355078124998812,
+          "minimum_pressure": 0.4940099999999818,
+          "minimum_temperature": 0.49897816609521833,
+          "minimum_total_energy_population": 0.0007980672827155841,
           "realizable": true
         },
         "learned_lifts_accepted": true,
-        "minimum_finite_volume_density": 0.9898564117894995,
+        "minimum_finite_volume_density": 0.9898564116040216,
         "minimum_finite_volume_pressure": 0.4940099999999819,
         "ownership_differentiability": "none",
         "rollback_applied": false,
@@ -914,7 +915,7 @@
             "maximum_moment_lift_residual": 4.440892098500626e-16,
             "maximum_particle_population_flux": 0.10520833333333472,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13210497854698858,
+            "maximum_total_energy_population_flux": 0.13210497772871152,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_0",
             "stage_index": 0,
@@ -938,7 +939,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
@@ -956,7 +957,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
@@ -974,7 +975,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
@@ -992,7 +993,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
@@ -1010,7 +1011,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
@@ -1028,7 +1029,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
@@ -1046,7 +1047,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
@@ -1064,7 +1065,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
@@ -1082,7 +1083,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
@@ -1100,7 +1101,7 @@
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
               "minimum_margin": 0.0006355078124998761
@@ -1112,12 +1113,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5018828755999997,
+            "maximum_common_conservative_flux": 0.5018828758242163,
             "maximum_equal_opposite_flux_residual": 0.0,
             "maximum_moment_lift_residual": 2.220446049250313e-16,
-            "maximum_particle_population_flux": 0.10591085048205119,
+            "maximum_particle_population_flux": 0.10591085048205122,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13338221022668706,
+            "maximum_total_energy_population_flux": 0.13338220388379796,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_1",
             "stage_index": 1,
@@ -1130,183 +1131,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.858207255894452e-18,
-                  "minimum_margin": 0.000639419417603695,
+                  "maximum_mach": 7.858207250558024e-18,
+                  "minimum_margin": 0.0006394194237244648,
                   "minimum_margins": {
                     "hull": 2.0,
                     "mach": 0.2587745847536102,
-                    "particle_equilibrium": 0.000639419417603695,
+                    "particle_equilibrium": 0.0006394194237244648,
                     "rho": 0.1900000000002593,
-                    "temperature": 0.01943349389916532,
+                    "temperature": 0.019433494577485555,
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.858207255894452e-18,
-                  "minimum_margin": 0.000639419417603695,
+                  "maximum_mach": 7.858207250558024e-18,
+                  "minimum_margin": 0.0006394194237244648,
                   "minimum_margins": {
                     "hull": 2.0,
                     "mach": 0.2587745847536102,
-                    "particle_equilibrium": 0.000639419417603695,
+                    "particle_equilibrium": 0.0006394194237244648,
                     "rho": 0.1900000000002593,
-                    "temperature": 0.01943349389916532,
+                    "temperature": 0.019433494577485555,
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.858207255894452e-18,
-                  "minimum_margin": 0.000639419417603695,
+                  "maximum_mach": 7.858207250558024e-18,
+                  "minimum_margin": 0.0006394194237244648,
                   "minimum_margins": {
                     "hull": 2.0,
                     "mach": 0.2587745847536102,
-                    "particle_equilibrium": 0.000639419417603695,
+                    "particle_equilibrium": 0.0006394194237244648,
                     "rho": 0.1900000000002593,
-                    "temperature": 0.01943349389916532,
+                    "temperature": 0.019433494577485555,
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.858207255894452e-18,
-                  "minimum_margin": 0.000639419417603695,
+                  "maximum_mach": 7.858207250558024e-18,
+                  "minimum_margin": 0.0006394194237244648,
                   "minimum_margins": {
                     "hull": 2.0,
                     "mach": 0.2587745847536102,
-                    "particle_equilibrium": 0.000639419417603695,
+                    "particle_equilibrium": 0.0006394194237244648,
                     "rho": 0.1900000000002593,
-                    "temperature": 0.01943349389916532,
+                    "temperature": 0.019433494577485555,
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.858207255894452e-18,
-                  "minimum_margin": 0.000639419417603695,
+                  "maximum_mach": 7.858207250558024e-18,
+                  "minimum_margin": 0.0006394194237244648,
                   "minimum_margins": {
                     "hull": 2.0,
                     "mach": 0.2587745847536102,
-                    "particle_equilibrium": 0.000639419417603695,
+                    "particle_equilibrium": 0.0006394194237244648,
                     "rho": 0.1900000000002593,
-                    "temperature": 0.01943349389916532,
+                    "temperature": 0.019433494577485555,
                     "u_x": 0.15000000000022737,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0071351676723957255,
-                  "minimum_margin": 0.0006419789698825765,
+                  "maximum_mach": 0.007135167669213389,
+                  "minimum_margin": 0.0006419789739698457,
                   "minimum_margins": {
                     "hull": 1.9916393987091665,
-                    "mach": 0.25163941708121446,
-                    "particle_equilibrium": 0.0006419789698825765,
+                    "mach": 0.2516394170843968,
+                    "particle_equilibrium": 0.0006419789739698457,
                     "rho": 0.1952916666669402,
-                    "temperature": 0.019635960779219364,
+                    "temperature": 0.019635960332887392,
                     "u_x": 0.1440281176131153,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0071351676723957255,
-                  "minimum_margin": 0.0006419789698825765,
+                  "maximum_mach": 0.007135167669213389,
+                  "minimum_margin": 0.0006419789739698457,
                   "minimum_margins": {
                     "hull": 1.9916393987091665,
-                    "mach": 0.25163941708121446,
-                    "particle_equilibrium": 0.0006419789698825765,
+                    "mach": 0.2516394170843968,
+                    "particle_equilibrium": 0.0006419789739698457,
                     "rho": 0.1952916666669402,
-                    "temperature": 0.019635960779219364,
+                    "temperature": 0.019635960332887392,
                     "u_x": 0.1440281176131153,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0071351676723957255,
-                  "minimum_margin": 0.0006419789698825765,
+                  "maximum_mach": 0.007135167669213389,
+                  "minimum_margin": 0.0006419789739698457,
                   "minimum_margins": {
                     "hull": 1.9916393987091665,
-                    "mach": 0.25163941708121446,
-                    "particle_equilibrium": 0.0006419789698825765,
+                    "mach": 0.2516394170843968,
+                    "particle_equilibrium": 0.0006419789739698457,
                     "rho": 0.1952916666669402,
-                    "temperature": 0.019635960779219364,
+                    "temperature": 0.019635960332887392,
                     "u_x": 0.1440281176131153,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0071351676723957255,
-                  "minimum_margin": 0.0006419789698825765,
+                  "maximum_mach": 0.007135167669213389,
+                  "minimum_margin": 0.0006419789739698457,
                   "minimum_margins": {
                     "hull": 1.9916393987091665,
-                    "mach": 0.25163941708121446,
-                    "particle_equilibrium": 0.0006419789698825765,
+                    "mach": 0.2516394170843968,
+                    "particle_equilibrium": 0.0006419789739698457,
                     "rho": 0.1952916666669402,
-                    "temperature": 0.019635960779219364,
+                    "temperature": 0.019635960332887392,
                     "u_x": 0.1440281176131153,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0071351676723957255,
-                  "minimum_margin": 0.0006419789698825765,
+                  "maximum_mach": 0.007135167669213389,
+                  "minimum_margin": 0.0006419789739698457,
                   "minimum_margins": {
                     "hull": 1.9916393987091665,
-                    "mach": 0.25163941708121446,
-                    "particle_equilibrium": 0.0006419789698825765,
+                    "mach": 0.2516394170843968,
+                    "particle_equilibrium": 0.0006419789739698457,
                     "rho": 0.1952916666669402,
-                    "temperature": 0.019635960779219364,
+                    "temperature": 0.019635960332887392,
                     "u_x": 0.1440281176131153,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.000639419417603695
+              "minimum_margin": 0.0006394194237244648
             },
             "weight": 0.16666666666666666
           },
@@ -1315,12 +1316,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5003331156267499,
+            "maximum_common_conservative_flux": 0.5003331163822745,
             "maximum_equal_opposite_flux_residual": 0.0,
-            "maximum_moment_lift_residual": 2.220446049250313e-16,
-            "maximum_particle_population_flux": 0.10533250519901426,
+            "maximum_moment_lift_residual": 4.440892098500626e-16,
+            "maximum_particle_population_flux": 0.10533250518786091,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13234608046124752,
+            "maximum_total_energy_population_flux": 0.13234607875716053,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_2",
             "stage_index": 2,
@@ -1333,183 +1334,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.0088563767010825e-08,
-                  "minimum_margin": 0.0006372529633146653,
+                  "maximum_mach": 2.0088626652223683e-08,
+                  "minimum_margin": 0.000637252965378213,
                   "minimum_margins": {
-                    "hull": 1.9999999764885978,
-                    "mach": 0.25877456466504645,
-                    "particle_equilibrium": 0.0006372529633146653,
-                    "rho": 0.1898978671942414,
-                    "temperature": 0.019200693222302556,
-                    "u_x": 0.14999998320636865,
+                    "hull": 1.9999999764885241,
+                    "mach": 0.25877456466498355,
+                    "particle_equilibrium": 0.000637252965378213,
+                    "rho": 0.1898978670345013,
+                    "temperature": 0.019200693462426033,
+                    "u_x": 0.14999998320631605,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.0088563767010825e-08,
-                  "minimum_margin": 0.0006372529633146653,
+                  "maximum_mach": 2.0088626652223683e-08,
+                  "minimum_margin": 0.000637252965378213,
                   "minimum_margins": {
-                    "hull": 1.9999999764885978,
-                    "mach": 0.25877456466504645,
-                    "particle_equilibrium": 0.0006372529633146653,
-                    "rho": 0.1898978671942414,
-                    "temperature": 0.019200693222302556,
-                    "u_x": 0.14999998320636865,
+                    "hull": 1.9999999764885241,
+                    "mach": 0.25877456466498355,
+                    "particle_equilibrium": 0.000637252965378213,
+                    "rho": 0.1898978670345013,
+                    "temperature": 0.019200693462426033,
+                    "u_x": 0.14999998320631605,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.0088563767010825e-08,
-                  "minimum_margin": 0.0006372529633146653,
+                  "maximum_mach": 2.0088626652223683e-08,
+                  "minimum_margin": 0.000637252965378213,
                   "minimum_margins": {
-                    "hull": 1.9999999764885978,
-                    "mach": 0.25877456466504645,
-                    "particle_equilibrium": 0.0006372529633146653,
-                    "rho": 0.1898978671942414,
-                    "temperature": 0.019200693222302556,
-                    "u_x": 0.14999998320636865,
+                    "hull": 1.9999999764885241,
+                    "mach": 0.25877456466498355,
+                    "particle_equilibrium": 0.000637252965378213,
+                    "rho": 0.1898978670345013,
+                    "temperature": 0.019200693462426033,
+                    "u_x": 0.14999998320631605,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.0088563767010825e-08,
-                  "minimum_margin": 0.0006372529633146653,
+                  "maximum_mach": 2.0088626652223683e-08,
+                  "minimum_margin": 0.000637252965378213,
                   "minimum_margins": {
-                    "hull": 1.9999999764885978,
-                    "mach": 0.25877456466504645,
-                    "particle_equilibrium": 0.0006372529633146653,
-                    "rho": 0.1898978671942414,
-                    "temperature": 0.019200693222302556,
-                    "u_x": 0.14999998320636865,
+                    "hull": 1.9999999764885241,
+                    "mach": 0.25877456466498355,
+                    "particle_equilibrium": 0.000637252965378213,
+                    "rho": 0.1898978670345013,
+                    "temperature": 0.019200693462426033,
+                    "u_x": 0.14999998320631605,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.0088563767010825e-08,
-                  "minimum_margin": 0.0006372529633146653,
+                  "maximum_mach": 2.0088626652223683e-08,
+                  "minimum_margin": 0.000637252965378213,
                   "minimum_margins": {
-                    "hull": 1.9999999764885978,
-                    "mach": 0.25877456466504645,
-                    "particle_equilibrium": 0.0006372529633146653,
-                    "rho": 0.1898978671942414,
-                    "temperature": 0.019200693222302556,
-                    "u_x": 0.14999998320636865,
+                    "hull": 1.9999999764885241,
+                    "mach": 0.25877456466498355,
+                    "particle_equilibrium": 0.000637252965378213,
+                    "rho": 0.1898978670345013,
+                    "temperature": 0.019200693462426033,
+                    "u_x": 0.14999998320631605,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0017719031306873845,
-                  "minimum_margin": 0.0006598746316053177,
+                  "maximum_mach": 0.0017719031274892303,
+                  "minimum_margin": 0.0006598746457991025,
                   "minimum_margins": {
-                    "hull": 1.9979228614297777,
-                    "mach": 0.25700268162292284,
-                    "particle_equilibrium": 0.0006598746316053177,
-                    "rho": 0.19180183772271664,
-                    "temperature": 0.01919679387117501,
-                    "u_x": 0.1485163292202706,
+                    "hull": 1.9979228614303082,
+                    "mach": 0.257002681626121,
+                    "particle_equilibrium": 0.0006598746457991025,
+                    "rho": 0.1918018378287083,
+                    "temperature": 0.01919679231913829,
+                    "u_x": 0.1485163292206495,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0017719031306873845,
-                  "minimum_margin": 0.0006598746316053177,
+                  "maximum_mach": 0.0017719031274892303,
+                  "minimum_margin": 0.0006598746457991025,
                   "minimum_margins": {
-                    "hull": 1.9979228614297777,
-                    "mach": 0.25700268162292284,
-                    "particle_equilibrium": 0.0006598746316053177,
-                    "rho": 0.19180183772271664,
-                    "temperature": 0.01919679387117501,
-                    "u_x": 0.1485163292202706,
+                    "hull": 1.9979228614303082,
+                    "mach": 0.257002681626121,
+                    "particle_equilibrium": 0.0006598746457991025,
+                    "rho": 0.1918018378287083,
+                    "temperature": 0.01919679231913829,
+                    "u_x": 0.1485163292206495,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0017719031306873845,
-                  "minimum_margin": 0.0006598746316053177,
+                  "maximum_mach": 0.0017719031274892303,
+                  "minimum_margin": 0.0006598746457991025,
                   "minimum_margins": {
-                    "hull": 1.9979228614297777,
-                    "mach": 0.25700268162292284,
-                    "particle_equilibrium": 0.0006598746316053177,
-                    "rho": 0.19180183772271664,
-                    "temperature": 0.01919679387117501,
-                    "u_x": 0.1485163292202706,
+                    "hull": 1.9979228614303082,
+                    "mach": 0.257002681626121,
+                    "particle_equilibrium": 0.0006598746457991025,
+                    "rho": 0.1918018378287083,
+                    "temperature": 0.01919679231913829,
+                    "u_x": 0.1485163292206495,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0017719031306873845,
-                  "minimum_margin": 0.0006598746316053177,
+                  "maximum_mach": 0.0017719031274892303,
+                  "minimum_margin": 0.0006598746457991025,
                   "minimum_margins": {
-                    "hull": 1.9979228614297777,
-                    "mach": 0.25700268162292284,
-                    "particle_equilibrium": 0.0006598746316053177,
-                    "rho": 0.19180183772271664,
-                    "temperature": 0.01919679387117501,
-                    "u_x": 0.1485163292202706,
+                    "hull": 1.9979228614303082,
+                    "mach": 0.257002681626121,
+                    "particle_equilibrium": 0.0006598746457991025,
+                    "rho": 0.1918018378287083,
+                    "temperature": 0.01919679231913829,
+                    "u_x": 0.1485163292206495,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.0017719031306873845,
-                  "minimum_margin": 0.0006598746316053177,
+                  "maximum_mach": 0.0017719031274892303,
+                  "minimum_margin": 0.0006598746457991025,
                   "minimum_margins": {
-                    "hull": 1.9979228614297777,
-                    "mach": 0.25700268162292284,
-                    "particle_equilibrium": 0.0006598746316053177,
-                    "rho": 0.19180183772271664,
-                    "temperature": 0.01919679387117501,
-                    "u_x": 0.1485163292202706,
+                    "hull": 1.9979228614303082,
+                    "mach": 0.257002681626121,
+                    "particle_equilibrium": 0.0006598746457991025,
+                    "rho": 0.1918018378287083,
+                    "temperature": 0.01919679231913829,
+                    "u_x": 0.1485163292206495,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.0006372529633146653
+              "minimum_margin": 0.000637252965378213
             },
             "weight": 0.6666666666666666
           }
@@ -1525,30 +1526,30 @@
           "all_model_outputs_finite": true,
           "all_primitive_supported": true,
           "all_successful": true,
-          "maximum_mach": 0.007582737392137907,
-          "minimum_margin": 0.0006276085038658525,
+          "maximum_mach": 0.007582739113100048,
+          "minimum_margin": 0.0006276084676576511,
           "minimum_margins": {
-            "hull": 1.9911193494774555,
-            "mach": 0.2511918473614723,
-            "particle_equilibrium": 0.0006276085038658525,
+            "hull": 1.9911193475034097,
+            "mach": 0.25119184564051017,
+            "particle_equilibrium": 0.0006276084676576511,
             "rho": 0.19000000000025907,
-            "temperature": 0.01895754984345549,
-            "u_x": 0.14365664902052758,
+            "temperature": 0.01895754963029256,
+            "u_x": 0.1436566476104751,
             "u_y": 0.15000000000022737
           },
-          "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+          "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
         },
         "accepted_step_size": 0.01,
         "audit": {
-          "maximum_absolute_residual": 6.661338147750939e-16,
-          "maximum_finite_volume_ledger_residual": 6.776263578034403e-21,
-          "maximum_global_conservation_residual": 3.387157701127859e-17,
+          "maximum_absolute_residual": 4.440892098500626e-16,
+          "maximum_finite_volume_ledger_residual": 1.3552527156068805e-20,
+          "maximum_global_conservation_residual": 2.0754001273624867e-17,
           "maximum_kinetic_moment_exchange_residual": 6.776263578034403e-21
         },
         "exact_step": true,
         "exchange": {
-          "maximum_finite_volume_interface_residual": 6.776263578034403e-21,
-          "maximum_global_single_application_residual": 3.387157701127859e-17,
+          "maximum_finite_volume_interface_residual": 1.3552527156068805e-20,
+          "maximum_global_single_application_residual": 2.0754001273624867e-17,
           "maximum_link_route_moment_residual": 6.776263578034403e-21,
           "maximum_unowned_outer_boundary_exchange": 0.0
         },
@@ -1561,14 +1562,14 @@
           "all_macroscopic_admissible": true,
           "all_populations_nonnegative": true,
           "minimum_density": 0.9899999999999862,
-          "minimum_particle_population": 0.0006355078124998761,
-          "minimum_pressure": 0.49400999999998196,
-          "minimum_temperature": 0.4989575498432281,
-          "minimum_total_energy_population": 0.0007980673168847355,
+          "minimum_particle_population": 0.0006355078124998814,
+          "minimum_pressure": 0.4940099999999818,
+          "minimum_temperature": 0.49895754963006517,
+          "minimum_total_energy_population": 0.000798067282715584,
           "realizable": true
         },
         "learned_lifts_accepted": true,
-        "minimum_finite_volume_density": 0.989478280832256,
+        "minimum_finite_volume_density": 0.9894782802623523,
         "minimum_finite_volume_pressure": 0.4940099999999819,
         "ownership_differentiability": "none",
         "rollback_applied": false,
@@ -1579,12 +1580,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5009368501944391,
+            "maximum_common_conservative_flux": 0.5009368512729805,
             "maximum_equal_opposite_flux_residual": 0.0,
-            "maximum_moment_lift_residual": 1.1102230246251565e-16,
-            "maximum_particle_population_flux": 0.1056384734080894,
+            "maximum_moment_lift_residual": 2.220446049250313e-16,
+            "maximum_particle_population_flux": 0.1056384734641269,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.1329036231053813,
+            "maximum_total_energy_population_flux": 0.13290361930614428,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_0",
             "stage_index": 0,
@@ -1597,183 +1598,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.4868524978795818e-05,
-                  "minimum_margin": 0.0006390816038331932,
+                  "maximum_mach": 1.4868540866508697e-05,
+                  "minimum_margin": 0.0006390816082476857,
                   "minimum_margins": {
-                    "hull": 1.9999825944197358,
-                    "mach": 0.2587597162286314,
-                    "particle_equilibrium": 0.0006390816038331932,
-                    "rho": 0.1898564117897723,
-                    "temperature": 0.01940988240561159,
-                    "u_x": 0.14998756744289554,
+                    "hull": 1.9999825944011282,
+                    "mach": 0.2587597162127437,
+                    "particle_equilibrium": 0.0006390816082476857,
+                    "rho": 0.18985641160429445,
+                    "temperature": 0.019409882911978538,
+                    "u_x": 0.14998756742960448,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.4868524978795818e-05,
-                  "minimum_margin": 0.0006390816038331932,
+                  "maximum_mach": 1.4868540866508697e-05,
+                  "minimum_margin": 0.0006390816082476857,
                   "minimum_margins": {
-                    "hull": 1.9999825944197358,
-                    "mach": 0.2587597162286314,
-                    "particle_equilibrium": 0.0006390816038331932,
-                    "rho": 0.1898564117897723,
-                    "temperature": 0.01940988240561159,
-                    "u_x": 0.14998756744289554,
+                    "hull": 1.9999825944011282,
+                    "mach": 0.2587597162127437,
+                    "particle_equilibrium": 0.0006390816082476857,
+                    "rho": 0.18985641160429445,
+                    "temperature": 0.019409882911978538,
+                    "u_x": 0.14998756742960448,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.4868524978795818e-05,
-                  "minimum_margin": 0.0006390816038331932,
+                  "maximum_mach": 1.4868540866508697e-05,
+                  "minimum_margin": 0.0006390816082476857,
                   "minimum_margins": {
-                    "hull": 1.9999825944197358,
-                    "mach": 0.2587597162286314,
-                    "particle_equilibrium": 0.0006390816038331932,
-                    "rho": 0.1898564117897723,
-                    "temperature": 0.01940988240561159,
-                    "u_x": 0.14998756744289554,
+                    "hull": 1.9999825944011282,
+                    "mach": 0.2587597162127437,
+                    "particle_equilibrium": 0.0006390816082476857,
+                    "rho": 0.18985641160429445,
+                    "temperature": 0.019409882911978538,
+                    "u_x": 0.14998756742960448,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.4868524978795818e-05,
-                  "minimum_margin": 0.0006390816038331932,
+                  "maximum_mach": 1.4868540866508697e-05,
+                  "minimum_margin": 0.0006390816082476857,
                   "minimum_margins": {
-                    "hull": 1.9999825944197358,
-                    "mach": 0.2587597162286314,
-                    "particle_equilibrium": 0.0006390816038331932,
-                    "rho": 0.1898564117897723,
-                    "temperature": 0.01940988240561159,
-                    "u_x": 0.14998756744289554,
+                    "hull": 1.9999825944011282,
+                    "mach": 0.2587597162127437,
+                    "particle_equilibrium": 0.0006390816082476857,
+                    "rho": 0.18985641160429445,
+                    "temperature": 0.019409882911978538,
+                    "u_x": 0.14998756742960448,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.4868524978795818e-05,
-                  "minimum_margin": 0.0006390816038331932,
+                  "maximum_mach": 1.4868540866508697e-05,
+                  "minimum_margin": 0.0006390816082476857,
                   "minimum_margins": {
-                    "hull": 1.9999825944197358,
-                    "mach": 0.2587597162286314,
-                    "particle_equilibrium": 0.0006390816038331932,
-                    "rho": 0.1898564117897723,
-                    "temperature": 0.01940988240561159,
-                    "u_x": 0.14998756744289554,
+                    "hull": 1.9999825944011282,
+                    "mach": 0.2587597162127437,
+                    "particle_equilibrium": 0.0006390816082476857,
+                    "rho": 0.18985641160429445,
+                    "temperature": 0.019409882911978538,
+                    "u_x": 0.14998756742960448,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.004779265269875983,
-                  "minimum_margin": 0.0006497024553762517,
+                  "maximum_mach": 0.004779265841686605,
+                  "minimum_margin": 0.0006497024730227764,
                   "minimum_margins": {
-                    "hull": 1.9943988157957744,
-                    "mach": 0.2539953194837342,
-                    "particle_equilibrium": 0.0006497024553762517,
-                    "rho": 0.19393698000578485,
-                    "temperature": 0.01944141059413884,
-                    "u_x": 0.14599914682931342,
+                    "hull": 1.9943988151139196,
+                    "mach": 0.2539953189119236,
+                    "particle_equilibrium": 0.0006497024730227764,
+                    "rho": 0.19393698044818763,
+                    "temperature": 0.019441408501370105,
+                    "u_x": 0.14599914634227165,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.004779265269875983,
-                  "minimum_margin": 0.0006497024553762517,
+                  "maximum_mach": 0.004779265841686605,
+                  "minimum_margin": 0.0006497024730227764,
                   "minimum_margins": {
-                    "hull": 1.9943988157957744,
-                    "mach": 0.2539953194837342,
-                    "particle_equilibrium": 0.0006497024553762517,
-                    "rho": 0.19393698000578485,
-                    "temperature": 0.01944141059413884,
-                    "u_x": 0.14599914682931342,
+                    "hull": 1.9943988151139196,
+                    "mach": 0.2539953189119236,
+                    "particle_equilibrium": 0.0006497024730227764,
+                    "rho": 0.19393698044818763,
+                    "temperature": 0.019441408501370105,
+                    "u_x": 0.14599914634227165,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.004779265269875983,
-                  "minimum_margin": 0.0006497024553762517,
+                  "maximum_mach": 0.004779265841686605,
+                  "minimum_margin": 0.0006497024730227764,
                   "minimum_margins": {
-                    "hull": 1.9943988157957744,
-                    "mach": 0.2539953194837342,
-                    "particle_equilibrium": 0.0006497024553762517,
-                    "rho": 0.19393698000578485,
-                    "temperature": 0.01944141059413884,
-                    "u_x": 0.14599914682931342,
+                    "hull": 1.9943988151139196,
+                    "mach": 0.2539953189119236,
+                    "particle_equilibrium": 0.0006497024730227764,
+                    "rho": 0.19393698044818763,
+                    "temperature": 0.019441408501370105,
+                    "u_x": 0.14599914634227165,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.004779265269875983,
-                  "minimum_margin": 0.0006497024553762517,
+                  "maximum_mach": 0.004779265841686605,
+                  "minimum_margin": 0.0006497024730227764,
                   "minimum_margins": {
-                    "hull": 1.9943988157957744,
-                    "mach": 0.2539953194837342,
-                    "particle_equilibrium": 0.0006497024553762517,
-                    "rho": 0.19393698000578485,
-                    "temperature": 0.01944141059413884,
-                    "u_x": 0.14599914682931342,
+                    "hull": 1.9943988151139196,
+                    "mach": 0.2539953189119236,
+                    "particle_equilibrium": 0.0006497024730227764,
+                    "rho": 0.19393698044818763,
+                    "temperature": 0.019441408501370105,
+                    "u_x": 0.14599914634227165,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.004779265269875983,
-                  "minimum_margin": 0.0006497024553762517,
+                  "maximum_mach": 0.004779265841686605,
+                  "minimum_margin": 0.0006497024730227764,
                   "minimum_margins": {
-                    "hull": 1.9943988157957744,
-                    "mach": 0.2539953194837342,
-                    "particle_equilibrium": 0.0006497024553762517,
-                    "rho": 0.19393698000578485,
-                    "temperature": 0.01944141059413884,
-                    "u_x": 0.14599914682931342,
+                    "hull": 1.9943988151139196,
+                    "mach": 0.2539953189119236,
+                    "particle_equilibrium": 0.0006497024730227764,
+                    "rho": 0.19393698044818763,
+                    "temperature": 0.019441408501370105,
+                    "u_x": 0.14599914634227165,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.0006390816038331932
+              "minimum_margin": 0.0006390816082476857
             },
             "weight": 0.16666666666666666
           },
@@ -1782,12 +1783,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5011954881543049,
+            "maximum_common_conservative_flux": 0.5011954901621224,
             "maximum_equal_opposite_flux_residual": 0.0,
-            "maximum_moment_lift_residual": 4.440892098500626e-16,
-            "maximum_particle_population_flux": 0.10578270355320872,
+            "maximum_moment_lift_residual": 2.220446049250313e-16,
+            "maximum_particle_population_flux": 0.10578270302430823,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13313619787400152,
+            "maximum_total_energy_population_flux": 0.13313619268351265,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_1",
             "stage_index": 1,
@@ -1800,183 +1801,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.494102681657064e-06,
-                  "minimum_margin": 0.0006423254396585586,
+                  "maximum_mach": 9.494099424818131e-06,
+                  "minimum_margin": 0.0006423254471436348,
                   "minimum_margins": {
-                    "hull": 1.9999888816629856,
-                    "mach": 0.25876509065092856,
-                    "particle_equilibrium": 0.0006423254396585586,
-                    "rho": 0.18955019779628557,
-                    "temperature": 0.019790172472953005,
-                    "u_x": 0.14999205833093132,
+                    "hull": 1.99998888166679,
+                    "mach": 0.2587650906541854,
+                    "particle_equilibrium": 0.0006423254471436348,
+                    "rho": 0.18955019723512867,
+                    "temperature": 0.01979017334245381,
+                    "u_x": 0.1499920583336487,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.494102681657064e-06,
-                  "minimum_margin": 0.0006423254396585586,
+                  "maximum_mach": 9.494099424818131e-06,
+                  "minimum_margin": 0.0006423254471436348,
                   "minimum_margins": {
-                    "hull": 1.9999888816629856,
-                    "mach": 0.25876509065092856,
-                    "particle_equilibrium": 0.0006423254396585586,
-                    "rho": 0.18955019779628557,
-                    "temperature": 0.019790172472953005,
-                    "u_x": 0.14999205833093132,
+                    "hull": 1.99998888166679,
+                    "mach": 0.2587650906541854,
+                    "particle_equilibrium": 0.0006423254471436348,
+                    "rho": 0.18955019723512867,
+                    "temperature": 0.01979017334245381,
+                    "u_x": 0.1499920583336487,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.494102681657064e-06,
-                  "minimum_margin": 0.0006423254396585586,
+                  "maximum_mach": 9.494099424818131e-06,
+                  "minimum_margin": 0.0006423254471436348,
                   "minimum_margins": {
-                    "hull": 1.9999888816629856,
-                    "mach": 0.25876509065092856,
-                    "particle_equilibrium": 0.0006423254396585586,
-                    "rho": 0.18955019779628557,
-                    "temperature": 0.019790172472953005,
-                    "u_x": 0.14999205833093132,
+                    "hull": 1.99998888166679,
+                    "mach": 0.2587650906541854,
+                    "particle_equilibrium": 0.0006423254471436348,
+                    "rho": 0.18955019723512867,
+                    "temperature": 0.01979017334245381,
+                    "u_x": 0.1499920583336487,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.494102681657064e-06,
-                  "minimum_margin": 0.0006423254396585586,
+                  "maximum_mach": 9.494099424818131e-06,
+                  "minimum_margin": 0.0006423254471436348,
                   "minimum_margins": {
-                    "hull": 1.9999888816629856,
-                    "mach": 0.25876509065092856,
-                    "particle_equilibrium": 0.0006423254396585586,
-                    "rho": 0.18955019779628557,
-                    "temperature": 0.019790172472953005,
-                    "u_x": 0.14999205833093132,
+                    "hull": 1.99998888166679,
+                    "mach": 0.2587650906541854,
+                    "particle_equilibrium": 0.0006423254471436348,
+                    "rho": 0.18955019723512867,
+                    "temperature": 0.01979017334245381,
+                    "u_x": 0.1499920583336487,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.494102681657064e-06,
-                  "minimum_margin": 0.0006423254396585586,
+                  "maximum_mach": 9.494099424818131e-06,
+                  "minimum_margin": 0.0006423254471436348,
                   "minimum_margins": {
-                    "hull": 1.9999888816629856,
-                    "mach": 0.25876509065092856,
-                    "particle_equilibrium": 0.0006423254396585586,
-                    "rho": 0.18955019779628557,
-                    "temperature": 0.019790172472953005,
-                    "u_x": 0.14999205833093132,
+                    "hull": 1.99998888166679,
+                    "mach": 0.2587650906541854,
+                    "particle_equilibrium": 0.0006423254471436348,
+                    "rho": 0.18955019723512867,
+                    "temperature": 0.01979017334245381,
+                    "u_x": 0.1499920583336487,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007395910524559524,
-                  "minimum_margin": 0.0006371571802462967,
+                  "maximum_mach": 0.007395909536333448,
+                  "minimum_margin": 0.0006371572438063032,
                   "minimum_margins": {
-                    "hull": 1.9913369250587416,
-                    "mach": 0.2513786742290507,
-                    "particle_equilibrium": 0.0006371571802462967,
-                    "rho": 0.1969382213913542,
-                    "temperature": 0.019987870640821526,
-                    "u_x": 0.14381206225015034,
+                    "hull": 1.9913369261558673,
+                    "mach": 0.25137867521727675,
+                    "particle_equilibrium": 0.0006371572438063032,
+                    "rho": 0.19693822484406542,
+                    "temperature": 0.019987863667833783,
+                    "u_x": 0.14381206303382227,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007395910524559524,
-                  "minimum_margin": 0.0006371571802462967,
+                  "maximum_mach": 0.007395909536333448,
+                  "minimum_margin": 0.0006371572438063032,
                   "minimum_margins": {
-                    "hull": 1.9913369250587416,
-                    "mach": 0.2513786742290507,
-                    "particle_equilibrium": 0.0006371571802462967,
-                    "rho": 0.1969382213913542,
-                    "temperature": 0.019987870640821526,
-                    "u_x": 0.14381206225015034,
+                    "hull": 1.9913369261558673,
+                    "mach": 0.25137867521727675,
+                    "particle_equilibrium": 0.0006371572438063032,
+                    "rho": 0.19693822484406542,
+                    "temperature": 0.019987863667833783,
+                    "u_x": 0.14381206303382227,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007395910524559524,
-                  "minimum_margin": 0.0006371571802462967,
+                  "maximum_mach": 0.007395909536333448,
+                  "minimum_margin": 0.0006371572438063032,
                   "minimum_margins": {
-                    "hull": 1.9913369250587416,
-                    "mach": 0.2513786742290507,
-                    "particle_equilibrium": 0.0006371571802462967,
-                    "rho": 0.1969382213913542,
-                    "temperature": 0.019987870640821526,
-                    "u_x": 0.14381206225015034,
+                    "hull": 1.9913369261558673,
+                    "mach": 0.25137867521727675,
+                    "particle_equilibrium": 0.0006371572438063032,
+                    "rho": 0.19693822484406542,
+                    "temperature": 0.019987863667833783,
+                    "u_x": 0.14381206303382227,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007395910524559524,
-                  "minimum_margin": 0.0006371571802462967,
+                  "maximum_mach": 0.007395909536333448,
+                  "minimum_margin": 0.0006371572438063032,
                   "minimum_margins": {
-                    "hull": 1.9913369250587416,
-                    "mach": 0.2513786742290507,
-                    "particle_equilibrium": 0.0006371571802462967,
-                    "rho": 0.1969382213913542,
-                    "temperature": 0.019987870640821526,
-                    "u_x": 0.14381206225015034,
+                    "hull": 1.9913369261558673,
+                    "mach": 0.25137867521727675,
+                    "particle_equilibrium": 0.0006371572438063032,
+                    "rho": 0.19693822484406542,
+                    "temperature": 0.019987863667833783,
+                    "u_x": 0.14381206303382227,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007395910524559524,
-                  "minimum_margin": 0.0006371571802462967,
+                  "maximum_mach": 0.007395909536333448,
+                  "minimum_margin": 0.0006371572438063032,
                   "minimum_margins": {
-                    "hull": 1.9913369250587416,
-                    "mach": 0.2513786742290507,
-                    "particle_equilibrium": 0.0006371571802462967,
-                    "rho": 0.1969382213913542,
-                    "temperature": 0.019987870640821526,
-                    "u_x": 0.14381206225015034,
+                    "hull": 1.9913369261558673,
+                    "mach": 0.25137867521727675,
+                    "particle_equilibrium": 0.0006371572438063032,
+                    "rho": 0.19693822484406542,
+                    "temperature": 0.019987863667833783,
+                    "u_x": 0.14381206303382227,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.0006371571802462967
+              "minimum_margin": 0.0006371572438063032
             },
             "weight": 0.16666666666666666
           },
@@ -1985,12 +1986,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5009338459301567,
+            "maximum_common_conservative_flux": 0.5009338480596637,
             "maximum_equal_opposite_flux_residual": 0.0,
-            "maximum_moment_lift_residual": 4.440892098500626e-16,
-            "maximum_particle_population_flux": 0.10565754965354406,
+            "maximum_moment_lift_residual": 2.220446049250313e-16,
+            "maximum_particle_population_flux": 0.10565754955434199,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13292559559019676,
+            "maximum_total_energy_population_flux": 0.13292559196210574,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_2",
             "stage_index": 2,
@@ -2003,183 +2004,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.1066126806234707e-05,
-                  "minimum_margin": 0.0006405834152642011,
+                  "maximum_mach": 2.1066147013774894e-05,
+                  "minimum_margin": 0.0006405834205115717,
                   "minimum_margins": {
-                    "hull": 1.999975334813843,
-                    "mach": 0.25875351862680396,
-                    "particle_equilibrium": 0.0006405834152642011,
-                    "rho": 0.18966160867492377,
-                    "temperature": 0.01959179830959701,
-                    "u_x": 0.14998238201011455,
+                    "hull": 1.9999753347901679,
+                    "mach": 0.25875351860659646,
+                    "particle_equilibrium": 0.0006405834205115717,
+                    "rho": 0.1896616082747853,
+                    "temperature": 0.019591798924868342,
+                    "u_x": 0.14998238199320374,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.1066126806234707e-05,
-                  "minimum_margin": 0.0006405834152642011,
+                  "maximum_mach": 2.1066147013774894e-05,
+                  "minimum_margin": 0.0006405834205115717,
                   "minimum_margins": {
-                    "hull": 1.999975334813843,
-                    "mach": 0.25875351862680396,
-                    "particle_equilibrium": 0.0006405834152642011,
-                    "rho": 0.18966160867492377,
-                    "temperature": 0.01959179830959701,
-                    "u_x": 0.14998238201011455,
+                    "hull": 1.9999753347901679,
+                    "mach": 0.25875351860659646,
+                    "particle_equilibrium": 0.0006405834205115717,
+                    "rho": 0.1896616082747853,
+                    "temperature": 0.019591798924868342,
+                    "u_x": 0.14998238199320374,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.1066126806234707e-05,
-                  "minimum_margin": 0.0006405834152642011,
+                  "maximum_mach": 2.1066147013774894e-05,
+                  "minimum_margin": 0.0006405834205115717,
                   "minimum_margins": {
-                    "hull": 1.999975334813843,
-                    "mach": 0.25875351862680396,
-                    "particle_equilibrium": 0.0006405834152642011,
-                    "rho": 0.18966160867492377,
-                    "temperature": 0.01959179830959701,
-                    "u_x": 0.14998238201011455,
+                    "hull": 1.9999753347901679,
+                    "mach": 0.25875351860659646,
+                    "particle_equilibrium": 0.0006405834205115717,
+                    "rho": 0.1896616082747853,
+                    "temperature": 0.019591798924868342,
+                    "u_x": 0.14998238199320374,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.1066126806234707e-05,
-                  "minimum_margin": 0.0006405834152642011,
+                  "maximum_mach": 2.1066147013774894e-05,
+                  "minimum_margin": 0.0006405834205115717,
                   "minimum_margins": {
-                    "hull": 1.999975334813843,
-                    "mach": 0.25875351862680396,
-                    "particle_equilibrium": 0.0006405834152642011,
-                    "rho": 0.18966160867492377,
-                    "temperature": 0.01959179830959701,
-                    "u_x": 0.14998238201011455,
+                    "hull": 1.9999753347901679,
+                    "mach": 0.25875351860659646,
+                    "particle_equilibrium": 0.0006405834205115717,
+                    "rho": 0.1896616082747853,
+                    "temperature": 0.019591798924868342,
+                    "u_x": 0.14998238199320374,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 2.1066126806234707e-05,
-                  "minimum_margin": 0.0006405834152642011,
+                  "maximum_mach": 2.1066147013774894e-05,
+                  "minimum_margin": 0.0006405834205115717,
                   "minimum_margins": {
-                    "hull": 1.999975334813843,
-                    "mach": 0.25875351862680396,
-                    "particle_equilibrium": 0.0006405834152642011,
-                    "rho": 0.18966160867492377,
-                    "temperature": 0.01959179830959701,
-                    "u_x": 0.14998238201011455,
+                    "hull": 1.9999753347901679,
+                    "mach": 0.25875351860659646,
+                    "particle_equilibrium": 0.0006405834205115717,
+                    "rho": 0.1896616082747853,
+                    "temperature": 0.019591798924868342,
+                    "u_x": 0.14998238199320374,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.005457309646136756,
-                  "minimum_margin": 0.0006458594414838413,
+                  "maximum_mach": 0.005457310353072595,
+                  "minimum_margin": 0.0006458594834629867,
                   "minimum_margins": {
-                    "hull": 1.9936053994144523,
-                    "mach": 0.2533172751074734,
-                    "particle_equilibrium": 0.0006458594414838413,
-                    "rho": 0.19489033582657278,
-                    "temperature": 0.01963420208895561,
-                    "u_x": 0.14543241727087483,
+                    "hull": 1.9936053985547468,
+                    "mach": 0.2533172744005376,
+                    "particle_equilibrium": 0.0006458594834629867,
+                    "rho": 0.1948903379990934,
+                    "temperature": 0.019634197181628843,
+                    "u_x": 0.14543241665679532,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.005457309646136756,
-                  "minimum_margin": 0.0006458594414838413,
+                  "maximum_mach": 0.005457310353072595,
+                  "minimum_margin": 0.0006458594834629867,
                   "minimum_margins": {
-                    "hull": 1.9936053994144523,
-                    "mach": 0.2533172751074734,
-                    "particle_equilibrium": 0.0006458594414838413,
-                    "rho": 0.19489033582657278,
-                    "temperature": 0.01963420208895561,
-                    "u_x": 0.14543241727087483,
+                    "hull": 1.9936053985547468,
+                    "mach": 0.2533172744005376,
+                    "particle_equilibrium": 0.0006458594834629867,
+                    "rho": 0.1948903379990934,
+                    "temperature": 0.019634197181628843,
+                    "u_x": 0.14543241665679532,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.005457309646136756,
-                  "minimum_margin": 0.0006458594414838413,
+                  "maximum_mach": 0.005457310353072595,
+                  "minimum_margin": 0.0006458594834629867,
                   "minimum_margins": {
-                    "hull": 1.9936053994144523,
-                    "mach": 0.2533172751074734,
-                    "particle_equilibrium": 0.0006458594414838413,
-                    "rho": 0.19489033582657278,
-                    "temperature": 0.01963420208895561,
-                    "u_x": 0.14543241727087483,
+                    "hull": 1.9936053985547468,
+                    "mach": 0.2533172744005376,
+                    "particle_equilibrium": 0.0006458594834629867,
+                    "rho": 0.1948903379990934,
+                    "temperature": 0.019634197181628843,
+                    "u_x": 0.14543241665679532,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.005457309646136756,
-                  "minimum_margin": 0.0006458594414838413,
+                  "maximum_mach": 0.005457310353072595,
+                  "minimum_margin": 0.0006458594834629867,
                   "minimum_margins": {
-                    "hull": 1.9936053994144523,
-                    "mach": 0.2533172751074734,
-                    "particle_equilibrium": 0.0006458594414838413,
-                    "rho": 0.19489033582657278,
-                    "temperature": 0.01963420208895561,
-                    "u_x": 0.14543241727087483,
+                    "hull": 1.9936053985547468,
+                    "mach": 0.2533172744005376,
+                    "particle_equilibrium": 0.0006458594834629867,
+                    "rho": 0.1948903379990934,
+                    "temperature": 0.019634197181628843,
+                    "u_x": 0.14543241665679532,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.005457309646136756,
-                  "minimum_margin": 0.0006458594414838413,
+                  "maximum_mach": 0.005457310353072595,
+                  "minimum_margin": 0.0006458594834629867,
                   "minimum_margins": {
-                    "hull": 1.9936053994144523,
-                    "mach": 0.2533172751074734,
-                    "particle_equilibrium": 0.0006458594414838413,
-                    "rho": 0.19489033582657278,
-                    "temperature": 0.01963420208895561,
-                    "u_x": 0.14543241727087483,
+                    "hull": 1.9936053985547468,
+                    "mach": 0.2533172744005376,
+                    "particle_equilibrium": 0.0006458594834629867,
+                    "rho": 0.1948903379990934,
+                    "temperature": 0.019634197181628843,
+                    "u_x": 0.14543241665679532,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.0006405834152642011
+              "minimum_margin": 0.0006405834205115717
             },
             "weight": 0.6666666666666666
           }
@@ -2195,30 +2196,30 @@
           "all_model_outputs_finite": true,
           "all_primitive_supported": true,
           "all_successful": true,
-          "maximum_mach": 0.007800004443892336,
-          "minimum_margin": 0.0006272727918317417,
+          "maximum_mach": 0.0078000078581839955,
+          "minimum_margin": 0.0006272727508728858,
           "minimum_margins": {
-            "hull": 1.9908631336953428,
-            "mach": 0.25097458030971787,
-            "particle_equilibrium": 0.0006272727918317417,
+            "hull": 1.9908631297367283,
+            "mach": 0.2509745768954262,
+            "particle_equilibrium": 0.0006272727508728858,
             "rho": 0.19000000000025907,
-            "temperature": 0.018946690252340304,
-            "u_x": 0.1434736351608542,
-            "u_y": 0.15000000000022737
+            "temperature": 0.018946690083469275,
+            "u_x": 0.14347363233323077,
+            "u_y": 0.15000000000022734
           },
-          "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+          "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
         },
         "accepted_step_size": 0.01,
         "audit": {
-          "maximum_absolute_residual": 4.440892098500626e-16,
+          "maximum_absolute_residual": 5.551115123125783e-16,
           "maximum_finite_volume_ledger_residual": 1.3234889800848443e-23,
-          "maximum_global_conservation_residual": 7.851995421047364e-18,
+          "maximum_global_conservation_residual": 2.6708642892822598e-17,
           "maximum_kinetic_moment_exchange_residual": 6.776263578034403e-21
         },
         "exact_step": true,
         "exchange": {
           "maximum_finite_volume_interface_residual": 1.3234889800848443e-23,
-          "maximum_global_single_application_residual": 7.851995421047364e-18,
+          "maximum_global_single_application_residual": 2.6708642892822598e-17,
           "maximum_link_route_moment_residual": 6.776263578034403e-21,
           "maximum_unowned_outer_boundary_exchange": 0.0
         },
@@ -2231,14 +2232,14 @@
           "all_macroscopic_admissible": true,
           "all_populations_nonnegative": true,
           "minimum_density": 0.9899999999999862,
-          "minimum_particle_population": 0.0006352296265770011,
-          "minimum_pressure": 0.49400999999998196,
-          "minimum_temperature": 0.4989466902521129,
-          "minimum_total_energy_population": 0.0007970564925888128,
+          "minimum_particle_population": 0.000635229626261406,
+          "minimum_pressure": 0.4940099999999818,
+          "minimum_temperature": 0.4989466900832419,
+          "minimum_total_energy_population": 0.0007970564603096745,
           "realizable": true
         },
         "learned_lifts_accepted": true,
-        "minimum_finite_volume_density": 0.9889883356923171,
+        "minimum_finite_volume_density": 0.9889883347988848,
         "minimum_finite_volume_pressure": 0.4940099999999819,
         "ownership_differentiability": "none",
         "rollback_applied": false,
@@ -2249,12 +2250,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5010228850466131,
+            "maximum_common_conservative_flux": 0.5010228876071314,
             "maximum_equal_opposite_flux_residual": 0.0,
-            "maximum_moment_lift_residual": 6.661338147750939e-16,
-            "maximum_particle_population_flux": 0.10573112726961725,
+            "maximum_moment_lift_residual": 2.220446049250313e-16,
+            "maximum_particle_population_flux": 0.1057311269395124,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13304347359489255,
+            "maximum_total_energy_population_flux": 0.13304346953810325,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_0",
             "stage_index": 0,
@@ -2267,183 +2268,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.2906848339956553e-05,
-                  "minimum_margin": 0.0006421303925261205,
+                  "maximum_mach": 1.2906853350608328e-05,
+                  "minimum_margin": 0.0006421303988073766,
                   "minimum_margins": {
-                    "hull": 1.9999848853072504,
-                    "mach": 0.25876167790527027,
-                    "particle_equilibrium": 0.0006421303925261205,
-                    "rho": 0.18947828083252882,
-                    "temperature": 0.019774537153343652,
-                    "u_x": 0.14998920379112035,
+                    "hull": 1.9999848853013715,
+                    "mach": 0.2587616779002596,
+                    "particle_equilibrium": 0.0006421303988073766,
+                    "rho": 0.18947828026262514,
+                    "temperature": 0.019774537892024213,
+                    "u_x": 0.1499892037869211,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.2906848339956553e-05,
-                  "minimum_margin": 0.0006421303925261205,
+                  "maximum_mach": 1.2906853350608328e-05,
+                  "minimum_margin": 0.0006421303988073766,
                   "minimum_margins": {
-                    "hull": 1.9999848853072504,
-                    "mach": 0.25876167790527027,
-                    "particle_equilibrium": 0.0006421303925261205,
-                    "rho": 0.18947828083252882,
-                    "temperature": 0.019774537153343652,
-                    "u_x": 0.14998920379112035,
+                    "hull": 1.9999848853013715,
+                    "mach": 0.2587616779002596,
+                    "particle_equilibrium": 0.0006421303988073766,
+                    "rho": 0.18947828026262514,
+                    "temperature": 0.019774537892024213,
+                    "u_x": 0.1499892037869211,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.2906848339956553e-05,
-                  "minimum_margin": 0.0006421303925261205,
+                  "maximum_mach": 1.2906853350608328e-05,
+                  "minimum_margin": 0.0006421303988073766,
                   "minimum_margins": {
-                    "hull": 1.9999848853072504,
-                    "mach": 0.25876167790527027,
-                    "particle_equilibrium": 0.0006421303925261205,
-                    "rho": 0.18947828083252882,
-                    "temperature": 0.019774537153343652,
-                    "u_x": 0.14998920379112035,
+                    "hull": 1.9999848853013715,
+                    "mach": 0.2587616779002596,
+                    "particle_equilibrium": 0.0006421303988073766,
+                    "rho": 0.18947828026262514,
+                    "temperature": 0.019774537892024213,
+                    "u_x": 0.1499892037869211,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.2906848339956553e-05,
-                  "minimum_margin": 0.0006421303925261205,
+                  "maximum_mach": 1.2906853350608328e-05,
+                  "minimum_margin": 0.0006421303988073766,
                   "minimum_margins": {
-                    "hull": 1.9999848853072504,
-                    "mach": 0.25876167790527027,
-                    "particle_equilibrium": 0.0006421303925261205,
-                    "rho": 0.18947828083252882,
-                    "temperature": 0.019774537153343652,
-                    "u_x": 0.14998920379112035,
+                    "hull": 1.9999848853013715,
+                    "mach": 0.2587616779002596,
+                    "particle_equilibrium": 0.0006421303988073766,
+                    "rho": 0.18947828026262514,
+                    "temperature": 0.019774537892024213,
+                    "u_x": 0.1499892037869211,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.2906848339956553e-05,
-                  "minimum_margin": 0.0006421303925261205,
+                  "maximum_mach": 1.2906853350608328e-05,
+                  "minimum_margin": 0.0006421303988073766,
                   "minimum_margins": {
-                    "hull": 1.9999848853072504,
-                    "mach": 0.25876167790527027,
-                    "particle_equilibrium": 0.0006421303925261205,
-                    "rho": 0.18947828083252882,
-                    "temperature": 0.019774537153343652,
-                    "u_x": 0.14998920379112035,
+                    "hull": 1.9999848853013715,
+                    "mach": 0.2587616779002596,
+                    "particle_equilibrium": 0.0006421303988073766,
+                    "rho": 0.18947828026262514,
+                    "temperature": 0.019774537892024213,
+                    "u_x": 0.1499892037869211,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006577352387317239,
-                  "minimum_margin": 0.0006406622021388969,
+                  "maximum_mach": 0.006577352795272829,
+                  "minimum_margin": 0.0006406622663471318,
                   "minimum_margins": {
-                    "hull": 1.9922947147694168,
-                    "mach": 0.252197232366293,
-                    "particle_equilibrium": 0.0006406622021388969,
-                    "rho": 0.19606251982246414,
-                    "temperature": 0.019857087976812404,
-                    "u_x": 0.144496205787536,
+                    "hull": 1.9922947142345349,
+                    "mach": 0.2521972319583374,
+                    "particle_equilibrium": 0.0006406622663471318,
+                    "rho": 0.19606252371980748,
+                    "temperature": 0.01985708058102542,
+                    "u_x": 0.1444962054054738,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006577352387317239,
-                  "minimum_margin": 0.0006406622021388969,
+                  "maximum_mach": 0.006577352795272829,
+                  "minimum_margin": 0.0006406622663471318,
                   "minimum_margins": {
-                    "hull": 1.9922947147694168,
-                    "mach": 0.252197232366293,
-                    "particle_equilibrium": 0.0006406622021388969,
-                    "rho": 0.19606251982246414,
-                    "temperature": 0.019857087976812404,
-                    "u_x": 0.144496205787536,
+                    "hull": 1.9922947142345349,
+                    "mach": 0.2521972319583374,
+                    "particle_equilibrium": 0.0006406622663471318,
+                    "rho": 0.19606252371980748,
+                    "temperature": 0.01985708058102542,
+                    "u_x": 0.1444962054054738,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006577352387317239,
-                  "minimum_margin": 0.0006406622021388969,
+                  "maximum_mach": 0.006577352795272829,
+                  "minimum_margin": 0.0006406622663471318,
                   "minimum_margins": {
-                    "hull": 1.9922947147694168,
-                    "mach": 0.252197232366293,
-                    "particle_equilibrium": 0.0006406622021388969,
-                    "rho": 0.19606251982246414,
-                    "temperature": 0.019857087976812404,
-                    "u_x": 0.144496205787536,
+                    "hull": 1.9922947142345349,
+                    "mach": 0.2521972319583374,
+                    "particle_equilibrium": 0.0006406622663471318,
+                    "rho": 0.19606252371980748,
+                    "temperature": 0.01985708058102542,
+                    "u_x": 0.1444962054054738,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006577352387317239,
-                  "minimum_margin": 0.0006406622021388969,
+                  "maximum_mach": 0.006577352795272829,
+                  "minimum_margin": 0.0006406622663471318,
                   "minimum_margins": {
-                    "hull": 1.9922947147694168,
-                    "mach": 0.252197232366293,
-                    "particle_equilibrium": 0.0006406622021388969,
-                    "rho": 0.19606251982246414,
-                    "temperature": 0.019857087976812404,
-                    "u_x": 0.144496205787536,
+                    "hull": 1.9922947142345349,
+                    "mach": 0.2521972319583374,
+                    "particle_equilibrium": 0.0006406622663471318,
+                    "rho": 0.19606252371980748,
+                    "temperature": 0.01985708058102542,
+                    "u_x": 0.1444962054054738,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006577352387317239,
-                  "minimum_margin": 0.0006406622021388969,
+                  "maximum_mach": 0.006577352795272829,
+                  "minimum_margin": 0.0006406622663471318,
                   "minimum_margins": {
-                    "hull": 1.9922947147694168,
-                    "mach": 0.252197232366293,
-                    "particle_equilibrium": 0.0006406622021388969,
-                    "rho": 0.19606251982246414,
-                    "temperature": 0.019857087976812404,
-                    "u_x": 0.144496205787536,
+                    "hull": 1.9922947142345349,
+                    "mach": 0.2521972319583374,
+                    "particle_equilibrium": 0.0006406622663471318,
+                    "rho": 0.19606252371980748,
+                    "temperature": 0.01985708058102542,
+                    "u_x": 0.1444962054054738,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.0006406622021388969
+              "minimum_margin": 0.0006406622663471318
             },
             "weight": 0.16666666666666666
           },
@@ -2452,12 +2453,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5009122641344428,
+            "maximum_common_conservative_flux": 0.5009122684836785,
             "maximum_equal_opposite_flux_residual": 0.0,
-            "maximum_moment_lift_residual": 6.661338147750939e-16,
-            "maximum_particle_population_flux": 0.10573593058858737,
+            "maximum_moment_lift_residual": 2.220446049250313e-16,
+            "maximum_particle_population_flux": 0.1057359297612691,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13301350931636916,
+            "maximum_total_energy_population_flux": 0.13301350580069954,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_1",
             "stage_index": 1,
@@ -2470,183 +2471,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.691719297452693e-05,
-                  "minimum_margin": 0.0006449298273228124,
+                  "maximum_mach": 1.69171782098038e-05,
+                  "minimum_margin": 0.0006449298345981226,
                   "minimum_margins": {
-                    "hull": 1.9999801821344367,
-                    "mach": 0.2587576675606357,
-                    "particle_equilibrium": 0.0006449298273228124,
-                    "rho": 0.1890254698197077,
-                    "temperature": 0.019881359069674476,
-                    "u_x": 0.14998584438196752,
+                    "hull": 1.9999801821517158,
+                    "mach": 0.2587576675754004,
+                    "particle_equilibrium": 0.0006449298345981226,
+                    "rho": 0.18902546886752336,
+                    "temperature": 0.01988135819725967,
+                    "u_x": 0.14998584439430968,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.691719297452693e-05,
-                  "minimum_margin": 0.0006449298273228124,
+                  "maximum_mach": 1.69171782098038e-05,
+                  "minimum_margin": 0.0006449298345981226,
                   "minimum_margins": {
-                    "hull": 1.9999801821344367,
-                    "mach": 0.2587576675606357,
-                    "particle_equilibrium": 0.0006449298273228124,
-                    "rho": 0.1890254698197077,
-                    "temperature": 0.019881359069674476,
-                    "u_x": 0.14998584438196752,
+                    "hull": 1.9999801821517158,
+                    "mach": 0.2587576675754004,
+                    "particle_equilibrium": 0.0006449298345981226,
+                    "rho": 0.18902546886752336,
+                    "temperature": 0.01988135819725967,
+                    "u_x": 0.14998584439430968,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.691719297452693e-05,
-                  "minimum_margin": 0.0006449298273228124,
+                  "maximum_mach": 1.69171782098038e-05,
+                  "minimum_margin": 0.0006449298345981226,
                   "minimum_margins": {
-                    "hull": 1.9999801821344367,
-                    "mach": 0.2587576675606357,
-                    "particle_equilibrium": 0.0006449298273228124,
-                    "rho": 0.1890254698197077,
-                    "temperature": 0.019881359069674476,
-                    "u_x": 0.14998584438196752,
+                    "hull": 1.9999801821517158,
+                    "mach": 0.2587576675754004,
+                    "particle_equilibrium": 0.0006449298345981226,
+                    "rho": 0.18902546886752336,
+                    "temperature": 0.01988135819725967,
+                    "u_x": 0.14998584439430968,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.691719297452693e-05,
-                  "minimum_margin": 0.0006449298273228124,
+                  "maximum_mach": 1.69171782098038e-05,
+                  "minimum_margin": 0.0006449298345981226,
                   "minimum_margins": {
-                    "hull": 1.9999801821344367,
-                    "mach": 0.2587576675606357,
-                    "particle_equilibrium": 0.0006449298273228124,
-                    "rho": 0.1890254698197077,
-                    "temperature": 0.019881359069674476,
-                    "u_x": 0.14998584438196752,
+                    "hull": 1.9999801821517158,
+                    "mach": 0.2587576675754004,
+                    "particle_equilibrium": 0.0006449298345981226,
+                    "rho": 0.18902546886752336,
+                    "temperature": 0.01988135819725967,
+                    "u_x": 0.14998584439430968,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.691719297452693e-05,
-                  "minimum_margin": 0.0006449298273228124,
+                  "maximum_mach": 1.69171782098038e-05,
+                  "minimum_margin": 0.0006449298345981226,
                   "minimum_margins": {
-                    "hull": 1.9999801821344367,
-                    "mach": 0.2587576675606357,
-                    "particle_equilibrium": 0.0006449298273228124,
-                    "rho": 0.1890254698197077,
-                    "temperature": 0.019881359069674476,
-                    "u_x": 0.14998584438196752,
+                    "hull": 1.9999801821517158,
+                    "mach": 0.2587576675754004,
+                    "particle_equilibrium": 0.0006449298345981226,
+                    "rho": 0.18902546886752336,
+                    "temperature": 0.01988135819725967,
+                    "u_x": 0.14998584439430968,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007504146600137113,
-                  "minimum_margin": 0.0006342993983219576,
+                  "maximum_mach": 0.007504147183664934,
+                  "minimum_margin": 0.0006342995129414742,
                   "minimum_margins": {
-                    "hull": 1.9912122970431763,
-                    "mach": 0.2512704381534731,
-                    "particle_equilibrium": 0.0006342993983219576,
-                    "rho": 0.1975591232225311,
-                    "temperature": 0.019767399558275223,
-                    "u_x": 0.1437230410396701,
+                    "hull": 1.9912122962426793,
+                    "mach": 0.25127043756994527,
+                    "particle_equilibrium": 0.0006342995129414742,
+                    "rho": 0.19755913220523325,
+                    "temperature": 0.019767412884917623,
+                    "u_x": 0.14372304046787954,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007504146600137113,
-                  "minimum_margin": 0.0006342993983219576,
+                  "maximum_mach": 0.007504147183664934,
+                  "minimum_margin": 0.0006342995129414742,
                   "minimum_margins": {
-                    "hull": 1.9912122970431763,
-                    "mach": 0.2512704381534731,
-                    "particle_equilibrium": 0.0006342993983219576,
-                    "rho": 0.1975591232225311,
-                    "temperature": 0.019767399558275223,
-                    "u_x": 0.1437230410396701,
+                    "hull": 1.9912122962426793,
+                    "mach": 0.25127043756994527,
+                    "particle_equilibrium": 0.0006342995129414742,
+                    "rho": 0.19755913220523325,
+                    "temperature": 0.019767412884917623,
+                    "u_x": 0.14372304046787954,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007504146600137113,
-                  "minimum_margin": 0.0006342993983219576,
+                  "maximum_mach": 0.007504147183664934,
+                  "minimum_margin": 0.0006342995129414742,
                   "minimum_margins": {
-                    "hull": 1.9912122970431763,
-                    "mach": 0.2512704381534731,
-                    "particle_equilibrium": 0.0006342993983219576,
-                    "rho": 0.1975591232225311,
-                    "temperature": 0.019767399558275223,
-                    "u_x": 0.1437230410396701,
+                    "hull": 1.9912122962426793,
+                    "mach": 0.25127043756994527,
+                    "particle_equilibrium": 0.0006342995129414742,
+                    "rho": 0.19755913220523325,
+                    "temperature": 0.019767412884917623,
+                    "u_x": 0.14372304046787954,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007504146600137113,
-                  "minimum_margin": 0.0006342993983219576,
+                  "maximum_mach": 0.007504147183664934,
+                  "minimum_margin": 0.0006342995129414742,
                   "minimum_margins": {
-                    "hull": 1.9912122970431763,
-                    "mach": 0.2512704381534731,
-                    "particle_equilibrium": 0.0006342993983219576,
-                    "rho": 0.1975591232225311,
-                    "temperature": 0.019767399558275223,
-                    "u_x": 0.1437230410396701,
+                    "hull": 1.9912122962426793,
+                    "mach": 0.25127043756994527,
+                    "particle_equilibrium": 0.0006342995129414742,
+                    "rho": 0.19755913220523325,
+                    "temperature": 0.019767412884917623,
+                    "u_x": 0.14372304046787954,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007504146600137113,
-                  "minimum_margin": 0.0006342993983219576,
+                  "maximum_mach": 0.007504147183664934,
+                  "minimum_margin": 0.0006342995129414742,
                   "minimum_margins": {
-                    "hull": 1.9912122970431763,
-                    "mach": 0.2512704381534731,
-                    "particle_equilibrium": 0.0006342993983219576,
-                    "rho": 0.1975591232225311,
-                    "temperature": 0.019767399558275223,
-                    "u_x": 0.1437230410396701,
+                    "hull": 1.9912122962426793,
+                    "mach": 0.25127043756994527,
+                    "particle_equilibrium": 0.0006342995129414742,
+                    "rho": 0.19755913220523325,
+                    "temperature": 0.019767412884917623,
+                    "u_x": 0.14372304046787954,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.0006342993983219576
+              "minimum_margin": 0.0006342995129414742
             },
             "weight": 0.16666666666666666
           },
@@ -2655,12 +2656,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5009721866546237,
+            "maximum_common_conservative_flux": 0.5009721905566833,
             "maximum_equal_opposite_flux_residual": 0.0,
             "maximum_moment_lift_residual": 2.220446049250313e-16,
-            "maximum_particle_population_flux": 0.10573136396666824,
+            "maximum_particle_population_flux": 0.10573136352990255,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13302390134693032,
+            "maximum_total_energy_population_flux": 0.13302389798042447,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_2",
             "stage_index": 2,
@@ -2673,183 +2674,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.3598419742537222e-05,
-                  "minimum_margin": 0.0006434620283079877,
+                  "maximum_mach": 1.3598418982478545e-05,
+                  "minimum_margin": 0.0006434620345656613,
                   "minimum_margins": {
-                    "hull": 1.999984072796031,
-                    "mach": 0.2587609863338677,
-                    "particle_equilibrium": 0.0006434620283079877,
-                    "rho": 0.18923036161773077,
-                    "temperature": 0.019940237030227792,
-                    "u_x": 0.14998862342596359,
+                    "hull": 1.9999840727969092,
+                    "mach": 0.25876098633462774,
+                    "particle_equilibrium": 0.0006434620345656613,
+                    "rho": 0.1892303608750282,
+                    "temperature": 0.019940237777661796,
+                    "u_x": 0.14998862342659094,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.3598419742537222e-05,
-                  "minimum_margin": 0.0006434620283079877,
+                  "maximum_mach": 1.3598418982478545e-05,
+                  "minimum_margin": 0.0006434620345656613,
                   "minimum_margins": {
-                    "hull": 1.999984072796031,
-                    "mach": 0.2587609863338677,
-                    "particle_equilibrium": 0.0006434620283079877,
-                    "rho": 0.18923036161773077,
-                    "temperature": 0.019940237030227792,
-                    "u_x": 0.14998862342596359,
+                    "hull": 1.9999840727969092,
+                    "mach": 0.25876098633462774,
+                    "particle_equilibrium": 0.0006434620345656613,
+                    "rho": 0.1892303608750282,
+                    "temperature": 0.019940237777661796,
+                    "u_x": 0.14998862342659094,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.3598419742537222e-05,
-                  "minimum_margin": 0.0006434620283079877,
+                  "maximum_mach": 1.3598418982478545e-05,
+                  "minimum_margin": 0.0006434620345656613,
                   "minimum_margins": {
-                    "hull": 1.999984072796031,
-                    "mach": 0.2587609863338677,
-                    "particle_equilibrium": 0.0006434620283079877,
-                    "rho": 0.18923036161773077,
-                    "temperature": 0.019940237030227792,
-                    "u_x": 0.14998862342596359,
+                    "hull": 1.9999840727969092,
+                    "mach": 0.25876098633462774,
+                    "particle_equilibrium": 0.0006434620345656613,
+                    "rho": 0.1892303608750282,
+                    "temperature": 0.019940237777661796,
+                    "u_x": 0.14998862342659094,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.3598419742537222e-05,
-                  "minimum_margin": 0.0006434620283079877,
+                  "maximum_mach": 1.3598418982478545e-05,
+                  "minimum_margin": 0.0006434620345656613,
                   "minimum_margins": {
-                    "hull": 1.999984072796031,
-                    "mach": 0.2587609863338677,
-                    "particle_equilibrium": 0.0006434620283079877,
-                    "rho": 0.18923036161773077,
-                    "temperature": 0.019940237030227792,
-                    "u_x": 0.14998862342596359,
+                    "hull": 1.9999840727969092,
+                    "mach": 0.25876098633462774,
+                    "particle_equilibrium": 0.0006434620345656613,
+                    "rho": 0.1892303608750282,
+                    "temperature": 0.019940237777661796,
+                    "u_x": 0.14998862342659094,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.3598419742537222e-05,
-                  "minimum_margin": 0.0006434620283079877,
+                  "maximum_mach": 1.3598418982478545e-05,
+                  "minimum_margin": 0.0006434620345656613,
                   "minimum_margins": {
-                    "hull": 1.999984072796031,
-                    "mach": 0.2587609863338677,
-                    "particle_equilibrium": 0.0006434620283079877,
-                    "rho": 0.18923036161773077,
-                    "temperature": 0.019940237030227792,
-                    "u_x": 0.14998862342596359,
+                    "hull": 1.9999840727969092,
+                    "mach": 0.25876098633462774,
+                    "particle_equilibrium": 0.0006434620345656613,
+                    "rho": 0.1892303608750282,
+                    "temperature": 0.019940237777661796,
+                    "u_x": 0.14998862342659094,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006839443227245331,
-                  "minimum_margin": 0.0006385508278840202,
+                  "maximum_mach": 0.006839444492195592,
+                  "minimum_margin": 0.0006385509166164431,
                   "minimum_margins": {
-                    "hull": 1.991988797235658,
-                    "mach": 0.25193514152636487,
-                    "particle_equilibrium": 0.0006385508278840202,
-                    "rho": 0.1964964801168636,
-                    "temperature": 0.019996443585394097,
-                    "u_x": 0.14427769089744558,
+                    "hull": 1.9919887956702227,
+                    "mach": 0.2519351402614146,
+                    "particle_equilibrium": 0.0006385509166164431,
+                    "rho": 0.19649648649366314,
+                    "temperature": 0.019996433127452584,
+                    "u_x": 0.14427768977926533,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006839443227245331,
-                  "minimum_margin": 0.0006385508278840202,
+                  "maximum_mach": 0.006839444492195592,
+                  "minimum_margin": 0.0006385509166164431,
                   "minimum_margins": {
-                    "hull": 1.991988797235658,
-                    "mach": 0.25193514152636487,
-                    "particle_equilibrium": 0.0006385508278840202,
-                    "rho": 0.1964964801168636,
-                    "temperature": 0.019996443585394097,
-                    "u_x": 0.14427769089744558,
+                    "hull": 1.9919887956702227,
+                    "mach": 0.2519351402614146,
+                    "particle_equilibrium": 0.0006385509166164431,
+                    "rho": 0.19649648649366314,
+                    "temperature": 0.019996433127452584,
+                    "u_x": 0.14427768977926533,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006839443227245331,
-                  "minimum_margin": 0.0006385508278840202,
+                  "maximum_mach": 0.006839444492195592,
+                  "minimum_margin": 0.0006385509166164431,
                   "minimum_margins": {
-                    "hull": 1.991988797235658,
-                    "mach": 0.25193514152636487,
-                    "particle_equilibrium": 0.0006385508278840202,
-                    "rho": 0.1964964801168636,
-                    "temperature": 0.019996443585394097,
-                    "u_x": 0.14427769089744558,
+                    "hull": 1.9919887956702227,
+                    "mach": 0.2519351402614146,
+                    "particle_equilibrium": 0.0006385509166164431,
+                    "rho": 0.19649648649366314,
+                    "temperature": 0.019996433127452584,
+                    "u_x": 0.14427768977926533,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006839443227245331,
-                  "minimum_margin": 0.0006385508278840202,
+                  "maximum_mach": 0.006839444492195592,
+                  "minimum_margin": 0.0006385509166164431,
                   "minimum_margins": {
-                    "hull": 1.991988797235658,
-                    "mach": 0.25193514152636487,
-                    "particle_equilibrium": 0.0006385508278840202,
-                    "rho": 0.1964964801168636,
-                    "temperature": 0.019996443585394097,
-                    "u_x": 0.14427769089744558,
+                    "hull": 1.9919887956702227,
+                    "mach": 0.2519351402614146,
+                    "particle_equilibrium": 0.0006385509166164431,
+                    "rho": 0.19649648649366314,
+                    "temperature": 0.019996433127452584,
+                    "u_x": 0.14427768977926533,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.006839443227245331,
-                  "minimum_margin": 0.0006385508278840202,
+                  "maximum_mach": 0.006839444492195592,
+                  "minimum_margin": 0.0006385509166164431,
                   "minimum_margins": {
-                    "hull": 1.991988797235658,
-                    "mach": 0.25193514152636487,
-                    "particle_equilibrium": 0.0006385508278840202,
-                    "rho": 0.1964964801168636,
-                    "temperature": 0.019996443585394097,
-                    "u_x": 0.14427769089744558,
+                    "hull": 1.9919887956702227,
+                    "mach": 0.2519351402614146,
+                    "particle_equilibrium": 0.0006385509166164431,
+                    "rho": 0.19649648649366314,
+                    "temperature": 0.019996433127452584,
+                    "u_x": 0.14427768977926533,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.0006385508278840202
+              "minimum_margin": 0.0006385509166164431
             },
             "weight": 0.6666666666666666
           }
@@ -2865,31 +2866,31 @@
           "all_model_outputs_finite": true,
           "all_primitive_supported": true,
           "all_successful": true,
-          "maximum_mach": 0.007684609648140464,
-          "minimum_margin": 0.0006275348472430051,
+          "maximum_mach": 0.007684614912669868,
+          "minimum_margin": 0.0006275347987951538,
           "minimum_margins": {
-            "hull": 1.9909965241029535,
-            "mach": 0.25108997510546976,
-            "particle_equilibrium": 0.0006275348472430051,
+            "hull": 1.9909965179708473,
+            "mach": 0.25108996984094034,
+            "particle_equilibrium": 0.0006275347987951538,
             "rho": 0.19000000000025907,
-            "temperature": 0.018942193677314367,
-            "u_x": 0.1435689154064505,
-            "u_y": 0.15000000000022737
+            "temperature": 0.018942193542375252,
+            "u_x": 0.14356891102631236,
+            "u_y": 0.15000000000022734
           },
-          "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+          "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
         },
         "accepted_step_size": 0.01,
         "audit": {
           "maximum_absolute_residual": 6.661338147750939e-16,
-          "maximum_finite_volume_ledger_residual": 1.3552527156068805e-20,
-          "maximum_global_conservation_residual": 5.627051626847131e-17,
-          "maximum_kinetic_moment_exchange_residual": 6.776263578034403e-21
+          "maximum_finite_volume_ledger_residual": 6.776263578034403e-21,
+          "maximum_global_conservation_residual": 9.765019332421201e-17,
+          "maximum_kinetic_moment_exchange_residual": 1.3552527156068805e-20
         },
         "exact_step": true,
         "exchange": {
-          "maximum_finite_volume_interface_residual": 1.3552527156068805e-20,
-          "maximum_global_single_application_residual": 5.627051626847131e-17,
-          "maximum_link_route_moment_residual": 6.776263578034403e-21,
+          "maximum_finite_volume_interface_residual": 6.776263578034403e-21,
+          "maximum_global_single_application_residual": 9.765019332421201e-17,
+          "maximum_link_route_moment_residual": 1.3552527156068805e-20,
           "maximum_unowned_outer_boundary_exchange": 0.0
         },
         "finite_volume_positive": true,
@@ -2901,14 +2902,14 @@
           "all_macroscopic_admissible": true,
           "all_populations_nonnegative": true,
           "minimum_density": 0.9899999999999862,
-          "minimum_particle_population": 0.0006343378242025224,
-          "minimum_pressure": 0.49400999999998196,
-          "minimum_temperature": 0.498942193677087,
-          "minimum_total_energy_population": 0.0007919966539524095,
+          "minimum_particle_population": 0.0006343378183917351,
+          "minimum_pressure": 0.4940099999999818,
+          "minimum_temperature": 0.49894219354214786,
+          "minimum_total_energy_population": 0.0007919966322255148,
           "realizable": true
         },
         "learned_lifts_accepted": true,
-        "minimum_finite_volume_density": 0.9884567189662106,
+        "minimum_finite_volume_density": 0.9884567179317482,
         "minimum_finite_volume_pressure": 0.4940099999999819,
         "ownership_differentiability": "none",
         "rollback_applied": false,
@@ -2919,12 +2920,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5007544320725502,
+            "maximum_common_conservative_flux": 0.500754435558296,
             "maximum_equal_opposite_flux_residual": 0.0,
             "maximum_moment_lift_residual": 4.440892098500626e-16,
-            "maximum_particle_population_flux": 0.10571655868875855,
+            "maximum_particle_population_flux": 0.10571655765348996,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13297824649526457,
+            "maximum_total_energy_population_flux": 0.1329782428991152,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_0",
             "stage_index": 0,
@@ -2937,183 +2938,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.470292771426569e-06,
-                  "minimum_margin": 0.0006448106400929476,
+                  "maximum_mach": 9.470275485608808e-06,
+                  "minimum_margin": 0.000644810646414784,
                   "minimum_margins": {
-                    "hull": 1.9999889060390637,
-                    "mach": 0.2587651144608388,
-                    "particle_equilibrium": 0.0006448106400929476,
-                    "rho": 0.18898833569259,
-                    "temperature": 0.019893675255694854,
-                    "u_x": 0.1499920757424156,
+                    "hull": 1.9999889060593046,
+                    "mach": 0.2587651144781246,
+                    "particle_equilibrium": 0.000644810646414784,
+                    "rho": 0.18898833479915766,
+                    "temperature": 0.019893674493887126,
+                    "u_x": 0.14999207575687346,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.470292771426569e-06,
-                  "minimum_margin": 0.0006448106400929476,
+                  "maximum_mach": 9.470275485608808e-06,
+                  "minimum_margin": 0.000644810646414784,
                   "minimum_margins": {
-                    "hull": 1.9999889060390637,
-                    "mach": 0.2587651144608388,
-                    "particle_equilibrium": 0.0006448106400929476,
-                    "rho": 0.18898833569259,
-                    "temperature": 0.019893675255694854,
-                    "u_x": 0.1499920757424156,
+                    "hull": 1.9999889060593046,
+                    "mach": 0.2587651144781246,
+                    "particle_equilibrium": 0.000644810646414784,
+                    "rho": 0.18898833479915766,
+                    "temperature": 0.019893674493887126,
+                    "u_x": 0.14999207575687346,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.470292771426569e-06,
-                  "minimum_margin": 0.0006448106400929476,
+                  "maximum_mach": 9.470275485608808e-06,
+                  "minimum_margin": 0.000644810646414784,
                   "minimum_margins": {
-                    "hull": 1.9999889060390637,
-                    "mach": 0.2587651144608388,
-                    "particle_equilibrium": 0.0006448106400929476,
-                    "rho": 0.18898833569259,
-                    "temperature": 0.019893675255694854,
-                    "u_x": 0.1499920757424156,
+                    "hull": 1.9999889060593046,
+                    "mach": 0.2587651144781246,
+                    "particle_equilibrium": 0.000644810646414784,
+                    "rho": 0.18898833479915766,
+                    "temperature": 0.019893674493887126,
+                    "u_x": 0.14999207575687346,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.470292771426569e-06,
-                  "minimum_margin": 0.0006448106400929476,
+                  "maximum_mach": 9.470275485608808e-06,
+                  "minimum_margin": 0.000644810646414784,
                   "minimum_margins": {
-                    "hull": 1.9999889060390637,
-                    "mach": 0.2587651144608388,
-                    "particle_equilibrium": 0.0006448106400929476,
-                    "rho": 0.18898833569259,
-                    "temperature": 0.019893675255694854,
-                    "u_x": 0.1499920757424156,
+                    "hull": 1.9999889060593046,
+                    "mach": 0.2587651144781246,
+                    "particle_equilibrium": 0.000644810646414784,
+                    "rho": 0.18898833479915766,
+                    "temperature": 0.019893674493887126,
+                    "u_x": 0.14999207575687346,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 9.470292771426569e-06,
-                  "minimum_margin": 0.0006448106400929476,
+                  "maximum_mach": 9.470275485608808e-06,
+                  "minimum_margin": 0.000644810646414784,
                   "minimum_margins": {
-                    "hull": 1.9999889060390637,
-                    "mach": 0.2587651144608388,
-                    "particle_equilibrium": 0.0006448106400929476,
-                    "rho": 0.18898833569259,
-                    "temperature": 0.019893675255694854,
-                    "u_x": 0.1499920757424156,
+                    "hull": 1.9999889060593046,
+                    "mach": 0.2587651144781246,
+                    "particle_equilibrium": 0.000644810646414784,
+                    "rho": 0.18898833479915766,
+                    "temperature": 0.019893674493887126,
+                    "u_x": 0.14999207575687346,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007150951557917241,
-                  "minimum_margin": 0.000635857298822017,
+                  "maximum_mach": 0.007150951765397654,
+                  "minimum_margin": 0.0006358574115163243,
                   "minimum_margins": {
-                    "hull": 1.991625399107676,
-                    "mach": 0.251623633195693,
-                    "particle_equilibrium": 0.000635857298822017,
-                    "rho": 0.19715472600585904,
-                    "temperature": 0.01982734505687428,
-                    "u_x": 0.1440181177491321,
+                    "hull": 1.9916253987548174,
+                    "mach": 0.25162363298821255,
+                    "particle_equilibrium": 0.0006358574115163243,
+                    "rho": 0.19715473632910996,
+                    "temperature": 0.01982735817257153,
+                    "u_x": 0.14401811749708782,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007150951557917241,
-                  "minimum_margin": 0.000635857298822017,
+                  "maximum_mach": 0.007150951765397654,
+                  "minimum_margin": 0.0006358574115163243,
                   "minimum_margins": {
-                    "hull": 1.991625399107676,
-                    "mach": 0.251623633195693,
-                    "particle_equilibrium": 0.000635857298822017,
-                    "rho": 0.19715472600585904,
-                    "temperature": 0.01982734505687428,
-                    "u_x": 0.1440181177491321,
+                    "hull": 1.9916253987548174,
+                    "mach": 0.25162363298821255,
+                    "particle_equilibrium": 0.0006358574115163243,
+                    "rho": 0.19715473632910996,
+                    "temperature": 0.01982735817257153,
+                    "u_x": 0.14401811749708782,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007150951557917241,
-                  "minimum_margin": 0.000635857298822017,
+                  "maximum_mach": 0.007150951765397654,
+                  "minimum_margin": 0.0006358574115163243,
                   "minimum_margins": {
-                    "hull": 1.991625399107676,
-                    "mach": 0.251623633195693,
-                    "particle_equilibrium": 0.000635857298822017,
-                    "rho": 0.19715472600585904,
-                    "temperature": 0.01982734505687428,
-                    "u_x": 0.1440181177491321,
+                    "hull": 1.9916253987548174,
+                    "mach": 0.25162363298821255,
+                    "particle_equilibrium": 0.0006358574115163243,
+                    "rho": 0.19715473632910996,
+                    "temperature": 0.01982735817257153,
+                    "u_x": 0.14401811749708782,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007150951557917241,
-                  "minimum_margin": 0.000635857298822017,
+                  "maximum_mach": 0.007150951765397654,
+                  "minimum_margin": 0.0006358574115163243,
                   "minimum_margins": {
-                    "hull": 1.991625399107676,
-                    "mach": 0.251623633195693,
-                    "particle_equilibrium": 0.000635857298822017,
-                    "rho": 0.19715472600585904,
-                    "temperature": 0.01982734505687428,
-                    "u_x": 0.1440181177491321,
+                    "hull": 1.9916253987548174,
+                    "mach": 0.25162363298821255,
+                    "particle_equilibrium": 0.0006358574115163243,
+                    "rho": 0.19715473632910996,
+                    "temperature": 0.01982735817257153,
+                    "u_x": 0.14401811749708782,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007150951557917241,
-                  "minimum_margin": 0.000635857298822017,
+                  "maximum_mach": 0.007150951765397654,
+                  "minimum_margin": 0.0006358574115163243,
                   "minimum_margins": {
-                    "hull": 1.991625399107676,
-                    "mach": 0.251623633195693,
-                    "particle_equilibrium": 0.000635857298822017,
-                    "rho": 0.19715472600585904,
-                    "temperature": 0.01982734505687428,
-                    "u_x": 0.1440181177491321,
+                    "hull": 1.9916253987548174,
+                    "mach": 0.25162363298821255,
+                    "particle_equilibrium": 0.0006358574115163243,
+                    "rho": 0.19715473632910996,
+                    "temperature": 0.01982735817257153,
+                    "u_x": 0.14401811749708782,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.000635857298822017
+              "minimum_margin": 0.0006358574115163243
             },
             "weight": 0.16666666666666666
           },
@@ -3122,12 +3123,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5005770103045694,
+            "maximum_common_conservative_flux": 0.5005770175541919,
             "maximum_equal_opposite_flux_residual": 0.0,
-            "maximum_moment_lift_residual": 2.220446049250313e-16,
-            "maximum_particle_population_flux": 0.10570912962676829,
+            "maximum_moment_lift_residual": 4.440892098500626e-16,
+            "maximum_particle_population_flux": 0.10570912864236819,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13289232181202792,
+            "maximum_total_energy_population_flux": 0.13289232040189655,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_1",
             "stage_index": 1,
@@ -3140,183 +3141,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 1.2214921753198317e-05,
-                  "minimum_margin": 0.0006473380152198791,
+                  "maximum_mach": 1.2214865620611176e-05,
+                  "minimum_margin": 0.0006473380210191484,
                   "minimum_margins": {
-                    "hull": 1.99998568628816,
-                    "mach": 0.258762369831857,
-                    "particle_equilibrium": 0.0006473380152198791,
-                    "rho": 0.18846932583232245,
-                    "temperature": 0.019574935174810792,
-                    "u_x": 0.14998977592034146,
-                    "u_y": 0.15000000000022734
-                  },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
-                },
-                {
-                  "all_finite": true,
-                  "all_model_outputs_finite": true,
-                  "all_primitive_supported": true,
-                  "all_successful": true,
-                  "maximum_mach": 1.2214921753198317e-05,
-                  "minimum_margin": 0.0006473380152198791,
-                  "minimum_margins": {
-                    "hull": 1.99998568628816,
-                    "mach": 0.258762369831857,
-                    "particle_equilibrium": 0.0006473380152198791,
-                    "rho": 0.18846932583232245,
-                    "temperature": 0.019574935174810792,
-                    "u_x": 0.14998977592034146,
-                    "u_y": 0.15000000000022734
-                  },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
-                },
-                {
-                  "all_finite": true,
-                  "all_model_outputs_finite": true,
-                  "all_primitive_supported": true,
-                  "all_successful": true,
-                  "maximum_mach": 1.2214921753198317e-05,
-                  "minimum_margin": 0.0006473380152198791,
-                  "minimum_margins": {
-                    "hull": 1.99998568628816,
-                    "mach": 0.258762369831857,
-                    "particle_equilibrium": 0.0006473380152198791,
-                    "rho": 0.18846932583232245,
-                    "temperature": 0.019574935174810792,
-                    "u_x": 0.14998977592034146,
-                    "u_y": 0.15000000000022734
-                  },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
-                },
-                {
-                  "all_finite": true,
-                  "all_model_outputs_finite": true,
-                  "all_primitive_supported": true,
-                  "all_successful": true,
-                  "maximum_mach": 1.2214921753198317e-05,
-                  "minimum_margin": 0.0006473380152198791,
-                  "minimum_margins": {
-                    "hull": 1.99998568628816,
-                    "mach": 0.258762369831857,
-                    "particle_equilibrium": 0.0006473380152198791,
-                    "rho": 0.18846932583232245,
-                    "temperature": 0.019574935174810792,
-                    "u_x": 0.14998977592034146,
-                    "u_y": 0.15000000000022734
-                  },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
-                },
-                {
-                  "all_finite": true,
-                  "all_model_outputs_finite": true,
-                  "all_primitive_supported": true,
-                  "all_successful": true,
-                  "maximum_mach": 1.2214921753198317e-05,
-                  "minimum_margin": 0.0006473380152198791,
-                  "minimum_margins": {
-                    "hull": 1.99998568628816,
-                    "mach": 0.258762369831857,
-                    "particle_equilibrium": 0.0006473380152198791,
-                    "rho": 0.18846932583232245,
-                    "temperature": 0.019574935174810792,
-                    "u_x": 0.14998977592034146,
-                    "u_y": 0.15000000000022734
-                  },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
-                },
-                {
-                  "all_finite": true,
-                  "all_model_outputs_finite": true,
-                  "all_primitive_supported": true,
-                  "all_successful": true,
-                  "maximum_mach": 0.007589548054238828,
-                  "minimum_margin": 0.0006309431345429886,
-                  "minimum_margins": {
-                    "hull": 1.9911151428334157,
-                    "mach": 0.25118503669937137,
-                    "particle_equilibrium": 0.0006309431345429886,
-                    "rho": 0.19795142784290176,
-                    "temperature": 0.01944649092881573,
-                    "u_x": 0.1436536442085019,
+                    "hull": 1.9999856863539272,
+                    "mach": 0.2587623698879896,
+                    "particle_equilibrium": 0.0006473380210191484,
+                    "rho": 0.18846932470532118,
+                    "temperature": 0.01957493446262437,
+                    "u_x": 0.14998977596731805,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007589548054238828,
-                  "minimum_margin": 0.0006309431345429886,
+                  "maximum_mach": 1.2214865620611176e-05,
+                  "minimum_margin": 0.0006473380210191484,
                   "minimum_margins": {
-                    "hull": 1.9911151428334157,
-                    "mach": 0.25118503669937137,
-                    "particle_equilibrium": 0.0006309431345429886,
-                    "rho": 0.19795142784290176,
-                    "temperature": 0.01944649092881573,
-                    "u_x": 0.1436536442085019,
+                    "hull": 1.9999856863539272,
+                    "mach": 0.2587623698879896,
+                    "particle_equilibrium": 0.0006473380210191484,
+                    "rho": 0.18846932470532118,
+                    "temperature": 0.01957493446262437,
+                    "u_x": 0.14998977596731805,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007589548054238828,
-                  "minimum_margin": 0.0006309431345429886,
+                  "maximum_mach": 1.2214865620611176e-05,
+                  "minimum_margin": 0.0006473380210191484,
                   "minimum_margins": {
-                    "hull": 1.9911151428334157,
-                    "mach": 0.25118503669937137,
-                    "particle_equilibrium": 0.0006309431345429886,
-                    "rho": 0.19795142784290176,
-                    "temperature": 0.01944649092881573,
-                    "u_x": 0.1436536442085019,
+                    "hull": 1.9999856863539272,
+                    "mach": 0.2587623698879896,
+                    "particle_equilibrium": 0.0006473380210191484,
+                    "rho": 0.18846932470532118,
+                    "temperature": 0.01957493446262437,
+                    "u_x": 0.14998977596731805,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007589548054238828,
-                  "minimum_margin": 0.0006309431345429886,
+                  "maximum_mach": 1.2214865620611176e-05,
+                  "minimum_margin": 0.0006473380210191484,
                   "minimum_margins": {
-                    "hull": 1.9911151428334157,
-                    "mach": 0.25118503669937137,
-                    "particle_equilibrium": 0.0006309431345429886,
-                    "rho": 0.19795142784290176,
-                    "temperature": 0.01944649092881573,
-                    "u_x": 0.1436536442085019,
+                    "hull": 1.9999856863539272,
+                    "mach": 0.2587623698879896,
+                    "particle_equilibrium": 0.0006473380210191484,
+                    "rho": 0.18846932470532118,
+                    "temperature": 0.01957493446262437,
+                    "u_x": 0.14998977596731805,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007589548054238828,
-                  "minimum_margin": 0.0006309431345429886,
+                  "maximum_mach": 1.2214865620611176e-05,
+                  "minimum_margin": 0.0006473380210191484,
                   "minimum_margins": {
-                    "hull": 1.9911151428334157,
-                    "mach": 0.25118503669937137,
-                    "particle_equilibrium": 0.0006309431345429886,
-                    "rho": 0.19795142784290176,
-                    "temperature": 0.01944649092881573,
-                    "u_x": 0.1436536442085019,
+                    "hull": 1.9999856863539272,
+                    "mach": 0.2587623698879896,
+                    "particle_equilibrium": 0.0006473380210191484,
+                    "rho": 0.18846932470532118,
+                    "temperature": 0.01957493446262437,
+                    "u_x": 0.14998977596731805,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
+                },
+                {
+                  "all_finite": true,
+                  "all_model_outputs_finite": true,
+                  "all_primitive_supported": true,
+                  "all_successful": true,
+                  "maximum_mach": 0.00758955140399521,
+                  "minimum_margin": 0.0006309432995620116,
+                  "minimum_margins": {
+                    "hull": 1.9911151387347108,
+                    "mach": 0.251185033349615,
+                    "particle_equilibrium": 0.0006309432995620116,
+                    "rho": 0.19795144300469092,
+                    "temperature": 0.019446510859914723,
+                    "u_x": 0.14365364128081626,
+                    "u_y": 0.15000000000022737
+                  },
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
+                },
+                {
+                  "all_finite": true,
+                  "all_model_outputs_finite": true,
+                  "all_primitive_supported": true,
+                  "all_successful": true,
+                  "maximum_mach": 0.00758955140399521,
+                  "minimum_margin": 0.0006309432995620116,
+                  "minimum_margins": {
+                    "hull": 1.9911151387347108,
+                    "mach": 0.251185033349615,
+                    "particle_equilibrium": 0.0006309432995620116,
+                    "rho": 0.19795144300469092,
+                    "temperature": 0.019446510859914723,
+                    "u_x": 0.14365364128081626,
+                    "u_y": 0.15000000000022737
+                  },
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
+                },
+                {
+                  "all_finite": true,
+                  "all_model_outputs_finite": true,
+                  "all_primitive_supported": true,
+                  "all_successful": true,
+                  "maximum_mach": 0.00758955140399521,
+                  "minimum_margin": 0.0006309432995620116,
+                  "minimum_margins": {
+                    "hull": 1.9911151387347108,
+                    "mach": 0.251185033349615,
+                    "particle_equilibrium": 0.0006309432995620116,
+                    "rho": 0.19795144300469092,
+                    "temperature": 0.019446510859914723,
+                    "u_x": 0.14365364128081626,
+                    "u_y": 0.15000000000022737
+                  },
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
+                },
+                {
+                  "all_finite": true,
+                  "all_model_outputs_finite": true,
+                  "all_primitive_supported": true,
+                  "all_successful": true,
+                  "maximum_mach": 0.00758955140399521,
+                  "minimum_margin": 0.0006309432995620116,
+                  "minimum_margins": {
+                    "hull": 1.9911151387347108,
+                    "mach": 0.251185033349615,
+                    "particle_equilibrium": 0.0006309432995620116,
+                    "rho": 0.19795144300469092,
+                    "temperature": 0.019446510859914723,
+                    "u_x": 0.14365364128081626,
+                    "u_y": 0.15000000000022737
+                  },
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
+                },
+                {
+                  "all_finite": true,
+                  "all_model_outputs_finite": true,
+                  "all_primitive_supported": true,
+                  "all_successful": true,
+                  "maximum_mach": 0.00758955140399521,
+                  "minimum_margin": 0.0006309432995620116,
+                  "minimum_margins": {
+                    "hull": 1.9911151387347108,
+                    "mach": 0.251185033349615,
+                    "particle_equilibrium": 0.0006309432995620116,
+                    "rho": 0.19795144300469092,
+                    "temperature": 0.019446510859914723,
+                    "u_x": 0.14365364128081626,
+                    "u_y": 0.15000000000022737
+                  },
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.0006309431345429886
+              "minimum_margin": 0.0006309432995620116
             },
             "weight": 0.16666666666666666
           },
@@ -3325,12 +3326,12 @@
             "all_learned_lifts_present": true,
             "all_learned_lifts_successful": true,
             "interface_count": 10,
-            "maximum_common_conservative_flux": 0.5006599258623008,
+            "maximum_common_conservative_flux": 0.5006599317858824,
             "maximum_equal_opposite_flux_residual": 0.0,
-            "maximum_moment_lift_residual": 2.220446049250313e-16,
-            "maximum_particle_population_flux": 0.1057086047831262,
+            "maximum_moment_lift_residual": 4.440892098500626e-16,
+            "maximum_particle_population_flux": 0.10570860396244006,
             "maximum_population_to_conservative_flux_residual": 0.0,
-            "maximum_total_energy_population_flux": 0.13292762468209593,
+            "maximum_total_energy_population_flux": 0.1329276226044879,
             "maximum_trace_common_flux_residual": 0.0,
             "phase": "ssprk3_stage_2",
             "stage_index": 2,
@@ -3343,183 +3344,183 @@
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.574898979297378e-06,
-                  "minimum_margin": 0.0006460315819420758,
+                  "maximum_mach": 7.574868402613877e-06,
+                  "minimum_margin": 0.000646031587566115,
                   "minimum_margins": {
-                    "hull": 1.999991125025248,
-                    "mach": 0.2587670098546309,
-                    "particle_equilibrium": 0.0006460315819420758,
-                    "rho": 0.18871986264168483,
-                    "temperature": 0.01973922138282047,
-                    "u_x": 0.14999366073254727,
+                    "hull": 1.9999911250610662,
+                    "mach": 0.25876700988520757,
+                    "particle_equilibrium": 0.000646031587566115,
+                    "rho": 0.1887198616706025,
+                    "temperature": 0.0197392206956446,
+                    "u_x": 0.14999366075813186,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.574898979297378e-06,
-                  "minimum_margin": 0.0006460315819420758,
+                  "maximum_mach": 7.574868402613877e-06,
+                  "minimum_margin": 0.000646031587566115,
                   "minimum_margins": {
-                    "hull": 1.999991125025248,
-                    "mach": 0.2587670098546309,
-                    "particle_equilibrium": 0.0006460315819420758,
-                    "rho": 0.18871986264168483,
-                    "temperature": 0.01973922138282047,
-                    "u_x": 0.14999366073254727,
+                    "hull": 1.9999911250610662,
+                    "mach": 0.25876700988520757,
+                    "particle_equilibrium": 0.000646031587566115,
+                    "rho": 0.1887198616706025,
+                    "temperature": 0.0197392206956446,
+                    "u_x": 0.14999366075813186,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.574898979297378e-06,
-                  "minimum_margin": 0.0006460315819420758,
+                  "maximum_mach": 7.574868402613877e-06,
+                  "minimum_margin": 0.000646031587566115,
                   "minimum_margins": {
-                    "hull": 1.999991125025248,
-                    "mach": 0.2587670098546309,
-                    "particle_equilibrium": 0.0006460315819420758,
-                    "rho": 0.18871986264168483,
-                    "temperature": 0.01973922138282047,
-                    "u_x": 0.14999366073254727,
+                    "hull": 1.9999911250610662,
+                    "mach": 0.25876700988520757,
+                    "particle_equilibrium": 0.000646031587566115,
+                    "rho": 0.1887198616706025,
+                    "temperature": 0.0197392206956446,
+                    "u_x": 0.14999366075813186,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.574898979297378e-06,
-                  "minimum_margin": 0.0006460315819420758,
+                  "maximum_mach": 7.574868402613877e-06,
+                  "minimum_margin": 0.000646031587566115,
                   "minimum_margins": {
-                    "hull": 1.999991125025248,
-                    "mach": 0.2587670098546309,
-                    "particle_equilibrium": 0.0006460315819420758,
-                    "rho": 0.18871986264168483,
-                    "temperature": 0.01973922138282047,
-                    "u_x": 0.14999366073254727,
+                    "hull": 1.9999911250610662,
+                    "mach": 0.25876700988520757,
+                    "particle_equilibrium": 0.000646031587566115,
+                    "rho": 0.1887198616706025,
+                    "temperature": 0.0197392206956446,
+                    "u_x": 0.14999366075813186,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 7.574898979297378e-06,
-                  "minimum_margin": 0.0006460315819420758,
+                  "maximum_mach": 7.574868402613877e-06,
+                  "minimum_margin": 0.000646031587566115,
                   "minimum_margins": {
-                    "hull": 1.999991125025248,
-                    "mach": 0.2587670098546309,
-                    "particle_equilibrium": 0.0006460315819420758,
-                    "rho": 0.18871986264168483,
-                    "temperature": 0.01973922138282047,
-                    "u_x": 0.14999366073254727,
+                    "hull": 1.9999911250610662,
+                    "mach": 0.25876700988520757,
+                    "particle_equilibrium": 0.000646031587566115,
+                    "rho": 0.1887198616706025,
+                    "temperature": 0.0197392206956446,
+                    "u_x": 0.14999366075813186,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007241200259783848,
-                  "minimum_margin": 0.0006340342090299609,
+                  "maximum_mach": 0.007241202790496095,
+                  "minimum_margin": 0.0006340343474776307,
                   "minimum_margins": {
-                    "hull": 1.9915210920735142,
-                    "mach": 0.25153338449382634,
-                    "particle_equilibrium": 0.0006340342090299609,
-                    "rho": 0.19737869773676997,
-                    "temperature": 0.019664227748772967,
-                    "u_x": 0.1439436117906395,
+                    "hull": 1.991521088969295,
+                    "mach": 0.2515333819631141,
+                    "particle_equilibrium": 0.0006340343474776307,
+                    "rho": 0.19737870994029638,
+                    "temperature": 0.019664244363313876,
+                    "u_x": 0.14394360957331304,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007241200259783848,
-                  "minimum_margin": 0.0006340342090299609,
+                  "maximum_mach": 0.007241202790496095,
+                  "minimum_margin": 0.0006340343474776307,
                   "minimum_margins": {
-                    "hull": 1.9915210920735142,
-                    "mach": 0.25153338449382634,
-                    "particle_equilibrium": 0.0006340342090299609,
-                    "rho": 0.19737869773676997,
-                    "temperature": 0.019664227748772967,
-                    "u_x": 0.1439436117906395,
+                    "hull": 1.991521088969295,
+                    "mach": 0.2515333819631141,
+                    "particle_equilibrium": 0.0006340343474776307,
+                    "rho": 0.19737870994029638,
+                    "temperature": 0.019664244363313876,
+                    "u_x": 0.14394360957331304,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007241200259783848,
-                  "minimum_margin": 0.0006340342090299609,
+                  "maximum_mach": 0.007241202790496095,
+                  "minimum_margin": 0.0006340343474776307,
                   "minimum_margins": {
-                    "hull": 1.9915210920735142,
-                    "mach": 0.25153338449382634,
-                    "particle_equilibrium": 0.0006340342090299609,
-                    "rho": 0.19737869773676997,
-                    "temperature": 0.019664227748772967,
-                    "u_x": 0.1439436117906395,
+                    "hull": 1.991521088969295,
+                    "mach": 0.2515333819631141,
+                    "particle_equilibrium": 0.0006340343474776307,
+                    "rho": 0.19737870994029638,
+                    "temperature": 0.019664244363313876,
+                    "u_x": 0.14394360957331304,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007241200259783848,
-                  "minimum_margin": 0.0006340342090299609,
+                  "maximum_mach": 0.007241202790496095,
+                  "minimum_margin": 0.0006340343474776307,
                   "minimum_margins": {
-                    "hull": 1.9915210920735142,
-                    "mach": 0.25153338449382634,
-                    "particle_equilibrium": 0.0006340342090299609,
-                    "rho": 0.19737869773676997,
-                    "temperature": 0.019664227748772967,
-                    "u_x": 0.1439436117906395,
+                    "hull": 1.991521088969295,
+                    "mach": 0.2515333819631141,
+                    "particle_equilibrium": 0.0006340343474776307,
+                    "rho": 0.19737870994029638,
+                    "temperature": 0.019664244363313876,
+                    "u_x": 0.14394360957331304,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 },
                 {
                   "all_finite": true,
                   "all_model_outputs_finite": true,
                   "all_primitive_supported": true,
                   "all_successful": true,
-                  "maximum_mach": 0.007241200259783848,
-                  "minimum_margin": 0.0006340342090299609,
+                  "maximum_mach": 0.007241202790496095,
+                  "minimum_margin": 0.0006340343474776307,
                   "minimum_margins": {
-                    "hull": 1.9915210920735142,
-                    "mach": 0.25153338449382634,
-                    "particle_equilibrium": 0.0006340342090299609,
-                    "rho": 0.19737869773676997,
-                    "temperature": 0.019664227748772967,
-                    "u_x": 0.1439436117906395,
+                    "hull": 1.991521088969295,
+                    "mach": 0.2515333819631141,
+                    "particle_equilibrium": 0.0006340343474776307,
+                    "rho": 0.19737870994029638,
+                    "temperature": 0.019664244363313876,
+                    "u_x": 0.14394360957331304,
                     "u_y": 0.15000000000022737
                   },
-                  "support_id": "b113e6d2c01392ca046e813516b11294bf6ba1f1f8a033c6e1d9debcd4728176"
+                  "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d"
                 }
               ],
-              "minimum_margin": 0.0006340342090299609
+              "minimum_margin": 0.0006340343474776307
             },
             "weight": 0.6666666666666666
           }

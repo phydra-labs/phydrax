@@ -20,7 +20,7 @@ from ..._numerics._ssp_runge_kutta import (
     ssprk54_step_with_evidence,
 )
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ...discretization.spectral._distributed_les import (
     DistributedPeriodicLESPlan,
@@ -396,7 +396,7 @@ class DistributedPeriodicLESMethodPlan(StrictModule, NonTrainableState):
         return PreparedDistributedPeriodicLESMethod(self, dynamics, coordinates)
 
 
-class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod):
+class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod, NonTrainableState):
     """ETDRK or SSPRK transition with exact distributed LES admission."""
 
     plan: DistributedPeriodicLESMethodPlan
@@ -988,7 +988,7 @@ class DistributedPeriodicLESProductionCase(StrictModule, NonTrainableState):
         return value
 
 
-class DistributedPeriodicLESProductionPlan(StrictModule, NonTrainableState):
+class DistributedPeriodicLESProductionPlan(StrictModule):
     """Exact production assembly consuming a distributed LES execution plan."""
 
     source_plan: DistributedPeriodicLESPlan
@@ -998,7 +998,7 @@ class DistributedPeriodicLESProductionPlan(StrictModule, NonTrainableState):
     method: PreparedDistributedPeriodicLESMethod
     coordinates: HermitianSpectralCoordinates
     statistics: DistributedPeriodicLESStatisticsPlan
-    statistics_evaluator: _DistributedPeriodicLESStatisticsEvaluator
+    statistics_evaluator: _DistributedPeriodicLESStatisticsEvaluator = fixed_field()
     manifest: ProductionCaseManifest
     runtime_plan: ProductionRunPlan
     checkpoint_encoding: RuntimeCheckpointEncodingPlan

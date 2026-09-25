@@ -12,7 +12,6 @@ import pytest
 
 import phydrax as phx
 from phydrax._numerics import smolyak_axis_data
-from phydrax._trainable import partition_trainable
 from phydrax.operators.interpolation import _smolyak as smolyak_module
 
 
@@ -154,8 +153,8 @@ def test_interpolant_is_fixed_state_and_does_not_retain_source_callable():
         phx.operators.SmolyakInterpolationPlan(1, 3),
     )
     fit_count = source.count
-    trainable, _ = partition_trainable(approximation)
-    leaves = jax.tree_util.tree_leaves(trainable)
+    parameters, _, _ = phx.partition_parameters(approximation)
+    leaves = jax.tree_util.tree_leaves(parameters)
 
     assert fit_count == 1
     assert not any(eqx.is_inexact_array(leaf) for leaf in leaves)
@@ -228,7 +227,7 @@ def test_interpolation_rejects_invalid_domains_rules_and_source_values():
         phx.uq.EmpiricalDistribution(jnp.asarray([0.0, 1.0])),
         label="e",
     )
-    with pytest.raises(ValueError, match="no canonical reference transform"):
+    with pytest.raises(ValueError, match="no declared exact reference transport"):
         phx.operators.interpolate_smolyak(
             empirical.Function("e")(lambda e: e),
             phx.operators.SmolyakInterpolationPlan(1, 2),

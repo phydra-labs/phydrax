@@ -16,12 +16,12 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from phydrax.ein import contract
 
+from ...._differentiation import DerivativeContract, DerivativeSurface
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._interpolation import linear_interpolate
 from ...._physical import RelativityScaleContract
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....artifacts import DifferentiationContract
 from ....discretization.spectral import SphericalSpectralDiscretization
 from ....interchange._report import AdapterLoss, AdapterReport, AdapterStatus
 from .._photometry import ObservationDataProvenance
@@ -563,7 +563,7 @@ class AlignedNRSurrogateArtifact(StrictModule, NonTrainableState):
     provenance: ObservationDataProvenance
     resource_policy: NRSurrogateResourcePolicy
     normalization_report: AdapterReport
-    differentiation: DifferentiationContract
+    differentiation: DerivativeContract
     modes: tuple[tuple[int, int], ...] = eqx.field(static=True)
     fit_coordinate_names: tuple[str, ...] = eqx.field(static=True)
     mode_set_id: str = eqx.field(static=True)
@@ -727,15 +727,17 @@ class AlignedNRSurrogateArtifact(StrictModule, NonTrainableState):
             mode_normalization=mode_normalization_,
         )
         source_differentiation = provenance.differentiation
-        differentiation = DifferentiationContract(
-            upstream_physical_parameters=(
-                source_differentiation.upstream_physical_parameters
+        # Stored values are not differentiable after normalization, and the
+        # piecewise reconstruction claims no global higher-order regularity.
+        differentiation = DerivativeContract(
+            (
+                entry
+                for entry in source_differentiation.surfaces
+                if entry.surface is not DerivativeSurface.STORED_VALUES
             ),
-            stored_values=False,
-            query_coordinates=source_differentiation.query_coordinates,
-            local_parameters=source_differentiation.local_parameters,
-            stochastic_realization=source_differentiation.stochastic_realization,
-            higher_order=False,
+            route=source_differentiation.route,
+            conditions=source_differentiation.conditions,
+            nondifferentiable_outputs=source_differentiation.nondifferentiable_outputs,
         )
         differentiation_losses = (
             ()
@@ -1061,7 +1063,10 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
             valid
             & physical_interior
             & fit_interior
-            & self.artifact.differentiation.upstream_physical_parameters
+            & (
+                DerivativeSurface.PHYSICAL_PARAMETER
+                in self.artifact.differentiation.supported_surfaces
+            )
         )
         status = jnp.where(
             valid,
@@ -1179,14 +1184,22 @@ class AlignedNRSurrogatePlan(StrictModule, NonTrainableState):
         intrinsic_derivative_valid = valid & modes.intrinsic_derivative_valid
         extrinsic_derivative_valid = (
             valid
-            & self.artifact.differentiation.local_parameters
+            & (
+                DerivativeSurface.MODEL_PARAMETER
+                in self.artifact.differentiation.supported_surfaces
+            )
             & (inclination_ > 0.0)
             & (inclination_ < jnp.pi)
         )
         mass_scaling_derivative_valid = jnp.zeros_like(valid)
         qualified = valid & modes.qualified
         time_derivative_valid = (
-            valid & self.artifact.differentiation.query_coordinates & ~at_knot
+            valid
+            & (
+                DerivativeSurface.INPUT
+                in self.artifact.differentiation.supported_surfaces
+            )
+            & ~at_knot
         )
         values = jnp.stack((jnp.real(strain), -jnp.imag(strain)))
         values = jnp.where(valid[None, :], values, jnp.zeros_like(values))

@@ -113,7 +113,10 @@ def test_qualification_artifact_fingerprint_and_coverage_are_independent():
         incomplete.verify(required_case_ids=required)
     forged_graduation = replace(
         artifact,
-        graduation={**artifact.graduation, "production_ready": False},
+        graduation={
+            **artifact.graduation,
+            "production_ready": not artifact.graduation["production_ready"],
+        },
     )
     with pytest.raises(ValueError, match="does not match record evidence"):
         forged_graduation.verify(required_case_ids=required)

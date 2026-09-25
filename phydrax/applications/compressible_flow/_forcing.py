@@ -15,7 +15,6 @@ from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
 from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
@@ -38,7 +37,7 @@ class CompressibleForcingResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-class CompressibleForcingPlan(StrictModule, NonTrainableState):
+class CompressibleForcingPlan(StrictModule):
     """Body acceleration, canonical-mixture mass injection, and heat source."""
 
     system: (

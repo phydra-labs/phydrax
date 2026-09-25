@@ -25,6 +25,10 @@ from phydrax.applications.battery._protocol import (
     CurrentStepPlan,
     RestStepPlan,
 )
+from phydrax.applications.battery._qualification import (
+    BROSA_PLANELLA_TSPME_CANDIDATE,
+    BROSA_PLANELLA_TSPME_SUPPORT,
+)
 from phydrax.applications.battery._results import BatteryRunStatus
 from phydrax.applications.battery._spm import SpmParameters
 from phydrax.applications.battery._spme_marquis2019 import (
@@ -39,7 +43,6 @@ from phydrax.applications.battery._tspme_brosa_planella import (
     BrosaPlanellaTspmePlan,
     BrosaPlanellaTspmeState,
 )
-from phydrax.qualification import CapabilityProfile, SupportTuple
 
 
 def _constant(
@@ -577,21 +580,8 @@ def test_protocol_orchestration_returns_separate_thermal_and_electrochemical_led
         (CurrentStepPlan(0.25), RestStepPlan(0.25), CurrentStepPlan(0.25))
     )
     protocol_values = BatteryProtocolValues(protocol, jnp.asarray((0.02, -0.01)))
-    support = SupportTuple(
-        "battery.simulation",
-        {
-            "model": "tspme-brosa-planella-base",
-            "control": "prescribed-current",
-            "thermal": "homogeneous",
-        },
-    )
-    profile = CapabilityProfile(
-        "battery.tspme-brosa-planella-test-candidate",
-        "phydrax-tests",
-        "candidate",
-        (support,),
-        released=False,
-    )
+    support = BROSA_PLANELLA_TSPME_SUPPORT
+    profile = BROSA_PLANELLA_TSPME_CANDIDATE
     save_times = jnp.asarray((0.0, 0.125, 0.25, 0.5, 0.625, 0.75))
     experiment = BatteryExperimentPlan(
         adapter,

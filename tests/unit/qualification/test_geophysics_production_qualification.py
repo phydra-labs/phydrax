@@ -117,7 +117,7 @@ def test_governed_external_and_field_references_are_content_verified_and_evidenc
     )
     assert evidence.passed
     with pytest.raises(ValueError, match="checksum"):
-        manifest.verify_bytes(b"field-reference")
+        manifest.verify_bytes(b"FIELD-REFERENCE")
     artifact_path = tmp_path / "external-oracle.npz"
     np.savez(
         artifact_path,

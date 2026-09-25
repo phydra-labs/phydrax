@@ -146,6 +146,7 @@ def test_output_spec_splits_prediction_and_target_shapes_without_casting_labels(
         ("multilabel", ("a", "b", "c"), "hard", 3, (3,), (3,)),
         ("multilabel", ("a", "b", "c"), "soft", 3, (3,), (3,)),
         ("ordinal", ("low", "mid", "high"), "hard", "scalar", (), ()),
+        ("ordinal", ("low", "mid", "high"), "soft", "scalar", (), (3,)),
     ],
 )
 def test_all_classification_kinds_have_explicit_statistical_shapes(
@@ -168,11 +169,7 @@ def test_all_classification_kinds_have_explicit_statistical_shapes(
     assert output.target_channel_shape == target_tail
 
 
-def test_ordinal_spec_rejects_soft_targets_and_noncanonical_thresholds():
-    with pytest.raises(ValueError, match="Soft ordinal"):
-        OperatorClassificationSpec(
-            "ordinal", ("low", "mid", "high"), target="soft", thresholds=(-1.0, 1.0)
-        )
+def test_ordinal_spec_rejects_noncanonical_thresholds():
     with pytest.raises(ValueError, match="strictly increasing"):
         OperatorClassificationSpec(
             "ordinal", ("low", "mid", "high"), thresholds=(1.0, 1.0)

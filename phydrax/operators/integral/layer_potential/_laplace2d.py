@@ -15,11 +15,8 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
-from ...._model import AbstractArrayModel
-from ....equations.trefftz._core import (
-    TRIAL_SPACE_CERTIFICATE_KEY,
-    TrialSpaceCertificate,
-)
+from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
+from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ....operators.differential._jet import jet_terms
 from ._core import (
     AbstractLayerKernel,
@@ -82,7 +79,7 @@ class LaplaceLayerKernel2D(AbstractLayerKernel):
         )
 
 
-class LaplaceLayerPotential2D(AbstractArrayModel):
+class LaplaceLayerPotential2D(_AbstractTrialSpaceField):
     """Finite weighted Laplace layer sum, algebraically harmonic off its sources."""
 
     panelization: BoundaryPanelization2D

@@ -22,6 +22,7 @@ from ..._interpolation import (
     barycentric_differentiation_matrix,
 )
 from ..._polynomial._orthogonal import legendre_rule_data
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._reference import FiniteElementSpec
@@ -104,7 +105,7 @@ def lagrange_1d_tabulation(
     points_ = jnp.asarray(points).reshape((-1,))
     if nodes_.ndim != 1 or nodes_.shape[0] == 0:
         raise ValueError("Lagrange nodes must be a nonempty vector.")
-    dtype = jnp.result_type(nodes_, points_, jnp.float64)
+    dtype = inexact_result_type(nodes_, points_)
     nodes_ = nodes_.astype(dtype)
     points_ = points_.astype(dtype)
     weights = (

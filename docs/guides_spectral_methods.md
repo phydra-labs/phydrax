@@ -46,6 +46,57 @@ encode homogeneous Dirichlet and Neumann endpoint semantics respectively. Chebys
 and Legendre plans use the internal polynomial preparation substrate and budgeted
 dense linear transforms.
 
+## Arbitrary-point evaluation and field views
+
+`space.evaluate(coefficients, coordinates)` synthesizes a tensor field at physical
+coordinates of shape `(points, axes)`, and
+`space.derivative_at(coefficients, coordinates, derivative)` synthesizes one
+coordinate derivative, where `derivative` is a multi-index with one order per
+axis. Each axis evaluates its own prepared basis
+rows (`PreparedSpectralAxis.evaluate_basis`) with the prepared mode ordering,
+normalization, and sign convention, so grid values equal `reconstruct` and
+single-axis derivatives equal `derivative_values` to rounding. Fourier rows use
+the prepared mode numbers, including the even-count Nyquist mode, and odd sine
+or cosine derivatives use the dual-parity rows. Periodic axes wrap coordinates
+by the periodic cell. A coordinate outside a bounded axis fails at runtime,
+including under `jit`, and is never extrapolated. Constrained and rational axes
+have no per-point basis rows and raise `ValueError`.
+
+```python
+points = jnp.asarray(((0.1,), (0.73,)))
+point_values = space.evaluate(coefficients, points)
+point_slopes = space.derivative_at(coefficients, points, (1,))
+```
+
+`prepare_spectral_field_reconstruction(space, maximum_derivative_order=2)` returns
+a `PreparedFieldReconstruction`. It is smooth and single-valued, and its support
+geometry is the tensor box of the axes (the periodic cell on periodic axes).
+Unbounded axes are refused. Points outside the box have status
+`OUTSIDE_SUPPORT`, and coordinate derivatives above the prepared order raise
+`ValueError`. Bind the reconstruction to an explicit geometry domain to get an
+exact `DomainFunction`:
+
+```python
+reconstruction = phx.discretization.prepare_spectral_field_reconstruction(space)
+view = phx.discretization.DiscreteFieldFunctionView(
+    reconstruction,
+    coefficients,
+    phx.domain.GeometryDomain(reconstruction.support_geometry, label="x"),
+    variable="x",
+)
+u = view.as_domain_function()
+du = phx.operators.grad(u, var="x")
+```
+
+Modal coefficients are always complex. For a real physical dtype the view
+returns the real part of the synthesis, as `reconstruct` does. The coefficient
+transpose is the exact bilinear transpose of the synthesis, and it satisfies
+`<R c, w> = Re(sum(c * R^T w))`, which `reconstruction.duality_evidence`
+checks. Both refuse query routes with any invalid point (for example
+`OUTSIDE_SUPPORT`) with a `ValueError`. A `value_port` with `event_shape`
+declares trailing component axes, so the coefficients have shape
+`space.modal_shape + event_shape`.
+
 ## Axis domains and unbounded intervals
 
 `AxisDomain` distinguishes bounded, periodic, half-line, and real-line support.

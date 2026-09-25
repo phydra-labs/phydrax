@@ -16,11 +16,8 @@ from phydrax._strict import StrictModule
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
-from ...._model import AbstractArrayModel
-from ....equations.trefftz._core import (
-    TRIAL_SPACE_CERTIFICATE_KEY,
-    TrialSpaceCertificate,
-)
+from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
+from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ._core import LayerDiscretizationReport
 from ._surface3d import SurfacePanelization3D, SurfaceTargetReport3D
 
@@ -66,7 +63,7 @@ class LaplaceLayerKernel3D(StrictModule):
         )
 
 
-class LaplaceLayerPotential3D(AbstractArrayModel):
+class LaplaceLayerPotential3D(_AbstractTrialSpaceField):
     """Finite weighted 3D Laplace layer sum, exact off its support."""
 
     panelization: SurfacePanelization3D

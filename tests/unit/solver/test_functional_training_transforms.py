@@ -1,9 +1,10 @@
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+import pytest
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
+from phydrax.solver._functional_run import partition_functional_parameters
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
@@ -22,6 +23,41 @@ def _fixed_term(domain, field_name, operator, *, points, label, blocks=None):
     )
 
 
+def _identity_map(value):
+    return value
+
+
+def _negated_map(value):
+    return -value
+
+
+def test_relaxation_map_identity_is_content_addressed_or_declared():
+    first_plain = phx.solver.ResidualRelaxationMap("u", _identity_map)
+    assert (
+        phx.solver.ResidualRelaxationMap("u", _identity_map).map_id == first_plain.map_id
+    )
+    assert phx.solver.ResidualRelaxationMap("u", _negated_map).map_id != (
+        first_plain.map_id
+    )
+
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        phx.solver.ResidualRelaxationMap("u", lambda value: value)
+
+    identity = phx.solver.ResidualRelaxationMap(
+        "u",
+        lambda value: value,
+        operator_semantic_id="identity-map",
+        operator_numeric_id="identity-map",
+    )
+    negation = phx.solver.ResidualRelaxationMap(
+        "u",
+        lambda value: -value,
+        operator_semantic_id="negation-map",
+        operator_numeric_id="negation-map",
+    )
+    assert identity.map_id != negation.map_id
+
+
 def test_pseudo_transient_root_uses_explicit_relaxation_map():
     domain = phx.domain.Interval1d(0.0, 1.0)
     current = domain.Parameter(jnp.asarray(2.0))
@@ -34,7 +70,7 @@ def test_pseudo_transient_root_uses_explicit_relaxation_map():
         label="equation",
     )
     solver = phx.solver.FunctionalSolver(functions={"u": current}, terms=(term,))
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -44,7 +80,12 @@ def test_pseudo_transient_root_uses_explicit_relaxation_map():
     )
     policy = phx.solver.PseudoTransientPolicy(
         0,
-        phx.solver.ResidualRelaxationMap("u", lambda value: value),
+        phx.solver.ResidualRelaxationMap(
+            "u",
+            lambda value: value,
+            operator_semantic_id="identity-map",
+            operator_numeric_id="identity-map",
+        ),
         inverse_step=3.0,
         freshness="experimental_fixed",
     )
@@ -83,7 +124,8 @@ def test_gauss_newton_uses_pseudo_transient_residual_roots():
                 phx.solver.ResidualRelaxationMap(
                     "u",
                     lambda value: value,
-                    map_id="identity",
+                    operator_semantic_id="identity-map",
+                    operator_numeric_id="identity-map",
                 ),
                 freshness="experimental_fixed",
             ),
@@ -112,7 +154,7 @@ def test_causal_gates_reduce_later_slab_contribution():
         label="dynamics",
     )
     solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -140,11 +182,10 @@ def test_causal_gates_reduce_later_slab_contribution():
     assert jnp.allclose(update.physical_values(solver.functions).total, 1.0)
 
 
-def _two_term_solver():
+def _two_term_solver(points=((0.2,), (0.8,))):
     domain = phx.domain.Interval1d(0.0, 1.0)
     u = domain.Parameter(jnp.asarray(1.0))
     v = domain.Parameter(jnp.asarray(10.0))
-    points = [[0.2], [0.8]]
     first = _fixed_term(
         domain,
         "u",
@@ -164,7 +205,7 @@ def _two_term_solver():
 
 def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment():
     solver = _two_term_solver()
-    params, fixed = partition_trainable(solver.functions)
+    params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0, 1),
         scale=1.0,
@@ -202,8 +243,10 @@ def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment():
 
 
 def test_ntk_trace_balancing_preserves_equal_linear_sensitivities():
-    solver = _two_term_solver()
-    params, fixed = partition_trainable(solver.functions)
+    # One point per term makes each block NTK a 1x1 matrix, so every Rademacher
+    # probe measures its trace exactly and the balance is realization-independent.
+    solver = _two_term_solver(points=((0.5,),))
+    params, fixed = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0, 1),
         scale=1.0,
@@ -251,7 +294,8 @@ def test_stateful_transforms_tolerate_unselected_sampled_terms():
         phx.solver.ResidualRelaxationMap(
             "u",
             lambda value: value,
-            map_id="identity-u",
+            operator_semantic_id="identity-map",
+            operator_numeric_id="identity-map",
         ),
         freshness="experimental_fixed",
     )

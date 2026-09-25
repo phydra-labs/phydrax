@@ -4,6 +4,7 @@
 
 from typing import Mapping
 
+import equinox as eqx
 import jax
 import pytest
 
@@ -170,6 +171,22 @@ class TestFrozenDict:
         assert jax.tree.structure(boolean_key) == jax.tree.structure(integer_key)
         assert jax.tree.structure(integer_key) == jax.tree.structure(floating_key)
 
+    def test_leaf_key_paths_name_the_mapping_keys(self):
+        fd = frozendict({"direction": 1.0, 3: 2.0, "offset": 3.0})
+        paths = [
+            jax.tree_util.keystr(path)
+            for path, _ in jax.tree_util.tree_flatten_with_path(fd)[0]
+        ]
+
+        assert [path.rsplit("[", 1)[-1] for path in paths] == [
+            "3]",
+            "'direction']",
+            "'offset']",
+        ]
+        mapped = jax.tree.map(lambda value: 2.0 * value, fd)
+        assert jax.tree.structure(mapped) == jax.tree.structure(fd)
+        assert mapped == frozendict({"direction": 2.0, 3: 4.0, "offset": 6.0})
+
     def test_noncanonical_key_kinds_are_rejected(self):
         class CustomKey:
             pass
@@ -195,6 +212,13 @@ class TestFrozenDict:
         assert list(fd.values()) == []
         assert list(fd.items()) == []
         assert hash(fd) == hash(frozenset())
+
+    def test_structural_update_preserves_empty_mapping_layout(self):
+        tree = {"metadata": frozendict(), "value": 1.0}
+        updated = eqx.tree_at(lambda item: item["value"], tree, 2.0)
+
+        assert jax.tree.structure(updated) == jax.tree.structure(tree)
+        assert eqx.tree_equal(updated, {"metadata": frozendict(), "value": 2.0})
 
     def test_type_annotations(self):
         # Test that type annotations work as expected

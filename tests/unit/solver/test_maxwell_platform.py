@@ -457,37 +457,91 @@ def test_refresh_rejects_changed_static_boundary_and_source_semantics():
             ),
         )
 
-    class Envelope:
-        def __call__(self, time, args):
-            del args
-            return jnp.cos(time)
 
-    first_envelope = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
-        jnp.asarray([0]),
-        jnp.asarray([1.0]),
-        envelope=Envelope(),
+def _cosine_envelope(time, args):
+    del args
+    return jnp.cos(time)
+
+
+def test_source_envelope_identity_requires_declared_ids_for_opaque_callables():
+    frequency = 2.0
+    for envelope in (
+        lambda time, args: jnp.cos(time),
+        lambda time, args: jnp.cos(frequency * time),
+    ):
+        with pytest.raises(TypeError, match="Opaque callables"):
+            phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
+                jnp.asarray([0]), jnp.asarray([1.0]), envelope=envelope
+            )
+        with pytest.raises(TypeError, match="Opaque callables"):
+            phx.solver.maxwell.MaxwellPairedCurrentSourcePlan(
+                jnp.asarray([0]),
+                jnp.asarray([1.0]),
+                jnp.asarray([0]),
+                jnp.asarray([1.0]),
+                envelope=envelope,
+                envelope_semantic_id="cosine-envelope",
+            )
+    with pytest.raises(ValueError, match="require an envelope"):
+        phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
+            jnp.asarray([0]),
+            jnp.asarray([1.0]),
+            envelope_semantic_id="cosine-envelope",
+            envelope_numeric_id="unit-frequency",
+        )
+
+    def plan(envelope, **ids):
+        return phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
+            jnp.asarray([0]), jnp.asarray([1.0]), envelope=envelope, **ids
+        )
+
+    cosine = plan(
+        lambda time, args: jnp.cos(time),
+        envelope_semantic_id="cosine-envelope",
+        envelope_numeric_id="unit-frequency",
     )
-    second_envelope = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
-        jnp.asarray([0]),
-        jnp.asarray([1.0]),
-        envelope=Envelope(),
+    sine = plan(
+        lambda time, args: jnp.sin(time),
+        envelope_semantic_id="sine-envelope",
+        envelope_numeric_id="unit-frequency",
     )
-    envelope_runtime = phx.solver.CompatibleMaxwellPlan(
-        bridge,
-        polarization="tez",
-        sources=(first_envelope,),
-    ).prepare()
-    envelope_plan = phx.solver.CompatibleMaxwellPlan(
-        bridge,
-        polarization="tez",
-        sources=(second_envelope,),
+    retuned = plan(
+        lambda time, args: jnp.cos(frequency * time),
+        envelope_semantic_id="cosine-envelope",
+        envelope_numeric_id="double-frequency",
     )
-    with pytest.raises(ValueError, match="executable step signature"):
-        phx.solver.maxwell.refresh_compatible_maxwell(
-            envelope_runtime,
+    plain = plan(_cosine_envelope)
+    assert len({cosine.source_id, sine.source_id, retuned.source_id}) == 3
+    assert plain.source_id == plan(_cosine_envelope).source_id
+    assert plain.source_id != cosine.source_id
+
+    bridge = _bridge((2, 2))
+
+    def maxwell(source):
+        return phx.solver.CompatibleMaxwellPlan(
+            bridge, polarization="tez", sources=(source,)
+        )
+
+    def refresh(runtime, source):
+        return phx.solver.maxwell.refresh_compatible_maxwell(
+            runtime,
             phx.solver.maxwell.CompatibleMaxwellRefreshSpec(
-                envelope_plan,
-                jnp.asarray(0.01),
-                "float64",
+                maxwell(source), jnp.asarray(0.01), "float64"
             ),
         )
+
+    cosine_runtime = maxwell(cosine).prepare()
+    with pytest.raises(ValueError, match="executable step signature"):
+        refresh(cosine_runtime, sine)
+    refreshed = refresh(cosine_runtime, retuned)
+    state = refreshed.runtime.initialize()
+    stepped = refreshed.step(jnp.asarray(0.25), state)
+    expected = maxwell(retuned).prepare().leapfrog_step(0.25, state, 0.01)
+    np.testing.assert_allclose(
+        np.asarray(stepped.primary.electric_displacement),
+        np.asarray(expected.primary.electric_displacement),
+    )
+    plain_runtime = maxwell(plain).prepare()
+    refresh(plain_runtime, plan(_cosine_envelope))
+    with pytest.raises(ValueError, match="executable step signature"):
+        refresh(plain_runtime, cosine)

@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
@@ -114,7 +115,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
     maximum_overlap_fraction: float = eqx.field(static=True)
     distance_tolerance: float = eqx.field(static=True)
     frame_tolerance: float = eqx.field(static=True)
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     key: DiscretizationKey
     method_id: str = eqx.field(static=True)
 
@@ -187,7 +188,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
                 "maximum_overlap_fraction": overlap,
                 "distance_tolerance": distance,
                 "frame_tolerance": frame,
-                "differentiability": "branchwise",
+                "differentiability": BranchDifferentiationPolicy.BRANCHWISE.value,
                 "key": key.key_id,
             }
         )
@@ -201,7 +202,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
         self.maximum_overlap_fraction = overlap
         self.distance_tolerance = distance
         self.frame_tolerance = frame
-        self.differentiability = "branchwise"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.key = key
         self.method_id = identifier
 
@@ -576,13 +577,21 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         )
         maximum_interaction_radius = 2.0 * float(np.max(interaction_extents))
         cohesion = method.contact.cohesion
-        isinstance(cohesion, BagheriCapillaryBridgePlan) or (
+        bagheri_present = isinstance(cohesion, BagheriCapillaryBridgePlan) or (
             isinstance(cohesion, CompositeDEMCohesionPlan)
             and any(
                 isinstance(component, BagheriCapillaryBridgePlan)
                 for component in cohesion.components
             )
         )
+        # Wall bridges need an explicit sphere/surface capillary binding, which
+        # only the conserved liquid process supplies (validated below).
+        if bagheri_present and barriers_ and method.liquid_process is None:
+            raise ValueError(
+                "Bagheri capillary bridges currently support sphere pairs only; "
+                "implicit barriers require DEMBarrierCapillaryPlan bindings through "
+                "a conserved liquid process."
+            )
         periodic_cell = None
         if method.periodic_cell_control is not None:
             if not isinstance(neighborhood.box, PeriodicCell):

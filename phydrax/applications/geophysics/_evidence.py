@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import equinox as eqx
 
+from ..._differentiation import DerivativeContract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract
 
 
 class GeophysicalCapabilityEvidence(StrictModule, NonTrainableState):
@@ -23,7 +23,7 @@ class GeophysicalCapabilityEvidence(StrictModule, NonTrainableState):
     boundary_models: tuple[str, ...] = eqx.field(static=True)
     material_models: tuple[str, ...] = eqx.field(static=True)
     limitations: tuple[str, ...] = eqx.field(static=True)
-    differentiation: DifferentiationContract
+    differentiation: DerivativeContract
     evidence_id: str = eqx.field(static=True)
 
     def __init__(
@@ -38,7 +38,7 @@ class GeophysicalCapabilityEvidence(StrictModule, NonTrainableState):
         boundary_models: tuple[str, ...],
         material_models: tuple[str, ...],
         limitations: tuple[str, ...],
-        differentiation: DifferentiationContract,
+        differentiation: DerivativeContract,
     ):
         values = (
             str(model).strip(),
@@ -55,7 +55,7 @@ class GeophysicalCapabilityEvidence(StrictModule, NonTrainableState):
             or not values[1]
             or any(value not in (1, 2, 3) for value in values[1])
             or any(not group or any(not item for item in group) for group in values[2:])
-            or not isinstance(differentiation, DifferentiationContract)
+            or not isinstance(differentiation, DerivativeContract)
         ):
             raise ValueError(
                 "Geophysical capability evidence must be explicit and nonempty."

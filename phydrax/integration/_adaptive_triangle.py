@@ -44,7 +44,7 @@ from ._lowering import component_factor_fields, sum_over
 from ._plans import AdaptiveTrianglePlan
 from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
-from ._targets import ComponentTarget, DensityTarget
+from ._targets import as_target_domain_function, ComponentTarget, DensityTarget
 
 
 class _TriangleIntegrand(StrictModule):
@@ -108,12 +108,6 @@ class _TriangleIntegrand(StrictModule):
 
     def __call__(self, coordinates: Array, /) -> Array:
         return jnp.asarray(self.field(coordinates).data)
-
-
-def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunction:
-    if isinstance(value, DomainFunction):
-        return value
-    return DomainFunction(domain=component.domain, deps=(), func=value)
 
 
 def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
@@ -208,9 +202,11 @@ def _run_triangle_raw(
     precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
     label, axis, structure, fixed, initial_triangles = _resolve_triangles(component)
-    function = _as_domain_function(integrand, component)
+    function = as_target_domain_function(integrand, component.domain)
     density_function = (
-        None if log_density is None else _as_domain_function(log_density, component)
+        None
+        if log_density is None
+        else as_target_domain_function(log_density, component.domain)
     )
     callback = _TriangleIntegrand(
         integrand=function,

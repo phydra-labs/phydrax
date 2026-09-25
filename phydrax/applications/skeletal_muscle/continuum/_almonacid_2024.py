@@ -32,7 +32,7 @@ from ...._identity import (
     strict_module_payload,
 )
 from ...._strict import StrictModule
-from ...._trainable import NonTrainableState
+from ...._trainable import fixed_field, NonTrainableState, parameter_field
 from ....ein import contract
 from ....nonlinear import (
     implicit_root_result,
@@ -104,8 +104,8 @@ class Almonacid2024Control(StrictModule):
     """Trainable load amplitudes on a fixed, identified control clock."""
 
     clock: _ControlClock
-    activation: Array
-    engineering_strain: Array
+    activation: Array = parameter_field()
+    engineering_strain: Array = parameter_field()
     source_id: str = eqx.field(static=True)
 
     def __init__(
@@ -144,8 +144,8 @@ class Almonacid2024InputHistory(StrictModule):
     """
 
     time_grid: _HistoryTimeGrid
-    activation: Array
-    engineering_strain: Array
+    activation: Array = parameter_field()
+    engineering_strain: Array = parameter_field()
     source_id: str = eqx.field(static=True)
     source_provenance: str = eqx.field(static=True)
 
@@ -478,8 +478,8 @@ class Almonacid2024MuscleAponeurosisPlan(StrictModule, NonTrainableState):
 
 class PreparedAlmonacid2024MuscleAponeurosis(StrictModule):
     plan: Almonacid2024MuscleAponeurosisPlan
-    parameters: Almonacid2024MuscleAponeurosisParameters
-    geometry: PreparedAlmonacid2024Geometry
+    parameters: Almonacid2024MuscleAponeurosisParameters = parameter_field()
+    geometry: PreparedAlmonacid2024Geometry = fixed_field()
     state: Almonacid2024State
     signature: ExecutableSignature
     prepared_id: str = eqx.field(static=True)

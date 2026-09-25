@@ -165,11 +165,12 @@ def main() -> None:
     )
     if not jnp.array_equal(serial.values, vectorized.values):
         raise RuntimeError("Serial and vmap workset routes differ.")
+    # No learned numeric content is bound into these items.
     checkpoint = ExecutionWorksetCheckpoint(
-        worksets, vectorized.values, vectorized.next_rng_counters
+        worksets, vectorized.values, vectorized.next_rng_counters, numeric_revisions=()
     )
     restarted, restarted_counters = restore_execution_workset_checkpoint(
-        worksets, checkpoint
+        worksets, checkpoint, numeric_revisions=()
     )
     print("descriptor:", external.descriptor.descriptor_id)
     print("prepared:", external.prepared_id)

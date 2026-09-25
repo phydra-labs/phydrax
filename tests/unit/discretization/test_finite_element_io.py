@@ -2,13 +2,13 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import sys
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.discretization.fem import _spectral_hp_io as spectral_hp_io
 
 
 def _cell_block(cell_type, data):
@@ -54,7 +54,14 @@ def test_mesh_import_preserves_volume_and_facet_groups_with_loss_evidence(
             )
         ],
     )
-    monkeypatch.setitem(sys.modules, "meshio", SimpleNamespace(read=lambda path: source))
+    # The reader admits the on-disk bytes through the bounded-resource boundary,
+    # then decodes the staged copy with the module's meshio binding.
+    (tmp_path / "case.msh").write_bytes(b"deterministic-fixture")
+    monkeypatch.setattr(
+        spectral_hp_io,
+        "meshio",
+        SimpleNamespace(read=lambda path, file_format: source),
+    )
 
     imported = phx.discretization.read_finite_element_mesh(tmp_path / "case.msh")
 
@@ -63,7 +70,7 @@ def test_mesh_import_preserves_volume_and_facet_groups_with_loss_evidence(
     assert imported.report.volume_names == ("myocardium",)
     assert imported.report.boundary_names == ("base",)
     assert imported.report.source_path.endswith("case.msh")
-    assert imported.report.source_format == "msh"
+    assert imported.report.source_format == "gmsh"
     assert dict(imported.report.source_metadata)["info"] == (
         '{"generator":"deterministic-fixture","revision":3}'
     )

@@ -3,6 +3,184 @@
 ## Unreleased
 
 ### Added
+- Added the machine-learning interoperability qualification runner
+  `tools/ml_interoperability_qualification.py`. It runs the scenarios of the 24
+  gates in `tests/integration/test_ml_interoperability_qualification.py` (all gates
+  or a `--gate` subset, optionally in parallel) and binds each gate's outcome into
+  one content-addressed `phydrax.qualification` record chain: support tuple,
+  zero-unqualified-scenario criterion, campaign start, raw observation, campaign
+  observation, and evidence, validated for causality. The report uses a logical
+  clock, so an unchanged build, environment, and outcome set reproduce it byte for
+  byte.
+- Completed the machine-learning interoperability gates. G4 drives continuous and
+  fixed-step discrete dynamics from one bound learned vector field and trains a
+  `NeuralFeedbackPolicy` through a differentiable rollout whose gradient matches
+  finite differences. G5 exposes a neural operator's proposal and the native
+  Newton correction of a finite-element problem as field views. G9 feeds one
+  learned face closure the finite-element facet traces of a field view and refuses
+  a field with a mismatched port. The new G21 shows DEM and reactive CFD-DEM replay
+  mismatches invalidating cotangents while preserving the primal and the forward
+  replay evidence.
+- Added the guide `docs/guides_ml_interoperability.md`: array roles, explicit
+  freeze, model state, lanes, intrinsic execution contracts versus bound authority,
+  ports, regularity, precision, randomness, objective admission, proposals versus
+  authoritative results, external tiers, and the qualification gates.
+- Added solver objectives in `phydrax.solver`: `SolverObjective` (implicit
+  solution maps), `RolloutObjective` (unrolled rollouts), and
+  `AlgorithmicWorkObjective` (fixed-work solver iterations with the
+  `algorithmic_work_loss` residual-reduction loss and a precision-aware stopped
+  floor), all built on `AbstractSolverObjective`. Each holds the trained component
+  as a separate PARAMETER child and binds it into a fixed prepared solve per
+  evaluation, with a frozen realization, declared route and objective kind, an
+  explicit `AcceptedResultPolicy`, and failure reduction into support and
+  rejection counts. `SolverObjectiveEvaluation` reports value, support, primal
+  status, derivative evidence, and binding identity.
+- Added `train_components(tree, objectives, optimizer=..., steps=..., key=...)`,
+  which trains components through solver objectives on the one accepted-update
+  training kernel with the `FunctionalSolver.solve` optimizer union and optional
+  checkpoint resume; mixed-authority trees need one compatible objective per
+  authority group. It returns `ComponentTrainingResult`.
+- Added `phydrax.uq.posterior_problem_from_solver_objective`, a fail-closed
+  residual-valued posterior over a component's parameters for EKI and
+  distribution-evolution consumers; derivative-free and gradient consumers are
+  never switched silently.
+- Added fixed-trip native Krylov: `DifferentiationPolicy("algorithmic")` on native
+  PCG, projected PCG, GMRES, and FGMRES runs the same gated steps in static-length
+  scans. Gram-Schmidt and Givens loops run the static restart length with
+  exact-zero masks, each FGMRES restart cycle and Arnoldi step is a checkpoint
+  unit, and PCG uses square-root block checkpointing, so reverse mode
+  differentiates the executed iteration across restart boundaries. Iterates,
+  iteration counts, and status match the unchanged early-exit route used by every
+  other mode. Benchmark: `benchmarks/linalg_fixed_trip_krylov.py`.
+- Added initial-guess providers: the ACCELERATOR slot
+  `phydrax.linalg.AbstractInitialGuessProvider` with `HistoryInitialGuess`,
+  `LearnedInitialGuess`, and one `InitialGuessDiagnostics` type.
+  `solve(..., initial_guess=provider)` compares the proposal's true residual with
+  the native zero guess on device, keeps the zero guess unless the proposal is
+  finite and strictly better, stops the selected guess, and reports
+  `LinearSolveResult.initial_guess`. `phydrax.nonlinear.select_initial_state`
+  applies the same rule to nonlinear initial states with domain validity.
+- Added `phydrax.nonlinear.implicit_fixed_point_result`: stopped Picard/Anderson
+  primal iterations, a custom root on `g(x, theta) - x`, required tangent and
+  adjoint policies for `I - dg/dx`, C1 and branch-margin admission of mapping
+  components, and no switch to Newton.
+- Added `phydrax.continuation.accepted_point_sensitivity`, the implicit derivative
+  of one accepted branch point with its continuation coordinate fixed.
+- Added differentiable receding-horizon MPC:
+  `phydrax.control.prepare_receding_horizon_mpc_sensitivity` runs the audited
+  `RecedingHorizonMPC.solve` with cold-started dense windows, prepares one
+  `PreparedQPSensitivity` per window, and composes them through the exact affine
+  state handoffs into `PreparedMPCSensitivity` with `jvp`/`vjp` over
+  `LinearQuadraticControlProblem`-shaped tangents. Only dense compilations with
+  zero solver regularization and no warm start are admitted (`DensePrimalDualQP`
+  active-set or barrier KKT, or `MPAXraPDHG(unroll=True)` algorithmic), and the
+  complete derivative is refused unless every window is valid, OPTIMAL, and
+  regular.
+- Added `phydrax.control.prepare_control_linearization`, a matrix-free
+  `PreparedControlLinearization` whose `[A B]` and `[C D]` Jacobians are
+  `JacobianLinearOperator` values, and
+  `phydrax.control.linear_quadratic_problem_from_discrete_dynamics`, which
+  linearizes a Euclidean discrete transition along an operating trajectory into a
+  `LinearQuadraticControlProblem` and refuses failed transitions.
+- Added arbitrary-normal finite-volume face closures: the neutral
+  `AbstractFaceClosurePlan` slot, `ArbitraryNormalFaceClosurePlan` evaluated with a
+  `FaceFluxContext` (unit normal, positive face measure, grid-normal velocity,
+  Cartesian axis, geometry and frame identity), and the optional construction-certified
+  `SymmetrizedFaceClosure`. Structured, mapped, block-AMR, triangle, unstructured,
+  moving, and overset owners apply one closure at every face site; a learned closure
+  trains inside the prepared dynamics as the only parameter lane. Euler,
+  compressible Navier--Stokes, and homogeneous-mixture gas systems implement the
+  explicit `AbstractNormalFrameSystem` capability used by face-normal-frame closures.
+- Added `LearnedStepCorrection`, a learned accepted-step transform: a model
+  proposes a correction of the native fixed-step candidate, native checks
+  (finiteness, support, declared conservation invariants, lower bounds, and a
+  stability bound relative to the native increment) admit it as one
+  transaction, and a rejected proposal keeps the native candidate with
+  `LearnedStepCorrectionReason` bits in the new `transform_admissibility`
+  evidence of fixed-step results, rollouts, and solutions. It never retries,
+  never uses the coarse residual as an accuracy certificate, and trains
+  through checkpointed fixed-step rollouts with frozen admission decisions.
+- Added `MODEL`-authority constitutive slots `AbstractConstitutiveModel` and
+  `phydrax.equations.fem.AbstractLocalImplicitMaterial`. `ConstitutiveModel` and
+  `LocalImplicitMaterial` are their fixed analytic implementations;
+  `LearnedConstitutiveModel` and `LearnedLocalImplicitMaterial` hold a learned
+  model child bound to the slot with unit-carrying ports, admit only models with
+  classical `C^1` regularity, deterministic randomness, and a declared precision
+  contract, return per-site admissibility headers, and poison derivatives
+  (including the exact-JVP consistent tangent) at invalid sites.
+  `MaterialIntegrationPlan` accepts any constitutive slot implementation and is
+  neutral, so learned laws train through implicit mechanics.
+  `AbstractTransportClosure`, `AbstractMPMConstitutivePlan`, and
+  `AbstractImplicitMPMConstitutivePlan` are neutral `MODEL` slots.
+- Frozen learned providers gain an explicit trainable counterpart:
+  `LearnedClosureBindingPlan.as_trainable_binding()` returns a
+  `TrainableLearnedClosureBinding`, and
+  `LearnedChemicalTransitionPlan.as_trainable_binding()` returns a
+  `TrainableLearnedChemicalTransitionPlan`; both keep the artifact's ABI,
+  schema, normalizer, manifests, and identities, and never modify the artifact.
+  The artifacts are now `ExplicitFreeze` holders. `PreparedSpectralDriftHook`
+  holds its binding (constructor takes the binding instead of a predictor and
+  `binding_id`), and a conservative-face `ArbitraryNormalFaceClosurePlan` holds
+  its binding as the correction child, so in either deployment a frozen
+  predictor stays fixed and a trainable one trains.
+- Solver, state-space, control, and meshing extension points are now owner
+  component slots. `AbstractPreconditioner` and `AbstractNonlinearUpdate` are
+  neutral `ACCELERATOR` slots whose composites (precision cast, multigrid
+  levels, subspace-correction terms, block factorizations) keep learned
+  children PARAMETER; `AbstractTransitionKernel` and `AbstractObservationModel`
+  are `MODEL` slots; `AbstractControlParameterization` and the new
+  `phydrax.meshing.AbstractMeshProposer` are `DECISION` slots.
+  `FunctionNonlinearUpdate` is the canonical callable and learned update: models
+  in its callable module are bound to the update slot
+  (`component_contracts()`), its capabilities derive from their execution and
+  derivative contracts, and success still requires a finite proposal that the
+  original problem accepts. Added `phydrax.stochastic.ModelObservationLocation`
+  (learned observation location with unchanged ensemble-transform numerics),
+  `phydrax.control.NeuralFeedbackPolicy` (learned state feedback), and
+  `phydrax.meshing.LearnedMeshProposer` (learned marking, size, and metric
+  proposals certified only by the native projection).
+- Added discrete field views: `PreparedFieldReconstruction` owns exact
+  coordinate evaluation, support geometry, value port, regularity, evidenced
+  maximum derivative order, trace policy, pointwise query evidence, and the
+  exact coefficient transpose; `DiscreteFieldFunctionView` binds coefficients to
+  an explicit equivalent `GeometryDomain` and exposes `as_domain_function()`
+  (an exact derivative rule that refuses unsupported orders and invalid queries)
+  and side-bound `trace(points, side=..., cell_ids=...)`. Finite-element fields
+  are evaluated from native tabulation and DOF routes at arbitrary points located
+  by `PreparedSimplicialCellLocator` (which now reports every containing cell and
+  accepts cell masks) or an explicit `AbstractCellLocator`; `C^0` facet
+  gradients require an owner, neighbor, or average trace. Sums with other fields
+  require matching value ports (units, frame, axes). FE point interpolation moved
+  to its own module and gained arbitrary component shapes and exact physical
+  derivatives.
+- Added `TensorSpectralDiscretization.evaluate` and `derivative_at` for
+  arbitrary-point canonical synthesis (prepared normalization, sign, and mode
+  ordering; periodic wrapping; out-of-box queries fail) and
+  `prepare_spectral_field_reconstruction` for smooth spectral field views.
+- Added `NeuralImplicitRegion`: a certified neural implicit region whose weights
+  live in the geometry `DesignState`, with explicit bounds, negative-inside sign
+  margins, constructed or declared Lipschitz and evaluation-error bounds,
+  discovered topology identity (`ImplicitRegionTopology`), normals only for
+  evidenced `C^1` networks with gradient margins, and `recertify` that rejects
+  topology changes. Geometry domains remain FIXED.
+- Added model execution contracts (`ModelExecutionContract`,
+  `ExecutionCapabilities`, `ComponentPrecisionContract`, `RandomnessContract`)
+  separate from bound component contracts (`AbstractComponentSlot`,
+  `ComponentContract`, `ComponentBinding`). Network, fitted ML, Trefftz,
+  layer-potential, and Equinox-wrapped families declare regularity from their
+  layers and activations; learned chemistry, learned stress, MHD closures, and
+  learned transitions return admissibility headers and derivative contracts.
+- Added one canonical derivative vocabulary at the package root: derivative
+  surfaces, gradient levels, routes, regularity with polynomial-degree algebra,
+  `DerivativeContract` meet/compose/admission, branch-differentiation policies,
+  objective kinds, component authorities, capability evidence requirements, and
+  construction certificates.
+- Added semantic value ports (`ValuePort`, `ModelPorts`, `PortMapping`,
+  `resolve_port_mapping`) with derived views for ML schemas, operator fields and
+  queries, dynamics state/input layouts, domains, discrete field spaces,
+  geophysical fields, and closure schemas.
+- Linear solve results and temporal differentiation evidence report canonical
+  derivative contracts; input-convex networks emit a construction certificate.
 - Added native quantum Hall workflows spanning Haldane, Kane--Mele, and
   Hofstadter lattices; Chern, time-reversal Z2, ribbon, and Bott topology;
   matrix-free projected-sphere pseudopotential spectra and gaps; monopole-sphere
@@ -19,8 +197,170 @@
   worksets and storage policies, AMR/mapped/moving-geometry contracts,
   species/radiation/ablation coupling, checkpoints, IREE export, VTK output,
   and bounded rendering/video adapters.
+- Added `ArtifactBindingIdentity`, the one binding identity of a frozen or
+  published model: its `SemanticProvenance`, the `NumericRevision` of its
+  dynamic content, and its `ExecutableSignature`, recorded together. Functional
+  checkpoints, operator training checkpoints, and native operator artifacts
+  record it at publication and recompute it on load, failing closed on any
+  mismatch; `ScientificArtifactEnvelope` and lifecycle `ModelManifest` accept
+  it whole. `ExecutableSignature(static_callables=...)` and
+  `PoolExecutionSignature(static_callables=...)` identify callables compiled into
+  an executable through `callable_payload`, so statically held weights are part
+  of the executable while dynamic weights change only the numeric revision
+  (qualification gate G22).
+- Plugin registration is public once at the root: `OperatorArchitectureCodec`,
+  `register_operator_architecture_codec`, `operator_architecture_codec`,
+  `operator_architecture_codec_for`, `register_artifact_value`,
+  `artifact_value`, and `artifact_value_id`. Lookups are exact type or object
+  identity with no base-class, name, or entry-point fallback.
+- External model tiers: every external invocation is admitted against declared
+  `ExecutionCapabilities` before it runs (host-only refuses jit/vmap/grad/jvp/vjp)
+  at `ExternalOperatorAdapter` (now requiring capabilities and an
+  `ArtifactBindingIdentity`), `OperatorExecutionPlan` (a compiled strategy
+  requires jit), `OperatorContextModel`, `IREEExecutable`, and the new
+  `phydrax.export.HostInferenceAdapter` and `load_onnx` (`phydrax[onnx-inference]`,
+  optional DLPack transport). `phydrax.nn.models.FunctionalJAXAdapter` holds
+  PARAMETER and MODEL_STATE lanes with an explicit inference mode; the
+  `EquinoxModel` `StateIndex` error names it. Staged external adjoints
+  `ExternalPrimalStage`/`ExternalAdjointAction` refuse replay mismatches;
+  `DAFoamAdjointAction` adds `DAFoamDesignVariableKind`, canonical ordering,
+  shape-preserving totals, and `replay_id`; providers without an adjoint report
+  derivative-free alternatives (gates G6, G7, G13).
+- Added the `phydrax.graph.facet_adjacency` bridge (`FacetAdjacency`): finite-volume
+  owner/neighbor cells and finite-element interior facets become an
+  `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- The dense control linearizations `linearize_discrete_dynamics`,
+  `linearize_differential_dynamics`, and `linearize_control_dynamics` are built
+  from `PreparedLinearization` and `JacobianLinearOperator` and require a
+  `materialization: MaterializationPolicy` that bounds each dense Jacobian family
+  over the whole case batch. A failed discrete transition now yields NaN matrices
+  instead of a finite zero Jacobian.
+- The native dense QP interior-point kernel, its independent audit, and the
+  active-set KKT tangent solve are compiled once per static program layout, so
+  repeated solves and sensitivities at fixed structure (such as MPC windows of one
+  topology) no longer retrace and recompile.
+- Removed `LinearSolveHistory`, `LinearSolveHistoryPolicy`, `solve_with_history`,
+  `HistoryLinearSolveResult`, `LinearInitialGuessDiagnostics`, and
+  `LinearInitialGuessStrategy`. Use `HistoryInitialGuess(operator, family_id,
+  strategy=...)` as a solve `initial_guess`; `at_time(t)` sets the extrapolation
+  target, and the unused reorthogonalization control is gone.
+- `phydrax.lifecycle.NumericRevision` is removed; `phydrax.NumericRevision` is the
+  one numeric-content identity. Lifecycle ancestry is the new
+  `lifecycle.RevisionLineage`, which references canonical semantic and revision
+  IDs plus a label, metadata, and one parent lineage. Lineage archives store the
+  revision's numeric content and recompute it on open; archives with the old
+  numeric-revision record are refused. ROM models and archives, IGA compatible
+  qualification and transfer plans, Fourier-modal revisions, and atomistic label
+  sets use canonical revisions (`fourier_modal_numeric_revision` drops `label`,
+  `qualify_compatible_complex` recomputes the complex revision,
+  `ReducedBasisArtifact` drops `numeric_revision`, and IGA transfer plans record
+  `source_content_id`/`target_content_id`).
+- Atomistic potential identity derives from the current PARAMETER lane:
+  `atomistic_potential_revision` replaces `checkpoint_atomistic_potential`, and
+  `parameter_state_tree`, the patched `parameter_state_id`/`potential_id` fields,
+  and `AtomisticProvenance.parameter_state_id`/`potential_id` are removed
+  (provenance records `potential_revision_id`).
+- `ExecutionWorksetCheckpoint` and `restore_execution_workset_checkpoint` require
+  the `numeric_revisions` bound into the items and refuse a restore under other
+  revisions. Operator training checkpoints require declared array roles and take
+  `static_callables`.
+- `OperatorArchitectureCodec` and `register_operator_architecture_codec` are no
+  longer re-exported from `phydrax.nn.operator.training`.
+- Phydrax-native fixed-topology message passing (MeshGraphNet, attention,
+  kernel and neural operators, equivariant, relational, hypergraph, simplicial,
+  DEC harmonic projection, cluster pooling, GCN/SAGE/GIN, `MessagePassing`)
+  gathers and reduces over sparse `EdgeRelation` routes with inert masked
+  routes; the jraph-compatible family keeps segment aggregators.
+  `GraphKernelIntegral` and `GraphNeuralOperator` take `reduction=` instead of
+  `aggregate_fn`, and `MessagePassing.aggregate` is removed.
+- `DAFoamTotalDerivative.values` is a read-only array in the design variable's
+  shape, and `run_dafoam` request identity includes design shapes.
+- Every native trainer (functional solvers including KFAC, evolution, windows,
+  decomposition, variational Monte Carlo and Calabi-Yau; operator fitting;
+  discrete, variational, and neural-CDE identification; kinetic rollout
+  closures; atomistic and free-energy fitting; flows, variational inference,
+  sparse GPs, buffered state space, targeted maps, SING, PGM; Stefan and
+  learned PIV) runs through one accepted-update training kernel. Attempts end
+  accepted, rule-rejected (only rule-authorized state commits), or nonfinite
+  (full rollback); unsuccessful and nonfinite updates are never committed.
+  Parameters train only under objectives their component authority admits.
+- Training and execution random keys use semantic sample addresses; training
+  checkpoints persist the kernel state and previous checkpoint formats fail
+  closed. `FunctionalUpdateKernel`, `training_key`, and `TrainingController`
+  key handling are removed.
+- Numerical flux plans, face reconstructions, and slope limiters are neutral
+  `DISCRETIZATION` component slots. Mapped structured finite volumes admit any
+  arbitrary-normal flux (including HLLC and the all-speed fluxes) and refuse
+  axis-only fluxes at preparation; face closures now apply on mapped geometry.
+- `ConservativeFaceClosurePlan` and its Cartesian-axis correction ABI are replaced
+  by `ArbitraryNormalFaceClosurePlan`; corrections receive a `FaceFluxContext`
+  instead of an axis. `LearnedClosureBindingPlan.bind_conservative_faces` verifies the
+  predictor's `conservative_face_numeric_revision` before binding.
+- The conservation-source callable type `SourceFunction` has one owner shared by the
+  structured, block-AMR, triangle, unstructured, and SBP dynamics.
+- `FieldCertificate` owns the Lipschitz upper bound, evaluation-error bound, and
+  topology identity; `ExactSDFEnclosureCertificate` carries only its field
+  certificate and requires those bounds on it.
+- `PreparedFiniteElementPointInterpolation` and
+  `prepare_finite_element_point_interpolation` live in the FE point-evaluation
+  module; rigid attachments check their nodal vector-field layout themselves.
+  `InterpolationTransposeEvidence` is exported from `phydrax.discretization`
+  only.
+- Models with intrinsic ports require an explicit `PortMapping` at
+  `Domain.Model`, model systems, operator context/execution plans, geophysical
+  bindings, and learned-stress bindings. Operator output name maps are replaced
+  by port mappings; fitted ML schemas can be built from owner ports.
+- Derivative planning admits field regularity before tracing: proven
+  degeneracy (for example a ReLU network with linear output under a Laplacian)
+  is rejected, and `FunctionalSolver(regularity_policy=...)` declares whether
+  almost-everywhere and undeclared regularity are admitted.
+- Nonlinear precision policies compose declared component error floors,
+  excluding accelerators, and reject unreachable tolerances. Implicit roots
+  and Newton preparation admit component randomness only when deterministic,
+  in inference state, or bound to a `FrozenRealization`.
+- Trainability is declared, not inferred from dtype. Arrays carry an
+  `ArrayRole` (parameter, fixed, model state) from field declarations
+  (`parameter_field`, `fixed_field`, `model_state_field`), `ParameterOwner`
+  model bases, and terminal `NonTrainableState`/`ExplicitFreeze` markers.
+  Every training entry runs `require_parameter_roles`, which rejects
+  unclassified arrays, parameters hidden under a fixed ancestor, and callables
+  capturing undeclared arrays. `partition_parameters` returns parameter,
+  model-state, and fixed lanes; `partition_trainable`, `combine_trainable`,
+  and the trainable-leaf predicates are removed.
+- Learned-component slot bases (numerical fluxes, reconstructions, limiters,
+  face closures, step and stage transforms, transport and MPM constitutive
+  plans) and their method/dynamics containers are neutral; built-in analytic
+  leaves remain fixed. Frozen artifacts (`FrozenModel`, `TrainedOperator`,
+  operator correction bindings) are explicit freezes. Operator batches,
+  context sources, normalizers, scalers, and fitted ML statistics are fixed.
+- Accepted-step and SSP stage transforms are `DISCRETIZATION` component
+  slots, and discrete model rollout transitions are a `MODEL` component slot;
+  built-in transitions are fixed. Fixed-step methods validate every direct
+  accepted-step transform result centrally (structure, dtype, scalar
+  evidence), and a failed transform can no longer change the candidate.
+  Learned DAE defects enter through the residual and the existing implicit
+  and adaptive acceptance lifecycle; `DAESolvePolicy` stays a fixed policy.
+- `ParameterSubspace` selections are role declarations; worksets and
+  ensembles map lanes through a declared `LaneLayout`, independent of roles.
+  `FunctionalSolver.partition_functions` returns three lanes.
+- `EquinoxModel` rejects stateful Equinox modules.
+- ML fitting uses the canonical derivative vocabulary: `FitResult` exposes
+  `derivative_contract`, `derivative_admission`, `require_derivative`, and model
+  ports; `fit(..., derivative_request=...)` replaces the ML gradient request.
+  The ML-specific gradient contract types are removed.
+- Fitted ML executables retain feature/target schemas (with optional physical
+  dimensions) and ports. Native ML artifacts persist the canonical contract,
+  schemas, ports, and semantic/numeric/executable identity; `load_ml_model`
+  returns the bound executable and previous artifact records fail closed.
+- Scientific artifact evidence uses `DerivativeContract`; the local
+  differentiation contract and `DerivativeAvailability` are removed.
+- Branch sensitivity, conservation, spectral, particle, reconstruction, and
+  filter differentiation policies are unified as
+  `BranchDifferentiationPolicy`; each owner accepts its supported subset.
+  `HybridSensitivityMode` and the owner-specific policy types are removed.
+  Fingerprints that hashed the previous policy spellings change.
 - Public API inventory now follows canonical access paths rather than private
   implementation module names, traverses without a depth cutoff, and includes
   explicitly supported lazy scientific leaves. Documentation directives,
@@ -40,9 +380,110 @@
   typed method/operator/plan provenance. Affine, activation, and semilinear
   exponential updates share one augmented action rather than constructing
   independent exponential and phi projections.
-
+- Blockwise model bindings now declare their output layout
+  (`dependency_axes`, `dependency_subset`, or `axis_array`). Output axes come
+  from that declaration, the vmap schedule, or coordinate dependencies; array
+  sizes only validate a declaration and never establish axis identity.
+- Domain-backed integration targets accept a `DomainFunction` or a constant.
+  A raw callable now raises `TypeError` naming `domain.Function(*labels)(f)`;
+  raw-callable engines (mapped, breakpoint, external, adaptive callable) keep
+  their callable interface.
+- Callable identities in residual relaxation, cochain residuals,
+  astrodynamics and GR events, Maxwell sources, probabilistic ODE drifts,
+  variational Monte Carlo, and robot environments use the canonical
+  callable payload. Opaque callables require explicit semantic and numeric
+  identifiers; `repr`, source-location, and type-name identities are removed.
+- Triangle and unstructured finite-volume methods accept any
+  arbitrary-normal numerical flux; moving and overset unstructured routes
+  require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- Derivative admission refuses every request on a `STOPPED` route, including
+  hard-tree fits and meets of differing routes; differentiated regularity keeps
+  the conditions it was admitted under.
+- Solver-objective gradients, ML influence functions, particle Fisher and
+  genealogical scores, and neural implicit design states differentiate only the
+  declared parameter lane; influence solves use native linear algebra and report
+  rank, conditioning, and per-sample status. Linear-Gaussian priors, transition
+  parameterizations, and observation models declare their roles.
+- Training preflight rejects functions that read array-valued module globals
+  and hidden arrays beneath plain fixed state; only explicit freezes authorize
+  hidden artifact state, and such functions no longer receive a stateless
+  identity. Trainable provider bindings require a parameter leaf; lane layouts
+  are canonically ordered.
+- Training checkpoints bind the digest of every lane and cursor; objective
+  callables may hold only fixed arrays; zero-support objectives commit no
+  model-state transition.
+- Relative component error floors require a declared residual scale before a
+  nonlinear tolerance can be certified. Batched QP sensitivity reports
+  regularity per case, and MPC sensitivity refusals name the failing case and
+  window.
+- Models that declare ports must be bound with owner ports: feedback policies,
+  observation locations, step corrections, mesh proposers, rollout transitions,
+  and other learned slots derive them from their layouts. Model execution
+  contracts can record declared capabilities, which satisfy only
+  declaration-level requirements.
+- Discrete field transposes and duality evidence refuse invalid query routes;
+  external operator adapters derive their binding from the manifest; blockwise
+  dependency subsets are validated against declared dependencies.
+- The public API manifest discovers lazily exported submodules by module spec,
+  so it no longer depends on import history; it now lists 22 previously omitted
+  public modules.
+- Neural implicit geometry reports sampled sign and topology evidence only and
+  no longer claims certified topology or reliable sign; its design state holds
+  parameter leaves only.
+- The environment now matches the declared `equinox==0.13.8` pin. Declared
+  `eqx.AbstractVar` fields are enforced as abstract, strict modules no longer
+  carry an undeclared initialization flag in their pytree state, and domain
+  geometries no longer declare phantom `adf` fields; `error_if` failures now
+  surface as `EquinoxRuntimeError` in eager and compiled calls.
+- JAX dtype promotion that the style refactor changed from weak `float` to
+  strong `float64` again preserves single-precision and complex-single inputs.
+- Frozen-dict leaves are addressed by mapping key in pytree paths; empty
+  frozen dicts keep their layout through structural updates.
+- Corrected latent defects across finite-volume, finite-element, IGA, DEM,
+  compatible systems, Bayesian quadrature, circuit small-signal convention,
+  dense classification, tribology saturation, native LSMR stopping, variational
+  inequality and higher-order root linear budgets, filter IPM budgets,
+  optimistix integration, ArviZ export, property verification tolerances,
+  multigrid coarse precision, chaos RQA validity, unitary propagation tangents,
+  graph value enforcement, operator benchmark primary sources, broken pairwise
+  iteration, and the `imageio.v3` import; stale tests and benchmark evidence
+  were updated to the current contracts.
+- Discrete-velocity pull offsets are integers, and the learned-energy and IREE
+  export evidence is regenerated against current artifacts.
+- The training-boundary check for hidden arrays inspects dataclass fields and
+  declared slots.
+- Composite derivative rules no longer hold copies of their operand fields.
+  Arithmetic expressions, transposes, gated and weighted boundary blends,
+  interior anchor corrections, ragged time-series ansätze and corrections,
+  trajectory signals, discrete field views, fiber projections, and frozen
+  correction fields now derive their rule on demand from their evaluator's own
+  operands (`DomainFunction.derivative_rule` returns the explicit rule, else the
+  evaluator-derived one; the stored rule is `explicit_derivative_rule`).
+  Derivatives therefore use the current parameters after a training update
+  instead of stale construction-time copies, each parameter is a single visible
+  leaf, and such fields pass `require_parameter_roles`.
+- `eqx.AbstractVar[...]` / `eqx.AbstractClassVar[...]` declarations on strict
+  modules are now actually abstract. Under `from __future__ import annotations`
+  Equinox silently treated them as concrete dataclass fields, so abstract
+  attributes were never enforced and every subclass implementing one with a
+  property carried a phantom field that broke flatten/unflatten round trips
+  (filter specs, parameter subspaces). Four concrete classes that never
+  implemented a declared attribute now do: `IntegrationAxisSpec.n`,
+  `FeasibleParameterization.scope`, `PreparedGeneralForceFieldTerm.force_group`,
+  and `ChemicalJumpProcess.process_id`.
+- Strict modules no longer store a freeze flag in their instance dictionary.
+  Equinox flattened it as wrapper metadata, so every unflattened copy gained
+  `__name__`/`__qualname__` set to a sentinel and `eqx.filter_jit` of
+  `eqx.filter_vmap(module)` failed with "__name__ must be set to a string
+  object". Deleting a strict module attribute still raises.
+- Mapped finite-volume dynamics and wave-propagation plans now refuse a face
+  closure at preparation instead of silently ignoring it.
+- DEM and reactive checkpointed replay VJPs invalidate the returned cotangent
+  when the replay does not match; the primal and replay evidence are kept.
+- Implicit root differentiation checks the nonlinear method's capability even
+  when explicit tangent and adjoint policies are supplied.
 - Hardened the quantum Hall, compressible kinetic, and scaled-Taylor additions:
   scientific owner identities and charge rosters now fail closed, transport and
   SCBA retain native solve status, finite-support means require convex-support

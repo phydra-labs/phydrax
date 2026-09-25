@@ -2,8 +2,8 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax._trainable import partition_trainable
 from phydrax.linalg import MaterializationPolicy, materialize
+from phydrax.solver._functional_run import partition_functional_parameters
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
@@ -132,7 +132,7 @@ def test_functional_ntk_exposes_measure_weighted_blocks():
 
 def test_functional_ntk_keeps_physical_and_surrogate_views_distinct():
     solver = _functional_solver()
-    params, non_trainable = partition_trainable(solver.functions)
+    params, non_trainable = partition_functional_parameters(solver.functions)
     physical = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -147,7 +147,8 @@ def test_functional_ntk_keeps_physical_and_surrogate_views_distinct():
                 phx.solver.ResidualRelaxationMap(
                     "u",
                     lambda value: value,
-                    map_id="identity",
+                    operator_semantic_id="identity-map",
+                    operator_numeric_id="identity-map",
                 ),
                 freshness="experimental_fixed",
             ),

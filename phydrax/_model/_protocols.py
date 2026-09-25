@@ -15,7 +15,14 @@ if TYPE_CHECKING:
     from ..enforcement._linear_representation import AbstractLinearRepresentation
 
 
-MODEL_CONSTRUCTION_CERTIFICATE_KEYS = frozenset({"trial_space_certificate"})
+TRIAL_SPACE_CERTIFICATE_KEY = "trial_space_certificate"
+INPUT_CONVEX_CERTIFICATE_KEY = "input_convex_certificate"
+# Metadata keys under which models attach construction certificates to the
+# bound domain function. Transforms that do not preserve a certified
+# construction drop every one of these keys.
+MODEL_CONSTRUCTION_CERTIFICATE_KEYS = frozenset(
+    {TRIAL_SPACE_CERTIFICATE_KEY, INPUT_CONVEX_CERTIFICATE_KEY}
+)
 
 
 class ModelEvaluator(abc.ABC):
@@ -88,9 +95,11 @@ class StructuredDerivativeProvider(abc.ABC):
 
 __all__ = [
     "AxisModelEvaluator",
+    "INPUT_CONVEX_CERTIFICATE_KEY",
     "MODEL_CONSTRUCTION_CERTIFICATE_KEYS",
     "LinearRepresentationProvider",
     "ModelEvaluator",
     "ModelMetadataProvider",
     "StructuredDerivativeProvider",
+    "TRIAL_SPACE_CERTIFICATE_KEY",
 ]

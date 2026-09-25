@@ -9,6 +9,12 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.applications.compressible_flow import (
+    AllSpeedCompressiblePolicy,
+    AllSpeedHLLFluxPlan,
+    ShockAwareAllSpeedFluxPlan,
+    ShockResolvingPolicy,
+)
 from phydrax.discretization.finite_volume import (
     _unstructured_dynamics as unstructured_dynamics,
 )
@@ -44,6 +50,7 @@ def _prepared_runtime(
     step_policy=None,
     source=None,
     boundary_values=None,
+    interface_solver=None,
 ):
     system = phx.equations.EulerSystem(2)
     plan = _grid_plan(system)
@@ -68,7 +75,11 @@ def _prepared_runtime(
     )
     method = phx.discretization.UnstructuredFiniteVolumeMethodPlan(
         phx.discretization.PiecewiseConstantReconstruction(),
-        phx.discretization.RusanovFluxPlan(),
+        (
+            phx.discretization.RusanovFluxPlan()
+            if interface_solver is None
+            else interface_solver
+        ),
     )
     problem = phx.equations.ConservationProblemIR(
         f"ale-runtime:{mapping_id}",
@@ -318,6 +329,74 @@ def test_stationary_ale_and_static_runtime_publish_one_compatible_ledger():
     )
     assert "accepted_" + "integrated_fluxes" not in vars(moving_result)
     assert "flux_" + "integrals" not in vars(moving_result.ale)
+
+
+def test_moving_unstructured_refuses_stationary_only_flux_before_execution():
+    stationary_only = phx.discretization.EntropyStableEulerFluxPlan()
+    _, _, _, static_runtime = _prepared_runtime(
+        mapping_id="static-entropy-stable",
+        interface_solver=stationary_only,
+    )
+    assert static_runtime.dynamics.method.interface_solver is stationary_only
+
+    with pytest.raises(ValueError, match="arbitrary-normal ALE numerical flux"):
+        _prepared_runtime(
+            motion=_interior_linear_deformation,
+            mapping_id="moving-entropy-stable",
+            interface_solver=stationary_only,
+        )
+
+
+@pytest.mark.parametrize(
+    "interface_solver",
+    (
+        pytest.param(phx.discretization.HLLCFluxPlan(), id="hllc"),
+        pytest.param(
+            AllSpeedHLLFluxPlan(AllSpeedCompressiblePolicy(reference_mach=0.1)),
+            id="all-speed-hll",
+        ),
+        pytest.param(
+            ShockAwareAllSpeedFluxPlan(ShockResolvingPolicy()),
+            id="shock-aware-all-speed",
+        ),
+    ),
+)
+def test_moving_unstructured_accepts_ale_capable_fluxes(interface_solver):
+    _, _, _, runtime = _prepared_runtime(
+        motion=_interior_linear_deformation,
+        mapping_id=f"moving-{type(interface_solver).__name__}",
+        interface_solver=interface_solver,
+    )
+
+    assert runtime.dynamics.method.interface_solver is interface_solver
+
+
+@pytest.mark.parametrize(
+    "interface_solver",
+    (
+        pytest.param(phx.discretization.HLLCFluxPlan(), id="hllc"),
+        pytest.param(
+            AllSpeedHLLFluxPlan(AllSpeedCompressiblePolicy(reference_mach=0.1)),
+            id="all-speed-hll",
+        ),
+    ),
+)
+def test_moving_unstructured_ale_flux_preserves_deforming_free_stream(
+    interface_solver,
+):
+    _, discretization, system, runtime = _prepared_runtime(
+        motion=_interior_linear_deformation,
+        mapping_id=f"free-stream-{type(interface_solver).__name__}",
+        interface_solver=interface_solver,
+    )
+    uniform = _uniform_conserved(system, discretization, velocity=(0.2, -0.1))
+    result = runtime.advance(runtime.initialize_state(uniform, 0.0, 2.0e-2))
+
+    assert bool(result.accepted)
+    assert result.ale is not None
+    np.testing.assert_allclose(
+        result.runtime_state.cell_average(), uniform, rtol=1e-10, atol=1e-11
+    )
 
 
 def test_deforming_free_stream_preserves_every_stage_and_exact_content_volume_gcl():

@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from .._precision import inexact_result_type
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 
@@ -127,9 +128,7 @@ def solve_adaptive_tdvp(
     if not callable(vector_field) or not isinstance(plan, AdaptiveTDVPPlan):
         raise TypeError("vector_field/plan types are invalid.")
     parameters = jnp.asarray(initial_parameters)
-    time = jnp.asarray(
-        plan.time_start, dtype=jnp.result_type(parameters.real.dtype, jnp.float64)
-    )
+    time = jnp.asarray(plan.time_start, dtype=inexact_result_type(parameters.real.dtype))
     step_size = jnp.asarray(plan.initial_step_size, dtype=time.dtype)
     accepted_count = jnp.asarray(0, dtype=jnp.int32)
     accepted_times = (

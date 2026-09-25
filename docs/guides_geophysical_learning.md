@@ -89,7 +89,7 @@ information. If `temporal_bounds` is omitted, only the selected native groups an
 point-order coordinates are protected; the adapter does not infer an unrecorded
 window duration. A completely ungrouped random case split is not accepted.
 
-`experiment.fit(model, steps=..., output_field_map=...)` calls native
+`experiment.fit(model, steps=..., output_ports=..., port_mapping=...)` calls native
 `fit_operator` with train-only normalization, physical quadrature weighting and
 held-out validation. `steps` specifies optimizer updates: the adapter gives the
 native trainer enough epochs to reach that budget instead of silently stopping

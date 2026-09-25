@@ -15,7 +15,15 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    SMOOTH,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
@@ -33,6 +41,7 @@ from phydrax.nn.operator.architectures.geometric._geometry_operator import (
 )
 from phydrax.nn.operator.data import OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+from phydrax.nn.operator.layers._attention import _measure_attention_regularity
 
 
 class GNOT(AbstractOperatorModel):
@@ -305,6 +314,36 @@ class GNOT(AbstractOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("GNOT requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Source summaries are quadrature-weighted sums; softmax gates fuse the
+        # attended branches.
+        query = self.query_encoder._value_regularity()
+        attended = []
+        logits = []
+        for encoder, attention, gate in zip(
+            self.source_encoders, self.source_attentions, self.fusion_gates, strict=True
+        ):
+            features = encoder._value_regularity()
+            attended.append(
+                compose_regularity(
+                    sum_regularity((features, query)),
+                    _measure_attention_regularity(attention),
+                )
+            )
+            logits.append(
+                compose_regularity(
+                    sum_regularity((query, compose_regularity(features, AFFINE))),
+                    gate._value_regularity(),
+                )
+            )
+        gates = compose_regularity(sum_regularity(logits), SMOOTH)
+        fused = sum_regularity(
+            (query, product_regularity((sum_regularity(attended), gates)))
+        )
+        return compose_regularity(
+            fused, self.processor._value_regularity(), self.projection._value_regularity()
+        )
 
 
 __all__ = ["GNOT"]

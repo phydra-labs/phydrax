@@ -2,6 +2,8 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -17,7 +19,7 @@ from phydrax.sampling.collocation import (
 from phydrax.solver import FunctionalSolver
 
 
-def _square_constraint(policy, *, counts=(12, 10)):
+def _square_constraint(policy, *, counts=(12, 10), trainable=False):
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
@@ -28,14 +30,18 @@ def _square_constraint(policy, *, counts=(12, 10)):
         return x0 + 1.0
 
     component = domain.component()
-    condition = phx.conditions.Residual("u", component, lambda _u: shifted_x)
+    condition = phx.conditions.Residual(
+        "u",
+        component,
+        (lambda u: u - shifted_x) if trainable else (lambda _u: shifted_x),
+    )
     source = phx.integration.adaptive(
         phx.integration.mean_over(component),
         phx.domain.GridSampling({"x": counts}, design="uniform"),
         policy,
     )
     term = phx.terms.ResidualPenalty(condition, source)
-    functions = {"u": domain.Function()(0.0)}
+    functions = {"u": domain.Parameter(0.0) if trainable else domain.Function()(0.0)}
     return domain, term, functions
 
 
@@ -146,7 +152,7 @@ def test_hierarchical_axes_activate_nested_nodes_without_shape_changes():
 
 def test_solver_trains_with_separable_population():
     policy = PeriodicSeparableCollocation(refresh_every=1)
-    domain, term, functions = _square_constraint(policy, counts=(6, 5))
+    domain, term, functions = _square_constraint(policy, counts=(6, 5), trainable=True)
     solver = FunctionalSolver(functions=functions, terms=[term])
     trained = solver.solve(
         num_iter=2,
@@ -160,3 +166,11 @@ def test_solver_trains_with_separable_population():
     assert isinstance(population.batch, GridBatch)
     assert int(population.refresh_count) == 2
     assert trained.functions["u"].domain == domain
+    initial = jax.tree_util.tree_leaves(eqx.filter(functions, eqx.is_inexact_array))
+    updated = jax.tree_util.tree_leaves(
+        eqx.filter(trained.functions, eqx.is_inexact_array)
+    )
+    assert any(
+        not jnp.allclose(before, after)
+        for before, after in zip(initial, updated, strict=True)
+    )

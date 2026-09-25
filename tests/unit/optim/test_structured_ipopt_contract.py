@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
@@ -159,7 +160,7 @@ def test_structured_warm_start_tracks_source_and_rejects_invalid_duals():
     assert warm.source_backend == "ipopt"
     assert warm.warm_start_id
 
-    with pytest.raises(ValueError, match="non-negative"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="non-negative"):
         phx.optim.StructuredNonlinearWarmStart(
             point,
             jnp.zeros(2),

@@ -15,6 +15,7 @@ import scipy.sparse as sp
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import NonTrainableState
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator, DenseLinearOperator
@@ -103,7 +104,7 @@ def _factor(
     return SparseTriangularFactor(analysis, storage.values)
 
 
-class GaussSeidelPreconditioner(AbstractPreconditioner):
+class GaussSeidelPreconditioner(AbstractPreconditioner, NonTrainableState):
     """Prepared forward, backward, or multiplicative symmetric sweep."""
 
     operator: AbstractLinearOperator

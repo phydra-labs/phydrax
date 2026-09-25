@@ -100,7 +100,7 @@ class _AbstractPreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess
         self.process_id = "adaptive-linear-source"
         self.requires_realization = False
         self.realization_name = None
-        self.differentiability = "smooth_discrete"
+        self.differentiability = "smooth"
         self.modified_components = ("total_energy",)
 
     def initialize(self, source_view, args: Any = None, /):
@@ -718,8 +718,10 @@ def test_implicit_radiative_cooling_decreases_energy_without_clipping():
 
 def test_shared_face_closure_is_conservative_and_equal_state_consistent():
     grid, system, discretization, _ = _periodic_euler_runtime((8,))
-    closure = phx.discretization.ConservativeFaceClosurePlan(
-        lambda system, left, right, baseline, axis, args: args["scale"] * (right - left),
+    closure = phx.discretization.ArbitraryNormalFaceClosurePlan(
+        lambda system, left, right, baseline, context, args: (
+            args["scale"] * (right - left)
+        ),
         closure_id="linear-jump-correction",
     )
     problem = phx.equations.ConservationProblemIR(

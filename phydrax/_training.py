@@ -15,9 +15,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, ArrayLike
 
 from ._iteration import (
     bind_iteration_scope,
@@ -78,7 +77,11 @@ class ExponentialMovingAverageTargetPolicy:
 
 
 class TargetParameterState(StrictModule):
-    """Checkpointable stopped target tree and exact update cursor."""
+    """Checkpointable stopped target of the PARAMETER lane and exact update cursor.
+
+    Delayed and EMA targets track parameters only; target functions take their
+    MODEL_STATE and FIXED leaves from the current functions.
+    """
 
     target: Any
     history: Any
@@ -442,20 +445,6 @@ def training_iteration_record(
     )
 
 
-def training_key(
-    master_key: Key[Array, ""],
-    index: int,
-    /,
-    *,
-    site: int = 0,
-) -> Key[Array, ""]:
-    """Derive a deterministic key from a persisted logical index and named site."""
-
-    if int(index) < 0 or int(site) < 0:
-        raise ValueError("Training key indices must be non-negative.")
-    return jr.fold_in(jr.fold_in(master_key, int(index)), int(site))
-
-
 def update_training_selection(
     progress: TrainingProgress,
     value: float,
@@ -549,13 +538,16 @@ def _update_validation_selection(
 
 
 class TrainingController:
-    """Shared host lifecycle for PRNG, progress, selection, and typed events."""
+    """Shared host lifecycle for progress, selection, and typed events.
+
+    Training randomness is owned by the training kernel (root key and cursors in
+    `TrainingKernelState`), not by the controller.
+    """
 
     def __init__(
         self,
         *,
         total_steps: int,
-        key: Key[Array, ""],
         algorithm_id: str,
         progress: TrainingProgress | None = None,
         session: IterationSession | None = None,
@@ -592,7 +584,6 @@ class TrainingController:
                 iteration_control_id=session.control_id,
             )
         self.total_steps = int(total_steps)
-        self.key = key
         self.progress = progress_
         self.session = session
         self.best_payload: Any | None = None
@@ -607,15 +598,6 @@ class TrainingController:
             checkpointable=True,
         )
         self.iteration_scope = bind_iteration_scope(plan, capabilities, algorithm_id_)
-
-    def split_key(self) -> Key[Array, ""]:
-        """Advance a sequential key stream for compatibility-sensitive loops."""
-
-        self.key, step_key = jr.split(self.key)
-        return step_key
-
-    def key_for(self, index: int, /, *, site: int = 0) -> Key[Array, ""]:
-        return training_key(self.key, index, site=site)
 
     def emit(
         self,
@@ -805,7 +787,6 @@ __all__ = [
     "resolve_evaluation_parameters",
     "emit_training_signal_stop",
     "tensorboard_every",
-    "training_key",
     "update_training_selection",
     "training_iteration_record",
 ]

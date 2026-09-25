@@ -693,7 +693,13 @@ class NonlinearTransformationEvidence(StrictModule):
 
 
 class NonlinearResult(StrictModule):
-    """Accepted nonlinear state, physical residual, and complete evidence."""
+    """Accepted nonlinear state, physical residual, and complete evidence.
+
+    `component_evidence` records the admission of the residual's model
+    components by an owner that admits them (for example implicit root
+    differentiation), including `"residual:determinism-undeclared"` for an
+    opaque residual closure.
+    """
 
     state: PyTree[Array]
     residual: PyTree[Array]
@@ -705,6 +711,7 @@ class NonlinearResult(StrictModule):
     precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
     attempts: tuple[Any, ...]
     iteration_evidence: IterationEvidence | None
+    component_evidence: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -719,6 +726,7 @@ class NonlinearResult(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
         attempts: tuple[Any, ...] = (),
         iteration_evidence: IterationEvidence | None = None,
+        component_evidence: tuple[str, ...] = (),
     ):
         if not isinstance(diagnostics, NonlinearDiagnostics):
             raise TypeError("diagnostics must be NonlinearDiagnostics.")
@@ -741,6 +749,9 @@ class NonlinearResult(StrictModule):
             iteration_evidence, IterationEvidence
         ):
             raise TypeError("iteration_evidence must be IterationEvidence or None.")
+        records = tuple(component_evidence)
+        if any(not isinstance(record, str) or not record for record in records):
+            raise TypeError("component_evidence must contain non-empty strings.")
         self.state = state
         self.residual = residual
         self.auxiliary = auxiliary
@@ -751,6 +762,7 @@ class NonlinearResult(StrictModule):
         self.precision_evidence = precision_evidence
         self.attempts = tuple(attempts)
         self.iteration_evidence = iteration_evidence
+        self.component_evidence = records
 
     @property
     def successful(self) -> Array:

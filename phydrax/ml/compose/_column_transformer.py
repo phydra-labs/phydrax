@@ -10,12 +10,17 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+)
+from ..._model import AbstractArrayModel, ModelBinding, ValuePort
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract
-from .._schema import FeatureSchema
+from .._contracts import AbstractRecipe, FitResult
+from .._schema import AbstractFittedModel, FeatureSchema
 from .._sparse_features import FeatureArray, SparseFeatures
 from ._common import (
+    _combine_models,
     _combine_results,
     _composition_binding,
     _join_feature_batches,
@@ -163,7 +168,26 @@ def _select_batch(batch: MLBatch, indices: tuple[int, ...], /) -> MLBatch:
     )
 
 
-class FittedColumnTransformer(AbstractArrayModel):
+def _with_remainder(
+    contract: DerivativeContract, remainder_indices: tuple[int, ...], /
+) -> DerivativeContract:
+    """Branch contract juxtaposed with the passthrough (identity) remainder columns.
+
+    The unfitted identity columns keep every derivative level; they only raise the
+    polynomial degree of the joined output to at least one.
+    """
+    if not remainder_indices or contract.regularity is None:
+        return contract
+    return DerivativeContract(
+        contract.surfaces,
+        route=contract.route,
+        regularity=contract.regularity.add(DerivativeRegularity.smooth(degree_bound=1)),
+        conditions=contract.conditions,
+        nondifferentiable_outputs=contract.nondifferentiable_outputs,
+    )
+
+
+class FittedColumnTransformer(AbstractFittedModel):
     """Schema-resolved immutable fitted column branches."""
 
     transformers: tuple[ResolvedColumnTransformer, ...]
@@ -173,10 +197,13 @@ class FittedColumnTransformer(AbstractArrayModel):
     remainder_indices: tuple[int, ...] = eqx.field(static=True)
     input_schema: FeatureSchema
     output_schema: FeatureSchema
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
+
+    def output_ports(self) -> tuple[ValuePort, ...]:
+        return self.output_schema.value_ports()
 
     def __init__(
         self,
@@ -189,7 +216,7 @@ class FittedColumnTransformer(AbstractArrayModel):
         remainder_indices: Sequence[int],
         input_schema: FeatureSchema,
         output_schema: FeatureSchema,
-        gradient_contract: GradientContract,
+        derivative_contract: DerivativeContract,
     ):
         transformers_ = tuple(transformers)
         results = tuple(fit_results)
@@ -218,7 +245,7 @@ class FittedColumnTransformer(AbstractArrayModel):
         self.remainder_indices = tuple(remainder_indices)
         self.input_schema = input_schema
         self.output_schema = output_schema
-        self.gradient_contract = gradient_contract
+        self.derivative_contract = derivative_contract
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self._input_binding = _composition_binding(models)
@@ -226,6 +253,16 @@ class FittedColumnTransformer(AbstractArrayModel):
     @property
     def fit_results(self) -> tuple[FitResult, ...]:
         return self.provenance.results
+
+    def _prediction_contract(self) -> DerivativeContract | None:
+        branches = _combine_models(
+            tuple(model for _, model, _ in self.transformers), sequential=False
+        )
+        return (
+            None
+            if branches is None
+            else _with_remainder(branches, self.remainder_indices)
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None):
         keys = _split_key(key, len(self.transformers))
@@ -321,7 +358,8 @@ class ColumnTransformer(AbstractRecipe):
         if remainder_indices:
             outputs.append(("remainder", _select_batch(batch, remainder_indices)))
         joined = _join_feature_batches(batch, outputs)
-        valid, status, contract = _combine_results(results)
+        valid, status, branches = _combine_results(results, sequential=False)
+        contract = _with_remainder(branches, remainder_indices)
         model = FittedColumnTransformer(
             fitted,
             results,
@@ -330,7 +368,7 @@ class ColumnTransformer(AbstractRecipe):
             remainder_indices=remainder_indices,
             input_schema=batch.feature_schema,
             output_schema=joined.feature_schema,
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
         diagnostics = CompositionDiagnostics(
             tuple(name for name, _, _ in self.transformers),
@@ -344,7 +382,7 @@ class ColumnTransformer(AbstractRecipe):
             valid=valid,
             status=status,
             method="column_transformer",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

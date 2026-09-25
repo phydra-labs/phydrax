@@ -18,7 +18,12 @@ from phydrax.ein import contract
 from .._admissibility import (
     AdmissibilityHeader,
     AdmissibilityReason,
-    DerivativeAvailability,
+)
+from .._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
 )
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -58,6 +63,13 @@ class FiniteParticleTransportState(StrictModule):
     runtime_id: str = eqx.field(static=True)
 
 
+# Derivatives of the executed algorithm with model and regime decisions frozen.
+_DERIVATIVE_CONTRACT = branch_policy_contract(
+    BranchDifferentiationPolicy.FROZEN_DECISION,
+    surfaces=(DerivativeSurface.PRIMAL_STATE, DerivativeSurface.PHYSICAL_PARAMETER),
+)
+
+
 class FiniteParticleStepResult(StrictModule):
     candidate: FiniteParticleTransportState
     accepted: FiniteParticleTransportState
@@ -68,7 +80,7 @@ class FiniteParticleStepResult(StrictModule):
     contacted: Array
     absorbed: Array
     header: AdmissibilityHeader
-    derivative_availability: DerivativeAvailability = eqx.field(static=True)
+    derivative_contract: DerivativeContract
     successful: Array
     plan_id: str = eqx.field(static=True)
 
@@ -435,7 +447,6 @@ class FiniteParticleTransportPlan(StrictModule, NonTrainableState):
             candidate,
             state,
         )
-        derivative = DerivativeAvailability.WITHIN_FIXED_MODEL
         return FiniteParticleStepResult(
             candidate,
             accepted,
@@ -446,7 +457,7 @@ class FiniteParticleTransportPlan(StrictModule, NonTrainableState):
             contacted,
             absorbed,
             header,
-            derivative,
+            _DERIVATIVE_CONTRACT,
             successful,
             self.plan_id,
         )

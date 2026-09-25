@@ -19,6 +19,10 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import (
+    derivative_contract_from_payload,
+    derivative_contract_payload,
+)
 from ..._fingerprint import (
     array_tree_fingerprint,
     canonical_fingerprint,
@@ -27,7 +31,6 @@ from ..._fingerprint import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...artifacts import DifferentiationContract
 from ...units import UnitDefinition
 from ._gr_products import GRImageScreen, StokesImage
 from ._interferometry import StokesVisibilityData, VisibilitySampling
@@ -89,55 +92,6 @@ class NeutralArrayPayload(StrictModule, NonTrainableState):
         return self.arrays[self.array_names.index(identifier)]
 
 
-def _differentiation_payload(value: DifferentiationContract, /) -> dict[str, object]:
-    return {
-        "upstream_physical_parameters": value.upstream_physical_parameters,
-        "stored_values": value.stored_values,
-        "query_coordinates": value.query_coordinates,
-        "local_parameters": value.local_parameters,
-        "stochastic_realization": value.stochastic_realization,
-        "higher_order": value.higher_order,
-        "contract_id": value.contract_id,
-    }
-
-
-def _differentiation_from_payload(value: object, /) -> DifferentiationContract:
-    if not isinstance(value, Mapping):
-        raise TypeError("Differentiation metadata must be a mapping.")
-    expected = {
-        "upstream_physical_parameters",
-        "stored_values",
-        "query_coordinates",
-        "local_parameters",
-        "stochastic_realization",
-        "higher_order",
-        "contract_id",
-    }
-    if set(value) != expected:
-        raise ValueError("Differentiation metadata does not use canonical fields.")
-    boolean_names = (
-        "upstream_physical_parameters",
-        "stored_values",
-        "query_coordinates",
-        "local_parameters",
-        "stochastic_realization",
-        "higher_order",
-    )
-    if any(type(value[name]) is not bool for name in boolean_names):
-        raise TypeError("Differentiation capability values must be booleans.")
-    result = DifferentiationContract(
-        upstream_physical_parameters=value["upstream_physical_parameters"],
-        stored_values=value["stored_values"],
-        query_coordinates=value["query_coordinates"],
-        local_parameters=value["local_parameters"],
-        stochastic_realization=value["stochastic_realization"],
-        higher_order=value["higher_order"],
-    )
-    if value["contract_id"] != result.contract_id:
-        raise ValueError("Differentiation contract identity does not match metadata.")
-    return result
-
-
 def _provenance_payload(value: ObservationDataProvenance, /) -> dict[str, object]:
     return {
         "producer": value.producer,
@@ -145,7 +99,7 @@ def _provenance_payload(value: ObservationDataProvenance, /) -> dict[str, object
         "source_id": value.source_id,
         "checksum": value.checksum,
         "license_id": value.license_id,
-        "differentiation": _differentiation_payload(value.differentiation),
+        "differentiation": derivative_contract_payload(value.differentiation),
         "provenance_id": value.provenance_id,
     }
 
@@ -180,7 +134,7 @@ def _provenance_from_payload(value: object, /) -> ObservationDataProvenance:
         source_id=value["source_id"],
         checksum=value["checksum"],
         license_id=value["license_id"],
-        differentiation=_differentiation_from_payload(value["differentiation"]),
+        differentiation=derivative_contract_from_payload(value["differentiation"]),
     )
     if value["provenance_id"] != result.provenance_id:
         raise ValueError("Provenance identity does not match metadata.")

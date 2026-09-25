@@ -11,9 +11,20 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
+from ..._model._array import value_derivative_contract
+from ..._trainable import fixed_field
 from .._batch import MLBatch
-from .._contracts import AbstractRecipe, FitResult, GradientContract
+from .._contracts import AbstractRecipe, FitResult, prediction_fit_contract
+from .._schema import AbstractFittedModel
 from ._common import (
     _BLOCKWISE_BINDING,
     _case_count,
@@ -26,6 +37,18 @@ from ._common import (
     OutlierDiagnostics,
 )
 
+
+# Hard path lengths are constant between split thresholds; the stopped score
+# has no parameter derivative.
+_HARD_ISOLATION_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0),
+    nondifferentiable_outputs=("hard_paths", "predict"),
+)
+
+# Sigmoid routing of affine coordinate gates, combined by sums and products.
+_SMOOTH_ISOLATION_CONTRACT = value_derivative_contract(DerivativeRegularity.smooth())
 
 _EULER_GAMMA = 0.5772156649015329
 
@@ -195,20 +218,23 @@ def _smooth_forest_scores_one(
     return jax.vmap(score_point)(queries)
 
 
-class IsolationForestModel(AbstractArrayModel):
+class IsolationForestModel(AbstractFittedModel):
     """Exact hard isolation forest; splits, paths, and predictions are nondifferentiable."""
 
     feature_indices: Array
-    thresholds: Array
+    thresholds: Array = fixed_field()
     splittable: Array
-    leaf_mass: Array
-    normalization: Array
+    leaf_mass: Array = fixed_field()
+    normalization: Array = fixed_field()
     threshold: Array
     max_depth: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
     _input_binding: ClassVar[ModelBinding] = _BLOCKWISE_BINDING
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HARD_ISOLATION_CONTRACT
 
     def __init__(
         self,
@@ -285,14 +311,14 @@ class IsolationForestModel(AbstractArrayModel):
         )
 
 
-class SmoothIsolationForestModel(AbstractArrayModel):
+class SmoothIsolationForestModel(AbstractFittedModel):
     """Differentiable sigmoid-routing relaxation of a fitted isolation forest."""
 
     feature_indices: Array
-    thresholds: Array
+    thresholds: Array = fixed_field()
     splittable: Array
-    leaf_mass: Array
-    normalization: Array
+    leaf_mass: Array = fixed_field()
+    normalization: Array = fixed_field()
     threshold: Array
     temperature: float = eqx.field(static=True)
     max_depth: int = eqx.field(static=True)
@@ -300,6 +326,9 @@ class SmoothIsolationForestModel(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
     _input_binding: ClassVar[ModelBinding] = _BLOCKWISE_BINDING
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_ISOLATION_CONTRACT
 
     def __init__(
         self,
@@ -468,19 +497,12 @@ class IsolationForestRecipe(AbstractRecipe):
             feature_count=batch.feature_count,
             case_shape=batch.case_shape,
         )
-        contract = GradientContract(
-            prediction_inputs="none",
-            prediction_parameters="none",
-            fit_features="none",
-            fit_targets="none",
-            fit_weights="none",
-            fit_hyperparameters="none",
-            fit_mode="stopped",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
             nondifferentiable_outputs=(
                 "tree_topology",
                 "split_features",
-                "hard_paths",
-                "predict",
                 "threshold",
                 "valid",
                 "status",
@@ -496,7 +518,7 @@ class IsolationForestRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="isolation-forest",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

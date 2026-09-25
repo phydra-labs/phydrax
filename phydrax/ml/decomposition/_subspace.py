@@ -12,19 +12,39 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
+    prediction_fit_contract,
 )
 from .._numerics import effective_sample_size, fit_weighted_subspace
+from .._schema import AbstractFittedModel
 
 
 SubspaceGradientTarget = Literal["projector", "basis", "none"]
+
+# Encoding is an affine metric-scaled projection of the input.
+_PREDICTION_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.smooth(degree_bound=1),
+)
 
 
 class SubspaceDiagnostics(StrictModule):
@@ -52,15 +72,15 @@ class SubspaceDiagnostics(StrictModule):
     method: str = eqx.field(static=True)
 
 
-class SubspaceModel(AbstractArrayModel):
+class SubspaceModel(AbstractFittedModel):
     """Fixed affine subspace with metric-correct encoding and decoding."""
 
-    offset: Array
+    offset: Array = fixed_field()
     components: Array
     weighted_components: Array
-    feature_metric: Array
+    feature_metric: Array = fixed_field()
     feature_support: Array
-    singular_values: Array
+    singular_values: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -119,6 +139,9 @@ class SubspaceModel(AbstractArrayModel):
             str(item) for item in query_layout_provenance
         )
         self.sign_phase_convention = "largest-magnitude-entry-positive-real"
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _PREDICTION_CONTRACT
 
     def _flatten_input(
         self, value: Array, width: int, /
@@ -194,28 +217,30 @@ def _shape_product(shape: tuple[int, ...], /) -> int:
     return result
 
 
-def _gradient_contract(target: SubspaceGradientTarget, /) -> GradientContract:
+def _derivative_contract(target: SubspaceGradientTarget, /) -> DerivativeContract:
+    if target == "none":
+        return prediction_fit_contract(
+            _PREDICTION_CONTRACT, route=DerivativeRoute.STOPPED
+        )
     if target == "projector":
-        return GradientContract(
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_mode="spectral",
-            conditions=(
-                "projector gradients require separation between retained and discarded spectra",
-            ),
+        conditions: tuple[str, ...] = (
+            "projector gradients require separation between retained and discarded spectra",
         )
-    if target == "basis":
-        return GradientContract(
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_mode="spectral",
-            conditions=(
-                "basis gradients require a non-repeated retained spectrum",
-                "basis representatives use the largest-magnitude-entry positive-real convention",
-                "canonicalization pivots must remain unique and nonzero",
-            ),
+    else:
+        conditions = (
+            "basis gradients require a non-repeated retained spectrum",
+            "basis representatives use the largest-magnitude-entry positive-real convention",
+            "canonicalization pivots must remain unique and nonzero",
         )
-    return GradientContract(fit_mode="stopped")
+    return prediction_fit_contract(
+        _PREDICTION_CONTRACT,
+        (
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        ),
+        route=DerivativeRoute.SPECTRAL,
+        conditions=conditions,
+    )
 
 
 def _fit_subspace(
@@ -323,7 +348,7 @@ def _fit_subspace(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=_gradient_contract(differentiate),
+        derivative_contract=_derivative_contract(differentiate),
     )
 
 

@@ -15,11 +15,20 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
 from phydrax._frozendict import frozendict
 from phydrax._strict import StrictModule
+from phydrax.nn._contracts import (
+    AFFINE,
+    compose_regularity,
+    product_regularity,
+    SMOOTH,
+    sum_regularity,
+)
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
+from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.layers._measure_attention import (
     AttentionExecution,
@@ -43,12 +52,47 @@ from phydrax.nn.operator.data import (
     OperatorPrediction,
 )
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
+from phydrax.nn.operator.layers._attention import _measure_attention_regularity
 
 
 def _feature_norm(norm: eqx.nn.RMSNorm, values: Array, /) -> Array:
     array = jnp.asarray(values)
     flattened = array.reshape((-1, array.shape[-1]))
     return jax.vmap(norm)(flattened).reshape(array.shape)
+
+
+def _feature_norm_regularity(norm: eqx.nn.RMSNorm, /) -> DerivativeRegularity | None:
+    return SMOOTH if norm.eps > 0.0 else None
+
+
+def _pooled_tokens_regularity(
+    lift: Linear, attention: MeasureAwareAttention, /
+) -> DerivativeRegularity | None:
+    """Regularity of parameter tokens updated by attention to lifted samples."""
+    return compose_regularity(
+        lift._value_regularity(),
+        sum_regularity((AFFINE, _measure_attention_regularity(attention))),
+    )
+
+
+def _query_decoder_regularity(
+    tokens: DerivativeRegularity | None,
+    query_lift: Linear,
+    attention: MeasureAwareAttention,
+    norm: eqx.nn.RMSNorm,
+    projection: Linear,
+    /,
+) -> DerivativeRegularity | None:
+    """Regularity of attending lifted query coordinates to encoded tokens."""
+    query = query_lift._value_regularity()
+    attended = compose_regularity(
+        sum_regularity((tokens, query)), _measure_attention_regularity(attention)
+    )
+    return compose_regularity(
+        sum_regularity((query, attended)),
+        _feature_norm_regularity(norm),
+        projection._value_regularity(),
+    )
 
 
 def _flatten_function_values(
@@ -203,6 +247,27 @@ class LatentTokenBlock(StrictModule):
         updated = (updated + feed_forward) * flattened_mask[..., None]
         return updated.reshape(array.shape)
 
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        attended = compose_regularity(
+            _feature_norm_regularity(self.attention_norm),
+            _measure_attention_regularity(self.attention),
+        )
+        feed_forward = compose_regularity(
+            _feature_norm_regularity(self.feed_forward_norm),
+            product_regularity(
+                (
+                    compose_regularity(
+                        self.gate._value_regularity(), activation_regularity(jnn.silu)
+                    ),
+                    self.value._value_regularity(),
+                )
+            ),
+            self.output._value_regularity(),
+        )
+        return compose_regularity(
+            sum_regularity((AFFINE, attended)), sum_regularity((AFFINE, feed_forward))
+        )
+
 
 class LatentTokenProcessor(StrictModule):
     """Shared fixed-cardinality latent processor used by UPT-style models."""
@@ -286,6 +351,9 @@ class LatentTokenProcessor(StrictModule):
         if return_layers:
             return hidden, tuple(layers)
         return hidden
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return compose_regularity(*(block._value_regularity() for block in self.blocks))
 
 
 class UPT(AbstractEncodedOperatorModel):
@@ -523,6 +591,19 @@ class UPT(AbstractEncodedOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("UPT requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        encoded = compose_regularity(
+            _pooled_tokens_regularity(self.source_lift, self.encoder_attention),
+            self.processor._value_regularity(),
+        )
+        return _query_decoder_regularity(
+            encoded,
+            self.query_lift,
+            self.decoder_attention,
+            self.decoder_norm,
+            self.projection,
+        )
 
 
 def _predict_abupt(
@@ -921,6 +1002,35 @@ class ABUPT(AbstractEncodedOperatorModel):
         if not isinstance(x, OperatorBatch):
             raise TypeError("ABUPT requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        # Anchors are fixed sample indices; branch states are juxtaposed.
+        state = sum_regularity(lift._value_regularity() for lift in self.source_lifts)
+        interaction = sum_regularity(
+            (
+                AFFINE,
+                *(
+                    _measure_attention_regularity(attention)
+                    for attention in self.interaction_attention
+                ),
+            )
+        )
+        for stage, blocks in enumerate(self.self_processors):
+            state = compose_regularity(
+                state,
+                sum_regularity(block._value_regularity() for block in blocks),
+                interaction if self.graph.interactions_at(stage) else AFFINE,
+            )
+        return sum_regularity(
+            _query_decoder_regularity(state, lift, attention, norm, projection)
+            for lift, attention, norm, projection in zip(
+                self.query_lifts,
+                self.decoder_attention,
+                self.decoder_norms,
+                self.projections,
+                strict=True,
+            )
+        )
 
 
 __all__ = [

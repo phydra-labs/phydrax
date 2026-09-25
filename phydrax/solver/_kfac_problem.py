@@ -15,6 +15,7 @@ from jaxtyping import Array, PyTree
 from phydrax.domain import DomainFunction
 from phydrax.terms import ResidualPenalty
 
+from ..enforcement import EnforcementProgram
 from ..operators.differential._requests import trace_derivative_requests
 from ..optim._kfac._blocks import (
     AffineFactorObservation,
@@ -54,7 +55,7 @@ def _block_jacobian_chunks(
     flat_params: Array,
     unravel,
     non_trainable: PyTree[Any],
-    solver,
+    enforcement: EnforcementProgram | None,
     term: PreparedResidualTerm,
     indices: tuple[int, ...],
     /,
@@ -77,7 +78,7 @@ def _block_jacobian_chunks(
         return prepared_term_residual_vector(
             candidate,
             non_trainable,
-            solver.enforcement,
+            enforcement,
             term,
             iteration=iter_,
         )
@@ -111,7 +112,7 @@ def _block_jacobian_chunks(
 def term_block_curvature_observations(
     params: PyTree[Any],
     non_trainable: PyTree[Any],
-    solver,
+    enforcement: EnforcementProgram | None,
     terms: tuple[PreparedResidualTerm, ...],
     layout: ParameterLayout,
     /,
@@ -136,7 +137,7 @@ def term_block_curvature_observations(
                 flat_params,
                 unravel,
                 non_trainable,
-                solver,
+                enforcement,
                 term,
                 block.indices,
                 chunk_size=chunk_size,
@@ -158,7 +159,7 @@ def term_block_curvature_observations(
                 flat_params,
                 unravel,
                 non_trainable,
-                solver,
+                enforcement,
                 term,
                 uncovered_spec.indices,
                 chunk_size=chunk_size,

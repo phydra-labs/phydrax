@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ._stencil import apply_gather_stencil, GatherStencil
 from ._types import BoundsMode, InterpolationResult
@@ -284,7 +285,7 @@ def bspline_jet_stencil(
         jnp.complexfloating,
     ):
         raise TypeError("B-spline coordinates must be real-valued.")
-    dtype = jnp.result_type(knots_raw, query_raw, jnp.float64)
+    dtype = inexact_result_type(knots_raw, query_raw)
     knots_ = knots_raw.astype(dtype)
     query_ = query_raw.astype(dtype)
     if knots_.ndim != 1:

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import math
 from abc import abstractmethod
-from typing import Any
 
 import equinox as eqx
 import jax
@@ -18,8 +17,9 @@ from phydrax.ein import contract
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
+from ..._model import register_artifact_value
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import NonTrainableState, ParameterOwner
 from ...imaging import image_coordinates
 from ..imaging._types import DenseDisplacementField2D, ImagePair2D
 from ._learned_primitives import (
@@ -216,7 +216,7 @@ class LearnedDensePIVResult(StrictModule):
     pair_id: str = eqx.field(static=True)
 
 
-class AbstractDensePIVModel(StrictModule):
+class AbstractDensePIVModel(StrictModule, ParameterOwner):
     """Dense PIV model contract over an explicitly prepared fixed pyramid."""
 
     plan: eqx.AbstractVar[LearnedDensePIVPlan]
@@ -454,12 +454,6 @@ class CorrelationPyramidPIV(AbstractDensePIVModel):
             }
         )
 
-    def parameter_state_tree(self, /) -> Any:
-        return {
-            "feature_pyramid": self.feature_pyramid,
-            "residual_refinement": self.residual_refinement,
-        }
-
     def __call__(self, prepared: PreparedLearnedDensePIV, /) -> DensePIVPrediction:
         if not isinstance(prepared, PreparedLearnedDensePIV):
             raise TypeError("prepared must be a PreparedLearnedDensePIV.")
@@ -522,6 +516,19 @@ class CorrelationPyramidPIV(AbstractDensePIVModel):
             valid_pyramid=tuple(validity),
             architecture_id=self.architecture_id,
         )
+
+
+for _artifact_value in (
+    _ChannelLastConv2D,
+    _SharedFeaturePyramid,
+    _SharedResidualRefinement,
+):
+    register_artifact_value(
+        f"phydrax.velocimetry.piv:{_artifact_value.__name__}",
+        _artifact_value,
+    )
+
+del _artifact_value
 
 
 __all__ = [

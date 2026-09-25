@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike
 
+from ._precision import inexact_result_type
 from ._strict import StrictModule
 from .domain._measure import MeasureKind
 
@@ -94,7 +95,7 @@ class DiagonalNormalLaw(AbstractProbabilityLaw):
         raw_scale = jnp.asarray(scale)
         if jnp.iscomplexobj(raw_location) or jnp.iscomplexobj(raw_scale):
             raise TypeError("Diagonal Normal parameters must be real-valued.")
-        dtype = jnp.result_type(raw_location, raw_scale, jnp.float64)
+        dtype = inexact_result_type(raw_location, raw_scale)
         location_array = raw_location.astype(dtype)
         if (
             location_array.ndim < len(events)

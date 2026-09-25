@@ -15,8 +15,8 @@ from phydrax.ein import contract
 from .._admissibility import (
     AdmissibilityHeader,
     AdmissibilityReason,
-    DerivativeAvailability,
 )
+from .._differentiation import DerivativeContract, DerivativeRoute, DerivativeSurface
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -35,6 +35,14 @@ from ..equations._electrochemistry import (
 from ._mac_electrostatic import MACElectrostaticPlan, MACElectrostaticResult
 
 
+# Implicit derivatives of the fixed model with its regime decisions frozen.
+_DERIVATIVE_CONTRACT = DerivativeContract.smooth(
+    (DerivativeSurface.PRIMAL_STATE, DerivativeSurface.PHYSICAL_PARAMETER),
+    route=DerivativeRoute.IMPLICIT,
+    conditions=("decisions-frozen",),
+)
+
+
 class MACPoissonNernstPlanckEvaluation(StrictModule):
     concentrations: Array
     concentration_rate: Array
@@ -45,7 +53,7 @@ class MACPoissonNernstPlanckEvaluation(StrictModule):
     charge_rate_defect: Array
     explicit_step_restriction: Array
     header: AdmissibilityHeader
-    derivative_availability: DerivativeAvailability = eqx.field(static=True)
+    derivative_contract: DerivativeContract
     plan_id: str = eqx.field(static=True)
 
 
@@ -212,7 +220,7 @@ class MACPoissonNernstPlanckPlan(StrictModule, NonTrainableState):
             charge_defect,
             flux.explicit_step_restriction,
             header,
-            DerivativeAvailability.IMPLICIT_FIXED_MODEL,
+            _DERIVATIVE_CONTRACT,
             self.plan_id,
         )
 

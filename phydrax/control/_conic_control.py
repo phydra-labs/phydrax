@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._trainable import fixed_field
 from ..optim import (
     ConicProgram,
     ConvexProgramResult,
@@ -135,13 +136,13 @@ class LinearControlConicSolution(StrictModule):
     """Decoded conic-control solution and complete conic solver evidence."""
 
     compilation: LinearControlConicCompilation
-    conic_result: ConvexProgramResult
+    conic_result: ConvexProgramResult = fixed_field()
     trajectory: ControlTrajectory
     policy: PiecewiseConstantControlParameterization
-    parameters: Array
-    objective: Array
-    valid: Array
-    status: Array
+    parameters: Array = fixed_field()
+    objective: Array = fixed_field()
+    valid: Array = fixed_field()
+    status: Array = fixed_field()
     solution_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 

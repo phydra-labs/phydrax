@@ -97,7 +97,9 @@ from ._mass_inverse import (
     PreparedDiscontinuousMassInverse,
 )
 from ._materials import (
+    AbstractLocalImplicitMaterial,
     FiniteElementAuxiliaryEvaluation,
+    LearnedLocalImplicitMaterial,
     LocalImplicitDiagnostics,
     LocalImplicitMaterial,
 )
@@ -178,7 +180,6 @@ from ._robustness import (
 from ._sensitivity import (
     certify_conservation_sensitivity,
     ConservationSensitivityEvidence,
-    SensitivityDecisionPolicy,
 )
 from ._spectral_hp_physics import (
     certify_derived_dgsem_mortar,
@@ -192,7 +193,6 @@ from ._topology_adjoint import (
     ReverseCheckpointSchedule,
     ReverseTimeTopologyTape,
     TopologyAdjointEvent,
-    TopologyAdjointPolicy,
     TopologyAdjointResult,
 )
 from ._trace_routes import (
@@ -308,6 +308,8 @@ __all__ = [
     "KernelBinding",
     "KernelTable",
     "LocalImplicitMaterial",
+    "AbstractLocalImplicitMaterial",
+    "LearnedLocalImplicitMaterial",
     "FacetJet",
     "FieldJet",
     "FieldSlot",
@@ -354,7 +356,6 @@ __all__ = [
     "upwind_advection_form",
     "certify_conservation_sensitivity",
     "ConservationSensitivityEvidence",
-    "SensitivityDecisionPolicy",
     "compile_workset_program",
     "kernel_table_from_form",
     "curl",
@@ -363,7 +364,6 @@ __all__ = [
     "ReverseCheckpointSchedule",
     "ReverseTimeTopologyTape",
     "TopologyAdjointEvent",
-    "TopologyAdjointPolicy",
     "TopologyAdjointResult",
     "divergence",
     "evaluate_differential_operator",

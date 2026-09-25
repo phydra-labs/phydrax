@@ -13,28 +13,61 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model._array import value_derivative_contract
 from ..._model._binding import ModelBinding
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
+from .._schema import AbstractFittedModel
 from ._utils import (
     broadcast_support,
     case_distances,
     chunked_call,
+    distance_softmax_regularity,
     gather_support,
     masked_softmax,
     pad_support,
     validate_metric,
     validated_weights,
 )
+
+
+def _selection_contract(*nondifferentiable_outputs: str) -> DerivativeContract:
+    # Weighted averages and votes of hard-selected training targets are locally
+    # constant between selection changes.
+    return prediction_fit_contract(
+        value_derivative_contract(
+            DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0)
+        ),
+        route=DerivativeRoute.DIRECT,
+        nondifferentiable_outputs=nondifferentiable_outputs,
+    )
+
+
+def _distance_softmax_contract(
+    metric: Any, *nondifferentiable_outputs: str
+) -> DerivativeContract:
+    return prediction_fit_contract(
+        value_derivative_contract(distance_softmax_regularity(metric)),
+        route=DerivativeRoute.DIRECT,
+        nondifferentiable_outputs=nondifferentiable_outputs,
+    )
 
 
 def _positive_scalar(value: ArrayLike, /, *, name: str) -> Array:
@@ -81,10 +114,10 @@ def _target_width(output_shape: tuple[int, ...]) -> int:
     return width
 
 
-class ExactNeighborRegressorModel(AbstractArrayModel):
-    support: Array
-    targets: Array
-    support_weight: Array
+class ExactNeighborRegressorModel(AbstractFittedModel):
+    support: Array = fixed_field()
+    targets: Array = fixed_field()
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
@@ -132,6 +165,9 @@ class ExactNeighborRegressorModel(AbstractArrayModel):
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _selection_contract("neighbor_indices")
+
     def neighbor_indices(self, x: ArrayLike, /) -> tuple[Array, Array]:
         distances, query_shape = case_distances(
             jnp.asarray(x), self.support, self.case_shape, self.metric
@@ -165,10 +201,10 @@ class ExactNeighborRegressorModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class ExactNeighborClassifierModel(AbstractArrayModel):
-    support: Array
+class ExactNeighborClassifierModel(AbstractFittedModel):
+    support: Array = fixed_field()
     labels: Array
-    support_weight: Array
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
@@ -217,6 +253,9 @@ class ExactNeighborClassifierModel(AbstractArrayModel):
         self.out_size = classes
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _selection_contract("neighbor_indices", "predict")
 
     def predict_proba(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
@@ -252,19 +291,19 @@ class ExactNeighborClassifierModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class KernelNeighborRegressorModel(AbstractArrayModel):
+class KernelNeighborRegressorModel(AbstractFittedModel):
     """Smooth all-support kernel weighting, distinct from hard top-k selection."""
 
-    support: Array
-    targets: Array
-    support_weight: Array
+    support: Array = fixed_field()
+    targets: Array = fixed_field()
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     output_shape: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
-    temperature: Array
+    temperature: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
 
@@ -306,6 +345,9 @@ class KernelNeighborRegressorModel(AbstractArrayModel):
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _distance_softmax_contract(self.metric)
+
     def weights(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
             jnp.asarray(x), self.support, self.case_shape, self.metric
@@ -336,19 +378,19 @@ class KernelNeighborRegressorModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class KernelNeighborClassifierModel(AbstractArrayModel):
+class KernelNeighborClassifierModel(AbstractFittedModel):
     """Smooth all-support class probabilities with no hard top-k operation."""
 
-    support: Array
+    support: Array = fixed_field()
     labels: Array
-    support_weight: Array
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     class_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
-    temperature: Array
+    temperature: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
@@ -391,6 +433,9 @@ class KernelNeighborClassifierModel(AbstractArrayModel):
         self.out_size = classes
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _distance_softmax_contract(self.metric, "predict")
 
     def predict_proba(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
@@ -425,17 +470,17 @@ class KernelNeighborClassifierModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class RadiusNeighborRegressorModel(AbstractArrayModel):
-    support: Array
-    targets: Array
-    support_weight: Array
+class RadiusNeighborRegressorModel(AbstractFittedModel):
+    support: Array = fixed_field()
+    targets: Array = fixed_field()
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     output_shape: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
-    radius: Array
+    radius: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
 
@@ -477,6 +522,9 @@ class RadiusNeighborRegressorModel(AbstractArrayModel):
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _selection_contract("radius_membership")
+
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
         distances, query_shape = case_distances(
@@ -506,17 +554,17 @@ class RadiusNeighborRegressorModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class RadiusNeighborClassifierModel(AbstractArrayModel):
-    support: Array
+class RadiusNeighborClassifierModel(AbstractFittedModel):
+    support: Array = fixed_field()
     labels: Array
-    support_weight: Array
+    support_weight: Array = fixed_field()
     support_mask: Array
     metric: Any
     neighbor_count: int = eqx.field(static=True)
     class_count: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
-    radius: Array
+    radius: Array = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
 
@@ -560,6 +608,9 @@ class RadiusNeighborClassifierModel(AbstractArrayModel):
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _selection_contract("radius_membership", "predict")
+
     def predict_proba(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
             jnp.asarray(x), self.support, self.case_shape, self.metric
@@ -593,7 +644,7 @@ class RadiusNeighborClassifierModel(AbstractArrayModel):
         return chunked_call(self, jnp.asarray(x), chunk_size)
 
 
-class NearestCentroidModel(AbstractArrayModel):
+class NearestCentroidModel(AbstractFittedModel):
     centroids: Array
     class_mask: Array
     metric: Any
@@ -638,6 +689,9 @@ class NearestCentroidModel(AbstractArrayModel):
         self.out_size = classes
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _distance_softmax_contract(self.metric, "predict")
 
     def predict_proba(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
@@ -765,11 +819,9 @@ class KNeighborsRegressorRecipe(AbstractRecipe):
             effective_samples=effective,
             method="exact-top-k-neighbors",
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("neighbor_indices",),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
             conditions=("Top-k ordering is locally constant and tie-free.",),
         )
         return FitResult(
@@ -778,7 +830,7 @@ class KNeighborsRegressorRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="knn-regression",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -849,12 +901,9 @@ class KNeighborsClassifierRecipe(AbstractRecipe):
             effective_samples=effective,
             method="exact-top-k-neighbors",
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_targets="none",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("neighbor_indices", "predict"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
             conditions=("Top-k ordering is locally constant and tie-free.",),
         )
         return FitResult(
@@ -863,7 +912,7 @@ class KNeighborsClassifierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="knn-classification",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -900,14 +949,17 @@ class KernelNeighborsRegressorRecipe(AbstractRecipe):
             case_shape=raw.case_shape,
             temperature=self.temperature,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="smooth",
-            fit_targets="smooth",
-            fit_weights="smooth",
-            fit_hyperparameters="smooth",
-            fit_mode="relaxed",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+                SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.SMOOTH),
+                SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.RELAXED,
             conditions=("At least one positive support weight.",),
         )
         return FitResult(
@@ -916,7 +968,7 @@ class KernelNeighborsRegressorRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="kernel-neighbor-regression",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -958,15 +1010,16 @@ class KernelNeighborsClassifierRecipe(AbstractRecipe):
             case_shape=raw.case_shape,
             temperature=self.temperature,
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="smooth",
-            fit_targets="none",
-            fit_weights="smooth",
-            fit_hyperparameters="smooth",
-            fit_mode="relaxed",
-            nondifferentiable_outputs=("predict",),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+                SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.RELAXED,
             conditions=(
                 "Class labels are fixed and at least one support weight is positive.",
             ),
@@ -977,7 +1030,7 @@ class KernelNeighborsClassifierRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="kernel-neighbor-classification",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -1014,11 +1067,9 @@ class RadiusNeighborsRegressorRecipe(AbstractRecipe):
             case_shape=raw.case_shape,
             radius=self.radius,
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("radius_membership",),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
             conditions=("No distance lies on the radius boundary.",),
         )
         return FitResult(
@@ -1027,7 +1078,7 @@ class RadiusNeighborsRegressorRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="radius-neighbor-regression",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -1069,12 +1120,9 @@ class RadiusNeighborsClassifierRecipe(AbstractRecipe):
             case_shape=raw.case_shape,
             radius=self.radius,
         )
-        contract = GradientContract(
-            prediction_inputs="almost-everywhere",
-            prediction_parameters="almost-everywhere",
-            fit_targets="none",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("radius_membership", "predict"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            route=DerivativeRoute.STOPPED,
             conditions=("No distance lies on the radius boundary.",),
         )
         return FitResult(
@@ -1083,7 +1131,7 @@ class RadiusNeighborsClassifierRecipe(AbstractRecipe):
             valid=result.valid,
             status=result.status,
             method="radius-neighbor-classification",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -1155,14 +1203,15 @@ class NearestCentroidRecipe(AbstractRecipe):
             effective_samples=jnp.sum(weights > 0, axis=-1),
             method="weighted-nearest-centroid",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="smooth",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_mode="direct",
-            nondifferentiable_outputs=("predict",),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
             conditions=("Class membership and nonempty classes are fixed.",),
         )
         return FitResult(
@@ -1171,7 +1220,7 @@ class NearestCentroidRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="nearest-centroid",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

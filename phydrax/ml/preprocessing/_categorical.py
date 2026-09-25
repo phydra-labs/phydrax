@@ -12,20 +12,28 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel, ModelBinding
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model import ModelBinding
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
-from .._schema import FeatureSchema
+from .._schema import AbstractFittedModel, FeatureSchema
 from ._common import (
     _align_parameter,
     _check_features,
@@ -40,6 +48,34 @@ from ._common import (
 
 UnknownPolicy = Literal["fail", "indicator"]
 ImputationStrategy = Literal["mean", "median", "most_frequent", "constant"]
+# Category lookups match inputs against a finite vocabulary, so every encoding is
+# discontinuous in its input.
+_ORDINAL_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.STOPPED,
+    regularity=DerivativeRegularity.discontinuous(),
+    nondifferentiable_outputs=("ordinal_codes", "unknown_indicators"),
+)
+_ONE_HOT_CONTRACT = DerivativeContract(
+    (SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),),
+    route=DerivativeRoute.STOPPED,
+    regularity=DerivativeRegularity.discontinuous(),
+    nondifferentiable_outputs=("one_hot_codes", "unknown_indicators"),
+)
+_TARGET_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+        ),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.discontinuous(),
+    nondifferentiable_outputs=("category_membership", "unknown_indicators"),
+    conditions=("Category membership and target masks are held fixed.",),
+)
 
 
 class CategoricalSchema(StrictModule):
@@ -210,10 +246,10 @@ def _categorical_fit_diagnostics(
     )
 
 
-class FittedSimpleImputer(AbstractArrayModel):
+class FittedSimpleImputer(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    fill_values: Array
+    fill_values: Array = fixed_field()
     missing_values: Number | float = eqx.field(static=True)
     missing_is_nan: bool = eqx.field(static=True)
     add_indicator: bool = eqx.field(static=True)
@@ -247,6 +283,26 @@ class FittedSimpleImputer(AbstractArrayModel):
             ModelBinding.blockwise("flat", pass_key=False)
             if self.case_shape
             else ModelBinding.pointwise("flat", pass_key=False)
+        )
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # Imputation is the identity except where an input equals a finite sentinel,
+        # which jumps to its fill value; a NaN sentinel never equals a real input.
+        return DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.CONDITIONAL),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+            regularity=(
+                DerivativeRegularity.smooth(degree_bound=1)
+                if self.missing_is_nan
+                else DerivativeRegularity.piecewise_polynomial(
+                    continuity=-1, degree_bound=1
+                )
+            ),
         )
 
     def _missing(self, values: Array, mask: Any | None) -> Array:
@@ -415,27 +471,25 @@ class SimpleImputer(AbstractRecipe):
             details=(("strategy", self.strategy), ("add_indicator", self.add_indicator)),
         )
         contract = (
-            GradientContract(
-                prediction_inputs="conditional",
-                prediction_parameters="smooth",
-                fit_features="conditional",
-                fit_targets="none",
-                fit_weights="conditional",
-                fit_hyperparameters="none",
-                fit_mode="direct",
+            prediction_fit_contract(
+                model._prediction_contract(),
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                    ),
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                    ),
+                ),
+                route=DerivativeRoute.DIRECT,
                 conditions=(
                     "Missingness, masks, and positive-weight support are held fixed.",
                 ),
             )
             if self.strategy == "mean"
-            else GradientContract(
-                prediction_inputs="conditional",
-                prediction_parameters="smooth",
-                fit_features="none",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="stopped",
+            else prediction_fit_contract(
+                model._prediction_contract(),
+                route=DerivativeRoute.STOPPED,
                 nondifferentiable_outputs=("imputation_choice",),
                 conditions=("The hard fitted imputation choice is fixed during apply.",),
             )
@@ -443,7 +497,7 @@ class SimpleImputer(AbstractRecipe):
         return _fit_result(model, diagnostics, contract)
 
 
-class FittedOrdinalEncoder(AbstractArrayModel, NonTrainableState):
+class FittedOrdinalEncoder(AbstractFittedModel, NonTrainableState):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     categories: Array
@@ -472,6 +526,9 @@ class FittedOrdinalEncoder(AbstractArrayModel, NonTrainableState):
         self.unknown_value = int(unknown_value)
         self.input_schema = input_schema
         self.output_schema = output_schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _ORDINAL_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -576,16 +633,11 @@ class OrdinalEncoder(AbstractRecipe):
             valid=diagnostics.valid,
             status=diagnostics.status,
             method=diagnostics.method,
-            gradient_contract=GradientContract(
-                prediction_inputs="none",
-                prediction_parameters="none",
-                fit_mode="stopped",
-                nondifferentiable_outputs=("ordinal_codes", "unknown_indicators"),
-            ),
+            derivative_contract=_ORDINAL_CONTRACT,
         )
 
 
-class FittedOneHotEncoder(AbstractArrayModel, NonTrainableState):
+class FittedOneHotEncoder(AbstractFittedModel, NonTrainableState):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     categories: Array
@@ -614,6 +666,9 @@ class FittedOneHotEncoder(AbstractArrayModel, NonTrainableState):
         self.unknown_policy = unknown_policy
         self.input_schema = input_schema
         self.output_schema = output_schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _ONE_HOT_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -730,21 +785,16 @@ class OneHotEncoder(AbstractRecipe):
             valid=diagnostics.valid,
             status=diagnostics.status,
             method=diagnostics.method,
-            gradient_contract=GradientContract(
-                prediction_inputs="none",
-                prediction_parameters="none",
-                fit_mode="stopped",
-                nondifferentiable_outputs=("one_hot_codes", "unknown_indicators"),
-            ),
+            derivative_contract=_ONE_HOT_CONTRACT,
         )
 
 
-class FittedTargetEncoder(AbstractArrayModel):
+class FittedTargetEncoder(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     category_schema: CategoricalSchema = eqx.field(static=True)
-    encodings: Array
-    global_mean: Array
+    encodings: Array = fixed_field()
+    global_mean: Array = fixed_field()
     unknown_policy: UnknownPolicy = eqx.field(static=True)
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
@@ -771,6 +821,9 @@ class FittedTargetEncoder(AbstractArrayModel):
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.case_shape = tuple(case_shape)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _TARGET_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -934,17 +987,7 @@ class TargetEncoder(AbstractRecipe):
             valid=valid,
             status=status,
             method="target_encoder",
-            gradient_contract=GradientContract(
-                prediction_inputs="none",
-                prediction_parameters="smooth",
-                fit_features="none",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_hyperparameters="conditional",
-                fit_mode="direct",
-                nondifferentiable_outputs=("category_membership", "unknown_indicators"),
-                conditions=("Category membership and target masks are held fixed.",),
-            ),
+            derivative_contract=_TARGET_CONTRACT,
         )
 
 

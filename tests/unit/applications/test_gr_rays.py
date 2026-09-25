@@ -57,6 +57,26 @@ class _StatefulMargin(StrictModule):
         return self.threshold - point[1]
 
 
+def _capture_below_negative_half(affine, point, tangent):
+    return point[1] + 0.5
+
+
+def _escape_above_half(affine, point, tangent):
+    return 0.5 - point[1]
+
+
+def _domain_below_half(affine, point, tangent):
+    return 0.5 - point[3]
+
+
+def _escape_above_053(affine, point, tangent):
+    return 0.53 - point[1]
+
+
+def _domain_affine_budget(affine, point, tangent):
+    return 2.0 - affine
+
+
 def _cartesian_metric():
     chart = CoordinateChart("cartesian-spacetime", ("t", "x", "y", "z"))
     return minkowski_metric(chart)
@@ -139,9 +159,9 @@ def test_mixed_batch_resolves_ordered_events_and_retains_work_exhaustion():
             active=jnp.asarray([True, True, True, True, False]),
         ),
         jnp.linspace(0.0, 1.0, 9),
-        capture_margin=lambda affine, point, tangent: point[1] + 0.5,
-        escape_margin=lambda affine, point, tangent: 0.5 - point[1],
-        domain_margin=lambda affine, point, tangent: 0.5 - point[3],
+        capture_margin=_capture_below_negative_half,
+        escape_margin=_escape_above_half,
+        domain_margin=_domain_below_half,
         **_ray_context(),
     )
     result = trace_gr_rays(plan)
@@ -187,7 +207,7 @@ def test_event_ledger_retains_backend_root_state_between_history_nodes():
             jnp.asarray([[1.0, 1.0, 0.0, 0.0]]),
         ),
         jnp.asarray([0.0, 0.25, 0.5, 0.75, 1.0]),
-        escape_margin=lambda affine, point, tangent: 0.53 - point[1],
+        escape_margin=_escape_above_053,
         **_ray_context(),
     )
     result = trace_gr_rays(plan)
@@ -217,7 +237,7 @@ def test_affine_dependent_domain_evidence_uses_each_history_time():
             jnp.asarray([[1.0, 1.0, 0.0, 0.0]]),
         ),
         affine,
-        domain_margin=lambda affine, point, tangent: 2.0 - affine,
+        domain_margin=_domain_affine_budget,
         affine_budget_is_event=False,
         **_ray_context(),
     )
@@ -253,6 +273,42 @@ def test_stateful_event_margin_identity_includes_numeric_callable_content():
     first = GRRayEventSurfaces(capture_margin=_StatefulMargin(1.0))
     second = GRRayEventSurfaces(capture_margin=_StatefulMargin(2.0))
     assert first.event_id != second.event_id
+
+
+def test_opaque_event_margins_require_declared_identity():
+    near = lambda affine, point, tangent: 1.0 - point[1]
+    far = lambda affine, point, tangent: 2.0 - point[1]
+    for margin in (near, far):
+        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+            GRRayEventSurfaces(capture_margin=margin)
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        GRRayPlan(
+            _cartesian_metric(),
+            GRRayState(jnp.zeros((1, 4)), jnp.asarray([[1.0, 1.0, 0.0, 0.0]])),
+            jnp.linspace(0.0, 1.0, 3),
+            escape_margin=near,
+            **_ray_context(),
+        )
+
+    declared_near = GRRayEventSurfaces(
+        capture_margin=near,
+        capture_margin_semantic_id="radial-capture",
+        capture_margin_numeric_id="radius-1",
+    )
+    declared_far = GRRayEventSurfaces(
+        capture_margin=far,
+        capture_margin_semantic_id="radial-capture",
+        capture_margin_numeric_id="radius-2",
+    )
+    assert declared_near.event_id != declared_far.event_id
+    assert (
+        GRRayEventSurfaces(escape_margin=_escape_above_half).event_id
+        == GRRayEventSurfaces(escape_margin=_escape_above_half).event_id
+    )
+    assert (
+        GRRayEventSurfaces(escape_margin=_escape_above_half).event_id
+        != GRRayEventSurfaces(escape_margin=_escape_above_053).event_id
+    )
 
 
 def test_callable_constant_revisions_change_constant_and_plan_identity():

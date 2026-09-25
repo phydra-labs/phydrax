@@ -13,22 +13,36 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
+from ..._model._array import value_derivative_contract
 from ..._model._binding import ModelBinding
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
+from .._schema import AbstractFittedModel
 from ._utils import masked_softmax, size, validated_weights
 
 
-class LinearMetricModel(AbstractArrayModel):
+_LINEAR_EMBEDDING_CONTRACT = value_derivative_contract(
+    DerivativeRegularity.smooth(degree_bound=1)
+)
+
+
+class LinearMetricModel(AbstractFittedModel):
     """Learned linear embedding inducing a positive-semidefinite metric."""
 
     factor: Array
@@ -66,6 +80,9 @@ class LinearMetricModel(AbstractArrayModel):
         self.out_size = components
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _LINEAR_EMBEDDING_CONTRACT
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
@@ -239,14 +256,18 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
             rank=jnp.linalg.matrix_rank(factor),
             method="unrolled-neighborhood-components",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="smooth",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="smooth",
-            fit_mode="unrolled",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
             conditions=("Discrete labels and active sample mask are fixed.",),
         )
         return FitResult(
@@ -255,7 +276,7 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="neighborhood-components-analysis",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -359,14 +380,20 @@ class MahalanobisMetricRecipe(AbstractRecipe):
             condition=jnp.max(values, axis=-1) / jnp.min(values, axis=-1),
             method="weighted-covariance-eigh",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_targets="none",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="spectral",
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.SPECTRAL,
             conditions=("Selected eigenspace is separated and labels are fixed.",),
         )
         return FitResult(
@@ -375,7 +402,7 @@ class MahalanobisMetricRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="mahalanobis-metric",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

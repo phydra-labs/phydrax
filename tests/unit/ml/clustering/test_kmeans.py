@@ -6,15 +6,20 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import (
+    DERIVATIVE_UNSUPPORTED,
+    DerivativeRoute,
+    DerivativeSurface,
+    DifferentiationRequest,
+    GradientLevel,
+)
 from phydrax.ml import (
     fit,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
-    ML_UNSUPPORTED_GRADIENT,
     MLBatch,
-    MLGradientRequest,
 )
 from phydrax.ml.clustering import (
     HardClusterModel,
@@ -141,12 +146,15 @@ def test_soft_kmeans_exercises_declared_prediction_and_fit_gradients():
     )(jnp.asarray(0.8))
 
     assert result.status == ML_SUCCESS
-    assert result.gradient_contract.prediction_inputs == "smooth"
-    assert result.gradient_contract.prediction_parameters == "smooth"
-    assert result.gradient_contract.fit_features == "conditional"
-    assert result.gradient_contract.fit_weights == "conditional"
-    assert result.gradient_contract.fit_hyperparameters == "conditional"
-    assert result.gradient_contract.fit_mode == "unrolled"
+    contract = result.derivative_contract
+    assert contract.level(DerivativeSurface.INPUT) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.MODEL_PARAMETER) is GradientLevel.SMOOTH
+    assert contract.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    assert contract.level(DerivativeSurface.FIT_WEIGHTS) is GradientLevel.CONDITIONAL
+    assert (
+        contract.level(DerivativeSurface.FIT_HYPERPARAMETERS) is GradientLevel.CONDITIONAL
+    )
+    assert contract.route is DerivativeRoute.UNROLLED
     assert jnp.all(jnp.isfinite(jax.grad(lambda value: model(value)[0])(point)))
     assert jnp.all(jnp.isfinite(parameter_gradient))
     assert jnp.all(jnp.isfinite(feature_gradient))
@@ -154,9 +162,9 @@ def test_soft_kmeans_exercises_declared_prediction_and_fit_gradients():
     assert jnp.isfinite(temperature_gradient)
 
 
-def test_ml_gradient_admission_distinguishes_hard_and_soft_fits():
+def test_derivative_admission_distinguishes_hard_and_soft_fits():
     features = jnp.asarray([[-2.0], [2.0], [-1.5], [1.5]])
-    request = MLGradientRequest("fit", ("features",))
+    request = DifferentiationRequest((DerivativeSurface.FIT_FEATURES,))
     hard = KMeans(2, initialization="first").fit_batch(MLBatch(features))
     soft = SoftKMeans(
         2,
@@ -166,20 +174,24 @@ def test_ml_gradient_admission_distinguishes_hard_and_soft_fits():
         initialization="first",
     ).fit_batch(MLBatch(features))
 
-    hard_admission = hard.gradient_admission(request)
-    soft_admission = soft.require_gradient(request)
+    hard_admission = hard.derivative_admission(request)
+    soft_admission = soft.require_derivative(request)
 
     assert not hard_admission.supported
-    assert hard_admission.status == ML_UNSUPPORTED_GRADIENT
+    assert hard_admission.status == DERIVATIVE_UNSUPPORTED
+    assert "surface-unsupported:fit-features" in hard_admission.reasons
     assert soft_admission.supported
-    assert soft_admission.levels == ("conditional",)
-    with pytest.raises(ValueError, match="unsupported"):
-        hard.require_gradient(request)
-    with pytest.raises(ValueError, match="unsupported"):
+    assert (
+        soft_admission.level(DerivativeSurface.FIT_FEATURES) is GradientLevel.CONDITIONAL
+    )
+    assert soft_admission.route is DerivativeRoute.UNROLLED
+    with pytest.raises(ValueError, match=DERIVATIVE_UNSUPPORTED):
+        hard.require_derivative(request)
+    with pytest.raises(ValueError, match=DERIVATIVE_UNSUPPORTED):
         fit(
             KMeans(2, initialization="first"),
             features,
-            gradient_request=request,
+            derivative_request=request,
         )
 
 
@@ -196,8 +208,10 @@ def test_kmedoids_returns_observations_and_uses_deterministic_manhattan_ties():
     assert jnp.all(
         jnp.any(model.centers[:, None, :] == features[None, :, :], axis=(1, 2))
     )
-    assert result.gradient_contract.fit_mode == "stopped"
-    assert result.gradient_contract.prediction_inputs == "none"
+    assert result.derivative_contract.route is DerivativeRoute.STOPPED
+    assert result.derivative_contract.level(DerivativeSurface.INPUT) is (
+        GradientLevel.NONE
+    )
 
 
 def test_minibatch_kmeans_requires_a_key_and_replays_it_exactly():
@@ -220,8 +234,8 @@ def test_minibatch_kmeans_requires_a_key_and_replays_it_exactly():
     assert first.status == ML_SUCCESS
     assert jnp.array_equal(first.as_trainable().centers, second.as_trainable().centers)
     assert jnp.array_equal(first.model(features), second.model(features))
-    assert first.gradient_contract.fit_mode == "stopped"
-    assert "explicit random key" in first.gradient_contract.conditions
+    assert first.derivative_contract.route is DerivativeRoute.STOPPED
+    assert "explicit random key" in first.derivative_contract.conditions
 
 
 def test_streaming_kmeans_updates_immutably_with_hard_and_soft_models():

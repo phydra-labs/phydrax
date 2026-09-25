@@ -5,30 +5,27 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Literal, overload, Protocol, runtime_checkable, TypeAlias, TypeVar
+from collections.abc import Iterable
+from typing import Any, overload, Protocol, runtime_checkable, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from .._model import AbstractArrayModel, FrozenModel
+from .._differentiation import (
+    DerivativeAdmission,
+    DerivativeContract,
+    DerivativeRoute,
+    DifferentiationRequest,
+    RegularityPolicy,
+    SurfaceDerivative,
+)
+from .._model import AbstractArrayModel, FrozenModel, ModelPorts, PortProvider
 from .._strict import StrictModule
 from ._batch import MLBatch
+from ._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 
 
-GradientLevel: TypeAlias = Literal["smooth", "almost-everywhere", "conditional", "none"]
-FitGradientMode: TypeAlias = Literal[
-    "direct", "implicit", "unrolled", "spectral", "relaxed", "stopped"
-]
-GradientSurface: TypeAlias = Literal["prediction", "fit"]
-GradientInput: TypeAlias = Literal[
-    "inputs",
-    "parameters",
-    "features",
-    "targets",
-    "weights",
-    "hyperparameters",
-]
 _ModelT = TypeVar("_ModelT", bound=AbstractArrayModel)
 
 ML_SUCCESS = 0
@@ -38,7 +35,6 @@ ML_NONFINITE = 3
 ML_NONCONVERGED = 4
 ML_INFEASIBLE = 5
 ML_CAPACITY_EXHAUSTED = 6
-ML_UNSUPPORTED_GRADIENT = 7
 
 
 @runtime_checkable
@@ -71,171 +67,6 @@ class ProbabilityModel(Protocol):
 
 def _protocol_model(model: AbstractArrayModel, /) -> AbstractArrayModel:
     return model.as_trainable() if isinstance(model, FrozenModel) else model
-
-
-class MLGradientRequest(StrictModule):
-    """Explicit admission request for one prediction or fitting gradient surface."""
-
-    surface: GradientSurface = eqx.field(static=True)
-    inputs: tuple[GradientInput, ...] = eqx.field(static=True)
-
-    def __init__(
-        self,
-        surface: GradientSurface,
-        inputs: tuple[GradientInput, ...],
-        /,
-    ):
-        if surface not in ("prediction", "fit"):
-            raise ValueError("Gradient surface must be 'prediction' or 'fit'.")
-        values = tuple(inputs)
-        allowed = (
-            {"inputs", "parameters"}
-            if surface == "prediction"
-            else {"features", "targets", "weights", "hyperparameters"}
-        )
-        if not values or any(value not in allowed for value in values):
-            raise ValueError(
-                f"Gradient inputs {values!r} are invalid for surface {surface!r}."
-            )
-        if len(set(values)) != len(values):
-            raise ValueError("Gradient request inputs must be unique.")
-        self.surface = surface
-        self.inputs = values
-
-
-class MLGradientAdmission(StrictModule):
-    """Audited answer for one explicit ML gradient request."""
-
-    request: MLGradientRequest
-    levels: tuple[GradientLevel, ...] = eqx.field(static=True)
-    fit_mode: FitGradientMode = eqx.field(static=True)
-    supported: bool = eqx.field(static=True)
-    status: int = eqx.field(static=True)
-    conditions: tuple[str, ...] = eqx.field(static=True)
-    nondifferentiable_outputs: tuple[str, ...] = eqx.field(static=True)
-
-    def __init__(
-        self,
-        request: MLGradientRequest,
-        levels: tuple[GradientLevel, ...],
-        /,
-        *,
-        fit_mode: FitGradientMode,
-        conditions: tuple[str, ...],
-        nondifferentiable_outputs: tuple[str, ...],
-    ):
-        supported = all(level != "none" for level in levels)
-        self.request = request
-        self.levels = tuple(levels)
-        self.fit_mode = fit_mode
-        self.supported = supported
-        self.status = ML_SUCCESS if supported else ML_UNSUPPORTED_GRADIENT
-        self.conditions = tuple(conditions)
-        self.nondifferentiable_outputs = tuple(nondifferentiable_outputs)
-
-
-class GradientContract(StrictModule):
-    """Static declaration of the gradients an ML result mathematically supports."""
-
-    prediction_inputs: GradientLevel = eqx.field(static=True)
-    prediction_parameters: GradientLevel = eqx.field(static=True)
-    fit_features: GradientLevel = eqx.field(static=True)
-    fit_targets: GradientLevel = eqx.field(static=True)
-    fit_weights: GradientLevel = eqx.field(static=True)
-    fit_hyperparameters: GradientLevel = eqx.field(static=True)
-    fit_mode: FitGradientMode = eqx.field(static=True)
-    nondifferentiable_outputs: tuple[str, ...] = eqx.field(static=True)
-    conditions: tuple[str, ...] = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        prediction_inputs: GradientLevel = "smooth",
-        prediction_parameters: GradientLevel = "smooth",
-        fit_features: GradientLevel = "none",
-        fit_targets: GradientLevel = "none",
-        fit_weights: GradientLevel = "none",
-        fit_hyperparameters: GradientLevel = "none",
-        fit_mode: FitGradientMode = "stopped",
-        nondifferentiable_outputs: tuple[str, ...] = (),
-        conditions: tuple[str, ...] = (),
-    ):
-        levels = {"smooth", "almost-everywhere", "conditional", "none"}
-        mode_values = {"direct", "implicit", "unrolled", "spectral", "relaxed", "stopped"}
-        declared = (
-            prediction_inputs,
-            prediction_parameters,
-            fit_features,
-            fit_targets,
-            fit_weights,
-            fit_hyperparameters,
-        )
-        if any(level not in levels for level in declared):
-            raise ValueError("GradientContract contains an unsupported gradient level.")
-        if fit_mode not in mode_values:
-            raise ValueError("GradientContract contains an unsupported fit mode.")
-        self.prediction_inputs = prediction_inputs
-        self.prediction_parameters = prediction_parameters
-        self.fit_features = fit_features
-        self.fit_targets = fit_targets
-        self.fit_weights = fit_weights
-        self.fit_hyperparameters = fit_hyperparameters
-        self.fit_mode = fit_mode
-        self.nondifferentiable_outputs = tuple(nondifferentiable_outputs)
-        self.conditions = tuple(conditions)
-
-    @classmethod
-    def direct(cls, /, *, conditions: tuple[str, ...] = ()) -> "GradientContract":
-        return cls(
-            fit_features="conditional",
-            fit_targets="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="direct",
-            conditions=conditions,
-        )
-
-    def admit(self, request: MLGradientRequest, /) -> MLGradientAdmission:
-        if not isinstance(request, MLGradientRequest):
-            raise TypeError("request must be an MLGradientRequest.")
-        if request.surface == "prediction":
-            declared = {
-                "inputs": self.prediction_inputs,
-                "parameters": self.prediction_parameters,
-            }
-        else:
-            declared = {
-                "features": self.fit_features,
-                "targets": self.fit_targets,
-                "weights": self.fit_weights,
-                "hyperparameters": self.fit_hyperparameters,
-            }
-        levels = tuple(declared[value] for value in request.inputs)
-        return MLGradientAdmission(
-            request,
-            levels,
-            fit_mode=self.fit_mode,
-            conditions=self.conditions,
-            nondifferentiable_outputs=self.nondifferentiable_outputs,
-        )
-
-    def require(self, request: MLGradientRequest, /) -> MLGradientAdmission:
-        admission = self.admit(request)
-        if not admission.supported:
-            unsupported = tuple(
-                value
-                for value, level in zip(
-                    admission.request.inputs,
-                    admission.levels,
-                    strict=True,
-                )
-                if level == "none"
-            )
-            raise ValueError(
-                "Gradient request is unsupported for inputs "
-                f"{unsupported!r}; inspect GradientContract before transforming."
-            )
-        return admission
 
 
 class FitDiagnostics(StrictModule):
@@ -273,13 +104,18 @@ class FitDiagnostics(StrictModule):
 
 
 class FitResult(StrictModule):
-    """Frozen executable model and audited diagnostics from one pure fit."""
+    """Frozen executable model and audited diagnostics from one pure fit.
+
+    `derivative_contract` is the canonical declaration of the derivatives the
+    fitted map supports: `INPUT` and `MODEL_PARAMETER` for predictions, and the
+    `FIT_*` surfaces for the fit itself, with the fit route as its route.
+    """
 
     model: FrozenModel
     diagnostics: Any
     valid: Array
     status: Array
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     method: str = eqx.field(static=True)
 
     def __init__(
@@ -291,13 +127,15 @@ class FitResult(StrictModule):
         valid: Any,
         status: Any,
         method: str,
-        gradient_contract: GradientContract,
+        derivative_contract: DerivativeContract,
     ):
+        if not isinstance(derivative_contract, DerivativeContract):
+            raise TypeError("derivative_contract must be a DerivativeContract.")
         self.model = model if isinstance(model, FrozenModel) else FrozenModel(model)
         self.diagnostics = diagnostics
         self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
-        self.gradient_contract = gradient_contract
+        self.derivative_contract = derivative_contract
         self.method = str(method)
 
     @overload
@@ -319,19 +157,82 @@ class FitResult(StrictModule):
             )
         return model
 
-    def gradient_admission(
+    def bind_schemas(
         self,
-        request: MLGradientRequest,
+        feature_schema: FeatureSchema,
         /,
-    ) -> MLGradientAdmission:
-        return self.gradient_contract.admit(request)
+        target_schema: TargetSchema | None = None,
+    ) -> FitResult:
+        """Return this result with the schemas bound into its fitted executable."""
+        model = self.as_trainable()
+        if not isinstance(model, AbstractFittedModel):
+            return self
+        bound = model.bind_schemas(feature_schema, target_schema)
+        if bound is model:
+            return self
+        return FitResult(
+            bound,
+            self.diagnostics,
+            valid=self.valid,
+            status=self.status,
+            method=self.method,
+            derivative_contract=self.derivative_contract,
+        )
 
-    def require_gradient(
+    def model_ports(self) -> ModelPorts:
+        """Return the derived ports of the fitted executable."""
+        model = self.as_trainable()
+        if not isinstance(model, PortProvider):
+            raise TypeError(f"{type(model).__name__} does not declare model ports.")
+        return model.model_ports()
+
+    def derivative_admission(
         self,
-        request: MLGradientRequest,
+        request: DifferentiationRequest,
         /,
-    ) -> MLGradientAdmission:
-        return self.gradient_contract.require(request)
+        *,
+        policy: RegularityPolicy | None = None,
+    ) -> DerivativeAdmission:
+        """Admit `request` against the fitted map's derivative contract."""
+        return self.derivative_contract.admit(request, policy=policy)
+
+    def require_derivative(
+        self,
+        request: DifferentiationRequest,
+        /,
+        *,
+        policy: RegularityPolicy | None = None,
+    ) -> DerivativeAdmission:
+        """Return the admission of `request`, raising `ValueError` if unsupported."""
+        return self.derivative_contract.require(request, policy=policy)
+
+
+def prediction_fit_contract(
+    prediction: DerivativeContract,
+    fit_surfaces: Iterable[SurfaceDerivative] = (),
+    /,
+    *,
+    route: DerivativeRoute,
+    conditions: Iterable[str] = (),
+    nondifferentiable_outputs: Iterable[str] = (),
+) -> DerivativeContract:
+    """Fit contract extending a fitted model's prediction contract.
+
+    The prediction surfaces, regularity, conditions, and nondifferentiable
+    outputs of `prediction` (the model's `_prediction_contract()`) are kept, so a
+    fit and its executable never disagree; `fit_surfaces`, the fit `route`, and
+    fit `conditions` and `nondifferentiable_outputs` are added.
+    """
+    return DerivativeContract(
+        (*prediction.surfaces, *fit_surfaces),
+        route=route,
+        regularity=prediction.regularity,
+        conditions=(*prediction.conditions, *conditions),
+        nondifferentiable_outputs=(
+            *prediction.nondifferentiable_outputs,
+            *nondifferentiable_outputs,
+        ),
+    )
 
 
 class AbstractRecipe(StrictModule):
@@ -355,19 +256,11 @@ __all__ = [
     "ML_NONFINITE",
     "ML_RANK_DEFICIENT",
     "ML_SUCCESS",
-    "ML_UNSUPPORTED_GRADIENT",
     "AbstractRecipe",
     "DecisionFunctionModel",
     "FitDiagnostics",
-    "FitGradientMode",
     "FitResult",
-    "GradientContract",
-    "GradientInput",
-    "GradientLevel",
-    "GradientSurface",
     "LogProbabilityModel",
     "PredictionModel",
     "ProbabilityModel",
-    "MLGradientAdmission",
-    "MLGradientRequest",
 ]

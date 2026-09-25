@@ -20,7 +20,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._sampling import MetropolisHastings, SingleElectronSphereProposal
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...nn.quantum import MonopoleAttentionAmplitude
 from ...operators.quantum import (
     evaluate_local_operator,
@@ -100,7 +100,7 @@ class LandauLevelMixingVMCPlan(StrictModule, NonTrainableState):
 class PreparedLandauLevelMixingVMC(StrictModule):
     plan: LandauLevelMixingVMCPlan = eqx.field(static=True)
     model: MonopoleAttentionAmplitude
-    operator: MonopoleSphereCoulombHamiltonian
+    operator: MonopoleSphereCoulombHamiltonian = fixed_field()
     problem: VariationalMonteCarloProblem
     prepared_id: str = eqx.field(static=True)
 

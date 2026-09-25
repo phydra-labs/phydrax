@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -30,7 +31,11 @@ def _periodic_problem(count=16, *, smooth_epsilon=0.0):
     method = phx.discretization.FiniteVolumeMethodPlan(
         phx.discretization.PiecewiseConstantReconstruction(),
         phx.discretization.RusanovFluxPlan(smooth_epsilon=smooth_epsilon),
-        differentiability="smooth_surrogate" if smooth_epsilon else "branchwise",
+        differentiability=(
+            phx.BranchDifferentiationPolicy.SMOOTH_SURROGATE
+            if smooth_epsilon
+            else phx.BranchDifferentiationPolicy.BRANCHWISE
+        ),
     )
     return phx.equations.compile_conservation_problem(
         problem, discretization, method
@@ -62,7 +67,10 @@ def test_smooth_wave_speed_has_finite_parameter_gradient():
     )(jnp.asarray(0.0))
 
     assert jnp.isfinite(gradient)
-    assert compiled.method.differentiability == "smooth_surrogate"
+    assert (
+        compiled.method.differentiability
+        is phx.BranchDifferentiationPolicy.SMOOTH_SURROGATE
+    )
 
 
 def test_boundary_control_gradient_flows_through_exterior_state():
@@ -136,4 +144,43 @@ def test_hard_limiter_reports_frozen_decision_semantics():
     reconstruction = phx.discretization.MUSCLReconstruction(
         phx.discretization.SuperbeeLimiter()
     )
-    assert reconstruction.differentiability == "frozen_decision"
+    assert (
+        reconstruction.differentiability
+        is phx.BranchDifferentiationPolicy.FROZEN_DECISION
+    )
+
+
+def test_branch_policy_owners_reject_members_outside_their_subset():
+    policy = phx.BranchDifferentiationPolicy
+    with pytest.raises(ValueError, match="FiniteVolumeMethodPlan supports"):
+        phx.discretization.FiniteVolumeMethodPlan(
+            phx.discretization.PiecewiseConstantReconstruction(),
+            phx.discretization.RusanovFluxPlan(),
+            differentiability=policy.FROZEN_DECISION,
+        )
+    with pytest.raises(ValueError, match="ExplicitStabilizationPlan supports"):
+        phx.discretization.ExplicitStabilizationPlan(
+            0.1, differentiability=policy.BRANCHWISE
+        )
+    with pytest.raises(ValueError, match="EntropyFilterPlan supports"):
+        phx.equations.fem.EntropyFilterPlan(differentiability=policy.SMOOTH)
+    with pytest.raises(TypeError, match="BranchDifferentiationPolicy"):
+        phx.discretization.PseudospectralMethodPlan(differentiability="branchwise")
+
+
+def test_explicit_stabilization_policy_selects_sensor_derivative():
+    values = jnp.asarray((0.0, 1.0, 0.0, 1.0))
+    measure = jnp.ones((4,))
+
+    def sensor_gradient(differentiability):
+        plan = phx.discretization.ExplicitStabilizationPlan(
+            0.25, differentiability=differentiability, periodic=True
+        )
+        return jax.grad(
+            lambda sensor: jnp.sum(plan.apply(values, sensor, measure=measure) ** 2)
+        )(jnp.full((4,), 0.5))
+
+    frozen = sensor_gradient(phx.BranchDifferentiationPolicy.FROZEN_DECISION)
+    smooth = sensor_gradient(phx.BranchDifferentiationPolicy.SMOOTH)
+    np.testing.assert_allclose(frozen, 0.0)
+    assert jnp.all(jnp.abs(smooth) > 0.0)

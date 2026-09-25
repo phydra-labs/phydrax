@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import DerivativeRoute
 from phydrax.ml import MLBatch, SparseFeatures
 from phydrax.ml._contracts import ML_CAPACITY_EXHAUSTED
 from phydrax.ml.neighbors import (
@@ -46,8 +47,8 @@ def test_exact_regression_and_classification_dense_chunked_jit_vmap_parity():
     assert jax.vmap(reg_model)(query).shape == (4,)
     assert cls_model.predict_proba(query).shape == (4, 2)
     assert cls_model.predict(query).dtype == jnp.int32
-    assert "neighbor_indices" in reg_result.gradient_contract.nondifferentiable_outputs
-    assert "predict" in cls_result.gradient_contract.nondifferentiable_outputs
+    assert "neighbor_indices" in reg_result.derivative_contract.nondifferentiable_outputs
+    assert "predict" in cls_result.derivative_contract.nondifferentiable_outputs
 
 
 def test_neighbor_cases_masks_outputs_and_fixed_capacity_status_are_explicit():
@@ -113,9 +114,9 @@ def test_soft_kernel_neighbors_are_smooth_and_distinct_from_hard_top_k():
     assert soft_reg.weights(query).shape == (2, features.shape[0])
     assert jnp.allclose(jnp.sum(soft_reg.weights(query), axis=-1), 1.0)
     assert jnp.allclose(jnp.sum(soft_cls.predict_proba(query), axis=-1), 1.0)
-    assert soft_reg_result.gradient_contract.fit_mode == "relaxed"
-    assert soft_cls_result.gradient_contract.fit_mode == "relaxed"
-    assert "predict" in soft_cls_result.gradient_contract.nondifferentiable_outputs
+    assert soft_reg_result.derivative_contract.route is DerivativeRoute.RELAXED
+    assert soft_cls_result.derivative_contract.route is DerivativeRoute.RELAXED
+    assert "predict" in soft_cls_result.derivative_contract.nondifferentiable_outputs
 
     input_gradient = jax.grad(lambda point: soft_reg(point) ** 2)(query[0])
     target_gradient = jax.grad(
@@ -160,8 +161,8 @@ def test_radius_regression_and_classification_expose_empty_and_hard_semantics():
     assert jnp.isnan(reg_model(far)[0])
     assert jnp.all(cls_model.predict_proba(far) == 0.0)
     assert cls_model.predict(far)[0] == -1
-    assert "radius_membership" in reg_result.gradient_contract.nondifferentiable_outputs
-    assert "radius_membership" in cls_result.gradient_contract.nondifferentiable_outputs
+    assert "radius_membership" in reg_result.derivative_contract.nondifferentiable_outputs
+    assert "radius_membership" in cls_result.derivative_contract.nondifferentiable_outputs
     assert jnp.allclose(
         reg_model(features[:4]),
         reg_model.predict_chunked(features[:4], chunk_size=2),

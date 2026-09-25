@@ -15,11 +15,8 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ...._fingerprint import canonical_fingerprint
-from ...._model import AbstractArrayModel
-from ....equations.trefftz._core import (
-    TRIAL_SPACE_CERTIFICATE_KEY,
-    TrialSpaceCertificate,
-)
+from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
+from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ....special import hankel1
 from ._core import AbstractLayerKernel, BoundaryPanelization2D, LayerDiscretizationReport
 
@@ -87,7 +84,7 @@ class HelmholtzLayerKernel2D(AbstractLayerKernel):
         )
 
 
-class HelmholtzLayerPotential2D(AbstractArrayModel):
+class HelmholtzLayerPotential2D(_AbstractTrialSpaceField):
     """Finite outgoing Helmholtz layer sum, exact off its source support."""
 
     panelization: BoundaryPanelization2D
@@ -216,7 +213,7 @@ class HelmholtzLayerPotential2D(AbstractArrayModel):
         return {TRIAL_SPACE_CERTIFICATE_KEY: self._certificate}
 
 
-class HelmholtzCombinedField2D(AbstractArrayModel):
+class HelmholtzCombinedField2D(_AbstractTrialSpaceField):
     """Brakhage--Werner combined field ``D - i*eta*S``."""
 
     panelization: BoundaryPanelization2D

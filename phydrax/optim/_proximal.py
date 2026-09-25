@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,
@@ -154,9 +155,7 @@ class IndicatorFunctional(AbstractProximalFunctional):
         leaves = jax.tree.leaves(parameters)
         if not leaves:
             raise ValueError("parameters must contain at least one array leaf.")
-        dtype = jnp.result_type(
-            *(jnp.asarray(leaf).dtype for leaf in leaves), jnp.float64
-        )
+        dtype = inexact_result_type(*(jnp.asarray(leaf).dtype for leaf in leaves))
         return jnp.where(
             jnp.asarray(self.contains(parameters), dtype=jnp.bool_),
             jnp.asarray(0.0, dtype=dtype),
@@ -201,9 +200,8 @@ class BoxIndicator(AbstractProximalFunctional):
                 upper,
             ),
         )
-        dtype = jnp.result_type(
-            *(jnp.asarray(leaf).dtype for leaf in jax.tree.leaves(parameters)),
-            jnp.float64,
+        dtype = inexact_result_type(
+            *(jnp.asarray(leaf).dtype for leaf in jax.tree.leaves(parameters))
         )
         return jnp.where(contained, jnp.asarray(0.0, dtype=dtype), jnp.inf)
 

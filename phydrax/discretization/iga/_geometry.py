@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._basis import TensorSplineBasisSpec
@@ -37,7 +38,7 @@ class NURBSGeometryState(StrictModule):
             weights_.dtype, jnp.complexfloating
         ):
             raise TypeError("NURBS geometry values must be real.")
-        dtype = jnp.result_type(points, weights_, jnp.float64)
+        dtype = inexact_result_type(points, weights_)
         points = points.astype(dtype)
         weights_ = weights_.astype(dtype)
         points = eqx.error_if(

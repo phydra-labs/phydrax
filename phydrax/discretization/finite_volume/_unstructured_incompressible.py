@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
@@ -133,7 +134,7 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
     def cell_field_gradient(self, value: ArrayLike, name: str, /) -> Array:
         field = self.validate_cell_field(value, name)
         if not jnp.issubdtype(field.dtype, jnp.inexact):
-            field = field.astype(jnp.result_type(field, jnp.float64))
+            field = field.astype(inexact_result_type(field))
         coefficients = self.gradient.coefficients(field)
         lengths = self.gradient.characteristic_lengths.astype(field.dtype)
         scale_shape = (field.shape[0],) + (1,) * field.ndim
@@ -144,7 +145,7 @@ class PreparedUnstructuredCollocatedOperators(StrictModule, NonTrainableState):
 
         field = self.validate_cell_field(value, name)
         if not jnp.issubdtype(field.dtype, jnp.inexact):
-            field = field.astype(jnp.result_type(field, jnp.float64))
+            field = field.astype(inexact_result_type(field))
         cell_gradient = self.cell_field_gradient(field, name)
         owner = self.discretization.owner_cells
         neighbor = self.discretization.neighbor_cells

@@ -17,9 +17,9 @@ from jaxtyping import Array, ArrayLike, PyTree
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import NumericRevision, SemanticProvenance
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..lifecycle import NumericRevision
 from ..linalg import (
     AbstractLinearOperator,
     DenseLinearOperator,
@@ -709,8 +709,17 @@ class AffineLinearROMPlan(StrictModule, NonTrainableState):
                 (item.output_map, item.lift_values) for item in observations
             ),
         }
-        content_digest = array_tree_fingerprint(content)["sha256"]
-        revision = NumericRevision(content_digest, label="affine-linear-rom")
+        revision = NumericRevision(
+            SemanticProvenance(
+                {
+                    "kind": "affine-linear-rom",
+                    "family": problem.family_id,
+                    "reduction": problem.reduction.reduction_id,
+                    "coefficient_map": coefficient_map.coefficient_map_id,
+                }
+            ),
+            content,
+        )
         model_id = canonical_fingerprint(
             {
                 "kind": "prepared-affine-linear-rom",

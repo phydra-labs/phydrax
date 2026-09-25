@@ -19,7 +19,6 @@ from phydrax.domain import (
     Boundary,
     ComponentSum,
     DomainComponent,
-    DomainFunction,
     Fixed,
     FixedEnd,
     FixedStart,
@@ -73,7 +72,12 @@ from ._plans import (
 )
 from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
-from ._targets import ComponentTarget, DensityTarget, ProbabilityTarget
+from ._targets import (
+    as_target_domain_function,
+    ComponentTarget,
+    DensityTarget,
+    ProbabilityTarget,
+)
 
 
 def _unwrap(factor: Any, /) -> Any:
@@ -99,12 +103,6 @@ def _target_domain(target: Any, /) -> Any:
     if isinstance(base, ProbabilityTarget):
         return base.probability
     raise TypeError(f"Target {type(target).__name__} has no domain for sampling.")
-
-
-def _as_domain_function(value: Any, domain: Any, /) -> DomainFunction:
-    if isinstance(value, DomainFunction):
-        return value
-    return DomainFunction(domain=domain, deps=(), func=value)
 
 
 def _default_structure(component: DomainComponent, /) -> SampleLayout:
@@ -476,7 +474,7 @@ def _sample_values(
     if isinstance(integrand, cx.AxisArray):
         value_field = integrand
     else:
-        function = _as_domain_function(integrand, domain)
+        function = as_target_domain_function(integrand, domain)
         value_field = function(batch.points, key=key, **kwargs)
     if not isinstance(value_field, cx.AxisArray):
         raise TypeError("Monte Carlo integrands must evaluate to phydrax.axes.AxisArray.")
@@ -496,7 +494,7 @@ def _sample_values(
         base_factor_field = base_factor_field * batch.mask
     factor_field = base_factor_field
     if isinstance(target, DensityTarget):
-        density_function = _as_domain_function(target.log_density, domain)
+        density_function = as_target_domain_function(target.log_density, domain)
         log_density = density_function(batch.points, key=key, **kwargs)
         log_data = precision.evaluation(log_density.data)
         factor_field = factor_field * cx.AxisArray(
@@ -537,7 +535,7 @@ def _control_values(
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> Array:
-    function = _as_domain_function(control, _target_domain(target))
+    function = as_target_domain_function(control, _target_domain(target))
     field = function(batch.points, key=key, **kwargs)
     values, dims = _expand_and_flatten(field, batch)
     if dims or values.ndim != 1:
@@ -1155,7 +1153,7 @@ def materialize_importance(
         samples
     )
     if isinstance(target, DensityTarget):
-        density_function = _as_domain_function(target.log_density, probability)
+        density_function = as_target_domain_function(target.log_density, probability)
         density_values = density_function(points, key=key)
         log_weights = log_weights + density_values.data
     return WeightedSampleBatch(

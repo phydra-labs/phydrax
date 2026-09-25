@@ -775,6 +775,12 @@ which keeps the method useful for large fields and operator states. Inflation an
 covariance regularization are explicit run settings. The smoother performs member-space
 regression over the retained forecast and analysis ensembles.
 
+The filter evaluates `observation.location` member by member and never
+special-cases its provenance. A learned location enters as
+`phydrax.stochastic.ModelObservationLocation` held by `GaussianObservationModel`:
+its model stays PARAMETER, is bound to the `MODEL` observation slot, and runs
+the same analysis numerics as an equivalent location closure.
+
 ::: phydrax.uq.initialize_ensemble_filter
 
 ---

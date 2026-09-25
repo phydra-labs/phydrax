@@ -7,12 +7,18 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax import (
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from phydrax._model import AbstractArrayModel
 from phydrax.ml import (
     AbstractRecipe,
     FitDiagnostics,
     FitResult,
-    GradientContract,
     MLBatch,
     TargetSchema,
 )
@@ -47,7 +53,24 @@ def _result(model, batch, method):
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=GradientContract.direct(),
+        derivative_contract=DerivativeContract(
+            (
+                SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+                *(
+                    SurfaceDerivative(surface, GradientLevel.CONDITIONAL)
+                    for surface in (
+                        DerivativeSurface.FIT_FEATURES,
+                        DerivativeSurface.FIT_TARGETS,
+                        DerivativeSurface.FIT_WEIGHTS,
+                        DerivativeSurface.FIT_HYPERPARAMETERS,
+                    )
+                ),
+            ),
+            route=DerivativeRoute.DIRECT,
+        ),
     )
 
 
@@ -196,7 +219,7 @@ def test_hard_label_reporting_is_distinct_and_preserves_external_vocabulary():
     probabilities = model.soft_model(batch.dense_features())
     assert probabilities.shape == (6, 2)
     assert jnp.issubdtype(probabilities.dtype, jnp.inexact)
-    assert result.gradient_contract.prediction_inputs == "none"
+    assert result.derivative_contract.level(DerivativeSurface.INPUT) is GradientLevel.NONE
 
 
 def test_graph_models_fail_closed_for_complex_features_vocabularies_and_partial_masks():
@@ -242,10 +265,10 @@ def test_soft_and_hard_self_training_are_distinct_keyed_and_deterministic():
         soft.model(batch.dense_features()), soft_again.model(batch.dense_features())
     )
     assert soft.diagnostics.child_status.shape == (3,)
-    assert hard.gradient_contract.nondifferentiable_outputs == (
+    assert set(hard.derivative_contract.nondifferentiable_outputs) == {
         "pseudo_label",
         "pseudo_label_acceptance",
-    )
+    }
     assert jax.jit(soft.as_trainable())(batch.dense_features()).shape == (5, 2)
 
 

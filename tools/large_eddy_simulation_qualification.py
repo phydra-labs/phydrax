@@ -3816,6 +3816,8 @@ def execute_campaign(
                     replay_id=run_spec.spec_id,
                     criteria_ids=(str(metric["criterion_id"]),),
                     raw_artifact_ids=(str(raw["artifact_id"]),),
+                    campaign_start_record_ids=(),
+                    campaign_observation_record_ids=(),
                     reviewer_id=str(validated["reviewer_id"]),
                     issued_at=int(validated["issued_at"]),
                     expires_at=int(validated["expires_at"]),

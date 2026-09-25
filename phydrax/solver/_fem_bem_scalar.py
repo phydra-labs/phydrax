@@ -10,7 +10,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import ExplicitFreeze, NonTrainableState
 from ..discretization._topology import EntitySelection
 from ..discretization.fem._generic import FiniteElementDiscretization
 from ..discretization.fem._interface_trace import (
@@ -62,7 +62,7 @@ _NON_GOALS = (
 )
 
 
-class ScalarLaplaceFEMBEMResult3D(StrictModule, NonTrainableState):
+class ScalarLaplaceFEMBEMResult3D(StrictModule, ExplicitFreeze):
     """One solved matching-interface scalar 3D Poisson/Laplace transmission state.
 
     The geometry, side convention, Johnson--Nédélec formulation, concrete FEM

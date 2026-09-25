@@ -14,7 +14,7 @@ from jaxtyping import Array, Key
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import ExplicitFreeze
 from ..domain import (
     BatchEvaluator,
     DerivativeBackend,
@@ -25,11 +25,14 @@ from ..domain import (
     GridBatch,
     PointBatch,
 )
+from ..domain._derivative import DerivativeRuleProvider
 from ..terms import ResidualPenalty
 from ._functional_solver import FunctionalSolver
 
 
-class _FrozenFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
+class _FrozenFieldEvaluator(
+    StrictModule, BatchEvaluator, ExplicitFreeze, DerivativeRuleProvider
+):
     field: DomainFunction
 
     def __init__(self, field: DomainFunction, /):
@@ -50,8 +53,12 @@ class _FrozenFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
     def __call__(self, *args: Any, key=None, **kwargs: Any):
         return self.field.func(*args, key=key, **kwargs)
 
+    def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
+        del function
+        return _FrozenDerivativeRule(self.field)
 
-class _FrozenDerivativeRule(StrictModule, DerivativeRule, NonTrainableState):
+
+class _FrozenDerivativeRule(StrictModule, DerivativeRule, ExplicitFreeze):
     field: DomainFunction
 
     def derive(
@@ -104,13 +111,17 @@ class _FrozenDerivativeRule(StrictModule, DerivativeRule, NonTrainableState):
 
 
 def freeze_domain_function(field: DomainFunction, /) -> DomainFunction:
-    """Return an equivalent field whose complete evaluator is solver-frozen."""
+    """Return an equivalent field whose complete evaluator is intentionally frozen.
+
+    The evaluator is an `ExplicitFreeze` holder: every array of `field`, including
+    trained model parameters, is FIXED in the returned field. Its derivative rule
+    is derived from the frozen evaluator, so derivatives stay frozen too.
+    """
     return DomainFunction(
         domain=field.domain,
         deps=field.deps,
         func=_FrozenFieldEvaluator(field),
         metadata=field.metadata,
-        derivative_rule=_FrozenDerivativeRule(field),
     )
 
 
@@ -214,12 +225,14 @@ def prepare_functional_correction(
         terms=tuple(scaled_terms),
         evaluation_terms=solver.evaluation_terms,
         enforcement=solver.enforcement,
+        regularity_policy=solver.regularity_policy,
     )
     physical_solver = FunctionalSolver(
         functions=composed,
         terms=solver.terms,
         evaluation_terms=solver.evaluation_terms,
         enforcement=solver.enforcement,
+        regularity_policy=solver.regularity_policy,
     )
     return FunctionalCorrectionProblem(
         training_solver,

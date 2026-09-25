@@ -16,18 +16,26 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._interpolation import bspline_stencil, linear_interpolate
-from ..._model import AbstractArrayModel
-from ..._trainable import NonTrainableState
+from ..._precision import inexact_result_type
+from ..._trainable import fixed_field, NonTrainableState
 from ...sparse import EdgeRelation, SparseLinearMap
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INFEASIBLE,
+    prediction_fit_contract,
 )
-from .._schema import FeatureSchema
+from .._schema import AbstractFittedModel, FeatureSchema
 from ._common import (
     _align_parameter,
     _check_features,
@@ -38,7 +46,73 @@ from ._common import (
 )
 
 
-class FittedPolynomialFeatures(AbstractArrayModel):
+_LINEAR = DerivativeRegularity.smooth(degree_bound=1)
+
+# Products of nonnegative integer powers of the inputs.
+_POLYNOMIAL_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.smooth(),
+)
+# Sines and cosines of affine input phases.
+_FOURIER_PREDICTION_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.smooth(),
+)
+_RANDOM_FOURIER_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=DerivativeRegularity.smooth(),
+    nondifferentiable_outputs=("random_frequencies", "random_phases"),
+    conditions=("The explicit random key is held fixed.",),
+)
+# Signed scatter-adds into fixed buckets are linear in the input.
+_HASHER_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=_LINEAR,
+    nondifferentiable_outputs=("hash_routes", "hash_signs"),
+)
+_GAUSSIAN_PROJECTION_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=_LINEAR,
+    nondifferentiable_outputs=("gaussian_projection_draw",),
+    conditions=("The explicit random key is held fixed.",),
+)
+_SPARSE_PROJECTION_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+    ),
+    route=DerivativeRoute.DIRECT,
+    regularity=_LINEAR,
+    nondifferentiable_outputs=(
+        "sparse_projection_support",
+        "sparse_projection_signs",
+    ),
+    conditions=("The explicit random key is held fixed.",),
+)
+
+
+class FittedPolynomialFeatures(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     exponents: Array
@@ -61,6 +135,9 @@ class FittedPolynomialFeatures(AbstractArrayModel):
         self.linear_indices = tuple(linear_indices)
         self.input_schema = input_schema
         self.output_schema = output_schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _POLYNOMIAL_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -174,21 +251,13 @@ class PolynomialFeatures(AbstractRecipe):
                 ("interaction_only", self.interaction_only),
             ),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="none",
-                fit_mode="direct",
-            ),
-        )
+        return _fit_result(model, diagnostics, _POLYNOMIAL_CONTRACT)
 
 
-class FittedSplineTransformer(AbstractArrayModel):
+class FittedSplineTransformer(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    knots: Array
+    knots: Array = fixed_field()
     degree: int = eqx.field(static=True)
     n_basis: int = eqx.field(static=True)
     bounds: Literal["clip", "error"] = eqx.field(static=True)
@@ -217,6 +286,30 @@ class FittedSplineTransformer(AbstractArrayModel):
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.case_shape = tuple(case_shape)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # B-spline pieces are polynomials of the spline degree; repeated fitted
+        # quantile knots may break continuity, and degree-zero bases are locally
+        # constant, so they admit no input derivative.
+        return DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT,
+                    GradientLevel.ALMOST_EVERYWHERE
+                    if self.degree > 0
+                    else GradientLevel.NONE,
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
+            regularity=DerivativeRegularity.piecewise_polynomial(
+                continuity=-1, degree_bound=self.degree
+            ),
+            nondifferentiable_outputs=("knot_spans",),
+            conditions=("Fitted knot order and active spans are held fixed.",),
+        )
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -299,7 +392,7 @@ class SplineTransformer(AbstractRecipe):
         quantiles = _weighted_quantiles(x, weights, probabilities)
         lower, upper = quantiles[..., 0], quantiles[..., -1]
         constant = upper <= lower
-        radius = jnp.sqrt(jnp.finfo(jnp.result_type(x, jnp.float64)).eps) * jnp.maximum(
+        radius = jnp.sqrt(jnp.finfo(inexact_result_type(x)).eps) * jnp.maximum(
             jnp.abs(lower), 1.0
         )
         safe_lower = jnp.where(constant, lower - radius, lower)
@@ -358,26 +451,14 @@ class SplineTransformer(AbstractRecipe):
                 ("knots", self.knots),
             ),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            GradientContract(
-                prediction_inputs="almost-everywhere",
-                prediction_parameters="conditional",
-                fit_features="none",
-                fit_weights="none",
-                fit_mode="stopped",
-                nondifferentiable_outputs=("knot_spans",),
-                conditions=("Fitted knot order and active spans are held fixed.",),
-            ),
-        )
+        return _fit_result(model, diagnostics, model._prediction_contract())
 
 
-class FittedFourierFeatures(AbstractArrayModel):
+class FittedFourierFeatures(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    origin: Array
-    period: Array
+    origin: Array = fixed_field()
+    period: Array = fixed_field()
     n_frequencies: int = eqx.field(static=True)
     include_bias: bool = eqx.field(static=True)
     include_original: bool = eqx.field(static=True)
@@ -408,6 +489,9 @@ class FittedFourierFeatures(AbstractArrayModel):
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.case_shape = tuple(case_shape)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _FOURIER_PREDICTION_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -502,7 +586,7 @@ class FourierFeatures(AbstractRecipe):
             raise TypeError(
                 "Complex Fourier features require explicit real periods and origins."
             )
-        real_x = x.real.astype(jnp.result_type(x.real, jnp.float64))
+        real_x = x.real.astype(inexact_result_type(x.real))
         minimum = jnp.min(jnp.where(weights > 0.0, real_x, jnp.inf), axis=-2)
         maximum = jnp.max(jnp.where(weights > 0.0, real_x, -jnp.inf), axis=-2)
         minimum = jnp.where(mass > 0.0, minimum, jnp.zeros_like(minimum))
@@ -567,28 +651,30 @@ class FourierFeatures(AbstractRecipe):
         return _fit_result(
             model,
             diagnostics,
-            GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="almost-everywhere" if fitted_range else "none",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="direct",
+            prediction_fit_contract(
+                model._prediction_contract(),
+                (
+                    SurfaceDerivative(
+                        DerivativeSurface.FIT_FEATURES, GradientLevel.ALMOST_EVERYWHERE
+                    ),
+                )
+                if fitted_range
+                else (),
+                route=DerivativeRoute.DIRECT,
                 conditions=(
-                    ("Extremum identities and positive-weight support are held fixed.",)
-                    if fitted_range
-                    else ()
-                ),
+                    "Extremum identities and positive-weight support are held fixed.",
+                )
+                if fitted_range
+                else (),
             ),
         )
 
 
-class FittedRandomFourierFeatures(AbstractArrayModel):
+class FittedRandomFourierFeatures(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    frequencies: Array
-    phases: Array
+    frequencies: Array = fixed_field()
+    phases: Array = fixed_field()
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
 
@@ -607,6 +693,9 @@ class FittedRandomFourierFeatures(AbstractArrayModel):
         self.phases = jnp.asarray(phases)
         self.input_schema = input_schema
         self.output_schema = output_schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _RANDOM_FOURIER_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -696,24 +785,10 @@ class RandomFourierFeatures(AbstractRecipe):
             method="random_fourier_features",
             details=(("n_components", self.n_components),),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="none",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="smooth",
-                fit_mode="direct",
-                nondifferentiable_outputs=("random_frequencies", "random_phases"),
-                conditions=("The explicit random key is held fixed.",),
-            ),
-        )
+        return _fit_result(model, diagnostics, _RANDOM_FOURIER_CONTRACT)
 
 
-class FittedFeatureHasher(AbstractArrayModel, NonTrainableState):
+class FittedFeatureHasher(AbstractFittedModel, NonTrainableState):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     buckets: Array
@@ -736,6 +811,9 @@ class FittedFeatureHasher(AbstractArrayModel, NonTrainableState):
         self.signs = jnp.asarray(signs)
         self.input_schema = input_schema
         self.output_schema = output_schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _HASHER_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -823,26 +901,13 @@ class FeatureHasher(AbstractRecipe):
                 ("alternate_sign", self.alternate_sign),
             ),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="none",
-                fit_features="none",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="direct",
-                nondifferentiable_outputs=("hash_routes", "hash_signs"),
-            ),
-        )
+        return _fit_result(model, diagnostics, _HASHER_CONTRACT)
 
 
-class _AbstractRandomProjection(AbstractArrayModel):
+class _AbstractRandomProjection(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    projection: Array
+    projection: Array = fixed_field()
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
 
@@ -874,6 +939,9 @@ class FittedGaussianRandomProjection(_AbstractRandomProjection):
         self.projection = jnp.asarray(projection)
         self.input_schema = input_schema
         self.output_schema = output_schema
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _GAUSSIAN_PROJECTION_CONTRACT
 
 
 class GaussianRandomProjection(AbstractRecipe):
@@ -922,27 +990,13 @@ class GaussianRandomProjection(AbstractRecipe):
             method="gaussian_random_projection",
             details=(("n_components", self.n_components),),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="none",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="direct",
-                nondifferentiable_outputs=("gaussian_projection_draw",),
-                conditions=("The explicit random key is held fixed.",),
-            ),
-        )
+        return _fit_result(model, diagnostics, _GAUSSIAN_PROJECTION_CONTRACT)
 
 
-class FittedSparseRandomProjection(AbstractArrayModel):
+class FittedSparseRandomProjection(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    projection: SparseLinearMap
+    projection: SparseLinearMap = fixed_field()
     density: float = eqx.field(static=True)
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
@@ -962,6 +1016,9 @@ class FittedSparseRandomProjection(AbstractArrayModel):
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.density = float(density)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SPARSE_PROJECTION_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -1061,24 +1118,7 @@ class SparseRandomProjection(AbstractRecipe):
             method="sparse_random_projection",
             details=(("n_components", self.n_components), ("density", float(density))),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            GradientContract(
-                prediction_inputs="smooth",
-                prediction_parameters="smooth",
-                fit_features="none",
-                fit_targets="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="direct",
-                nondifferentiable_outputs=(
-                    "sparse_projection_support",
-                    "sparse_projection_signs",
-                ),
-                conditions=("The explicit random key is held fixed.",),
-            ),
-        )
+        return _fit_result(model, diagnostics, _SPARSE_PROJECTION_CONTRACT)
 
 
 def _box_cox(values: Array, lambdas: Array) -> Array:
@@ -1129,10 +1169,10 @@ def _yeo_johnson_inverse(values: Array, lambdas: Array) -> Array:
     return jnp.where(values >= 0.0, positive, negative)
 
 
-class FittedPowerTransformer(AbstractArrayModel):
+class FittedPowerTransformer(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    lambdas: Array
+    lambdas: Array = fixed_field()
     method: Literal["yeo-johnson", "box-cox"] = eqx.field(static=True)
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
@@ -1155,12 +1195,32 @@ class FittedPowerTransformer(AbstractArrayModel):
         self.output_schema = schema
         self.case_shape = tuple(case_shape)
 
+    def _prediction_contract(self) -> DerivativeContract:
+        # Box-Cox is analytic on its positive domain. Yeo-Johnson joins two
+        # analytic branches at zero with matching first and second derivatives.
+        return DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
+            regularity=DerivativeRegularity.smooth()
+            if self.method == "box-cox"
+            else DerivativeRegularity.piecewise_smooth(continuity=2),
+            nondifferentiable_outputs=("selected_lambda",),
+            conditions=("The fixed-grid maximum-likelihood lambda is held fixed.",),
+        )
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         values = _check_features(x, self.in_size)
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("PowerTransformer requires real-valued features.")
-        values = values.astype(jnp.result_type(values, jnp.float64))
+        values = values.astype(inexact_result_type(values))
         lambdas = _align_parameter(self.lambdas, values, self.case_shape)
         if self.method == "box-cox":
             values = eqx.error_if(
@@ -1177,7 +1237,7 @@ class FittedPowerTransformer(AbstractArrayModel):
     def inverse_transform(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         values = _check_features(x, self.out_size)
-        values = values.astype(jnp.result_type(values, jnp.float64))
+        values = values.astype(inexact_result_type(values))
         lambdas = _align_parameter(self.lambdas, values, self.case_shape)
         if self.method == "box-cox":
             domain = (jnp.abs(lambdas) <= 1e-7) | (1.0 + lambdas * values > 0.0)
@@ -1239,7 +1299,7 @@ class PowerTransformer(AbstractRecipe):
         )
         if jnp.issubdtype(x.dtype, jnp.complexfloating):
             raise TypeError("PowerTransformer requires real-valued features.")
-        x = x.astype(jnp.result_type(x, jnp.float64))
+        x = x.astype(inexact_result_type(x))
         positive = jnp.all((x > 0.0) | (weights == 0.0), axis=-2)
         if self.method == "box-cox":
             positive_case = jnp.all(positive, axis=-1)
@@ -1254,7 +1314,7 @@ class PowerTransformer(AbstractRecipe):
             self.lambda_range[0],
             self.lambda_range[1],
             self.n_lambdas,
-            dtype=jnp.result_type(x, jnp.float64),
+            dtype=inexact_result_type(x),
         )
         expanded = safe_x[..., None]
         lambda_bank = lambdas.reshape((1,) * x.ndim + (self.n_lambdas,))
@@ -1314,27 +1374,14 @@ class PowerTransformer(AbstractRecipe):
             constant=constant,
             details=(("power_method", self.method), ("n_lambdas", self.n_lambdas)),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            GradientContract(
-                prediction_inputs="almost-everywhere",
-                prediction_parameters="smooth",
-                fit_features="none",
-                fit_weights="none",
-                fit_hyperparameters="none",
-                fit_mode="stopped",
-                nondifferentiable_outputs=("selected_lambda",),
-                conditions=("The fixed-grid maximum-likelihood lambda is held fixed.",),
-            ),
-        )
+        return _fit_result(model, diagnostics, model._prediction_contract())
 
 
-class FittedQuantileTransformer(AbstractArrayModel):
+class FittedQuantileTransformer(AbstractFittedModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    quantiles: Array
-    references: Array
+    quantiles: Array = fixed_field()
+    references: Array = fixed_field()
     output_distribution: Literal["uniform", "normal"] = eqx.field(static=True)
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
@@ -1358,6 +1405,30 @@ class FittedQuantileTransformer(AbstractArrayModel):
         self.input_schema = schema
         self.output_schema = schema
         self.case_shape = tuple(case_shape)
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # Linear interpolation of the empirical CDF, clamped outside its range;
+        # tied fitted quantiles make it jump. The normal output composes ndtri.
+        return DerivativeContract(
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.INPUT, GradientLevel.ALMOST_EVERYWHERE
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.MODEL_PARAMETER, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.STOPPED,
+            regularity=DerivativeRegularity.piecewise_polynomial(
+                continuity=-1, degree_bound=1
+            )
+            if self.output_distribution == "uniform"
+            else DerivativeRegularity.piecewise_smooth(continuity=-1),
+            nondifferentiable_outputs=("weighted_order_statistics",),
+            conditions=(
+                "Empirical quantile order and interpolation intervals are held fixed.",
+            ),
+        )
 
     def _uniform(self, values: Array) -> Array:
         quantiles = _align_parameter(
@@ -1466,21 +1537,7 @@ class QuantileTransformer(AbstractRecipe):
                 ("output_distribution", self.output_distribution),
             ),
         )
-        return _fit_result(
-            model,
-            diagnostics,
-            GradientContract(
-                prediction_inputs="almost-everywhere",
-                prediction_parameters="conditional",
-                fit_features="none",
-                fit_weights="none",
-                fit_mode="stopped",
-                nondifferentiable_outputs=("weighted_order_statistics",),
-                conditions=(
-                    "Empirical quantile order and interpolation intervals are held fixed.",
-                ),
-            ),
-        )
+        return _fit_result(model, diagnostics, model._prediction_contract())
 
 
 __all__ = [

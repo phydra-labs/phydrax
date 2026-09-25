@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics._grid import TimeGrid
 
@@ -50,7 +51,7 @@ def _finite_vector(value: ArrayLike, owner: str, /) -> Array:
         raise ValueError(f"{owner} must be a nonempty rank-one vector.")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
-    array = array.astype(jnp.result_type(array, jnp.float64))
+    array = array.astype(inexact_result_type(array))
     if not bool(jnp.all(jnp.isfinite(array))):
         raise ValueError(f"{owner} must be finite.")
     return array
@@ -111,7 +112,7 @@ def solve_almgren_chriss_schedule(
     quantity = jnp.asarray(parent_quantity)
     if quantity.shape != () or jnp.issubdtype(quantity.dtype, jnp.complexfloating):
         raise ValueError("parent_quantity must be a real scalar.")
-    quantity = quantity.astype(jnp.result_type(quantity, jnp.float64))
+    quantity = quantity.astype(inexact_result_type(quantity))
     if not bool(jnp.isfinite(quantity)):
         raise ValueError("parent_quantity must be finite.")
     elapsed = time_grid.times - time_grid.times[0]

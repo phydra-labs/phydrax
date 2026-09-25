@@ -13,23 +13,32 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     _protocol_model,
     AbstractRecipe,
     DecisionFunctionModel,
     FitResult,
-    GradientContract,
     LogProbabilityModel,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from .._numerics import effective_sample_size, run_fixed_iterations
-from .._schema import FeatureSchema, TargetSchema
+from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from ..discriminant._models import _labels_for, _reshape_for_samples
 
 
@@ -199,17 +208,42 @@ def _diagnostics(
     )
 
 
+def _prediction(
+    regularity: DerivativeRegularity,
+    /,
+    *,
+    inputs: GradientLevel = GradientLevel.SMOOTH,
+    parameters: GradientLevel = GradientLevel.SMOOTH,
+) -> DerivativeContract:
+    return DerivativeContract(
+        (
+            SurfaceDerivative(DerivativeSurface.INPUT, inputs),
+            SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, parameters),
+        ),
+        route=DerivativeRoute.DIRECT,
+        regularity=regularity,
+    )
+
+
 def _contract(
-    *, smooth_inputs: bool = True, fit_mode: str = "unrolled"
-) -> GradientContract:
-    return GradientContract(
-        prediction_inputs="smooth" if smooth_inputs else "none",
-        prediction_parameters="smooth" if smooth_inputs else "almost-everywhere",
-        fit_features="conditional" if fit_mode != "stopped" else "none",
-        fit_targets="none",
-        fit_weights="conditional" if fit_mode != "stopped" else "none",
-        fit_hyperparameters="conditional" if fit_mode != "stopped" else "none",
-        fit_mode=fit_mode,
+    prediction: DerivativeContract,
+    /,
+    *,
+    route: DerivativeRoute = DerivativeRoute.UNROLLED,
+) -> DerivativeContract:
+    fit_level = (
+        GradientLevel.NONE
+        if route is DerivativeRoute.STOPPED
+        else GradientLevel.CONDITIONAL
+    )
+    return prediction_fit_contract(
+        prediction,
+        (
+            SurfaceDerivative(DerivativeSurface.FIT_FEATURES, fit_level),
+            SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, fit_level),
+            SurfaceDerivative(DerivativeSurface.FIT_HYPERPARAMETERS, fit_level),
+        ),
+        route=route,
         nondifferentiable_outputs=("predict", "predict_indices"),
         conditions=(
             "fixed class vocabulary",
@@ -219,10 +253,33 @@ def _contract(
     )
 
 
-class PlattCalibrationModel(AbstractArrayModel):
+# Sigmoid or softmax of affine logits, or normalized sigmoids of affine scores.
+_SMOOTH_CONTRACT = _contract(_prediction(DerivativeRegularity.smooth()))
+# Lookup of pool-adjacent-violators levels: constant between fitted thresholds.
+_ISOTONIC_CONTRACT = _contract(
+    _prediction(
+        DerivativeRegularity.piecewise_polynomial(continuity=-1, degree_bound=0),
+        inputs=GradientLevel.NONE,
+        parameters=GradientLevel.ALMOST_EVERYWHERE,
+    ),
+    route=DerivativeRoute.STOPPED,
+)
+# A sum of sigmoid steps; its final clip is inactive while the levels are monotone
+# within [0, 1], as fitted.
+_SMOOTH_ISOTONIC_CONTRACT = _contract(
+    _prediction(
+        DerivativeRegularity.smooth(conditions=("monotone isotonic levels in [0, 1]",))
+    ),
+    route=DerivativeRoute.STOPPED,
+)
+# Normalizing probabilities by their positive sum.
+_NORMALIZATION = _prediction(DerivativeRegularity.smooth())
+
+
+class PlattCalibrationModel(AbstractFittedModel):
     slope: Array
     intercept: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -244,6 +301,9 @@ class PlattCalibrationModel(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
         self.in_size = 1
         self.out_size = 2
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_CONTRACT
 
     def decision_function(self, x: Any, /) -> Array:
         values = jnp.asarray(x)
@@ -275,9 +335,9 @@ class PlattCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class TemperatureCalibrationModel(AbstractArrayModel):
+class TemperatureCalibrationModel(AbstractFittedModel):
     temperature: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -297,6 +357,9 @@ class TemperatureCalibrationModel(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
         self.in_size = self.labels.shape[0]
         self.out_size = self.in_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_CONTRACT
 
     def decision_function(self, x: Any, /) -> Array:
         values = jnp.asarray(x)
@@ -325,10 +388,10 @@ class TemperatureCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class VectorCalibrationModel(AbstractArrayModel):
+class VectorCalibrationModel(AbstractFittedModel):
     scale: Array
     bias: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -350,6 +413,9 @@ class VectorCalibrationModel(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
         self.in_size = self.labels.shape[0]
         self.out_size = self.in_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_CONTRACT
 
     def decision_function(self, x: Any, /) -> Array:
         values = jnp.asarray(x)
@@ -379,10 +445,10 @@ class VectorCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class MatrixCalibrationModel(AbstractArrayModel):
+class MatrixCalibrationModel(AbstractFittedModel):
     matrix: Array
     bias: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -404,6 +470,9 @@ class MatrixCalibrationModel(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
         self.in_size = self.labels.shape[0]
         self.out_size = self.in_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_CONTRACT
 
     def decision_function(self, x: Any, /) -> Array:
         values = jnp.asarray(x)
@@ -433,10 +502,10 @@ class MatrixCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class MulticlassCalibrationModel(AbstractArrayModel):
+class MulticlassCalibrationModel(AbstractFittedModel):
     slope: Array
     intercept: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -458,6 +527,9 @@ class MulticlassCalibrationModel(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
         self.in_size = labels.shape[0]
         self.out_size = self.in_size
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_CONTRACT
 
     def decision_function(self, x: Any, /) -> Array:
         values = jnp.asarray(x)
@@ -633,7 +705,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
         valid=diagnostics.valid,
         status=diagnostics.status,
         method=kind,
-        gradient_contract=_contract(),
+        derivative_contract=_SMOOTH_CONTRACT,
     )
 
 
@@ -871,11 +943,11 @@ def _pav_one(scores: Array, targets: Array, weights: Array) -> tuple[Array, Arra
     return thresholds, levels, block_count
 
 
-class IsotonicCalibrationModel(AbstractArrayModel):
-    thresholds: Array
+class IsotonicCalibrationModel(AbstractFittedModel):
+    thresholds: Array = fixed_field()
     values: Array
     block_count: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     case_shape: tuple[int, ...] = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
@@ -899,6 +971,9 @@ class IsotonicCalibrationModel(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
         self.in_size = 1
         self.out_size = 2
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _ISOTONIC_CONTRACT
 
     def positive_probability(self, x: Any, /) -> Array:
         raw = jnp.asarray(x)
@@ -942,11 +1017,11 @@ class IsotonicCalibrationModel(AbstractArrayModel):
         return self.predict_proba(x)
 
 
-class SmoothIsotonicCalibrationModel(AbstractArrayModel):
-    thresholds: Array
+class SmoothIsotonicCalibrationModel(AbstractFittedModel):
+    thresholds: Array = fixed_field()
     values: Array
     block_count: Array
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     bandwidth: Array
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -973,6 +1048,9 @@ class SmoothIsotonicCalibrationModel(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
         self.in_size = 1
         self.out_size = 2
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _SMOOTH_ISOTONIC_CONTRACT
 
     def positive_probability(self, x: Any, /) -> Array:
         raw = jnp.asarray(x)
@@ -1082,7 +1160,7 @@ def _fit_isotonic(recipe: Any, batch: MLBatch, *, smooth: bool) -> FitResult:
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=_contract(smooth_inputs=smooth, fit_mode="stopped"),
+        derivative_contract=_SMOOTH_ISOTONIC_CONTRACT if smooth else _ISOTONIC_CONTRACT,
     )
 
 
@@ -1157,10 +1235,10 @@ def _calibration_input(model: AbstractArrayModel, x: Any, in_size: int) -> Array
     return score[..., None]
 
 
-class CalibratedClassifierModel(AbstractArrayModel):
+class CalibratedClassifierModel(AbstractFittedModel):
     base_model: AbstractArrayModel
     calibration_model: AbstractArrayModel
-    labels: Array
+    labels: Array = fixed_field()
     target_schema: TargetSchema
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
@@ -1182,6 +1260,16 @@ class CalibratedClassifierModel(AbstractArrayModel):
             raise ValueError(
                 "Calibrator output must align with the external class vocabulary."
             )
+
+    def _prediction_contract(self) -> DerivativeContract:
+        # Normalized calibrator probabilities of the base classifier's scores.
+        return (
+            self.base_model.model_execution_contract()
+            .derivative.compose(
+                self.calibration_model.model_execution_contract().derivative
+            )
+            .compose(_NORMALIZATION)
+        )
 
     def decision_function(self, x: Any, /) -> Array:
         logits = _calibration_input(
@@ -1299,7 +1387,7 @@ class CalibratedClassifierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="calibrated-classifier",
-            gradient_contract=_contract(),
+            derivative_contract=_contract(model._prediction_contract()),
         )
 
 

@@ -979,12 +979,20 @@ conversion.
 
 An immutable recipe plus `MLBatch` produces a `FitResult` containing a
 solver-frozen `AbstractArrayModel`, fit diagnostics, validity/status, the resolved
-method, and a per-input `GradientContract`. Exact discrete algorithms and smooth
+method, and the canonical root `DerivativeContract` covering prediction
+(`INPUT`, `MODEL_PARAMETER`) and fit (`FIT_*`) surfaces. `phydrax.ml.fit` binds the
+batch `FeatureSchema`/`TargetSchema` (with optional per-component physical
+dimensions) into the executable, which then derives `model_ports()`, and admits
+an optional `derivative_request` before returning. Pipelines compose stage
+contracts; unions, column transformers, and cross-validation meet them. Native
+artifacts record the executable's schemas, ports, derivative contract, and
+verified identity triplet. Exact discrete algorithms and smooth
 relaxations have separate types. Dense-only recipes reject sparse storage rather
 than allocating silently. The resulting model uses the same `ModelBinding` as
 neural models, so it can remain a fixed domain closure or be explicitly unwrapped
 as a trainable warm start. See [Native machine learning](guides/ml.md), the
-[scientific ML workflow](cookbook/native_ml.md), and the
+[scientific ML workflow](cookbook/native_ml.md),
+[Derivative contracts](appendix/ml_differentiability.md), and the
 [complete ML API](api/ml/index.md).
 Fixed-recipe conditional-loss reliability composes pure exact-cover dense OOF
 assembly, weighted tie-block selective metrics, forced-group paired locked-test
@@ -2281,6 +2289,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Control workflows](cookbook/control.md)
 - [Control API](api/control.md)
 - [Solvers and training](guides_solver.md)
+- [Machine learning interoperability](guides_ml_interoperability.md)
 - [API reference](api/phydrax.md)
 - `phydrax.domain` for geometry, time, and sampling.
 - `phydrax.sampling` for typed reference designs and capability inspection.

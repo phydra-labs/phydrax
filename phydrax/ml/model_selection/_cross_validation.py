@@ -12,13 +12,16 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
+from ..._differentiation import (
+    DerivativeContract,
+)
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
     DecisionFunctionModel,
     FitResult,
-    GradientContract,
     ML_NONFINITE,
     ML_SUCCESS,
     PredictionModel,
@@ -110,9 +113,7 @@ def _score_leaf(value: Any, raw: Any, /) -> ScoreRecord:
         array,
         valid=valid,
         status=jnp.where(valid, ML_SUCCESS, ML_NONFINITE).astype(jnp.int32),
-        effective_weight=jnp.ones_like(
-            array, dtype=jnp.result_type(array.real, jnp.float64)
-        ),
+        effective_weight=jnp.ones_like(array, dtype=inexact_result_type(array.real)),
         raw=raw,
     )
 
@@ -371,43 +372,22 @@ def _aggregate_scores(folds: tuple[FoldEvaluation, ...], /) -> ScoreRecord:
     )
 
 
-_LEVEL_ORDER = {"none": 0, "conditional": 1, "almost-everywhere": 2, "smooth": 3}
-
-
-def _weakest_level(
-    contracts: tuple[GradientContract, ...],
-    select: Callable[[GradientContract], str],
-    /,
-) -> str:
-    return min(
-        (select(contract) for contract in contracts),
-        key=lambda level: _LEVEL_ORDER[level],
-    )
-
-
-def _cross_validation_contract(folds: tuple[FoldEvaluation, ...], /) -> GradientContract:
-    contracts = tuple(fold.fit_result.gradient_contract for fold in folds)
-    modes = {contract.fit_mode for contract in contracts}
-    return GradientContract(
-        prediction_inputs=_weakest_level(
-            contracts, lambda contract: contract.prediction_inputs
-        ),
-        prediction_parameters=_weakest_level(
-            contracts, lambda contract: contract.prediction_parameters
-        ),
-        fit_features=_weakest_level(contracts, lambda contract: contract.fit_features),
-        fit_targets=_weakest_level(contracts, lambda contract: contract.fit_targets),
-        fit_weights=_weakest_level(contracts, lambda contract: contract.fit_weights),
-        fit_hyperparameters=_weakest_level(
-            contracts, lambda contract: contract.fit_hyperparameters
-        ),
-        fit_mode=next(iter(modes)) if len(modes) == 1 else "stopped",
+def _cross_validation_contract(
+    folds: tuple[FoldEvaluation, ...], /
+) -> DerivativeContract:
+    contracts = tuple(fold.fit_result.derivative_contract for fold in folds)
+    met = contracts[0].meet(*contracts[1:])
+    return DerivativeContract(
+        met.surfaces,
+        route=met.route,
+        regularity=met.regularity,
         nondifferentiable_outputs=(
             "fold_indices",
             "valid",
             "status",
         ),
         conditions=(
+            *met.conditions,
             "Fold indices are fixed and gradients never pass through split membership.",
             "Score gradients additionally require the supplied scorer to be differentiable.",
             "Every batch-dependent transform must be an unfitted recipe component and is refit per fold.",
@@ -424,7 +404,7 @@ class CrossValidationResult(StrictModule):
     valid: Any
     status: Any
     key: Any
-    gradient_contract: GradientContract
+    derivative_contract: DerivativeContract
     method: str = eqx.field(static=True)
 
     def __init__(
@@ -435,7 +415,7 @@ class CrossValidationResult(StrictModule):
         /,
         *,
         key: Any,
-        gradient_contract: GradientContract,
+        derivative_contract: DerivativeContract,
     ):
         fit_valid = jnp.all(
             jnp.stack([jnp.all(jnp.asarray(fold.fit_result.valid)) for fold in folds])
@@ -462,7 +442,7 @@ class CrossValidationResult(StrictModule):
         self.valid = fit_valid & score_valid
         self.status = jnp.max(jnp.stack(statuses))
         self.key = _require_key(key)
-        self.gradient_contract = gradient_contract
+        self.derivative_contract = derivative_contract
         self.method = "cross_validation"
 
 
@@ -522,7 +502,7 @@ def _cross_validate_materialized(
         split_result,
         aggregate,
         key=key,
-        gradient_contract=_cross_validation_contract(folds),
+        derivative_contract=_cross_validation_contract(folds),
     )
 
 

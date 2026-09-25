@@ -8,9 +8,11 @@ import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
-from phydrax._trainable import partition_trainable
 from phydrax.linalg import MaterializationPolicy, materialize
-from phydrax.solver._functional_run import FunctionalSolveConfig
+from phydrax.solver._functional_run import (
+    FunctionalSolveConfig,
+    partition_functional_parameters,
+)
 from phydrax.solver._functional_surrogate import prepare_functional_update
 
 
@@ -78,7 +80,7 @@ def test_functional_session_rejects_sharding_execution_group_mismatch():
 
 def test_sharded_functional_ntk_matches_unsharded_global_kernel():
     solver = _scalar_solver()
-    params, non_trainable = partition_trainable(solver.functions)
+    params, non_trainable = partition_functional_parameters(solver.functions)
     prepared = solver.objective.prepare_training(
         (0,),
         scale=1.0,
@@ -88,6 +90,9 @@ def test_sharded_functional_ntk_matches_unsharded_global_kernel():
     )
     policy = phx.solver.FunctionalShardingPolicy({"__phydra_blk__x": "data"})
     sharded = policy.place_prepared(prepared)
+    sharded_params, sharded_held = partition_functional_parameters(
+        solver.functions, sharding=policy
+    )
     unsharded_update = prepare_functional_update(
         prepared,
         params,
@@ -96,8 +101,8 @@ def test_sharded_functional_ntk_matches_unsharded_global_kernel():
     )
     sharded_update = prepare_functional_update(
         sharded,
-        policy.place_parameters(params),
-        policy.place_tree(non_trainable),
+        sharded_params,
+        sharded_held,
         solver.enforcement,
     )
     unsharded_ntk = phx.solver.prepare_functional_ntk(
@@ -211,12 +216,13 @@ def test_functional_time_windows_transfer_optimizer_state_independently():
     assert final_state is not None
     for trained in result.solvers:
         assert trained.training_state is not None
-        statistics = trained.training_state.update_alignment_statistics
+        statistics = trained.training_state.kernel_state.rule_state.statistics
         assert statistics is not None
         assert int(statistics.steps) == 1
+    # The second window resumes the first window's Adam state: its step count is 2.
     integer_scalars = tuple(
         int(value)
-        for value in jax.tree.leaves(final_state.optimizer_state)
+        for value in jax.tree.leaves(final_state.kernel_state.rule_state.optimizer_state)
         if hasattr(value, "dtype")
         and jnp.issubdtype(value.dtype, jnp.integer)
         and value.shape == ()
@@ -242,7 +248,7 @@ def test_functional_time_windows_reinitialize_incompatible_optimizer_state():
     assert final_state.current_functions["u"].func().shape == (2,)
     integer_scalars = tuple(
         int(value)
-        for value in jax.tree.leaves(final_state.optimizer_state)
+        for value in jax.tree.leaves(final_state.kernel_state.rule_state)
         if hasattr(value, "dtype")
         and jnp.issubdtype(value.dtype, jnp.integer)
         and value.shape == ()

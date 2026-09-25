@@ -24,7 +24,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from ..._trainable import fixed_field, NonTrainableState
 from ...control import (
     AbstractControlParameterization,
     PiecewiseConstantControlParameterization,
@@ -417,9 +417,7 @@ class QuadraticModelErrorRegularization(StrictModule, NonTrainableState):
         )
 
 
-class PeriodicModelErrorParameterization(
-    AbstractControlParameterization, NonTrainableState
-):
+class PeriodicModelErrorParameterization(AbstractControlParameterization):
     """Piecewise-constant additive correction in an exact solenoidal basis.
 
     ``SolenoidalHermitianFourierBasis`` spans transverse Fourier polarizations,
@@ -429,7 +427,7 @@ class PeriodicModelErrorParameterization(
     """
 
     basis: SolenoidalHermitianFourierBasis
-    time_grid: TimeGrid
+    time_grid: TimeGrid = fixed_field()
     coordinate_schedule: PiecewiseConstantControlParameterization
     base_forcing_id: str = eqx.field(static=True)
     model_interpretation: str = eqx.field(static=True)
@@ -673,7 +671,7 @@ class ModelErrorAssimilationValueGradient(StrictModule):
     objective_id: str = eqx.field(static=True)
 
 
-class ModelErrorAssimilationObjective(StrictModule, NonTrainableState):
+class ModelErrorAssimilationObjective(StrictModule):
     """Differentiable training objective with separately reported holdout error."""
 
     parameterization: PeriodicModelErrorParameterization

@@ -19,7 +19,7 @@ import optax
 import phydrax as phx
 from benchmarks._runtime import synchronize
 from phydrax._interpolation import bspline_stencil
-from phydrax._trainable import partition_trainable
+from phydrax._trainable import partition_parameters
 
 
 def _benchmark(
@@ -43,8 +43,8 @@ def _benchmark(
 
 
 def _parameter_count(model: phx.nn.models.KAN) -> int:
-    trainable, _ = partition_trainable(model)
-    return sum(leaf.size for leaf in jax.tree.leaves(trainable))
+    parameters, _, _ = partition_parameters(model)
+    return sum(leaf.size for leaf in jax.tree.leaves(parameters))
 
 
 def _basis_matrix(grid: phx.nn.models.BSplineGrid, query: jax.Array) -> jax.Array:

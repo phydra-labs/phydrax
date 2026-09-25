@@ -12,8 +12,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
+from .._differentiation import DerivativeContract
 from .._fingerprint import canonical_fingerprint, canonical_mapping
-from ..artifacts import DifferentiationContract
 from ..qualification import ReferenceArtifactManifest
 from ._field import QuantityField
 from ._quantity import canonical_quantity_text
@@ -97,7 +97,7 @@ class DerivationRecord:
     transformation_id: str | None = None
     adapter_report_ids: tuple[str, ...] = ()
     calibration_ids: tuple[str, ...] = ()
-    differentiation: DifferentiationContract | None = None
+    differentiation: DerivativeContract | None = None
     derivation_id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -134,9 +134,9 @@ class DerivationRecord:
         if parents and transformation is None:
             raise ValueError("Derived parent links require transformation_id.")
         if self.differentiation is not None and not isinstance(
-            self.differentiation, DifferentiationContract
+            self.differentiation, DerivativeContract
         ):
-            raise TypeError("differentiation must be DifferentiationContract or None.")
+            raise TypeError("differentiation must be DerivativeContract or None.")
         object.__setattr__(self, "parent_ids", parents)
         object.__setattr__(self, "adapter_report_ids", reports)
         object.__setattr__(self, "calibration_ids", calibrations)

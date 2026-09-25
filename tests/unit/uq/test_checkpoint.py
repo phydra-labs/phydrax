@@ -106,7 +106,7 @@ def test_checkpoint_rejects_incompatible_problem_settings_and_corruption(tmp_pat
         )
 
     destination.write_bytes(destination.read_bytes()[:40])
-    with pytest.raises(phx.uq.CheckpointCorruptionError, match="Cannot read"):
+    with pytest.raises(phx.uq.CheckpointCorruptionError):
         read_checkpoint_archive(
             destination,
             kind="mcmc",

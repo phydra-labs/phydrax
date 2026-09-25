@@ -5,14 +5,16 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint
+from .._model import AbstractComponentSlot
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -23,8 +25,17 @@ class TransportProperties(StrictModule):
     thermal_conductivity: Array
 
 
-class AbstractTransportClosure(StrictModule, NonTrainableState):
-    """Temperature-dependent viscous and thermal transport closure."""
+class AbstractTransportClosure(AbstractComponentSlot):
+    """Temperature-dependent viscous and thermal transport closure slot.
+
+    The slot confers `MODEL` authority and is neutral: fixed analytic closures
+    are `NonTrainableState` leaves, while a learned closure holds its model as a
+    trainable child. `closure_id` is static identity metadata; a learned
+    closure's identity never changes with the training revision of its model.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
+    slot_semantic_id: ClassVar[str] = "phydrax.equations.transport-closure"
 
     closure_id: str = eqx.field(static=True)
 
@@ -39,7 +50,7 @@ class AbstractTransportClosure(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class ConstantTransport(AbstractTransportClosure):
+class ConstantTransport(AbstractTransportClosure, NonTrainableState):
     dynamic_viscosity: float = eqx.field(static=True)
     bulk_viscosity: float = eqx.field(static=True)
     thermal_conductivity: float = eqx.field(static=True)
@@ -95,7 +106,7 @@ class ConstantTransport(AbstractTransportClosure):
         )
 
 
-class SutherlandTransport(AbstractTransportClosure):
+class SutherlandTransport(AbstractTransportClosure, NonTrainableState):
     """Sutherland viscosity with constant Prandtl heat conduction."""
 
     reference_viscosity: float = eqx.field(static=True)

@@ -10,6 +10,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 from ..._axis_factorization import AxisFactorizedField
+from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import ModelBinding
 from .._base import _AbstractStructuredInputModel
@@ -137,6 +138,9 @@ class SeparableMLP(_AbstractStructuredInputModel):
         of 1D coordinate arrays (see `phydrax.nn.models.Separable`).
         """
         return self.model(x, key=key)
+
+    def _value_regularity(self) -> DerivativeRegularity | None:
+        return self.model._value_regularity()
 
     def factorize_axes(
         self,

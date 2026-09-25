@@ -16,7 +16,6 @@ import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
 from ._smooth_compressible import (
     SmoothCompressibleD2VKineticMethod,
     SmoothCompressibleKineticState,
@@ -269,7 +268,7 @@ def _apply_source(
     )
 
 
-class ZeroSmoothCompressibleD2VForcingPlan(StrictModule, NonTrainableState):
+class ZeroSmoothCompressibleD2VForcingPlan(StrictModule):
     """Exact no-source transaction for a certified D2V17 kinetic method."""
 
     method: SmoothCompressibleD2VKineticMethod
@@ -303,7 +302,7 @@ class ZeroSmoothCompressibleD2VForcingPlan(StrictModule, NonTrainableState):
     __call__ = apply
 
 
-class SmoothCompressibleD2VBodyForcingPlan(StrictModule, NonTrainableState):
+class SmoothCompressibleD2VBodyForcingPlan(StrictModule):
     """Coupled D2V17 body-acceleration and volumetric-heating source kick."""
 
     method: SmoothCompressibleD2VKineticMethod

@@ -26,7 +26,7 @@ from .._array_archive import (
     DEFAULT_ARRAY_ARCHIVE_LIMITS,
 )
 from .._frozendict import frozendict
-from .._strict import Strict
+from .._strict import mark_strict_initialized, Strict
 from ._artifacts import artifact_value, artifact_value_id
 
 
@@ -225,7 +225,7 @@ def model_structure_recipe(
                 for index, item in enumerate(value)
             ],
         }
-    if dataclasses.is_dataclass(value):
+    if dataclasses.is_dataclass(value) and not isinstance(value, frozendict):
         return {
             "kind": "dataclass",
             "type": artifact_value_id(type(value)),
@@ -595,7 +595,7 @@ def _restore_dataclass(
             _restore_recipe(fields[field.name], array_factory),
         )
     if issubclass(cls, Strict):
-        object.__setattr__(instance, "_strict_initialized", True)
+        mark_strict_initialized(instance)
     return instance
 
 

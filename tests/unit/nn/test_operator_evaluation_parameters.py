@@ -12,7 +12,6 @@ import optax
 import pytest
 
 import phydrax as phx
-from phydrax._trainable import combine_trainable, partition_trainable
 
 
 def _dataset():
@@ -90,9 +89,12 @@ def test_fit_operator_returns_and_validates_on_evaluation_model():
         evaluation_parameters=shifted,
         jit=False,
     )
-    parameters, fixed = partition_trainable(baseline.last_execution_model)
-    expected = combine_trainable(
+    parameters, model_state, fixed = phx.partition_parameters(
+        baseline.last_execution_model
+    )
+    expected = phx.combine_parameters(
         jax.tree.map(lambda value: value + 1.0, parameters),
+        model_state,
         fixed,
     )
 

@@ -10,6 +10,15 @@ from typing import Any, Literal, TypeAlias
 import diffrax as dfx
 import equinox as eqx
 
+from .._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
@@ -191,8 +200,131 @@ class TemporalMethodCapabilities(StrictModule, NonTrainableState):
         return None
 
 
+_TEMPORAL_SURFACES = (
+    DerivativeSurface.PRIMAL_STATE,
+    DerivativeSurface.PHYSICAL_PARAMETER,
+)
+
+
+def _temporal_route(
+    form: TemporalDifferentiationForm, /
+) -> tuple[DerivativeRoute, tuple[str, ...]]:
+    match form:
+        case "discretize-then-optimize":
+            return DerivativeRoute.UNROLLED, ()
+        case "optimize-then-discretize":
+            return DerivativeRoute.EXTERNAL_ADJOINT, ("continuous-adjoint-approximation",)
+        case "implicit-solution-map":
+            return DerivativeRoute.IMPLICIT, ("steady-state-reached",)
+        case "unknown":
+            return DerivativeRoute.STOPPED, ()
+        case _:
+            raise ValueError("Unknown temporal differentiation form.")
+
+
+def _decision_policy(
+    semantics: TemporalDecisionSemantics, /
+) -> BranchDifferentiationPolicy:
+    match semantics:
+        case "fixed-grid":
+            return BranchDifferentiationPolicy.SMOOTH
+        case "frozen-adaptive-schedule":
+            return BranchDifferentiationPolicy.FROZEN_DECISION
+        case "backend-defined":
+            return BranchDifferentiationPolicy.UNSUPPORTED
+        case _:
+            raise ValueError("Unknown temporal decision derivative semantics.")
+
+
+def _event_policy(semantics: TemporalEventSemantics, /) -> BranchDifferentiationPolicy:
+    match semantics:
+        case "none":
+            return BranchDifferentiationPolicy.SMOOTH
+        case "backend-branchwise-unqualified":
+            return BranchDifferentiationPolicy.BRANCHWISE
+        case "implicit-event-replay":
+            return BranchDifferentiationPolicy.EVENT_AWARE
+        case "unsupported" | "unknown":
+            return BranchDifferentiationPolicy.UNSUPPORTED
+        case _:
+            raise ValueError("Unknown temporal event derivative semantics.")
+
+
+def _stochastic_conditions(
+    semantics: TemporalStochasticSemantics, /
+) -> tuple[str, ...] | None:
+    match semantics:
+        case "deterministic":
+            return ()
+        case "fixed-realization-pathwise":
+            return ("fixed-realization",)
+        case "distributional":
+            return ("distributional-derivative",)
+        case "unknown":
+            return None
+        case _:
+            raise ValueError("Unknown temporal stochastic derivative semantics.")
+
+
+def _temporal_derivative_contract(
+    form: TemporalDifferentiationForm,
+    orientations: tuple[TemporalDifferentiationOrientation, ...],
+    decision_semantics: TemporalDecisionSemantics,
+    event_semantics: TemporalEventSemantics,
+    stochastic_semantics: TemporalStochasticSemantics,
+    verified: bool,
+    /,
+) -> DerivativeContract:
+    route, route_conditions = _temporal_route(form)
+    policies = (
+        _decision_policy(decision_semantics),
+        _event_policy(event_semantics),
+    )
+    stochastic = _stochastic_conditions(stochastic_semantics)
+    if (
+        route is DerivativeRoute.STOPPED
+        or not orientations
+        or stochastic is None
+        or BranchDifferentiationPolicy.UNSUPPORTED in policies
+    ):
+        return DerivativeContract(route=DerivativeRoute.STOPPED)
+    # The vector field's own regularity is not known to the solve, so the
+    # combined contract leaves regularity undeclared.
+    level = GradientLevel.SMOOTH if verified else GradientLevel.CONDITIONAL
+    base = DerivativeContract(
+        (SurfaceDerivative(surface, level) for surface in _TEMPORAL_SURFACES),
+        route=route,
+        conditions=(
+            *route_conditions,
+            *stochastic,
+            *(() if verified else ("derivative-classification-unverified",)),
+        ),
+    )
+    return base.meet(
+        *(
+            branch_policy_contract(policy, surfaces=_TEMPORAL_SURFACES)
+            for policy in policies
+            if policy is not BranchDifferentiationPolicy.SMOOTH
+        ),
+        composition_route=route,
+    )
+
+
 class TemporalDifferentiationEvidence(StrictModule, NonTrainableState):
-    """Static semantics of the derivative exposed by one temporal solve."""
+    """Static semantics of the derivative exposed by one temporal solve.
+
+    `derivative_contract` is the canonical contract of those semantics on the
+    initial state (`PRIMAL_STATE`) and the problem arguments
+    (`PHYSICAL_PARAMETER`). The form fixes the route: discretize-then-optimize
+    is unrolled, an implicit solution map is implicit at a reached steady state,
+    and optimize-then-discretize is a continuous adjoint
+    (`EXTERNAL_ADJOINT`) approximating the continuous derivative. Frozen
+    adaptive schedules, branchwise events, and implicit event replay combine
+    the corresponding `BranchDifferentiationPolicy` contracts; fixed-realization
+    stochastic solves carry the `"fixed-realization"` condition; an unverified
+    classification is conditional. Unknown forms or semantics, empty
+    orientations, and unsupported events give a stopped contract.
+    """
 
     form: TemporalDifferentiationForm = eqx.field(static=True)
     orientations: tuple[TemporalDifferentiationOrientation, ...] = eqx.field(static=True)
@@ -204,6 +336,7 @@ class TemporalDifferentiationEvidence(StrictModule, NonTrainableState):
     implementation_id: str = eqx.field(static=True)
     verified: bool = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
+    derivative_contract: DerivativeContract
 
     def __init__(
         self,
@@ -298,6 +431,14 @@ class TemporalDifferentiationEvidence(StrictModule, NonTrainableState):
                 "implementation_id": identifier,
                 "verified": bool(verified),
             }
+        )
+        self.derivative_contract = _temporal_derivative_contract(
+            form,
+            directions,
+            decision_semantics,
+            event_semantics,
+            stochastic_semantics,
+            bool(verified),
         )
 
 

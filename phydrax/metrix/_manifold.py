@@ -12,6 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 
 
@@ -49,7 +50,7 @@ def _real_inner(left: Array, right: Array, /) -> Array:
 
 
 def _finite_residual(value: Array, residual: Array, /) -> Array:
-    infinity = jnp.asarray(jnp.inf, dtype=jnp.result_type(value.dtype, jnp.float64))
+    infinity = jnp.asarray(jnp.inf, dtype=inexact_result_type(value.dtype))
     return jnp.where(jnp.all(jnp.isfinite(value)), residual, infinity)
 
 
@@ -194,8 +195,8 @@ class EuclideanManifold(AbstractGeodesicManifold):
         value = _array_with_trailing_shape(point, self.point_shape, "Euclidean point")
         return jnp.where(
             jnp.all(jnp.isfinite(value)),
-            jnp.asarray(0.0, dtype=jnp.result_type(value.dtype, jnp.float64)),
-            jnp.asarray(jnp.inf, dtype=jnp.result_type(value.dtype, jnp.float64)),
+            jnp.asarray(0.0, dtype=inexact_result_type(value.dtype)),
+            jnp.asarray(jnp.inf, dtype=inexact_result_type(value.dtype)),
         )
 
     def project_tangent(

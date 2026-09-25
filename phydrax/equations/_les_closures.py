@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -167,7 +168,7 @@ class LESFilterScale(StrictModule):
     def __init__(self, directional_widths: ArrayLike, /):
         widths = jnp.asarray(directional_widths)
         if not jnp.issubdtype(widths.dtype, jnp.inexact):
-            widths = widths.astype(jnp.result_type(widths, jnp.float64))
+            widths = widths.astype(inexact_result_type(widths))
         if widths.ndim < 1 or widths.shape[-1] != 3:
             raise ValueError("LES directional widths must have trailing dimension 3.")
         if not isinstance(widths, jax.core.Tracer):
@@ -255,7 +256,7 @@ class AlgebraicLESInputs(StrictModule):
             raise TypeError("filter_scale must be a LESFilterScale.")
         gradient = jnp.asarray(velocity_gradient)
         if not jnp.issubdtype(gradient.dtype, jnp.inexact):
-            gradient = gradient.astype(jnp.result_type(gradient, jnp.float64))
+            gradient = gradient.astype(inexact_result_type(gradient))
         if gradient.ndim < 2 or gradient.shape[-2:] != (3, 3):
             raise ValueError("LES velocity gradient must have trailing shape (3, 3).")
         self.velocity_gradient = gradient
@@ -397,7 +398,7 @@ def _formula_id(formula: _LESFormula, /) -> str:
 def _validated_coefficient(value: ArrayLike, name: str, /) -> Array:
     coefficient = jnp.asarray(value)
     if not jnp.issubdtype(coefficient.dtype, jnp.inexact):
-        coefficient = coefficient.astype(jnp.result_type(coefficient, jnp.float64))
+        coefficient = coefficient.astype(inexact_result_type(coefficient))
     if coefficient.shape != ():
         raise ValueError(f"{name} LES coefficient must be scalar.")
     if not isinstance(coefficient, jax.core.Tracer):

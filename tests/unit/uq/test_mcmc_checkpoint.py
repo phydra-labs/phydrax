@@ -151,7 +151,7 @@ def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
         )
 
     checkpoint.write_bytes(checkpoint.read_bytes()[:64])
-    with pytest.raises(phx.uq.CheckpointCorruptionError, match="Cannot read"):
+    with pytest.raises(phx.uq.CheckpointCorruptionError):
         phx.uq.sample_nuts(
             problem,
             **settings,

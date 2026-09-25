@@ -15,6 +15,7 @@ import numpy as np
 
 from .._execution_control import ObservationScope
 from .._iteration import IterationSession
+from .._trainable import ArrayRole, partition_parameters, resolve_array_roles
 from .._training import (
     DelayedTargetPolicy,
     EvaluationParametersFn,
@@ -209,10 +210,49 @@ def replace_solver_state(
     )
 
 
+def partition_functional_parameters(
+    functions: Any,
+    /,
+    *,
+    sharding: Any = None,
+) -> tuple[Any, Any]:
+    """Split functions into the PARAMETER lane and the held non-parameter lanes.
+
+    Functional routes differentiate and update only PARAMETER leaves. The returned
+    held tree combines the MODEL_STATE and FIXED lanes of `partition_parameters`:
+    no functional objective returns a next model state, so model state is carried
+    unchanged. Recombine with `eqx.combine(parameters, held)`. An optional
+    `FunctionalShardingPolicy` places the lanes by role before they are combined.
+    """
+    parameters, model_state, fixed = partition_parameters(functions)
+    if sharding is not None:
+        parameters, model_state, fixed = sharding.place_lanes(
+            parameters, model_state, fixed
+        )
+    return parameters, eqx.combine(model_state, fixed)
+
+
+def require_empty_model_state(tree: Any, /, *, context: str) -> None:
+    """Raise `ValueError` when `tree` declares any MODEL_STATE leaf."""
+    resolution = resolve_array_roles(tree)
+    paths = tuple(
+        path
+        for path, role in zip(resolution.paths, resolution.roles, strict=True)
+        if role is ArrayRole.MODEL_STATE
+    )
+    if paths:
+        raise ValueError(
+            f"{context} requires an empty MODEL_STATE lane; found model state at "
+            f"{', '.join(paths)}."
+        )
+
+
 __all__ = [
     "FunctionalSolveConfig",
     "expand_train_terms",
+    "partition_functional_parameters",
     "replace_solver_state",
+    "require_empty_model_state",
     "select_train_terms",
     "validate_term_sample_size",
 ]

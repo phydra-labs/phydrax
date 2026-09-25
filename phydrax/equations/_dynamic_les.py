@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._les_closures import (
@@ -793,11 +794,7 @@ class PreparedDynamicSmagorinskyPlan(StrictModule, NonTrainableState):
         if not isinstance(self.averaging, LagrangianDynamicLESAveraging):
             raise TypeError("Only Lagrangian averaging has continuation state.")
         shape = inputs.leonard_tensor.shape[:-2]
-        dtype = jnp.result_type(
-            inputs.leonard_tensor,
-            inputs.modeled_tensor,
-            jnp.float64,
-        )
+        dtype = inexact_result_type(inputs.leonard_tensor, inputs.modeled_tensor)
         continuation_id = self._continuation_id(shape)
         return LagrangianDynamicLESState(
             jnp.zeros(shape, dtype=dtype),
@@ -904,7 +901,7 @@ class PreparedDynamicSmagorinskyPlan(StrictModule, NonTrainableState):
 def _inexact_array(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(jnp.result_type(array, jnp.float64))
+        array = array.astype(inexact_result_type(array))
     return array
 
 

@@ -63,6 +63,8 @@ _PROVENANCE_FIELDS = {
     "binding_plan_id",
     "numeric_revision_id",
     "prepared_binding_id",
+    "features",
+    "target",
 }
 
 
@@ -218,14 +220,14 @@ def write_learned_energy_equilibrium_artifact(
         or validated_binding.prepared_id != binding.prepared_id
     ):
         raise ValueError("Binding identities are inconsistent with owned dependencies.")
-    feature_schema = {
+    features = {
         "kind": _FEATURE_KIND,
         "flow_schema": _schema_record(plan.schema),
         "input_component_names": list(plan.input_component_names),
         "normalizer": _normalizer_record(plan.normalizer),
         "support": _support_record(plan.support),
     }
-    target_schema = {
+    target = {
         "kind": _TARGET_KIND,
         "output_component_names": ["energy_dual_x", "energy_dual_y"],
         "material": _material_record(plan.material),
@@ -247,12 +249,12 @@ def write_learned_energy_equilibrium_artifact(
         "binding_plan_id": plan.plan_id,
         "numeric_revision_id": binding.numeric_revision.revision_id,
         "prepared_binding_id": binding.prepared_id,
+        "features": features,
+        "target": target,
     }
     return save_ml_artifact(
         destination,
         model,
-        feature_schema=feature_schema,
-        target_schema=target_schema,
         provenance=provenance,
         licenses=licenses,
     )
@@ -512,20 +514,20 @@ def read_learned_energy_equilibrium_artifact(
     if source.suffix != ".phxml":
         raise ValueError("Learned energy-equilibrium artifacts require .phxml paths.")
     artifact = read_ml_artifact(source)
-    feature = _mapping(
-        artifact.manifest.feature_schema,
-        _FEATURE_FIELDS,
-        "Learned energy-equilibrium feature schema",
-    )
-    target = _mapping(
-        artifact.manifest.target_schema,
-        _TARGET_FIELDS,
-        "Learned energy-equilibrium target schema",
-    )
     provenance = _mapping(
         artifact.manifest.provenance,
         _PROVENANCE_FIELDS,
         "Learned energy-equilibrium provenance",
+    )
+    feature = _mapping(
+        provenance["features"],
+        _FEATURE_FIELDS,
+        "Learned energy-equilibrium feature record",
+    )
+    target = _mapping(
+        provenance["target"],
+        _TARGET_FIELDS,
+        "Learned energy-equilibrium target record",
     )
     if (
         feature["kind"] != _FEATURE_KIND

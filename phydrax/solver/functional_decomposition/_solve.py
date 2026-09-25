@@ -4,8 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Literal
+from collections.abc import Mapping, Sequence
+from typing import Any, ClassVar, final, Literal
 
 import equinox as eqx
 import jax
@@ -27,8 +27,24 @@ from ..._iteration import (
     IterationSession,
     IterationSessionState,
 )
+from ..._sampling._addressing import derive_key, SampleAddress
 from ..._strict import StrictModule
-from ..._trainable import partition_trainable
+from ..._trainable import (
+    ArrayRole,
+    NonTrainableState,
+    require_parameter_roles,
+    resolve_array_roles,
+)
+from ..._training_kernel import (
+    AbstractKernelUpdateRule,
+    KernelUpdateContext,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    run_training_attempt,
+    TrainingKernelSpec,
+    TrainingKernelState,
+    TrainingRejectionBudgetError,
+)
 from ...conditions import SubdomainValueJump
 from ...domain import (
     broken_field,
@@ -39,9 +55,15 @@ from ...domain import (
 )
 from ...nn.parameters import ParameterSubspace
 from ...terms import ResidualPenalty
+from .._functional_kernel import (
+    functional_kernel_objective,
+    FUNCTIONAL_ROOT_AUTHORITY,
+    functional_training_tree,
+    functional_tree_functions,
+    resume_functional_kernel_state,
+)
 from .._functional_solver import FunctionalSolver
 from .._functional_training import FunctionalTrainingPlan
-from .._functional_update_kernel import FunctionalUpdateKernel, FunctionalUpdateState
 from ._prepare import PreparedFunctionalDecomposition
 from ._problem import GlobalScope, PairScope, PatchScope
 from ._schwarz import (
@@ -91,13 +113,52 @@ class FunctionalDecompositionEvidence(StrictModule):
         self.certified = bool(certified)
 
 
+def _local_steps(
+    kernel_states: Sequence[TrainingKernelState | None], /
+) -> tuple[int, ...]:
+    """Accepted local updates of every patch (its kernel's accepted cursor)."""
+    cursors = jax.device_get(
+        tuple(None if state is None else state.accepted_cursor for state in kernel_states)
+    )
+    return tuple(0 if cursor is None else int(cursor) for cursor in cursors)
+
+
+def _patch_kernel_states(
+    kernel_states: Sequence[TrainingKernelState | None],
+    kernel_checkpoint_ids: Sequence[str | None],
+    /,
+) -> tuple[tuple[TrainingKernelState | None, ...], tuple[str | None, ...]]:
+    states = tuple(kernel_states)
+    identities = tuple(
+        None if identity is None else str(identity) for identity in kernel_checkpoint_ids
+    )
+    if len(states) != len(identities):
+        raise ValueError(
+            "kernel_states and kernel_checkpoint_ids must have equal length."
+        )
+    for state, identity in zip(states, identities, strict=True):
+        if state is not None and not isinstance(state, TrainingKernelState):
+            raise TypeError("kernel_states entries must be TrainingKernelState or None.")
+        if (state is None) != (identity is None):
+            raise ValueError(
+                "Every patch kernel state requires its kernel checkpoint identity."
+            )
+    return states, identities
+
+
 class FunctionalDecompositionState(StrictModule):
-    """Accepted decomposition state at a completed joint run or local sweep."""
+    """Accepted decomposition state at a completed joint run or local sweep.
+
+    `kernel_states[i]` is the training-kernel state of patch `i`'s local updates
+    (optimizer state, semantic root key, and cursors; `None` for a patch that has
+    not trained) and `kernel_checkpoint_ids[i]` the identity of the kernel that
+    produced it, verified before a resumed run continues it.
+    """
 
     functions: frozendict[str, DomainFunction]
-    optimizer_states: tuple[Any | None, ...]
+    kernel_states: tuple[TrainingKernelState | None, ...]
     trace_state: SchwarzTraceState | None
-    local_steps: tuple[int, ...] = eqx.field(static=True)
+    kernel_checkpoint_ids: tuple[str | None, ...] = eqx.field(static=True)
     completed_sweeps: int = eqx.field(static=True)
     strategy: str = eqx.field(static=True)
 
@@ -106,24 +167,24 @@ class FunctionalDecompositionState(StrictModule):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        optimizer_states: tuple[Any | None, ...] = (),
-        local_steps: tuple[int, ...] = (),
+        kernel_states: Sequence[TrainingKernelState | None] = (),
+        kernel_checkpoint_ids: Sequence[str | None] = (),
         completed_sweeps: int = 0,
         trace_state: SchwarzTraceState | None = None,
         strategy: str,
     ):
-        states = tuple(optimizer_states)
-        steps = tuple(local_steps)
-        if states and len(states) != len(steps):
-            raise ValueError("optimizer_states and local_steps must have equal length.")
-        if any(value < 0 for value in steps):
-            raise ValueError("local_steps must be non-negative.")
+        states, identities = _patch_kernel_states(kernel_states, kernel_checkpoint_ids)
         self.functions = frozendict(functions)
-        self.optimizer_states = states
-        self.local_steps = steps
+        self.kernel_states = states
+        self.kernel_checkpoint_ids = identities
         self.trace_state = trace_state
         self.completed_sweeps = int(completed_sweeps)
         self.strategy = str(strategy)
+
+    @property
+    def local_steps(self) -> tuple[int, ...]:
+        """Accepted local updates per patch."""
+        return _local_steps(self.kernel_states)
 
 
 class FunctionalDecompositionIterationMetrics(StrictModule):
@@ -209,6 +270,22 @@ class FunctionalDecompositionResult(StrictModule):
 
 Optimizer = optax.GradientTransformation | optax.GradientTransformationExtraArgs
 
+_ADDRESS_NAMESPACE = "functional-decomposition"
+# Independent evidence realizations, addressed by term collection and the term's
+# authored index in that collection.
+_TRAINING_EVIDENCE_ADDRESS = SampleAddress(
+    _ADDRESS_NAMESPACE, "evidence", target=("training",), role="term"
+)
+_EVALUATION_EVIDENCE_ADDRESS = SampleAddress(
+    _ADDRESS_NAMESPACE, "evidence", target=("evaluation",), role="term"
+)
+_LOCAL_RULE_ID = "functional-decomposition-local-optax"
+
+
+def _patch_address(operation: str, patch_id: str, role: str, /) -> SampleAddress:
+    """Address of one patch's local-solve substream, by stable patch identity."""
+    return SampleAddress(_ADDRESS_NAMESPACE, operation, target=(patch_id,), role=role)
+
 
 def _term_values(
     prepared: PreparedFunctionalDecomposition,
@@ -228,10 +305,11 @@ def _term_values(
     pair_totals = {
         pairing_id: jnp.asarray(0.0) for pairing_id in prepared.problem.cover.pairing_ids
     }
+    address = _EVALUATION_EVIDENCE_ADDRESS if evaluation else _TRAINING_EVIDENCE_ADDRESS
     for index, scoped in enumerate(scoped_terms):
         value = scoped.term.evaluate(
             functions,
-            key=jr.fold_in(key, index),
+            key=derive_key(key, address, index),
         ).value
         total = total + value
         if isinstance(scoped.scope, PatchScope):
@@ -257,13 +335,13 @@ def _evidence(
     training, training_patches, training_pairs = _term_values(
         prepared,
         functions,
-        key=jr.fold_in(key, 100),
+        key=key,
         evaluation=False,
     )
     evaluation, evaluation_patches, evaluation_pairs = _term_values(
         prepared,
         functions,
-        key=jr.fold_in(key, 200),
+        key=key,
         evaluation=True,
     )
     evaluation_patch_ids = {
@@ -396,16 +474,27 @@ def _terms_for_patch(
     return tuple(terms)
 
 
-def _trainable_paths(
+def _parameter_paths(
     functions: Mapping[str, DomainFunction],
     /,
 ) -> tuple[str, ...]:
-    trainable, _ = partition_trainable(functions)
+    resolution = resolve_array_roles(functions)
     return tuple(
-        jax.tree_util.keystr(path)
-        for path, leaf in jax.tree_util.tree_flatten_with_path(trainable)[0]
-        if eqx.is_inexact_array(leaf)
+        path
+        for path, role in zip(resolution.paths, resolution.roles, strict=True)
+        if role is ArrayRole.PARAMETER
     )
+
+
+def _field_path(functions: Mapping[str, DomainFunction], name: str, /) -> str:
+    """Key path of the named field inside the flattened `functions` mapping."""
+    field = functions[name]
+    for path, leaf in jax.tree_util.tree_flatten_with_path(
+        functions, is_leaf=lambda value: isinstance(value, DomainFunction)
+    )[0]:
+        if leaf is field:
+            return jax.tree_util.keystr(path)
+    raise KeyError(name)
 
 
 def _patch_parameter_subspace(
@@ -417,10 +506,17 @@ def _patch_parameter_subspace(
     problem = prepared.problem
     if problem.assembly == "broken":
         patch_id = problem.cover.patch_ids[patch_index]
-        token = f"['{problem.family.field_name(patch_id)}']"
+        prefix = _field_path(functions, problem.family.field_name(patch_id))
     else:
-        token = f"['{problem.field_name}'].func.fields[{patch_index}].func.source"
-    selected = tuple(path for path in _trainable_paths(functions) if token in path)
+        prefix = (
+            _field_path(functions, problem.field_name)
+            + f".func.fields[{patch_index}].func.source"
+        )
+    selected = tuple(
+        path
+        for path in _parameter_paths(functions)
+        if path.startswith(prefix) and path[len(prefix) : len(prefix) + 1] in (".", "[")
+    )
     if not selected:
         raise ValueError(
             f"Patch {problem.cover.patch_ids[patch_index]!r} has no trainable inexact-array parameters."
@@ -443,45 +539,134 @@ def _merge_patch_candidate(
     return frozendict(current_subspace.reconstruct(candidate_subspace.initial))
 
 
+@final
+class _LocalPatchLoss(StrictModule, NonTrainableState):
+    """Local FunctionalSolver objective of one patch over its parameter subspace.
+
+    Holds the patch solver without its functions: its terms, collocation, and
+    enforcement are the objective's FIXED data, while the trained functions
+    reach it only through the kernel. Every evaluation binds the reconstructed
+    trial functions and evaluates the terms with the attempt's `loss` key at
+    the accepted local step.
+    """
+
+    solver: FunctionalSolver
+
+    def __init__(self, solver: FunctionalSolver, /):
+        self.solver = eqx.tree_at(lambda value: value.functions, solver, frozendict())
+
+    def __call__(
+        self, parameters: Any, held: ParameterSubspace, payload: None, keys: Any
+    ) -> tuple[Array, None]:
+        del payload
+        bound = eqx.tree_at(
+            lambda value: value.functions,
+            self.solver,
+            held.reconstruct(parameters),
+        )
+        return bound.loss(key=keys.attempt_key("loss"), step=keys.accepted_cursor), None
+
+
+@final
+class _FiniteCandidateOptaxRule(AbstractKernelUpdateRule):
+    """Optax local update accepted only when its candidate objective is finite.
+
+    The kernel already rejects a nonfinite value, gradient, candidate, or
+    candidate optimizer state; a local patch update also requires the objective
+    at the candidate (same payload and keys) to be finite.
+    """
+
+    rejection_commit_policy: ClassVar[tuple[str, ...]] = ()
+    optax_rule: OptaxUpdateRule
+    rule_id: str = eqx.field(static=True)
+
+    def __init__(self, optimizer: Optimizer, /):
+        self.optax_rule = OptaxUpdateRule(optimizer, rule_id=_LOCAL_RULE_ID)
+        self.rule_id = _LOCAL_RULE_ID
+
+    def init(self, parameters: Any, /) -> Any:
+        return self.optax_rule.init(parameters)
+
+    def propose(
+        self,
+        parameters: Any,
+        gradients: Any,
+        value: Array,
+        rule_state: Any,
+        context: KernelUpdateContext,
+        /,
+    ) -> tuple[Any, Any, Any, Array]:
+        candidate, candidate_state, rejection_state, accepted = self.optax_rule.propose(
+            parameters, gradients, value, rule_state, context
+        )
+        finite_candidate = jnp.isfinite(context.objective_value(candidate))
+        return candidate, candidate_state, rejection_state, accepted & finite_candidate
+
+
 def _solve_local(
     prepared: PreparedFunctionalDecomposition,
     functions: Mapping[str, DomainFunction],
-    optimizer_state: Any | None,
+    kernel_state: TrainingKernelState | None,
+    kernel_checkpoint_id: str | None,
     patch_index: int,
     *,
     inner_iterations: int,
     optim: Optimizer,
     seed: int,
-    start_step: int,
     jit: bool,
     trace_state: SchwarzTraceState | None = None,
-) -> tuple[frozendict[str, DomainFunction], Any, int]:
+    resumed: bool = False,
+) -> tuple[frozendict[str, DomainFunction], TrainingKernelState, str]:
+    """Run `inner_iterations` kernel attempts on one patch's parameter subspace.
+
+    Every attempt must be accepted (rejection budget 0): any rejection is a
+    nonfinite local update and raises `FloatingPointError`. A `resumed` kernel
+    state (one not produced by this run) is verified against the patch kernel.
+    """
     patch_id = prepared.problem.cover.patch_ids[patch_index]
+    root = jr.key(seed)
     local_solver = FunctionalSolver(
         functions=functions,
         terms=_terms_for_patch(prepared, patch_id, trace_state=trace_state),
-        collocation_key=jr.key(seed + patch_index),
+        collocation_key=derive_key(
+            root, _patch_address("local-collocation", patch_id, "collocation")
+        ),
     )
-    subspace = _patch_parameter_subspace(prepared, functions, patch_index)
-    kernel = FunctionalUpdateKernel.from_subspace(
-        local_solver,
-        optim,
-        subspace,
-        jit=jit,
+    tree = functional_training_tree(
+        functions,
+        subspace=_patch_parameter_subspace(prepared, functions, patch_index),
     )
-    state = (
-        kernel.initialize(functions)
-        if optimizer_state is None
-        else FunctionalUpdateState(functions, optimizer_state, start_step)
+    kernel = prepare_training_kernel(
+        tree,
+        (functional_kernel_objective(_LocalPatchLoss(local_solver)),),
+        TrainingKernelSpec(
+            _FiniteCandidateOptaxRule(optim),
+            context=f"functional decomposition patch {patch_id!r}",
+            rejection_budget=0,
+        ),
+        root_authority=FUNCTIONAL_ROOT_AUTHORITY,
     )
+    if kernel_state is None:
+        state = kernel.init(
+            tree, derive_key(root, _patch_address("local-training", patch_id, "root"))
+        )
+    elif resumed:
+        assert kernel_checkpoint_id is not None
+        state = resume_functional_kernel_state(kernel, kernel_state, kernel_checkpoint_id)
+    else:
+        state = kernel_state
     for _ in range(inner_iterations):
-        update_key = jr.fold_in(jr.key(seed + patch_index), state.step)
-        state, evidence = kernel.advance(state, key=update_key)
-        if not bool(jax.device_get(evidence.accepted)):
+        try:
+            state, _ = run_training_attempt(kernel, state, None, jit=jit)
+        except TrainingRejectionBudgetError as error:
             raise FloatingPointError(
                 f"Local update for patch {patch_id!r} was rejected as non-finite."
-            )
-    return state.functions, state.optimizer_state, state.step
+            ) from error
+    return (
+        frozendict(functional_tree_functions(kernel.tree(state))),
+        state,
+        kernel.checkpoint_id,
+    )
 
 
 def _solve_blocks(
@@ -500,8 +685,8 @@ def _solve_blocks(
     patch_count = len(prepared.problem.cover.patches)
     if state is None:
         functions = frozendict(prepared.solver.functions)
-        optimizer_states: list[Any | None] = [None for _ in range(patch_count)]
-        local_steps = [0 for _ in range(patch_count)]
+        kernel_states: list[TrainingKernelState | None] = [None] * patch_count
+        checkpoint_ids: list[str | None] = [None] * patch_count
         completed = 0
     else:
         expected = (
@@ -509,14 +694,39 @@ def _solve_blocks(
         )
         if state.strategy != expected:
             raise ValueError("Resume state strategy does not match the prepared plan.")
-        if len(state.optimizer_states) != patch_count:
-            raise ValueError("Resume state optimizer count does not match the cover.")
+        if len(state.kernel_states) != patch_count:
+            raise ValueError("Resume state kernel-state count does not match the cover.")
         if state.completed_sweeps > strategy.sweeps:
             raise ValueError("Resume state exceeds the planned number of sweeps.")
         functions = frozendict(state.functions)
-        optimizer_states = list(state.optimizer_states)
-        local_steps = list(state.local_steps)
+        kernel_states = list(state.kernel_states)
+        checkpoint_ids = list(state.kernel_checkpoint_ids)
         completed = state.completed_sweeps
+    # Kernel states handed in by the caller are verified at their first use.
+    unverified = {index for index, value in enumerate(kernel_states) if value is not None}
+
+    def local(
+        patch_index: int,
+        base: Mapping[str, DomainFunction],
+        trace: SchwarzTraceState | None,
+        /,
+    ) -> frozendict[str, DomainFunction]:
+        candidate, kernel_states[patch_index], checkpoint_ids[patch_index] = _solve_local(
+            prepared,
+            base,
+            kernel_states[patch_index],
+            checkpoint_ids[patch_index],
+            patch_index,
+            inner_iterations=strategy.inner_iterations,
+            optim=optim,
+            seed=seed,
+            jit=jit,
+            trace_state=trace,
+            resumed=patch_index in unverified,
+        )
+        unverified.discard(patch_index)
+        return candidate
+
     if isinstance(strategy, SchwarzDecompositionTraining):
         if state is None:
             trace_state = capture_schwarz_trace_state(
@@ -557,23 +767,10 @@ def _solve_blocks(
             break
         snapshot = frozendict(functions)
         if strategy.sweep == "jacobi":
-            candidates = []
-            for patch_index in active_indices:
-                candidate, optimizer_state, local_step = _solve_local(
-                    prepared,
-                    snapshot,
-                    optimizer_states[patch_index],
-                    patch_index,
-                    inner_iterations=strategy.inner_iterations,
-                    optim=optim,
-                    seed=seed,
-                    start_step=local_steps[patch_index],
-                    jit=jit,
-                    trace_state=trace_state,
-                )
-                candidates.append((patch_index, candidate))
-                optimizer_states[patch_index] = optimizer_state
-                local_steps[patch_index] = local_step
+            candidates = [
+                (patch_index, local(patch_index, snapshot, trace_state))
+                for patch_index in active_indices
+            ]
             merged = snapshot
             for patch_index, candidate in candidates:
                 merged = _merge_patch_candidate(
@@ -595,20 +792,7 @@ def _solve_blocks(
         elif strategy.sweep == "gauss-seidel":
             current = snapshot
             for patch_index in active_indices:
-                current, optimizer_state, local_step = _solve_local(
-                    prepared,
-                    current,
-                    optimizer_states[patch_index],
-                    patch_index,
-                    inner_iterations=strategy.inner_iterations,
-                    optim=optim,
-                    seed=seed,
-                    start_step=local_steps[patch_index],
-                    jit=jit,
-                    trace_state=trace_state,
-                )
-                optimizer_states[patch_index] = optimizer_state
-                local_steps[patch_index] = local_step
+                current = local(patch_index, current, trace_state)
                 if isinstance(strategy, SchwarzDecompositionTraining):
                     trace_state = capture_schwarz_trace_state(
                         prepared.problem,
@@ -634,21 +818,7 @@ def _solve_blocks(
                     if patch_id in active_ids
                 )
                 for patch_index in indices:
-                    candidate, optimizer_state, local_step = _solve_local(
-                        prepared,
-                        color_snapshot,
-                        optimizer_states[patch_index],
-                        patch_index,
-                        inner_iterations=strategy.inner_iterations,
-                        optim=optim,
-                        seed=seed,
-                        start_step=local_steps[patch_index],
-                        jit=jit,
-                        trace_state=trace_state,
-                    )
-                    candidates.append(candidate)
-                    optimizer_states[patch_index] = optimizer_state
-                    local_steps[patch_index] = local_step
+                    candidates.append(local(patch_index, color_snapshot, trace_state))
                 for patch_index, candidate in zip(indices, candidates, strict=True):
                     current = _merge_patch_candidate(
                         prepared,
@@ -680,7 +850,7 @@ def _solve_blocks(
                     IterationPhase.COMMIT,
                     FunctionalDecompositionIterationMetrics(
                         completed,
-                        tuple(local_steps),
+                        _local_steps(kernel_states),
                         defect,
                         jnp.asarray(jnp.nan, dtype=defect.dtype),
                     ),
@@ -702,8 +872,8 @@ def _solve_blocks(
     name = "schwarz" if isinstance(strategy, SchwarzDecompositionTraining) else "block"
     state = FunctionalDecompositionState(
         functions,
-        optimizer_states=tuple(optimizer_states),
-        local_steps=tuple(local_steps),
+        kernel_states=tuple(kernel_states),
+        kernel_checkpoint_ids=tuple(checkpoint_ids),
         completed_sweeps=completed,
         trace_state=trace_state,
         strategy=name,
@@ -729,6 +899,9 @@ def solve_functional_decomposition(
     """Execute one prepared native functional domain-decomposition problem."""
     if not isinstance(prepared, PreparedFunctionalDecomposition):
         raise TypeError("prepared must be a PreparedFunctionalDecomposition.")
+    require_parameter_roles(
+        prepared.solver.functions, context="solve_functional_decomposition"
+    )
     if session is not None and not isinstance(session, IterationSession):
         raise TypeError("session must be IterationSession or None.")
     strategy = prepared.plan.training

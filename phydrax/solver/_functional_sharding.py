@@ -18,7 +18,7 @@ import phydrax.axes as cx
 from .._execution_runtime import ExecutionGroup
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._trainable import NonTrainableState, place_array_leaves
+from .._trainable import NonTrainableState
 from ._functional_objective import _PreparedObjective
 
 
@@ -143,7 +143,25 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
         )
 
     def place_parameters(self, parameters: Any, /):
-        return place_array_leaves(parameters, self.replicated)
+        """Replicate every array of one PARAMETER or MODEL_STATE lane."""
+        return jax.tree.map(
+            lambda leaf: (
+                jax.device_put(leaf, self.replicated) if eqx.is_array(leaf) else leaf
+            ),
+            parameters,
+        )
+
+    def place_lanes(self, parameters: Any, model_state: Any, fixed: Any, /):
+        """Place `partition_parameters` lanes by role.
+
+        Parameters and model state are replicated on every device; fixed data
+        shards named sample axes and replicates its other arrays.
+        """
+        return (
+            self.place_parameters(parameters),
+            self.place_parameters(model_state),
+            self.place_tree(fixed),
+        )
 
     def place_prepared(self, prepared: _PreparedObjective, /) -> _PreparedObjective:
         if not isinstance(prepared, _PreparedObjective):

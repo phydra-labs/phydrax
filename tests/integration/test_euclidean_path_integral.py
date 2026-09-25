@@ -11,7 +11,7 @@ import phydrax as phx
 
 
 class _TrainableHarmonic(eqx.Module):
-    stiffness: jax.Array
+    stiffness: jax.Array = phx.parameter_field()
 
     def __call__(self, q, t):
         return 0.5 * self.stiffness * q[0] ** 2

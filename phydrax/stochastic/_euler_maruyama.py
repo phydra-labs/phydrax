@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ._linear_gaussian import degenerate_gaussian_log_prob
 from ._state_space import (
@@ -69,7 +70,7 @@ def _euler_maruyama_parameters(
     state_size: int,
     valid: Array,
 ) -> EulerMaruyamaParameters:
-    dtype = jnp.result_type(state, drift, coefficient, jnp.float64)
+    dtype = inexact_result_type(state, drift, coefficient)
     interval = interval.astype(dtype)
     state_flat = state.astype(dtype).reshape((state_size,))
     drift_flat = drift.astype(dtype).reshape((state_size,))

@@ -256,6 +256,34 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
             **kwargs,
         )
 
+    def with_cell(self, cell: PeriodicCell, /) -> "AtomisticSystemPlan":
+        """Return the same particle identity, topology, and site map in another cell.
+
+        The cell enters the system identity, so the result carries a regenerated
+        ``system_id``; an explicitly supplied identifier never transfers to a
+        different fixed cell.
+        """
+        if not isinstance(cell, PeriodicCell):
+            raise TypeError("cell must be a PeriodicCell.")
+        return AtomisticSystemPlan(
+            self.particle_ids,
+            self.atomic_numbers,
+            self.masses,
+            self.units,
+            atom_type_ids=self.atom_type_ids,
+            element_mask=self.element_mask,
+            charges=self.charges,
+            active_mask=self.active_mask,
+            mobile_mask=self.mobile_mask,
+            molecule_ids=self.molecule_ids,
+            region_ids=self.region_ids,
+            topology=self.topology,
+            cell=cell,
+            coordinate_map=self.coordinate_map,
+            name=self.name,
+            coordinate_dtype=self.coordinate_dtype,
+        )
+
     def prepare(self, /, *, numeric_version: str = "0") -> "PreparedAtomisticSystem":
         return PreparedAtomisticSystem(self, numeric_version=numeric_version)
 

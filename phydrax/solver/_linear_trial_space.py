@@ -10,14 +10,18 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
-from .._trainable import combine_trainable, partition_trainable
+from .._trainable import (
+    combine_parameters,
+    partition_parameters,
+    require_parameter_roles,
+)
 from ..domain._model_function import ConcatenatedModelEvaluator
 from ..equations.trefftz import trial_space_certificate
 from ..integration import FixedIntegration
@@ -33,6 +37,15 @@ from ..terms import ResidualPenalty
 from ._functional_residual import (
     materialize_prepared_residual_terms,
     prepared_term_residual_vector,
+)
+from ._functional_run import require_empty_model_state
+
+
+_EVALUATION_ADDRESS = SampleAddress(
+    "functional", "linear-trial-space", target="objective", role="evaluation"
+)
+_SAMPLING_ADDRESS = SampleAddress(
+    "functional", "linear-trial-space", target="objective", role="sampling"
 )
 
 
@@ -90,6 +103,8 @@ def _validate_solver(solver) -> None:
         raise ValueError("Linear trial-space solves do not accept hard enforcement.")
     if not solver.terms:
         raise ValueError("Linear trial-space solves require at least one training term.")
+    require_parameter_roles(solver.functions, context="solve_linear_trial_space")
+    require_empty_model_state(solver.functions, context="solve_linear_trial_space")
     for term in solver.terms:
         if not isinstance(term, ResidualPenalty):
             raise TypeError(
@@ -126,19 +141,18 @@ def solve_linear_trial_space(
         if not math.isfinite(affine_tolerance_) or affine_tolerance_ < 0.0:
             raise ValueError("affine_tolerance must be finite and nonnegative.")
 
-    params, non_trainable = partition_trainable(solver.functions)
+    params, model_state, fixed = partition_parameters(solver.functions)
     flat_params, unravel = ravel_pytree(params)
     if flat_params.size == 0:
         raise ValueError("Linear trial-space solver found no trainable coefficients.")
     if jnp.iscomplexobj(flat_params):
         raise TypeError("Linear trial-space coefficients must be real-valued.")
 
-    evaluation_key, sampling_key = jr.split(key)
     prepared = solver.objective.prepare_training(
         range(len(solver.terms)),
         scale=1.0,
-        evaluation_key=evaluation_key,
-        sampling_key=sampling_key,
+        evaluation_key=derive_key(key, _EVALUATION_ADDRESS),
+        sampling_key=derive_key(key, _SAMPLING_ADDRESS),
         iteration=jnp.asarray(0, dtype=jnp.int32),
     )
     residual_terms = materialize_prepared_residual_terms(prepared, require_all=True)
@@ -152,7 +166,7 @@ def solve_linear_trial_space(
         pieces = tuple(
             prepared_term_residual_vector(
                 current,
-                non_trainable,
+                fixed,
                 solver.enforcement,
                 term,
                 iteration=prepared.iteration,
@@ -205,7 +219,7 @@ def solve_linear_trial_space(
     )
     linear_result = solve_linear(problem, -offset, policy=policy)
     solved_params = unravel(jnp.asarray(linear_result.value))
-    updated_functions = combine_trainable(solved_params, non_trainable)
+    updated_functions = combine_parameters(solved_params, model_state, fixed)
     updated_solver = eqx.tree_at(lambda value: value.functions, solver, updated_functions)
     initial_residual = jnp.linalg.norm(residual_vector(flat_params))
     final_residual = jnp.linalg.norm(residual_vector(jnp.asarray(linear_result.value)))

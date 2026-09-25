@@ -577,10 +577,6 @@ def to_openmm_system(bundle: AtomisticInterchangeBundle, /):
         for term, coefficient in zip(terms, coefficients, strict=True)
         if isinstance(term, LennardJonesPotential)
     ]
-    if lennard_jones and system_plan.cell is None:
-        warnings.append(
-            "Finite-cutoff PhydraX Lennard-Jones is exported through OpenMM NoCutoff."
-        )
     electrostatic = [
         (term, coefficient)
         for term, coefficient in zip(terms, coefficients, strict=True)

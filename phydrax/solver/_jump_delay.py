@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..stochastic import JUMP_SUCCESS, JumpEventBatch, WienerRealization
 from ._delay import DelayDifferentialProblem, DelayHistory, DelayValues, DerivativeDelay
@@ -116,7 +117,7 @@ class _RestartHistory(StrictModule):
         del args
         tolerance = (
             100.0
-            * jnp.finfo(jnp.result_type(time, jnp.float64)).eps
+            * jnp.finfo(inexact_result_type(time)).eps
             * jnp.maximum(1.0, jnp.abs(self.restart_time))
         )
         return jax.lax.cond(

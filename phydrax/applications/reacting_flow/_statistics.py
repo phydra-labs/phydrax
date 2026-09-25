@@ -12,7 +12,6 @@ from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
 from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
@@ -37,7 +36,7 @@ class ReactiveClosureTargets(StrictModule):
     target_id: str = eqx.field(static=True)
 
 
-class ReactiveClosureTargetPlan(StrictModule, NonTrainableState):
+class ReactiveClosureTargetPlan(StrictModule):
     system: (
         HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem
     )
@@ -179,7 +178,7 @@ class ReactiveFlowStatistics(StrictModule):
     statistics_id: str = eqx.field(static=True)
 
 
-class ReactiveFlowStatisticsPlan(StrictModule, NonTrainableState):
+class ReactiveFlowStatisticsPlan(StrictModule):
     """Volume and Favre statistics retaining species/element/energy structure."""
 
     system: (

@@ -19,6 +19,7 @@ from jaxtyping import Array
 
 from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import localize_numerical_event
@@ -712,7 +713,7 @@ def initialize_neural_network(
                 )
         cells.append(value)
     groups = tuple(_stack([cells[i] for i in group.indices]) for group in runtime.groups)
-    dtype = jnp.result_type(*[jax.tree.leaves(value)[0] for value in cells], jnp.float64)
+    dtype = inexact_result_type(*[jax.tree.leaves(value)[0] for value in cells])
     channels = tuple(
         initialize_stochastic_channels(
             binding.runtime, counts, jax.random.fold_in(key, index)

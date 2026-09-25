@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic._jump import JumpProcess
 
@@ -33,7 +34,7 @@ def _finite_vector(value: ArrayLike, owner: str, /) -> Array:
         raise ValueError(f"{owner} must be a nonempty rank-one vector.")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
-    array = array.astype(jnp.result_type(array, jnp.float64))
+    array = array.astype(inexact_result_type(array))
     if not bool(jnp.all(jnp.isfinite(array))):
         raise ValueError(f"{owner} must be finite.")
     return array
@@ -45,7 +46,7 @@ def _finite_matrix(value: ArrayLike, owner: str, /) -> Array:
         raise ValueError(f"{owner} must be a nonempty rank-two matrix.")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
-    array = array.astype(jnp.result_type(array, jnp.float64))
+    array = array.astype(inexact_result_type(array))
     if not bool(jnp.all(jnp.isfinite(array))):
         raise ValueError(f"{owner} must be finite.")
     return array
@@ -361,7 +362,7 @@ def hawkes_intensity_path(
     times = jnp.asarray(event_times)
     if times.ndim != 1 or jnp.issubdtype(times.dtype, jnp.complexfloating):
         raise TypeError("event_times must be a real rank-one vector.")
-    times = times.astype(jnp.result_type(times, jnp.float64))
+    times = times.astype(inexact_result_type(times))
     if not bool(jnp.all(jnp.isfinite(times))):
         raise ValueError("event_times must be finite.")
     channels = jnp.asarray(event_channels)

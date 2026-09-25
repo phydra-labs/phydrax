@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 
 
@@ -37,7 +38,7 @@ class TimeGrid(StrictModule):
             raise ValueError("TimeGrid times must be finite.")
         if np.any(np.diff(host) <= 0.0):
             raise ValueError("TimeGrid times must be strictly increasing.")
-        self.times = values.astype(jnp.result_type(values, jnp.float64))
+        self.times = values.astype(inexact_result_type(values))
         self.time_id = _identifier(time_id, "TimeGrid time_id")
 
     @property

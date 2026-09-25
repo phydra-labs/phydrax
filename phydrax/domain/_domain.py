@@ -4,11 +4,14 @@
 
 import abc
 from collections.abc import Callable, Mapping
+from math import prod
 from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
 
+from .._model import ModelPorts, PortMapping, ValuePort
 from .._strict import StrictModule
+from ..axes import AxisKey
 from ._coordinate import CoordinateSpec
 
 
@@ -51,6 +54,43 @@ class Domain(StrictModule):
         """Return the static coordinate schema bound to ``label``."""
         factor = self.factor(label)
         return factor.coordinate_specs[factor.labels.index(label)]
+
+    def value_port(self, label: str, /) -> ValuePort:
+        """Return the coordinate `ValuePort` of one label.
+
+        Each port is label-scoped: `semantic_id` is the label, a scalar
+        coordinate has the single component ID `label`, and an event of shape
+        `s` has components `f"{label}[{i}]"` in row-major order. Event axis `j`
+        has key `AxisKey(f"domain-label:{label}", str(j))`, so equal coordinate
+        schemas under different labels never share a port. Coordinates are
+        points, not vector components, so `variance` is `"neutral"`, and
+        `representation` is `"domain-coordinates"`. Domains declare no coordinate
+        units, space, frame, or normalization, so those fields are undeclared.
+        PyTree and graph coordinates have no dense event and raise `ValueError`.
+        """
+        spec = self.coordinate(label)
+        shape = spec.event_shape
+        if shape is None:
+            raise ValueError(
+                f"Domain label {label!r} declares a {spec.kind} coordinate "
+                "without a dense event; it has no ValuePort view."
+            )
+        scope = f"domain-label:{label}"
+        return ValuePort(
+            label,
+            event_shape=shape,
+            component_ids=(
+                (label,)
+                if not shape
+                else tuple(f"{label}[{i}]" for i in range(prod(shape)))
+            ),
+            representation="domain-coordinates",
+            axis_keys=tuple(AxisKey(scope, str(axis)) for axis in range(len(shape))),
+        )
+
+    def value_ports(self) -> tuple[ValuePort, ...]:
+        """Return one coordinate `ValuePort` per label (see `value_port`), in `labels` order."""
+        return tuple(self.value_port(label) for label in self.labels)
 
     def factor(self, label: str, /) -> "JointFactor":
         """Return the complete joint factor owning ``label``."""
@@ -160,7 +200,7 @@ class Domain(StrictModule):
             FunctionBinding,
             PointwiseEvaluator,
         )
-        from ._function import DomainFunction
+        from ._function import _reject_model_state, DomainFunction
 
         if binding is not None and not isinstance(binding, FunctionBinding):
             raise TypeError("binding must be a FunctionBinding or None.")
@@ -183,6 +223,7 @@ class Domain(StrictModule):
                 evaluator = function
             else:
                 evaluator = PointwiseEvaluator(function, binding=binding)
+            _reject_model_state(evaluator, context="Domain.Function")
             return DomainFunction(domain=self, deps=deps, func=evaluator)
 
         return decorator
@@ -191,14 +232,42 @@ class Domain(StrictModule):
         self,
         *deps: str,
         binding: "ModelBinding | None" = None,
+        port_mapping: PortMapping | None = None,
     ):
-        """Bind a model with an explicit domain input contract."""
+        """Bind a model with an explicit domain input contract.
+
+        A model declaring intrinsic ports (a `PortProvider`, such as a fitted ML
+        executable) requires `port_mapping`, binding each model input port to
+        the `value_port` of one dependency label. Dependencies are packed in
+        `deps` order and never repacked, so the labels mapped from the model's
+        ordered input ports must be exactly `deps`. The bound field publishes the
+        model's output ports unchanged, so `port_mapping` maps inputs only. The
+        resulting `PortBindingEvidence` is the field's `port_binding`. Models
+        without intrinsic ports take no mapping.
+        """
         from .._model import ModelBinding, ModelEvaluator, ModelMetadataProvider
-        from ._function import DomainFunction
+        from .._model._ports import (
+            bind_model_ports,
+            intrinsic_model_ports,
+            require_mapped_order,
+        )
+        from ._function import (
+            _reject_model_state,
+            DomainFunction,
+            PORT_BINDING_METADATA_KEY,
+        )
         from ._model_function import ConcatenatedModelEvaluator
 
         if binding is not None and not isinstance(binding, ModelBinding):
             raise TypeError("binding must be a ModelBinding or None.")
+        if port_mapping is not None:
+            if not isinstance(port_mapping, PortMapping):
+                raise TypeError("port_mapping must be a PortMapping or None.")
+            if port_mapping.outputs:
+                raise ValueError(
+                    "Domain.Model publishes the model's output ports unchanged; "
+                    "port_mapping binds input ports only."
+                )
 
         deps_ = self.labels if not deps else deps
         for dep in deps_:
@@ -206,8 +275,11 @@ class Domain(StrictModule):
                 raise ValueError(
                     f"Unknown dependency label {dep!r}; expected subset of {self.labels}."
                 )
+        if binding is not None:
+            binding.require_dependencies(tuple(deps_))
 
         def decorator(model):
+            _reject_model_state(model, context="Domain.Model")
             if isinstance(model, ModelEvaluator):
                 declared_binding = model.input_binding()
                 if binding is not None and binding != declared_binding:
@@ -222,13 +294,45 @@ class Domain(StrictModule):
                     )
                 resolved_binding = binding
 
-            metadata: Mapping[str, Any] = {}
+            metadata: dict[str, Any] = {}
             if isinstance(model, ModelMetadataProvider):
-                metadata = model.model_metadata()
-                if not isinstance(metadata, Mapping):
+                declared = model.model_metadata()
+                if not isinstance(declared, Mapping):
                     raise TypeError("Model metadata providers must return a mapping.")
-                if any(not isinstance(name, str) or not name for name in metadata):
+                if any(not isinstance(name, str) or not name for name in declared):
                     raise ValueError("Model metadata keys must be nonempty strings.")
+                if PORT_BINDING_METADATA_KEY in declared:
+                    raise ValueError(
+                        f"Model metadata key {PORT_BINDING_METADATA_KEY!r} is reserved "
+                        "for the domain port binding."
+                    )
+                metadata.update(declared)
+
+            site = f"Domain.Model{tuple(deps_)!r}"
+            model_ports = intrinsic_model_ports(model)
+            if model_ports is not None:
+                owner_inputs = tuple(self.value_port(dep) for dep in deps_)
+                model_outputs = model_ports.outputs
+                mapping = (
+                    None
+                    if port_mapping is None
+                    else PortMapping(
+                        inputs=port_mapping.inputs,
+                        outputs=[(port.port_id, port.port_id) for port in model_outputs],
+                    )
+                )
+                owner = ModelPorts(inputs=owner_inputs, outputs=model_outputs)
+            else:
+                mapping, owner = port_mapping, ModelPorts(inputs=(), outputs=())
+            evidence = bind_model_ports(model, owner, mapping, site=site)
+            if evidence is not None:
+                require_mapped_order(
+                    evidence,
+                    "input",
+                    tuple(port.port_id for port in owner.inputs),
+                    site=site,
+                )
+                metadata[PORT_BINDING_METADATA_KEY] = evidence
 
             return DomainFunction(
                 domain=self,

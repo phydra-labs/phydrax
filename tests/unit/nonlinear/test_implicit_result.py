@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 import phydrax.linalg as la
 import phydrax.nonlinear as nl
 
@@ -231,13 +232,52 @@ def test_implicit_root_derivative_policy_defaults_adjoint_to_tangent():
 def test_implicit_root_requires_tangent_policy_for_non_newton_method():
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
-        problem_id="implicit-fixed-point-policy",
-    )
-    method = nl.NonlinearRichardson(
-        nl.FunctionNonlinearUpdate(lambda state, target: target / state)
+        problem_id="implicit-quasi-newton-policy",
     )
 
     with pytest.raises(ValueError, match="tangent linear policy is required"):
+        nl.implicit_root_result(
+            problem,
+            jnp.asarray(1.0),
+            method=nl.Broyden(),
+            termination=_termination(),
+            args=jnp.asarray(2.0),
+        )
+
+
+@pytest.mark.parametrize(
+    "method",
+    (
+        nl.NonlinearRichardson(
+            nl.FunctionNonlinearUpdate(lambda state, target: target / state)
+        ),
+        nl.NonlinearGMRES(
+            nl.FunctionNonlinearUpdate(lambda state, target: target / state)
+        ),
+    ),
+)
+def test_implicit_root_refuses_method_without_implicit_capability(method):
+    problem = nl.NonlinearSystemProblem(
+        lambda state, target: state**2 - target,
+        problem_id="implicit-unsupported-method",
+    )
+    dense = la.LinearSolvePolicy(la.DenseLU())
+    policy = nl.ImplicitRootDerivativePolicy(
+        tangent_linear_policy=dense,
+        adjoint_linear_policy=dense,
+    )
+
+    assert not method.capabilities.implicit_differentiation
+    with pytest.raises(ValueError, match="does not support implicit root"):
+        nl.implicit_root_result(
+            problem,
+            jnp.asarray(1.0),
+            method=method,
+            termination=_termination(),
+            derivative_policy=policy,
+            args=jnp.asarray(2.0),
+        )
+    with pytest.raises(ValueError, match="does not support implicit root"):
         nl.implicit_root_result(
             problem,
             jnp.asarray(1.0),
@@ -486,3 +526,58 @@ def test_failed_implicit_setup_root_preserves_accepted_state_and_status():
         nl.implicit_root(
             problem, initial, method=method, termination=termination, args=history
         )
+
+
+class _NetworkResidual(eqx.Module):
+    network: eqx.Module
+
+    def __call__(self, state, target):
+        return state + 0.1 * self.network(state, key=jax.random.key(3)) - target
+
+
+def _network(activation, *, dropout=0.0):
+    return phx.nn.models.MLP(
+        in_size=2,
+        out_size=2,
+        width_size=4,
+        depth=1,
+        activation=activation,
+        dropout=dropout,
+        key=jax.random.key(0),
+    )
+
+
+def _implicit(residual):
+    return nl.implicit_root_result(
+        nl.NonlinearSystemProblem(residual),
+        jnp.zeros(2),
+        termination=_termination(),
+        args=jnp.asarray([0.5, -0.25]),
+    )
+
+
+def test_implicit_root_refuses_components_without_classical_c1_regularity():
+    with pytest.raises(ValueError, match="implicit-requires-c1"):
+        _implicit(_NetworkResidual(_network(jax.nn.relu)))
+
+    result = _implicit(_NetworkResidual(_network(jnp.tanh)))
+    assert bool(result.successful)
+    assert result.component_evidence == ("residual.network:deterministic",)
+
+
+def test_implicit_root_requires_the_inference_state_of_dropout_components():
+    residual = _NetworkResidual(_network(jnp.tanh, dropout=0.25))
+    with pytest.raises(ValueError, match="inference-state-unbound"):
+        _implicit(residual)
+
+    result = _implicit(phx.nn.layers.inference_mode(residual))
+    assert bool(result.successful)
+
+
+def test_opaque_residual_closures_record_undeclared_determinism():
+    result = _implicit(lambda state, target: state + state**3 - target)
+
+    assert result.component_evidence == (
+        "residual:determinism-undeclared",
+        "residual:regularity-undeclared",
+    )

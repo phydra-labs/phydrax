@@ -750,8 +750,12 @@ def _propose_nested(
                     break
 
     if plan.proposal.ellipsoid and not evaluator.exhausted and not evaluator.invalid:
-        if bool(jnp.any(proposal_state.ellipsoid_active)):
-            counts["ellipsoid_attempts"] = 1
+        counts["ellipsoid_attempts"] = 1
+        if not bool(jnp.any(proposal_state.ellipsoid_active)):
+            # A requested ellipsoid kernel without fitted geometry is a failed
+            # proposal; only the explicit rejection fallback may recover it.
+            failed = True
+        else:
             bounds = EllipsoidalNestedBounds(
                 centers=proposal_state.ellipsoid_centers,
                 factors=proposal_state.ellipsoid_factors,
@@ -805,8 +809,10 @@ def _propose_nested(
                     accepted_states.append((position, log_prior, log_likelihood))
 
     if plan.proposal.learned_flow and not evaluator.exhausted and not evaluator.invalid:
-        if bool(proposal_state.flow_active):
-            counts["flow_attempts"] = 1
+        counts["flow_attempts"] = 1
+        if not bool(proposal_state.flow_active):
+            failed = True
+        else:
             flow_key = derive_key(
                 current_state.root_key,
                 _PREPARED_FLOW,

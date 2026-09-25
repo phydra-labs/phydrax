@@ -6,6 +6,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax as phx
+from phydrax import BranchDifferentiationPolicy
+from phydrax._model._ports import PortMapping
 from phydrax.closure_data import (
     LearnedClosureBindingPlan,
     LearnedStressBindingPlan,
@@ -131,6 +134,7 @@ def _prepared(
     policy="signed",
     fraction=None,
     predictor=_predict_stress,
+    port_mapping=None,
 ):
     resolved_filter = _resolved_filter()
     provenance = LESParameterProvenance(
@@ -157,6 +161,7 @@ def _prepared(
         model_artifact_id="stress-model-sha256",
         target_id="deviatoric-specific-stress-target",
         output_units="(m/s)^2",
+        port_mapping=port_mapping,
     )
     return prepared
 
@@ -173,7 +178,7 @@ def test_signed_stress_validates_contract_and_preserves_backscatter():
     )
     np.testing.assert_allclose(result.stress, jnp.swapaxes(result.stress, -1, -2))
     assert not bool(result.evidence.correction_applied)
-    assert result.evidence.differentiation_semantics == "smooth_discrete"
+    assert result.evidence.differentiation_semantics is BranchDifferentiationPolicy.SMOOTH
     assert result.evidence.target_id == prepared.plan.output_contract.target_id
     assert result.evidence.filter_id == prepared.plan.resolved_filter.filter_id
     assert result.evidence.valid
@@ -187,7 +192,10 @@ def test_dissipative_projection_removes_only_negative_local_transfer():
     assert bool(result.evidence.correction_applied)
     assert bool(result.evidence.correction_active[0])
     assert not bool(result.evidence.correction_active[1])
-    assert result.evidence.differentiation_semantics == "branchwise"
+    assert (
+        result.evidence.differentiation_semantics
+        is BranchDifferentiationPolicy.BRANCHWISE
+    )
     np.testing.assert_allclose(result.evidence.selected_backscatter_transfer, 0.0)
 
 
@@ -376,6 +384,57 @@ def test_prepared_binding_is_jittable_and_has_a_finite_jvp():
     assert jnp.all(jnp.isfinite(tangent))
 
 
+def test_stress_result_carries_header_contract_and_identities():
+    prepared = _prepared()
+    result = prepared(_FEATURES, _STRAIN)
+    dissipative = _prepared(policy="dissipative")(_FEATURES, _STRAIN)
+
+    np.testing.assert_array_equal(result.header.eligible, (True, True))
+    np.testing.assert_array_equal(result.header.reason_bits, (0, 0))
+    assert bool(jnp.all(result.header.margin >= 0.0))
+    assert result.header.evidence_id == prepared.prepared_id
+    assert result.header.model_id == dissipative.header.model_id
+    assert result.header.model_id != result.header.evidence_id
+    assert result.derivative_contract.conditions == ()
+    assert dissipative.derivative_contract.conditions == ("executed-branch",)
+    np.testing.assert_array_equal(result.derivative_valid, (True, True))
+
+
+def _transfer_tangent(prepared, features):
+    return jax.jvp(
+        lambda values: prepared(values, _STRAIN).local_transfer,
+        (features,),
+        (jnp.ones_like(features),),
+    )
+
+
+def test_dissipative_lane_on_zero_transfer_boundary_has_poisoned_derivative():
+    # Lane 0 predicts a pure shear stress orthogonal to the strain (zero
+    # transfer, the dissipative clip boundary); lane 1 is clipped backscatter.
+    features = jnp.asarray(((1.0, 3.0), (3.0, 2.0)), dtype=jnp.float32)
+    prepared = _prepared(policy="dissipative")
+    result = prepared(features, _STRAIN)
+
+    np.testing.assert_array_equal(result.derivative_valid, (False, True))
+    np.testing.assert_allclose(result.local_transfer, (0.0, 0.0), atol=1e-6)
+    np.testing.assert_allclose(result.stress[0, 0, 1], 1.0)
+    primal, tangent = _transfer_tangent(prepared, features)
+    np.testing.assert_allclose(primal, result.local_transfer)
+    assert bool(jnp.isnan(tangent[0]))
+    assert bool(jnp.isfinite(tangent[1]))
+
+
+def test_bounded_backscatter_on_the_cap_poisons_only_backscatter_lanes():
+    prepared = _prepared(policy="bounded_backscatter", fraction=1.0)
+    result = prepared(_FEATURES, _STRAIN)
+
+    np.testing.assert_allclose(result.local_transfer, (-2.0, 2.0))
+    np.testing.assert_array_equal(result.derivative_valid, (False, True))
+    _, tangent = _transfer_tangent(prepared, _FEATURES)
+    assert bool(jnp.isnan(tangent[0]))
+    assert bool(jnp.isfinite(tangent[1]))
+
+
 def test_existing_generic_binding_contract_remains_unchanged():
     predictor = lambda values, args: values if args is None else args * values
     binding = LearnedClosureBindingPlan(
@@ -390,4 +449,102 @@ def test_existing_generic_binding_contract_remains_unchanged():
 
     assert binding.predictor is predictor
     assert binding.deployment_kind == "conservative_face"
-    assert binding.differentiability == "smooth_discrete"
+    assert binding.differentiability is BranchDifferentiationPolicy.SMOOTH
+
+
+def _fitted_stress_model(feature_port, stress_port):
+    features = jnp.asarray(
+        np.random.default_rng(0).normal(size=(16, 2)), dtype=jnp.float32
+    )
+    a, b = features[:, 0], features[:, 1]
+    zero = jnp.zeros_like(a)
+    targets = jnp.stack((a, b, zero, b, -a, zero, zero, zero, zero), axis=-1).reshape(
+        16, 3, 3
+    )
+    return phx.ml.fit(
+        phx.ml.linear.RidgeRecipe(1e-3),
+        features,
+        targets,
+        feature_schema=phx.ml.FeatureSchema.from_ports((feature_port,)),
+        target_schema=phx.ml.TargetSchema.from_port(stress_port),
+    ).model
+
+
+def _owner_ports():
+    return (
+        _feature_schema().value_port(),
+        _output_contract(_resolved_filter()).value_port(),
+    )
+
+
+def test_fitted_predictor_binds_to_stress_owner_ports_through_explicit_mapping():
+    feature_port, stress_port = _owner_ports()
+    model = _fitted_stress_model(feature_port, stress_port)
+    mapping = PortMapping(
+        inputs=((feature_port.port_id, feature_port.port_id),),
+        outputs=((stress_port.port_id, stress_port.port_id),),
+    )
+
+    prepared = _prepared(predictor=model, port_mapping=mapping)
+
+    evidence = prepared.port_binding
+    assert evidence.inputs == ((feature_port.port_id, feature_port.port_id),)
+    assert evidence.outputs == ((stress_port.port_id, stress_port.port_id),)
+    assert evidence.dimensions_verified
+    assert _prepared().port_binding is None
+
+
+def test_stress_binding_requires_mapping_exactly_for_port_declaring_predictors():
+    feature_port, stress_port = _owner_ports()
+    model = _fitted_stress_model(feature_port, stress_port)
+    mapping = PortMapping(
+        inputs=((feature_port.port_id, feature_port.port_id),),
+        outputs=((stress_port.port_id, stress_port.port_id),),
+    )
+
+    with pytest.raises(ValueError, match="requires an explicit port_mapping"):
+        _prepared(predictor=model)
+    with pytest.raises(ValueError, match="declares no model ports"):
+        _prepared(port_mapping=mapping)
+    crossed = PortMapping(
+        inputs=((feature_port.port_id, stress_port.port_id),),
+        outputs=((stress_port.port_id, stress_port.port_id),),
+    )
+    with pytest.raises(ValueError, match="unknown owner input ports"):
+        _prepared(predictor=model, port_mapping=crossed)
+
+
+def test_stress_binding_rejects_predictor_with_mismatched_feature_dimensions():
+    feature_port, stress_port = _owner_ports()
+    velocity_features = LearnedStressFeatureSchema(
+        name="resolved-gradient",
+        component_names=("s_xx", "s_xy"),
+        component_units=("m/s", "m/s"),
+        shape=(2, 2),
+        dtype=jnp.float32,
+        flow_schema_id="flow-schema",
+    ).value_port()
+    model = _fitted_stress_model(velocity_features, stress_port)
+    mapping = PortMapping(
+        inputs=((velocity_features.port_id, feature_port.port_id),),
+        outputs=((stress_port.port_id, stress_port.port_id),),
+    )
+
+    with pytest.raises(ValueError, match="dimensions mismatch"):
+        _prepared(predictor=model, port_mapping=mapping)
+
+
+def test_generic_closure_binding_rejects_port_declaring_predictors():
+    feature_port, stress_port = _owner_ports()
+    model = _fitted_stress_model(feature_port, stress_port)
+
+    with pytest.raises(ValueError, match="declare no owner value ports"):
+        LearnedClosureBindingPlan(
+            model,
+            deployment_kind="conservative_face",
+            schema_id="schema",
+            input_component_names=("rho",),
+            output_component_names=("rho",),
+            model_artifact_id="model",
+            normalizer_provenance_id="normalizer",
+        )

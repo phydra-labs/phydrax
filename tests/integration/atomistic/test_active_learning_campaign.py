@@ -140,10 +140,20 @@ def test_campaign_labels_retrains_qualifies_and_promotes():
     assert bool(result.successful & result.promoted)
     assert result.state.round_index == 1
     assert len(result.state.labels.records) == 3
-    assert result.state.labels.revision.parent_digest == labels.revision.content_digest
+    lineage = result.state.labels.lineage
+    assert lineage.revision_id == result.state.labels.revision.revision_id
+    assert lineage.parent_revision_id == labels.revision.revision_id
+    assert lineage.parent_lineage_id == labels.lineage.lineage_id
+    assert labels.lineage.parent_lineage_id is None
+    assert result.state.labels.revision.semantic_id == labels.revision.semantic_id
     assert result.state.committee is not None
     assert result.lifecycle.run.status == "completed"
     assert len(result.lifecycle.models) == 2
+    assert len({model.numeric_revision_id for model in result.lifecycle.models}) == 2
+    assert all(
+        result.state.labels.label_set_id in model.association_ids
+        for model in result.lifecycle.models
+    )
     assert (
         result.lifecycle.run.numeric_revision_id
         == result.state.labels.revision.revision_id

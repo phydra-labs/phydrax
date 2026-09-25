@@ -447,7 +447,17 @@ reference lineage. Full targets preserve trace; deviatoric targets remove it exp
 `LearnedStressBindingPlan` is an artifact-bound constant-density specific-deviatoric
 stress contract. Feature layout/dtype/units/flow schema, output, target, filter,
 discretization, regime, provenance, model artifact, and train-only normalizer IDs
-must agree.
+must agree. `plan.prepare(..., port_mapping=...)` binds a predictor that declares
+model ports (for example a `phx.ml.fit` model trained with
+`FeatureSchema.from_ports((feature_schema.value_port(),))` and
+`TargetSchema.from_port(output_contract.value_port())`) to those two owner ports;
+the mapping is required exactly for such predictors, and the resulting
+`PortBindingEvidence` is `PreparedLearnedStressBinding.port_binding`.
+`LearnedClosureBindingPlan` face-correction and spectral-drift ABIs declare no
+owner value ports and reject port-declaring predictors. The plan is a frozen
+deployment artifact; `as_trainable_binding()` explicitly returns a new
+`TrainableLearnedClosureBinding` whose predictor trains, with the artifact's ABI,
+schema, normalizer provenance, and `binding_id` unchanged.
 
 `PeriodicLearnedStressPlan` builds the fixed nine-component velocity-gradient ABI,
 evaluates the bound stress, and owns Fourier divergence, Leray projection, momentum,
@@ -672,6 +682,11 @@ Its model emits an additional unconstrained face rate; the MAC pressure
 projection remains authoritative. A transition distinguishes a numerically
 usable coarse training candidate from a physically converged accepted result.
 Normal deployment admits only physical convergence.
+
+Both transitions bind their model through owner ports derived from their own
+layouts: the prepared plan's feature and stress ports for the periodic stress
+transition, and the state point and tangent ports for the MAC rate. A model
+declaring ports needs the transition's explicit `port_mapping` in that order.
 
 `ProgressiveLinearRefinementPolicy` changes the native Krylov iteration budget
 after fixed-validation plateaus. Initial support requires algorithmic

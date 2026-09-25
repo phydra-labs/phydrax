@@ -331,7 +331,10 @@ class _AbstractPressureDependentPlan(AbstractImplicitMPMConstitutivePlan):
         )
 
 
-class DruckerPragerMPMConstitutivePlan(_AbstractPressureDependentPlan):
+class DruckerPragerMPMConstitutivePlan(
+    _AbstractPressureDependentPlan,
+    NonTrainableState,
+):
     def __init__(self):
         self.dimension = 3
         self.kinematics = "three_dimensional"
@@ -445,7 +448,7 @@ class DruckerPragerMPMConstitutivePlan(_AbstractPressureDependentPlan):
         )
 
 
-class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan):
+class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan, NonTrainableState):
     def __init__(self):
         self.dimension = 3
         self.kinematics = "three_dimensional"
@@ -560,7 +563,10 @@ class MohrCoulombMPMConstitutivePlan(_AbstractPressureDependentPlan):
         )
 
 
-class ModifiedCamClayMPMConstitutivePlan(_AbstractPressureDependentPlan):
+class ModifiedCamClayMPMConstitutivePlan(
+    _AbstractPressureDependentPlan,
+    NonTrainableState,
+):
     initial_preconsolidation_pressure: float = eqx.field(static=True)
     initial_void_ratio: float = eqx.field(static=True)
     root: LocalRootPlan

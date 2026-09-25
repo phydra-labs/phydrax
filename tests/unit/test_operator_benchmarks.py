@@ -337,7 +337,8 @@ def test_function_frame_benchmark_respects_projection_capability_boundary():
     assert all(
         report.runtime_accepted for report in architecture.capability_reports(scenario)
     )
-    assert model.source_frame.rank <= int(jnp.min(encoded.report.sample_count))
+    (source,) = model.sources
+    assert source.frame.rank <= int(jnp.min(encoded.reports[source.name].sample_count))
     assert prediction.shape == (
         *scenario.train_batch.case_shape,
         *higher_resolution.batch.require_single_query().sample_shape,

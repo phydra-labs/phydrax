@@ -32,20 +32,20 @@ from ._iterative._types import (
 class OptimistixMethod(AbstractMinimizationMethod):
     """Explicit adapter for a verified public Optimistix minimizer instance."""
 
-    solver: optx.AbstractMinimizer
+    solver: optx.AbstractMinimiser
     adjoint: optx.AbstractAdjoint
     options: frozendict[str, Any]
 
     def __init__(
         self,
-        solver: optx.AbstractMinimizer,
+        solver: optx.AbstractMinimiser,
         /,
         *,
         adjoint: optx.AbstractAdjoint | None = None,
         options: Mapping[str, Any] | None = None,
     ):
-        if not isinstance(solver, optx.AbstractMinimizer):
-            raise TypeError("solver must be an optimistix.AbstractMinimizer.")
+        if not isinstance(solver, optx.AbstractMinimiser):
+            raise TypeError("solver must be an optimistix.AbstractMinimiser.")
         adjoint_ = optx.ImplicitAdjoint() if adjoint is None else adjoint
         if not isinstance(adjoint_, optx.AbstractAdjoint):
             raise TypeError("adjoint must be an optimistix.AbstractAdjoint or None.")
@@ -128,7 +128,7 @@ class OptimistixMethod(AbstractMinimizationMethod):
             )
 
         def run_backend(_):
-            solution = optx.minimize(
+            solution = optx.minimise(
                 problem.objective,
                 self.solver,
                 parameters,

@@ -16,9 +16,17 @@ from benchmarks.advanced_solvers.compare import (
 from benchmarks.advanced_solvers.schema import (
     empty_distribution,
     SchemaError,
+    skip_certificate,
     TIMING_PHASES,
     validate_report,
 )
+
+
+_PROVENANCE = {
+    "harness_source_fingerprint": "c" * 64,
+    "certificate_evaluator_fingerprint": "d" * 64,
+    "case_source_fingerprint": "e" * 64,
+}
 
 
 def test_schema_requires_independent_finite_residual_and_backward_error():
@@ -52,6 +60,7 @@ def test_schema_requires_precise_dependency_skip_and_no_fabricated_measurement()
         "converged": None,
         "message": "not executed",
         "skip_reason": "required module 'slepc4py' is not installed for adapter 'slepc'",
+        "failure_phase": None,
     }
     row["availability"] = {
         "available": False,
@@ -65,10 +74,10 @@ def test_schema_requires_precise_dependency_skip_and_no_fabricated_measurement()
         backend="slepc-comm-self",
         method="slepc-eps-nhep-largest-magnitude",
     )
-    row["certificate"].update(
-        residual_norm=None,
-        relative_residual=None,
-        backward_error=None,
+    row["certificate"] = skip_certificate(
+        "eigenpair-or-schur-relation",
+        capability="eigen.general",
+        problem_fingerprint=row["problem"]["fingerprint"],
     )
     row["transfers"].update(
         host_to_device_bytes=None,
@@ -94,18 +103,32 @@ def test_schema_requires_precise_dependency_skip_and_no_fabricated_measurement()
 def test_comparison_rejects_protocol_changes_before_pairing_rows():
     reference = _report([_measured_row()])
     candidate = copy.deepcopy(reference)
-    candidate["campaign"]["warmup"] = 2
+    candidate["campaign"]["seed"] = 8
 
     with pytest.raises(IncomparableReportsError, match="campaign protocols differ"):
         compare_reports(reference, candidate)
 
 
 def test_comparison_rejects_incomparable_certificate_relation():
-    reference = _report([_measured_row()])
+    row = _measured_row()
+    row["availability"]["capability"] = "eigen.general"
+    row["certificate"].update(
+        kind="eigenpair-relation",
+        capability="eigen.general",
+        details={
+            "requested_eigenpairs": 1,
+            "returned_eigenpairs": 1,
+            "count_satisfied": True,
+            "largest_magnitude_membership_error": 0.0,
+            "membership_tolerance": 1e-10,
+            "largest_magnitude_membership_satisfied": True,
+        },
+    )
+    reference = _report([row])
     candidate = copy.deepcopy(reference)
-    candidate["rows"][0]["certificate"]["kind"] = "solver-internal-estimate"
+    candidate["rows"][0]["certificate"]["kind"] = "schur-relation"
 
-    with pytest.raises(IncomparableReportsError, match="different certificate relations"):
+    with pytest.raises(IncomparableReportsError, match="different certificate identity"):
         compare_reports(reference, candidate)
 
 
@@ -213,6 +236,7 @@ def test_schema_requires_independent_refreshed_problem_certificate():
     )
     for phase in ("refresh", "refreshed_solve", "refreshed_verification"):
         row["timing"][phase] = copy.deepcopy(row["timing"]["setup"])
+    row["memory"]["refreshed"] = copy.deepcopy(row["memory"]["initial"])
     report = _report([row])
     validate_report(report)
 
@@ -224,7 +248,10 @@ def test_schema_requires_independent_refreshed_problem_certificate():
 
 def test_schema_rejects_optimization_rows_without_stationarity_evidence():
     report = _report([_measured_row()])
-    certificate = report["rows"][0]["certificate"]
+    row = report["rows"][0]
+    row["availability"]["capability"] = "optimization.unconstrained"
+    certificate = row["certificate"]
+    certificate["capability"] = "optimization.unconstrained"
     certificate["kind"] = "optimization-stationarity"
     certificate["details"] = {
         "objective": 0.0,
@@ -238,7 +265,10 @@ def test_schema_rejects_optimization_rows_without_stationarity_evidence():
 
 def test_schema_rejects_continuation_success_without_fold_evidence():
     report = _report([_measured_row()])
-    certificate = report["rows"][0]["certificate"]
+    row = report["rows"][0]
+    row["availability"]["capability"] = "continuation.fold"
+    certificate = row["certificate"]
+    certificate["capability"] = "continuation.fold"
     certificate["kind"] = "continuation-branch-residual"
     certificate["details"] = {
         "branch_successful": True,
@@ -257,6 +287,7 @@ def test_schema_rejects_continuation_success_without_fold_evidence():
 def _report(rows):
     return {
         "environment": _environment(),
+        "provenance": dict(_PROVENANCE),
         "campaign": {
             "seed": 7,
             "warmup": 1,
@@ -265,8 +296,12 @@ def _report(rows):
                 dict.fromkeys(row["implementation"]["adapter"] for row in rows)
             ),
             "selected_cases": list(dict.fromkeys(row["case_id"] for row in rows)),
+            "case_fingerprints": {
+                row["case_id"]: row["problem"]["fingerprint"] for row in rows
+            },
         },
         "rows": rows,
+        "passed": all(row["outcome"]["status"] in {"success", "skipped"} for row in rows),
     }
 
 
@@ -313,14 +348,18 @@ def _measured_row():
             "converged": True,
             "message": "converged",
             "skip_reason": None,
+            "failure_phase": None,
         },
         "certificate": {
             "kind": "linear-system",
+            "capability": "linear.scalar",
+            "problem_fingerprint": "a" * 64,
             "residual_norm": 1e-12,
             "relative_residual": 1e-13,
             "backward_error": 1e-14,
             "independently_computed": True,
             "evaluator": "benchmarks.advanced_solvers.certificates",
+            "evaluator_fingerprint": _PROVENANCE["certificate_evaluator_fingerprint"],
             "details": {},
         },
         "operations": {
@@ -346,9 +385,13 @@ def _measured_row():
             "independently_certified": None,
         },
         "memory": {
-            "matrix_bytes": 128,
-            "setup_bytes": 64,
-            "peak_estimate_bytes": 256,
+            "initial": {
+                "matrix_bytes": 128,
+                "setup_bytes": 64,
+                "peak_estimate_bytes": 256,
+                "evidence": "exact arrays plus documented workspace estimate",
+            },
+            "refreshed": None,
             "evidence": "exact arrays plus documented workspace estimate",
         },
         "transfers": {
@@ -363,6 +406,7 @@ def _measured_row():
             "setup": sample,
             "compilation": empty_distribution(),
             "preparation": sample,
+            "warmup": sample,
             "solve": sample,
             "differentiation_compilation": empty_distribution(),
             "differentiation": empty_distribution(),

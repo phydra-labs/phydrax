@@ -14,6 +14,7 @@ from jaxtyping import Array
 from phydrax._strict import StrictModule
 
 from .._fingerprint import canonical_fingerprint
+from .._trainable import fixed_field
 from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
 from ..equations import CompressibleNavierStokesSystem, EulerSystem, IdealMHDSystem
 from ..stochastic import OrnsteinUhlenbeckRealization
@@ -124,10 +125,10 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
     plan: SpectralOUForcingPlan
     transport: AbstractPreparedBalanceLawTransport
     dynamics: PreparedFiniteVolumeDynamics
-    wavevectors: Array
-    spectral_weight: Array
-    nonzero: Array
-    normalization: Array
+    wavevectors: Array = fixed_field()
+    spectral_weight: Array = fixed_field()
+    nonzero: Array = fixed_field()
+    normalization: Array = fixed_field()
     density_index: int = eqx.field(static=True)
     momentum_indices: tuple[int, ...] = eqx.field(static=True)
     energy_index: int = eqx.field(static=True)
@@ -211,7 +212,7 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
         )
         self.requires_realization = True
         self.realization_name = plan.realization_name
-        self.differentiability = "smooth_discrete"
+        self.differentiability = "smooth"
         self.modified_components = tuple(
             names[index] for index in self.momentum_indices
         ) + ("total_energy",)

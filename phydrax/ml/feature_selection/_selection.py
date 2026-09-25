@@ -15,19 +15,64 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeContract,
+    DerivativeRegularity,
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from ..._model import AbstractArrayModel, ModelBinding
+from ..._precision import inexact_result_type
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_INSUFFICIENT_DATA,
     ML_NONFINITE,
     ML_SUCCESS,
 )
 from .._numerics import assign_bins, quantile_bin_edges
-from .._schema import FeatureSchema
+from .._schema import AbstractFittedModel, FeatureSchema
+
+
+# A fixed gather with inactive entries zeroed is linear in the input.
+_EXACT_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.NONE),
+    ),
+    route=DerivativeRoute.STOPPED,
+    regularity=DerivativeRegularity.smooth(degree_bound=1),
+    nondifferentiable_outputs=("selected_indices", "selected_mask"),
+    conditions=(
+        "Selection capacity is static; inactive padded entries evaluate to zero.",
+    ),
+)
+# Elementwise gating by fitted weights is linear in the input.
+_GATE_CONTRACT = DerivativeContract(
+    (
+        SurfaceDerivative(DerivativeSurface.INPUT, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.MODEL_PARAMETER, GradientLevel.SMOOTH),
+        SurfaceDerivative(DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_TARGETS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL),
+        SurfaceDerivative(
+            DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+        ),
+    ),
+    route=DerivativeRoute.RELAXED,
+    regularity=DerivativeRegularity.smooth(degree_bound=1),
+    conditions=(
+        "The configured scorer must be differentiable at the supplied batch.",
+        "Feature and target masks must remain fixed with positive effective mass.",
+        "Score normalization requires a nonzero finite range and stable extrema.",
+        "Absolute correlation requires nonzero covariance and variance.",
+    ),
+)
 
 
 class ExactSelection(StrictModule):
@@ -83,10 +128,10 @@ class FeatureSelectionDiagnostics(StrictModule):
         self.method = str(method)
 
 
-class ExactFeatureSelectorModel(AbstractArrayModel):
+class ExactFeatureSelectorModel(AbstractFittedModel):
     """Exact fixed-capacity gather, smooth in values conditional on fitted indices."""
 
-    selection: ExactSelection
+    selection: ExactSelection = fixed_field()
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     _input_binding = ModelBinding.pointwise()
@@ -98,6 +143,9 @@ class ExactFeatureSelectorModel(AbstractArrayModel):
         self.in_size = int(input_size)
         self.out_size = selection.indices.shape[0]
 
+    def _prediction_contract(self) -> DerivativeContract:
+        return _EXACT_CONTRACT
+
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         selected = jnp.take(jnp.asarray(x), self.selection.indices, axis=-1)
@@ -105,7 +153,7 @@ class ExactFeatureSelectorModel(AbstractArrayModel):
         return jnp.where(mask, selected, 0)
 
 
-class ContinuousFeatureGateModel(AbstractArrayModel):
+class ContinuousFeatureGateModel(AbstractFittedModel):
     """Smooth, shape-preserving sparse feature gate."""
 
     gates: Array
@@ -126,6 +174,9 @@ class ContinuousFeatureGateModel(AbstractArrayModel):
         )
         self.in_size = gates_.shape[0]
         self.out_size = gates_.shape[0]
+
+    def _prediction_contract(self) -> DerivativeContract:
+        return _GATE_CONTRACT
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -196,7 +247,7 @@ def _gate_hyperparameter(value: Any, name: str, /) -> Array:
         raise ValueError(f"{name} must be a scalar.")
     if jnp.issubdtype(scalar.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
-    return scalar.astype(jnp.result_type(scalar.dtype, jnp.float64))
+    return scalar.astype(inexact_result_type(scalar.dtype))
 
 
 def _selection(scores: Array, eligible: Array, capacity: int) -> ExactSelection:
@@ -238,15 +289,7 @@ def _exact_result(
         valid=valid,
         status=status,
         method=method,
-        gradient_contract=GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="none",
-            fit_mode="stopped",
-            nondifferentiable_outputs=("selected_indices", "selected_mask"),
-            conditions=(
-                "Selection capacity is static; inactive padded entries evaluate to zero.",
-            ),
-        ),
+        derivative_contract=_EXACT_CONTRACT,
     )
 
 
@@ -709,19 +752,7 @@ class ContinuousSparseGateRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             method="continuous-sparse-gates",
-            gradient_contract=GradientContract(
-                fit_features="conditional",
-                fit_targets="conditional",
-                fit_weights="conditional",
-                fit_hyperparameters="conditional",
-                fit_mode="relaxed",
-                conditions=(
-                    "The configured scorer must be differentiable at the supplied batch.",
-                    "Feature and target masks must remain fixed with positive effective mass.",
-                    "Score normalization requires a nonzero finite range and stable extrema.",
-                    "Absolute correlation requires nonzero covariance and variance.",
-                ),
-            ),
+            derivative_contract=_GATE_CONTRACT,
         )
 
 

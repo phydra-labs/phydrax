@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
+from ..._trainable import fixed_field
 from ...control import (
     LinearControlQPSolution,
     LinearQuadraticControlProblem,
@@ -99,13 +100,13 @@ def replay_building(
 
 
 class HVACControlResult(StrictModule):
-    electrical_power: Array
-    delivered_heat: Array
-    replay: BuildingReplay
+    electrical_power: Array = fixed_field()
+    delivered_heat: Array = fixed_field()
+    replay: BuildingReplay = fixed_field()
     optimization: MinimizationResult | LinearControlQPSolution
-    objective: Array
-    successful: Array
-    state_reference_temperature: Array
+    objective: Array = fixed_field()
+    successful: Array = fixed_field()
+    state_reference_temperature: Array = fixed_field()
     mode: str = eqx.field(static=True)
 
 

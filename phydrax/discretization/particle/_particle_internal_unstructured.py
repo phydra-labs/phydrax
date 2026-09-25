@@ -10,7 +10,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...sparse import EdgeRelation
 from ..finite_volume import UnstructuredFiniteVolumePlan
@@ -122,7 +122,7 @@ class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalM
                 "kind": "prepared-unstructured-particle-internal-mesh",
                 "plan": plan.mesh_id,
                 "finite_volume": discretization.prepared_id,
-                "transport_relation": self.transport_relation.relation_id,
+                "transport_relation": array_tree_fingerprint(self.transport_relation),
             }
         )
 

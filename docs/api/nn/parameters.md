@@ -218,6 +218,8 @@ contract and are not claimed here.
 
 `ParameterSubspace` partitions selected inexact array leaves from a frozen complement and reconstructs the original model topology exactly. It also records deterministic leaf paths, shapes, exact dtypes, and total dimension. `pack()` and `unpack()` provide the canonical vector coordinate system; `reconstruct_vector()` rebuilds a complete model directly from that vector. Use exact leaf paths or named subtree paths for branched architectures. `last_layer(...)` means the globally final array leaves in deterministic PyTree order; it is not architecture-aware and does not select one output head per branch.
 
+An explicit selection is a role declaration for that request: the selected inexact leaves are the parameters and the complement is frozen, whatever their default role. Only selectable leaves (see [array roles](../phydrax.md#array-roles-and-lanes)) may be selected: leaves below a `Domain`, `NonTrainableState`, or `ExplicitFreeze` node and leaves declared with `fixed_field` or `model_state_field` raise `ValueError` when named by a leaf path, a subtree path containing no selectable leaf, or a boolean filter spec. A named subtree selects its selectable leaves, and a callable filter spec is evaluated only on selectable leaves. `array_leaf_paths(tree)` lists the selectable paths.
+
 ```python
 model = positive_layer
 subspace = phx.nn.parameters.ParameterSubspace.from_subtree_paths(

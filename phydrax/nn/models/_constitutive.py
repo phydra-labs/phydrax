@@ -11,6 +11,7 @@ from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import ParameterOwner
 from .._keys import EvalKey
 from ._input_convex import ConvexActivation, InputConvexNetwork
 
@@ -78,7 +79,7 @@ class DeformationGradientMinors(StrictModule):
         )
 
 
-class PolyconvexPotential(StrictModule):
+class PolyconvexPotential(StrictModule, ParameterOwner):
     """Hyperelastic energy convex in ``(F, cof(F), det(F))`` by construction.
 
     Polyconvexity follows from the owned :class:`InputConvexNetwork`. Objectivity,

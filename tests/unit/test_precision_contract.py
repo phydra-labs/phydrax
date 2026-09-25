@@ -18,6 +18,7 @@ from phydrax._numerics import (
 )
 from phydrax._precision import (
     complex_precision_dtype,
+    inexact_result_type,
     precision_dtype_name,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
@@ -68,6 +69,22 @@ def test_precision_dtype_vocabulary_distinguishes_semantic_and_storage_names():
     assert complex_precision_dtype("float64") == "complex128"
     with pytest.raises(ValueError, match="Unsupported precision dtype"):
         precision_dtype_name(jnp.int32)
+
+
+def test_inexact_result_type_keeps_inexact_precision_and_defaults_exact_inputs():
+    default = jnp.asarray(1.0).dtype
+    f32 = jnp.zeros(2, jnp.float32)
+    for dtype in (jnp.float16, jnp.bfloat16, jnp.float32, jnp.complex64):
+        assert inexact_result_type(jnp.zeros(2, dtype)) == jnp.dtype(dtype)
+        assert inexact_result_type(jnp.dtype(dtype)) == jnp.dtype(dtype)
+    assert inexact_result_type(f32, jnp.zeros(2, jnp.int32), 2.0, 3) == jnp.float32
+    assert inexact_result_type(f32, jnp.zeros(2, jnp.complex64)) == jnp.complex64
+    assert inexact_result_type(jnp.zeros(2, jnp.float16), f32) == jnp.float32
+    assert inexact_result_type(jnp.zeros(2, jnp.int32)) == default
+    assert inexact_result_type(jnp.zeros(2, bool), 1) == default
+    assert inexact_result_type(1) == default
+    assert inexact_result_type() == default
+    assert inexact_result_type(1j) == jnp.asarray(1j).dtype
 
 
 def test_precision_resource_assumptions_round_trip_without_execution_claims():

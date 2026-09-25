@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 
 import equinox as eqx
 import jax
@@ -13,7 +12,20 @@ import jax.numpy as jnp
 import optax
 from jaxtyping import Array, ArrayLike, Key
 
+from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._strict import StrictModule
+from .._trainable import combine_parameters
+from .._training_kernel import (
+    KernelObjective,
+    OptaxUpdateRule,
+    prepare_training_kernel,
+    PreparedTrainingKernel,
+    run_training_attempt,
+    TrainingKernelSpec,
+    TrainingKernelState,
+    TrainingRejectionBudgetError,
+)
+from .._training_objective import _ObjectiveContribution
 from ._belief_propagation import SumProductBeliefPropagationResult
 from ._elimination import (
     plan_variable_elimination,
@@ -31,16 +43,27 @@ from ._gibbs import (
 )
 from ._kernel import FactorGraphResourcePolicy
 from ._model import DiscreteFactorGraph, factor_graph_log_score, pack_assignments
-from ._training import contrastive_divergence_loss, FactorGraphTrainingDiagnostics
+from ._training import (
+    _packed_contrastive_divergence_loss,
+    FactorGraphTrainingDiagnostics,
+)
 
 
 class PersistentFactorGraphTrainingState(StrictModule):
-    """Optimizer and persistent negative-chain state for stochastic model learning."""
+    """Committed model, training-kernel state, and persistent negative chains.
+
+    `training` is the shared training-kernel state (parameters, optimizer state,
+    attempt/accepted cursors); `graph` is its committed factor graph.
+    """
 
     graph: DiscreteFactorGraph
-    optimizer_state: Any
+    training: TrainingKernelState
     chains: GibbsState
-    step_index: Array
+
+    @property
+    def step_index(self) -> Array:
+        """Number of attempted persistent-CD updates."""
+        return self.training.attempt_cursor
 
 
 class PersistentTrainingResult(StrictModule):
@@ -116,19 +139,62 @@ def bethe_negative_log_likelihood(
     )
 
 
+def _contrastive_divergence_objective(parameters, model_state, fixed, payload, keys):
+    """Persistent-CD surrogate; the payload is packed `(positives, negatives)`."""
+    del keys
+    positive, negative = payload
+    value, diagnostics = _packed_contrastive_divergence_loss(
+        combine_parameters(parameters, model_state, fixed), positive, negative
+    )
+    return _ObjectiveContribution(value, 1.0), model_state, diagnostics
+
+
+def _persistent_kernel(
+    graph: DiscreteFactorGraph,
+    optimizer: optax.GradientTransformation,
+    /,
+    *,
+    context: str,
+) -> PreparedTrainingKernel:
+    return prepare_training_kernel(
+        graph,
+        (
+            KernelObjective(
+                objective_id="persistent-contrastive-divergence",
+                kind=ObjectiveKind.DATA_FIT,
+                route=DerivativeRoute.DIRECT,
+                fn=_contrastive_divergence_objective,
+            ),
+        ),
+        TrainingKernelSpec(
+            OptaxUpdateRule(optimizer, rule_id="persistent-cd-caller-optimizer"),
+            context=context,
+            rejection_budget=0,
+        ),
+        root_authority=ComponentAuthority.MODEL,
+    )
+
+
+# The contrastive-divergence objective draws no training randomness (negative
+# chains advance with the caller's per-step key), so the kernel root key only
+# completes the checkpointable state.
+_INERT_ROOT_KEY_SEED = 0
+
+
 def initialize_persistent_training(
     graph: DiscreteFactorGraph,
     optimizer: optax.GradientTransformation,
     chains: GibbsState,
     /,
 ) -> PersistentFactorGraphTrainingState:
-    """Initialize optimizer state over only trainable inexact graph leaves."""
-    parameters = eqx.filter(graph, eqx.is_inexact_array)
+    """Initialize the training-kernel state over the graph's PARAMETER leaves."""
+    kernel = _persistent_kernel(
+        graph, optimizer, context="initialize_persistent_training"
+    )
     return PersistentFactorGraphTrainingState(
         graph=graph,
-        optimizer_state=optimizer.init(parameters),
+        training=kernel.init(graph, jax.random.key(_INERT_ROOT_KEY_SEED)),
         chains=chains,
-        step_index=jnp.asarray(0, dtype=jnp.uint32),
     )
 
 
@@ -142,7 +208,12 @@ def persistent_contrastive_divergence_step(
     *,
     negative_sweeps: int = 1,
 ) -> PersistentTrainingResult:
-    """Apply one persistent-CD/SML parameter update and advance negative chains."""
+    """Apply one persistent-CD/SML parameter update and advance negative chains.
+
+    The update is one attempt of the shared training kernel (`MODEL` root
+    authority, one data-fit objective). A nonfinite update rolls back and raises
+    `FloatingPointError`; the chains then do not advance.
+    """
     if not isinstance(state, PersistentFactorGraphTrainingState):
         raise TypeError("state must be PersistentFactorGraphTrainingState.")
     if negative_sweeps < 1:
@@ -151,25 +222,24 @@ def persistent_contrastive_divergence_step(
         raise ValueError("prepared Gibbs plan must match the training graph.")
     if state.chains.positions.shape[1:] != (state.graph.num_variables,):
         raise ValueError("Persistent chains must match the training graph.")
-
-    def objective(graph):
-        return contrastive_divergence_loss(
-            graph,
-            positive_assignments,
-            state.chains.positions,
-        )
-
-    (value, diagnostics), gradients = eqx.filter_value_and_grad(
-        objective,
-        has_aux=True,
-    )(state.graph)
-    parameters = eqx.filter(state.graph, eqx.is_inexact_array)
-    updates, optimizer_state = optimizer.update(
-        gradients,
-        state.optimizer_state,
-        parameters,
+    kernel = _persistent_kernel(
+        state.graph, optimizer, context="persistent_contrastive_divergence_step"
     )
-    graph = eqx.apply_updates(state.graph, updates)
+    try:
+        training, evidence = run_training_attempt(
+            kernel,
+            state.training,
+            (
+                pack_assignments(state.graph, positive_assignments),
+                pack_assignments(state.graph, state.chains.positions),
+            ),
+        )
+    except TrainingRejectionBudgetError as error:
+        raise FloatingPointError(
+            "Persistent contrastive-divergence update is nonfinite; the state was "
+            "rolled back and the chains did not advance."
+        ) from error
+    graph = kernel.tree(training)
     refreshed = refresh_chromatic_gibbs(prepared, graph)
     sampled = sample_gibbs(
         refreshed,
@@ -183,14 +253,13 @@ def persistent_contrastive_divergence_step(
     )
     next_state = PersistentFactorGraphTrainingState(
         graph=graph,
-        optimizer_state=optimizer_state,
+        training=training,
         chains=sampled.final_state,
-        step_index=state.step_index + 1,
     )
     return PersistentTrainingResult(
         state=next_state,
-        objective=value,
-        diagnostics=diagnostics,
+        objective=evidence.diagnostics[0].objective,
+        diagnostics=evidence.diagnostics[0],
         sampler_valid=jnp.all(sampled.transition_valid),
     )
 

@@ -8,16 +8,38 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._admissibility import AdmissibilityHeader, guard_derivative_validity
+from .._differentiation import (
+    branch_policy_contract,
+    BranchDifferentiationPolicy,
+    DerivativeContract,
+    DerivativeSurface,
+)
 from .._fingerprint import canonical_fingerprint
+from .._identity import NumericRevision, SemanticProvenance
+from .._model import ValuePort
+from .._model._frozen import trainable_provider
+from .._model._ports import (
+    bind_model_ports,
+    intrinsic_model_ports,
+    ModelPorts,
+    PortBindingEvidence,
+    PortMapping,
+    require_mapped_order,
+)
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
-from ..discretization.finite_volume._closure import ConservativeFaceClosurePlan
+from .._trainable import ExplicitFreeze, NonTrainableState, parameter_field
+from ..discretization.finite_volume._closure import (
+    ArbitraryNormalFaceClosurePlan,
+    FaceFluxContext,
+)
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..discretization.spectral._dealias import (
     OversamplingDealiasingPlan,
@@ -27,7 +49,7 @@ from ..discretization.spectral._incompressible import PeriodicLerayProjector
 from ..equations._les_closures import LESParameterProvenance, ResolvedLESFilter
 from ._dataset import TrainOnlyNormalizer
 from ._les import LESStressConvention
-from ._state import FlowStateSchema
+from ._state import _declared_dimension, FlowStateSchema
 
 
 ClosureDeploymentKind = Literal["conservative_face", "spectral_drift"]
@@ -35,97 +57,127 @@ SpectralEnergyPolicy = Literal["nonincreasing", "diagnostic"]
 StressEnergyPolicy = Literal["signed", "dissipative", "bounded_backscatter"]
 
 
-class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
-    """Artifact- and schema-bound learned predictor with an explicit deployment ABI."""
+def conservative_face_numeric_revision(
+    binding: LearnedClosureBindingPlan | TrainableLearnedClosureBinding, /
+) -> NumericRevision:
+    """Numeric revision of a conservative-face predictor under its binding identity.
 
-    predictor: Callable = eqx.field(static=True)
+    The revision binds the predictor's inexact array leaves to the binding
+    semantics (`binding_id`: deployment kind, schema, components, model artifact,
+    normalizer provenance, differentiability).
+    """
+    return NumericRevision(
+        binding.binding_id,
+        {
+            "predictor": tuple(
+                jax.tree_util.tree_leaves(
+                    eqx.filter(binding.predictor, eqx.is_inexact_array)
+                )
+            )
+        },
+    )
+
+
+def _conservative_face_correction(
+    binding: _AbstractLearnedClosureBinding,
+    system: Any,
+    left: Array,
+    right: Array,
+    baseline_normal_flux: Array,
+    context: FaceFluxContext,
+    args: Any,
+    /,
+) -> Array:
+    if binding.deployment_kind != "conservative_face":
+        raise ValueError("Only conservative_face bindings evaluate face corrections.")
+    return binding.predictor(system, left, right, baseline_normal_flux, context, args)
+
+
+def _bind_conservative_faces(
+    binding: _AbstractLearnedClosureBinding,
+    schema: FlowStateSchema,
+    numeric_revision: NumericRevision,
+    consistency_tolerance: float,
+    /,
+) -> ArbitraryNormalFaceClosurePlan:
+    binding._validate_schema(schema)
+    if binding.deployment_kind != "conservative_face":
+        raise ValueError("Only conservative_face bindings can enter a face flux plan.")
+    if binding.output_component_names != schema.component_names:
+        raise ValueError(
+            "A conservative face closure must output every conservative component in schema order."
+        )
+    if not isinstance(numeric_revision, NumericRevision):
+        raise TypeError("numeric_revision must be a NumericRevision.")
+    expected = conservative_face_numeric_revision(binding)
+    if (
+        numeric_revision.semantic_id != expected.semantic_id
+        or numeric_revision.revision_id != expected.revision_id
+    ):
+        raise ValueError(
+            "Numeric revision does not match the bound conservative-face predictor."
+        )
+    # The binding itself is the correction child: its role marker governs the
+    # predictor arrays inside the finite-volume tree, and its static identity is
+    # the closure identity, so weights never change the method identity.
+    return ArbitraryNormalFaceClosurePlan(
+        binding,
+        closure_id=binding.binding_id,
+        consistency_tolerance=consistency_tolerance,
+        differentiability=binding.differentiability,
+    )
+
+
+class _AbstractLearnedClosureBinding(StrictModule):
+    """Deployment ABI, artifact provenance, and deployments of one closure predictor.
+
+    The frozen artifact (`LearnedClosureBindingPlan`) and its explicit trainable
+    counterpart (`TrainableLearnedClosureBinding`) share this static provenance
+    and the deployment operations; they differ only in the role of `predictor`.
+    """
+
+    predictor: eqx.AbstractVar[Callable]
     deployment_kind: ClosureDeploymentKind = eqx.field(static=True)
     schema_id: str = eqx.field(static=True)
     input_component_names: tuple[str, ...] = eqx.field(static=True)
     output_component_names: tuple[str, ...] = eqx.field(static=True)
     model_artifact_id: str = eqx.field(static=True)
     normalizer_provenance_id: str = eqx.field(static=True)
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
-    def __init__(
+    def __call__(
         self,
-        predictor: Callable,
+        system: Any,
+        left: Array,
+        right: Array,
+        baseline_normal_flux: Array,
+        context: FaceFluxContext,
+        args: Any = None,
         /,
-        *,
-        deployment_kind: ClosureDeploymentKind,
-        schema_id: str,
-        input_component_names: tuple[str, ...],
-        output_component_names: tuple[str, ...],
-        model_artifact_id: str,
-        normalizer_provenance_id: str,
-        differentiability: str = "smooth_discrete",
-    ):
-        if not callable(predictor):
-            raise TypeError("predictor must be callable.")
-        deployment = str(deployment_kind).strip()
-        schema = str(schema_id).strip()
-        inputs = tuple(str(value).strip() for value in input_component_names)
-        outputs = tuple(str(value).strip() for value in output_component_names)
-        artifact = str(model_artifact_id).strip()
-        normalizer = str(normalizer_provenance_id).strip()
-        differentiability_ = str(differentiability).strip()
-        if (
-            deployment not in ("conservative_face", "spectral_drift")
-            or not schema
-            or not inputs
-            or not outputs
-            or any(not value for value in (*inputs, *outputs))
-            or len(set(inputs)) != len(inputs)
-            or len(set(outputs)) != len(outputs)
-            or not artifact
-            or not normalizer
-            or differentiability_
-            not in ("smooth_discrete", "branchwise", "smooth_surrogate")
-        ):
-            raise ValueError("Learned closure binding metadata is invalid.")
-        self.predictor = predictor
-        self.deployment_kind = deployment
-        self.schema_id = schema
-        self.input_component_names = inputs
-        self.output_component_names = outputs
-        self.model_artifact_id = artifact
-        self.normalizer_provenance_id = normalizer
-        self.differentiability = differentiability_
-        self.binding_id = canonical_fingerprint(
-            {
-                "kind": "learned-closure-binding-plan",
-                "deployment_kind": deployment,
-                "schema": schema,
-                "input_components": list(inputs),
-                "output_components": list(outputs),
-                "model_artifact": artifact,
-                "normalizer_provenance": normalizer,
-                "differentiability": differentiability_,
-            }
+    ) -> Array:
+        """Evaluate the conservative-face correction ABI of the bound predictor."""
+        return _conservative_face_correction(
+            self, system, left, right, baseline_normal_flux, context, args
         )
 
     def bind_conservative_faces(
         self,
         schema: FlowStateSchema,
+        numeric_revision: NumericRevision,
         /,
         *,
         consistency_tolerance: float = 1e-10,
-    ) -> ConservativeFaceClosurePlan:
-        self._validate_schema(schema)
-        if self.deployment_kind != "conservative_face":
-            raise ValueError(
-                "Only conservative_face bindings can enter a face flux plan."
-            )
-        if self.output_component_names != schema.component_names:
-            raise ValueError(
-                "A conservative face closure must output every conservative component in schema order."
-            )
-        return ConservativeFaceClosurePlan(
-            self.predictor,
-            closure_id=self.binding_id,
-            consistency_tolerance=consistency_tolerance,
-            differentiability=self.differentiability,
+    ) -> ArbitraryNormalFaceClosurePlan:
+        """Bind the verified predictor revision as an arbitrary-normal face closure.
+
+        `numeric_revision` must equal `conservative_face_numeric_revision(self)`,
+        the revision recorded with the model artifact. The closure holds this
+        binding as its correction child, so the predictor keeps this binding's
+        role: FIXED for the frozen artifact, PARAMETER for a trainable binding.
+        """
+        return _bind_conservative_faces(
+            self, schema, numeric_revision, consistency_tolerance
         )
 
     def bind_spectral_drift(
@@ -139,6 +191,12 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
         energy_policy: SpectralEnergyPolicy = "nonincreasing",
         evidence_tolerance: float = 1e-10,
     ) -> PreparedSpectralDriftHook:
+        """Deploy the predictor as a spectral drift hook holding this binding.
+
+        The hook holds the binding as its child, so the predictor keeps this
+        binding's role: FIXED for the frozen artifact, PARAMETER for a
+        trainable binding.
+        """
         self._validate_schema(schema)
         if self.deployment_kind != "spectral_drift":
             raise ValueError("Only spectral_drift bindings can enter a spectral hook.")
@@ -147,11 +205,10 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
                 "A spectral drift binding must output the declared velocity components in order."
             )
         return PreparedSpectralDriftHook(
-            self.predictor,
+            self,
             projector,
             hermitian_coordinates,
             dealiasing,
-            binding_id=self.binding_id,
             energy_policy=energy_policy,
             evidence_tolerance=evidence_tolerance,
         )
@@ -175,6 +232,132 @@ class LearnedClosureBindingPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Learned closure output components are absent from the schema."
             )
+
+
+class LearnedClosureBindingPlan(_AbstractLearnedClosureBinding, ExplicitFreeze):
+    """Artifact- and schema-bound learned predictor with an explicit deployment ABI.
+
+    The binding is the frozen deployment artifact: as an `ExplicitFreeze`
+    holder its predictor is FIXED wherever the binding or one of its
+    deployments is held, so training never updates it accidentally.
+    `as_trainable_binding` is the explicit operation that returns a new
+    trainable binding.
+    """
+
+    predictor: Callable
+
+    def __init__(
+        self,
+        predictor: Callable,
+        /,
+        *,
+        deployment_kind: ClosureDeploymentKind,
+        schema_id: str,
+        input_component_names: tuple[str, ...],
+        output_component_names: tuple[str, ...],
+        model_artifact_id: str,
+        normalizer_provenance_id: str,
+        differentiability: BranchDifferentiationPolicy = (
+            BranchDifferentiationPolicy.SMOOTH
+        ),
+    ):
+        if not callable(predictor):
+            raise TypeError("predictor must be callable.")
+        # Face corrections and modal drifts are structured callables over native
+        # solver values; they expose no owner value ports a model could bind to.
+        if intrinsic_model_ports(predictor) is not None:
+            raise ValueError(
+                "LearnedClosureBindingPlan deployment ABIs declare no owner value "
+                f"ports; {type(predictor).__name__} declares model ports and cannot "
+                "be bound as a face-correction or spectral-drift predictor."
+            )
+        if not isinstance(differentiability, BranchDifferentiationPolicy):
+            raise TypeError("differentiability must be a BranchDifferentiationPolicy.")
+        match differentiability:
+            case (
+                BranchDifferentiationPolicy.SMOOTH
+                | BranchDifferentiationPolicy.BRANCHWISE
+                | BranchDifferentiationPolicy.SMOOTH_SURROGATE
+            ):
+                pass
+            case _:
+                raise ValueError(
+                    "LearnedClosureBindingPlan supports SMOOTH, BRANCHWISE, or "
+                    f"SMOOTH_SURROGATE; got {differentiability.name}."
+                )
+        deployment = str(deployment_kind).strip()
+        schema = str(schema_id).strip()
+        inputs = tuple(str(value).strip() for value in input_component_names)
+        outputs = tuple(str(value).strip() for value in output_component_names)
+        artifact = str(model_artifact_id).strip()
+        normalizer = str(normalizer_provenance_id).strip()
+        if (
+            deployment not in ("conservative_face", "spectral_drift")
+            or not schema
+            or not inputs
+            or not outputs
+            or any(not value for value in (*inputs, *outputs))
+            or len(set(inputs)) != len(inputs)
+            or len(set(outputs)) != len(outputs)
+            or not artifact
+            or not normalizer
+        ):
+            raise ValueError("Learned closure binding metadata is invalid.")
+        self.predictor = predictor
+        self.deployment_kind = deployment
+        self.schema_id = schema
+        self.input_component_names = inputs
+        self.output_component_names = outputs
+        self.model_artifact_id = artifact
+        self.normalizer_provenance_id = normalizer
+        self.differentiability = differentiability
+        self.binding_id = canonical_fingerprint(
+            {
+                "kind": "learned-closure-binding-plan",
+                "deployment_kind": deployment,
+                "schema": schema,
+                "input_components": list(inputs),
+                "output_components": list(outputs),
+                "model_artifact": artifact,
+                "normalizer_provenance": normalizer,
+                "differentiability": differentiability.value,
+            }
+        )
+
+    def as_trainable_binding(self, /) -> TrainableLearnedClosureBinding:
+        """Return a new binding whose predictor is a trainable PARAMETER child.
+
+        The deployment ABI and the schema, artifact, and normalizer provenance
+        (and so `binding_id`) are kept; this frozen artifact is not modified. A
+        `FrozenModel` predictor is unwrapped to its trainable model. Raises
+        `ValueError` when the predictor holds no trainable array.
+        """
+        return TrainableLearnedClosureBinding(self.predictor, self)
+
+
+class TrainableLearnedClosureBinding(_AbstractLearnedClosureBinding):
+    """Explicit trainable counterpart of a frozen `LearnedClosureBindingPlan`.
+
+    Created by `LearnedClosureBindingPlan.as_trainable_binding`. The predictor
+    is a PARAMETER child, so it trains through every deployment holding this
+    binding; the deployment ABI and artifact provenance (`binding_id`) stay
+    those of the source artifact.
+    """
+
+    predictor: Callable = parameter_field()
+
+    def __init__(self, predictor: Callable, source: LearnedClosureBindingPlan, /):
+        if not isinstance(source, LearnedClosureBindingPlan):
+            raise TypeError("source must be a LearnedClosureBindingPlan.")
+        self.predictor = trainable_provider(predictor)
+        self.deployment_kind = source.deployment_kind
+        self.schema_id = source.schema_id
+        self.input_component_names = source.input_component_names
+        self.output_component_names = source.output_component_names
+        self.model_artifact_id = source.model_artifact_id
+        self.normalizer_provenance_id = source.normalizer_provenance_id
+        self.differentiability = source.differentiability
+        self.binding_id = source.binding_id
 
 
 class LearnedStressFeatureSchema(StrictModule, NonTrainableState):
@@ -236,6 +419,39 @@ class LearnedStressFeatureSchema(StrictModule, NonTrainableState):
                 "dtype": dtype_.name,
                 "flow_schema": schema,
             }
+        )
+
+    def value_port(self) -> ValuePort:
+        """Return the per-sample feature port in declared component order.
+
+        `shape` is the declared sample layout followed by the component axis, so
+        the event is the trailing axis: `event_shape` is `(shape[-1],)` and the
+        leading `shape[:-1]` axes are sample axes, not event axes.
+        `semantic_id` is the declared feature `name`, `component_ids` are
+        `component_names`, and each dimension is
+        `phydrax.units.parse_unit(unit).dimension` of the declared component
+        unit. The representation is the fixed literal
+        `"learned-stress-features"`; space, frame, normalization, and event axes
+        are undeclared; variance is neutral. `dtype` and `flow_schema_id` stay
+        enforced by the binding plan through `feature_schema_id`.
+
+        Raises `ValueError` for a component unit that `parse_unit` cannot
+        resolve.
+        """
+        return ValuePort(
+            self.name,
+            event_shape=(self.shape[-1],),
+            component_ids=self.component_names,
+            representation="learned-stress-features",
+            dimensions=tuple(
+                _declared_dimension(
+                    unit,
+                    f"Learned stress feature schema {self.name!r} component {name!r}",
+                )
+                for name, unit in zip(
+                    self.component_names, self.component_units, strict=True
+                )
+            ),
         )
 
 
@@ -325,6 +541,35 @@ class LearnedStressOutputContract(StrictModule, NonTrainableState):
             }
         )
 
+    def value_port(self) -> ValuePort:
+        """Return the per-sample 3x3 stress-tensor port.
+
+        The declared `shape` ends with the `(3, 3)` tensor, which is the event
+        shape; the leading `shape[:-2]` axes are sample axes. `semantic_id` is
+        `target_id`. The contract names no tensor components, so
+        `component_ids` are `f"{target_id}[{i}]"` for the row-major flat index
+        `i`. Every component has `phydrax.units.parse_unit(units).dimension`.
+        The representation is `f"{stress_convention}-{density_semantics}"`
+        (`"deviatoric-constant-density-specific"`) and `space_id` is the
+        declared `discretization_id`; frame, normalization, and event axes are
+        undeclared, and variance is neutral. `dtype`, `filter_id`, `regime`,
+        and the tolerances stay enforced by the binding plan through
+        `contract_id`.
+
+        Raises `ValueError` when `units` cannot be resolved by `parse_unit`.
+        """
+        dimension = _declared_dimension(
+            self.units, f"Learned stress output contract {self.target_id!r}"
+        )
+        return ValuePort(
+            self.target_id,
+            event_shape=(3, 3),
+            component_ids=tuple(f"{self.target_id}[{index}]" for index in range(9)),
+            representation=f"{self.stress_convention}-{self.density_semantics}",
+            space_id=self.discretization_id,
+            dimensions=(dimension,) * 9,
+        )
+
 
 class LearnedStressBindingPlan(StrictModule, NonTrainableState):
     """Declarative artifact and LES-identity contract for a stress predictor."""
@@ -337,7 +582,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
     normalizer_id: str = eqx.field(static=True)
     energy_policy: StressEnergyPolicy = eqx.field(static=True)
     maximum_backscatter_fraction: float | None = eqx.field(static=True)
-    differentiation_semantics: str = eqx.field(static=True)
+    differentiation_semantics: BranchDifferentiationPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -407,7 +652,9 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
         self.energy_policy = policy
         self.maximum_backscatter_fraction = fraction
         self.differentiation_semantics = (
-            "smooth_discrete" if policy == "signed" else "branchwise"
+            BranchDifferentiationPolicy.SMOOTH
+            if policy == "signed"
+            else BranchDifferentiationPolicy.BRANCHWISE
         )
         self.plan_id = canonical_fingerprint(
             {
@@ -420,7 +667,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
                 "normalizer": normalizer,
                 "energy_policy": policy,
                 "maximum_backscatter_fraction": fraction,
-                "differentiation_semantics": self.differentiation_semantics,
+                "differentiation_semantics": self.differentiation_semantics.value,
             }
         )
 
@@ -433,8 +680,13 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
         model_artifact_id: str,
         target_id: str,
         output_units: str,
+        port_mapping: PortMapping | None = None,
     ) -> PreparedLearnedStressBinding:
-        """Bind loaded runtime objects only when their artifact metadata is exact."""
+        """Bind loaded runtime objects only when their artifact metadata is exact.
+
+        `port_mapping` binds a port-declaring predictor to the plan's owner ports;
+        see `PreparedLearnedStressBinding`.
+        """
 
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
@@ -461,7 +713,9 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
             raise ValueError("Loaded predictor target does not match the binding plan.")
         if units != self.output_contract.units:
             raise ValueError("Loaded predictor output units do not match the contract.")
-        return PreparedLearnedStressBinding(predictor, normalizer, self)
+        return PreparedLearnedStressBinding(
+            predictor, normalizer, self, port_mapping=port_mapping
+        )
 
 
 class LearnedStressEvidence(StrictModule, NonTrainableState):
@@ -493,7 +747,7 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
     parameter_provenance_id: str = eqx.field(static=True)
     energy_policy: StressEnergyPolicy = eqx.field(static=True)
     maximum_backscatter_fraction: float | None = eqx.field(static=True)
-    differentiation_semantics: str = eqx.field(static=True)
+    differentiation_semantics: BranchDifferentiationPolicy = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
     def __init__(
@@ -551,38 +805,73 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
                 "parameter_provenance": self.parameter_provenance_id,
                 "energy_policy": self.energy_policy,
                 "maximum_backscatter_fraction": self.maximum_backscatter_fraction,
-                "differentiation_semantics": self.differentiation_semantics,
+                "differentiation_semantics": self.differentiation_semantics.value,
             }
         )
 
 
 class LearnedStressResult(StrictModule, NonTrainableState):
-    """Specific deviatoric stress and Π = -τᵢⱼSᵢⱼ, positive for forward transfer."""
+    """Specific deviatoric stress and Π = -τᵢⱼSᵢⱼ, positive for forward transfer.
+
+    Beside the domain `evidence`, every sample lane carries the common
+    `header` (margin: distance of the selected stress to the output contract's
+    symmetry and trace tolerances; `model_id`: the bound predictor's component
+    identity; `evidence_id`: the prepared binding identity), the canonical
+    `derivative_contract` of the energy policy, and `derivative_valid`. Lanes
+    whose selected energy branch sits on a branch boundary keep their primal
+    stress and transfer but carry NaN derivatives.
+    """
 
     stress: Array
     local_transfer: Array
     evidence: LearnedStressEvidence
+    header: AdmissibilityHeader
+    derivative_contract: DerivativeContract
+    derivative_valid: Array
 
     def __init__(
         self,
         stress: ArrayLike,
         local_transfer: ArrayLike,
         evidence: LearnedStressEvidence,
+        header: AdmissibilityHeader,
+        derivative_contract: DerivativeContract,
+        derivative_valid: ArrayLike,
         /,
     ):
         if not isinstance(evidence, LearnedStressEvidence):
             raise TypeError("evidence must be LearnedStressEvidence.")
+        if not isinstance(header, AdmissibilityHeader):
+            raise TypeError("header must be an AdmissibilityHeader.")
+        if not isinstance(derivative_contract, DerivativeContract):
+            raise TypeError("derivative_contract must be a DerivativeContract.")
         self.stress = jnp.asarray(stress)
         self.local_transfer = jnp.asarray(local_transfer)
         self.evidence = evidence
+        self.header = header
+        self.derivative_contract = derivative_contract
+        self.derivative_valid = jnp.asarray(derivative_valid, dtype=jnp.bool_)
 
 
-class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
-    """JIT-compatible stress evaluation without a backend divergence operator."""
+class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
+    """JIT-compatible stress evaluation without a backend divergence operator.
+
+    The bound predictor is a loaded, artifact-identified deployment and is
+    intentionally frozen (`ExplicitFreeze`); retraining binds a new predictor.
+
+    The owner ports are the plan's feature port
+    (`feature_schema.value_port()`), consumed as the predictor's single
+    positional feature input, and its stress port (`output_contract.value_port()`),
+    the single predictor output. A predictor declaring model ports requires an
+    explicit `port_mapping` binding its ordered inputs and outputs to exactly
+    those owner ports; `port_binding` holds the resulting `PortBindingEvidence`
+    and is `None` for predictors without intrinsic ports, which take no mapping.
+    """
 
     predictor: Callable
     normalizer: TrainOnlyNormalizer
     plan: LearnedStressBindingPlan
+    port_binding: PortBindingEvidence | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
@@ -591,6 +880,8 @@ class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
         normalizer: TrainOnlyNormalizer,
         plan: LearnedStressBindingPlan,
         /,
+        *,
+        port_mapping: PortMapping | None = None,
     ):
         if not callable(predictor):
             raise TypeError("predictor must be callable.")
@@ -598,9 +889,26 @@ class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
             raise TypeError("normalizer must be a TrainOnlyNormalizer.")
         if not isinstance(plan, LearnedStressBindingPlan):
             raise TypeError("plan must be a LearnedStressBindingPlan.")
+        site = "PreparedLearnedStressBinding"
+        feature_port = plan.feature_schema.value_port()
+        stress_port = plan.output_contract.value_port()
+        port_binding = bind_model_ports(
+            predictor,
+            ModelPorts(inputs=(feature_port,), outputs=(stress_port,)),
+            port_mapping,
+            site=site,
+        )
+        if port_binding is not None:
+            require_mapped_order(
+                port_binding, "input", (feature_port.port_id,), site=site
+            )
+            require_mapped_order(
+                port_binding, "output", (stress_port.port_id,), site=site
+            )
         self.predictor = predictor
         self.normalizer = normalizer
         self.plan = plan
+        self.port_binding = port_binding
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-learned-stress-binding",
@@ -651,6 +959,7 @@ class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
                 "Learned stress predictor output does not match the bound dtype."
             )
         nonfinite_count = jnp.sum(~jnp.isfinite(raw_stress))
+        branch_tolerance = 32.0 * jnp.finfo(raw_stress.dtype).eps
         symmetry_defect = jnp.max(jnp.abs(raw_stress - jnp.swapaxes(raw_stress, -1, -2)))
         trace_defect = jnp.max(jnp.abs(jnp.trace(raw_stress, axis1=-2, axis2=-1)))
         raw_stress = eqx.error_if(
@@ -672,6 +981,20 @@ class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
         raw_transfer = _stress_transfer(raw_stress, strain_deviatoric)
         selected_transfer = raw_transfer
         backscatter_limit = jnp.asarray(jnp.inf, dtype=raw_transfer.dtype)
+        strain_norm_squared = ein.contract(
+            "...ij,...ij->...", strain_deviatoric, strain_deviatoric, backend="jax"
+        )
+        # A lane's derivative is branch-local: invalid where the executed energy
+        # branch sits on its boundary (zero local transfer, or the aggregate
+        # backscatter cap switching on) relative to the lane's transfer scale.
+        derivative_valid = jnp.ones(raw_transfer.shape, dtype=jnp.bool_)
+        if self.plan.energy_policy != "signed":
+            stress_norm_squared = ein.contract(
+                "...ij,...ij->...", raw_stress, raw_stress, backend="jax"
+            )
+            derivative_valid = jnp.abs(raw_transfer) > branch_tolerance * jnp.sqrt(
+                stress_norm_squared * strain_norm_squared
+            )
         if self.plan.energy_policy == "dissipative":
             selected_transfer = jnp.maximum(raw_transfer, 0.0)
             backscatter_limit = jnp.asarray(0.0, dtype=raw_transfer.dtype)
@@ -686,10 +1009,11 @@ class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
                 backscatter_scale * raw_transfer,
                 raw_transfer,
             )
+            cap_resolved = jnp.abs(
+                backscatter_limit - raw_backscatter
+            ) > branch_tolerance * jnp.maximum(backscatter_limit, raw_backscatter)
+            derivative_valid = derivative_valid & ((raw_transfer > 0.0) | cap_resolved)
         transfer_delta = raw_transfer - selected_transfer
-        strain_norm_squared = ein.contract(
-            "...ij,...ij->...", strain_deviatoric, strain_deviatoric, backend="jax"
-        )
         safe_strain_norm = jnp.where(strain_norm_squared > 0.0, strain_norm_squared, 1.0)
         correction_coefficient = jnp.where(
             strain_norm_squared > 0.0,
@@ -704,12 +1028,13 @@ class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
             "Learned stress energy projection produced nonfinite values.",
         )
         local_transfer = _stress_transfer(selected_stress, strain_deviatoric)
-        selected_symmetry_defect = jnp.max(
-            jnp.abs(selected_stress - jnp.swapaxes(selected_stress, -1, -2))
+        lane_symmetry_defect = jnp.max(
+            jnp.abs(selected_stress - jnp.swapaxes(selected_stress, -1, -2)),
+            axis=(-2, -1),
         )
-        selected_trace_defect = jnp.max(
-            jnp.abs(jnp.trace(selected_stress, axis1=-2, axis2=-1))
-        )
+        lane_trace_defect = jnp.abs(jnp.trace(selected_stress, axis1=-2, axis2=-1))
+        selected_symmetry_defect = jnp.max(lane_symmetry_defect)
+        selected_trace_defect = jnp.max(lane_trace_defect)
         selected_stress = eqx.error_if(
             selected_stress,
             (selected_symmetry_defect > output_contract.symmetry_tolerance)
@@ -734,7 +1059,35 @@ class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
             valid=jnp.asarray(True),
             plan=self.plan,
         )
-        return LearnedStressResult(selected_stress, local_transfer, evidence)
+        header = AdmissibilityHeader(
+            jnp.minimum(
+                output_contract.symmetry_tolerance - lane_symmetry_defect,
+                output_contract.trace_tolerance - lane_trace_defect,
+            ),
+            jnp.zeros(raw_transfer.shape, dtype=jnp.uint32),
+            _stress_component_id(self.plan),
+            self.prepared_id,
+        )
+        dependencies = (feature_array, strain_array)
+        selected_stress = guard_derivative_validity(
+            selected_stress,
+            derivative_valid[..., None, None],
+            dependencies=dependencies,
+        )
+        local_transfer = guard_derivative_validity(
+            local_transfer, derivative_valid, dependencies=dependencies
+        )
+        return LearnedStressResult(
+            selected_stress,
+            local_transfer,
+            evidence,
+            header,
+            branch_policy_contract(
+                self.plan.differentiation_semantics,
+                surfaces=(DerivativeSurface.INPUT, DerivativeSurface.PRIMAL_STATE),
+            ),
+            derivative_valid,
+        )
 
     def __call__(
         self,
@@ -744,6 +1097,21 @@ class PreparedLearnedStressBinding(StrictModule, NonTrainableState):
         /,
     ) -> LearnedStressResult:
         return self.apply(features, strain, args)
+
+
+def _stress_component_id(plan: LearnedStressBindingPlan, /) -> str:
+    """Declared artifact identity of the predictor bound by `plan`."""
+    return SemanticProvenance(
+        {
+            "kind": "learned-stress-component",
+            "features": plan.feature_schema.feature_schema_id,
+            "target": plan.output_contract.target_id,
+        },
+        resource_ids={
+            "model_artifact": plan.model_artifact_id,
+            "normalizer": plan.normalizer_id,
+        },
+    ).semantic_id
 
 
 def _symmetric_deviatoric(tensor: Array, /) -> Array:
@@ -870,10 +1238,15 @@ class SpectralDriftResult(StrictModule, NonTrainableState):
         self.fallback = fallback
 
 
-class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
-    """Dealiased, solenoidal, Hermitian learned drift with energy evidence."""
+class PreparedSpectralDriftHook(StrictModule):
+    """Dealiased, solenoidal, Hermitian learned drift with energy evidence.
 
-    predictor: Callable = eqx.field(static=True)
+    The hook holds its closure `binding` as a child and is otherwise neutral:
+    the predictor of a frozen `LearnedClosureBindingPlan` stays FIXED, and the
+    predictor of a `TrainableLearnedClosureBinding` trains through the hook.
+    """
+
+    binding: _AbstractLearnedClosureBinding
     projector: PeriodicLerayProjector
     hermitian_coordinates: HermitianSpectralCoordinates
     dealiasing: PreparedDealiasingPlan
@@ -884,18 +1257,20 @@ class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        predictor: Callable,
+        binding: LearnedClosureBindingPlan | TrainableLearnedClosureBinding,
         projector: PeriodicLerayProjector,
         hermitian_coordinates: HermitianSpectralCoordinates,
         dealiasing: PreparedDealiasingPlan,
         /,
         *,
-        binding_id: str,
         energy_policy: SpectralEnergyPolicy,
         evidence_tolerance: float,
     ):
-        if not callable(predictor):
-            raise TypeError("predictor must be callable.")
+        if not isinstance(binding, _AbstractLearnedClosureBinding):
+            raise TypeError(
+                "binding must be a LearnedClosureBindingPlan or "
+                "TrainableLearnedClosureBinding."
+            )
         if not isinstance(projector, PeriodicLerayProjector):
             raise TypeError("projector must be a PeriodicLerayProjector.")
         if not isinstance(hermitian_coordinates, HermitianSpectralCoordinates):
@@ -907,12 +1282,10 @@ class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
                 "Oversampling dealiasing cannot serve as a learned spectral drift "
                 "output filter because its filter action is identity."
             )
-        binding = str(binding_id).strip()
         policy = str(energy_policy).strip()
         tolerance = float(evidence_tolerance)
         if (
-            not binding
-            or policy not in ("nonincreasing", "diagnostic")
+            policy not in ("nonincreasing", "diagnostic")
             or not np.isfinite(tolerance)
             or tolerance < 0.0
             or projector.state_shape != hermitian_coordinates.state_shape
@@ -921,17 +1294,17 @@ class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
             != projector.discretization.prepared_id
         ):
             raise ValueError("Spectral drift hook contracts are incompatible.")
-        self.predictor = predictor
+        self.binding = binding
         self.projector = projector
         self.hermitian_coordinates = hermitian_coordinates
         self.dealiasing = dealiasing
-        self.binding_id = binding
+        self.binding_id = binding.binding_id
         self.energy_policy = policy
         self.evidence_tolerance = tolerance
         self.hook_id = canonical_fingerprint(
             {
                 "kind": "prepared-spectral-drift-hook",
-                "binding": binding,
+                "binding": self.binding_id,
                 "projector": projector.projector_id,
                 "hermitian_coordinates": hermitian_coordinates.coordinate_id,
                 "dealiasing": dealiasing.prepared_id,
@@ -952,7 +1325,7 @@ class PreparedSpectralDriftHook(StrictModule, NonTrainableState):
             | (input_hermitian > self.evidence_tolerance),
             "Spectral closure input violates finiteness, projection, or Hermitian contracts.",
         )
-        raw = jnp.asarray(self.predictor(value, args))
+        raw = jnp.asarray(self.binding.predictor(value, args))
         if raw.shape != value.shape:
             raise ValueError("Spectral closure predictor output must match state shape.")
         if not jnp.issubdtype(raw.dtype, jnp.complexfloating):
@@ -1025,6 +1398,7 @@ def _energy_rate(state: Array, drift: Array) -> Array:
 
 __all__ = [
     "ClosureDeploymentKind",
+    "conservative_face_numeric_revision",
     "LearnedClosureBindingPlan",
     "LearnedStressBindingPlan",
     "LearnedStressEvidence",
@@ -1038,4 +1412,5 @@ __all__ = [
     "SpectralEnergyPolicy",
     "SpectralFallbackArtifact",
     "StressEnergyPolicy",
+    "TrainableLearnedClosureBinding",
 ]

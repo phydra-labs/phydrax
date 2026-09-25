@@ -20,6 +20,7 @@ from phydrax.ein import contract
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ..._trainable import fixed_field, ParameterOwner
 from ._selection import ParameterSubspace
 
 
@@ -74,16 +75,17 @@ class LowRankAdaptationPlan:
         return tuple(path for path, _ in self.specs)
 
 
-class LowRankUpdate(StrictModule):
-    """Dense base weight plus one trainable low-rank update.
+class LowRankUpdate(StrictModule, ParameterOwner):
+    """Frozen dense base weight plus one trainable low-rank update.
 
     For a base weight with shape ``(out, in)``, ``left`` has shape
     ``(out, rank)`` and ``right`` has shape ``(rank, in)``. Evaluation keeps the
     update factorized; :meth:`materialize` is reserved for diagnostics, export,
-    and deployment merging.
+    and deployment merging. ``base`` is FIXED; ``left`` and ``right`` are the
+    PARAMETER factors.
     """
 
-    base: Array
+    base: Array = fixed_field()
     left: Array
     right: Array
     alpha: float = eqx.field(static=True)

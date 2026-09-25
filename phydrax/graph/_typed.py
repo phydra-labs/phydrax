@@ -10,9 +10,9 @@ import numpy as np
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
 
+from ..sparse import EdgeRelation, gather_routes, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._kernels import segment_sum
 
 
 GraphFlow = Literal["source_to_target", "target_to_source"]
@@ -163,40 +163,46 @@ def _with_node_output(
     return nodes
 
 
-def _oriented_edges(
-    graph: GraphIR, flow: GraphFlow, /
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+def _oriented_relation(
+    graph: GraphIR, flow: GraphFlow, node_count: int, /
+) -> EdgeRelation:
     if graph.senders is None or graph.receivers is None:
         raise ValueError(
             "RelationalGraphConvolution requires explicit senders/receivers."
         )
-    if flow == "source_to_target":
-        return graph.senders, graph.receivers
-    if flow == "target_to_source":
-        return graph.receivers, graph.senders
-    raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+    if flow not in ("source_to_target", "target_to_source"):
+        raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+    return graph.edge_relation(node_count=node_count, flow=flow)
 
 
 def _edge_weights(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray:
     if graph.senders is None:
         raise ValueError("RelationalGraphConvolution requires explicit edges.")
     if edge_weight_key is None:
-        out = jnp.ones((graph.senders.shape[0],), dtype=jnp.float64)
-    else:
-        if not isinstance(graph.edges, Mapping):
-            raise TypeError("edge_weight_key requires mapping-valued graph edges.")
-        if edge_weight_key not in graph.edges:
-            raise KeyError(
-                f"Graph edges do not contain edge_weight_key {edge_weight_key!r}."
-            )
-        out = jnp.asarray(graph.edges[edge_weight_key], dtype=jnp.float64)
-        if out.ndim == 2 and out.shape[1] == 1:
-            out = out[:, 0]
-        if out.ndim != 1:
-            raise ValueError("edge weights must have shape (n_edge,) or (n_edge, 1).")
-    if graph.edge_mask is not None:
-        out = out * graph.edge_mask.astype(out.dtype)
+        return jnp.ones((graph.senders.shape[0],), dtype=jnp.float64)
+    if not isinstance(graph.edges, Mapping):
+        raise TypeError("edge_weight_key requires mapping-valued graph edges.")
+    if edge_weight_key not in graph.edges:
+        raise KeyError(f"Graph edges do not contain edge_weight_key {edge_weight_key!r}.")
+    out = jnp.asarray(graph.edges[edge_weight_key], dtype=jnp.float64)
+    if out.ndim == 2 and out.shape[1] == 1:
+        out = out[:, 0]
+    if out.ndim != 1:
+        raise ValueError("edge weights must have shape (n_edge,) or (n_edge, 1).")
     return out
+
+
+def _typed_target_relation(
+    relation: EdgeRelation, edge_types: jnp.ndarray, relation_count: int, /
+) -> EdgeRelation:
+    """Route each message onto its `(edge type, target node)` normalization slot."""
+    return EdgeRelation(
+        relation.source_indices,
+        edge_types * relation.target_size + relation.target_indices,
+        source_size=relation.source_size,
+        target_size=relation_count * relation.target_size,
+        valid=relation.valid,
+    )
 
 
 def _relation_transform(nodes: jnp.ndarray, relation_weights: jnp.ndarray) -> jnp.ndarray:
@@ -231,7 +237,9 @@ class RelationalGraphConvolution(StrictModule):
 
     Edge type ids choose a relation weight for each message. Relation weights may
     be scalar per relation `(R,)`, channel-wise `(R, F)`, or dense matrices
-    `(R, F, O)`.
+    `(R, F, O)`. Messages are gathered and reduced over
+    `graph.edge_relation(flow=flow)`; routes with `edge_mask=False` are inert,
+    including in the per-relation degree normalization.
     """
 
     relation_weights: jnp.ndarray
@@ -277,23 +285,22 @@ class RelationalGraphConvolution(StrictModule):
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
         nodes = _node_features(graph, self.input_key)
-        source, target = _oriented_edges(graph, self.flow)
+        relation = _oriented_relation(graph, self.flow, nodes.shape[0])
         edge_types = edge_type_ids(graph, type_key=self.edge_type_key)
 
         edge_scale = _edge_weights(graph, self.edge_weight_key)
         if self.normalize:
-            n = nodes.shape[0]
-            keys = edge_types * n + target
-            degree = segment_sum(
-                edge_scale,
-                keys,
-                self.relation_weights.shape[0] * n,
-            )[keys]
+            typed = _typed_target_relation(
+                relation, edge_types, self.relation_weights.shape[0]
+            )
+            degree = gather_routes(typed.transpose(), route_reduce(typed, edge_scale))
             edge_scale = jnp.where(degree > 0, edge_scale / degree, 0.0)
 
-        messages = _relation_transform(nodes[source], self.relation_weights[edge_types])
+        messages = _relation_transform(
+            gather_routes(relation, nodes), self.relation_weights[edge_types]
+        )
         messages = messages * edge_scale[:, None]
-        out = segment_sum(messages, target, nodes.shape[0])
+        out = route_reduce(relation, messages)
         if self.self_weight is not None:
             out = out + _self_transform(nodes, self.self_weight)
         out = _mask_nodes(out, graph.node_mask)

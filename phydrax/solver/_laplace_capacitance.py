@@ -15,7 +15,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import fixed_field, NonTrainableState
 from ..discretization import EntitySelection
 from ..linalg import (
     AbstractPreconditioner,
@@ -58,15 +58,15 @@ class LaplaceCapacitanceSensitivityEvidence3D(StrictModule, NonTrainableState):
 class LaplaceCapacitanceResult3D(StrictModule):
     """Unit-voltage conductor responses and their Maxwell capacitance matrix."""
 
-    layer_density: Array
-    capacitance: Array
-    linear_results: tuple[LinearSolveResult, ...]
+    layer_density: Array = fixed_field()
+    capacitance: Array = fixed_field()
+    linear_results: tuple[LinearSolveResult, ...] = fixed_field()
     potentials: tuple[LaplaceLayerPotential3D, ...]
     assembly_report: LaplaceSingleLayerDP0AssemblyReport3D
     sensitivity: LaplaceCapacitanceSensitivityEvidence3D
-    permittivity: Array
-    capacitance_reciprocity_defect: Array
-    valid: Array
+    permittivity: Array = fixed_field()
+    capacitance_reciprocity_defect: Array = fixed_field()
+    valid: Array = fixed_field()
     conductor_names: tuple[str, ...] = eqx.field(static=True)
     conductor_selection_ids: tuple[str, ...] = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
@@ -307,7 +307,7 @@ class LaplaceCapacitanceCoordinateJVP3D(StrictModule):
     epoch_id: str = eqx.field(static=True)
 
 
-class PreparedLaplaceStableDualCalderon3D(AbstractPreconditioner):
+class PreparedLaplaceStableDualCalderon3D(AbstractPreconditioner, NonTrainableState):
     """Prepared stable-dual first-kind Calderón action for a declared mesh family."""
 
     matrix: Array

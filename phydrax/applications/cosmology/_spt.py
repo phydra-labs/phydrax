@@ -11,12 +11,12 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
+from ..._differentiation import DerivativeContract, DerivativeSurface
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import gauss_legendre_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._background import FLRWBackground
-from ._closure import DifferentiationContract
 from ._products import (
     CosmologyProductProvenance,
     MatterPowerDescriptor,
@@ -201,11 +201,12 @@ class OneLoopEdSSPTPlan(StrictModule, NonTrainableState):
             scale_id=linear_power.scale.scale_id,
             source_kind="native",
             differentiation=linear_power.provenance.differentiation.meet(
-                DifferentiationContract(
-                    upstream_physical_parameters=True,
-                    stored_values=True,
-                    query_coordinates=True,
-                    local_parameters=False,
+                DerivativeContract.smooth(
+                    (
+                        DerivativeSurface.INPUT,
+                        DerivativeSurface.PHYSICAL_PARAMETER,
+                        DerivativeSurface.STORED_VALUES,
+                    )
                 )
             ),
             parent_product_ids=(linear_power.provenance.provenance_id,),

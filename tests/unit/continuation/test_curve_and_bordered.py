@@ -384,3 +384,106 @@ def test_bordered_tangent_drops_inherited_state_sized_preconditioner():
     assert jnp.isfinite(coordinate_tangent)
     assert float(residual_norm) <= 1e-10
     assert float(alignment) > 0.0
+
+
+def _sensitivity_problem():
+    return phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, args: jnp.stack(
+            (
+                state[0] + args["cubic"] * state[0] ** 3 - coordinate,
+                state[1] - args["coupling"] * jnp.sin(state[0]) - coordinate**2,
+            )
+        ),
+        problem_id="accepted-point-sensitivity",
+    )
+
+
+def _tight_termination():
+    return phx.nonlinear.NonlinearTermination(
+        absolute_residual=1e-13,
+        relative_residual=0.0,
+        absolute_step=0.0,
+        relative_step=0.0,
+        maximum_steps=30,
+    )
+
+
+def test_accepted_point_sensitivity_matches_recorrected_central_differences():
+    problem = _sensitivity_problem()
+    args = {"cubic": jnp.asarray(2.0), "coupling": jnp.asarray(0.5)}
+    branch = phx.continuation.continue_branch(
+        problem,
+        jnp.zeros(2),
+        jnp.asarray(0.0),
+        num_steps=3,
+        method=phx.continuation.PseudoArclengthContinuation(
+            initial_step=0.2, maximum_step=0.2
+        ),
+        args=args,
+    )
+    point = branch.points[-1]
+    assert float(point.coordinate) > 0.0
+
+    def sensitive_state(arguments):
+        return phx.continuation.accepted_point_sensitivity(
+            problem, point, args=arguments, termination=_tight_termination()
+        ).state
+
+    def recorrected_state(arguments):
+        return (
+            phx.nonlinear.NewtonKrylov()
+            .solve(
+                phx.nonlinear.NonlinearSystemProblem(
+                    lambda state, values: problem.residual(
+                        state, point.coordinate, values
+                    )
+                ),
+                point.state,
+                termination=_tight_termination(),
+                args=arguments,
+            )
+            .state
+        )
+
+    result = phx.continuation.accepted_point_sensitivity(
+        problem, point, args=args, termination=_tight_termination()
+    )
+    jacobian = jax.jacfwd(sensitive_state)(args)
+    weights = jnp.asarray([1.0, -3.0])
+    gradient = jax.grad(lambda arguments: weights @ sensitive_state(arguments))(args)
+    step = 1e-4
+    assert bool(result.successful)
+    np.testing.assert_allclose(result.state, point.state, atol=1e-8)
+    for name in args:
+        plus = dict(args, **{name: args[name] + step})
+        minus = dict(args, **{name: args[name] - step})
+        difference = (recorrected_state(plus) - recorrected_state(minus)) / (2 * step)
+        assert float(jnp.max(jnp.abs(difference))) > 1e-3
+        np.testing.assert_allclose(jacobian[name], difference, rtol=1e-5, atol=1e-8)
+        np.testing.assert_allclose(
+            gradient[name], weights @ difference, rtol=1e-5, atol=1e-8
+        )
+
+
+def test_accepted_point_sensitivity_refuses_invalid_inputs():
+    problem = _sensitivity_problem()
+    args = {"cubic": jnp.asarray(2.0), "coupling": jnp.asarray(0.5)}
+    branch = phx.continuation.continue_branch(
+        problem,
+        jnp.zeros(2),
+        jnp.asarray(0.0),
+        num_steps=1,
+        args=args,
+    )
+    point = branch.points[-1]
+    with pytest.raises(TypeError, match="BranchPoint"):
+        phx.continuation.accepted_point_sensitivity(problem, point.state, args=args)
+    with pytest.raises(TypeError, match="ContinuationCurveProblem"):
+        phx.continuation.accepted_point_sensitivity(object(), point, args=args)
+    failed = eqx.tree_at(
+        lambda value: value.status,
+        point,
+        jnp.asarray(int(phx.nonlinear.NonlinearStatus.MAXIMUM_STEPS_REACHED)),
+    )
+    with pytest.raises(ValueError, match="successfully corrected"):
+        phx.continuation.accepted_point_sensitivity(problem, failed, args=args)

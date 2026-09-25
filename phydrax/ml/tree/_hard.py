@@ -18,13 +18,17 @@ from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     ML_SUCCESS,
 )
 from .._schema import TargetSchema
-from ._representation import _traverse_one_tree, _weighted_median_case, TreeEnsemble
+from ._representation import (
+    _HARD_CONTRACT,
+    _traverse_one_tree,
+    _weighted_median_case,
+    TreeEnsemble,
+)
 
 
 SplitSearch: TypeAlias = Literal["exact", "histogram", "random"]
@@ -36,25 +40,6 @@ XGBObjective: TypeAlias = Literal[
     "poisson",
     "pairwise_ranking",
 ]
-
-_HARD_CONTRACT = GradientContract(
-    prediction_inputs="none",
-    prediction_parameters="almost-everywhere",
-    fit_features="none",
-    fit_targets="none",
-    fit_weights="none",
-    fit_hyperparameters="none",
-    fit_mode="stopped",
-    nondifferentiable_outputs=(
-        "split structure",
-        "leaf indices",
-        "decision paths",
-        "class labels",
-    ),
-    conditions=(
-        "Finite values away from represented split thresholds are locally constant.",
-    ),
-)
 
 
 def _as_bool(value: Any) -> bool:
@@ -887,7 +872,7 @@ def _finish_result(
         valid=valid_array,
         status=status_array,
         method=method,
-        gradient_contract=_HARD_CONTRACT,
+        derivative_contract=_HARD_CONTRACT,
     )
 
 

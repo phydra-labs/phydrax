@@ -53,10 +53,16 @@ def test_operator_training_substrate_has_explicit_namespace_ownership():
     training_exports = set(phx.nn.operator.training.__all__)
     assert set(phx.nn.__all__) == {
         "activations",
+        "atomistic",
+        "flows",
+        "latent",
         "layers",
         "models",
+        "neural_tangent",
         "operator",
         "parameters",
+        "population",
+        "quantum",
     }
     assert {"MLP", "SeparableMLP"} <= set(vars(phx.nn.models))
     assert {"Linear", "MeasureAwareAttention", "RandomFourierFeatureEmbeddings"} <= set(
@@ -145,7 +151,7 @@ def test_multi_query_batches_stack_and_preserve_per_query_metadata():
 
     assert batch.case_axes == ("scenario",)
     assert batch.case_shape == (2,)
-    assert tuple(batch.queries) == ("state", "flux")
+    assert tuple(batch.queries) == ("flux", "state")
     assert batch.query("state") is batch.queries["state"]
     assert jnp.array_equal(
         batch.query("state").mask_array(case_shape=(2,)),

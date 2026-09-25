@@ -13,7 +13,7 @@ import jax.random as jr
 from jaxtyping import Array
 
 from phydrax._fingerprint import canonical_fingerprint
-from phydrax._trainable import NonTrainableState
+from phydrax._trainable import NonTrainableState, ParameterOwner
 from phydrax.nn.operator.layers import (
     clifford_gated_activation,
     CliffordGeometricProductLayer,
@@ -87,7 +87,7 @@ class PeriodicCliffordLaplacian(eqx.Module, NonTrainableState):
         )
 
 
-class DifferentialCliffordOperatorBlock(eqx.Module):
+class DifferentialCliffordOperatorBlock(eqx.Module, ParameterOwner):
     """Benchmark candidate coupling a declared Laplacian to Clifford products."""
 
     __hash__ = object.__hash__

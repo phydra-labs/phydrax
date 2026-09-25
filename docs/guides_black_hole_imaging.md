@@ -39,7 +39,14 @@ equal coordinate names, or equal output shape cannot replace that content bindin
 ## Ordered terminal events and statuses
 
 `GRRayEventSurfaces` accepts optional signed capture, escape, and metric-domain margins.
-The admissible side has positive margin and a down-crossing triggers. Simultaneous
+The admissible side has positive margin and a down-crossing triggers. Margin
+identity uses the canonical callable payload: StrictModule margins and plain
+module-level functions are identified by content, while opaque margins (lambdas,
+closures, methods, partials) require the matching `capture_margin_semantic_id`/
+`capture_margin_numeric_id` (likewise `escape_margin_*` and `domain_margin_*`)
+pair; a missing pair raises `TypeError`. Margins passed directly to `GRRayPlan`
+must therefore be content-addressable; declare opaque margins on a
+`GRRayEventSurfaces` passed as `events`. Simultaneous
 terminal events use the fixed priority
 
 ```text

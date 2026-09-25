@@ -12,6 +12,7 @@ import jax.scipy.special as jsp
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
+from ...._precision import inexact_result_type
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 
@@ -88,9 +89,7 @@ class GaussianErfVortexKernel3D(StrictModule, NonTrainableState):
             offset.shape[:-1], circulation.shape[:-1], radius.shape
         )
 
-        dtype = jnp.result_type(
-            offset.dtype, circulation.dtype, radius.dtype, jnp.float64
-        )
+        dtype = inexact_result_type(offset.dtype, circulation.dtype, radius.dtype)
         offset = jnp.broadcast_to(offset.astype(dtype), leading_shape + (3,))
         circulation = jnp.broadcast_to(circulation.astype(dtype), leading_shape + (3,))
         radius = jnp.broadcast_to(radius.astype(dtype), leading_shape)

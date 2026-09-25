@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax.axes as cx
 
 
 def _gaussian_problem():
@@ -14,7 +15,10 @@ def _gaussian_problem():
     return phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(jnp.asarray(0.0), priors=prior),
         lambda value: likelihood.log_prob(value),
-        sample_observation=lambda key, value: value + jax.random.normal(key),
+        sample_observation=lambda key, value: cx.AxisArray(
+            value + jax.random.normal(key),
+            dims=(),
+        ),
     )
 
 

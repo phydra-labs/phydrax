@@ -1747,7 +1747,7 @@ def operator_conditioned_inverse_pde(
     candidates = jnp.linspace(0.7, 2.7, 41)
     scores = jax.vmap(log_likelihood)(candidates)
     selected_diffusion = candidates[jnp.argmax(scores)]
-    query_design = phx.uq.FunctionalDesign.from_points(
+    query_design = phx.uq.FunctionalDesign.from_inputs(
         query_points,
         value,
         name="query-values",

@@ -13,6 +13,7 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -60,7 +61,7 @@ class AbstractWavePropagationPlan(StrictModule, NonTrainableState):
     wave_plan_id: str = eqx.field(static=True)
     conservative: bool = eqx.field(static=True)
     fwave: bool = eqx.field(static=True)
-    differentiability: str = eqx.field(static=True)
+    differentiability: BranchDifferentiationPolicy = eqx.field(static=True)
 
     @abc.abstractmethod
     def decompose(
@@ -90,7 +91,7 @@ class RoeWavePropagationPlan(AbstractWavePropagationPlan):
         self.entropy_fix = fix
         self.conservative = True
         self.fwave = False
-        self.differentiability = "almost_everywhere"
+        self.differentiability = BranchDifferentiationPolicy.BRANCHWISE
         self.wave_plan_id = canonical_fingerprint(
             {"kind": "roe-wave-propagation", "entropy_fix": fix}
         )

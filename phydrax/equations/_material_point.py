@@ -6,13 +6,15 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, TypeAlias
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint
+from .._model import AbstractComponentSlot
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
@@ -158,8 +160,16 @@ class MPMLinearizedConstitutiveResponse(StrictModule):
     tangent_successful: Array
 
 
-class AbstractMPMConstitutivePlan(StrictModule, NonTrainableState):
-    """Fixed-shape material update required by explicit material-point dynamics."""
+class AbstractMPMConstitutivePlan(AbstractComponentSlot):
+    """Fixed-shape material update required by explicit material-point dynamics.
+
+    The slot confers `MODEL` authority and is neutral: built-in analytic plans
+    are `NonTrainableState` leaves, wrapper plans hold their base plan as a
+    child, and a learned plan holds its model as a trainable child.
+    """
+
+    component_authority: ClassVar[ComponentAuthority] = ComponentAuthority.MODEL
+    slot_semantic_id: ClassVar[str] = "phydrax.equations.mpm-constitutive-plan"
 
     dimension: eqx.AbstractVar[int]
     kinematics: eqx.AbstractVar[MPMKinematics]
@@ -186,6 +196,10 @@ class AbstractMPMConstitutivePlan(StrictModule, NonTrainableState):
 
 
 class AbstractImplicitMPMConstitutivePlan(AbstractMPMConstitutivePlan):
+    """MPM material update that also supplies its algorithmic tangent `dP/dF`."""
+
+    slot_semantic_id: ClassVar[str] = "phydrax.equations.implicit-mpm-constitutive-plan"
+
     @abc.abstractmethod
     def evaluate_linearized(
         self,
@@ -214,7 +228,7 @@ class MaterialPointArguments(StrictModule):
         self.external_arguments = external_arguments
 
 
-class MaterialPointProblemIR(StrictModule, NonTrainableState):
+class MaterialPointProblemIR(StrictModule):
     """One homogeneous constitutive family and optional body acceleration."""
 
     name: str = eqx.field(static=True)
@@ -280,7 +294,7 @@ class MaterialPointProblemIR(StrictModule, NonTrainableState):
         self.problem_id = identifier
 
 
-class CompiledMaterialPointProblem(StrictModule, NonTrainableState):
+class CompiledMaterialPointProblem(StrictModule):
     problem: MaterialPointProblemIR
     dynamics: PreparedMPMDynamics
     discretization_bundle: DiscretizationBundle

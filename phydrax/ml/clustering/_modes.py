@@ -13,16 +13,22 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._differentiation import (
+    DerivativeRoute,
+    DerivativeSurface,
+    GradientLevel,
+    SurfaceDerivative,
+)
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
     FitResult,
-    GradientContract,
     ML_CAPACITY_EXHAUSTED,
     ML_INSUFFICIENT_DATA,
     ML_NONCONVERGED,
     ML_NONFINITE,
     ML_SUCCESS,
+    prediction_fit_contract,
 )
 from ._common import (
     active_data,
@@ -166,14 +172,21 @@ class MeanShift(AbstractRecipe):
             degeneracy=exhausted,
             method="mean-shift",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
-            nondifferentiable_outputs=("hard_labels", "merged mode mask"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
+            nondifferentiable_outputs=("merged mode mask",),
             conditions=("fixed seed and merge ordering", "positive bandwidth"),
         )
         return FitResult(
@@ -182,7 +195,7 @@ class MeanShift(AbstractRecipe):
             valid=valid,
             status=status,
             method="mean-shift",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 
@@ -361,14 +374,21 @@ class AffinityPropagation(AbstractRecipe):
             degeneracy=exhausted,
             method="affinity-propagation",
         )
-        contract = GradientContract(
-            prediction_inputs="smooth",
-            prediction_parameters="smooth",
-            fit_features="conditional",
-            fit_weights="conditional",
-            fit_hyperparameters="conditional",
-            fit_mode="unrolled",
-            nondifferentiable_outputs=("hard_labels", "exemplar selection"),
+        contract = prediction_fit_contract(
+            model._prediction_contract(),
+            (
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_FEATURES, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_WEIGHTS, GradientLevel.CONDITIONAL
+                ),
+                SurfaceDerivative(
+                    DerivativeSurface.FIT_HYPERPARAMETERS, GradientLevel.CONDITIONAL
+                ),
+            ),
+            route=DerivativeRoute.UNROLLED,
+            nondifferentiable_outputs=("exemplar selection",),
             conditions=("fixed message iterations", "fixed exemplar top-k ordering"),
         )
         return FitResult(
@@ -377,7 +397,7 @@ class AffinityPropagation(AbstractRecipe):
             valid=valid,
             status=status,
             method="affinity-propagation",
-            gradient_contract=contract,
+            derivative_contract=contract,
         )
 
 

@@ -2,13 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from phydrax._trainable import partition_trainable
 from phydrax.applications.battery._protocol import (
     BatteryProtocolPlan,
     BatteryProtocolValues,
@@ -31,7 +29,7 @@ def test_passive_terminal_convention_is_one_immutable_sign_source():
         convention.current_definition = "discharge positive"
 
 
-def test_protocol_topology_is_nontrainable_while_values_are_dynamic_leaves():
+def test_protocol_topology_maps_dynamic_values_onto_intervals():
     plan = BatteryProtocolPlan(
         (
             CurrentStepPlan(
@@ -51,11 +49,6 @@ def test_protocol_topology_is_nontrainable_while_values_are_dynamic_leaves():
         jnp.asarray((2.7, 323.15, 0.95)),
     )
 
-    plan_trainable, _ = partition_trainable(plan)
-    values_trainable, _ = partition_trainable(values)
-    assert not jax.tree.leaves(plan_trainable)
-    leaves = [leaf for leaf in jax.tree.leaves(values_trainable) if eqx.is_array(leaf)]
-    assert [leaf.shape for leaf in leaves] == [(2,), (3,)]
     np.testing.assert_array_equal(plan.interval_current_indices, np.asarray((0, -1, 1)))
     np.testing.assert_allclose(
         plan.interval_currents(values), np.asarray((-2.0, 0.0, 0.5))

@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, PRNGKeyArray
 
+from .._precision import inexact_result_type
 from .._strict import StrictModule
 
 
@@ -127,7 +128,7 @@ class ExponentialHawkesProcess(StrictModule):
             raise ValueError("excitation must have shape (channels, channels).")
         if decay_.shape not in ((), (channels, channels)):
             raise ValueError("decay must be scalar or have shape (channels, channels).")
-        dtype = jnp.result_type(baseline_, excitation_, decay_, jnp.float64)
+        dtype = inexact_result_type(baseline_, excitation_, decay_)
         baseline_ = baseline_.astype(dtype)
         excitation_ = excitation_.astype(dtype)
         decay_ = jnp.broadcast_to(decay_.astype(dtype), (channels, channels))

@@ -22,7 +22,7 @@ class _ZeroShift(eqx.Module):
 
 
 class _IsotropicRawFactor(eqx.Module):
-    expansion: jax.Array
+    expansion: jax.Array = phx.parameter_field()
     baseline: float = eqx.field(static=True)
 
     def __init__(self, expansion):
