@@ -29,24 +29,24 @@
   },
   "identities": {
     "boundary_topologies": {
-      "exchange_equilibrium_reservoir": "f862a920d7a8130bf2ff604f9a51e926fa7a6735a825d5649c11ab44aba51306",
-      "invalid_target_reservoir": "9f3e5324f01bb0a78a8cff696e12023be1611a0e103dc7b61caaaf378188ee30",
-      "matching_equilibrium_reservoir": "f862a920d7a8130bf2ff604f9a51e926fa7a6735a825d5649c11ab44aba51306",
-      "maxwell_thermal": "9c2772612b5a7963c2b3ae9c40cd5309e3acb52862e4137560a2760ea243a95d",
-      "maxwell_thermal_degenerate": "a9283e1b955b19f5670661c22cad7f505fe41a0cb5ddcbe0aebcfb61faa79c11",
-      "outward_extrapolation": "1815bb05305fd485693602ae4da5e1da6a6c9ae57063eb885cd8c16c177ada5b",
-      "periodic": "4d7a556c184be484fb61c9f0936bcbbda40a92ad4e08eabea11fa694d0b90016",
-      "specular_adiabatic": "af83397dfcfec6eed5df25fdcf281bd7d6eda0dc1487b5cad0bbc2701db5a582"
+      "exchange_equilibrium_reservoir": "65e7fac2287a7d3f334440237a3c1920395e77b6869dd521aedc703d38f81a2e",
+      "invalid_target_reservoir": "7703f444b4c468b4eb4f9e7982c5199cd04db7c212d83aa935561e59d4a1cca2",
+      "matching_equilibrium_reservoir": "65e7fac2287a7d3f334440237a3c1920395e77b6869dd521aedc703d38f81a2e",
+      "maxwell_thermal": "55d5be2007357c6049b52106d50476cd5918f3b308abb64dc3b4a9899db3cefb",
+      "maxwell_thermal_degenerate": "b9d0e45178627785151e29fa1a1c4351b94a74eb03c45ff150ca8bf997c43d66",
+      "outward_extrapolation": "251abc3112ed9a434d6d88a028563f984453194adc69630fb8323be2c1661e16",
+      "periodic": "1f1c12090831d8ab84d55e400c4edd6a097268efda48c52fff8055e3d857518e",
+      "specular_adiabatic": "b84644ac89104777f01b4c72c26006283fb4e465fe84ada47ae157634ee8bf85"
     },
-    "boundary_topology_set": "bfcf3a2344918c3e1fac5fda74204ff3654dd3ed28b658b82d59834d28972ebf",
+    "boundary_topology_set": "3ef30dc55b51bf1bf642047ca01b4ce18e4e478f9b6b0a1534f336b09f6294cc",
     "energy_plan": "b4cb8e1f0260cd96191636b31f2fa817f83c59e2c5a6375bedc7ce3765eaf189",
     "kinetic_method": "6199410282d847d6b25d7bf44a56144b92974898716efd9a22a781e3f218d2eb",
     "material": "2a9118f25ff3fa199ce1cd53ac2d948f42809a1728b021f1477dd5ae6bf05ea3",
-    "parent_periodic_transport": "34a65127a34e08b8fd38e3bf7cdf201e5899e779665d62fb44f30024a457feb1",
+    "parent_periodic_transport": "aabc5ec81f6596a837ff8089761d1de8d026beada59c9d6585f0f98224e8821e",
     "quadrature": "e98e367a69a4a752157e9b59c0ed86a14962bab97bb018bdfe919b7492ef05bf",
-    "runtime": "c931d87472cb044a48f9fc08dc0f6a7374c04ed5d8ecacc3823526d58789cd81",
+    "runtime": "ebdd537e34dbd97e2d111824e1215e9dbcdf52c36e50342fa934cee228931031",
     "runtime_program_manifest": "e7077092d71183bd1b1452d35590cfc02c9122adc0b0689f9eb040517108f793",
-    "spatial_plan": "0da510336d6eb07260a23daf611d965fe657d8fd030fc83c754e467d835a5457",
+    "spatial_plan": "0a0b089e2b8e6e91069137be306010e94d35d3f899d6ed625e375862fabdfc2e",
     "transport_closure": "2e968ac79dc0270cfa5a32b4e32f6b9eb950d099102738b02c4a2a39af3a2b31"
   },
   "incompatible_reservoir_corner": {
@@ -66,18 +66,18 @@
     ],
     "particle_state_fully_restored": true,
     "passed": true,
-    "plan_id": "b27bdd115050dea5b009d7330b75a52776c5680991cd8e88353ca9eec1f253e4",
+    "plan_id": "6671cc48f255c9b37174f268443c8e2a706eaefe0d86babfa806d3119ec29112",
     "rejected_candidate_differs": true,
     "rollback_applied": true,
     "status": "INVALID_TARGET",
-    "topology_id": "9f3e5324f01bb0a78a8cff696e12023be1611a0e103dc7b61caaaf378188ee30"
+    "topology_id": "7703f444b4c468b4eb4f9e7982c5199cd04db7c212d83aa935561e59d4a1cca2"
   },
   "lineage": {
     "model_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
-    "parent_spatial_id": "00f1543552971a1bedeb5d4427d88608d6fe8258ff0f4bec1c90ee077790e981",
-    "runtime_id": "c931d87472cb044a48f9fc08dc0f6a7374c04ed5d8ecacc3823526d58789cd81",
+    "parent_spatial_id": "99d0c0e0bad4ac7ac3bf462cefc96fad0693fa4e94210b3dea317c0a66bf00a3",
+    "runtime_id": "ebdd537e34dbd97e2d111824e1215e9dbcdf52c36e50342fa934cee228931031",
     "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d",
-    "topology_id": "bfcf3a2344918c3e1fac5fda74204ff3654dd3ed28b658b82d59834d28972ebf"
+    "topology_id": "3ef30dc55b51bf1bf642047ca01b4ce18e4e478f9b6b0a1534f336b09f6294cc"
   },
   "long_link_routes": {
     "checked_long_boundary_links": 368,
@@ -130,12 +130,12 @@
     "incoming_values_supplied_directly": true,
     "input_source": "prepared runtime analytic safe-equilibrium f/g populations",
     "passed": true,
-    "plan_id": "fb69b12dc55b4d368cd4d692f0770138aac2d03ccc3440f7dbc6b433cf23ee2e",
+    "plan_id": "93626f5290f7e6e1f81c98b9c19bed7b6fafd374785414224021974d27648e12",
     "state_exactly_stationary": true,
-    "topology_id": "f862a920d7a8130bf2ff604f9a51e926fa7a6735a825d5649c11ab44aba51306"
+    "topology_id": "65e7fac2287a7d3f334440237a3c1920395e77b6869dd521aedc703d38f81a2e"
   },
   "maxwell_thermal": {
-    "degenerate_topology_id": "a9283e1b955b19f5670661c22cad7f505fe41a0cb5ddcbe0aebcfb61faa79c11",
+    "degenerate_topology_id": "b9d0e45178627785151e29fa1a1c4351b94a74eb03c45ff150ca8bf997c43d66",
     "passed": true,
     "positive_accommodation": {
       "accepted_energy_exchange": 3547.6171875,
@@ -171,7 +171,7 @@
       ],
       "mass_flux_absolute_tolerance": 5e-10,
       "passed": true,
-      "plan_id": "a4c51419a0713d8bb64325e4047abbcfc604a719f914e29c365ef6a9fcb8380b",
+      "plan_id": "ae54e3703ada6e424c9098bf18c3dbcf8858ecbcc9166b0adf34445bc8408acc",
       "reported_exchange_tolerance": 6.951454765349108e-10,
       "reported_mass_momentum_energy_exchange": [
         1.5279510989785194e-10,
@@ -205,7 +205,7 @@
         "energy_state_fully_restored": true,
         "exchange_ledgers_exactly_zero": true,
         "particle_state_fully_restored": true,
-        "plan_id": "f474bf49afb4b70e74346e7ba5c5ad89ca135e3112f4a7f0600f4e05f6fe4c40",
+        "plan_id": "4dd9371ea2911c86b39e4c1e06b219fe65626d4bf6adcfcf2509e6016ffbd60d",
         "refused": true,
         "rollback_applied": true,
         "route_dtype": "float32",
@@ -216,19 +216,19 @@
         "energy_state_fully_restored": true,
         "exchange_ledgers_exactly_zero": true,
         "particle_state_fully_restored": true,
-        "plan_id": "a4c51419a0713d8bb64325e4047abbcfc604a719f914e29c365ef6a9fcb8380b",
+        "plan_id": "ae54e3703ada6e424c9098bf18c3dbcf8858ecbcc9166b0adf34445bc8408acc",
         "refused": true,
         "rollback_applied": true,
         "status": "NONPOSITIVE_CANDIDATE"
       },
       "passed": true
     },
-    "topology_id": "9c2772612b5a7963c2b3ae9c40cd5309e3acb52862e4137560a2760ea243a95d",
+    "topology_id": "55d5be2007357c6049b52106d50476cd5918f3b308abb64dc3b4a9899db3cefb",
     "zero_accommodation_specular_limit": {
       "coupled_state_and_ledgers_exactly_equal": true,
       "passed": true,
-      "plan_id": "b1e83cd0c1cec1430d35920fcea88e349d5c32ed72f9a1800701580ae7c5ed6e",
-      "reference_specular_plan_id": "da1d01a2a13a25ffb95ecb43634d4e244fc758d7c810eb264883067714cb0259",
+      "plan_id": "069756eb444ee75b992ba0f4bcdb7d04d9ad783be8315d44b5742022f2b30085",
+      "reference_specular_plan_id": "f8b25b7db96c74030c4c955be3c96fe6a218e8c1571f41d64c3d93ab63db1d54",
       "status": "SUCCESS"
     }
   },
@@ -262,13 +262,13 @@
       true
     ],
     "physical_axis": "x",
-    "plan_id": "fb0cc778c9a0ec6805c5adcf3178f5ee29745f611c83225a3c2d6c694871b6cd",
-    "topology_id": "1815bb05305fd485693602ae4da5e1da6a6c9ae57063eb885cd8c16c177ada5b"
+    "plan_id": "f1a35b244560eb84255610086837fdd0ac960d13796ef05300eb08a9d363c467",
+    "topology_id": "251abc3112ed9a434d6d88a028563f984453194adc69630fb8323be2c1661e16"
   },
   "passed": true,
   "periodic_compatibility": {
-    "boundary_plan_id": "c073d186c4063d1243c4572b5142d4fdd8b43af7987f92165fbc7c5073f020a6",
-    "boundary_topology_id": "4d7a556c184be484fb61c9f0936bcbbda40a92ad4e08eabea11fa694d0b90016",
+    "boundary_plan_id": "d8a58f53433ff07d7549cc1d0f91640aad30f0c2c4c463929d85d4ee983560fd",
+    "boundary_topology_id": "1f1c12090831d8ab84d55e400c4edd6a097268efda48c52fff8055e3d857518e",
     "energy_maximum_absolute_difference": 0.0,
     "exchange": [
       0.0,
@@ -277,11 +277,11 @@
       0.0
     ],
     "history_retained_and_exact": true,
-    "parent_periodic_transport_id": "34a65127a34e08b8fd38e3bf7cdf201e5899e779665d62fb44f30024a457feb1",
+    "parent_periodic_transport_id": "aabc5ec81f6596a837ff8089761d1de8d026beada59c9d6585f0f98224e8821e",
     "particle_maximum_absolute_difference": 0.0,
     "passed": true
   },
-  "qualification_id": "da9b32a5669bba1de24328e41632bbc67bc8958994f12dbf5a685b5dbc718299",
+  "qualification_id": "c3ec03ea92095aec8f1942390982f0b68fea414f2e3714f021d5f9efcd52badf",
   "reservoir_exchange_and_corners": {
     "all_exchange_components_nonzero": true,
     "coupled_route_values_exact": true,
@@ -300,14 +300,14 @@
       0.05316821695963547
     ],
     "passed": true,
-    "plan_id": "7cf1179902856a66911ab3a0698ca3f571d4011d8ab5e66e3887269175a8189a",
+    "plan_id": "f5d33b0e078d48b537534cfc2a3e9968aa529b8f3c2f2321877f5dc9803ac47b",
     "reported_mass_momentum_energy_exchange": [
       0.0410037923177099,
       -0.00543040364583333,
       -0.008020540364583327,
       0.05316821695963703
     ],
-    "topology_id": "f862a920d7a8130bf2ff604f9a51e926fa7a6735a825d5649c11ab44aba51306",
+    "topology_id": "65e7fac2287a7d3f334440237a3c1920395e77b6869dd521aedc703d38f81a2e",
     "wall_momentum_impulse": [
       0.0,
       0.0
@@ -348,14 +348,14 @@
       0.0
     ],
     "passed": true,
-    "plan_id": "da1d01a2a13a25ffb95ecb43634d4e244fc758d7c810eb264883067714cb0259",
+    "plan_id": "f8b25b7db96c74030c4c955be3c96fe6a218e8c1571f41d64c3d93ab63db1d54",
     "reported_mass_momentum_energy_exchange": [
       0.0,
       -7238.875,
       -450.75,
       0.0
     ],
-    "topology_id": "af83397dfcfec6eed5df25fdcf281bd7d6eda0dc1487b5cad0bbc2701db5a582",
+    "topology_id": "b84644ac89104777f01b4c72c26006283fb4e465fe84ada47ae157634ee8bf85",
     "wall_momentum_impulse": [
       7238.875,
       450.75

@@ -1,12 +1,12 @@
 {
   "accepted_update_count": 6,
   "artifact": {
-    "artifact_id": "32f4a1196fed06c72e0ed35f6edf07020a19298c0d00a06db672282467567ac9",
-    "numeric_revision_id": "db95211e856e7911b053dc6f02a593cc0fd7f14de413d04846ab40900b64c89a",
+    "artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+    "numeric_revision_id": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
     "path": "benchmarks/learned_energy_stage_two.phxml",
-    "prepared_binding_id": "32f4a1196fed06c72e0ed35f6edf07020a19298c0d00a06db672282467567ac9"
+    "prepared_binding_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9"
   },
-  "artifact_id": "2cbbb2d72d823da89733b4ab45201a99e2520c7008398212c5fdcd3a4fbcc7cd",
+  "artifact_id": "f27c7af312835c291b5b046cc994466f5dabc28be656339900d0f564e798385e",
   "attempt_count": 6,
   "curriculum": [
     1,
@@ -28,23 +28,23 @@
     "trained_no_regression": true
   },
   "identities": {
-    "checkpoint_state_id": "9eaace777e31d8c0153af6ec6669370c8cbead913670410d05dc9b994c5d4f5a",
-    "final_model_revision_id": "db95211e856e7911b053dc6f02a593cc0fd7f14de413d04846ab40900b64c89a",
+    "checkpoint_state_id": "eb7669e36b1aca0db1ef7ef1ebd7c0be399d67e2c7cfce2de8c58ad9800602af",
+    "final_model_revision_id": "0b0eb11145c8ff78e5c95d489cd9e349ce9b779170190cd6e0fc9f89ade4b5f4",
     "normalizer_id": "af380d4ebba3c9e63fe5ad9683ae69147aaeda00f159af8d4b20c49463d39663",
-    "rollout_preparation_id": "5e22f4ed7fc57c5724a3be40f4fae2396415b0471e9f92be6de6a54cc0c69b9a",
-    "runtime_id": "d05a22a630ba21eeb9a30fbeabff18c6a079d984e4a825cb10305776ab6507b5",
+    "rollout_preparation_id": "691525564fe6bcc419c62186f15a3f9e1c6272d182f5c0caca26f90e6ebbbb22",
+    "runtime_id": "889b5e3e83884178d87256cbc2105ed97979ddfc0d045dd7637717f99b0a61e2",
     "stage_one_artifact_id": "ab49b6a07cdac9a5fc7ec9fbf8f8feff1cdb48e5dc1b461e3a32c941c013a89f",
     "stage_one_model_revision_id": "9e06dd790298a996cc0ee12d5e2e98ad62e9860528d4368fe8b656cfb144c8d6",
-    "stage_two_artifact_id": "32f4a1196fed06c72e0ed35f6edf07020a19298c0d00a06db672282467567ac9",
-    "stage_two_binding_plan_id": "67bd06e11f059ee74f3e3aece22bd48a2a308fe0b2c4f9ad10f07904dac80cc6",
-    "stage_two_prepared_binding_id": "32f4a1196fed06c72e0ed35f6edf07020a19298c0d00a06db672282467567ac9",
-    "stage_two_semantic_id": "3e6afd7b99c9b54f2a909f564331f75675e29b212a3e17ca441c8eb04e2d5528",
+    "stage_two_artifact_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+    "stage_two_binding_plan_id": "4696c861aa6173815e034ddf3f6dccc6ebb0bb4e80fe5fdf0d887cf8608948f0",
+    "stage_two_prepared_binding_id": "62fe714ef6ca0ef9afe260571a8f03bb6aa23ac62713e10306f1fee49e73dde9",
+    "stage_two_semantic_id": "6099df26a77c314633b3756b8e278386e79b7607b96b70533eef00c5ef1149d5",
     "support_id": "6687098d03757f601c85e84962b48d70b96b8c15515e85045b76fe0840bbfc5d",
-    "training_plan_id": "0b8bee569f079fb86c7b1fb147802b0d0278b4f54cb31ece940a433fbc2ec775"
+    "training_plan_id": "1d55cc5ffdc93905e7f2277228b055bcde4e07fd6112c049e49682fcbd312a1b"
   },
   "kind": "learned-energy-stage-two-qualification",
   "late_start_anchor": 6,
-  "maximum_scaled_flux_error": 0.0027883027939627596,
+  "maximum_scaled_flux_error": 0.0027883031799679162,
   "passed": true,
   "rejection_count": 0,
   "replay": {
@@ -273,6 +273,6 @@
     "absolute_loss": 1e-12,
     "maximum_relative_gradient": 1e-10
   },
-  "selected_stage_two_loss": 0.022937681248334858,
+  "selected_stage_two_loss": 0.022937857856236615,
   "stage_one_baseline_loss": 0.02436623549684959
 }

@@ -103,7 +103,7 @@ class D2V17PeriodicTransportPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "D2V17 pull transport requires velocity*time_step/cell_spacing to be integer."
             )
-        offsets = tuple(tuple(row) for row in rounded)
+        offsets = tuple(tuple(row) for row in rounded.astype(np.int64).tolist())
         reach = tuple(max(abs(row[axis]) for row in offsets) for axis in range(2))
         if any(shape[axis] <= 2 * reach[axis] for axis in range(2)):
             raise ValueError(

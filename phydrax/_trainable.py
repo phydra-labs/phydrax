@@ -449,9 +449,41 @@ def _hidden_state(value: Any, /) -> Iterator[tuple[str, Any]]:
     elif hasattr(value, "__wrapped__"):
         yield "wrapped callable", value.__wrapped__
     else:
-        attributes = getattr(value, "__dict__", None)
-        if isinstance(attributes, dict):
-            for name, attribute in attributes.items():
+        yield from _instance_attributes(value)
+
+
+def _declared_slot_names(cls: type, /) -> Iterator[str]:
+    """Yield the attribute names of every `__slots__` entry along the MRO."""
+    for owner in cls.__mro__:
+        slots = owner.__dict__.get("__slots__", ())
+        for name in (slots,) if isinstance(slots, str) else slots:
+            if name in ("__dict__", "__weakref__"):
+                continue
+            if name.startswith("__") and not name.endswith("__"):
+                name = f"_{owner.__name__.lstrip('_')}{name}"
+            yield name
+
+
+def _instance_attributes(value: Any, /) -> Iterator[tuple[str, Any]]:
+    """Yield instance state: dataclass fields, declared slots, then `__dict__`."""
+    seen: set[str] = set()
+    names: list[str] = []
+    if dataclasses.is_dataclass(value):
+        names.extend(field.name for field in dataclasses.fields(value))
+    names.extend(_declared_slot_names(type(value)))
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            attribute = getattr(value, name)
+        except AttributeError:  # A declared slot that was never assigned.
+            continue
+        yield f"attribute {name!r}", attribute
+    attributes = getattr(value, "__dict__", None)
+    if isinstance(attributes, dict):
+        for name, attribute in attributes.items():
+            if name not in seen:
                 yield f"attribute {name!r}", attribute
 
 
@@ -517,8 +549,9 @@ def require_declared_callables(tree: PyTree[Any], /, *, context: str) -> None:
 
     Everything a PyTree flattening cannot see is searched: closure cells,
     defaults, `functools.partial` arguments, bound instances, wrapped callables,
-    attributes of opaque leaves and static fields. Each inexact array found there
-    is reported with its path and capture route.
+    attributes of opaque leaves (dataclass fields, declared `__slots__` and
+    `__dict__`, so slotted frozen dataclasses are covered) and static fields. Each
+    inexact array found there is reported with its path and capture route.
     """
     if not isinstance(context, str) or not context:
         raise TypeError("context must be a non-empty string.")

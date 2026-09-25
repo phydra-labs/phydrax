@@ -258,7 +258,7 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
             raise ValueError(
                 "Certified integer-lattice velocities are not integer within tolerance."
             )
-        return tuple(tuple(row) for row in rounded)
+        return tuple(tuple(row) for row in rounded.astype(np.int64).tolist())
 
     def raw_moment(self, populations: ArrayLike, exponents: Sequence[int], /) -> Array:
         values = self.validate_populations(populations)

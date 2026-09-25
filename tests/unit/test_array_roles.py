@@ -1,3 +1,5 @@
+import dataclasses
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -280,6 +282,36 @@ def test_require_parameter_roles_names_paths_and_remedies():
         assert remedy in message
     clean = Owner(jnp.ones(2))
     assert phx.require_parameter_roles(clean, context="x").unclassified == ()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _SlottedCoefficients:
+    scale: object
+    label: str = "coefficients"
+
+
+def _training_callable(coefficients):
+    def loss(x):
+        return coefficients.scale * x
+
+    return Neutral(loss)
+
+
+def test_training_callable_capturing_slotted_dataclass_array_is_rejected():
+    tree = _training_callable(_SlottedCoefficients(jnp.ones(2)))
+
+    with pytest.raises(ValueError) as error:
+        phx.require_parameter_roles(tree, context="unit training")
+
+    message = str(error.value)
+    assert message.startswith("unit training:")
+    assert ".value: closure variable 'coefficients' -> attribute 'scale'" in message
+
+
+def test_training_callable_capturing_slotted_dataclass_scalars_is_accepted():
+    tree = _training_callable(_SlottedCoefficients(2.0))
+
+    assert phx.require_parameter_roles(tree, context="x").unclassified == ()
 
 
 def _stacked_members():
