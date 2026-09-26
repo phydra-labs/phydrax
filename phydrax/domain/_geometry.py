@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Bool
 
 from .._doc import DOC_KEY0
 from .._mass import Mass
@@ -31,7 +30,7 @@ from ..geometry import (
 )
 from ..geometry._contracts import ClosestPointResult
 from ..geometry._sampling import require_complete
-from ..typing import PRNGKey
+from ..typing import Bool, PRNGKey, Scalar
 from ._base import _make_compact_boundary_factor, AbstractGeometry
 
 
@@ -295,7 +294,7 @@ class GeometryDomain(AbstractGeometry):
 
     def estimate_boundary_subset_measure(
         self,
-        where: Callable[[Array], Bool[Array, ""]],
+        where: Callable[[Array], Bool[Scalar]],
         *,
         num_samples: int = 4096,
         key: PRNGKey = DOC_KEY0,

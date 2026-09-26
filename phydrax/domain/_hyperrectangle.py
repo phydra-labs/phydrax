@@ -3,6 +3,7 @@
 #
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -10,7 +11,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Bool, Float
 
 from .._doc import DOC_KEY0
 from .._sampling import (
@@ -21,8 +21,14 @@ from .._sampling import (
     seed_from_key,
 )
 from ..discretization._axis import broadcasted_grid
-from ..typing import PRNGKey
-from ._base import AbstractGeometry, EnforcementGateMethod, GeometryTransitionKind
+from ..typing import AnyShape, Bool, Float, PRNGKey, Scalar
+from ._base import (
+    _PointDim,
+    _SpatialDim,
+    AbstractGeometry,
+    EnforcementGateMethod,
+    GeometryTransitionKind,
+)
 from ._structure import _validate_label
 
 
@@ -121,7 +127,7 @@ class HyperRectangle(AbstractGeometry):
         return "box_reflection"
 
     @property
-    def bounds(self) -> Float[Array, "2 spatial_dim"]:
+    def bounds(self) -> Float[Literal[2], _SpatialDim]:
         return jnp.stack((self.lower, self.upper), axis=0)
 
     @property
@@ -301,7 +307,7 @@ class HyperRectangle(AbstractGeometry):
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
         key: PRNGKey = DOC_KEY0,
-    ) -> tuple[tuple[Array, ...], Bool[Array, "..."]]:
+    ) -> tuple[tuple[Array, ...], Bool[AnyShape]]:
         dim = int(self.spatial_dim)
         if isinstance(num_points, int):
             counts = (int(num_points),) * dim
@@ -348,18 +354,18 @@ class HyperRectangle(AbstractGeometry):
 
         return coords, mask
 
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         pts, _ = self._points_2d(points)
         return jnp.all((pts >= self.lower) & (pts <= self.upper), axis=-1)
 
-    def _on_boundary(self, points: Array) -> Bool[Array, " num_points"]:
+    def _on_boundary(self, points: Array) -> Bool[_PointDim]:
         pts, _ = self._points_2d(points)
         inside = self._contains(pts)
         lower_face = jnp.isclose(pts, self.lower)
         upper_face = jnp.isclose(pts, self.upper)
         return inside & jnp.any(lower_face | upper_face, axis=-1)
 
-    def _boundary_normals(self, points: Array) -> Float[Array, "num_points spatial_dim"]:
+    def _boundary_normals(self, points: Array) -> Float[_PointDim, _SpatialDim]:
         pts, _ = self._points_2d(points)
         lower_face = jnp.isclose(pts, self.lower)
         upper_face = jnp.isclose(pts, self.upper)
@@ -394,7 +400,7 @@ class HyperRectangle(AbstractGeometry):
 
     def estimate_boundary_subset_measure(
         self,
-        where: Callable[[Array], Bool[Array, ""]],
+        where: Callable[[Array], Bool[Scalar]],
         *,
         num_samples: int = 4096,
         key: PRNGKey = DOC_KEY0,

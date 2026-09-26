@@ -12,12 +12,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Bool
 
 from .._sampling import materialize_design
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import PRNGKey
+from ..typing import Bool, PRNGKey
+from ._base import _PointDim
 from ._measure import BaseMeasure, ExactMass
 from ._scalar import AbstractScalarDomain
 from ._selection import Fixed, Interior, Selection
@@ -344,7 +344,7 @@ class ProbabilityDomain(AbstractScalarDomain):
             other.distribution
         )
 
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         return jnp.asarray(self.distribution.contains(points), dtype=jnp.bool_)
 
 

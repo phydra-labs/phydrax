@@ -12,12 +12,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Bool, Float
 
 from .._doc import DOC_KEY0
 from .._mass import ExactMass, Mass, UnknownMass
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import AnyShape, Bool, Dim, Float, Int32, PRNGKey, Scalar
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -176,14 +175,24 @@ def _make_global_boundary_ansatz_factor(
     return jax.jit(factor)
 
 
+class _PointDim(Dim):
+    """Number of points in one geometry query."""
+
+
+class _SpatialDim(Dim, minimum=1):
+    """Number of spatial coordinates."""
+
+
 class GeometryTransitionResult(StrictModule):
     """Fixed-shape result of a geometry-constrained coordinate transition."""
 
-    points: Array
-    valid: Bool[Array, " num_points"]
-    displacement_norm: Float[Array, " num_points"]
-    projection_distance: Float[Array, " num_points"]
-    reflection_count: Array
+    __strict_contract__ = True
+
+    points: Float[_PointDim, _SpatialDim]
+    valid: Bool[_PointDim]
+    displacement_norm: Float[_PointDim]
+    projection_distance: Float[_PointDim]
+    reflection_count: Int32[_PointDim]
 
     def __init__(
         self,
@@ -389,7 +398,7 @@ class AbstractGeometry(JointFactor):
 
     @property
     @abstractmethod
-    def bounds(self) -> Float[Array, "2 spatial_dim"]:
+    def bounds(self) -> Float[Literal[2], _SpatialDim]:
         raise NotImplementedError
 
     @property
@@ -397,7 +406,7 @@ class AbstractGeometry(JointFactor):
         return False
 
     @ft.cached_property
-    def mesh_bounds(self) -> Float[Array, "2 spatial_dim"]:
+    def mesh_bounds(self) -> Float[Literal[2], _SpatialDim]:
         """Axis-aligned bounding box as `[[mins...], [maxs...]]` (raw values)."""
         bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         sd = int(self.spatial_dim)
@@ -408,7 +417,7 @@ class AbstractGeometry(JointFactor):
         return bounds
 
     @ft.cached_property
-    def volume_proportion(self) -> Float[Array, ""]:
+    def volume_proportion(self) -> Float[Scalar]:
         """Fraction of the AABB volume occupied by the geometry (defaults to 1.0)."""
         return jnp.array(1.0, dtype=jnp.float64)
 
@@ -609,7 +618,7 @@ class AbstractGeometry(JointFactor):
     @abstractmethod
     def estimate_boundary_subset_measure(
         self,
-        where: Callable[[Array], Bool[Array, ""]],
+        where: Callable[[Array], Bool[Scalar]],
         *,
         num_samples: int = 4096,
         key: PRNGKey = DOC_KEY0,
@@ -654,18 +663,18 @@ class AbstractGeometry(JointFactor):
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
         key: PRNGKey = DOC_KEY0,
-    ) -> tuple[tuple[Array, ...], Bool[Array, "..."]]:
+    ) -> tuple[tuple[Array, ...], Bool[AnyShape]]:
         """Internal helper for separable interior sampling."""
         raise NotImplementedError
 
     @abstractmethod
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         raise NotImplementedError
 
     @abstractmethod
-    def _on_boundary(self, points: Array) -> Bool[Array, " num_points"]:
+    def _on_boundary(self, points: Array) -> Bool[_PointDim]:
         raise NotImplementedError
 
     @abstractmethod
-    def _boundary_normals(self, points: Array) -> Float[Array, "num_points spatial_dim"]:
+    def _boundary_normals(self, points: Array) -> Float[_PointDim, _SpatialDim]:
         raise NotImplementedError

@@ -16,6 +16,9 @@
   contract field of a module. Checks read only kind, rank, extent, and dtype
   metadata: they add no JAX operations and synchronize nothing. See the typing
   guide.
+- Domain geometry annotations use `phydrax.typing` forms with nominal point and
+  spatial dimensions; `GeometryTransitionResult` opts into structural contracts.
+  jaxtyping dtype and shape forms are refused by lint in package code.
 - PRNG key parameters and fields are annotated with `phydrax.typing.PRNGKey`, the
   typed scalar key; seeded internal draws in Lyapunov, covariant-vector, and chaos
   analysis, Riemannian density flows, multistart optimization, process

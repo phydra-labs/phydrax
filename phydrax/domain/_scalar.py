@@ -11,11 +11,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Bool
 
 from .._doc import DOC_KEY0
 from .._sampling import host_design_factory, seed_from_key
-from ..typing import PRNGKey
+from ..typing import Bool, PRNGKey
+from ._base import _PointDim
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -232,5 +232,5 @@ class ScalarInterval(AbstractScalarDomain):
         sampled = sampled * (self.end - self.start) + self.start
         return sampled
 
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         return (self.start <= points) & (points <= self.end)

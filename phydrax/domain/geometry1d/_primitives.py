@@ -3,6 +3,7 @@
 #
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -10,12 +11,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Bool, Float
 
 from ..._doc import DOC_KEY0
 from ..._sampling import host_design_factory, seed_from_key
-from ...typing import PRNGKey
-from .._base import EnforcementGateMethod
+from ...typing import AnyShape, Bool, Float, PRNGKey, Scalar
+from .._base import _PointDim, EnforcementGateMethod
 from ._base import _AbstractGeometry1D
 
 
@@ -92,7 +92,7 @@ class Interval1d(_AbstractGeometry1D):
         return self.end - self.start
 
     @property
-    def bounds(self) -> Float[Array, "2 1"]:
+    def bounds(self) -> Float[Literal[2], Literal[1]]:
         return jnp.array([[self.start], [self.end]], dtype=jnp.float64)
 
     def _same_factor_support(self, other: object, /) -> bool:
@@ -168,7 +168,7 @@ class Interval1d(_AbstractGeometry1D):
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
         key: PRNGKey = DOC_KEY0,
-    ) -> tuple[tuple[Array, ...], Bool[Array, "..."]]:
+    ) -> tuple[tuple[Array, ...], Bool[AnyShape]]:
         if isinstance(num_points, int):
             num_points_ = num_points
         else:
@@ -239,7 +239,7 @@ class Interval1d(_AbstractGeometry1D):
         )
         return sampled_points
 
-    def _contains(self, points: Array) -> Bool[Array, " num_points"]:
+    def _contains(self, points: Array) -> Bool[_PointDim]:
         pts = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
@@ -248,14 +248,14 @@ class Interval1d(_AbstractGeometry1D):
         on_boundary = jnp.isclose(pts_, a) | jnp.isclose(pts_, b)
         return inside | on_boundary
 
-    def _on_boundary(self, points: Array) -> Bool[Array, " num_points"]:
+    def _on_boundary(self, points: Array) -> Bool[_PointDim]:
         pts = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
         pts_ = pts[:, 0] if (pts.ndim == 2 and pts.shape[1] == 1) else jnp.squeeze(pts)
         return jnp.isclose(pts_, a) | jnp.isclose(pts_, b)
 
-    def _boundary_normals(self, points: Array) -> Float[Array, "num_points 1"]:
+    def _boundary_normals(self, points: Array) -> Float[_PointDim, Literal[1]]:
         pts = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
@@ -292,7 +292,7 @@ class Interval1d(_AbstractGeometry1D):
 
     def estimate_boundary_subset_measure(
         self,
-        where: Callable[[Array], Bool[Array, ""]],
+        where: Callable[[Array], Bool[Scalar]],
         *,
         num_samples: int = 4096,
         key: PRNGKey = DOC_KEY0,
