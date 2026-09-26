@@ -9,10 +9,15 @@ from collections.abc import Sequence
 from numbers import Real
 
 
+def is_canonical_identifier(value: str, /) -> bool:
+    """Return whether `value` is non-empty and free of surrounding whitespace."""
+    return bool(value) and value == value.strip()
+
+
 def canonical_identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
+    if not is_canonical_identifier(value):
         raise ValueError(f"{name} must be a non-empty canonical identifier.")
     return value
 
@@ -60,6 +65,7 @@ def finite_real_scalar(value: object, name: str, /) -> float:
 __all__ = [
     "canonical_identifier",
     "finite_real_scalar",
+    "is_canonical_identifier",
     "normalized_identifier",
     "optional_identifier",
     "unique_identifiers",

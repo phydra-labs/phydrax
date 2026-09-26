@@ -3,6 +3,23 @@
 ## Unreleased
 
 ### Added
+- Added `phydrax.typing`, a closed structural contract language shared by static
+  checkers and runtime boundaries. Nominal `Dim`/`VariadicDim` size variables,
+  `AnyDim`, `AnyShape`, `Scalar`, and `Broadcast[D]` build JAX tensor forms
+  (`Float64[ComponentDim]`, statically `jax.Array`) and host forms
+  (`HostFloat64[ComponentDim]`, statically a dtype-carrying NumPy array);
+  `Size[D]`, `Identifier`, `Identifiers[D]`, `PRNGKey` (typed keys only),
+  `Literal` selectors, `Enum`s, optionals, unions, and fixed tuples complete the
+  grammar. `Scope` binds dimensions with provenance and union rollback; `parse`
+  validates and canonicalizes selector literals; `as_array` and `as_host_array`
+  convert once under an explicit casting policy; `validate` checks every
+  contract field of a module. Checks read only kind, rank, extent, and dtype
+  metadata: they add no JAX operations and synchronize nothing. See the typing
+  guide.
+- Battery OED criteria, generic experiment-design criteria, and axis
+  discretization bases and primary entities are parsed against their `Literal`
+  aliases, removing duplicated option tuples; non-string selector values now
+  raise `TypeError`, unsupported selector strings still raise `ValueError`.
 - Added the machine-learning interoperability qualification runner
   `tools/ml_interoperability_qualification.py`. It runs the scenarios of the 24
   gates in `tests/integration/test_ml_interoperability_qualification.py` (all gates

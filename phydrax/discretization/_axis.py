@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 import math
 from collections.abc import Callable, Sequence
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,6 +19,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
+from ..typing import parse
 from ._axis_domain import AxisDomain
 from ._core import (
     DiscretizationCapability,
@@ -33,8 +34,8 @@ if TYPE_CHECKING:
     from ._tensor_support import PreparedTensorGrid
 
 
-AxisPrimaryEntity = Literal["point", "interval"]
-AxisBasis = Literal[
+AxisPrimaryEntity: TypeAlias = Literal["point", "interval"]
+AxisBasis: TypeAlias = Literal[
     "uniform",
     "nonuniform",
     "fourier",
@@ -78,19 +79,7 @@ class AxisDiscretization(StrictModule):
     ) -> None:
         if not isinstance(domain, AxisDomain):
             raise TypeError("domain must be an AxisDomain.")
-        if basis not in (
-            "uniform",
-            "nonuniform",
-            "fourier",
-            "sine",
-            "cosine",
-            "chebyshev",
-            "legendre",
-            "nested",
-            "rational_chebyshev_line",
-            "rational_chebyshev_half_line",
-        ):
-            raise ValueError("Unknown axis basis.")
+        basis = parse(basis, AxisBasis, "basis")
         nodes_ = jnp.asarray(nodes, dtype=jnp.float64).reshape((-1,))
         if nodes_.size == 0:
             raise ValueError("AxisDiscretization.nodes must be non-empty.")
@@ -114,8 +103,7 @@ class AxisDiscretization(StrictModule):
                 jnp.any(~jnp.isfinite(weights)) | jnp.any(weights < 0.0),
                 "AxisDiscretization quadrature weights must be finite and non-negative.",
             )
-        if primary_entity not in ("point", "interval"):
-            raise ValueError("primary_entity must be 'point' or 'interval'.")
+        primary_entity = parse(primary_entity, AxisPrimaryEntity, "primary_entity")
         if primary_entity == "interval" and domain.finite_bounds is None:
             raise ValueError("Interval-primary axes require a finite domain.")
         lower = bool(lower_endpoint_included)

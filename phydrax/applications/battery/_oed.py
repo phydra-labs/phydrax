@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from numbers import Integral
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -31,14 +31,14 @@ from ...qualification import (
     SupportTuple,
     validate_qualification_causality,
 )
+from ...typing import parse
 from ...uq import experiment_design_objective, ExperimentDesignResult
 from ._calibration import PreparedBatteryCalibration
 from ._protocol import BatteryProtocolValues
 from ._results import BatteryExperimentResult
 
 
-BatteryOEDCriterion = Literal["d_optimal", "a_optimal", "e_optimal"]
-_CRITERIA = ("d_optimal", "a_optimal", "e_optimal")
+BatteryOEDCriterion: TypeAlias = Literal["d_optimal", "a_optimal", "e_optimal"]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -461,10 +461,7 @@ class PreparedBatteryOED(StrictModule):
         index = int(experiment_index)
         if index < 0 or index >= len(calibration.plan.experiments):
             raise IndexError("experiment_index is outside the calibration plan.")
-        if criterion not in _CRITERIA:
-            raise ValueError(
-                "criterion must be 'd_optimal', 'a_optimal', or 'e_optimal'."
-            )
+        criterion_name = parse(criterion, BatteryOEDCriterion, "criterion")
         regularization_ = float(regularization)
         if not np.isfinite(regularization_) or regularization_ < 0.0:
             raise ValueError("regularization must be finite and non-negative.")
@@ -577,7 +574,7 @@ class PreparedBatteryOED(StrictModule):
         self.current_lower_a = lower
         self.current_upper_a = upper
         self.experiment_index = index
-        self.criterion_name = criterion
+        self.criterion_name = criterion_name
         self.regularization = regularization_
         self.parameter_count = parameter_count
         self.current_count = protocol.current_step_count

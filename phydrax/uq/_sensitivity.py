@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from math import isfinite
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key, PyTree
+from typing_extensions import assert_never
 
 import phydrax.axes as cx
 
@@ -29,7 +30,13 @@ from ..linalg import (
     inverse,
     OperatorProperties,
 )
+from ..typing import parse
 from ._distributions import AbstractDistribution
+
+
+_DesignCriterion: TypeAlias = Literal[
+    "d_optimal", "a_optimal", "e_optimal", "mutual_information"
+]
 
 
 class SobolResult(StrictModule):
@@ -1040,7 +1047,7 @@ def experiment_design_objective(
     information: ArrayLike | Callable[[Array], ArrayLike],
     /,
     *,
-    criterion: Literal["d_optimal", "a_optimal", "e_optimal", "mutual_information"],
+    criterion: _DesignCriterion,
     dimension: int | None = None,
     regularization: float = 0.0,
     noise_variance: float = 1.0,
@@ -1086,41 +1093,41 @@ def experiment_design_objective(
     positive_semidefinite = jnp.all(eigenvalues >= -tolerance)
     finite = jnp.all(jnp.isfinite(effective)) & jnp.all(jnp.isfinite(eigenvalues))
     base_valid = finite & symmetric & positive_semidefinite
-    if criterion == "d_optimal":
-        _, log_determinant = jnp.linalg.slogdet(effective)
-        raw_value = log_determinant
-        criterion_valid = base_valid & positive
-    elif criterion == "a_optimal":
-        inverse_result = inverse(
-            effective,
-            FactorizationPolicy("cholesky"),
-            properties=OperatorProperties(
-                self_adjoint=True,
-                positive_definite=True,
-                evidence={
-                    "self_adjoint": "asserted",
-                    "positive_definite": "asserted",
-                },
-            ),
-        )
-        raw_value = -jnp.trace(inverse_result.value)
-        criterion_valid = base_valid & positive & inverse_result.successful
-    elif criterion == "e_optimal":
-        raw_value = eigenvalues[0]
-        criterion_valid = base_valid
-    elif criterion == "mutual_information":
-        variance = float(noise_variance)
-        if not isfinite(variance) or variance <= 0.0:
-            raise ValueError("noise_variance must be finite and positive.")
-        _, log_determinant = jnp.linalg.slogdet(
-            jnp.eye(size, dtype=matrix.dtype) + effective / variance
-        )
-        raw_value = 0.5 * log_determinant
-        criterion_valid = base_valid
-    else:
-        raise ValueError(
-            "criterion must be 'd_optimal', 'a_optimal', 'e_optimal', or 'mutual_information'."
-        )
+    design_criterion = parse(criterion, _DesignCriterion, "criterion")
+    match design_criterion:
+        case "d_optimal":
+            _, log_determinant = jnp.linalg.slogdet(effective)
+            raw_value = log_determinant
+            criterion_valid = base_valid & positive
+        case "a_optimal":
+            inverse_result = inverse(
+                effective,
+                FactorizationPolicy("cholesky"),
+                properties=OperatorProperties(
+                    self_adjoint=True,
+                    positive_definite=True,
+                    evidence={
+                        "self_adjoint": "asserted",
+                        "positive_definite": "asserted",
+                    },
+                ),
+            )
+            raw_value = -jnp.trace(inverse_result.value)
+            criterion_valid = base_valid & positive & inverse_result.successful
+        case "e_optimal":
+            raw_value = eigenvalues[0]
+            criterion_valid = base_valid
+        case "mutual_information":
+            variance = float(noise_variance)
+            if not isfinite(variance) or variance <= 0.0:
+                raise ValueError("noise_variance must be finite and positive.")
+            _, log_determinant = jnp.linalg.slogdet(
+                jnp.eye(size, dtype=matrix.dtype) + effective / variance
+            )
+            raw_value = 0.5 * log_determinant
+            criterion_valid = base_valid
+        case unsupported:
+            assert_never(unsupported)
     reported_valid = criterion_valid & jnp.isfinite(raw_value)
     value = jnp.where(reported_valid, raw_value, jnp.nan)
     status = jnp.where(
@@ -1133,7 +1140,7 @@ def experiment_design_objective(
         eigenvalues=eigenvalues,
         valid=reported_valid,
         status=status,
-        criterion=criterion,
+        criterion=design_criterion,
         method_id=method_id,
         approximation=approximation,
         regularization=penalty,
