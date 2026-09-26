@@ -34,6 +34,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellGeometrySpec, CellMesh, PolygonalConnectivity
 from ..discretization.fem import FiniteElementTransferBundle
+from ..typing import parse
 from ._adaptation import refine_triangle_mesh
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy, CellMeshAuditReport
 from ._contracts import MeshingLimits
@@ -340,8 +341,7 @@ class LearnedMeshProposer(AbstractMeshProposer):
     ) -> None:
         if not isinstance(model, AbstractArrayModel):
             raise TypeError("model must be an AbstractArrayModel.")
-        if kind not in ("marking", "size", "metric"):
-            raise ValueError("kind must be 'marking', 'size', or 'metric'.")
+        kind = parse(kind, MeshProposerKind, "kind")
         if (kind == "metric") != (spatial_dimension is not None):
             raise ValueError(
                 "spatial_dimension is required exactly for metric proposers."

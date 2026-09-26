@@ -29,6 +29,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint, canon
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._lattice_distribution import LatticeDecompositionPlan
+from ...typing import parse
 
 
 GaugeInterchangeKind: TypeAlias = Literal["nersc", "milc", "ildg"]
@@ -464,10 +465,8 @@ def write_gauge_interchange(
         raise TypeError("field must be GaugeFieldRecord.")
     if kind not in _MAGIC:
         raise ValueError("kind must be nersc, milc, or ildg.")
-    if byte_order not in ("big", "little"):
-        raise ValueError("byte_order must be big or little.")
-    if precision not in ("float32", "float64"):
-        raise ValueError("precision must be float32 or float64.")
+    byte_order = parse(byte_order, GaugeByteOrder, "byte_order")
+    precision = parse(precision, GaugeComponentPrecision, "precision")
     plan = GaugeIOPlan() if policy is None else policy
     if not isinstance(plan, GaugeIOPlan):
         raise TypeError("policy must be GaugeIOPlan or None.")
@@ -549,13 +548,14 @@ def read_gauge_interchange(
         raise TypeError("policy must be GaugeIOPlan or None.")
     if expected_kind is not None and expected_kind not in _MAGIC:
         raise ValueError("expected_kind must be nersc, milc, ildg, or None.")
-    if expected_byte_order is not None and expected_byte_order not in ("big", "little"):
-        raise ValueError("expected_byte_order must be big, little, or None.")
-    if expected_precision is not None and expected_precision not in (
-        "float32",
-        "float64",
-    ):
-        raise ValueError("expected_precision must be float32, float64, or None.")
+    if expected_byte_order is not None:
+        expected_byte_order = parse(
+            expected_byte_order, GaugeByteOrder, "expected_byte_order"
+        )
+    if expected_precision is not None:
+        expected_precision = parse(
+            expected_precision, GaugeComponentPrecision, "expected_precision"
+        )
     source = Path(path)
     container_size = source.stat().st_size
     maximum_container = min(
@@ -608,10 +608,10 @@ def read_gauge_interchange(
         raise ValueError("Gauge interchange header is not canonical.")
     if header["kind"] != f"{kind}-like-global-gauge-field":
         raise ValueError("Gauge interchange header kind and magic disagree.")
-    byte_order = header["byte_order"]
-    precision = header["component_precision"]
-    if byte_order not in ("big", "little") or precision not in ("float32", "float64"):
-        raise ValueError("Gauge interchange endian or precision metadata is invalid.")
+    byte_order = parse(header["byte_order"], GaugeByteOrder, "byte_order")
+    precision = parse(
+        header["component_precision"], GaugeComponentPrecision, "component_precision"
+    )
     if expected_byte_order is not None and byte_order != expected_byte_order:
         raise ValueError("Gauge interchange byte order differs from the required order.")
     if expected_precision is not None and precision != expected_precision:

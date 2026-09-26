@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...stochastic._jump import JumpProcess
+from ...typing import parse
 
 
 HawkesHistorySide: TypeAlias = Literal["left", "ordered"]
@@ -365,8 +366,7 @@ def hawkes_intensity_path(
 
     if not isinstance(model, HawkesOrderFlowModel):
         raise TypeError("model must be a HawkesOrderFlowModel.")
-    if side not in ("left", "ordered"):
-        raise ValueError("side must be 'left' or 'ordered'.")
+    side = parse(side, HawkesHistorySide, "side")
     times = jnp.asarray(event_times)
     if times.ndim != 1 or jnp.issubdtype(times.dtype, jnp.complexfloating):
         raise TypeError("event_times must be a real rank-one vector.")

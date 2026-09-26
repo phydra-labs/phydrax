@@ -524,7 +524,7 @@ def test_configuration_and_shape_guards_are_explicit():
                 phx.optim.DensePrimalDualQP(max_kkt_dimension=1)
             ),
         )
-    with pytest.raises(ValueError, match="Unknown convex-program differentiation mode"):
+    with pytest.raises(ValueError, match="mode"):
         phx.optim.ConvexDifferentiationPolicy("unsupported")
 
 

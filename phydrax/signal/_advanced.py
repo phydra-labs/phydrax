@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from numbers import Integral, Real
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
+from ..typing import parse
 
 
 IIRDesignKind: TypeAlias = Literal["butterworth", "chebyshev1", "chebyshev2", "elliptic"]
@@ -181,22 +182,24 @@ def design_iir_sos(
     """Design a normalized-digital IIR filter and return one stable SOS plan."""
 
     order_ = _positive_static_int(order, "IIR order")
-    if kind == "butterworth":
-        sections = scipy_signal.butter(order_, cutoff, btype=btype, output="sos")
-    elif kind == "chebyshev1":
-        sections = scipy_signal.cheby1(
-            order_, ripple_db, cutoff, btype=btype, output="sos"
-        )
-    elif kind == "chebyshev2":
-        sections = scipy_signal.cheby2(
-            order_, attenuation_db, cutoff, btype=btype, output="sos"
-        )
-    elif kind == "elliptic":
-        sections = scipy_signal.ellip(
-            order_, ripple_db, attenuation_db, cutoff, btype=btype, output="sos"
-        )
-    else:
-        raise ValueError(f"Unknown IIR design kind {kind!r}.")
+    kind = parse(kind, IIRDesignKind, "kind")
+    match kind:
+        case "butterworth":
+            sections = scipy_signal.butter(order_, cutoff, btype=btype, output="sos")
+        case "chebyshev1":
+            sections = scipy_signal.cheby1(
+                order_, ripple_db, cutoff, btype=btype, output="sos"
+            )
+        case "chebyshev2":
+            sections = scipy_signal.cheby2(
+                order_, attenuation_db, cutoff, btype=btype, output="sos"
+            )
+        case "elliptic":
+            sections = scipy_signal.ellip(
+                order_, ripple_db, attenuation_db, cutoff, btype=btype, output="sos"
+            )
+        case _:
+            assert_never(kind)
     return SOSFilterPlan(sections)
 
 

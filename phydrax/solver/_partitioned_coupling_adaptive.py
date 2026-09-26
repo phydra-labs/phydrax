@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._hybrid_event import HybridReplayPolicy
 from ._partitioned_coupling_graph import PreparedCoupling
 from ._partitioned_coupling_runtime import advance_coupling_window
@@ -154,8 +155,7 @@ class AdaptiveCouplingRolloutPlan(StrictModule, NonTrainableState):
             raise ValueError("DCD step capacity must cover every window attempt.")
         if not isinstance(replay_policy, HybridReplayPolicy):
             raise TypeError("replay_policy must be HybridReplayPolicy.")
-        if retention not in ("final", "windows"):
-            raise ValueError("Unknown adaptive coupling retention policy.")
+        retention = parse(retention, AdaptiveCouplingRetention, "retention")
         self.maximum_windows = windows
         self.segment_policy = segment_policy
         self.window_policy = window_policy

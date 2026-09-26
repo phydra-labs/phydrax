@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from math import prod
 from numbers import Integral
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,11 +20,12 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._core import TensorTrain, TensorTrainOperator, tt_svd
 from ._local import regularized_least_squares
 
 
-TensorTrainSolveMethod = Literal["als", "amen"]
+TensorTrainSolveMethod: TypeAlias = Literal["als", "amen"]
 
 
 class TensorTrainSolvePlan(StrictModule, NonTrainableState):
@@ -78,8 +79,7 @@ class TensorTrainSolvePlan(StrictModule, NonTrainableState):
         ridge = float(local_regularization)
         dense_limit = int(max_dense_entries)
         local_limit = int(max_local_unknowns)
-        if method not in ("als", "amen"):
-            raise ValueError("TensorTrain solve method must be 'als' or 'amen'.")
+        method = parse(method, TensorTrainSolveMethod, "method")
         if not modes or any(size <= 0 for size in modes):
             raise ValueError("TensorTrain solve modes must be nonempty and positive.")
         if (

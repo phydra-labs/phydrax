@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
 from numbers import Integral
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..conditions._ir import ArrayCodomain, FieldCodomain, ProductFieldSpec
+from ..typing import parse
 from ._base import AbstractPositiveDefiniteKernel
 from ._finite_feature import kernel_feature_rank, kernel_features
 from ._operator_valued import (
@@ -29,8 +30,8 @@ from ._operator_valued import (
 )
 
 
-KernelMetricMode = Literal["independent", "coupled"]
-KernelFunctionalExactness = Literal[
+KernelMetricMode: TypeAlias = Literal["independent", "coupled"]
+KernelFunctionalExactness: TypeAlias = Literal[
     "analytic", "finite-feature", "fixed-realization", "selected-section"
 ]
 
@@ -177,13 +178,7 @@ class KernelFunctional(StrictModule):
             raise ValueError("Every functional term must have the same row count.")
         if not identifier:
             raise ValueError("functional_id must be nonempty.")
-        if exactness not in (
-            "analytic",
-            "finite-feature",
-            "fixed-realization",
-            "selected-section",
-        ):
-            raise ValueError("Unknown kernel functional exactness.")
+        exactness = parse(exactness, KernelFunctionalExactness, "exactness")
         realization = None if realization_id is None else str(realization_id)
         if realization_id is not None and not realization:
             raise ValueError("realization_id must be nonempty when supplied.")
@@ -280,8 +275,7 @@ class ProductFieldKernelMetric(StrictModule):
         kernels_ = tuple(kernels)
         adapters_ = tuple(adapters)
         channels_ = tuple(tuple(item) for item in channel_indices)
-        if mode not in ("independent", "coupled"):
-            raise ValueError("Kernel metric mode must be independent or coupled.")
+        mode = parse(mode, KernelMetricMode, "mode")
         expected_kernels = len(field_spec.fields) if mode == "independent" else 1
         if len(kernels_) != expected_kernels:
             raise ValueError("Kernel count does not match the product metric mode.")

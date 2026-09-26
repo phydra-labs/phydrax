@@ -22,6 +22,7 @@ from ...stochastic import (
     JumpMeasureChange,
     measure_changed_target,
 )
+from ...typing import parse
 from ..contracts._credit import DefaultEventState
 from ..core import Currency, FinanceDate, FinanceEvidenceBinding
 from ._collateral import (
@@ -249,8 +250,7 @@ class WrongWayRiskLink(StrictModule):
         measure_change_id: str | None = None,
         link_id: str,
     ) -> None:
-        if mode not in ("shared_factor", "measure_change"):
-            raise ValueError("Unsupported wrong-way-risk mode.")
+        mode = parse(mode, WrongWayRiskMode, "mode")
         factors = tuple(_identifier(value, "factor_id") for value in factor_ids)
         if not factors or len(set(factors)) != len(factors):
             raise ValueError("factor_ids must be non-empty and unique.")
@@ -328,8 +328,9 @@ class ExposureSimulationPlan(StrictModule):
             raise ValueError(
                 "Single-currency collateral must match the netting-set base currency."
             )
-        if default_dependence not in ("independent", "wrong_way"):
-            raise ValueError("Unsupported default dependence.")
+        default_dependence = parse(
+            default_dependence, DefaultDependence, "default_dependence"
+        )
         if (default_dependence == "wrong_way") != (wrong_way_risk is not None):
             raise ValueError("Exactly wrong-way-dependent exposure requires a WWR link.")
         pricing_id = _identifier(pricing_law_id, "pricing_law_id")

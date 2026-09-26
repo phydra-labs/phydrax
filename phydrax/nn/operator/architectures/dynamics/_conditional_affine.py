@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,8 +30,10 @@ from phydrax.nn._utils import _get_size
 from phydrax.nn.operator.data import OperatorBatch, OperatorOutputSpec
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import parse
 
-DriverOutputTransform = Literal["direct", "softplus"]
+
+DriverOutputTransform: TypeAlias = Literal["direct", "softplus"]
 
 
 class ChemicalConditionalAffineScaling(StrictModule, NonTrainableState):
@@ -71,8 +73,9 @@ class ChemicalConditionalAffineScaling(StrictModule, NonTrainableState):
             or float(np.asarray(duration)) <= 0.0
         ):
             raise ValueError("All conditional-affine scales must be finite and positive.")
-        if driver_output_transform not in ("direct", "softplus"):
-            raise ValueError("driver_output_transform must be 'direct' or 'softplus'.")
+        driver_output_transform = parse(
+            driver_output_transform, DriverOutputTransform, "driver_output_transform"
+        )
         generated = canonical_fingerprint(
             {
                 "kind": "chemical-conditional-affine-scaling",

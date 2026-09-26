@@ -4,16 +4,17 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-ResultNormalization = Literal["absolute", "noise-relative", "unnormalized"]
+ResultNormalization: TypeAlias = Literal["absolute", "noise-relative", "unnormalized"]
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -48,8 +49,7 @@ class UQResultContext(StrictModule, NonTrainableState):
         approximation_id: str,
         normalization: ResultNormalization,
     ) -> None:
-        if normalization not in ("absolute", "noise-relative", "unnormalized"):
-            raise ValueError("Unknown result normalization semantics.")
+        normalization = parse(normalization, ResultNormalization, "normalization")
         identifiers = tuple(
             _identifier(value, role)
             for value, role in (

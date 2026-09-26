@@ -31,6 +31,7 @@ from ...linalg import (
     TransformDiagonalSolvePlan,
     TransformDiagonalSolveResult,
 )
+from ...typing import parse
 from .._tensor_entities import StructuredAxis
 from .._tensor_support import PreparedTensorGrid
 
@@ -427,13 +428,13 @@ def _normalize_boundaries(
             else:
                 raise ValueError(f"Bounded axis {axis_name!r} requires two boundaries.")
         else:
-            pair = tuple(value)
-            if len(pair) != 2 or any(
-                condition not in ("periodic", "dirichlet", "neumann")
-                for condition in pair
-            ):
-                raise ValueError("FD boundary pairs require periodic/Dirichlet/Neumann.")
-            pair = (pair[0], pair[1])
+            conditions = tuple(value)
+            if len(conditions) != 2:
+                raise ValueError("FD boundary pairs require exactly two conditions.")
+            pair = (
+                parse(conditions[0], FDBoundaryKind, f"boundaries[{axis_name!r}][0]"),
+                parse(conditions[1], FDBoundaryKind, f"boundaries[{axis_name!r}][1]"),
+            )
         if axis.periodic != (pair == ("periodic", "periodic")):
             raise ValueError("Periodic axis metadata and boundary pair must agree.")
         if (pair[0] == "periodic") != (pair[1] == "periodic"):

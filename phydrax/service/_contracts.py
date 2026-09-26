@@ -13,6 +13,7 @@ from typing import Any, Literal, Mapping, TYPE_CHECKING, TypeAlias
 from urllib.parse import urlparse
 
 from .._execution_resources import ResourceRequest
+from ..typing import parse
 
 
 if TYPE_CHECKING:
@@ -216,14 +217,11 @@ class ArtifactRights:
             raise TypeError("Artifact rights byte_size must be an integer.")
         if self.byte_size < 0:
             raise ValueError("Artifact rights byte_size must be nonnegative.")
-        if self.classification not in {
-            "scientific",
-            "cad",
-            "checkpoint",
-            "diagnostic",
-            "support",
-        }:
-            raise ValueError("Artifact rights classification is not accepted.")
+        object.__setattr__(
+            self,
+            "classification",
+            parse(self.classification, ArtifactClassification, "classification"),
+        )
         permissions = (
             self.allow_redistribution,
             self.allow_export,

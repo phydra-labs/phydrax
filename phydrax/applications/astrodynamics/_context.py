@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._physical import DimensionalScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 AstrodynamicsTimeScale: TypeAlias = Literal[
@@ -64,9 +65,7 @@ class TimeInstant(StrictModule, NonTrainableState):
     def __init__(self, julian_date: JulianDate, scale: AstrodynamicsTimeScale, /) -> None:
         if not isinstance(julian_date, JulianDate):
             raise TypeError("julian_date must be a JulianDate.")
-        scale_ = str(scale).upper()
-        if scale_ not in ("UTC", "TAI", "GPS", "TT", "TCG", "TDB", "TCB", "UT1"):
-            raise ValueError("Unknown astronomical time scale.")
+        scale_ = parse(str(scale).upper(), AstrodynamicsTimeScale, "scale")
         self.julian_date = julian_date
         self.scale = scale_
         self.instant_id = canonical_fingerprint(

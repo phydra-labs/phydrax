@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
@@ -26,6 +26,7 @@ from ...qualification import (
     SupportTuple,
 )
 from ...qualification._registry import SupportValue
+from ...typing import parse
 
 
 DarkMatterClaimName = Literal[
@@ -40,7 +41,7 @@ DarkMatterClaimName = Literal[
     "sidm-fluid-spherical",
     "sidm-inelastic-2to2",
 ]
-DarkMatterQualificationLevel = Literal[
+DarkMatterQualificationLevel: TypeAlias = Literal[
     "experimental",
     "numerically-qualified",
     "scientifically-qualified",
@@ -1022,13 +1023,9 @@ def bind_dark_matter_promotion(
         raise TypeError("promotion must be a PromotionState.")
     if not isinstance(trust, QualificationRoleTrust):
         raise TypeError("trust must be QualificationRoleTrust.")
-    if qualification_level not in (
-        "experimental",
-        "numerically-qualified",
-        "scientifically-qualified",
-        "production",
-    ):
-        raise ValueError("Unknown dark-matter qualification level.")
+    qualification_level = parse(
+        qualification_level, DarkMatterQualificationLevel, "qualification_level"
+    )
     expected_channel = dark_matter_promotion_channel(claim)
     if promotion.channel != expected_channel:
         raise ValueError("Promotion channel does not bind this exact claim ID.")

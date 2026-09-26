@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,11 +15,12 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._regulators import FunctionalRGStatus
 from ._wetterich import _volume_factor
 
 
-FermionBosonRepresentation = Literal["gross-neveu", "yukawa", "mixed"]
+FermionBosonRepresentation: TypeAlias = Literal["gross-neveu", "yukawa", "mixed"]
 
 
 class FiniteTemperatureThresholds(StrictModule):
@@ -237,13 +238,11 @@ class GrossNeveuYukawaFlowPlan(StrictModule, NonTrainableState):
         dimension_ = float(dimension)
         if not isinstance(matsubara, MatsubaraThresholdPlan):
             raise TypeError("matsubara must be MatsubaraThresholdPlan.")
-        if (
-            flavors <= 0
-            or scalars <= 0
-            or not 2.0 < dimension_ <= 4.0
-            or representation not in ("gross-neveu", "yukawa", "mixed")
-        ):
+        if flavors <= 0 or scalars <= 0 or not 2.0 < dimension_ <= 4.0:
             raise ValueError("Gross--Neveu/Yukawa truncation data are invalid.")
+        representation = parse(
+            representation, FermionBosonRepresentation, "representation"
+        )
         self.matsubara = matsubara
         self.fermion_flavors = flavors
         self.scalar_components = scalars

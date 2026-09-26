@@ -13,6 +13,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..metrix import RiemannianMetric, WeightedRiemannianMeasure
+from ..typing import parse
 from ._function import DomainFunction
 
 
@@ -44,12 +45,7 @@ class ReferencedDensityField(StrictModule):
     ) -> None:
         if not isinstance(field, DomainFunction):
             raise TypeError("field must be a DomainFunction.")
-        if reference not in (
-            "coordinate",
-            "riemannian-volume",
-            "weighted-riemannian-volume",
-        ):
-            raise ValueError("Unknown density reference.")
+        reference = parse(reference, DensityReference, "reference")
         state_var_ = str(state_var)
         if state_var_ not in field.domain.labels:
             raise ValueError("state_var must be one of the density field domain labels.")

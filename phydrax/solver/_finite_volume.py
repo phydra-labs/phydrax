@@ -42,6 +42,7 @@ from ..discretization.finite_volume._small_cell import (
 from ..discretization.finite_volume._unstructured_motion import (
     UnstructuredALEStepGeometry,
 )
+from ..typing import parse
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 
 
@@ -793,8 +794,7 @@ class DirectionalSplitFiniteVolumePlan(StrictModule):
             raise ValueError(
                 "Directional splitting requires a numerical-flux interface method."
             )
-        if splitting not in ("godunov", "strang"):
-            raise ValueError("splitting must be 'godunov' or 'strang'.")
+        splitting = parse(splitting, SplittingKind, "splitting")
         self.dynamics = dynamics
         self.splitting = splitting
         self.temporal_method_id = f"temporal:split:{splitting}"

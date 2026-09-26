@@ -25,6 +25,7 @@ from ...linalg._local_blocks import (
     prepare_local_block_factorization,
     solve_local_blocks,
 )
+from ...typing import parse
 from ._channel_ultraspherical import (
     prepare_ultraspherical_channel,
     PreparedUltrasphericalChannel,
@@ -50,8 +51,7 @@ class ChannelMeanConstraint(StrictModule, NonTrainableState):
         values: ArrayLike | Sequence[float] = (0.0, 0.0),
         /,
     ) -> None:
-        if kind not in ("pressure_gradient", "bulk_flux"):
-            raise ValueError("Unknown channel mean constraint kind.")
+        kind = parse(kind, ChannelMeanConstraintKind, "kind")
         raw_values = jnp.asarray(values)
         if jnp.iscomplexobj(raw_values):
             raise TypeError("Channel mean constraint values must be real.")
@@ -128,8 +128,9 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Incompressible channel walls must have matching normal velocities."
             )
-        if tangential_boundary not in ("velocity", "traction"):
-            raise ValueError("Unknown channel tangential boundary kind.")
+        tangential_boundary = parse(
+            tangential_boundary, ChannelTangentialBoundaryKind, "tangential_boundary"
+        )
         if tangential_boundary == "traction" and not bool(
             jnp.array_equal(
                 lower[jnp.asarray((0, 2))], jnp.zeros((2,), dtype=lower.dtype)
@@ -146,10 +147,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         )
         if not isinstance(constraint, ChannelMeanConstraint):
             raise TypeError("mean_constraint must be ChannelMeanConstraint or None.")
-        if route not in ("ultraspherical_banded", "dense_reference"):
-            raise ValueError(
-                "route must be 'ultraspherical_banded' or 'dense_reference'."
-            )
+        route = parse(route, ChannelStokesRoute, "route")
         if isinstance(maximum_factor_bytes, bool):
             raise TypeError("maximum_factor_bytes must be an integer.")
         maximum = index(maximum_factor_bytes)

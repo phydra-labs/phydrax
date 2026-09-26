@@ -18,6 +18,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..linalg import FactorizationPolicy, inverse, OperatorProperties
+from ..typing import parse
 from ._chart import ChartTransition, CoordinateChart
 from ._map import DifferentiableMap, Immersion
 from ._utils import _pointwise_array
@@ -270,8 +271,7 @@ class LorentzianMetric(AbstractSemiRiemannianMetric):
             raise TypeError("Metric chart must be a CoordinateChart.")
         if chart.dimension < 2:
             raise ValueError("A Lorentzian metric requires dimension at least two.")
-        if convention not in ("mostly_plus", "mostly_minus"):
-            raise ValueError("convention must be 'mostly_plus' or 'mostly_minus'.")
+        convention = parse(convention, LorentzianConvention, "convention")
         self.matrix_function = matrix
         self.chart = chart
         self.convention = convention

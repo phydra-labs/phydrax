@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,11 +18,12 @@ from jaxtyping import PyTree
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 from .._photometry import ObservationDataProvenance
 from ._status import GravitationalWaveStatus
 
 
-DerivativeLevel = Literal["none", "first", "higher"]
+DerivativeLevel: TypeAlias = Literal["none", "first", "higher"]
 
 
 class WaveformCapabilities(StrictModule, NonTrainableState):
@@ -59,7 +60,8 @@ class WaveformCapabilities(StrictModule, NonTrainableState):
             raise ValueError("Waveform polarization IDs must be non-empty.")
         if len(set(polarizations)) != len(polarizations):
             raise ValueError("Waveform polarization IDs must be unique.")
-        if derivative_level not in ("none", "first", "higher") or not parameterization:
+        derivative_level = parse(derivative_level, DerivativeLevel, "derivative_level")
+        if not parameterization:
             raise ValueError("Waveform derivative level or parameterization is invalid.")
         if (phase_parameter is None) != (phase_harmonic is None):
             raise ValueError("Phase parameter and harmonic must be declared together.")

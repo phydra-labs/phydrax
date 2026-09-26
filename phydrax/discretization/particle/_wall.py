@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._assembly import ParticleInteractionLedger
 from ._bipartite_neighborhood import BipartiteNeighborhoodState
 from ._core import ParticleDiscretization, ParticleSetPlan
@@ -213,8 +214,7 @@ class AdamiWallBoundaryPlan(StrictModule, NonTrainableState):
         atmospheric_pressure: float = 0.0,
         kinematic_viscosity: float = 0.0,
     ) -> None:
-        if slip not in ("no-slip", "free-slip"):
-            raise ValueError("Wall slip policy must be 'no-slip' or 'free-slip'.")
+        slip = parse(slip, WallSlipPolicy, "slip")
         if (
             not np.isfinite(atmospheric_pressure)
             or not np.isfinite(kinematic_viscosity)

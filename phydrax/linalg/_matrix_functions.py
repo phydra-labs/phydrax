@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +24,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
+from ..typing import parse
 from ._certificates import _operator_numeric_fingerprint
 from ._exponential_taylor import (
     execute_taylor_exponential_action,
@@ -109,14 +110,7 @@ class MatrixFunctionPolicy(StrictModule):
         differentiation: DifferentiationPolicy | None = None,
         failure: FailurePolicy | None = None,
     ) -> None:
-        if method not in (
-            "auto",
-            "spectral",
-            "chebyshev",
-            "lanczos",
-            "arnoldi",
-        ):
-            raise ValueError("Unknown matrix-function method.")
+        method = parse(method, MatrixFunctionMethod, "method")
         dimension = int(max_dimension)
         tolerance = float(error_tolerance)
         if dimension < 1 or not np.isfinite(tolerance) or tolerance < 0.0:
@@ -596,20 +590,7 @@ def matrix_function_action(
         raise ValueError("Matrix functions require an endomorphism.")
     self_adjoint = operator.properties.certifies("self_adjoint")
     positive_definite = operator.properties.certifies("positive_definite")
-    if kind not in (
-        "exp",
-        "phi1",
-        "phi2",
-        "phi3",
-        "sin",
-        "cos",
-        "log",
-        "sqrt",
-        "inverse-sqrt",
-        "fractional",
-        "resolvent",
-    ):
-        raise ValueError("Unknown matrix-function kind.")
+    kind = parse(kind, MatrixFunctionKind, "kind")
     if kind == "fractional" and power is None:
         raise ValueError("fractional actions require power.")
     if kind == "resolvent" and shift is None:
@@ -1327,18 +1308,21 @@ def _general_primary_matrix_function(
     if kind == "fractional" and power is not None and float(power).is_integer():
         return jnp.linalg.matrix_power(matrix, int(power))
     logarithm = _general_matrix_logarithm(matrix)
-    if kind == "log":
-        return logarithm
-    if kind == "sqrt":
-        exponent = 0.5
-    elif kind == "inverse-sqrt":
-        exponent = -0.5
-    elif kind == "fractional":
-        if power is None:
-            raise ValueError("A fractional matrix function requires power.")
-        exponent = power
-    else:
-        raise ValueError(f"No general primary-matrix route exists for {kind!r}.")
+    match kind:
+        case "log":
+            return logarithm
+        case "sqrt":
+            exponent = 0.5
+        case "inverse-sqrt":
+            exponent = -0.5
+        case "fractional":
+            if power is None:
+                raise ValueError("A fractional matrix function requires power.")
+            exponent = power
+        case "exp" | "phi1" | "phi2" | "phi3" | "sin" | "cos" | "resolvent":
+            raise ValueError(f"No general primary-matrix route exists for {kind!r}.")
+        case _:
+            assert_never(kind)
     return jsp.linalg.expm(jnp.asarray(exponent, dtype=matrix.real.dtype) * logarithm)
 
 

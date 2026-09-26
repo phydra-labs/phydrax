@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -23,10 +23,11 @@ from ..._holomorphic import (
 from ..._holomorphic_linear import HolomorphicLinearFrame
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._holomorphic_frame import HolomorphicPolynomialFrame
 
 
-HolomorphicTraceEvidenceKind = Literal[
+HolomorphicTraceEvidenceKind: TypeAlias = Literal[
     "finite-functional-exact",
     "continuous-subspace-exact",
     "continuous-validated-bound",
@@ -55,13 +56,9 @@ class HolomorphicTraceCertificate(StrictModule, NonTrainableState):
         topology_assumptions: tuple[str, ...] = (),
         residual_bound: ArrayLike = 0.0,
     ) -> None:
-        if evidence_kind not in (
-            "finite-functional-exact",
-            "continuous-subspace-exact",
-            "continuous-validated-bound",
-            "sampled-audit",
-        ):
-            raise ValueError("Unknown holomorphic trace evidence kind.")
+        evidence_kind = parse(
+            evidence_kind, HolomorphicTraceEvidenceKind, "evidence_kind"
+        )
         identifiers = (str(geometry_id), str(trace_space_id), str(field_id))
         assumptions = tuple(str(value) for value in topology_assumptions)
         bound = jnp.asarray(residual_bound)

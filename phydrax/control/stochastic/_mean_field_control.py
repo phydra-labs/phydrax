@@ -38,7 +38,7 @@ from ...stochastic import (
     MeanFieldBSDEProblem,
     MeanFieldSnapshot,
 )
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
 MEAN_FIELD_CONTROL_PLANNER_STATIONARITY = "MEAN_FIELD_CONTROL_PLANNER_STATIONARITY"
@@ -127,10 +127,7 @@ class MeanFieldExternality(StrictModule):
     ) -> None:
         running_callback = _callback(running, "running")
         terminal_callback = _callback(terminal, "terminal")
-        if mode not in ("analytic-lions", "finite-particle-adjoint"):
-            raise ValueError(
-                "mode must be 'analytic-lions' or 'finite-particle-adjoint'."
-            )
+        mode = parse(mode, MeanFieldExternalityMode, "mode")
 
         if mode == "analytic-lions":
             if (

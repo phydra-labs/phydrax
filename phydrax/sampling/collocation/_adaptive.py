@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, Protocol, TYPE_CHECKING
+from typing import Any, Literal, Protocol, TYPE_CHECKING, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -21,7 +21,7 @@ from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ..._sampling import DesignLike, resolve_design, UnitDesign
 from ..._strict import StrictModule
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -121,7 +121,7 @@ def _normalized_importance(
     )
 
 
-CollocationAlgorithm = Literal["periodic", "r3", "rar_d"]
+CollocationAlgorithm: TypeAlias = Literal["periodic", "r3", "rar_d"]
 
 
 class AbstractCollocationPolicy(StrictModule):
@@ -265,8 +265,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         refinement_fraction: float = 0.05,
         epsilon: float = 1e-12,
     ) -> None:
-        if algorithm not in ("periodic", "r3", "rar_d"):
-            raise ValueError(f"Unsupported collocation algorithm {algorithm!r}.")
+        algorithm = parse(algorithm, CollocationAlgorithm, "algorithm")
         if int(refresh_every) <= 0:
             raise ValueError("refresh_every must be positive.")
         if int(candidate_multiplier) <= 0:

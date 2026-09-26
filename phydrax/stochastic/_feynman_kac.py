@@ -23,7 +23,7 @@ from .._frozendict import frozendict
 from .._probability import _event_axes, _leading_shape
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._bsde import (
     _event_finite,
     _predictor_value,
@@ -119,16 +119,16 @@ class FeynmanKacSamplingPlan(StrictModule):
             raise ValueError(
                 "initial_time and terminal_time must be finite with t1 > t0."
             )
-        if sampling_mode not in ("trajectory_nodes", "queries"):
-            raise ValueError("Unknown Feynman-Kac sampling_mode.")
+        sampling_mode = parse(sampling_mode, FeynmanKacSamplingMode, "sampling_mode")
         paths = int(num_paths_per_query)
         steps = int(num_time_steps)
         if paths < 1 or steps < 1:
             raise ValueError("num_paths_per_query and num_time_steps must be positive.")
         if quadrature not in ("left", "trapezoid"):
             raise ValueError("quadrature must be 'left' or 'trapezoid'.")
-        if control_target_mode not in ("none", "martingale", "malliavin"):
-            raise ValueError("Unknown Feynman-Kac control_target_mode.")
+        control_target_mode = parse(
+            control_target_mode, FeynmanKacControlTargetMode, "control_target_mode"
+        )
         use_antithetic = bool(antithetic)
         if use_antithetic and paths % 2:
             raise ValueError("Antithetic sampling requires an even path count.")
@@ -137,10 +137,8 @@ class FeynmanKacSamplingPlan(StrictModule):
             raise ValueError("path_chunk_size must lie in [1, num_paths_per_query].")
         if use_antithetic and chunk is not None and chunk % 2:
             raise ValueError("Antithetic path chunks must contain an even path count.")
-        if time_weighting not in ("uniform", "trapezoid"):
-            raise ValueError("time_weighting must be 'uniform' or 'trapezoid'.")
-        if refresh_mode not in ("fixed", "resample"):
-            raise ValueError("refresh_mode must be 'fixed' or 'resample'.")
+        time_weighting = parse(time_weighting, FeynmanKacTimeWeighting, "time_weighting")
+        refresh_mode = parse(refresh_mode, FeynmanKacRefreshMode, "refresh_mode")
         identity_parts = (
             t0,
             t1,

@@ -22,7 +22,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleNeighborhoodState
 from ..linalg import AbstractLinearOperator
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._dynamics import PreparedAtomisticDynamics
 from ._hydrodynamic_mobility import (
     AbstractHydrodynamicMobilityPlan,
@@ -73,12 +73,14 @@ class HydrodynamicBrownianPlan(StrictModule, NonTrainableState):
             or thermal < 0.0
             or not math.isfinite(epsilon)
             or epsilon <= 0.0
-            or differentiation not in ("pathwise", "weak")
             or realization < 0
             or realization > np.iinfo(np.uint32).max
             or (maximum is not None and (not math.isfinite(maximum) or maximum <= 0.0))
         ):
             raise ValueError("Hydrodynamic Brownian controls are invalid.")
+        differentiation = parse(
+            differentiation, HydrodynamicDifferentiationPolicy, "differentiation"
+        )
         self.step_size = step
         self.temperature = thermal
         self.drift_epsilon = epsilon

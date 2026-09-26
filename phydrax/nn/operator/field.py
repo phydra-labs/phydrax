@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax.numpy as jnp
 from jax import Array
@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._model import ValuePort
 from ..._strict import StrictModule
 from ...discretization import CochainFieldSpec
+from ...typing import parse
 from ...units import DIMENSIONLESS, DimensionSignature
 from .._utils import _get_size
 from .capabilities import OperatorFieldRepresentation
@@ -24,7 +25,7 @@ from .representations import (
 )
 
 
-OperatorFieldRole = Literal["source", "target", "both"]
+OperatorFieldRole: TypeAlias = Literal["source", "target", "both"]
 
 
 class OperatorFieldSpec(StrictModule):
@@ -69,8 +70,7 @@ class OperatorFieldSpec(StrictModule):
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Operator field name must not be empty.")
-        if role not in ("source", "target", "both"):
-            raise ValueError("Operator field role must be 'source', 'target', or 'both'.")
+        role = parse(role, OperatorFieldRole, "role")
         channel_count = _get_size(channels)
         if representation is None:
             if clifford_layout is not None:

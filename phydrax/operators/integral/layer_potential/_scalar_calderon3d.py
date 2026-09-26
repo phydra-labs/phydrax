@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, NoReturn
+from typing import Literal, NoReturn, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -28,6 +28,7 @@ from ....linalg import (
     OperatorProperties,
 )
 from ....linalg._operators import _AbstractCostedLinearOperator
+from ....typing import parse
 from ._galerkin3d import LaplaceSingleLayerDP0GalerkinPolicy3D
 from ._galerkin_quadrature3d import (
     _diameter,
@@ -52,7 +53,9 @@ from ._surface3d import SurfacePanelization3D
 from ._surface_fem3d import _SurfaceFEMBinding3D
 
 
-ScalarKernelName3D = Literal["laplace", "modified-helmholtz", "outgoing-helmholtz"]
+ScalarKernelName3D: TypeAlias = Literal[
+    "laplace", "modified-helmholtz", "outgoing-helmholtz"
+]
 
 
 class ScalarKernelFamily3D(StrictModule, NonTrainableState):
@@ -80,12 +83,7 @@ class ScalarKernelFamily3D(StrictModule, NonTrainableState):
         *,
         parameter: float = 0.0,
     ) -> None:
-        if family not in (
-            "laplace",
-            "modified-helmholtz",
-            "outgoing-helmholtz",
-        ):
-            raise ValueError("Unsupported three-dimensional scalar kernel family.")
+        family = parse(family, ScalarKernelName3D, "family")
         value = float(parameter)
         if family == "laplace":
             if value != 0.0:

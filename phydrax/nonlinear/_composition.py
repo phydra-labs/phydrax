@@ -24,6 +24,7 @@ from ..linalg import (
     LinearSolvePolicy,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._precision import NonlinearPrecisionPolicy
 from ._types import NonlinearSystemProblem
 from ._updates import (
@@ -115,8 +116,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             raise TypeError(
                 "updates must be a nonempty tuple of AbstractNonlinearUpdate values."
             )
-        if kind not in ("multiplicative", "additive", "residual-optimal"):
-            raise ValueError("Unknown nonlinear composition kind.")
+        kind = parse(kind, NonlinearCompositionKind, "kind")
         weights_ = (
             tuple(1.0 for _ in updates_)
             if weights is None

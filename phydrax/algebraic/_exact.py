@@ -18,6 +18,7 @@ import numpy as np
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._grading import PolynomialVariableGroup
 from ._system import SparsePolynomialSupport
 
@@ -249,17 +250,11 @@ class ExactSymbolicStatus(IntEnum):
 MonomialOrder: TypeAlias = Literal["grevlex", "lex"]
 
 
-def _order(value: str, /) -> MonomialOrder:
-    if value not in ("grevlex", "lex"):
-        raise ValueError("Exact monomial order must be 'grevlex' or 'lex'.")
-    return value
-
-
 class GroebnerBasisArguments(StrictModule):
     monomial_order: MonomialOrder = eqx.field(static=True)
 
     def __init__(self, monomial_order: MonomialOrder = "grevlex", /) -> None:
-        self.monomial_order = _order(monomial_order)
+        self.monomial_order = parse(monomial_order, MonomialOrder, "monomial_order")
 
     def to_record(self) -> dict[str, object]:
         return {"monomial_order": self.monomial_order}
@@ -280,7 +275,7 @@ class NormalFormArguments(StrictModule):
         if polynomial.equation_count != 1:
             raise ValueError("Normal form accepts exactly one polynomial dividend.")
         self.polynomial = polynomial
-        self.monomial_order = _order(monomial_order)
+        self.monomial_order = parse(monomial_order, MonomialOrder, "monomial_order")
 
     def to_record(self) -> dict[str, object]:
         return {

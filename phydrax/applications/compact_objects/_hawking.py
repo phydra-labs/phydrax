@@ -24,9 +24,10 @@ from ..._physical import RelativityScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
+from ...typing import parse
 
 
-QuantumStatistics = Literal["boson", "fermion"]
+QuantumStatistics: TypeAlias = Literal["boson", "fermion"]
 _EvaporationCarry: TypeAlias = tuple[Array, Array, Array, Array]
 _EvaporationInterval: TypeAlias = tuple[Array, Array, Array]
 _EvaporationFluxes: TypeAlias = tuple[
@@ -74,8 +75,7 @@ class QuantumFieldSpecies(StrictModule, NonTrainableState):
             raise ValueError(
                 "Quantum spin must be a nonnegative integer or half-integer."
             )
-        if statistics not in ("boson", "fermion"):
-            raise ValueError("Quantum statistics must be 'boson' or 'fermion'.")
+        statistics = parse(statistics, QuantumStatistics, "statistics")
         expected = "boson" if twice_spin % 2 == 0 else "fermion"
         if statistics != expected:
             raise ValueError(

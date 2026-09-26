@@ -22,7 +22,7 @@ from phydrax.domain import DomainFunction
 from .._frozendict import frozendict
 from .._probability import _leading_shape
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._jump import JumpEventBatch
 from ._realization import is_stochastic_realization, StochasticRealization
 from ._wiener import WienerRealization
@@ -449,10 +449,8 @@ def evaluate_bsde(
         or paths.noise_shape != problem.noise_shape
     ):
         raise ValueError("Path and BSDE state/noise shapes do not match.")
-    if control_mode not in ("explicit", "autodiff"):
-        raise ValueError("control_mode must be 'explicit' or 'autodiff'.")
-    if quadrature not in ("left", "trapezoid"):
-        raise ValueError("quadrature must be 'left' or 'trapezoid'.")
+    control_mode = parse(control_mode, BSDEControlMode, "control_mode")
+    quadrature = parse(quadrature, BSDEQuadrature, "quadrature")
     if control_mode == "explicit" and control_predictor is None:
         raise ValueError("Explicit BSDE control requires control_predictor.")
     value_key, control_key, right_control_key = jr.split(key, 3)
@@ -641,8 +639,7 @@ def bsde_objective_loss(
     """Compose terminal, local, and global residual losses without hidden terms."""
     if not isinstance(evaluation, BSDEEvaluation):
         raise TypeError("evaluation must be a BSDEEvaluation.")
-    if mode not in ("terminal", "local", "global", "joint"):
-        raise ValueError("Unknown BSDE objective mode.")
+    mode = parse(mode, BSDEObjectiveMode, "mode")
     weights = tuple(
         jnp.asarray(value, dtype=jnp.float64).reshape(())
         for value in (terminal_weight, local_weight, global_weight)

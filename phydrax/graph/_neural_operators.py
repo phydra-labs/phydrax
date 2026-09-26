@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,13 +16,14 @@ from ..sparse import (
     route_reduce,
     RouteReduction,
 )
+from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._typed import GraphFlow, node_type_ids
 
 
 ArrayTree = Any
-FiniteVolumeSign = Literal["in_minus_out", "out_minus_in"]
+FiniteVolumeSign: TypeAlias = Literal["in_minus_out", "out_minus_in"]
 
 
 def _route_reduction(value: str, /) -> RouteReduction:
@@ -425,7 +426,7 @@ class GraphDiffusion(StrictModule):
 
     conductivity_fn: Callable | None
     update_node_fn: Callable | None
-    sign: str = eqx.field(static=True)
+    sign: FiniteVolumeSign = eqx.field(static=True)
 
     def __init__(
         self,
@@ -433,12 +434,9 @@ class GraphDiffusion(StrictModule):
         /,
         *,
         update_node_fn: Callable | None = None,
-        sign: str = "in_minus_out",
+        sign: FiniteVolumeSign = "in_minus_out",
     ) -> None:
-        if sign not in ("in_minus_out", "out_minus_in"):
-            raise ValueError(
-                "GraphDiffusion sign must be 'in_minus_out' or 'out_minus_in'."
-            )
+        sign = parse(sign, FiniteVolumeSign, "sign")
         self.conductivity_fn = conductivity_fn
         self.update_node_fn = update_node_fn
         self.sign = sign
@@ -799,8 +797,7 @@ class GraphFiniteVolumeDivergence(StrictModule):
         normalize_by_volume: bool = True,
         sign: FiniteVolumeSign = "in_minus_out",
     ) -> None:
-        if sign not in ("in_minus_out", "out_minus_in"):
-            raise ValueError("sign must be 'in_minus_out' or 'out_minus_in'.")
+        sign = parse(sign, FiniteVolumeSign, "sign")
         self.flux_key = flux_key
         self.output_key = output_key
         self.volume_key = volume_key
@@ -854,8 +851,7 @@ class GraphFiniteVolumeDiffusion(StrictModule):
         sign: FiniteVolumeSign = "in_minus_out",
         eps: float = 1e-12,
     ) -> None:
-        if sign not in ("in_minus_out", "out_minus_in"):
-            raise ValueError("sign must be 'in_minus_out' or 'out_minus_in'.")
+        sign = parse(sign, FiniteVolumeSign, "sign")
         self.input_key = input_key
         self.output_key = output_key
         self.conductivity_key = conductivity_key

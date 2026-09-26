@@ -47,11 +47,12 @@ from ....discretization.vortex._interfaces import (
 from ....discretization.vortex._precision import VortexPrecisionPolicy
 from ....discretization.vortex._source import VortexSourceState, VortexTargetState
 from ....sparse import EdgeRelation, RelationExecutionPlan
+from ....typing import parse
 from ._gaussian2d import gaussian_vortex_kernel_2d
 from ._gaussian3d import GaussianErfVortexKernel3D
 
 
-VortexFMMExecution = Literal["level_octree", "plane_dual"]
+VortexFMMExecution: TypeAlias = Literal["level_octree", "plane_dual"]
 _NearRouteState: TypeAlias = tuple[Array, Array, Array]
 _NearSourceState: TypeAlias = tuple[Array, Array, Array, Array]
 
@@ -179,7 +180,6 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
             or target_leaf <= 0
             or not np.isfinite(displacement)
             or displacement <= 0.0
-            or execution not in ("level_octree", "plane_dual")
             or coarse < 2
             or top_nodes <= 0
             or (queue is not None and queue <= 0)
@@ -191,6 +191,7 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
             raise ValueError(
                 "Vortex FMM geometry, execution, or capacity controls are invalid."
             )
+        execution = parse(execution, VortexFMMExecution, "execution")
         lower_tuple = tuple(float(value) for value in lower_array)
         upper_tuple = tuple(float(value) for value in upper_array)
         precision_value = VortexPrecisionPolicy() if precision is None else precision

@@ -20,7 +20,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import inverse_distance_stencil
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._observation import PointObservationAction
 
 
@@ -491,8 +491,7 @@ class CardinalCorrectionPlan(StrictModule):
             raise TypeError("CardinalCorrectionPlan requires PointObservationAction.")
         if not isinstance(domain, Domain):
             raise TypeError("CardinalCorrectionPlan requires a Domain.")
-        if interpolation not in ("idw", "compact"):
-            raise ValueError("interpolation must be 'idw' or 'compact'.")
+        interpolation = parse(interpolation, CardinalInterpolation, "interpolation")
         count = action.observation_count
         anchors = _anchor_coordinates(domain, action)
         _validate_distinct_anchors(anchors, count)

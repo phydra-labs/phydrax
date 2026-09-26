@@ -22,6 +22,7 @@ from ..discretization import (
     PseudospectralMethodPlan,
     TensorSpectralDiscretization,
 )
+from ..typing import parse
 from ._ir import _exact_integer_literal, PDEExpression, PDEProblemIR
 from ._spectral_compile import (
     _SpectralEvaluator,
@@ -536,10 +537,10 @@ def compile_spectral_residual(
         raise TypeError("discretization must be a TensorSpectralDiscretization.")
     if not isinstance(method, PseudospectralMethodPlan):
         raise TypeError("method must be a PseudospectralMethodPlan.")
-    if scope not in ("full", "retained"):
-        raise ValueError("scope must be 'full' or 'retained'.")
-    if condition_handling not in ("reject", "external"):
-        raise ValueError("condition_handling must be 'reject' or 'external'.")
+    scope = parse(scope, SpectralResidualScope, "scope")
+    condition_handling = parse(
+        condition_handling, SpectralConditionHandling, "condition_handling"
+    )
     validate_pde_ir(problem)
     if problem.conditions and condition_handling == "reject":
         raise ValueError(

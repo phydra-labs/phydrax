@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._model import register_artifact_value
 from ..._strict import StrictModule
+from ...typing import parse
 from ._register import _target_wire_ids, HilbertRegisterLayout
 
 
@@ -111,8 +112,7 @@ class QuantumProgram(StrictModule):
     ) -> None:
         if not isinstance(layout, HilbertRegisterLayout):
             raise TypeError("layout must be a HilbertRegisterLayout.")
-        if state_kind not in ("state-vector", "density-matrix"):
-            raise ValueError("Unknown quantum-program state kind.")
+        state_kind = parse(state_kind, QuantumStateKind, "state_kind")
         selected = tuple(operations)
         for operation in selected:
             if not isinstance(

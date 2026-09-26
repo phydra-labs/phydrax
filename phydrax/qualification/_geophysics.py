@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import cast, Literal
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
@@ -15,11 +15,12 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._evidence import QualificationEvidence
 from ._reference import ReferenceArtifactManifest
 
 
-GeophysicalReferenceKind = Literal["external-oracle", "field"]
+GeophysicalReferenceKind: TypeAlias = Literal["external-oracle", "field"]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -70,8 +71,7 @@ class GeophysicalReferenceComparison(StrictModule, NonTrainableState):
         passed: bool,
         /,
     ) -> None:
-        if reference_kind not in ("external-oracle", "field"):
-            raise ValueError("Reference comparison kind is invalid.")
+        reference_kind = parse(reference_kind, GeophysicalReferenceKind, "reference_kind")
         self.reference_kind = reference_kind
         self.recipe_id = _identifier(recipe_id, "reference recipe ID")
         self.reference_manifest_id = _identifier(
@@ -204,8 +204,7 @@ class GeophysicalReferenceRecipe(StrictModule, NonTrainableState):
         maximum_samples: int,
         minimum_valid_samples: int = 1,
     ) -> None:
-        if reference_kind not in ("external-oracle", "field"):
-            raise ValueError("Reference kind must be external-oracle or field.")
+        reference_kind = parse(reference_kind, GeophysicalReferenceKind, "reference_kind")
         if not isinstance(artifact, ReferenceArtifactManifest):
             raise TypeError("Geophysical reference recipe requires an artifact manifest.")
         absolute = float(absolute_tolerance)

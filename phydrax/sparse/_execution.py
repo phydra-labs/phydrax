@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,13 +17,14 @@ from .._fingerprint import canonical_fingerprint
 from .._numerics._compensated import two_sum
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._key_groups import KeyGroupPlan, KeyGroupState
 from ._relation import EdgeRelation, RowRelation, SparseRelation
 
 
-RelationAccumulation = Literal["fast", "deterministic", "compensated"]
-RelationReduction = Literal["sum", "mean", "min", "max"]
-RelationOutput = Literal["compact", "dense"]
+RelationAccumulation: TypeAlias = Literal["fast", "deterministic", "compensated"]
+RelationReduction: TypeAlias = Literal["sum", "mean", "min", "max"]
+RelationOutput: TypeAlias = Literal["compact", "dense"]
 
 
 def canonical_row_route_ids(
@@ -153,12 +154,9 @@ class RelationExecutionState(NonTrainableState, StrictModule):
         output: RelationOutput = "dense",
     ) -> tuple[PyTree[Array], RelationReductionEvidence]:
         """Reduce route-aligned values to compact groups or the dense target space."""
-        if reduction not in ("sum", "mean", "min", "max"):
-            raise ValueError(f"Unsupported relation reduction {reduction!r}.")
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError(f"Unsupported relation accumulation {accumulation!r}.")
-        if output not in ("compact", "dense"):
-            raise ValueError(f"Unsupported relation output {output!r}.")
+        reduction = parse(reduction, RelationReduction, "reduction")
+        accumulation = parse(accumulation, RelationAccumulation, "accumulation")
+        output = parse(output, RelationOutput, "output")
         if accumulation == "compensated" and reduction not in ("sum", "mean"):
             raise ValueError("Compensated accumulation supports sum and mean only.")
 

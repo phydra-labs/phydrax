@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal, overload
+from typing import Literal, overload, TypeAlias
 
 import equinox as eqx
 import jax
@@ -23,6 +23,7 @@ from ..._interpolation import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._utils import _get_size
 from ._kan import KAN, KANLayer
 from ._kan_basis import BSplineEdgeBasis
@@ -30,8 +31,8 @@ from ._separable_kan import SeparableKAN
 from .wrappers._separable_wrappers import Separable
 
 
-QuantileMethod = Literal["linear", "nearest", "midpoint"]
-DegenerateGridPolicy = Literal["retain", "uniform"]
+QuantileMethod: TypeAlias = Literal["linear", "nearest", "midpoint"]
+DegenerateGridPolicy: TypeAlias = Literal["retain", "uniform"]
 
 
 class KANGridAdaptationPlan(StrictModule, NonTrainableState):
@@ -58,10 +59,10 @@ class KANGridAdaptationPlan(StrictModule, NonTrainableState):
             raise ValueError("adaptation blend must lie between zero and one.")
         if not isfinite(minimum_span_) or minimum_span_ <= 0.0:
             raise ValueError("adaptation minimum_span must be finite and positive.")
-        if quantile_method not in ("linear", "nearest", "midpoint"):
-            raise ValueError(f"Unknown quantile method: {quantile_method!r}.")
-        if degenerate_policy not in ("retain", "uniform"):
-            raise ValueError(f"Unknown degenerate-grid policy: {degenerate_policy!r}.")
+        quantile_method = parse(quantile_method, QuantileMethod, "quantile_method")
+        degenerate_policy = parse(
+            degenerate_policy, DegenerateGridPolicy, "degenerate_policy"
+        )
         self.blend = blend_
         self.minimum_span = minimum_span_
         self.quantile_method = quantile_method

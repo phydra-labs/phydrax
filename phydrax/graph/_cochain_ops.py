@@ -15,6 +15,7 @@ from jax import Array, core as jax_core
 
 from .._strict import StrictModule
 from ..sparse import EdgeRelation, gather_routes, linear_apply, route_reduce
+from ..typing import parse
 from ._cochain import CochainBoundaryKind, CochainBoundaryPolicy
 from ._ir import GraphIR
 
@@ -175,10 +176,7 @@ def cochain_hodge_laplacian(
     boundary_policy: CochainBoundaryKind = "absolute",
 ) -> Array:
     """Apply a lower, upper, or complete metric Hodge Laplacian."""
-    if component not in ("lower", "upper", "complete"):
-        raise ValueError(
-            "Hodge Laplacian component must be 'lower', 'upper', or 'complete'."
-        )
+    component = parse(component, HodgeLaplacianComponent, "component")
     nodes, _ = _cochain_payload(graph)
     resolved_degree = int(degree)
     if resolved_degree < 0:
@@ -371,8 +369,7 @@ class CochainHodgeLaplacian(StrictModule):
         component: HodgeLaplacianComponent = "complete",
         boundary_policy: CochainBoundaryKind = "absolute",
     ) -> None:
-        if component not in ("lower", "upper", "complete"):
-            raise ValueError("Unknown Hodge Laplacian component.")
+        component = parse(component, HodgeLaplacianComponent, "component")
         self.degree = int(degree)
         self.input_key = str(input_key)
         self.output_key = str(output_key)

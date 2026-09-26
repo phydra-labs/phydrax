@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 
 
 MaxwellFieldKind: TypeAlias = Literal["electric", "magnetic"]
@@ -75,8 +76,7 @@ class FieldProbePlan(AbstractMaxwellObserverPlan):
         *,
         weights: ArrayLike | None = None,
     ) -> None:
-        if field not in ("electric", "magnetic"):
-            raise ValueError("Probe field must be 'electric' or 'magnetic'.")
+        field = parse(field, MaxwellFieldKind, "field")
         indices_ = np.asarray(indices)
         if indices_.ndim == 1:
             indices_ = indices_[:, None]

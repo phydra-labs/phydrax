@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._keldysh import (
     ClosedTimePathGrid,
     KeldyshTwoPointFunctions,
@@ -24,7 +25,7 @@ from ._keldysh import (
 )
 
 
-TwoPITruncation = Literal["free", "hartree", "basketball"]
+TwoPITruncation: TypeAlias = Literal["free", "hartree", "basketball"]
 
 
 class TwoPISelfEnergy(StrictModule):
@@ -101,12 +102,12 @@ class KadanoffBaym2PIPlan(StrictModule, NonTrainableState):
         tolerance = float(energy_tolerance)
         times = np.asarray(grid.plan.time_nodes)
         steps = np.diff(times)
+        truncation = parse(truncation, TwoPITruncation, "truncation")
         if (
             not np.isfinite(coupling_)
             or coupling_ < 0.0
             or memory < 1
             or memory >= times.size
-            or truncation not in ("free", "hartree", "basketball")
             or mode_capacity <= 0
             or work_capacity <= 0
             or not np.isfinite(tolerance)

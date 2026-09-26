@@ -48,6 +48,7 @@ from ...metrix import (
     ProductStateGeometryBlock,
     QuaternionPoseStateGeometry,
 )
+from ...typing import parse
 from ._rod_dynamics import PreparedRod, RodState
 from ._rod_loads import RodLoadLedger
 from ._rod_reduced_dynamics import (
@@ -148,8 +149,7 @@ class FloatingReducedRodPlan(StrictModule, NonTrainableState):
             raise TypeError("reduction must be a ReducedRodPlan.")
         if reduction.dimension != 3:
             raise ValueError("Floating reduced rods require a spatial 3-D reduction.")
-        if convention not in ("body", "spatial"):
-            raise ValueError("convention must be 'body' or 'spatial'.")
+        convention = parse(convention, FloatingRodTwistConvention, "convention")
         tolerance = _positive_finite(pose_tolerance, "pose_tolerance")
         if tolerance >= np.pi:
             raise ValueError("pose_tolerance must be smaller than pi.")

@@ -16,6 +16,7 @@ from jax import Array, core as jax_core
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 from ._boundary_cascade import (
     BoundaryCascadePolicy,
     BoundaryRelation,
@@ -251,12 +252,9 @@ class FourierModalRefreshSpec(StrictModule, NonTrainableState):
         bloch_wavevector_changed: bool = False,
         ports_changed: bool = False,
     ) -> None:
-        updates = tuple(layer_updates)
-        if any(
-            value not in ("unchanged", "thickness", "translation", "material")
-            for value in updates
-        ):
-            raise ValueError("Unknown Fourier-modal layer refresh kind.")
+        updates = tuple(
+            parse(value, LayerRefreshKind, "layer_updates") for value in layer_updates
+        )
         self.layer_updates = updates
         self.angular_frequency_changed = bool(angular_frequency_changed)
         self.bloch_wavevector_changed = bool(bloch_wavevector_changed)

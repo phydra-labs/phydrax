@@ -13,6 +13,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._resources import AlgebraResourceBudget
 from ._structure import AlgebraRationalMap, AlgebraRationalVector, AlgebraStructureTable
 
@@ -47,15 +48,8 @@ class AlgebraClaimEvidence(StrictModule, NonTrainableState):
         name = str(property_name)
         if not name:
             raise ValueError("Algebra property name must be non-empty.")
-        if status not in ("proven", "disproven", "unknown"):
-            raise ValueError("Unknown algebra claim status.")
-        if source not in (
-            "exact_basis_audit",
-            "family_construction",
-            "explicit_witness",
-            "unavailable",
-        ):
-            raise ValueError("Unknown algebra claim source.")
+        status = parse(status, AlgebraClaimStatus, "status")
+        source = parse(source, AlgebraClaimSource, "source")
         work_ = int(work)
         if work_ < 0:
             raise ValueError("Algebra claim work must be nonnegative.")

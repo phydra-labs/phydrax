@@ -17,6 +17,7 @@ from jax import Array
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._axis import AxisDiscretization, AxisPrimaryEntity
 
 
@@ -201,13 +202,11 @@ class TensorEntityLayout(StrictModule, NonTrainableState):
         names = tuple(str(name) for name in axis_names)
         axes_ = tuple(axes)
         entities = tuple(axis_entities)
-        if (
-            not names
-            or len(axes_) != len(names)
-            or len(entities) != len(names)
-            or any(entity not in ("point", "interval") for entity in entities)
-        ):
+        if not names or len(axes_) != len(names) or len(entities) != len(names):
             raise ValueError("Tensor entity layout factors must align with axes.")
+        entities = tuple(
+            parse(entity, AxisEntityKind, "axis_entities") for entity in entities
+        )
         shape = tuple(
             axis.count(entity) for axis, entity in zip(axes_, entities, strict=True)
         )

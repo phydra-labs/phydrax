@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import PlantRuntimeState, PlantStepResult
+from ...typing import parse
 from ..solid_mechanics._rod_plant import (
     PreparedReducedRodPlant,
     ReducedRodPlantEvidence,
@@ -428,12 +429,9 @@ class SoftFrameQueryPlan(StrictModule, NonTrainableState):
             raise TypeError("reconstruction must be RodReconstructionPlan.")
         if not isinstance(include_pose, bool):
             raise TypeError("include_pose must be bool.")
-        if not isinstance(twists, tuple) or any(
-            value not in ("body", "world_origin", "frame_world") for value in twists
-        ):
-            raise ValueError(
-                "twists must contain only 'body', 'world_origin', or 'frame_world'."
-            )
+        if not isinstance(twists, tuple):
+            raise ValueError("twists must be a tuple of frame twist kinds.")
+        twists = tuple(parse(value, SoftTwistKind, "twists") for value in twists)
         if len(set(twists)) != len(twists):
             raise ValueError("Frame twist kinds must be unique.")
         if not include_pose and not twists:

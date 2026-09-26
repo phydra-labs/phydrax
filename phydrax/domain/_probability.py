@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,14 +16,14 @@ from jax.typing import ArrayLike
 from .._sampling import materialize_design
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..typing import Bool, PRNGKey
+from ..typing import Bool, parse, PRNGKey
 from ._base import _PointDim
 from ._measure import BaseMeasure, ExactMass
 from ._scalar import AbstractScalarDomain
 from ._selection import Fixed, Interior, Selection
 
 
-ReferenceMeasure = Literal["uniform", "standard-normal"]
+ReferenceMeasure: TypeAlias = Literal["uniform", "standard-normal"]
 
 
 def open_unit_interval(values: Any, /) -> Array:
@@ -55,8 +55,9 @@ class ReferenceTransportEvidence(StrictModule, NonTrainableState):
     ) -> None:
         if not provider:
             raise ValueError("Reference transport provider identity must be nonempty.")
-        if reference_measure not in ("uniform", "standard-normal"):
-            raise ValueError("Unsupported reference measure.")
+        reference_measure = parse(
+            reference_measure, ReferenceMeasure, "reference_measure"
+        )
         residual = float(maximum_round_trip_residual)
         if not np.isfinite(residual) or residual < 0.0:
             raise ValueError(
@@ -90,8 +91,9 @@ class ReferenceTransport(StrictModule, NonTrainableState):
         log_abs_det_jacobian: Callable | None = None,
         evidence: ReferenceTransportEvidence | None = None,
     ) -> None:
-        if reference_measure not in ("uniform", "standard-normal"):
-            raise ValueError("reference_measure must be 'uniform' or 'standard-normal'.")
+        reference_measure = parse(
+            reference_measure, ReferenceMeasure, "reference_measure"
+        )
         if not callable(forward) or not callable(inverse):
             raise TypeError(
                 "Reference transport forward and inverse maps must be callable."

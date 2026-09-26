@@ -25,6 +25,7 @@ from ..._strict import StrictModule
 from ...algebraic import SparsePolynomialSystem
 from ...algebraic._exact_integer import exact_integer_rank
 from ...linalg import FactorizationPolicy, inverse as invert_matrix
+from ...typing import parse
 
 
 ProjectiveVarietyKind: TypeAlias = Literal[
@@ -935,12 +936,7 @@ class ProjectiveVarietyPlan(StrictModule):
         toric_charge_matrix: ArrayLike | None = None,
         maximum_monomials: int = 100_000,
     ) -> None:
-        if kind not in (
-            "hypersurface",
-            "complete-intersection",
-            "toric-complete-intersection",
-        ):
-            raise ValueError("Unknown projective variety kind.")
+        kind = parse(kind, ProjectiveVarietyKind, "kind")
         if not isinstance(system, SparsePolynomialSystem):
             raise TypeError("system must be SparsePolynomialSystem.")
         weights = tuple(ambient_weights)

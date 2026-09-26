@@ -17,6 +17,7 @@ from jax import Array, core as jax_core
 from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._sparse_triangular import (
     analyze_sparse_triangular,
@@ -64,10 +65,8 @@ class SparseFactorizationPolicy(StrictModule):
         allow_pivot_replacement: bool = False,
         replacement_value: float = 1e-12,
     ) -> None:
-        if kind not in ("auto", "lu", "cholesky"):
-            raise ValueError(f"Unknown sparse factorization kind {kind!r}.")
-        if ordering not in ("natural", "reverse-cuthill-mckee"):
-            raise ValueError(f"Unknown sparse ordering {ordering!r}.")
+        kind = parse(kind, SparseFactorizationKind, "kind")
+        ordering = parse(ordering, SparseOrdering, "ordering")
         fill = None if fill_level is None else int(fill_level)
         maximum_fill = None if maximum_fill_per_row is None else int(maximum_fill_per_row)
         if fill is not None and fill < 0:

@@ -17,6 +17,7 @@ from phydrax._interpolation import linear_interpolate
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._context import AstrodynamicsTimeScale, JulianDate, TimeInstant
 from ._data import AstrodynamicsDataProvenance
 from ._status import AstrodynamicsStatus
@@ -61,15 +62,11 @@ class TimeScaleTransform(StrictModule, NonTrainableState):
         *,
         interpolation: TimeInterpolation,
     ) -> None:
-        source = str(source_scale).upper()
-        target = str(target_scale).upper()
-        supported = ("UTC", "TAI", "GPS", "TT", "TCG", "TDB", "TCB", "UT1")
-        if source not in supported or target not in supported:
-            raise ValueError("Unknown astrodynamics time scale.")
+        source = parse(str(source_scale).upper(), AstrodynamicsTimeScale, "source_scale")
+        target = parse(str(target_scale).upper(), AstrodynamicsTimeScale, "target_scale")
         if source == target:
             raise ValueError("Time-scale transform endpoints must differ.")
-        if interpolation not in ("constant", "linear", "step"):
-            raise ValueError("Unknown time offset interpolation policy.")
+        interpolation = parse(interpolation, TimeInterpolation, "interpolation")
         if not isinstance(provenance, AstrodynamicsDataProvenance):
             raise TypeError("provenance must be AstrodynamicsDataProvenance.")
         nodes_host = np.asarray(nodes, dtype=np.float64)

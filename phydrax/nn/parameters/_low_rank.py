@@ -22,7 +22,7 @@ from phydrax.ein import contract
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, ParameterOwner
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from ._selection import ParameterSubspace
 
 
@@ -45,12 +45,10 @@ class LowRankSpec:
         if rank <= 0:
             raise ValueError("Low-rank adaptation rank must be positive.")
         alpha = float(rank if self.alpha is None else self.alpha)
-        scaling = str(self.scaling)
         stddev = float(self.stddev)
         if not isfinite(alpha) or alpha <= 0.0:
             raise ValueError("Low-rank adaptation alpha must be finite and positive.")
-        if scaling not in ("rank", "sqrt_rank"):
-            raise ValueError("Low-rank scaling must be 'rank' or 'sqrt_rank'.")
+        scaling = parse(str(self.scaling), LowRankScaling, "scaling")
         if not isfinite(stddev) or stddev <= 0.0:
             raise ValueError(
                 "Low-rank initialization stddev must be finite and positive."
@@ -129,11 +127,9 @@ class LowRankUpdate(StrictModule, ParameterOwner):
             if left.dtype != value.dtype or right.dtype != value.dtype:
                 raise TypeError("Low-rank factors must have the exact base dtype.")
             alpha_value = float(alpha) if alpha is not None else float(factor_rank)
-            scaling_value = str(scaling)
             if not isfinite(alpha_value) or alpha_value <= 0.0:
                 raise ValueError("Low-rank adaptation alpha must be finite and positive.")
-            if scaling_value not in ("rank", "sqrt_rank"):
-                raise ValueError("Low-rank scaling must be 'rank' or 'sqrt_rank'.")
+            scaling_value = parse(str(scaling), LowRankScaling, "scaling")
             self.base = value
             self.left = left
             self.right = right

@@ -19,6 +19,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
+from ..typing import parse
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._mac_adaptive import (
     MACAcceptedGridTrace,
@@ -135,8 +136,7 @@ class MACFixedGridSensitivityPlan(StrictModule):
         absolute_tolerance: float = 1e-8,
         relative_tolerance: float = 1e-6,
     ) -> None:
-        if derivative_mode not in ("smooth", "branchwise", "unsupported"):
-            raise ValueError("Unknown MAC derivative certification mode.")
+        derivative_mode = parse(derivative_mode, MACDerivativeMode, "derivative_mode")
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         if (
@@ -375,8 +375,7 @@ class MACSegmentedShadowingPlan(StrictModule):
         state_size = sensitivity_plan.replay_plan.dynamics.state_shape[0]
         if length <= 0 or dimension <= 0 or dimension > state_size:
             raise ValueError("MAC shadowing segment and tangent dimensions are invalid.")
-        if neutral_mode not in ("none", "flow"):
-            raise ValueError("Unknown MAC neutral-direction mode.")
+        neutral_mode = parse(neutral_mode, MACNeutralMode, "neutral_mode")
         if neutral_mode == "flow" and dimension >= state_size:
             raise ValueError(
                 "Flow-neutral shadowing needs tangent_dimension below state dimension."

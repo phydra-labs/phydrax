@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import prod
 from numbers import Integral
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -26,6 +26,7 @@ from ..coresets import (
     moment_recombine,
     MomentRecombination,
 )
+from ..typing import parse
 from ._trajectory import StochasticDriverSegmentReference, StochasticTrajectory
 
 
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
     from ..nn.operator.training import OperatorDataset
 
 
-TrajectoryBlockWeighting = Literal["trajectory", "block", "duration"]
+TrajectoryBlockWeighting: TypeAlias = Literal["trajectory", "block", "duration"]
 TrajectoryCoresetMethod = MomentRecombination | KernelHerding
 
 
@@ -164,8 +165,7 @@ def compress_trajectory_blocks(
     """Select valid blocks under one explicit trajectory/block/duration measure."""
     if not isinstance(view, StochasticTrajectoryBlockView):
         raise TypeError("view must be a StochasticTrajectoryBlockView.")
-    if weighting not in ("trajectory", "block", "duration"):
-        raise ValueError("weighting must be 'trajectory', 'block', or 'duration'.")
+    weighting = parse(weighting, TrajectoryBlockWeighting, "weighting")
     feature_values = jnp.asarray(features)
     if feature_values.ndim != 2 or feature_values.shape[0] != view.count:
         raise ValueError("features must have shape (candidate_block, feature).")

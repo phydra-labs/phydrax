@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from numbers import Number
-from typing import Any, Literal
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,6 +24,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -47,8 +48,8 @@ from ._common import (
 )
 
 
-UnknownPolicy = Literal["fail", "indicator"]
-ImputationStrategy = Literal["mean", "median", "most_frequent", "constant"]
+UnknownPolicy: TypeAlias = Literal["fail", "indicator"]
+ImputationStrategy: TypeAlias = Literal["mean", "median", "most_frequent", "constant"]
 # Category lookups match inputs against a finite vocabulary, so every encoding is
 # discontinuous in its input.
 _ORDINAL_CONTRACT = DerivativeContract(
@@ -383,8 +384,7 @@ class SimpleImputer(AbstractRecipe):
         add_indicator: bool = False,
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
-        if strategy not in ("mean", "median", "most_frequent", "constant"):
-            raise ValueError("Unsupported imputation strategy.")
+        strategy = parse(strategy, ImputationStrategy, "strategy")
         if weight_policy not in ("none", "statistical", "measure", "product"):
             raise ValueError("Unsupported weight policy.")
         if not isinstance(fill_value, Number) or not isinstance(missing_values, Number):
@@ -408,26 +408,31 @@ class SimpleImputer(AbstractRecipe):
         x, weights, mass, effective, valid, status = _feature_observations(
             batch, weight_policy=self.weight_policy, extra_mask=available
         )
-        if self.strategy == "mean":
-            fill = _weighted_mean(x, weights)
-        elif self.strategy == "median":
-            if jnp.issubdtype(x.dtype, jnp.complexfloating):
-                raise TypeError("Median imputation requires real-valued features.")
-            fill = _weighted_quantiles(
-                x, weights, jnp.asarray([0.5], dtype=weights.dtype)
-            )[..., 0]
-        elif self.strategy == "most_frequent":
-            candidates = x[..., :, None, :]
-            observations = x[..., None, :, :]
-            equality = candidates == observations
-            candidate_mass = jnp.sum(equality * weights[..., None, :, :], axis=-2)
-            indices = jnp.argmax(candidate_mass, axis=-2)
-            fill = jnp.take_along_axis(x, indices[..., None, :], axis=-2)[..., 0, :]
-        else:
-            fill = jnp.broadcast_to(
-                jnp.asarray(self.fill_value, dtype=jnp.result_type(x, self.fill_value)),
-                mass.shape,
-            )
+        match self.strategy:
+            case "mean":
+                fill = _weighted_mean(x, weights)
+            case "median":
+                if jnp.issubdtype(x.dtype, jnp.complexfloating):
+                    raise TypeError("Median imputation requires real-valued features.")
+                fill = _weighted_quantiles(
+                    x, weights, jnp.asarray([0.5], dtype=weights.dtype)
+                )[..., 0]
+            case "most_frequent":
+                candidates = x[..., :, None, :]
+                observations = x[..., None, :, :]
+                equality = candidates == observations
+                candidate_mass = jnp.sum(equality * weights[..., None, :, :], axis=-2)
+                indices = jnp.argmax(candidate_mass, axis=-2)
+                fill = jnp.take_along_axis(x, indices[..., None, :], axis=-2)[..., 0, :]
+            case "constant":
+                fill = jnp.broadcast_to(
+                    jnp.asarray(
+                        self.fill_value, dtype=jnp.result_type(x, self.fill_value)
+                    ),
+                    mass.shape,
+                )
+            case _:
+                assert_never(self.strategy)
         if self.strategy == "constant":
             raw_weight = batch.effective_weight(self.weight_policy)
             finite_weight = jnp.all(
@@ -589,8 +594,7 @@ class OrdinalEncoder(AbstractRecipe):
         unknown_value: int = -1,
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
-        if unknown_policy not in ("fail", "indicator"):
-            raise ValueError("unknown_policy must be 'fail' or 'indicator'.")
+        unknown_policy = parse(unknown_policy, UnknownPolicy, "unknown_policy")
         if weight_policy not in ("none", "statistical", "measure", "product"):
             raise ValueError("Unsupported weight policy.")
         self.schema = schema
@@ -738,8 +742,7 @@ class OneHotEncoder(AbstractRecipe):
         unknown_policy: UnknownPolicy = "fail",
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
-        if unknown_policy not in ("fail", "indicator"):
-            raise ValueError("unknown_policy must be 'fail' or 'indicator'.")
+        unknown_policy = parse(unknown_policy, UnknownPolicy, "unknown_policy")
         if weight_policy not in ("none", "statistical", "measure", "product"):
             raise ValueError("Unsupported weight policy.")
         self.schema = schema
@@ -887,8 +890,7 @@ class TargetEncoder(AbstractRecipe):
             ~jnp.isfinite(smoothing_) | (smoothing_ < 0.0),
             "smoothing must be finite and nonnegative.",
         )
-        if unknown_policy not in ("fail", "indicator"):
-            raise ValueError("unknown_policy must be 'fail' or 'indicator'.")
+        unknown_policy = parse(unknown_policy, UnknownPolicy, "unknown_policy")
         if weight_policy not in ("none", "statistical", "measure", "product"):
             raise ValueError("Unsupported weight policy.")
         self.schema = schema

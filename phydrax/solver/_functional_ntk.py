@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,7 +24,7 @@ from ..nn.neural_tangent import (
 )
 from ..nn.parameters import ParameterSubspace
 from ..terms import ResidualBlockRef
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._functional_residual import (
     FunctionalResidualLayout,
     prepare_functional_residual,
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from ._functional_solver import FunctionalSolver
 
 
-FunctionalNTKView = Literal["physical", "surrogate"]
+FunctionalNTKView: TypeAlias = Literal["physical", "surrogate"]
 
 _NTK_EVALUATION_ADDRESS = SampleAddress(
     "functional", "ntk-residual", target="objective", role="evaluation"
@@ -73,8 +73,7 @@ class PreparedFunctionalNTK(StrictModule):
             raise TypeError("ntk must be a PreparedEmpiricalNTK.")
         if not isinstance(residual, PreparedFunctionalResidual):
             raise TypeError("residual must be a PreparedFunctionalResidual.")
-        if view not in ("physical", "surrogate"):
-            raise ValueError("Unknown functional NTK view.")
+        view = parse(view, FunctionalNTKView, "view")
         self.ntk = ntk
         self.residual = residual
         self.parameters = parameters
@@ -146,8 +145,7 @@ def prepare_functional_ntk(
     linearization: LinearizationPolicy | None = None,
 ) -> PreparedFunctionalNTK:
     """Prepare the finite-width NTK of measure-weighted functional residuals."""
-    if view not in ("physical", "surrogate"):
-        raise ValueError("view must be 'physical' or 'surrogate'.")
+    view = parse(view, FunctionalNTKView, "view")
     if prepared_update is not None and not isinstance(
         prepared_update, PreparedFunctionalUpdate
     ):

@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from operator import index
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -37,10 +37,11 @@ from ....special._solid_harmonic import (
     solid_harmonic_irregular,
     solid_harmonic_regular,
 )
+from ....typing import parse
 
 
-TranslationRoute3D = Literal["dense"]
-LaplaceExecution3D = Literal["level_octree", "plane_dual"]
+TranslationRoute3D: TypeAlias = Literal["dense"]
+LaplaceExecution3D: TypeAlias = Literal["level_octree", "plane_dual"]
 
 
 def _translation_quadrature(bandlimit: int) -> tuple[np.ndarray, np.ndarray]:
@@ -276,8 +277,7 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
             raise ValueError(
                 "Only the complete dense Laplace translation route is available."
             )
-        if execution not in ("level_octree", "plane_dual"):
-            raise ValueError("execution must be 'level_octree' or 'plane_dual'.")
+        execution = parse(execution, LaplaceExecution3D, "execution")
         source_leaf = index(source_leaf_occupancy)
         target_leaf = index(target_leaf_occupancy)
         coarse = index(plane_coarsening_factor)

@@ -15,7 +15,7 @@ from ...stochastic import (
     BSDEProblem,
     evaluate_bsde,
 )
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from ..core import PricingLaw
 
 
@@ -63,10 +63,8 @@ class ExposureBSDERoute(StrictModule):
             raise ValueError(
                 "Pricing-law factor layout is incompatible with the BSDE route."
             )
-        if control_mode not in ("explicit", "autodiff"):
-            raise ValueError("control_mode must be 'explicit' or 'autodiff'.")
-        if quadrature not in ("left", "trapezoid"):
-            raise ValueError("quadrature must be 'left' or 'trapezoid'.")
+        control_mode = parse(control_mode, BSDEControlMode, "control_mode")
+        quadrature = parse(quadrature, BSDEQuadrature, "quadrature")
         self.problem = problem
         self.pricing_law = pricing_law
         self.factor_layout_id = layout

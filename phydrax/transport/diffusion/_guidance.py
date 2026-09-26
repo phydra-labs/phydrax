@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,10 +19,10 @@ from ..._frozendict import frozendict
 from ..._score_field import StateTimeScoreField
 from ..._strict import StrictModule
 from ...domain import DomainFunction
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
-GuidanceExactness = Literal["exact", "approximate", "heuristic"]
+GuidanceExactness: TypeAlias = Literal["exact", "approximate", "heuristic"]
 
 
 class ScoreContext(StrictModule):
@@ -122,8 +122,7 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
         value = float(scale)
         if not jnp.isfinite(value):
             raise ValueError("Guidance scale must be finite.")
-        if exactness not in ("exact", "approximate", "heuristic"):
-            raise ValueError("Unknown guidance exactness.")
+        exactness = parse(exactness, GuidanceExactness, "exactness")
         if not guidance_id:
             raise ValueError("guidance_id must be non-empty.")
         self.field = field

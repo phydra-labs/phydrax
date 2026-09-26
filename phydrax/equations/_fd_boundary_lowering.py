@@ -25,6 +25,7 @@ from ..discretization import (
     PreparedTensorGrid,
 )
 from ..discretization.finite_difference._boundary_runtime import GhostConditionKind
+from ..typing import parse
 from ._ir import PDECondition, PDEExpression, PDEProblemIR, PDERegion
 
 
@@ -204,13 +205,8 @@ class FDBoundaryBinding(StrictModule, NonTrainableState):
         alpha: float,
         beta: float,
     ) -> None:
-        if side not in ("lower", "upper") or kind not in (
-            "periodic",
-            "dirichlet",
-            "neumann",
-            "robin",
-        ):
-            raise ValueError("Invalid FD boundary side or kind.")
+        side = parse(side, BoundarySide, "side")
+        kind = parse(kind, GhostConditionKind, "kind")
         self.condition_name = str(condition_name)
         self.field_name = str(field_name)
         self.axis = str(axis)
@@ -776,14 +772,10 @@ class FDInterfaceBinding(StrictModule, NonTrainableState):
         /,
     ) -> None:
         coefficient_ = float(coefficient)
-        if (
-            not condition_name
-            or not interface_name
-            or not field_name
-            or not axis
-            or kind not in ("field_jump", "flux_jump")
-            or coefficient_ == 0.0
-        ):
+        if not condition_name or not interface_name or not field_name or not axis:
+            raise ValueError("FD interface binding metadata is invalid.")
+        kind = parse(kind, FDInterfaceConditionKind, "kind")
+        if coefficient_ == 0.0:
             raise ValueError("FD interface binding metadata is invalid.")
         self.condition_name = str(condition_name)
         self.interface_name = str(interface_name)

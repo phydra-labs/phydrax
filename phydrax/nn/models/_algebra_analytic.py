@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,9 +16,10 @@ from jax.typing import ArrayLike
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
 from ...metrix.algebra import AlgebraProductPlan, BracketingPlan
+from ...typing import parse
 
 
-AnalyticityKind = Literal[
+AnalyticityKind: TypeAlias = Literal[
     "complex_holomorphic",
     "slice_regular",
     "left_fueter",
@@ -44,21 +45,8 @@ class AnalyticityOperator(StrictModule):
         tolerance: float = 1e-6,
         operator_id: str,
     ) -> None:
-        supported = (
-            "complex_holomorphic",
-            "slice_regular",
-            "left_fueter",
-            "right_fueter",
-            "left_monogenic",
-            "right_monogenic",
-            "certified_linear",
-        )
-        if (
-            kind not in supported
-            or not callable(action)
-            or float(tolerance) <= 0.0
-            or not operator_id
-        ):
+        kind = parse(kind, AnalyticityKind, "kind")
+        if not callable(action) or float(tolerance) <= 0.0 or not operator_id:
             raise ValueError("Analyticity operator kind/action/tolerance/id are invalid.")
         self.action = action
         self.kind = kind

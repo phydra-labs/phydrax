@@ -18,6 +18,7 @@ from ...._callable import _ensure_special_kwonly_args
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ...._trainable import ParameterOwner
+from ....typing import parse
 from ..._keys import EvalKey, fold_in_eval_key, split_eval_key
 
 
@@ -26,7 +27,7 @@ _CaseData: TypeAlias = tuple[Array, Array, Array]
 _StepData: TypeAlias = tuple[Array, Array, Array]
 
 
-MaskedSeriesReduction = Literal["mean", "sum"]
+MaskedSeriesReduction: TypeAlias = Literal["mean", "sum"]
 
 
 class RaggedSeriesBatchInput(StrictModule):
@@ -221,8 +222,7 @@ class MaskedSeriesPoolingModel(StrictModule, ParameterOwner):
         include_static_in_readout: bool = True,
         scale_sampled_sum: bool = False,
     ) -> None:
-        if reduction not in ("mean", "sum"):
-            raise ValueError("reduction must be either 'mean' or 'sum'.")
+        reduction = parse(reduction, MaskedSeriesReduction, "reduction")
         self.step_model = _ensure_special_kwonly_args(step_model)
         self.readout_model = _ensure_special_kwonly_args(readout_model)
         self.reduction = reduction

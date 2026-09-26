@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import DifferentialProblem, DifferentialSolution
+from ...typing import parse
 from ._experiment import BatteryRuntimeInputs
 from ._particle import (
     BatteryParticleEvaluation,
@@ -104,14 +105,6 @@ def _solid_diffusivity_query(
     if law.coordinate == "stoichiometry":
         return stoichiometric_endpoints
     return stoichiometric_endpoints * maximum_concentration_mol_m3
-
-
-def _limiting_electrode(value: LimitingElectrode, /) -> LimitingElectrode:
-    if value not in ("balanced", "negative", "positive"):
-        raise ValueError(
-            "limiting_electrode must be 'balanced', 'negative', or 'positive'."
-        )
-    return value
 
 
 def _capacity_rule_valid(
@@ -264,7 +257,7 @@ class SpmParameters(StrictModule):
             coordinate="stoichiometry",
             value_unit="V",
         )
-        limiting = _limiting_electrode(limiting_electrode)
+        limiting = parse(limiting_electrode, LimitingElectrode, "limiting_electrode")
         tolerance = float(capacity_balance_relative_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError(

@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
+from ...typing import parse
 from ._generalized_wave_gauge import GeneralizedWaveGaugePlan
 
 
@@ -85,8 +86,9 @@ class SphericalConformalAdSPlan(StrictModule):
             or not np.allclose(spacing, spacing[0], rtol=1e-12, atol=1e-14)
         ):
             raise ValueError("Spherical AdS requires a uniform grid in [0, pi/2).")
-        if boundary_policy not in ("reflecting", "driven", "dissipative"):
-            raise ValueError("Unknown spherical AdS boundary policy.")
+        boundary_policy = parse(
+            boundary_policy, SphericalAdSBoundaryPolicy, "boundary_policy"
+        )
         if gauge is not None and not isinstance(gauge, GeneralizedWaveGaugePlan):
             raise TypeError("gauge must be GeneralizedWaveGaugePlan or None.")
         scalars = (

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -41,6 +41,7 @@ from ...stochastic import (
     StateSpaceProblem,
     StateSpaceStepContext,
 )
+from ...typing import parse
 from ...uq import (
     kalman_filter,
     kalman_innovation_diagnostics,
@@ -56,7 +57,7 @@ from ._observations import BatteryRecordRole, BatteryTimeSeriesRecord
 from ._properties import ConstantPropertyLaw, TabulatedPropertyLaw
 
 
-TemperatureMode = Literal["isothermal", "known"]
+TemperatureMode: TypeAlias = Literal["isothermal", "known"]
 
 
 def _real_array(value: ArrayLike, name: str, /) -> Array:
@@ -381,8 +382,7 @@ class ExactAffineECMEstimationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "state_of_charge_interval must be an increasing subset of [0, 1]."
             )
-        if temperature_mode not in ("isothermal", "known"):
-            raise ValueError("temperature_mode must be 'isothermal' or 'known'.")
+        temperature_mode = parse(temperature_mode, TemperatureMode, "temperature_mode")
         for value, name in (
             (hysteresis, "hysteresis"),
             (capacity_fade, "capacity_fade"),

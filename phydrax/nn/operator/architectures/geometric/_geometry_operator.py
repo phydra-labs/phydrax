@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -29,11 +29,13 @@ from phydrax.nn.operator.layers._graph_transfer import (
     MultiscaleGraphTransfer,
 )
 
+from .....typing import parse
+
 
 GeometryTransfer = GraphKernelTransfer | GraphAttentionTransfer | MultiscaleGraphTransfer
 LatentGeometry = TensorGridLatentGeometry | RegionalPointLatentGeometry
-TensorGridExecution = Literal["structured", "operator_batch"]
-LatentSupportKind = Literal["occupancy", "sdf"]
+TensorGridExecution: TypeAlias = Literal["structured", "operator_batch"]
+LatentSupportKind: TypeAlias = Literal["occupancy", "sdf"]
 
 
 def _sample_coordinates(
@@ -186,7 +188,6 @@ class TensorGridProcessor(StrictModule):
         self.model = model
         self.geometry = geometry
         self.channels = int(channels)
-        self.execution = execution
         self.source_key = str(source_key)
         self.conditioning_channels = tuple(
             (str(name), int(width)) for name, width in conditioning_channels
@@ -199,8 +200,7 @@ class TensorGridProcessor(StrictModule):
             raise ValueError(
                 "TensorGridProcessor model must preserve latent channel width."
             )
-        if self.execution not in ("structured", "operator_batch"):
-            raise ValueError("execution must be 'structured' or 'operator_batch'.")
+        self.execution = parse(execution, TensorGridExecution, "execution")
         if len({name for name, _ in self.conditioning_channels}) != len(
             self.conditioning_channels
         ):
@@ -417,8 +417,9 @@ class _GeometryOperatorCore(StrictModule):
         condition_names = {name for name, _ in conditions_}
         if condition_names.intersection(keys_):
             raise ValueError("Conditioning inputs cannot also be encoded sources.")
-        if latent_support_kind not in ("occupancy", "sdf"):
-            raise ValueError("latent_support_kind must be 'occupancy' or 'sdf'.")
+        latent_support_kind = parse(
+            latent_support_kind, LatentSupportKind, "latent_support_kind"
+        )
         if int(latent_support_neighbors) <= 0:
             raise ValueError("latent_support_neighbors must be positive.")
         if latent_support_radius is not None and float(latent_support_radius) <= 0.0:

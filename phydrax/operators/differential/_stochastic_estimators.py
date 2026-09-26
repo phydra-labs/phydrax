@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,10 +17,10 @@ from jax.typing import ArrayLike, DTypeLike
 import phydrax.linalg as la
 
 from ..._strict import StrictModule
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
-ProbeDistribution = Literal["rademacher", "normal"]
+ProbeDistribution: TypeAlias = Literal["rademacher", "normal"]
 
 
 def _state_axes(value: Array, state_ndim: int, /) -> tuple[int, ...]:
@@ -132,8 +132,7 @@ class StochasticTracePolicy(StrictModule):
         count = int(num_probes)
         if count < 2:
             raise ValueError("num_probes must be at least two to estimate uncertainty.")
-        if distribution not in ("rademacher", "normal"):
-            raise ValueError("distribution must be 'rademacher' or 'normal'.")
+        distribution = parse(distribution, ProbeDistribution, "distribution")
         self.num_probes = count
         self.distribution = distribution
 
@@ -160,8 +159,7 @@ class StochasticOperatorEstimate(StrictModule):
             raise ValueError("value and standard_error must have the same shape.")
         if int(num_probes) < 2:
             raise ValueError("num_probes must be at least two.")
-        if distribution not in ("rademacher", "normal"):
-            raise ValueError("distribution must be 'rademacher' or 'normal'.")
+        distribution = parse(distribution, ProbeDistribution, "distribution")
         self.value = value_array
         self.standard_error = error_array
         self.num_probes = int(num_probes)
@@ -195,8 +193,7 @@ class StochasticOperatorSamples(StrictModule):
         samples = jnp.asarray(values)
         if samples.ndim < 1 or samples.shape[0] < 2:
             raise ValueError("values must contain at least two probe realizations.")
-        if distribution not in ("rademacher", "normal"):
-            raise ValueError("distribution must be 'rademacher' or 'normal'.")
+        distribution = parse(distribution, ProbeDistribution, "distribution")
         count = samples.shape[0]
         mean = jnp.mean(samples, axis=0)
         centered = samples - mean

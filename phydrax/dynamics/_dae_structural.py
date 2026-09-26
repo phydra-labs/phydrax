@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,11 +21,12 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._differential_algebraic import DAERole, DAEStructure, DifferentialAlgebraicSystem
 from ._layout import InputLayout
 
 
-DAETearingPolicy = Literal["none", "automatic", "declared"]
+DAETearingPolicy: TypeAlias = Literal["none", "automatic", "declared"]
 
 
 def _identifier(value: str, owner: str, /) -> str:
@@ -443,8 +444,7 @@ class DAEStructuralPolicy(StrictModule, NonTrainableState):
             raise TypeError("DAE structural capacities must be integers.")
         if maximum_differentiations < 0 or maximum_tears < 0:
             raise ValueError("DAE structural capacities must be nonnegative.")
-        if tearing not in ("none", "automatic", "declared"):
-            raise ValueError("Unknown DAE tearing policy.")
+        tearing = parse(tearing, DAETearingPolicy, "tearing")
         tears = tuple(_identifier(value, "declared tear") for value in declared_tears)
         if tearing != "declared" and tears:
             raise ValueError("declared_tears require tearing='declared'.")

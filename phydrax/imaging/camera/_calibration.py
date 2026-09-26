@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -36,12 +36,13 @@ from ...optim import (
     OptimizationStatus,
     OptimizationTermination,
 )
+from ...typing import parse
 from ._model import CameraModel, project_points
 from ._rig import CameraRig
 
 
 CAMERA_PARAMETER_COUNT = 16
-CalibrationGauge = Literal["world-points", "reference-camera"]
+CalibrationGauge: TypeAlias = Literal["world-points", "reference-camera"]
 
 
 class CameraCalibrationStatus(IntEnum):
@@ -170,8 +171,7 @@ class CameraCalibrationPlan(StrictModule, NonTrainableState):
         camera_capacity = mask_host.shape[0]
         if camera_capacity < 1 or not np.any(mask_host):
             raise ValueError("At least one calibration parameter must be free.")
-        if gauge not in ("world-points", "reference-camera"):
-            raise ValueError("gauge must be 'world-points' or 'reference-camera'.")
+        gauge = parse(gauge, CalibrationGauge, "gauge")
         if gauge == "reference-camera":
             if reference_camera is None:
                 raise ValueError("reference-camera gauge requires reference_camera.")

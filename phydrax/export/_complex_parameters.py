@@ -23,6 +23,7 @@ from .._fingerprint import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 if TYPE_CHECKING:
@@ -38,15 +39,6 @@ ComplexInterchangeSemantics: TypeAlias = Literal[
     "pole-locations",
 ]
 
-_SEMANTICS = frozenset(
-    {
-        "trainable-parameters",
-        "frame-coefficients",
-        "constrained-frame-coefficients",
-        "meromorphic-coefficients",
-        "pole-locations",
-    }
-)
 _ProviderT = TypeVar("_ProviderT")
 _ComplexLinearT = TypeVar("_ComplexLinearT", bound="ComplexLinear")
 _LowRankT = TypeVar("_LowRankT", bound="LowRankComplexLinear")
@@ -181,8 +173,7 @@ class ComplexInterchangeState(StrictModule, NonTrainableState):
         *,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        if semantics not in _SEMANTICS:
-            raise ValueError("Unknown complex interchange semantics.")
+        semantics = parse(semantics, ComplexInterchangeSemantics, "semantics")
         provider = str(provider_kind)
         architecture = str(architecture_id)
         if not provider or not architecture:

@@ -19,6 +19,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg._certificates import SpectralInterval
 from ...linalg._rational_functions import PartialFractionRationalFunction
+from ...typing import parse
 
 
 RationalErrorMetric: TypeAlias = Literal["absolute", "relative"]
@@ -152,8 +153,7 @@ class RationalApproximationPlan(StrictModule):
             raise ValueError("verification_points is too small for the requested order.")
         if not math.isfinite(span) or span <= 1.0:
             raise ValueError("pole_span must be finite and greater than one.")
-        if error_metric not in ("absolute", "relative"):
-            raise ValueError("error_metric must be 'absolute' or 'relative'.")
+        error_metric = parse(error_metric, RationalErrorMetric, "error_metric")
         if tolerance is not None and (not math.isfinite(tolerance) or tolerance < 0.0):
             raise ValueError("requested_tolerance must be finite and non-negative.")
         workspace = 16 * points * (poles + 3) + 8 * (2 * points) * (poles + 2)
@@ -242,8 +242,7 @@ class CertifiedRationalApproximation(StrictModule):
             value.shape != () for value in (absolute, relative, witness_, successful_)
         ):
             raise ValueError("Rational certificate summary values must be scalar.")
-        if metric not in ("absolute", "relative"):
-            raise ValueError("Unknown rational certificate metric.")
+        metric = parse(metric, RationalErrorMetric, "metric")
         plan_identifier = str(plan_id)
         evidence_ = str(evidence)
         if not plan_identifier or not evidence_:

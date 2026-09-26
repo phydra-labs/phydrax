@@ -28,6 +28,7 @@ from ...._model._ports import (
 )
 from ...._strict import StrictModule
 from ...._trainable import fixed_field, NonTrainableState
+from ....typing import parse
 from ..._keys import EvalKey, split_eval_key
 from ..capabilities import ConfiguredOperatorContract, OperatorTrainingEvidence
 from ..data import (
@@ -336,7 +337,7 @@ def executionize_prediction(
     )
 
 
-OperatorCompilationStrategy = Literal["eager", "compiled"]
+OperatorCompilationStrategy: TypeAlias = Literal["eager", "compiled"]
 OperatorPaddingPolicy = Literal["explicit_mask"]
 
 
@@ -541,8 +542,9 @@ class OperatorExecutionPlan(StrictModule):
             sharding_policy, OperatorShardingPolicy
         ):
             raise TypeError("sharding_policy must be an OperatorShardingPolicy.")
-        if compilation_strategy not in ("eager", "compiled"):
-            raise ValueError("compilation_strategy must be 'eager' or 'compiled'.")
+        compilation_strategy = parse(
+            compilation_strategy, OperatorCompilationStrategy, "compilation_strategy"
+        )
         if padding_policy != "explicit_mask":
             raise ValueError("padding_policy must be 'explicit_mask'.")
         execution = execution_model.model_execution_contract().execution

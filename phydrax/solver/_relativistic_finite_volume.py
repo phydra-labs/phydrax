@@ -36,6 +36,7 @@ from ..equations._relativistic_hydrodynamics import (
 )
 from ..linalg import inverse_small_linear, SmallLinearSolvePlan
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ..typing import parse
 from ._finite_volume_content import FiniteVolumeConservativeContentState
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 from ._relativistic_primitive import (
@@ -67,8 +68,7 @@ class GRHDBoundaryCondition(StrictModule, NonTrainableState):
     boundary_id: str = eqx.field(static=True)
 
     def __init__(self, kind: GRHDBoundaryKind = "outflow", /) -> None:
-        if kind not in ("outflow", "reflective", "atmosphere"):
-            raise ValueError("GRHD boundary kind is unsupported.")
+        kind = parse(kind, GRHDBoundaryKind, "kind")
         self.kind = kind
         self.boundary_id = canonical_fingerprint(
             {"kind": "grhd-boundary-condition", "policy": kind}
@@ -114,8 +114,7 @@ class GRHDFaceFluxPlan(StrictModule, NonTrainableState):
     flux_id: str = eqx.field(static=True)
 
     def __init__(self, kind: GRHDFaceFluxKind = "hlle", /) -> None:
-        if kind not in ("hlle", "rusanov"):
-            raise ValueError("GRHD face flux must be 'hlle' or 'rusanov'.")
+        kind = parse(kind, GRHDFaceFluxKind, "kind")
         self.kind = kind
         self.flux_id = canonical_fingerprint(
             {

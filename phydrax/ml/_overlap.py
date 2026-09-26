@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 OverlapKind: TypeAlias = Literal["dice", "jaccard", "tversky"]
@@ -42,14 +43,9 @@ class OverlapScoreConfig(StrictModule, NonTrainableState):
         alpha: float = 0.5,
         beta: float = 0.5,
     ) -> None:
-        if kind not in ("dice", "jaccard", "tversky"):
-            raise ValueError("kind must be 'dice', 'jaccard', or 'tversky'.")
-        if class_reduction not in ("micro", "macro", "support_weighted"):
-            raise ValueError(
-                "class_reduction must be 'micro', 'macro', or 'support_weighted'."
-            )
-        if empty not in ("zero", "one", "nan", "ignore"):
-            raise ValueError("empty must be 'zero', 'one', 'nan', or 'ignore'.")
+        kind = parse(kind, OverlapKind, "kind")
+        class_reduction = parse(class_reduction, OverlapClassReduction, "class_reduction")
+        empty = parse(empty, OverlapEmptyPolicy, "empty")
         smooth_value = float(smooth)
         alpha_value = float(alpha)
         beta_value = float(beta)
@@ -136,8 +132,7 @@ def _ratio(
     smooth_value = float(smooth)
     if not math.isfinite(smooth_value) or smooth_value < 0.0:
         raise ValueError("smooth must be finite and nonnegative.")
-    if empty not in ("zero", "one", "nan", "ignore"):
-        raise ValueError("empty must be 'zero', 'one', 'nan', or 'ignore'.")
+    empty = parse(empty, OverlapEmptyPolicy, "empty")
     empty_support = denominator == 0.0
     safe_denominator = jnp.where(empty_support, 1.0, denominator)
     value = (numerator + smooth_value) / (safe_denominator + smooth_value)

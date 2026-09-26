@@ -27,6 +27,7 @@ from ..linalg import (
     PreparedLinearSolve,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._constrained_model import prepare_constrained_model, PreparedConstrainedModel
 from ._iterative import MinimizationProblem
 
@@ -193,8 +194,7 @@ def constrained_solution_jvp(
     linear: LinearSolvePolicy | None = None,
     precision: NonlinearPrecisionPolicy | None = None,
 ) -> ConstrainedSensitivityResult:
-    if mode not in ("fixed-active", "barrier"):
-        raise ValueError("Unknown constrained sensitivity mode.")
+    mode = parse(mode, ConstrainedSensitivityMode, "mode")
     precision_ = NonlinearPrecisionPolicy() if precision is None else precision
     if not isinstance(precision_, NonlinearPrecisionPolicy):
         raise TypeError("precision must be NonlinearPrecisionPolicy or None.")

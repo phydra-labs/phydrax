@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import parse
 from .units import (
     derived_unit,
     KILOGRAM,
@@ -31,7 +32,7 @@ from .units import (
 )
 
 
-LengthCoordinateKind = Literal["physical", "comoving", "code"]
+LengthCoordinateKind: TypeAlias = Literal["physical", "comoving", "code"]
 
 
 class SpatialCoordinateContract(StrictModule, NonTrainableState):
@@ -57,8 +58,7 @@ class SpatialCoordinateContract(StrictModule, NonTrainableState):
         if length_unit.dimension != LENGTH:
             raise ValueError("Spatial coordinate length_unit must have length dimension.")
         kind = str(length_coordinate_kind).strip()
-        if kind not in ("physical", "comoving", "code"):
-            raise ValueError("Spatial coordinate kind is invalid.")
+        kind = parse(kind, LengthCoordinateKind, "length_coordinate_kind")
         system = str(coordinate_system).strip()
         frame = str(reference_frame).strip()
         if not system or not frame:
@@ -184,8 +184,7 @@ class DimensionalScaleContract(StrictModule, NonTrainableState):
                 "Dimensional scale units must share one explicit reference system."
             )
         kind = str(length_coordinate_kind).strip()
-        if kind not in ("physical", "comoving", "code"):
-            raise ValueError("Dimensional scale coordinate kind is invalid.")
+        kind = parse(kind, LengthCoordinateKind, "length_coordinate_kind")
 
         length_symbol = length_unit.symbol
         mass_symbol = mass_unit.symbol

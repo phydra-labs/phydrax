@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,7 @@ from phydrax.linalg import eigen as eigen_api
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import parse
 from ._covariance import CovarianceOperator
 from ._linearized import LinearizedPropagationResult, propagate_linearized
 from ._posterior import AbstractBijector, IdentityBijector, PosteriorProblem
@@ -31,8 +32,8 @@ from ._predictive import PredictiveField
 from ._whitening import GaussianPriorWhitening
 
 
-StructuredCurvature = Literal["full", "diagonal", "lanczos", "lobpcg"]
-LikelihoodCurvature = Literal["hessian", "ggn"]
+StructuredCurvature: TypeAlias = Literal["full", "diagonal", "lanczos", "lobpcg"]
+LikelihoodCurvature: TypeAlias = Literal["hessian", "ggn"]
 
 
 class StructuredCurvatureEstimate(StrictModule):
@@ -264,10 +265,10 @@ def fit_structured_laplace(
     del mv_jit
     if not isinstance(problem, PosteriorProblem):
         raise TypeError("problem must be a PosteriorProblem.")
-    if curvature not in ("full", "diagonal", "lanczos", "lobpcg"):
-        raise ValueError(f"Unknown structured curvature {curvature!r}.")
-    if likelihood_curvature not in ("hessian", "ggn"):
-        raise ValueError("likelihood_curvature must be 'hessian' or 'ggn'.")
+    curvature = parse(curvature, StructuredCurvature, "curvature")
+    likelihood_curvature = parse(
+        likelihood_curvature, LikelihoodCurvature, "likelihood_curvature"
+    )
     if likelihood_curvature == "ggn" and problem.gauss_newton_residual_fn is None:
         raise ValueError(
             "GGN curvature requires an explicit Gauss-Newton residual callback."

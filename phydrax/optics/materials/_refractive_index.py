@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...artifacts import ArtifactManifest
+from ...typing import parse
 
 
 ExtrapolationPolicy: TypeAlias = Literal["reject", "clamp", "continue"]
@@ -58,8 +59,7 @@ class AngularFrequencyValidity(StrictModule, NonTrainableState):
             raise ValueError("Angular-frequency validity bounds must be finite.")
         if not bool((lower > 0) & (upper > lower)):
             raise ValueError("Validity requires 0 < minimum < maximum.")
-        if extrapolation not in ("reject", "clamp", "continue"):
-            raise ValueError("extrapolation must be 'reject', 'clamp', or 'continue'.")
+        extrapolation = parse(extrapolation, ExtrapolationPolicy, "extrapolation")
         self.minimum = lower
         self.maximum = upper
         self.extrapolation = extrapolation
@@ -149,8 +149,7 @@ def _common_law_values(
     identifier = str(law_id).strip()
     if not identifier:
         raise ValueError("law_id must be non-empty.")
-    if passive_branch not in ("positive-imaginary", "as-given"):
-        raise ValueError("passive_branch must be 'positive-imaginary' or 'as-given'.")
+    passive_branch = parse(passive_branch, PassiveBranch, "passive_branch")
     return speed, identifier, passive_branch
 
 

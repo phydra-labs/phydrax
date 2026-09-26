@@ -26,6 +26,7 @@ from ...nonlinear import (
     NonlinearTermination,
     solve_causal_recurrence,
 )
+from ...typing import parse
 from .._keys import EvalKey
 from ._recurrent import (
     _recurrent_output_from_state,
@@ -63,8 +64,9 @@ class CausalRecurrentConfig(StrictModule):
             raise TypeError("method must be a causal recurrence method or None.")
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
-        if failure_policy not in ("raise", "serial"):
-            raise ValueError("failure_policy must be 'raise' or 'serial'.")
+        failure_policy = parse(
+            failure_policy, CausalRecurrentFailurePolicy, "failure_policy"
+        )
         self.method = method_
         self.termination = termination_
         self.failure_policy = failure_policy

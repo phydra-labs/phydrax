@@ -31,7 +31,7 @@ from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..transport.continuous._coupling import EndpointCouplingSample
 from ..transport.continuous._interpolant import AbstractEndpointInterpolant
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._sample_statistics import effective_sample_size, normalized_log_weights
 from ._time_sampling import AbstractTimeSamplingPolicy, UniformTimeSamplingPolicy
 
@@ -203,8 +203,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
             raise ValueError("velocity_name must be a non-empty string.")
         if not isinstance(interpolant, AbstractEndpointInterpolant):
             raise TypeError("interpolant must implement AbstractEndpointInterpolant.")
-        if sampling_mode not in ("fixed", "resample"):
-            raise ValueError("sampling_mode must be 'fixed' or 'resample'.")
+        sampling_mode = parse(sampling_mode, FlowMatchingSamplingMode, "sampling_mode")
         if not state_label or not time_label or state_label == time_label:
             raise ValueError("state_label and time_label must be distinct and non-empty.")
         resolved_policy = UniformTimeSamplingPolicy() if policy is None else policy

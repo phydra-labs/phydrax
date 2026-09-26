@@ -21,6 +21,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._temporal import RealizedTemporalMesh, TemporalMesh
 from ..discretization.finite_volume import FiniteVolumePrecisionPolicy
+from ..typing import parse
 from ._finite_volume_runtime import (
     FiniteVolumeRunStatus,
     FiniteVolumeRuntimeState,
@@ -48,8 +49,7 @@ class FiniteVolumeReplayPolicy(StrictModule, NonTrainableState):
         *,
         block_size: int | None = None,
     ) -> None:
-        if mode not in ("full", "step", "block"):
-            raise ValueError("Unknown finite-volume replay mode.")
+        mode = parse(mode, FiniteVolumeReplayMode, "mode")
         size = None if block_size is None else int(block_size)
         if mode == "block":
             if size is None or size <= 0:
@@ -134,8 +134,7 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
             raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         if attempts <= 0 or stride <= 0:
             raise ValueError("Attempt count and checkpoint stride must be positive.")
-        if retention not in ("final", "checkpoints", "trajectory"):
-            raise ValueError("Unknown finite-volume retention policy.")
+        retention = parse(retention, FiniteVolumeRetentionPolicy, "retention")
         replay_ = FiniteVolumeReplayPolicy() if replay is None else replay
         if not isinstance(replay_, FiniteVolumeReplayPolicy):
             raise TypeError("replay must be FiniteVolumeReplayPolicy or None.")
@@ -259,8 +258,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         stride = int(checkpoint_stride)
         if stride <= 0:
             raise ValueError("checkpoint_stride must be positive.")
-        if retention not in ("final", "checkpoints", "trajectory"):
-            raise ValueError("Unknown finite-volume retention policy.")
+        retention = parse(retention, FiniteVolumeRetentionPolicy, "retention")
         replay_ = FiniteVolumeReplayPolicy() if replay is None else replay
         if not isinstance(replay_, FiniteVolumeReplayPolicy):
             raise TypeError("replay must be FiniteVolumeReplayPolicy or None.")

@@ -16,6 +16,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..series import CoordinateKind, SampledSeries, SeriesPairView, SeriesSupport
+from ..typing import parse
 from ._layout import InputLayout, StateLayout
 
 
@@ -59,12 +60,11 @@ def _case_axes(
         or len(set(resolved_names)) != len(resolved_names)
     ):
         raise ValueError("case_axes must uniquely name every case axis.")
-    if len(resolved_roles) != len(shape) or any(
-        role not in ("case", "dataset", "parameter", "process", "realization")
-        for role in resolved_roles
-    ):
+    if len(resolved_roles) != len(shape):
         raise ValueError("case_axis_roles must assign one supported role per case axis.")
-    return resolved_names, resolved_roles
+    return resolved_names, tuple(
+        parse(role, CaseAxisRole, "case_axis_roles") for role in resolved_roles
+    )
 
 
 class TrajectoryTransitions(StrictModule):
@@ -242,8 +242,7 @@ class TrajectoryData(StrictModule):
             raise ValueError(
                 "inputs and input_layout must either both be supplied or both absent."
             )
-        if input_alignment not in ("samples", "transitions"):
-            raise ValueError("input_alignment must be 'samples' or 'transitions'.")
+        input_alignment = parse(input_alignment, InputAlignment, "input_alignment")
         if inputs is None:
             if input_valid is not None:
                 raise ValueError("input_valid requires inputs.")

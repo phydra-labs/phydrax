@@ -38,6 +38,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._iterative._base import AbstractScalarIterativeMethod
 from ._iterative._globalization import (
     strong_wolfe_line_search,
@@ -119,7 +120,7 @@ class _AbstractScalarExtensionState(StrictModule):
         self.metrics = IterativeStepMetrics() if metrics is None else metrics
 
 
-BetaMethod = Literal[
+BetaMethod: TypeAlias = Literal[
     "fletcher-reeves",
     "polak-ribiere+",
     "hestenes-stiefel+",
@@ -152,7 +153,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
     """Strong-Wolfe nonlinear CG with safeguarded beta and explicit restarts."""
 
     line_search: StrongWolfeLineSearch
-    beta_method: str = eqx.field(static=True)
+    beta_method: BetaMethod = eqx.field(static=True)
     restart_interval: int | None = eqx.field(static=True)
     orthogonality_restart: float = eqx.field(static=True)
     descent_safeguard: float = eqx.field(static=True)
@@ -166,15 +167,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
         orthogonality_restart: float = 0.1,
         descent_safeguard: float = 1e-3,
     ) -> None:
-        beta = str(beta_method)
-        supported = {
-            "fletcher-reeves",
-            "polak-ribiere+",
-            "hestenes-stiefel+",
-            "dai-yuan",
-        }
-        if beta not in supported:
-            raise ValueError(f"beta_method must be one of {sorted(supported)}.")
+        beta = parse(str(beta_method), BetaMethod, "beta_method")
         search = StrongWolfeLineSearch() if line_search is None else line_search
         if not isinstance(search, StrongWolfeLineSearch):
             raise TypeError("line_search must be a StrongWolfeLineSearch or None.")

@@ -32,7 +32,7 @@ from ..operators.quantum.variable_sector import (
     VariableSectorProposal,
     VariableSectorSpace,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 VariableSectorVMCStatus: TypeAlias = Literal[0, 1, 2, 3, 4]
@@ -626,8 +626,8 @@ def run_variable_sector_vmc(
     )
 
 
-ParameterMode = Literal["real", "holomorphic"]
-EvolutionKind = Literal["imaginary-time", "real-time"]
+ParameterMode: TypeAlias = Literal["real", "holomorphic"]
+EvolutionKind: TypeAlias = Literal["imaginary-time", "real-time"]
 
 
 class StochasticReconfigurationResult(StrictModule):
@@ -666,10 +666,8 @@ def solve_stochastic_reconfiguration(
         raise ValueError("SR requires at least two samples and one parameter.")
     if not np.isfinite(damping_) or damping_ <= 0:
         raise ValueError("damping must be finite and positive.")
-    if parameter_mode not in ("real", "holomorphic"):
-        raise ValueError("parameter_mode must be 'real' or 'holomorphic'.")
-    if evolution not in ("imaginary-time", "real-time"):
-        raise ValueError("evolution must be 'imaginary-time' or 'real-time'.")
+    parameter_mode = parse(parameter_mode, ParameterMode, "parameter_mode")
+    evolution = parse(evolution, EvolutionKind, "evolution")
     count = derivatives.shape[0]
     centered_derivatives = derivatives - jnp.mean(derivatives, axis=0)
     centered_energy = energies - jnp.mean(energies)
@@ -752,8 +750,7 @@ class VariableSectorTDVPPlan(StrictModule, NonTrainableState):
         step, count = float(time_step), int(step_count)
         if not np.isfinite(step) or step <= 0 or count < 1:
             raise ValueError("TDVP time_step/step_count must be finite and positive.")
-        if evolution not in ("imaginary-time", "real-time"):
-            raise ValueError("evolution must be 'imaginary-time' or 'real-time'.")
+        evolution = parse(evolution, EvolutionKind, "evolution")
         self.time_step = step
         self.step_count = count
         self.evolution = evolution

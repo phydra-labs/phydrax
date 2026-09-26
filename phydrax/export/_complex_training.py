@@ -27,6 +27,7 @@ from .._array_archive import (
 )
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._complex_parameters import (
     ComplexImportPolicy,
     ComplexInterchangeEntry,
@@ -42,15 +43,6 @@ ComplexOptimizerRouteKind: TypeAlias = Literal[
     "exact-real",
     "exact-discrete",
 ]
-
-_ROUTE_KINDS = frozenset(
-    {
-        "complex-vector",
-        "cartesian-second-moment",
-        "exact-real",
-        "exact-discrete",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,8 +65,7 @@ class ComplexOptimizerStateGroup:
             raise ValueError(
                 "Optimizer interchange group name must be safe and non-empty."
             )
-        if kind not in _ROUTE_KINDS:
-            raise ValueError("Unknown optimizer interchange route kind.")
+        kind = parse(kind, ComplexOptimizerRouteKind, "kind")
         expected = 2 if kind in ("complex-vector", "cartesian-second-moment") else 1
         if len(paths_) != expected or any(not path for path in paths_):
             raise ValueError(f"Optimizer group {kind!r} requires {expected} paths.")

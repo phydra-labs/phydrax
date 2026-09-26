@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._operators import AbstractLinearOperator, adjoint
 from ._spaces import _coordinate_dtype
 
@@ -33,17 +34,11 @@ def _operator_numeric_fingerprint(operator: AbstractLinearOperator, /) -> str:
 
 
 def _validate_evidence(value: CertificateEvidence, /) -> CertificateEvidence:
-    if value not in ("construction", "verified", "asserted"):
-        raise ValueError(
-            "certificate evidence must be 'construction', 'verified', or 'asserted'."
-        )
-    return value
+    return parse(value, CertificateEvidence, "evidence")
 
 
 def _validate_scope(value: CertificateScope, /) -> CertificateScope:
-    if value not in ("structural", "numerical"):
-        raise ValueError("certificate scope must be 'structural' or 'numerical'.")
-    return value
+    return parse(value, CertificateScope, "scope")
 
 
 def _subspace_residuals(operator: AbstractLinearOperator, subspace: Any, /) -> Array:

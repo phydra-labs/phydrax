@@ -17,6 +17,7 @@ from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
 from ..linalg import ArraySpace, FunctionLinearOperator
+from ..typing import parse
 from ._spaces import DiscreteFieldSpace
 from ._transfer import FieldTransfer, TransferProperties
 
@@ -250,10 +251,8 @@ class TensorGridStateTransfer(AbstractRefinementTransfer):
             raise ValueError("fine_shape and coarse_shape must have equal rank.")
         if any(fine_size < coarse_size for fine_size, coarse_size in zip(fine, coarse)):
             raise ValueError("Every fine grid axis must be at least as large as coarse.")
-        if boundary not in ("endpoint", "periodic"):
-            raise ValueError("boundary must be 'endpoint' or 'periodic'.")
-        if restriction not in ("injection", "weighted"):
-            raise ValueError("restriction must be 'injection' or 'weighted'.")
+        boundary = parse(boundary, TensorGridBoundary, "boundary")
+        restriction = parse(restriction, TensorGridRestriction, "restriction")
         prolongations: list[Array] = []
         restrictions: list[Array] = []
         for fine_size, coarse_size in zip(fine, coarse, strict=True):

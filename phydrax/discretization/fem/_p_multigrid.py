@@ -23,9 +23,10 @@ from ...linalg import (
     MultigridLevelBuilder,
     PreconditionerProperties,
 )
+from ...typing import parse
 
 
-PDegreeCoarsening = Literal[
+PDegreeCoarsening: TypeAlias = Literal[
     "all-degrees",
     "half-degrees",
     "half-dofs",
@@ -33,7 +34,7 @@ PDegreeCoarsening = Literal[
 ]
 
 PLevelOrder: TypeAlias = int | tuple[int, ...]
-PCoarseOperatorSource = Literal["direct", "galerkin"]
+PCoarseOperatorSource: TypeAlias = Literal["direct", "galerkin"]
 
 
 def _order_axes(cell_kind: str, order: PLevelOrder, /) -> tuple[int, ...]:
@@ -120,7 +121,6 @@ class FiniteElementPMultigridPolicy(StrictModule, NonTrainableState):
         post_smoothing: int = 1,
         cycle: str = "v",
     ) -> None:
-        coarsening = str(degree_coarsening)
         orders = tuple(
             tuple(value) if isinstance(value, tuple) else int(value)
             for value in explicit_orders
@@ -128,13 +128,7 @@ class FiniteElementPMultigridPolicy(StrictModule, NonTrainableState):
         pre = int(pre_smoothing)
         post = int(post_smoothing)
         cycle_ = str(cycle)
-        if coarsening not in (
-            "all-degrees",
-            "half-degrees",
-            "half-dofs",
-            "explicit",
-        ):
-            raise ValueError("Unknown p-multigrid degree coarsening policy.")
+        coarsening = parse(degree_coarsening, PDegreeCoarsening, "degree_coarsening")
         if coarsening == "explicit":
             if not orders:
                 raise ValueError("Explicit p-level orders must be non-empty.")
@@ -261,9 +255,9 @@ class FiniteElementPMultigridPlan(StrictModule, NonTrainableState):
             hierarchy_builder, AbstractPreconditionerBuilder
         ) or not isinstance(policy, FiniteElementPMultigridPolicy):
             raise TypeError("p-multigrid plan requires hierarchy builder and policy.")
-        source = str(coarse_operator_source)
-        if source not in ("direct", "galerkin"):
-            raise ValueError("Unknown p-multigrid coarse-operator source.")
+        source = parse(
+            coarse_operator_source, PCoarseOperatorSource, "coarse_operator_source"
+        )
         orders = tuple(level_orders)
         if len(orders) < 2:
             raise ValueError("A p-multigrid plan requires at least two p-levels.")
@@ -299,9 +293,9 @@ def finite_element_p_multigrid_plan(
     if not isinstance(selected, FiniteElementPMultigridPolicy):
         raise TypeError("policy must be FiniteElementPMultigridPolicy or None.")
     orders = selected.degree_sequence(cell_kind, fine_order)
-    source = str(coarse_operator_source)
-    if source not in ("direct", "galerkin"):
-        raise ValueError("Unknown p-multigrid coarse-operator source.")
+    source = parse(
+        coarse_operator_source, PCoarseOperatorSource, "coarse_operator_source"
+    )
     expected_operators = len(orders) if source == "direct" else 1
     if (
         len(operators) != expected_operators

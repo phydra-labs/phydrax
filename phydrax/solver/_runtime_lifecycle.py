@@ -12,7 +12,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import copy_context
 from pathlib import Path
 from types import MappingProxyType, TracebackType
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -34,9 +34,10 @@ from .._trainable import NonTrainableState
 from ..discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ..linalg._real_coordinates import RealCoordinateEvidence
 from ..logging import emit
+from ..typing import parse
 
 
-ReplayClassification = Literal["bitwise", "tolerance", "unsupported"]
+ReplayClassification: TypeAlias = Literal["bitwise", "tolerance", "unsupported"]
 
 
 class UnsupportedReplayError(ValueError):
@@ -169,8 +170,7 @@ class RuntimeRestartRelation(StrictModule, NonTrainableState):
         target = str(target_topology_id)
         if not source or not target:
             raise ValueError("Restart relation topology identities must be nonempty.")
-        if classification not in ("bitwise", "tolerance", "unsupported"):
-            raise ValueError("Restart replay classification is unsupported.")
+        classification = parse(classification, ReplayClassification, "classification")
         tolerance_ = None if tolerance is None else float(tolerance)
         if classification == "tolerance":
             if tolerance_ is None or not math.isfinite(tolerance_) or tolerance_ < 0.0:
@@ -940,7 +940,7 @@ class ExactTimeSchedule(StrictModule, NonTrainableState):
         return self.advance_cursor(time, jnp.asarray(0, dtype=jnp.int32))
 
 
-ObservableReduction = Literal["sum", "mean", "maximum", "minimum", "last"]
+ObservableReduction: TypeAlias = Literal["sum", "mean", "maximum", "minimum", "last"]
 
 
 class StreamingObservableState(StrictModule):
@@ -962,13 +962,9 @@ class StreamingObservablePlan(StrictModule, NonTrainableState):
         self, name: str, evaluator: Callable, reduction: ObservableReduction, /
     ) -> None:
         name_ = str(name)
-        reduction_ = str(reduction)
-        if (
-            not name_
-            or not callable(evaluator)
-            or reduction_ not in ("sum", "mean", "maximum", "minimum", "last")
-        ):
+        if not name_ or not callable(evaluator):
             raise ValueError("Streaming observable definition is invalid.")
+        reduction_ = parse(reduction, ObservableReduction, "reduction")
         self.name = name_
         self.evaluator = evaluator
         self.reduction = reduction_
@@ -1354,7 +1350,7 @@ class ByteBoundedAsyncPublisher:
         self.close()
 
 
-MomentWeighting = Literal["sample", "time"]
+MomentWeighting: TypeAlias = Literal["sample", "time"]
 
 
 class StreamingMomentState(StrictModule):
@@ -1405,7 +1401,6 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
             or any(value <= 0 for value in shape)
             or edges.ndim != 1
             or (edges.size not in (0, 1) and np.any(np.diff(edges) <= 0.0))
-            or weighting not in ("sample", "time")
             or (start is not None and not math.isfinite(start))
             or (end is not None and not math.isfinite(end))
             or (start is not None and end is not None and end <= start)
@@ -1416,6 +1411,7 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
             or not str(plan_id)
         ):
             raise ValueError("Streaming moment plan is invalid.")
+        weighting = parse(weighting, MomentWeighting, "weighting")
         self.evaluator = evaluator
         self.value_shape = shape
         self.histogram_edges = jnp.asarray(edges)

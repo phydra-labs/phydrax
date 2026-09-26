@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import cast, Literal
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -23,12 +23,13 @@ from ..._trainable import NonTrainableState
 from ...atomistic import AtomisticUnitSystem
 from ...discretization import PeriodicCell
 from ...ein import contract
+from ...typing import parse
 from ...units import derived_unit, ENERGY, LENGTH, UnitDefinition
 from .._result import ElectronicEnergyLedger
 from ._source import PeriodicProvenanceManifest
 
 
-EwaldNeutralityKind = Literal["require-neutral", "uniform-background"]
+EwaldNeutralityKind: TypeAlias = Literal["require-neutral", "uniform-background"]
 
 
 class PeriodicEwaldEvidence(StrictModule, NonTrainableState):
@@ -59,8 +60,7 @@ class PeriodicEwaldEvidence(StrictModule, NonTrainableState):
         residual_tolerance: float,
         /,
     ) -> None:
-        if neutrality not in ("require-neutral", "uniform-background"):
-            raise ValueError("Unknown Ewald neutrality policy.")
+        neutrality = parse(neutrality, EwaldNeutralityKind, "neutrality")
         tolerance = float(residual_tolerance)
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError(
@@ -242,8 +242,7 @@ class PeriodicEwaldPlan(StrictModule, NonTrainableState):
         charge_tolerance_ = float(charge_tolerance)
         minimum = float(minimum_distance)
         residual_tolerance_ = float(residual_tolerance)
-        if neutrality not in ("require-neutral", "uniform-background"):
-            raise ValueError("neutrality must be require-neutral or uniform-background.")
+        neutrality = parse(neutrality, EwaldNeutralityKind, "neutrality")
         if (
             not isfinite(alpha_)
             or alpha_ <= 0.0

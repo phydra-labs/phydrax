@@ -9,6 +9,8 @@ from typing import Literal, TypeAlias
 
 import numpy as np
 
+from ...typing import parse
+
 
 CcsdsMessageKind: TypeAlias = Literal["OEM", "OPM", "AEM", "APM", "TDM", "CDM"]
 
@@ -36,8 +38,7 @@ class CcsdsMessage:
 def parse_ccsds_kvn(text: str, kind: CcsdsMessageKind, /) -> CcsdsMessage:
     """Parse a strict CCSDS KVN product while preserving unknown key/value extensions."""
 
-    if kind not in ("OEM", "OPM", "AEM", "APM", "TDM", "CDM"):
-        raise ValueError("Unknown CCSDS message kind.")
+    kind = parse(kind, CcsdsMessageKind, "kind")
     version = ""
     creation = ""
     originator = ""

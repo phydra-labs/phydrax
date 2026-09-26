@@ -24,6 +24,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding, ValuePort
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 
 
@@ -546,22 +547,15 @@ class TreeEnsemble(AbstractFittedModel):
             raise ValueError("base_score must have shape case_shape + (output,).")
         if len(feature_schema.names) <= 0:
             raise ValueError("feature_schema must be non-empty.")
-        if aggregation not in {"sum", "weighted_median"}:
-            raise ValueError(f"Unsupported ensemble aggregation {aggregation!r}.")
-        if input_dtype not in {"preserve", "float32", "float64"}:
-            raise ValueError(f"Unsupported tree input dtype policy {input_dtype!r}.")
+        aggregation = parse(aggregation, EnsembleAggregation, "aggregation")
+        input_dtype = parse(input_dtype, TreeInputDType, "input_dtype")
         if aggregation == "weighted_median" and jnp.issubdtype(
             leaf_value_.dtype, jnp.complexfloating
         ):
             raise TypeError("Weighted-median tree aggregation requires real leaf values.")
-        if objective_transform not in {
-            "identity",
-            "sigmoid",
-            "softmax",
-            "exponential",
-            "positive",
-        }:
-            raise ValueError(f"Unsupported objective transform {objective_transform!r}.")
+        objective_transform = parse(
+            objective_transform, ObjectiveTransform, "objective_transform"
+        )
         if objective_transform == "sigmoid" and output_count != 1:
             raise ValueError("A sigmoid tree objective requires one raw output.")
         if objective_transform == "softmax" and output_count < 2:

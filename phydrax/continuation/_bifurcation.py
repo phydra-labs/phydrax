@@ -8,7 +8,7 @@ import abc
 from collections.abc import Callable
 from enum import IntEnum
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -25,11 +25,12 @@ from ..nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ..typing import parse
 from ._core import _execution_residual, BranchSeed, ContinuationCurveProblem
 from ._geometry import ContinuationGeometry
 
 
-BifurcationKind = Literal[
+BifurcationKind: TypeAlias = Literal[
     "fold",
     "hopf",
     "branch-point",
@@ -1385,14 +1386,7 @@ class BifurcationCertificate(StrictModule):
         certificate_id: str,
         geometry: ContinuationGeometry | None = None,
     ) -> None:
-        if kind not in (
-            "fold",
-            "hopf",
-            "branch-point",
-            "pitchfork",
-            "transcritical",
-        ):
-            raise ValueError("Unsupported bifurcation kind.")
+        kind = parse(kind, BifurcationKind, "kind")
         identifier = str(certificate_id)
         if not identifier:
             raise ValueError("certificate_id must be non-empty.")

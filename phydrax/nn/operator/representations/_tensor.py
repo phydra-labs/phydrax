@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,8 +15,10 @@ import phydrax.ein as ein
 from phydrax._strict import StrictModule
 from phydrax.linalg import inverse as matrix_inverse
 
+from ....typing import parse
 
-TensorVariance = Literal["contravariant", "covariant"]
+
+TensorVariance: TypeAlias = Literal["contravariant", "covariant"]
 TensorParity = Literal[-1, 1]
 
 
@@ -35,13 +37,9 @@ class TensorType(StrictModule):
         parity: TensorParity = 1,
         dimension: int,
     ) -> None:
-        resolved_variance = tuple(variance)
-        if any(
-            value not in ("contravariant", "covariant") for value in resolved_variance
-        ):
-            raise ValueError(
-                "Tensor variance entries must be covariant or contravariant."
-            )
+        resolved_variance = tuple(
+            parse(value, TensorVariance, "variance") for value in tuple(variance)
+        )
         if parity not in (-1, 1):
             raise ValueError("Tensor parity must be +1 (ordinary) or -1 (pseudo).")
         resolved_dimension = int(dimension)

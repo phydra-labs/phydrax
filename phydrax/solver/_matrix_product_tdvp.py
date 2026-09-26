@@ -42,6 +42,7 @@ from ..tensor_network._environments import (
 )
 from ..tensor_network._models import FixedStructureMPOCoefficients
 from ..tensor_network._split import truncated_svd
+from ..typing import parse
 
 
 FiniteTDVPMode: TypeAlias = Literal["real-time", "imaginary-time"]
@@ -137,10 +138,8 @@ class FiniteTDVPPolicy(StrictModule):
         maximum_history_elements: int = 10_000_000,
         integrator: MatrixFunctionPolicy | None = None,
     ) -> None:
-        if mode not in ("real-time", "imaginary-time"):
-            raise ValueError("Unknown finite TDVP mode.")
-        if algorithm not in ("one-site", "two-site"):
-            raise ValueError("Unknown finite TDVP algorithm.")
+        mode = parse(mode, FiniteTDVPMode, "mode")
+        algorithm = parse(algorithm, FiniteTDVPAlgorithm, "algorithm")
         step = float(step_size)
         count = int(steps)
         bond = int(maximum_bond_dimension)

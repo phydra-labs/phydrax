@@ -32,6 +32,7 @@ from ..linalg import (
 )
 from ..stochastic._spatial_noise import SpatialNoiseBasis
 from ..stochastic._wiener import WienerRealization
+from ..typing import parse
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._spde import _ConstantBasisDiffusion, _ValidatedVectorField, SemidiscreteSPDE
 
@@ -452,12 +453,8 @@ def solve_semilinear_spde(
     step_limit = float(dt)
     if not isfinite(step_limit) or step_limit <= 0.0:
         raise ValueError("dt must be finite and positive.")
-    if scheme not in ("auto", "exponential_euler", "exponential_milstein"):
-        raise ValueError(
-            "scheme must be 'auto', 'exponential_euler', or 'exponential_milstein'."
-        )
-    if fallback not in ("diffrax", "error"):
-        raise ValueError("fallback must be 'diffrax' or 'error'.")
+    scheme = parse(scheme, SemilinearSPDEScheme, "scheme")
+    fallback = parse(fallback, SemilinearFallback, "fallback")
     policy = (
         MatrixFunctionPolicy()
         if matrix_function_policy is None

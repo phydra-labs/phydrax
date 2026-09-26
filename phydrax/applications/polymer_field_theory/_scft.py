@@ -29,6 +29,7 @@ from ...nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+from ...typing import parse
 from ._architecture import (
     IncompressibleGaussianMixturePlan,
     PolymerComponentPlan,
@@ -43,8 +44,7 @@ class ContourIntegratorPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, kind: ContourIntegratorKind = "richardson-strang-4", /) -> None:
-        if kind not in ("strang-2", "richardson-strang-4"):
-            raise ValueError("Unknown Gaussian-chain contour integrator.")
+        kind = parse(kind, ContourIntegratorKind, "kind")
         self.kind = kind
         self.plan_id = canonical_fingerprint(
             {"kind": "contour-integrator-plan", "method": kind}

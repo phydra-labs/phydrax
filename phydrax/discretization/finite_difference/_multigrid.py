@@ -36,6 +36,7 @@ from ...linalg import (
     pseudoinverse,
     RankPolicy,
 )
+from ...typing import parse
 from .._axis import TensorGridPlan, UniformAxisSpec, UniformCellAxisSpec
 from .._tensor_entities import StructuredAxis
 from .._tensor_support import PreparedTensorGrid
@@ -798,13 +799,13 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
         minimum = int(minimum_coarse_points)
         maximum = int(maximum_levels)
         relaxation_ = float(relaxation)
+        coarsening = parse(coarsening, StructuredCoarsening, "coarsening")
+        compatibility = parse(compatibility, StructuredMGCompatibility, "compatibility")
+        gauge = parse(gauge, StructuredMGGauge, "gauge")
+        smoother = parse(smoother, StructuredSmootherKind, "smoother")
         if (
             minimum < 2
             or maximum < 2
-            or coarsening not in ("full", "semi")
-            or compatibility not in ("error", "project_rhs")
-            or gauge not in ("zero_mean", "minimum_norm")
-            or smoother not in ("jacobi", "red_black", "line")
             or not np.isfinite(relaxation_)
             or relaxation_ <= 0.0
             or relaxation_ >= 2.0

@@ -27,6 +27,7 @@ from ...linalg import (
     OperatorProperties,
 )
 from ...metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
+from ...typing import parse
 
 
 GaugeFixingCondition: TypeAlias = Literal["landau", "coulomb"]
@@ -96,8 +97,7 @@ class GaugeFixingPlan(StrictModule, NonTrainableState):
             raise TypeError("link_space must be MatrixGaugeLinkSpace.")
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):
             raise TypeError("Gauge fixing requires U(N) or SU(N) matrix links.")
-        if condition not in ("landau", "coulomb"):
-            raise ValueError("condition must be 'landau' or 'coulomb'.")
+        condition = parse(condition, GaugeFixingCondition, "condition")
         active_edges = np.asarray(
             link_space.topology.entities(1).active_mask, dtype=np.bool_
         )

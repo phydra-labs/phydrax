@@ -14,6 +14,7 @@ import jax
 import numpy as np
 from jax import core as jax_core
 
+from ...typing import parse
 from .data import FunctionSamples, OperatorBatch
 
 
@@ -162,14 +163,11 @@ class OperatorCapabilitySpec:
             raise ValueError("axis_size_divisor must be positive.")
         if len(set(self.global_condition_sources)) != len(self.global_condition_sources):
             raise ValueError("global_condition_sources must be unique.")
-        if self.coarsened_cochain_policy_invalid:
-            raise ValueError("Invalid cochain capability policy.")
-
-    @property
-    def coarsened_cochain_policy_invalid(self) -> bool:
-        return self.cochains not in ("unsupported", "optional", "required") or any(
-            side not in ("primal", "dual") for side in self.cochain_sides
+        object.__setattr__(
+            self, "cochains", parse(self.cochains, OperatorCochainPolicy, "cochains")
         )
+        if any(side not in ("primal", "dual") for side in self.cochain_sides):
+            raise ValueError("Invalid cochain capability policy.")
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal, Sequence, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,9 +16,10 @@ from jax.typing import ArrayLike
 from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._publication import publish_bytes
 from ..._strict import StrictModule
+from ...typing import parse
 
 
-TouchstoneFormat = Literal["RI", "MA", "DB"]
+TouchstoneFormat: TypeAlias = Literal["RI", "MA", "DB"]
 
 
 class TouchstonePolicy(StrictModule):
@@ -102,8 +103,7 @@ class TouchstoneData(StrictModule):
         )
         if len(names) != count or any(not name for name in names):
             raise ValueError("port_names must contain one non-empty name per port.")
-        if data_format not in ("RI", "MA", "DB"):
-            raise ValueError("data_format must be RI, MA, or DB.")
+        data_format = parse(data_format, TouchstoneFormat, "data_format")
         unit = str(frequency_unit).upper()
         if unit not in ("HZ", "KHZ", "MHZ", "GHZ"):
             raise ValueError("Unsupported Touchstone frequency unit.")
@@ -141,9 +141,10 @@ def _option(tokens: list[str]) -> tuple[str, TouchstoneFormat, float]:
     upper = [token.upper() for token in tokens]
     if len(upper) != 5 or upper[1] != "S" or upper[3] != "R":
         raise ValueError("Supported option grammar is '# <unit> S <RI|MA|DB> R <real>'.")
-    unit, data_format = upper[0], upper[2]
-    if unit not in _UNIT_SCALE or data_format not in ("RI", "MA", "DB"):
+    unit = upper[0]
+    if unit not in _UNIT_SCALE:
         raise ValueError("Unsupported Touchstone unit, parameter, or data format.")
+    data_format = parse(upper[2], TouchstoneFormat, "data_format")
     reference = float(tokens[4])
     if not np.isfinite(reference) or reference <= 0.0:
         raise ValueError("Touchstone reference resistance must be finite and positive.")
@@ -328,7 +329,8 @@ def write_touchstone(
     target_version = data.version if version is None else str(version)
     target_format = data.data_format if data_format is None else data_format
     unit = data.frequency_unit if frequency_unit is None else str(frequency_unit).upper()
-    if target_format not in ("RI", "MA", "DB") or unit not in _UNIT_SCALE:
+    target_format = parse(target_format, TouchstoneFormat, "data_format")
+    if unit not in _UNIT_SCALE:
         raise ValueError("Unsupported output format or frequency unit.")
     if not (target_version.startswith("1") or target_version.startswith("2")):
         raise ValueError("Only Touchstone versions 1.x and 2.x can be written.")

@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,10 +24,10 @@ from ..._model._array import native_parameter_precision, value_derivative_contra
 from ..._model._component import ModelExecutionContract, RandomnessContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
-TrialEquationFamily = Literal[
+TrialEquationFamily: TypeAlias = Literal[
     "laplace",
     "polyharmonic",
     "helmholtz",
@@ -35,9 +35,9 @@ TrialEquationFamily = Literal[
     "stokes",
     "dirac",
 ]
-TrialExactness = Literal["algebraic"]
-TrialCoverage = Literal["finite-subspace", "finite-parametric-family"]
-TrialValidityRegion = Literal["all-space", "off-singular-support"]
+TrialExactness: TypeAlias = Literal["algebraic"]
+TrialCoverage: TypeAlias = Literal["finite-subspace", "finite-parametric-family"]
+TrialValidityRegion: TypeAlias = Literal["all-space", "off-singular-support"]
 
 TRIAL_SPACE_REPRESENTATION_KEY = "trial_space_runtime_representation"
 
@@ -222,15 +222,7 @@ class TrialSpaceCertificate(AbstractConstructionCertificate):
         validity_region: TrialValidityRegion = "all-space",
         singular_support_id: str | None = None,
     ) -> None:
-        if equation_family not in (
-            "laplace",
-            "polyharmonic",
-            "helmholtz",
-            "linear-elasticity",
-            "stokes",
-            "dirac",
-        ):
-            raise ValueError("Unknown Trefftz equation family.")
+        equation_family = parse(equation_family, TrialEquationFamily, "equation_family")
         dimension = int(ambient_dimension)
         rank_ = int(rank)
         shape = tuple(field_shape)
@@ -243,14 +235,12 @@ class TrialSpaceCertificate(AbstractConstructionCertificate):
             )
         )
         assumptions_ = tuple(str(value) for value in assumptions)
-        if coverage not in ("finite-subspace", "finite-parametric-family"):
-            raise ValueError("Unknown Trefftz coverage contract.")
+        coverage = parse(coverage, TrialCoverage, "coverage")
         if coverage == "finite-subspace" and not linear_in_coefficients:
             raise ValueError(
                 "A finite-subspace certificate must be linear in its coefficients."
             )
-        if validity_region not in ("all-space", "off-singular-support"):
-            raise ValueError("Unknown Trefftz validity region.")
+        validity_region = parse(validity_region, TrialValidityRegion, "validity_region")
         singular_support = (
             None if singular_support_id is None else str(singular_support_id)
         )

@@ -35,6 +35,7 @@ from ..operators.quantum import (
     transmon_mode_problem,
     TransmonParameters,
 )
+from ..typing import parse
 from ._local_hamiltonian import (
     FixedGridLocalHamiltonian,
     LocalHamiltonian,
@@ -107,8 +108,7 @@ class CircuitModePlacement(StrictModule):
         wire = str(wire_id)
         if not wire:
             raise ValueError("wire_id must be nonempty.")
-        if kind not in ("transmon", "fluxonium", "harmonic"):
-            raise ValueError("Unknown circuit mode kind.")
+        kind = parse(kind, CircuitModeKind, "kind")
         if kind == "transmon" and not isinstance(basis, ChargeBasis):
             raise TypeError("Transmon placements require ChargeBasis.")
         if kind in ("fluxonium", "harmonic") and not isinstance(basis, OscillatorBasis):

@@ -22,7 +22,7 @@ from .._term import AbstractSamplingTerm
 from ..integration import IntegrationPrecisionPolicy
 from ..operators.differential._dimension_estimators import DimensionOperatorSamples
 from ..operators.differential._stochastic_estimators import StochasticOperatorSamples
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._randomized_quadratic import event_inner as _event_inner, randomized_squared_mean
 
 
@@ -283,10 +283,10 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
     ) -> None:
         if not callable(residual_evaluator):
             raise TypeError("residual_evaluator must be callable.")
-        if loss_mode not in ("u_statistic", "independent_product", "plug_in"):
-            raise ValueError("Unknown randomized residual loss_mode.")
-        if sampling_mode not in ("fixed", "resample"):
-            raise ValueError("sampling_mode must be 'fixed' or 'resample'.")
+        loss_mode = parse(loss_mode, RandomizedResidualLossMode, "loss_mode")
+        sampling_mode = parse(
+            sampling_mode, RandomizedResidualSamplingMode, "sampling_mode"
+        )
         if sampling_mode == "resample":
             if not callable(collocation):
                 raise TypeError("Resampled objectives require a collocation callable.")

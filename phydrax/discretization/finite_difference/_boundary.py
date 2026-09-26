@@ -15,6 +15,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator
+from ...typing import parse
 from ._stencil import StencilFootprint
 
 
@@ -54,20 +55,10 @@ class AxisBoundaryPair(StrictModule, NonTrainableState):
         /,
     ) -> None:
         axis_ = str(axis)
-        allowed = (
-            "periodic",
-            "dirichlet",
-            "neumann",
-            "robin",
-            "ghost",
-            "one_sided",
-            "sbp_sat",
-            "absorbing",
-        )
-        if not axis_ or lower not in allowed or upper not in allowed:
-            raise ValueError(
-                "Axis boundary values must be recognized and axis non-empty."
-            )
+        if not axis_:
+            raise ValueError("Axis boundary axis must be non-empty.")
+        lower = parse(lower, BoundaryConditionKind, "lower")
+        upper = parse(upper, BoundaryConditionKind, "upper")
         if (lower == "periodic") != (upper == "periodic"):
             raise ValueError("Periodicity must be declared on both sides of an axis.")
         self.axis = axis_
@@ -103,15 +94,7 @@ class BoundaryRealizationPlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(boundary, AxisBoundaryPair):
             raise TypeError("boundary must be an AxisBoundaryPair.")
-        if realization not in (
-            "periodic",
-            "ghost",
-            "closure",
-            "sat",
-            "basis",
-            "absorbing",
-        ):
-            raise ValueError("Unknown boundary realization.")
+        realization = parse(realization, BoundaryRealizationKind, "realization")
         lower = int(lower_width)
         upper = int(upper_width)
         if lower < 0 or upper < 0:

@@ -17,6 +17,7 @@ from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 WaveLimiterKind: TypeAlias = Literal["minmod", "mc", "superbee", "van_leer"]
@@ -139,8 +140,7 @@ class WaveFamilyLimiterPlan(StrictModule, NonTrainableState):
     limiter_id: str = eqx.field(static=True)
 
     def __init__(self, kind: WaveLimiterKind = "mc", /) -> None:
-        if kind not in ("minmod", "mc", "superbee", "van_leer"):
-            raise ValueError("Unknown wave-family limiter.")
+        kind = parse(kind, WaveLimiterKind, "kind")
         self.kind = kind
         self.limiter_id = canonical_fingerprint(
             {"kind": "wave-family-limiter", "method": kind}

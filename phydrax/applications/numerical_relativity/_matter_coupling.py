@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ...typing import parse
 
 
 RelativisticMatterKind: TypeAlias = Literal["grhd", "grmhd", "grrmhd"]
@@ -821,8 +822,7 @@ class MatterStageProposal(StrictModule):
             raise TypeError("horizon_flux must be HorizonFluxLedger.")
         if not isinstance(evidence, CoupledParticipantStatus):
             raise TypeError("evidence must be CoupledParticipantStatus.")
-        if matter_kind not in ("grhd", "grmhd", "grrmhd"):
-            raise ValueError("matter_kind must be 'grhd', 'grmhd', or 'grrmhd'.")
+        matter_kind = parse(matter_kind, RelativisticMatterKind, "matter_kind")
         self.candidate = candidate
         self.stress_energy = stress_energy
         self.address = address

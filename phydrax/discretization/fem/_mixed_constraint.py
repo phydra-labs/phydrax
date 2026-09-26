@@ -26,6 +26,7 @@ from ...linalg import (
     saddle_point_operator,
     ScaledLinearOperator,
 )
+from ...typing import parse
 from .._cell_geometry import CellGeometrySpec
 from .._cell_mesh import CellMesh
 from ._generic import (
@@ -74,9 +75,7 @@ class PressureGaugePolicy(StrictModule, NonTrainableState):
         pinned_dof: int | None = None,
         tolerance: float = 1.0e-10,
     ) -> None:
-        mode_ = str(mode)
-        if mode_ not in ("mean-zero", "pinned", "none"):
-            raise ValueError("Pressure gauge mode must be mean-zero, pinned, or none.")
+        mode_ = parse(mode, PressureGaugeMode, "mode")
         limit = float(tolerance)
         if not isfinite(limit) or limit < 0.0:
             raise ValueError("Pressure gauge tolerance must be finite and nonnegative.")
@@ -194,9 +193,7 @@ class MixedPressureStabilization(StrictModule, NonTrainableState):
         *,
         coefficient: float = 0.0,
     ) -> None:
-        kind_ = str(kind)
-        if kind_ not in ("none", "pressure-laplacian"):
-            raise ValueError("Unknown mixed-pressure stabilization.")
+        kind_ = parse(kind, MixedPressureStabilizationKind, "kind")
         coefficient_ = float(coefficient)
         if not isfinite(coefficient_) or coefficient_ < 0.0:
             raise ValueError("Stabilization coefficient must be finite and nonnegative.")
@@ -502,8 +499,7 @@ def mixed_inf_sup_diagnostic(
         raise ValueError("Mixed constraint and coupling matrices must be finite.")
     if not isinstance(gauge, PressureGaugePolicy):
         raise TypeError("gauge must be PressureGaugePolicy.")
-    if formulation not in ("exact", "finite-bulk"):
-        raise ValueError("Unknown mixed constraint formulation.")
+    formulation = parse(formulation, MixedConstraintFormulation, "formulation")
     tolerance = float(rank_tolerance)
     if not isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("rank_tolerance must be positive and finite.")

@@ -34,6 +34,7 @@ from ..linalg.eigen import (
     ShiftInvertTransform,
     StandardTransform,
 )
+from ..typing import parse
 from ._availability import import_backend_module, probe_backend
 from ._types import (
     AbstractExternalBackend,
@@ -161,8 +162,7 @@ class SLEPcEigenPolicy(StrictModule):
             raise TypeError("transform must be a general eigen transform.")
         if not isinstance(tolerances, GeneralEigenTolerancePolicy):
             raise TypeError("tolerance must be a GeneralEigenTolerancePolicy.")
-        if operator_mode not in ("shell", "csr"):
-            raise ValueError("operator_mode must be 'shell' or 'csr'.")
+        operator_mode = parse(operator_mode, SLEPcOperatorMode, "operator_mode")
         iterations = int(maximum_iterations)
         dimension = None if subspace_dimension is None else int(subspace_dimension)
         if iterations < 1:
@@ -171,8 +171,7 @@ class SLEPcEigenPolicy(StrictModule):
             raise ValueError("subspace_dimension must be at least two or None.")
         if st_options is not None and not isinstance(st_options, SLEPcSTOptions):
             raise TypeError("st_options must be SLEPcSTOptions or None.")
-        if failure_mode not in ("status", "error"):
-            raise ValueError("failure_mode must be 'status' or 'error'.")
+        failure_mode = parse(failure_mode, SLEPcFailureMode, "failure_mode")
         self.selection = selected
         self.transform = transformed
         self.tolerance = tolerances

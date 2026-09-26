@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator
 from .._policies import FailurePolicy
@@ -77,8 +78,7 @@ class SpectralSelection(StrictModule):
         expected_dimension: int | None = None,
         selection_id: str | None = None,
     ) -> None:
-        if kind not in ("real-below", "real-above", "disk", "exterior-disk"):
-            raise ValueError("Unknown spectral selection kind.")
+        kind = parse(kind, SpectralSelectionKind, "kind")
         threshold_ = float(threshold)
         center_ = complex(center)
         radius_ = float(radius)
@@ -158,24 +158,30 @@ class SpectralSelection(StrictModule):
         return jnp.abs(self._signed_distance(jnp.asarray(eigenvalues)))
 
     def _signed_distance(self, values: Array, /) -> Array:
-        if self.kind == "real-below":
-            return self.threshold - jnp.real(values)
-        if self.kind == "real-above":
-            return jnp.real(values) - self.threshold
-        radial = jnp.abs(values - self.center)
-        if self.kind == "disk":
-            return self.radius - radial
-        return radial - self.radius
+        match self.kind:
+            case "real-below":
+                return self.threshold - jnp.real(values)
+            case "real-above":
+                return jnp.real(values) - self.threshold
+            case "disk":
+                return self.radius - jnp.abs(values - self.center)
+            case "exterior-disk":
+                return jnp.abs(values - self.center) - self.radius
+            case _:
+                assert_never(self.kind)
 
     def _matches_scalar(self, value: complex, /) -> bool:
-        if self.kind == "real-below":
-            signed = self.threshold - value.real
-        elif self.kind == "real-above":
-            signed = value.real - self.threshold
-        elif self.kind == "disk":
-            signed = self.radius - abs(value - self.center)
-        else:
-            signed = abs(value - self.center) - self.radius
+        match self.kind:
+            case "real-below":
+                signed = self.threshold - value.real
+            case "real-above":
+                signed = value.real - self.threshold
+            case "disk":
+                signed = self.radius - abs(value - self.center)
+            case "exterior-disk":
+                signed = abs(value - self.center) - self.radius
+            case _:
+                assert_never(self.kind)
         return signed >= 0 if self.inclusive else signed > 0
 
 

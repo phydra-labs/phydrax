@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from math import isfinite
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -28,11 +28,12 @@ from ..optim._gradient_composition import ConflictFreeGradientPolicy
 from ..optim._update_alignment import ConflictFreeUpdatePolicy
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockLayout, ResidualBlockRef
+from ..typing import parse
 
 
-PseudoTimeFreshness = Literal["every_update", "periodic", "experimental_fixed"]
-BalanceMethod = Literal["gradient_norm", "ntk_trace"]
-CausalGateSignal = Literal["physical", "surrogate"]
+PseudoTimeFreshness: TypeAlias = Literal["every_update", "periodic", "experimental_fixed"]
+BalanceMethod: TypeAlias = Literal["gradient_norm", "ntk_trace"]
+CausalGateSignal: TypeAlias = Literal["physical", "surrogate"]
 
 
 class ResidualRelaxationMap(StrictModule, NonTrainableState):
@@ -190,8 +191,7 @@ class PseudoTransientPolicy(StrictModule, NonTrainableState):
             adaptation, PseudoTransientAdaptation
         ):
             raise TypeError("adaptation must be PseudoTransientAdaptation or None.")
-        if freshness not in ("every_update", "periodic", "experimental_fixed"):
-            raise ValueError("Unknown pseudo-time freshness policy.")
+        freshness = parse(freshness, PseudoTimeFreshness, "freshness")
         self.term_index = index
         self.relaxation = relaxation
         self.initial_inverse_step = values.reshape(()) if values.ndim == 0 else values
@@ -255,8 +255,7 @@ class CausalResidualPolicy(StrictModule, NonTrainableState):
             raise ValueError(
                 "Causal residual loss initially requires non-overlapping slabs."
             )
-        if gate_signal not in ("physical", "surrogate"):
-            raise ValueError("Unknown causal gate signal.")
+        gate_signal = parse(gate_signal, CausalGateSignal, "gate_signal")
         self.term_index = index
         self.time_label = label
         self.schedule = schedule
@@ -310,8 +309,7 @@ class FunctionalTermBalancePolicy(StrictModule, NonTrainableState):
         keys = tuple((block.term_index, block.block_name) for block in blocks_)
         if len(set(keys)) != len(keys):
             raise ValueError("Balanced residual blocks must be unique.")
-        if method not in ("gradient_norm", "ntk_trace"):
-            raise ValueError("Unknown functional term balance method.")
+        method = parse(method, BalanceMethod, "method")
         start_ = int(start)
         every_ = int(every)
         probes = int(ntk_probes)

@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from ..mechanics._linear_elasticity import LinearElasticityTensor
 
 from ...domain._evaluation import evaluate_pointwise_callable
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from ._array_ops import (
     _basis_nth_derivative,
     _fd_nth_derivative,
@@ -4049,7 +4049,7 @@ def hydrostatic_stress(
     return (tr / float(var_dim)) * I
 
 
-EquivalentStressConvention = Literal["embedded-3d", "intrinsic"]
+EquivalentStressConvention: TypeAlias = Literal["embedded-3d", "intrinsic"]
 
 
 def von_mises_stress(
@@ -4078,8 +4078,7 @@ def von_mises_stress(
 
     - A `DomainFunction` representing the scalar von Mises equivalent stress.
     """
-    if convention not in ("embedded-3d", "intrinsic"):
-        raise ValueError("convention must be 'embedded-3d' or 'intrinsic'.")
+    convention = parse(convention, EquivalentStressConvention, "convention")
     var = _resolve_var(sigma, var)
     factor, var_dim = _factor_and_dim(sigma, var)
     if factor.kind == "scalar":

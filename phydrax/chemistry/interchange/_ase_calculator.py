@@ -10,7 +10,7 @@ import importlib
 import importlib.metadata
 import importlib.util
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
@@ -20,6 +20,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticScaleContract
+from ...typing import parse
 from ...units import (
     ANGSTROM,
     conversion_factor,
@@ -43,7 +44,7 @@ from .._result import (
 from .._task import ElectronicProperty
 
 
-ASESpinSemantics = Literal["multiplicity", "unpaired-electrons"]
+ASESpinSemantics: TypeAlias = Literal["multiplicity", "unpaired-electrons"]
 
 
 def is_ase_calculator_available() -> bool:
@@ -80,8 +81,7 @@ class ASEElectronicStateBinding(StrictModule, NonTrainableState):
             raise ValueError("charge_key must be non-empty when provided.")
         if spin_key is not None and not spin:
             raise ValueError("spin_key must be non-empty when provided.")
-        if spin_semantics not in ("multiplicity", "unpaired-electrons"):
-            raise ValueError("Unknown ASE spin semantics.")
+        spin_semantics = parse(spin_semantics, ASESpinSemantics, "spin_semantics")
         invariant = bool(state_invariant)
         if invariant and (charge is not None or spin is not None):
             raise ValueError(

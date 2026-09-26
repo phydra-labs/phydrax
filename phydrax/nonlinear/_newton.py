@@ -54,6 +54,7 @@ from ..linalg import (
     solve_recycled,
     TolerancePolicy,
 )
+from ..typing import parse
 from ._components import admit_residual_components
 from ._linearization import (
     _jacobian_solve_direction,
@@ -337,8 +338,7 @@ class NewtonForcingPolicy(StrictModule):
         gamma: float = 0.9,
         exponent: float = 1.5,
     ) -> None:
-        if strategy not in ("constant", "eisenstat-walker"):
-            raise ValueError("Unknown inexact-Newton forcing strategy.")
+        strategy = parse(strategy, NewtonForcingStrategy, "strategy")
         values = tuple(
             float(value) for value in (initial, minimum, maximum, gamma, exponent)
         )
@@ -392,8 +392,7 @@ class JacobianRefreshPolicy(StrictModule):
         period: int = 1,
         residual_reduction: float = 0.5,
     ) -> None:
-        if strategy not in ("every-step", "periodic", "stagnation", "rejection"):
-            raise ValueError("Unknown Jacobian refresh strategy.")
+        strategy = parse(strategy, JacobianRefreshStrategy, "strategy")
         period_ = int(period)
         reduction = float(residual_reduction)
         if period_ < 1:

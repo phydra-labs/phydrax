@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Literal, TypeAlias
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +24,7 @@ from ..stochastic._state_space import (
     LinearGaussianTransitionKernel,
     StateSpaceProblem,
 )
+from ..typing import parse
 from ._kalman import initialize_kalman_filter, kalman_filter_step, KalmanFilterState
 
 
@@ -59,16 +60,7 @@ BELLMAN_PSEUDO_LIKELIHOOD_FAILURE = 7
 
 def bellman_filter_status_name(value: int, /) -> BellmanStatus:
     code = int(value)
-    names: tuple[BellmanStatus, ...] = (
-        "success",
-        "initialization_optimizer_failure",
-        "initialization_curvature_failure",
-        "prediction_optimizer_failure",
-        "prediction_curvature_failure",
-        "update_optimizer_failure",
-        "update_curvature_failure",
-        "pseudo_likelihood_failure",
-    )
+    names: tuple[BellmanStatus, ...] = get_args(BellmanStatus)
     if code < 0 or code >= len(names):
         raise ValueError(f"Unknown Bellman status code {code}.")
     return names[code]
@@ -101,10 +93,8 @@ def _validated_configuration(
     int,
     int,
 ]:
-    if method not in ("auto", "analytic", "optimization"):
-        raise ValueError("method must be 'auto', 'analytic', or 'optimization'.")
-    if curvature not in ("observed", "score-outer-product"):
-        raise ValueError("curvature must be 'observed' or 'score-outer-product'.")
+    method = parse(method, BellmanExecutionMethod, "method")
+    curvature = parse(curvature, BellmanCurvatureMethod, "curvature")
     damping = float(curvature_damping)
     rtol = float(optimizer_rtol)
     atol = float(optimizer_atol)

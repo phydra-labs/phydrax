@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._matrix_functions import TransformDiagonalRepresentation
 from ._spaces import ArraySpace
 
@@ -56,10 +57,8 @@ class TransformDiagonalSolvePlan(StrictModule, NonTrainableState):
         shift = jnp.asarray(diagonal_shift)
         if shift.shape != () or not bool(np.isfinite(np.asarray(shift))):
             raise ValueError("diagonal_shift must be one finite scalar.")
-        if compatibility not in ("error", "project_rhs"):
-            raise ValueError("Unknown compatibility policy.")
-        if gauge not in ("zero_mean", "minimum_norm"):
-            raise ValueError("Unknown gauge policy.")
+        compatibility = parse(compatibility, CompatibilityPolicy, "compatibility")
+        gauge = parse(gauge, GaugePolicy, "gauge")
         tolerance = float(zero_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("zero_tolerance must be finite and positive.")

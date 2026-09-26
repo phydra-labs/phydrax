@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._context import AstrodynamicsContext
 from ._scalable_gravity import EncounterEvaluation
 from ._status import AstrodynamicsStatus
@@ -149,9 +150,9 @@ class CloseEncounterRegularizationPlan(StrictModule, NonTrainableState):
             or values[3] < 0.0
             or values[4] <= 0.0
             or capacity <= 0
-            or gauge_policy not in ("positive-first", "largest-component")
         ):
             raise ValueError("Close-encounter regularization policy is invalid.")
+        gauge_policy = parse(gauge_policy, KSGaugePolicy, "gauge_policy")
         self.encounter_radius = values[0]
         self.collision_radius = values[1]
         self.maximum_fictitious_steps = capacity

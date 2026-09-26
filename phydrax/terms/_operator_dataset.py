@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -25,10 +25,10 @@ from ..nn.operator.metrics import (
     operator_spectral_loss,
 )
 from ..nn.operator.protocols import OperatorModel
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
-OperatorLoss = Literal["l2", "h1", "spectral"]
+OperatorLoss: TypeAlias = Literal["l2", "h1", "spectral"]
 
 
 def _operator_callable(function: DomainFunction, /) -> Callable:
@@ -125,12 +125,10 @@ class OperatorDatasetTerm(AbstractScalarTerm):
             raise ValueError("targets and batches must have the same length.")
         self.targets = target_values
         self.fields = (str(function),)
-        self.loss_kind = loss
         self.relative = bool(relative)
         self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
-        if loss not in ("l2", "h1", "spectral"):
-            raise ValueError("loss must be 'l2', 'h1', or 'spectral'.")
+        self.loss_kind = parse(loss, OperatorLoss, "loss")
 
     def loss(
         self,
@@ -218,11 +216,9 @@ class PhysicsInformedOperatorTerm(AbstractScalarTerm):
             raise TypeError("residual_fn must be callable.")
         self.residual_fn = residual_fn
         self.fields = (str(function),)
-        self.loss_kind = loss
         self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
-        if loss not in ("l2", "h1", "spectral"):
-            raise ValueError("loss must be 'l2', 'h1', or 'spectral'.")
+        self.loss_kind = parse(loss, OperatorLoss, "loss")
 
     def loss(
         self,
@@ -287,11 +283,9 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
             raise TypeError("residual_operator must be callable.")
         self.residual_operator = residual_operator
         self.fields = (str(function),)
-        self.loss_kind = loss
         self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
-        if loss not in ("l2", "h1", "spectral"):
-            raise ValueError("loss must be 'l2', 'h1', or 'spectral'.")
+        self.loss_kind = parse(loss, OperatorLoss, "loss")
         for batch in self.batches:
             if batch.require_single_query().geometry_case_shape:
                 raise ValueError(

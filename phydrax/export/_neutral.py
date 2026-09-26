@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 NeutralSchemaKind: TypeAlias = Literal["geometry", "material", "field", "point_cloud"]
@@ -296,12 +297,12 @@ class NeutralAdapterBoundary(StrictModule, NonTrainableState):
             "point_cloud",
         ),
     ) -> None:
-        if not allowed_kinds or any(
-            value not in ("geometry", "material", "field", "point_cloud")
-            for value in allowed_kinds
-        ):
+        kinds = tuple(
+            parse(value, NeutralSchemaKind, "allowed_kinds") for value in allowed_kinds
+        )
+        if not kinds:
             raise ValueError("Neutral adapter allowed_kinds are invalid.")
-        self.allowed_kinds = tuple(allowed_kinds)
+        self.allowed_kinds = kinds
 
     def export(self, value: Any, /) -> dict[str, Any]:
         if not isinstance(

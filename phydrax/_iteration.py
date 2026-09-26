@@ -10,7 +10,7 @@ import abc
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, cast, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
@@ -28,9 +28,10 @@ from ._execution_control import (
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .typing import parse
 
 
-IterationGranularity = Literal[
+IterationGranularity: TypeAlias = Literal[
     "terminal",
     "output",
     "segment",
@@ -38,14 +39,6 @@ IterationGranularity = Literal[
     "attempt",
     "inner-iteration",
 ]
-_GRANULARITIES: tuple[IterationGranularity, ...] = (
-    "terminal",
-    "output",
-    "segment",
-    "step",
-    "attempt",
-    "inner-iteration",
-)
 
 
 class IterationPhase(IntEnum):
@@ -140,13 +133,11 @@ class IterationCapabilities(StrictModule, NonTrainableState):
         mapped_records: bool = True,
         checkpointable: bool = False,
     ) -> None:
-        granularities_ = cast(
-            tuple[IterationGranularity, ...],
-            tuple(str(value) for value in granularities),
+        granularities_ = tuple(
+            parse(str(value), IterationGranularity, "granularities")
+            for value in granularities
         )
-        if not granularities_ or any(
-            value not in _GRANULARITIES for value in granularities_
-        ):
+        if not granularities_:
             raise ValueError("Iteration granularities are invalid.")
         if "terminal" not in granularities_:
             raise ValueError("Every iterative owner must support terminal evidence.")
@@ -612,9 +603,7 @@ class IterationPlan(StrictModule, NonTrainableState):
         stop_rule: AbstractIterationStopRule | None = None,
         children: Sequence[IterationChildPlan] = (),
     ) -> None:
-        granularity_ = str(granularity)
-        if granularity_ not in _GRANULARITIES:
-            raise ValueError("Iteration plan granularity is invalid.")
+        granularity_ = parse(str(granularity), IterationGranularity, "granularity")
         observers_ = tuple(observers)
         if any(not isinstance(value, AbstractIterationObserver) for value in observers_):
             raise TypeError(

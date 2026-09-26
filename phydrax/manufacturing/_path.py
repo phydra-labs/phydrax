@@ -10,6 +10,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import parse
 
 
 ProcessEventKind: TypeAlias = Literal["move", "deposit", "remove", "dwell", "heat"]
@@ -28,10 +29,8 @@ class ToolpathEvent:
     mass_rate_kg_s: float = 0.0
 
     def __post_init__(self) -> None:
-        supported = {"move", "deposit", "remove", "dwell", "heat"}
         if (
             not self.event_id
-            or self.kind not in supported
             or not self.frame_id
             or not np.isfinite(self.start_time_s)
             or not np.isfinite(self.end_time_s)
@@ -40,6 +39,7 @@ class ToolpathEvent:
             or not self.start
         ):
             raise ValueError("Toolpath event is invalid or uses an unsupported kind.")
+        object.__setattr__(self, "kind", parse(self.kind, ProcessEventKind, "kind"))
         if (
             any(
                 not np.isfinite(v)

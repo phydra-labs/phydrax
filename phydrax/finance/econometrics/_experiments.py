@@ -13,6 +13,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import solve_weighted_least_squares
 from ..._strict import StrictModule
+from ...typing import parse
 from ..core import FinanceEvidenceBinding
 from ._features import PreparedFeatureLabelDataset
 
@@ -354,10 +355,8 @@ def evaluate_walk_forward(
         raise TypeError("plan must be a WalkForwardPlan.")
     if plan.dataset_id != dataset.dataset_id or plan.row_capacity != dataset.row_capacity:
         raise ValueError("plan and dataset identities/shapes must match.")
-    if estimator not in ("linear", "mean"):
-        raise ValueError("estimator must be 'linear' or 'mean'.")
-    if loss not in ("squared", "absolute"):
-        raise ValueError("loss must be 'squared' or 'absolute'.")
+    estimator = parse(estimator, WalkForwardEstimator, "estimator")
+    loss = parse(loss, WalkForwardLoss, "loss")
     ridge_ = float(ridge)
     if ridge_ < 0.0:
         raise ValueError("ridge must be nonnegative.")

@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._programming._mixed_integer import _indices
 
 
@@ -32,8 +33,7 @@ class ConvexConstraintEvidence(StrictModule, NonTrainableState):
     evidence_id: str = eqx.field(static=True)
 
     def __init__(self, kind: ConvexConstraintKind, evidence_id: str, /) -> None:
-        if kind not in ("convex-upper", "concave-lower", "affine-equality"):
-            raise ValueError("Unknown convex constraint evidence kind.")
+        kind = parse(kind, ConvexConstraintKind, "kind")
         identifier = str(evidence_id)
         if not identifier:
             raise ValueError("evidence_id must be nonempty.")

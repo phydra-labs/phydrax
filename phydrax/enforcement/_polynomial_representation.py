@@ -39,6 +39,7 @@ from ..linalg import (
     OperatorProperties,
     svd as svd_api,
 )
+from ..typing import parse
 from ._linear_representation import (
     AbstractLinearRepresentation,
     CallableLinearRepresentation,
@@ -158,8 +159,7 @@ class PolynomialActionEvidence(StrictModule, NonTrainableState):
         complex_valued: bool,
         reductivity: Literal["not-applicable", "declared"] = "not-applicable",
     ) -> None:
-        if kind not in ("finite", "declared-reductive", "scaling"):
-            raise ValueError("Unknown polynomial action kind.")
+        kind = parse(kind, PolynomialActionKind, "kind")
         if reductivity not in ("not-applicable", "declared"):
             raise ValueError("Unknown reductivity evidence scope.")
         verification, rejection = _tolerances(verification_tolerance, rejection_tolerance)
@@ -869,10 +869,8 @@ class PolynomialSubspaceEvidence(StrictModule, NonTrainableState):
         method_evidence_id: str,
         candidate_isotypic: bool = False,
     ) -> None:
-        if kind not in ("invariant", "equivariant", "casimir-spectral-block"):
-            raise ValueError("Unknown polynomial subspace kind.")
-        if status not in ("verified", "ambiguous"):
-            raise ValueError("Unknown polynomial subspace status.")
+        kind = parse(kind, PolynomialSubspaceKind, "kind")
+        status = parse(status, PolynomialActionStatus, "status")
         verification, rejection = _tolerances(verification_tolerance, rejection_tolerance)
         dimension_ = int(dimension)
         rank_ = int(numerical_rank)

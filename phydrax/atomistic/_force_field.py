@@ -24,6 +24,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PreparationReport
+from ..typing import parse
 from ._classical import LennardJonesCombiningRule, LennardJonesPotential
 from ._constraints import DistanceConstraintPlan, PreparedDistanceConstraints
 from ._electrostatics import (
@@ -166,29 +167,25 @@ class AtomisticNonbondedPolicy(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError("Nonbonded cutoff or switch_distance is invalid.")
-        if combining_rule not in ("lorentz-berthelot", "geometric", "explicit"):
-            raise ValueError("Unknown nonbonded combining rule.")
-        if electrostatics not in ("direct", "reaction-field", "ewald", "pme"):
-            raise ValueError("Unknown electrostatic policy.")
-        if dispersion not in ("cutoff", "tail-correction", "lj-pme"):
-            raise ValueError("Unknown dispersion policy.")
-        if charge_neutrality not in ("require-neutral", "uniform-background"):
-            raise ValueError("Unknown charge-neutrality policy.")
+        rule = parse(combining_rule, LennardJonesCombiningRule, "combining_rule")
+        electrostatics_ = parse(electrostatics, NonbondedElectrostatics, "electrostatics")
+        dispersion_ = parse(dispersion, NonbondedDispersion, "dispersion")
+        neutrality = parse(charge_neutrality, ChargeNeutralityPolicy, "charge_neutrality")
         self.cutoff = cutoff_
         self.switch_distance = switch
-        self.combining_rule = combining_rule
-        self.electrostatics = electrostatics
-        self.dispersion = dispersion
-        self.charge_neutrality = charge_neutrality
+        self.combining_rule = rule
+        self.electrostatics = electrostatics_
+        self.dispersion = dispersion_
+        self.charge_neutrality = neutrality
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "atomistic-nonbonded-policy",
                 "cutoff": cutoff_,
                 "switch_distance": switch,
-                "combining_rule": combining_rule,
-                "electrostatics": electrostatics,
-                "dispersion": dispersion,
-                "charge_neutrality": charge_neutrality,
+                "combining_rule": rule,
+                "electrostatics": electrostatics_,
+                "dispersion": dispersion_,
+                "charge_neutrality": neutrality,
             }
         )
 

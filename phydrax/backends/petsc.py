@@ -28,6 +28,7 @@ from ..linalg import (
 )
 from ..linalg._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ..nonlinear import NonlinearStatus, NonlinearSystemProblem
+from ..typing import parse
 from ._availability import import_backend_module, probe_backend
 from ._types import (
     AbstractExternalBackend,
@@ -154,8 +155,7 @@ class PETScSNESPolicy(StrictModule):
         options: Mapping[str, PETScOptionValue]
         | Sequence[tuple[str, PETScOptionValue]] = (),
     ) -> None:
-        if jacobian_mode not in ("matrix-free", "dense-autodiff"):
-            raise ValueError("jacobian_mode must be 'matrix-free' or 'dense-autodiff'.")
+        jacobian_mode = parse(jacobian_mode, PETScJacobianMode, "jacobian_mode")
         snes = str(snes_type)
         tolerances = tuple(
             float(value)

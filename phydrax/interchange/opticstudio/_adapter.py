@@ -13,7 +13,7 @@ import math
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, final, Literal, TYPE_CHECKING
+from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -29,6 +29,7 @@ from ...backends import (
     BackendAvailability,
     BackendCapabilities,
 )
+from ...typing import parse
 from .._report import (
     AdapterCapability,
     AdapterError,
@@ -40,7 +41,7 @@ from .._report import (
 )
 
 
-_AnalysisName = Literal["cardinal-points", "surface-data", "system-data"]
+_AnalysisName: TypeAlias = Literal["cardinal-points", "surface-data", "system-data"]
 if TYPE_CHECKING:
     from ...optics.geometric import SequentialOpticsPlan
 
@@ -358,9 +359,9 @@ class OpticStudioAnalysisRequest(StrictModule, NonTrainableState):
         settings: Mapping[str, object] | None = None,
     ) -> None:
         settings_input: Mapping[str, object] = {} if settings is None else settings
-        analysis_ = str(analysis).strip().lower().replace("_", "-")
-        if analysis_ not in ("cardinal-points", "surface-data", "system-data"):
-            raise ValueError("Unsupported OpticStudio analysis request.")
+        analysis_ = parse(
+            str(analysis).strip().lower().replace("_", "-"), _AnalysisName, "analysis"
+        )
         settings_ = _normalize_analysis_settings(analysis_, settings_input)
         self.analysis = analysis_
         self.settings = settings_

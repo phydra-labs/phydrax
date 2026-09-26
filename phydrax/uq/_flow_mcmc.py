@@ -8,7 +8,7 @@ import importlib.metadata
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast, Literal, TypeAlias
+from typing import Any, cast, get_args, Literal, TypeAlias
 
 import blackjax
 import equinox as eqx
@@ -1567,7 +1567,7 @@ def _read_flow_nuts_checkpoint(
         compatibility=compatibility,
     )
     phase = state.get("phase")
-    if phase not in ("adaptation", "stabilization", "production"):
+    if phase not in get_args(_FlowNUTSPhase):
         raise CheckpointCorruptionError("Flow-NUTS checkpoint phase is invalid.")
     completed_rounds = int(state.get("completed_rounds", -1))
     completed_stabilization = int(state.get("completed_stabilization", -1))

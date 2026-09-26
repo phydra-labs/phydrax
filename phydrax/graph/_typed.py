@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -11,11 +11,12 @@ import phydrax.ein as ein
 from phydrax._strict import StrictModule
 
 from ..sparse import EdgeRelation, gather_routes, route_reduce
+from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
 
 
-GraphFlow = Literal["source_to_target", "target_to_source"]
+GraphFlow: TypeAlias = Literal["source_to_target", "target_to_source"]
 
 
 def _type_ids(type_ids: Any, /) -> jnp.ndarray:
@@ -170,8 +171,7 @@ def _oriented_relation(
         raise ValueError(
             "RelationalGraphConvolution requires explicit senders/receivers."
         )
-    if flow not in ("source_to_target", "target_to_source"):
-        raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+    flow = parse(flow, GraphFlow, "flow")
     return graph.edge_relation(node_count=node_count, flow=flow)
 
 

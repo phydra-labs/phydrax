@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import parse
 from ._assembly import (
     plan_sparse_assembly,
     prepare_sparse_assembly,
@@ -1308,15 +1309,7 @@ def _source_identifier(source: PreconditionerSource, /) -> str:
 
 
 def _refresh_mode(value: str, /) -> MultigridRefreshMode:
-    mode = str(value)
-    if mode not in (
-        "rebuild-all",
-        "reuse-aggregates",
-        "reuse-transfers",
-        "reuse-symbolic-sparse-products",
-    ):
-        raise ValueError(f"Unsupported multigrid refresh mode {mode!r}.")
-    return mode
+    return parse(str(value), MultigridRefreshMode, "refresh_mode")
 
 
 def _validate_endomorphism(operator: AbstractLinearOperator, /) -> None:

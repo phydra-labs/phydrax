@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from itertools import product
-from typing import cast, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +17,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._multiresolution import MultiresolutionCoefficients
 from ._wavelet_kernels import (
     dwt_axis,
@@ -162,14 +163,10 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
             raise ValueError("Discrete wavelet transform levels must be positive.")
         wavelet_names = _per_axis_strings(wavelet, len(axes_value), "wavelet")
         boundary_names = _per_axis_strings(boundary, len(axes_value), "boundary")
-        if any(
-            name not in ("periodization", "symmetric", "zero") for name in boundary_names
-        ):
-            raise ValueError(
-                "Wavelet boundaries must be 'periodization', 'symmetric', or 'zero'."
-            )
+        boundaries = tuple(
+            parse(name, WaveletBoundary, "boundary") for name in boundary_names
+        )
         banks = tuple(WaveletFilterBank.from_name(name) for name in wavelet_names)
-        boundaries = cast(tuple[WaveletBoundary, ...], boundary_names)
         self.filter_banks = banks
         self.axes = axes_value
         self.boundaries = boundaries

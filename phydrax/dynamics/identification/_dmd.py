@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._numerics import solve_weighted_least_squares
 from ..._strict import StrictModule
 from ...metrix import EuclideanStateGeometry
+from ...typing import parse
 from .._layout import InputLayout, StateLayout
 from .._system import DiscreteStepContext, DiscreteSystem
 from .._trajectory import TrajectoryData, TrajectoryTransitions
@@ -225,8 +226,7 @@ def fit_dmd(
         raise TypeError("data must be TrajectoryData.")
     if rank is not None and energy_threshold is not None:
         raise ValueError("rank and energy_threshold are mutually exclusive.")
-    if mode not in ("exact", "projected"):
-        raise ValueError("mode must be 'exact' or 'projected'.")
+    mode = parse(mode, DMDMode, "mode")
     transitions, source, target, mask, weights, roots = _weighted_snapshots(data)
     input_values = None
     if transitions.inputs is not None:

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 AMRAxisEntity: TypeAlias = Literal["point", "interval"]
@@ -80,11 +81,10 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
     ) -> None:
         entities = tuple(axis_entities)
         ratio = int(refinement_ratio)
-        if (
-            not entities
-            or any(value not in ("point", "interval") for value in entities)
-            or ratio <= 1
-        ):
+        entities = tuple(
+            parse(value, AMRAxisEntity, "axis_entities") for value in entities
+        )
+        if not entities or ratio <= 1:
             raise ValueError("AMR entity axes and refinement ratio are invalid.")
         identifier = canonical_fingerprint(
             {

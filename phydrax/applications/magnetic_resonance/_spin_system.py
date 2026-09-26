@@ -24,6 +24,7 @@ from ...solver._local_hamiltonian import (
     LocalHamiltonianTerm,
     materialize_local_hamiltonian,
 )
+from ...typing import parse
 from ._conventions import (
     HBAR_J_S,
     MagneticResonanceConvention,
@@ -88,8 +89,7 @@ class ResonanceIsotope(StrictModule):
         /,
     ) -> None:
         identifier = _identifier(isotope_id, "isotope_id")
-        if particle_kind not in ("nucleus", "electron", "positive-muon"):
-            raise ValueError("particle_kind must be nucleus, electron, or positive-muon.")
+        particle_kind = parse(particle_kind, ParticleKind, "particle_kind")
         spin_, dimension = _validate_spin(spin)
         gamma = float(gyromagnetic_ratio_rad_s_t)
         if not math.isfinite(gamma) or gamma == 0.0:

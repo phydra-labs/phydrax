@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, assert_never, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -16,12 +16,13 @@ from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ...._trainable import fixed_field, NonTrainableState
+from ....typing import parse
 from ..._base import _AbstractBaseModel
 from ..._contracts import gradient_regularity, model_regularity
 from ..._keys import EvalKey
 
 
-DifferentialTransform = Literal[
+DifferentialTransform: TypeAlias = Literal[
     "gradient",
     "curl_3d",
     "rotated_gradient_2d",
@@ -146,28 +147,31 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
             out_size: int | tuple[int, ...] | Literal["scalar"] = (
                 "scalar" if output_channels == 1 else output_channels
             )
-        elif transform == "gradient":
-            if channels != 1:
-                raise ValueError("gradient requires a scalar potential decoder.")
-            out_size = "scalar" if dimension == 1 else dimension
-        elif transform == "rotated_gradient_2d":
-            if dimension != 2 or channels != 1:
-                raise ValueError(
-                    "rotated_gradient_2d requires a scalar decoder in two dimensions."
-                )
-            out_size = 2
-        elif transform == "curl_3d":
-            if dimension != 3 or channels != 3:
-                raise ValueError("curl_3d requires a three-vector decoder in 3D.")
-            out_size = 3
-        elif transform == "symmetric_gradient":
-            if channels != dimension:
-                raise ValueError(
-                    "symmetric_gradient requires one displacement component per coordinate."
-                )
-            out_size = (dimension, dimension)
         else:
-            raise ValueError(f"Unknown differential transform {transform!r}.")
+            transform = parse(transform, DifferentialTransform, "transform")
+            match transform:
+                case "gradient":
+                    if channels != 1:
+                        raise ValueError("gradient requires a scalar potential decoder.")
+                    out_size = "scalar" if dimension == 1 else dimension
+                case "rotated_gradient_2d":
+                    if dimension != 2 or channels != 1:
+                        raise ValueError(
+                            "rotated_gradient_2d requires a scalar decoder in two dimensions."
+                        )
+                    out_size = 2
+                case "curl_3d":
+                    if dimension != 3 or channels != 3:
+                        raise ValueError("curl_3d requires a three-vector decoder in 3D.")
+                    out_size = 3
+                case "symmetric_gradient":
+                    if channels != dimension:
+                        raise ValueError(
+                            "symmetric_gradient requires one displacement component per coordinate."
+                        )
+                    out_size = (dimension, dimension)
+                case _:
+                    assert_never(transform)
         step_ = jnp.asarray(step, dtype=jnp.float64)
         if step_.ndim == 0:
             step_ = jnp.full((dimension,), step_)

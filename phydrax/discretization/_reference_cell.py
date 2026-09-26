@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import assert_never, Literal, TypeAlias
 
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import parse
 
 
-FacetShape = Literal["point", "edge", "triangle", "quadrilateral"]
+FacetShape: TypeAlias = Literal["point", "edge", "triangle", "quadrilateral"]
 
 
 @dataclass(frozen=True)
@@ -54,30 +55,32 @@ class FacetOrientationAction:
 
 
 def facet_orientation_actions(shape: FacetShape, /) -> tuple[FacetOrientationAction, ...]:
-    if shape == "point":
-        permutations = ((0,),)
-    elif shape == "edge":
-        permutations = ((0, 1), (1, 0))
-    elif shape == "triangle":
-        rotations = ((0, 1, 2), (1, 2, 0), (2, 0, 1))
-        reflections = ((0, 2, 1), (2, 1, 0), (1, 0, 2))
-        permutations = rotations + reflections
-    elif shape == "quadrilateral":
-        rotations = (
-            (0, 1, 2, 3),
-            (1, 2, 3, 0),
-            (2, 3, 0, 1),
-            (3, 0, 1, 2),
-        )
-        reflections = (
-            (0, 3, 2, 1),
-            (3, 2, 1, 0),
-            (2, 1, 0, 3),
-            (1, 0, 3, 2),
-        )
-        permutations = rotations + reflections
-    else:
-        raise ValueError("Unknown facet shape.")
+    shape = parse(shape, FacetShape, "shape")
+    match shape:
+        case "point":
+            permutations = ((0,),)
+        case "edge":
+            permutations = ((0, 1), (1, 0))
+        case "triangle":
+            rotations = ((0, 1, 2), (1, 2, 0), (2, 0, 1))
+            reflections = ((0, 2, 1), (2, 1, 0), (1, 0, 2))
+            permutations = rotations + reflections
+        case "quadrilateral":
+            rotations = (
+                (0, 1, 2, 3),
+                (1, 2, 3, 0),
+                (2, 3, 0, 1),
+                (3, 0, 1, 2),
+            )
+            reflections = (
+                (0, 3, 2, 1),
+                (3, 2, 1, 0),
+                (2, 1, 0, 3),
+                (1, 0, 3, 2),
+            )
+            permutations = rotations + reflections
+        case _:
+            assert_never(shape)
     return tuple(FacetOrientationAction(shape, value) for value in permutations)
 
 

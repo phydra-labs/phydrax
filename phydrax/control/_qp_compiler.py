@@ -39,6 +39,7 @@ from ..optim._programming import (
 )
 from ..optim._programming._quadratic import _rebind_quadratic_program
 from ..sparse import EdgeRelation, SparseLinearMap
+from ..typing import parse
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
 from ._trajectory import (
@@ -60,8 +61,7 @@ class LinearControlCompilationPolicy(StrictModule):
     representation: ControlQPRepresentation = eqx.field(static=True)
 
     def __init__(self, representation: ControlQPRepresentation = "dense", /) -> None:
-        if representation not in ("dense", "sparse"):
-            raise ValueError("representation must be 'dense' or 'sparse'.")
+        representation = parse(representation, ControlQPRepresentation, "representation")
         self.representation = representation
 
 

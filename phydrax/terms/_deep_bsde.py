@@ -21,7 +21,7 @@ from phydrax.domain import DomainFunction
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..stochastic._bsde import _pointwise_values, BSDEPathBatch, BSDEProblem
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 DeepBSDESamplingMode: TypeAlias = Literal["resample", "fixed"]
@@ -332,8 +332,7 @@ class DeepBSDEShootingTerm(AbstractSamplingTerm):
                 raise ValueError(f"{owner} must be a non-empty string.")
         if initial_value_name == control_name:
             raise ValueError("Initial-value and control function names must be distinct.")
-        if sampling_mode not in ("resample", "fixed"):
-            raise ValueError("sampling_mode must be 'resample' or 'fixed'.")
+        sampling_mode = parse(sampling_mode, DeepBSDESamplingMode, "sampling_mode")
         if fixed_paths is not None:
             _validate_paths(fixed_paths, problem)
         if sampling_mode == "resample" and fixed_paths is not None:

@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from enum import IntEnum
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -34,11 +34,12 @@ from ._strict import StrictModule
 from ._tensorboard import ScalarEventWriter
 from ._trainable import NonTrainableState
 from .logging import emit
+from .typing import parse
 
 
-SelectionMode = Literal["min", "max"]
+SelectionMode: TypeAlias = Literal["min", "max"]
 EvaluationParametersFn = Callable[[Any, Any], Any]
-TargetParameterSource = Literal["raw", "evaluation"]
+TargetParameterSource: TypeAlias = Literal["raw", "evaluation"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +72,9 @@ class ExponentialMovingAverageTargetPolicy:
             raise ValueError("EMA decay must lie in [0, 1).")
         if int(self.start_step) < 0 or int(self.update_every) <= 0:
             raise ValueError("EMA start/update cadence is invalid.")
-        if self.source not in ("raw", "evaluation"):
-            raise ValueError("EMA target source must be raw or evaluation.")
+        object.__setattr__(
+            self, "source", parse(self.source, TargetParameterSource, "source")
+        )
         object.__setattr__(self, "decay", float(self.decay))
         object.__setattr__(self, "start_step", int(self.start_step))
         object.__setattr__(self, "update_every", int(self.update_every))
@@ -459,8 +461,7 @@ def update_training_selection(
 ) -> tuple[TrainingProgress, bool]:
     """Update strict best-state and early-stopping counters deterministically."""
 
-    if mode not in ("min", "max"):
-        raise ValueError("mode must be 'min' or 'max'.")
+    mode = parse(mode, SelectionMode, "mode")
     delta = _finite_selection_value(min_delta, "min_delta")
     if delta < 0.0:
         raise ValueError("min_delta must be non-negative.")

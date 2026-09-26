@@ -29,6 +29,7 @@ from ...equations._nonequilibrium_gas import (
 )
 from ...equations._spalart_allmaras import SpalartAllmarasCompressibleSystem
 from ...qualification._evidence import QualificationEvidence, SupportDependency
+from ...typing import parse
 
 
 CompressibleEquation: TypeAlias = Literal["euler", "navier_stokes"]
@@ -280,39 +281,30 @@ class CompressibleFlowCaseSpec(StrictModule):
         length = float(characteristic_length)
         density = float(reference_density)
         velocity = float(reference_velocity)
-        if (
-            not name_
-            or not isinstance(
-                system,
-                (
-                    HomogeneousMixtureEulerSystem,
-                    HomogeneousMixtureCompressibleNavierStokesSystem,
-                    SpalartAllmarasCompressibleSystem,
-                    TwoTemperatureMixtureEulerSystem,
-                    TwoTemperatureMixtureNavierStokesSystem,
-                ),
-            )
-            or route
-            not in (
-                "tensor-dgsem",
-                "nodal-dg-ldg",
-                "structured-fv",
-                "mapped-fv",
-            )
-            or any(
-                not np.isfinite(value) or value <= 0.0
-                for value in (length, density, velocity)
-            )
-            or fidelity not in ("unqualified", "dns-candidate")
-            or (
-                boundary_layer is not None
-                and (
-                    not isinstance(boundary_layer, FiniteXBoundaryLayerCaseSpec)
-                    or boundary_layer.dimension != system.dimension
-                )
-            )
+        invalid = "Compressible-flow case specification is invalid."
+        if not name_ or not isinstance(
+            system,
+            (
+                HomogeneousMixtureEulerSystem,
+                HomogeneousMixtureCompressibleNavierStokesSystem,
+                SpalartAllmarasCompressibleSystem,
+                TwoTemperatureMixtureEulerSystem,
+                TwoTemperatureMixtureNavierStokesSystem,
+            ),
         ):
-            raise ValueError("Compressible-flow case specification is invalid.")
+            raise ValueError(invalid)
+        route = parse(route, CompressibleRoute, "route")
+        if any(
+            not np.isfinite(value) or value <= 0.0
+            for value in (length, density, velocity)
+        ):
+            raise ValueError(invalid)
+        fidelity = parse(fidelity, CompressibleFidelity, "fidelity")
+        if boundary_layer is not None and (
+            not isinstance(boundary_layer, FiniteXBoundaryLayerCaseSpec)
+            or boundary_layer.dimension != system.dimension
+        ):
+            raise ValueError(invalid)
         if boundary_layer is not None and route not in (
             "tensor-dgsem",
             "structured-fv",
@@ -491,9 +483,9 @@ class ShockResolvingPolicy(StrictModule, NonTrainableState):
         threshold = float(sensor_threshold)
         all_speed_ = AllSpeedCompressiblePolicy() if all_speed is None else all_speed
         fallback = HLLFluxPlan() if fallback_flux is None else fallback_flux
+        reconstruction = parse(reconstruction, ShockReconstruction, "reconstruction")
         if (
-            reconstruction not in ("weno_z", "teno", "mp5")
-            or not np.isfinite(threshold)
+            not np.isfinite(threshold)
             or threshold <= 0.0
             or not isinstance(all_speed_, AllSpeedCompressiblePolicy)
             or not isinstance(fallback, HLLFluxPlan)

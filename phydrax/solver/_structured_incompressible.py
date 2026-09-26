@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -53,6 +53,7 @@ from ..linalg._transform_line import (
     TransformLineSolvePlan,
     TransformLineSolveResult,
 )
+from ..typing import parse
 from ._mac_separable import (
     certify_separable_action,
     diagonal_resource_counts,
@@ -243,10 +244,7 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Projection density, tolerance, iterations, and resources are invalid."
             )
-        if solve_method not in ("auto", "direct", "transform", "hybrid", "iterative"):
-            raise ValueError(
-                "solve_method must be 'auto', 'direct', 'transform', 'hybrid', or 'iterative'."
-            )
+        solve_method = parse(solve_method, MACPressureSolveMethod, "solve_method")
         line_axis = None if hybrid_line_axis is None else int(hybrid_line_axis)
         dimension = len(operators.discretization.cell_shape)
         if line_axis is not None and (line_axis < 0 or line_axis >= dimension):
@@ -391,39 +389,47 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Hybrid MAC projection requires a certified symmetric line action."
             )
-        if solve_method == "hybrid":
-            constant_route = "hybrid"
-            route_reason = "explicit certified transform-line pressure action"
-        elif solve_method == "transform":
-            constant_route = "transform"
-            route_reason = "explicit certified tensor-transform pressure action"
-        elif solve_method == "direct":
-            if transform_plan is not None:
-                constant_route = "transform"
-                route_reason = "explicit direct request accepted by tensor action"
-            elif hybrid_plan is not None:
+        match solve_method:
+            case "hybrid":
                 constant_route = "hybrid"
-                route_reason = "explicit direct request accepted by transform-line action"
-            else:
-                raise ValueError(
-                    "Explicit direct MAC projection has no certified exact representation."
-                )
-        elif solve_method == "iterative":
-            constant_route = "iterative"
-            route_reason = "explicit iterative pressure route"
-        elif transform_plan is not None:
-            constant_route = "transform"
-            route_reason = "auto selected exact constant-coefficient tensor action"
-        elif hybrid_plan is not None:
-            constant_route = "hybrid"
-            route_reason = "auto selected exact retained-line action"
-        else:
-            constant_route = "iterative"
-            route_reason = (
-                "auto selected FGMRES for stabilized nonsymmetric traction"
-                if nonsymmetric_traction
-                else "auto selected PCG because no exact action certified"
-            )
+                route_reason = "explicit certified transform-line pressure action"
+            case "transform":
+                constant_route = "transform"
+                route_reason = "explicit certified tensor-transform pressure action"
+            case "direct":
+                if transform_plan is not None:
+                    constant_route = "transform"
+                    route_reason = "explicit direct request accepted by tensor action"
+                elif hybrid_plan is not None:
+                    constant_route = "hybrid"
+                    route_reason = (
+                        "explicit direct request accepted by transform-line action"
+                    )
+                else:
+                    raise ValueError(
+                        "Explicit direct MAC projection has no certified exact representation."
+                    )
+            case "iterative":
+                constant_route = "iterative"
+                route_reason = "explicit iterative pressure route"
+            case "auto":
+                if transform_plan is not None:
+                    constant_route = "transform"
+                    route_reason = (
+                        "auto selected exact constant-coefficient tensor action"
+                    )
+                elif hybrid_plan is not None:
+                    constant_route = "hybrid"
+                    route_reason = "auto selected exact retained-line action"
+                else:
+                    constant_route = "iterative"
+                    route_reason = (
+                        "auto selected FGMRES for stabilized nonsymmetric traction"
+                        if nonsymmetric_traction
+                        else "auto selected PCG because no exact action certified"
+                    )
+            case _:
+                assert_never(solve_method)
         identifier = canonical_fingerprint(
             {
                 "kind": "mac-pressure-projection-plan",

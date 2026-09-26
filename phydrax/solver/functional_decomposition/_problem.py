@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 
@@ -25,11 +25,11 @@ from ...domain import (
 )
 from ...enforcement import EnforcementProgram
 from ...terms import ResidualPenalty
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
 ScopeKind = Literal["patch", "pair", "global"]
-AssemblyKind = Literal["partition-of-unity", "broken"]
+AssemblyKind: TypeAlias = Literal["partition-of-unity", "broken"]
 
 
 class PatchScope(StrictModule):
@@ -137,8 +137,7 @@ class FunctionalDecompositionProblem(StrictModule):
             raise TypeError("family must be a LocalFieldFamily.")
         if family.cover.cover_id != cover.cover_id:
             raise ValueError("family and problem cover identities must match.")
-        if assembly not in ("partition-of-unity", "broken"):
-            raise ValueError("Unknown decomposition field assembly.")
+        assembly = parse(assembly, AssemblyKind, "assembly")
         name = str(field_name)
         if not name:
             raise ValueError("field_name must be non-empty.")

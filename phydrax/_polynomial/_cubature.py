@@ -19,6 +19,7 @@ from scipy.special import roots_jacobi
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._lebedev_cubature_data import LEBEDEV_RULES
 from ._orthogonal import legendre_rule_data
 from ._simplex_cubature_data import TETRAHEDRON_RULES, TRIANGLE_RULES
@@ -108,19 +109,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
         degree = _degree(exact_degree)
         if reference_domain not in _REFERENCE_DIMENSION:
             raise ValueError(f"Unsupported cubature reference: {reference_domain!r}.")
-        if family not in (
-            "xiao-gimbutas",
-            "lebedev",
-            "periodic-circle",
-            "radial-product",
-            "duffy",
-            "stroud-secrest-3-1",
-            "hadamard-3",
-            "stroud-secrest-5-2",
-            "stroud-secrest-5-3",
-            "tensor-hermite",
-        ):
-            raise ValueError(f"Unsupported cubature family: {family!r}.")
+        family = parse(family, CubatureFamily, "family")
         dtype_ = np.dtype(dtype)
         points_host = np.asarray(points, dtype=dtype_)
         weights_host = np.asarray(weights, dtype=dtype_).reshape((-1,))

@@ -15,6 +15,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._lattice import LatticeBoltzmannVelocitySet
 
 
@@ -57,8 +58,9 @@ class LatticeBoltzmannExecutionProvenance(StrictModule, NonTrainableState):
         step_count: int,
         /,
     ) -> None:
-        if execution_kind not in ("reference", "sharded", "fused"):
-            raise ValueError("Unknown LBM execution kind.")
+        execution_kind = parse(
+            execution_kind, LatticeBoltzmannExecutionKind, "execution_kind"
+        )
         identifiers = tuple(str(value) for value in (plan_id, step_id, lattice_id))
         count = int(step_count)
         if any(not value for value in identifiers) or count <= 0:

@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._kinetic_entropy import (
     KineticEntropyRootPlan,
     KineticEntropyRootStrategy,
@@ -206,8 +207,8 @@ class CumulantCollisionPlan(StrictModule, NonTrainableState):
         )
 
 
-KBCVariant = Literal["a", "b", "c", "d"]
-KBCStabilizerKind = Literal["quadratic", "exact", "hybrid"]
+KBCVariant: TypeAlias = Literal["a", "b", "c", "d"]
+KBCStabilizerKind: TypeAlias = Literal["quadratic", "exact", "hybrid"]
 
 
 class KBCCollisionPlan(StrictModule, NonTrainableState):
@@ -227,10 +228,8 @@ class KBCCollisionPlan(StrictModule, NonTrainableState):
         stabilizer: KBCStabilizerKind = "quadratic",
         root: KineticEntropyRootPlan | None = None,
     ) -> None:
-        if variant not in ("a", "b", "c", "d"):
-            raise ValueError(f"Unknown KBC variant {variant!r}.")
-        if stabilizer not in ("quadratic", "exact", "hybrid"):
-            raise ValueError(f"Unknown KBC stabilizer {stabilizer!r}.")
+        variant = parse(variant, KBCVariant, "variant")
+        stabilizer = parse(stabilizer, KBCStabilizerKind, "stabilizer")
         selected_basis = MomentBasisPlan() if basis is None else basis
         selected_root = KineticEntropyRootPlan() if root is None else root
         if not isinstance(selected_basis, MomentBasisPlan):

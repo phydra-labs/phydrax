@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import parse
 from ._assembly import PreparedSparseAssembly
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
@@ -91,8 +92,7 @@ class MultigridCyclePolicy(StrictModule):
     cycle_id: str = eqx.field(static=True)
 
     def __init__(self, kind: MultigridCycleKind = "v", /) -> None:
-        if kind not in ("v", "w", "f", "full"):
-            raise ValueError(f"Unknown multigrid cycle kind {kind!r}.")
+        kind = parse(kind, MultigridCycleKind, "kind")
         self.kind = kind
         self.cycle_id = canonical_fingerprint(
             {"kind": "multigrid-cycle-policy", "cycle": kind}

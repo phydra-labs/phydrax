@@ -33,6 +33,7 @@ from ...discretization.spectral._incompressible import PeriodicLerayProjector
 from ...discretization.spectral._space import TensorSpectralDiscretization
 from ...linalg import HermitianSpectrum
 from ...metrix import StressEnergyProjection
+from ...typing import parse
 
 
 WeakFieldDifferentiation: TypeAlias = Literal["piecewise-fixed-route", "none"]
@@ -114,8 +115,9 @@ class WeakFieldRelativisticPMPolicy(StrictModule, NonTrainableState):
         workspace = int(maximum_workspace_bytes)
         if points <= 0 or workspace <= 0:
             raise ValueError("Weak-field resource limits must be positive integers.")
-        if differentiation not in ("piecewise-fixed-route", "none"):
-            raise ValueError("Unknown weak-field differentiation contract.")
+        differentiation = parse(
+            differentiation, WeakFieldDifferentiation, "differentiation"
+        )
         (
             self.maximum_scalar_metric_fraction,
             self.maximum_vector_metric_fraction,

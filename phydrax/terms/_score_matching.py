@@ -31,7 +31,7 @@ from ..stochastic._state_time import (
     TrajectoryStateTimeSamples,
 )
 from ..stochastic._trajectory import StochasticTrajectory
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._sample_statistics import (
     clustered_standard_error,
     effective_sample_size,
@@ -75,8 +75,7 @@ class ScoreMatchingPolicy(StrictModule):
         distribution: Literal["rademacher", "normal"] = "rademacher",
         policy_id: str | None = None,
     ) -> None:
-        if method not in ("exact", "implicit", "sliced"):
-            raise ValueError("method must be 'exact', 'implicit', or 'sliced'.")
+        method = parse(method, ScoreMatchingMethod, "method")
         count = int(num_probes)
         if method == "exact":
             if count < 0:
@@ -202,8 +201,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
     ) -> None:
         if not isinstance(score_name, str) or not score_name:
             raise ValueError("score_name must be a non-empty string.")
-        if sampling_mode not in ("fixed", "resample"):
-            raise ValueError("sampling_mode must be 'fixed' or 'resample'.")
+        sampling_mode = parse(sampling_mode, ScoreMatchingSamplingMode, "sampling_mode")
         resolved_policy = ScoreMatchingPolicy() if policy is None else policy
         if not isinstance(resolved_policy, ScoreMatchingPolicy):
             raise TypeError("policy must be a ScoreMatchingPolicy.")

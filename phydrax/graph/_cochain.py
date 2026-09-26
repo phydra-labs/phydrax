@@ -29,6 +29,7 @@ from ..discretization import (
     OrientedIncidence,
 )
 from ..sparse import EdgeRelation, SparseLinearMap
+from ..typing import parse
 from ._ir import GraphIR
 
 
@@ -710,8 +711,7 @@ def graph_to_cochain_complex(
         raise ValueError("Graph-to-cochain conversion requires exactly one graph.")
     if graph.node_mask is not None or graph.graph_mask is not None:
         raise ValueError("Padded node or graph masks are not supported.")
-    if edge_semantics not in ("reciprocal", "undirected_once"):
-        raise ValueError("edge_semantics must be 'reciprocal' or 'undirected_once'.")
+    edge_semantics = parse(edge_semantics, GraphEdgeSemantics, "edge_semantics")
     if float(reciprocal_rtol) < 0.0 or float(reciprocal_atol) < 0.0:
         raise ValueError("Reciprocal tolerances must be nonnegative.")
     node_count = graph.num_nodes

@@ -27,7 +27,7 @@ from ..terms._deep_splitting import (
     DeepSplittingRegressionDiagnostics,
     DeepSplittingRegressionTerm,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._functional_solver import FunctionalSolver
 
 
@@ -79,8 +79,7 @@ class DeepSplittingSolution(StrictModule):
             raise ValueError("Deep splitting requires one learned slice per interval.")
         if any(not isinstance(value, DomainFunction) for value in slice_values):
             raise TypeError("Deep splitting slices must be DomainFunction objects.")
-        if interpolation not in ("linear", "nearest"):
-            raise ValueError("interpolation must be 'linear' or 'nearest'.")
+        interpolation = parse(interpolation, DeepSplittingInterpolation, "interpolation")
         self.problem = problem
         self.times = time_values
         self.slices = slice_values
@@ -312,12 +311,10 @@ def solve_deep_splitting(
         raise ValueError("value_name must be a non-empty string.")
     if value_name not in solver.ansatz_functions():
         raise KeyError(f"Missing deep splitting value function {value_name!r}.")
-    if sampling_mode not in ("resample", "fixed"):
-        raise ValueError("sampling_mode must be 'resample' or 'fixed'.")
+    sampling_mode = parse(sampling_mode, DeepSplittingSamplingMode, "sampling_mode")
     if sampling_mode == "resample" and fixed_paths is not None:
         raise ValueError("fixed_paths is valid only for fixed sampling.")
-    if interpolation not in ("linear", "nearest"):
-        raise ValueError("interpolation must be 'linear' or 'nearest'.")
+    interpolation = parse(interpolation, DeepSplittingInterpolation, "interpolation")
     if optim is None:
         optim = optax.adam(1e-3)
     root_key = jr.key(int(seed))

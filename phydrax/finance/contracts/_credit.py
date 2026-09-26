@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ..core import CurrencyAmount, FinanceDate, InstrumentReference, ResolvedSchedule
 from ._base import AbstractPayoff, AbstractResolvedContract
 from ._cashflows import CashflowBatch
@@ -111,10 +112,8 @@ class RecoveryTerms(StrictModule):
         rate_ = _scalar(rate, "recovery rate", nonnegative=True)
         if float(np.asarray(jax.device_get(rate_))) > 1.0:
             raise ValueError("recovery rate must not exceed one.")
-        if convention not in ("par", "market_value", "treasury"):
-            raise ValueError("Unsupported recovery convention.")
-        if timing not in ("at_default", "period_end"):
-            raise ValueError("Unsupported default timing convention.")
+        convention = parse(convention, RecoveryConvention, "convention")
+        timing = parse(timing, DefaultTimingConvention, "timing")
         self.rate = rate_
         self.settlement_lag = _scalar(
             settlement_lag, "recovery settlement_lag", nonnegative=True
@@ -219,8 +218,7 @@ class CreditPayoff(AbstractPayoff):
         kind: CreditPayoffKind,
         /,
     ) -> None:
-        if kind not in ("defaultable_bond", "credit_default_swap"):
-            raise ValueError("Unsupported credit payoff kind.")
+        kind = parse(kind, CreditPayoffKind, "kind")
         self.payoff_id = _identifier(payoff_id, "payoff_id")
         self.reference_entity_id = _identifier(reference_entity_id, "reference_entity_id")
         self.kind = kind
@@ -268,8 +266,9 @@ class DefaultableBondContract(AbstractResolvedContract):
             raise TypeError("recovery must be RecoveryTerms.")
         if not isinstance(payoff, CreditPayoff) or payoff.kind != "defaultable_bond":
             raise TypeError("payoff must be a defaultable-bond CreditPayoff.")
-        if default_boundary_side not in ("before_payment", "after_payment"):
-            raise ValueError("Unsupported default boundary side.")
+        default_boundary_side = parse(
+            default_boundary_side, DefaultBoundarySide, "default_boundary_side"
+        )
         identifier = _identifier(contract_id, "contract_id")
         times = _validate_payment_times(schedule, payment_times)
         coupon = _scalar(coupon_rate, "coupon_rate", nonnegative=True)
@@ -376,12 +375,12 @@ class CreditDefaultSwapContract(AbstractResolvedContract):
             raise ValueError("CDS protection currently requires recovery-of-par terms.")
         if not isinstance(payoff, CreditPayoff) or payoff.kind != "credit_default_swap":
             raise TypeError("payoff must be a CDS CreditPayoff.")
-        if protection_side not in ("buy", "sell"):
-            raise ValueError("protection_side must be 'buy' or 'sell'.")
+        protection_side = parse(protection_side, ProtectionSide, "protection_side")
         if type(accrued_on_default) is not bool:
             raise TypeError("accrued_on_default must be bool.")
-        if default_boundary_side not in ("before_payment", "after_payment"):
-            raise ValueError("Unsupported default boundary side.")
+        default_boundary_side = parse(
+            default_boundary_side, DefaultBoundarySide, "default_boundary_side"
+        )
         identifier = _identifier(contract_id, "contract_id")
         times = _validate_payment_times(schedule, payment_times)
         spread = _scalar(running_spread, "running_spread", nonnegative=True)

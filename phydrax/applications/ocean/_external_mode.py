@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume._hydrostatic_grid import PreparedHydrostaticGrid
+from ...typing import parse
 
 
 ExternalModeSubcycleKind: TypeAlias = Literal["fixed-count", "adaptive-cfl"]
@@ -52,8 +53,7 @@ class ExternalModeSubcyclePolicy(StrictModule, NonTrainableState):
         target_courant: float = 0.8,
         minimum_spacing: float = 0.0,
     ) -> None:
-        if kind not in ("fixed-count", "adaptive-cfl"):
-            raise ValueError("Unknown external-mode subcycle policy.")
+        kind = parse(kind, ExternalModeSubcycleKind, "kind")
         fixed = int(fixed_count)
         maximum = fixed if maximum_substeps is None else int(maximum_substeps)
         courant = float(target_courant)

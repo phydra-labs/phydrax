@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,9 +21,10 @@ from ...solver._multiphysics_inference import (
     FieldObservationPlan,
     SimulationSensitivityReport,
 )
+from ...typing import parse
 
 
-ParticleTargetKind = Literal["density", "extensive-content"]
+ParticleTargetKind: TypeAlias = Literal["density", "extensive-content"]
 
 
 class ParticleFieldRealizationEvaluation(StrictModule):
@@ -73,8 +74,7 @@ class ParticleFieldRealizationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Particle position inference requires piecewise geometry AD."
             )
-        if target_kind not in ("density", "extensive-content"):
-            raise ValueError("Unknown particle-field target kind.")
+        target_kind = parse(target_kind, ParticleTargetKind, "target_kind")
         axes = transfer.plan.target.axes
         if any(not axis.periodic or axis.bounds is None for axis in axes):
             raise ValueError(

@@ -22,6 +22,7 @@ from .._trainable import NonTrainableState
 from ..axes import AxisKey
 from ..linalg import AbstractVectorSpace, DualSpace
 from ..sparse import RowRelation
+from ..typing import parse
 from ._core import nonempty_identifier, resolved_identifier
 
 
@@ -388,31 +389,8 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Vector-space size {vector_space.size} does not match DOF-layout size {layout.size}."
             )
-        if representation not in (
-            "point_value",
-            "basis_coefficient",
-            "cell_average",
-            "cell_integral",
-            "flux_moment",
-            "circulation_moment",
-            "polynomial_moment",
-            "modal_coefficient",
-            "particle_value",
-            "cochain",
-            "functional",
-            "custom",
-        ):
-            raise ValueError("Unknown field representation.")
-        if conformity not in (
-            "H1",
-            "Hdiv",
-            "Hcurl",
-            "L2",
-            "discontinuous",
-            "cochain",
-            "unrestricted",
-        ):
-            raise ValueError("Unknown field conformity.")
+        representation = parse(representation, FieldRepresentation, "representation")
+        conformity = parse(conformity, FieldConformity, "conformity")
         projection = (
             None
             if projection_id is None

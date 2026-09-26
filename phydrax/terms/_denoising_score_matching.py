@@ -24,7 +24,7 @@ from .._term import AbstractSamplingTerm
 from ..integration._external import _canonical_weighted, materialize_weighted_target
 from ..integration._targets import WeightedSampleTarget
 from ..stochastic._gaussian_diffusion import AbstractGaussianDiffusion
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._sample_statistics import effective_sample_size, normalized_log_weights
 from ._time_sampling import UniformTimeSamplingPolicy
 
@@ -139,8 +139,7 @@ class DenoisingScoreMatchingBatch(StrictModule):
             == expected
         ):
             raise ValueError("Denoising sample metadata must have shape (num_samples,).")
-        if weighting not in ("unit", "conditional-variance", "diffusion-rate"):
-            raise ValueError("Unknown denoising score weighting.")
+        weighting = parse(weighting, DenoisingScoreWeighting, "weighting")
         for owner, value in (
             ("process_id", process_id),
             ("policy_id", policy_id),
@@ -247,10 +246,8 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
             raise ValueError("Denoising score minimum_time must be strictly positive.")
         if bool(policy.maximum_time > process.terminal_time):
             raise ValueError("Denoising score time policy exceeds the process interval.")
-        if weighting not in ("unit", "conditional-variance", "diffusion-rate"):
-            raise ValueError("Unknown denoising score weighting.")
-        if sampling_mode not in ("fixed", "resample"):
-            raise ValueError("sampling_mode must be 'fixed' or 'resample'.")
+        weighting = parse(weighting, DenoisingScoreWeighting, "weighting")
+        sampling_mode = parse(sampling_mode, DenoisingScoreSamplingMode, "sampling_mode")
         if not state_label or not time_label or state_label == time_label:
             raise ValueError("state_label and time_label must be distinct and non-empty.")
         if sampling_mode == "fixed":

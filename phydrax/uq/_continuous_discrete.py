@@ -29,6 +29,7 @@ from ..stochastic._state_space import (
     StateSpaceProblem,
     StateSpaceStepContext,
 )
+from ..typing import parse
 from ._conditioning import condition_gaussian_moments
 from ._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 from ._nonlinear_gaussian import (
@@ -206,8 +207,7 @@ def _validate_configuration(
                 "Continuous-discrete augmented moments require a deterministic "
                 f"ODE-compatible Diffrax solver; got {type(solver).__name__}."
             )
-    if method not in ("extended", "cubature", "unscented"):
-        raise ValueError("method must be 'extended', 'cubature', or 'unscented'.")
+    method = parse(method, ContinuousDiscreteGaussianMethod, "method")
     regularization = float(covariance_regularization)
     tolerance = float(rank_tolerance)
     alpha = float(unscented_alpha)

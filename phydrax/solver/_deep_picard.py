@@ -35,7 +35,7 @@ from ..stochastic._feynman_kac import (
     trajectory_node_feynman_kac_labels,
 )
 from ..terms._feynman_kac import FeynmanKacRegressionTerm
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._functional_solver import FunctionalSolver
 
 
@@ -456,8 +456,7 @@ def solve_deep_picard(
         raise ValueError("Picard and inner iteration counts must be positive.")
     if minimum_steps < 1 or minimum_steps > outer_steps:
         raise ValueError("minimum_picard_steps must lie in [1, num_picard_steps].")
-    if initial_source not in ("zero", "current"):
-        raise ValueError("initial_source must be 'zero' or 'current'.")
+    initial_source = parse(initial_source, DeepPicardInitialSource, "initial_source")
     damping = float(target_damping)
     absolute_tolerance = float(convergence_tolerance)
     relative_tolerance_value = float(relative_tolerance)

@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,7 +18,7 @@ import phydrax.axes as cx
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ...graph import batch_graphs, GraphIR, LayoutPlan
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._coordinate import CoordinateSpec
 from .._domain import JointFactor
 from .._factor_component import FactorComponent
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 GRAPH_DATASET_INDEX_KEY = "__phydrax_graph_dataset_index__"
 GRAPH_SAMPLE_INDEX_KEY = "__phydrax_graph_sample_index__"
 GRAPH_ENTITY_OFFSET_KEY = "__phydrax_graph_entity_offset__"
-GraphDatasetMeasureMode = Literal["probability", "count"]
+GraphDatasetMeasureMode: TypeAlias = Literal["probability", "count"]
 
 
 def _to_axis_fields(tree: Any, axis: str, /) -> Any:
@@ -168,10 +168,7 @@ class GraphDatasetDomain(JointFactor):
         """
         if len(graphs) == 0:
             raise ValueError("GraphDatasetDomain requires at least one graph.")
-        if measure not in ("probability", "count"):
-            raise ValueError(
-                "GraphDatasetDomain measure must be 'probability' or 'count'."
-            )
+        measure = parse(measure, GraphDatasetMeasureMode, "measure")
         graphs_tuple = tuple(graphs)
         for graph in graphs_tuple:
             if not isinstance(graph, GraphIR):

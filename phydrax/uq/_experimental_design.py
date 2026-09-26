@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from itertools import combinations
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -23,6 +23,7 @@ from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..optim._finite import FiniteAxis, FiniteProductSpace
+from ..typing import parse
 from ._finite_experimental_design import (
     evaluate_finite_experimental_design,
     FiniteDesignBelief,
@@ -31,12 +32,12 @@ from ._finite_experimental_design import (
 from ._posterior import PosteriorProblem
 
 
-ExpectedUtilityTarget = Literal[
+ExpectedUtilityTarget: TypeAlias = Literal[
     "parameter",
     "predictive",
     "model_discrimination",
 ]
-RetrospectiveDesignStrategy = Literal[
+RetrospectiveDesignStrategy: TypeAlias = Literal[
     "random",
     "space_filling",
     "uncertainty_only",
@@ -44,14 +45,6 @@ RetrospectiveDesignStrategy = Literal[
     "proposed_design",
 ]
 
-_UTILITY_TARGETS = ("parameter", "predictive", "model_discrimination")
-_RETROSPECTIVE_STRATEGIES = (
-    "random",
-    "space_filling",
-    "uncertainty_only",
-    "domain_heuristic",
-    "proposed_design",
-)
 _EXACT_SELECTION_LIMIT = 24
 
 
@@ -93,11 +86,7 @@ def _positive_integer(value: int, name: str, /, *, minimum: int = 1) -> int:
 
 
 def _utility_target(value: ExpectedUtilityTarget, /) -> ExpectedUtilityTarget:
-    if value not in _UTILITY_TARGETS:
-        raise ValueError(
-            "utility_target must be 'parameter', 'predictive', or 'model_discrimination'."
-        )
-    return value
+    return parse(value, ExpectedUtilityTarget, "utility_target")
 
 
 class ExperimentalDesignCandidate(StrictModule, NonTrainableState):
@@ -553,7 +542,10 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
         metric_id: str,
     ) -> None:
         plan_values = tuple(plans)
-        if len(plan_values) != len(_RETROSPECTIVE_STRATEGIES) or any(
+        strategies: tuple[RetrospectiveDesignStrategy, ...] = get_args(
+            RetrospectiveDesignStrategy
+        )
+        if len(plan_values) != len(strategies) or any(
             not isinstance(plan, ExperimentalBatchPlan) for plan in plan_values
         ):
             raise ValueError(
@@ -562,7 +554,7 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
             )
         values = jnp.asarray(realized_utility, dtype=jnp.float64)
         validity = jnp.asarray(realized_valid, dtype=jnp.bool_)
-        expected_shape = (len(_RETROSPECTIVE_STRATEGIES),)
+        expected_shape = (len(strategies),)
         if values.shape != expected_shape or validity.shape != expected_shape:
             raise ValueError("Retrospective metrics must have one value per strategy.")
         if bool(jnp.any(validity & ~jnp.isfinite(values))):
@@ -610,7 +602,7 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
         self.selected_batch_sizes = sizes
         self.cost_normalized_realized_utility = normalized
         self.cost_normalized_valid = normalized_valid
-        self.strategy_ids = _RETROSPECTIVE_STRATEGIES
+        self.strategy_ids = strategies
         self.metric_id = metric
         self.evaluation_kind = "retrospective_cost_normalized_replay"
         self.comparison_basis = "realized_utility_per_planned_total_cost"
@@ -619,7 +611,7 @@ class RetrospectiveDesignResult(StrictModule, NonTrainableState):
         self.evaluation_id = canonical_fingerprint(
             {
                 "kind": "retrospective-experimental-design-evaluation",
-                "strategy_ids": list(_RETROSPECTIVE_STRATEGIES),
+                "strategy_ids": list(strategies),
                 "plan_ids": [plan.plan_id for plan in plan_values],
                 "metric_id": metric,
                 "realized": array_tree_fingerprint((values, validity)),

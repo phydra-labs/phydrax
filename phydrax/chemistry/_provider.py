@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import numpy as np
@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._context import ElectronicEvaluationContext
 from ._model import ElectronicMethodFamily, ElectronicReferenceKind
 from ._result import (
@@ -39,8 +40,10 @@ if TYPE_CHECKING:
     from ._calculation import ElectronicCalculationPlan
 
 
-ElectronicExecutionKind = Literal["host", "device"]
-ElectronicConcurrencyKind = Literal["serial", "thread-safe", "process-isolated"]
+ElectronicExecutionKind: TypeAlias = Literal["host", "device"]
+ElectronicConcurrencyKind: TypeAlias = Literal[
+    "serial", "thread-safe", "process-isolated"
+]
 
 
 class ElectronicProviderUnavailableError(RuntimeError):
@@ -246,10 +249,8 @@ class ElectronicExecutionCapabilities(StrictModule, NonTrainableState):
         execution: ElectronicExecutionKind = "host",
         concurrency: ElectronicConcurrencyKind = "serial",
     ) -> None:
-        if execution not in ("host", "device"):
-            raise ValueError("execution must be host or device.")
-        if concurrency not in ("serial", "thread-safe", "process-isolated"):
-            raise ValueError("Unknown electronic provider concurrency model.")
+        execution = parse(execution, ElectronicExecutionKind, "execution")
+        concurrency = parse(concurrency, ElectronicConcurrencyKind, "concurrency")
         self.conservative_forces = bool(conservative_forces)
         self.differentiable = bool(differentiable)
         self.batching = bool(batching)

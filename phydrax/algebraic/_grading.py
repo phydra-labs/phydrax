@@ -13,6 +13,7 @@ import numpy as np
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 if TYPE_CHECKING:
@@ -52,8 +53,7 @@ class PolynomialVariableGroup(StrictModule, NonTrainableState):
             raise ValueError("A polynomial variable group cannot repeat a variable.")
         if tuple(sorted(indices)) != indices:
             raise ValueError("Polynomial variable indices must be strictly increasing.")
-        if geometry not in ("affine", "projective"):
-            raise ValueError("Variable-group geometry must be 'affine' or 'projective'.")
+        geometry = parse(geometry, PolynomialVariableGeometry, "geometry")
         if geometry == "projective" and len(indices) < 2:
             raise ValueError(
                 "A projective variable group requires at least two homogeneous coordinates."
@@ -145,8 +145,7 @@ class PolynomialBezoutForecast(StrictModule, NonTrainableState):
         group_dimensions: Sequence[int],
         path_count: int,
     ) -> None:
-        if kind not in ("total_degree", "multihomogeneous"):
-            raise ValueError("Unknown polynomial Bézout forecast kind.")
+        kind = parse(kind, BezoutForecastKind, "kind")
         labels = tuple(str(value) for value in group_labels)
         dimensions = tuple(group_dimensions)
         count = int(path_count)

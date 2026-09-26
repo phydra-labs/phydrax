@@ -16,6 +16,7 @@ from jax.typing import DTypeLike
 from .._dtype_names import precision_dtype_name
 from .._model import register_artifact_value
 from .._strict import StrictModule
+from ..typing import parse
 from ._certificates import StabilityLowerBound
 from ._materialization import MaterializationPolicy
 from ._preconditioning import PreconditioningPolicy
@@ -518,19 +519,7 @@ def _precision_dtype(
     if value is None:
         return None
     precision = precision_dtype_name(value)
-    supported = (
-        "float16",
-        "bfloat16",
-        "float32",
-        "float64",
-        "complex64",
-        "complex128",
-    )
-    if precision not in supported:
-        raise ValueError(
-            f"{name} must name a supported real or complex floating dtype; got {precision!r}."
-        )
-    return precision
+    return parse(precision, PrecisionDType, name)
 
 
 class RankPolicy(StrictModule):
@@ -560,8 +549,7 @@ class FailurePolicy(StrictModule):
     mode: FailureMode = eqx.field(static=True)
 
     def __init__(self, mode: FailureMode = "status", /) -> None:
-        if mode not in ("status", "error"):
-            raise ValueError("Failure mode must be 'status' or 'error'.")
+        mode = parse(mode, FailureMode, "mode")
         self.mode = mode
 
 
@@ -571,8 +559,7 @@ class DifferentiationPolicy(StrictModule):
     mode: DifferentiationMode = eqx.field(static=True)
 
     def __init__(self, mode: DifferentiationMode = "mathematical", /) -> None:
-        if mode not in ("mathematical", "rhs-only", "algorithmic", "none"):
-            raise ValueError("Unknown differentiation mode.")
+        mode = parse(mode, DifferentiationMode, "mode")
         self.mode = mode
 
 

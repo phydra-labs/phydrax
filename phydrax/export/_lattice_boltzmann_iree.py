@@ -23,6 +23,7 @@ from ..discretization.lattice_boltzmann._execution import (
 from ..discretization.lattice_boltzmann._fused import (
     FusedLatticeBoltzmannExecutionPlan,
 )
+from ..typing import parse
 from ._iree import IREEExportPolicy, IREEExportResult, save_iree
 
 
@@ -117,8 +118,7 @@ def prepare_lattice_boltzmann_iree_contract(
         (ReferenceLatticeBoltzmannExecutionPlan, FusedLatticeBoltzmannExecutionPlan),
     ):
         raise TypeError("IREE LBM export requires a reference or fused execution plan.")
-    if mode not in ("forward", "forward-vjp"):
-        raise ValueError("Unknown LBM IREE export mode.")
+    mode = parse(mode, LatticeBoltzmannIREEExportMode, "mode")
     arrays = (initial_populations, *tuple(runtime_arrays))
     if any(not eqx.is_array(value) for value in arrays):
         raise TypeError("IREE LBM export accepts explicit JAX array inputs only.")

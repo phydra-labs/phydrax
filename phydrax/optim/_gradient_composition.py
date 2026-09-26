@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,9 +30,10 @@ from ..linalg._dense_pseudoinverse import (
     factor_pseudoinverse,
 )
 from ..linalg._policies import RankPolicy
+from ..typing import parse
 
 
-ConflictFreeFailureMode = Literal["status", "error"]
+ConflictFreeFailureMode: TypeAlias = Literal["status", "error"]
 
 
 class ConflictFreeGradientStatus(IntEnum):
@@ -68,8 +69,7 @@ class ConflictFreeGradientPolicy(StrictModule, NonTrainableState):
             raise ValueError("minimum_norm must be finite and strictly positive.")
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("projection_tolerance must be finite and nonnegative.")
-        if failure not in ("status", "error"):
-            raise ValueError("failure must be 'status' or 'error'.")
+        failure = parse(failure, ConflictFreeFailureMode, "failure")
         self.rank_policy = rank
         self.minimum_norm = norm
         self.projection_tolerance = tolerance

@@ -14,6 +14,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import parse
 from .._materialization import MaterializationPolicy
 from .._policies import FailurePolicy
 from .._preconditioning import PreconditioningPolicy
@@ -210,13 +211,7 @@ class EigenSolvePolicy(StrictModule):
             raise ValueError("Eigenvalue count must be positive.")
         if steps < 1:
             raise ValueError("max_steps must be positive.")
-        if which not in (
-            "smallest-algebraic",
-            "largest-algebraic",
-            "smallest-magnitude",
-            "largest-magnitude",
-        ):
-            raise ValueError("Unknown eigenvalue target.")
+        which = parse(which, EigenTarget, "which")
         tolerance_ = EigenTolerancePolicy() if tolerance is None else tolerance
         resources_ = EigenResourcePolicy() if resources is None else resources
         materialization_ = (
@@ -233,8 +228,9 @@ class EigenSolvePolicy(StrictModule):
             preconditioning, PreconditioningPolicy
         ):
             raise TypeError("preconditioning must be a PreconditioningPolicy or None.")
-        if differentiation not in ("none", "eigenvalues"):
-            raise ValueError("differentiation must be 'none' or 'eigenvalues'.")
+        differentiation = parse(
+            differentiation, EigenDifferentiationMode, "differentiation"
+        )
         if not isinstance(failure_, FailurePolicy):
             raise TypeError("failure must be a FailurePolicy.")
         basis_ = _initial_basis(initial_basis)

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from numbers import Real
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -25,6 +25,7 @@ from ....qualification import (
     ScientificCase,
     ScientificClaimProfile,
 )
+from ....typing import parse
 from ._conditional_mapping import ConditionalMappingFit, ConditionalMutationLaw
 from ._ensemble_inference import (
     EnsembleDiagnostics,
@@ -35,7 +36,7 @@ from ._ensemble_inference import (
 from ._mutation_profiles import MutationProfileBatch
 
 
-ModelLadderLevel = Literal[
+ModelLadderLevel: TypeAlias = Literal[
     "binary-accessibility", "context", "hierarchical", "finite-mixture"
 ]
 PredictiveStageId = Literal["predictive-calibration", "locked-prediction"]
@@ -656,13 +657,7 @@ class ModelLadderEvaluation(StrictModule, NonTrainableState):
         execution_valid: bool | ArrayLike,
     ) -> None:
         model = _identifier(model_id, "model_id")
-        if level not in (
-            "binary-accessibility",
-            "context",
-            "hierarchical",
-            "finite-mixture",
-        ):
-            raise ValueError("Unknown model-ladder level.")
+        level = parse(level, ModelLadderLevel, "level")
         scores = tuple(
             score
             for score in (

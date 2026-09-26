@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from ..linalg import AbstractLinearOperator, ArraySpace, OperatorCapabilities
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
+from ..typing import parse
 from ._layout import InputLayout
 
 
@@ -178,9 +179,7 @@ def _roles(value: Sequence[DAERole], owner: str, /) -> tuple[DAERole, ...]:
     roles = tuple(value)
     if not roles:
         raise ValueError(f"{owner} must not be empty.")
-    if any(role not in ("differential", "algebraic") for role in roles):
-        raise ValueError(f"{owner} entries must be 'differential' or 'algebraic'.")
-    return roles
+    return tuple(parse(role, DAERole, owner) for role in roles)
 
 
 def _inexact(value: ArrayLike, /) -> Array:

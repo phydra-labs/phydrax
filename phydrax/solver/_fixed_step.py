@@ -76,6 +76,7 @@ from .._tree_math import tree_where
 from ..discretization import DiscretizationBundle
 from ..lifecycle import commit_candidate, TransactionalCandidate
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
+from ..typing import parse
 
 
 def _canonical_structured_state(state: Any, /) -> PyTree[Array]:
@@ -1170,8 +1171,7 @@ class FixedStepReplayPolicy(StrictModule, NonTrainableState):
         block_size: int | None = None,
         schedule: PreparedReplaySchedule | None = None,
     ) -> None:
-        if mode not in ("full", "step", "block", "scheduled"):
-            raise ValueError("Unknown fixed-step replay mode.")
+        mode = parse(mode, FixedStepReplayMode, "mode")
         size = None if block_size is None else int(block_size)
         if mode == "block":
             if size is None or size <= 0:
@@ -1364,8 +1364,7 @@ class FixedStepRolloutPlan(StrictModule):
         replay: FixedStepReplayPolicy | None = None,
         iteration: IterationPlan | None = None,
     ) -> None:
-        if retention not in ("final", "checkpoints", "trajectory"):
-            raise ValueError("Unknown fixed-step retention policy.")
+        retention = parse(retention, FixedStepRetentionPolicy, "retention")
         stride = int(checkpoint_stride)
         if stride <= 0:
             raise ValueError("checkpoint_stride must be positive.")

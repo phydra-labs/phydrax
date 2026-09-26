@@ -8,7 +8,7 @@ import abc
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -66,6 +66,7 @@ from ..nonlinear import (
     refresh_nonlinear,
 )
 from ..nonlinear._prepared import _solve_prepared_nonlinear_stateful
+from ..typing import parse
 from ._checkpoint import (
     continuation_checkpoint,
     ContinuationCheckpoint,
@@ -84,7 +85,7 @@ from ._state_machine import (
 )
 
 
-ContinuationEventKind = Literal[
+ContinuationEventKind: TypeAlias = Literal[
     "fold-candidate",
     "hopf-candidate",
     "corrector-retry",
@@ -103,7 +104,7 @@ ContinuationEventKind = Literal[
     "stability-analysis-failure",
     "user",
 ]
-EventBracketKind = Literal["fold-candidate", "hopf-candidate"]
+EventBracketKind: TypeAlias = Literal["fold-candidate", "hopf-candidate"]
 
 
 class ContinuationStatus(IntEnum):
@@ -1428,8 +1429,7 @@ class EventBracket(StrictModule):
         left_indicator: Any,
         right_indicator: Any,
     ) -> None:
-        if kind not in ("fold-candidate", "hopf-candidate"):
-            raise ValueError("Unknown event bracket kind.")
+        kind = parse(kind, EventBracketKind, "kind")
         identifiers = tuple(
             str(value) for value in (bracket_id, left_point_id, right_point_id)
         )
@@ -1477,26 +1477,7 @@ class ContinuationEvent(StrictModule):
         bracket_id: str = "",
         message: str = "",
     ) -> None:
-        if kind not in (
-            "fold-candidate",
-            "hopf-candidate",
-            "corrector-retry",
-            "corrector-failure",
-            "target-corrector-retry",
-            "coordinate-target",
-            "predictor-fallback",
-            "tangent-retry",
-            "curvature-retry",
-            "tangent-fallback",
-            "application-retry",
-            "application-failure",
-            "coordinate-bound",
-            "stability-real-crossing",
-            "stability-near-zero",
-            "stability-analysis-failure",
-            "user",
-        ):
-            raise ValueError("Unknown continuation event kind.")
+        kind = parse(kind, ContinuationEventKind, "kind")
         self.kind = kind
         self.coordinate = _real_scalar(coordinate, name="event coordinate")
         self.indicator = jnp.asarray(indicator)

@@ -29,7 +29,7 @@ def test_configuration_validation():
         phx.optim.DifferentialEvolutionSearch(4, 1, relative_tolerance=-1.0)
     with pytest.raises(ValueError, match="absolute_tolerance"):
         phx.optim.DifferentialEvolutionSearch(4, 1, absolute_tolerance=jnp.nan)
-    with pytest.raises(ValueError, match="design must be one of"):
+    with pytest.raises(ValueError, match="design"):
         phx.optim.DifferentialEvolutionSearch(4, 1, design="unknown")
 
 

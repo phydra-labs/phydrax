@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast, ClassVar, Literal
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -25,6 +25,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding
 from ..._model._array import value_derivative_contract
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -296,7 +297,7 @@ class SpectralEmbeddingRecipe(AbstractRecipe):
         )
 
 
-MDSMethod = Literal["classical", "smacof"]
+MDSMethod: TypeAlias = Literal["classical", "smacof"]
 
 
 class MultidimensionalScalingModel(AbstractFittedModel):
@@ -452,13 +453,11 @@ class MultidimensionalScalingRecipe(AbstractRecipe):
     ) -> None:
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
-        if method not in ("classical", "smacof"):
-            raise ValueError("Only metric classical and SMACOF MDS are supported.")
+        method = parse(method, MDSMethod, "method")
         if int(iterations) <= 0 or float(tolerance) <= 0.0:
             raise ValueError("iterations and tolerance must be positive.")
         self.n_components = int(n_components)
-        # method was validated against MDSMethod above.
-        self.method = cast(MDSMethod, str(method))
+        self.method = method
         self.iterations = int(iterations)
         self.tolerance = float(tolerance)
 

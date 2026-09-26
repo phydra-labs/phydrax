@@ -38,6 +38,7 @@ from ..nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
+from ..typing import parse
 from ._bdf_method import (
     bdf_predict as _general_bdf_predict,
     bdf_shift_offset as _general_bdf_shift_offset,
@@ -369,8 +370,7 @@ class DAEReplayPolicy(StrictModule):
         chunk_size: int | None = None,
         memory_budget_bytes: int | None = None,
     ) -> None:
-        if checkpointing not in ("full", "chunked"):
-            raise ValueError("checkpointing must be 'full' or 'chunked'.")
+        checkpointing = parse(checkpointing, DAEReplayMode, "checkpointing")
         chunk = None if chunk_size is None else int(chunk_size)
         budget = None if memory_budget_bytes is None else int(memory_budget_bytes)
         if chunk is not None and chunk < 1:
@@ -405,16 +405,14 @@ class DAERegularityPolicy(StrictModule):
         condition_limit: float | None = None,
         failure: DAERegularityFailureMode = "record",
     ) -> None:
-        if mode not in ("solver-evidence", "periodic"):
-            raise ValueError("mode must be 'solver-evidence' or 'periodic'.")
+        mode = parse(mode, DAERegularityMode, "mode")
         interval_ = int(interval)
         limit = None if condition_limit is None else float(condition_limit)
         if interval_ < 1:
             raise ValueError("interval must be positive.")
         if limit is not None and (not math.isfinite(limit) or limit <= 1.0):
             raise ValueError("condition_limit must be finite and exceed one.")
-        if failure not in ("record", "status"):
-            raise ValueError("failure must be 'record' or 'status'.")
+        failure = parse(failure, DAERegularityFailureMode, "failure")
         self.mode = mode
         self.interval = interval_
         self.condition_limit = limit
@@ -508,8 +506,7 @@ class DAESolvePolicy(StrictModule):
         ratio = float(max_step_ratio)
         if not math.isfinite(ratio) or ratio < 1.0:
             raise ValueError("max_step_ratio must be finite and at least one.")
-        if failure not in ("status", "error"):
-            raise ValueError("failure must be 'status' or 'error'.")
+        failure = parse(failure, DAEFailureMode, "failure")
         self.nonlinear_method = stage_method
         self.nonlinear_termination = stage_termination
         self.initialization_method = initial_method

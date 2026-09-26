@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._particle_epoch import ParticleCapacityRequest
 from ._population import (
     ParticleAllocationRequest,
@@ -171,10 +172,9 @@ class SPHParticleSourcePlan(StrictModule, NonTrainableState):
         )
         if any(not np.isfinite(value) or value < 0.0 for value in clearances):
             raise ValueError("SPH source clearances must be finite and nonnegative.")
-        if density_initialization not in ("summation", "continuity"):
-            raise ValueError(
-                "density_initialization must be 'summation' or 'continuity'."
-            )
+        density_initialization = parse(
+            density_initialization, SPHDensityInitialization, "density_initialization"
+        )
         if replay_policy.maximum_events < 1:
             raise ValueError("SPH emission requires at least one hybrid tape event slot.")
         identifier = str(schedule_id)

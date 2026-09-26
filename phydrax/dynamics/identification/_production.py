@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._system import ContinuousSystem, DiscreteSystem
 from .._trajectory import StateLayout
 
@@ -50,8 +51,7 @@ class IdentificationStateTransform(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(physical_layout, StateLayout):
             raise TypeError("physical_layout must be a StateLayout.")
-        if kind not in ("affine", "log-affine"):
-            raise ValueError("kind must be 'affine' or 'log-affine'.")
+        kind = parse(kind, TransformKind, "kind")
         offset_ = jnp.asarray(offset)
         scale_ = jnp.asarray(scale, dtype=offset_.dtype)
         if (

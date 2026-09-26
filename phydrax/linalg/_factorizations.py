@@ -18,6 +18,7 @@ from phydrax import ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._dense_pseudoinverse import fixed_rank_pseudoinverse_value
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator, DenseLinearOperator
@@ -88,8 +89,7 @@ class FactorizationPolicy(StrictModule):
         resources: SolveResourcePolicy | None = None,
         precision: MixedPrecisionPolicy | None = None,
     ) -> None:
-        if kind not in ("auto", "lu", "cholesky", "qr", "svd"):
-            raise ValueError("Unknown factorization kind.")
+        kind = parse(kind, FactorizationKind, "kind")
         self.kind = kind
         self.rank = RankPolicy() if rank is None else rank
         self.tolerance = TolerancePolicy() if tolerance is None else tolerance

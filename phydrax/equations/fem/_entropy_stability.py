@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -23,10 +23,11 @@ from ...discretization.fem._reference import FiniteElementSpec
 from ...discretization.finite_volume._riemann import (
     AbstractSymmetricTwoPointFluxPlan,
 )
+from ...typing import parse
 from .._entropy_pair import ConvexEntropyPair
 
 
-EntropyDGFormulation = Literal[
+EntropyDGFormulation: TypeAlias = Literal[
     "tensor_sbp",
     "generalized_sbp",
     "skew_modal",
@@ -114,11 +115,10 @@ class EntropyStableDGPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         boundary_contracts: Sequence[PhysicalBoundaryEntropyContract] = (),
     ) -> None:
-        formulation_ = str(formulation)
         tolerance_ = float(tolerance)
+        formulation_ = parse(formulation, EntropyDGFormulation, "formulation")
         if (
-            formulation_ not in ("tensor_sbp", "generalized_sbp", "skew_modal")
-            or not isinstance(entropy_pair, ConvexEntropyPair)
+            not isinstance(entropy_pair, ConvexEntropyPair)
             or not isinstance(volume_flux, AbstractSymmetricTwoPointFluxPlan)
             or not math.isfinite(tolerance_)
             or tolerance_ <= 0.0

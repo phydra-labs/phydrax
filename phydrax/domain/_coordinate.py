@@ -5,14 +5,15 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
-CoordinateKind = Literal["scalar", "array", "pytree", "graph"]
+CoordinateKind: TypeAlias = Literal["scalar", "array", "pytree", "graph"]
 
 
 class CoordinateSpec(StrictModule):
@@ -44,8 +45,7 @@ class CoordinateSpec(StrictModule):
                 raise ValueError("Coordinate event dimensions must be positive.")
         else:
             shape = None
-        if kind not in ("scalar", "array", "pytree", "graph"):
-            raise ValueError(f"Unknown coordinate kind {kind!r}.")
+        kind = parse(kind, CoordinateKind, "kind")
         if kind == "scalar" and shape != ():
             raise ValueError("Scalar coordinates must have event_shape=().")
         if kind in ("pytree", "graph") and shape is not None:

@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 from .._differentiation import DerivativeContract, DerivativeRoute, DerivativeSurface
 from .._iteration import IterationEvidence
 from .._strict import StrictModule
+from ..typing import parse
 from ._policies import DifferentiationMode, DifferentiationPolicy, MixedPrecisionPolicy
 from ._recycling import RecyclingState
 
@@ -574,8 +575,7 @@ class MatrixInversionResult(StrictModule):
             raise TypeError("diagnostics must be LinearSolveDiagnostics.")
         if not isinstance(provenance, LinearSolveProvenance):
             raise TypeError("provenance must be LinearSolveProvenance.")
-        if operation not in ("inverse", "pseudoinverse"):
-            raise ValueError("operation must be 'inverse' or 'pseudoinverse'.")
+        operation = parse(operation, MatrixInversionKind, "operation")
         matrix = jnp.asarray(value)
         if matrix.ndim < 2:
             raise ValueError("Matrix inversion values must have at least two axes.")
@@ -648,8 +648,7 @@ class LinearSolveCheckEvidence(StrictModule):
         nullspace_certificate_id: str | None,
         primal_valid: Any = True,
     ) -> None:
-        if kind not in ("primal", "adjoint"):
-            raise ValueError("kind must be 'primal' or 'adjoint'.")
+        kind = parse(kind, LinearSolveCheckKind, "kind")
         identifier = str(operator_id)
         if not identifier:
             raise ValueError("operator_id must be non-empty.")

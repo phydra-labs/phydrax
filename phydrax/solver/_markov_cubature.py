@@ -27,6 +27,7 @@ from ..stochastic._cubature_path import (
     straight_wiener_cubature_path,
     WienerCubaturePathData,
 )
+from ..typing import parse
 from ._differential import DifferentialProblem
 
 
@@ -151,8 +152,7 @@ class MarkovCubaturePlan(StrictModule):
         )
         if not isinstance(selected_recombination, PolynomialRecombination):
             raise TypeError("recombination must be PolynomialRecombination.")
-        if method not in ("weak-euler", "stratonovich-flow"):
-            raise ValueError("method must be 'weak-euler' or 'stratonovich-flow'.")
+        method = parse(method, MarkovCubatureMethod, "method")
         expanded = _positive_integer(
             maximum_expanded_particles, "maximum_expanded_particles"
         )

@@ -32,6 +32,7 @@ from ..nonlinear import (
     NonlinearTermination,
     solve_causal_recurrence,
 )
+from ..typing import parse
 from ._interleaved_nuts import HamiltonianMetric
 
 
@@ -80,8 +81,7 @@ class CausalHMCConfig(StrictModule):
         dense_cap = int(maximum_dense_dimension)
         if block_size < 1:
             raise ValueError("trajectory_block_size must be positive.")
-        if linearization not in ("dense-exact", "pair-hutchinson"):
-            raise ValueError("Unknown causal HMC linearization.")
+        linearization = parse(linearization, CausalHMCLinearization, "linearization")
         if probes < 1:
             raise ValueError("probe_count must be positive.")
         absolute = float(absolute_residual)
@@ -97,8 +97,7 @@ class CausalHMCConfig(StrictModule):
             raise ValueError("maximum_dense_dimension must be positive.")
         if not isfinite(damping) or damping <= 0.0:
             raise ValueError("initial_damping must be positive and finite.")
-        if failure_policy not in ("raise", "sequential"):
-            raise ValueError("failure_policy must be 'raise' or 'sequential'.")
+        failure_policy = parse(failure_policy, CausalHMCFailurePolicy, "failure_policy")
         self.trajectory_block_size = block_size
         self.linearization = linearization
         self.probe_count = probes

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._mna import AbstractMNAComponent, MNAStamp
 
 
@@ -39,9 +40,7 @@ class CircuitElementStateLayout(StrictModule):
         rate_scale: ArrayLike | None = None,
         residual_scale: ArrayLike | None = None,
     ) -> None:
-        roles_ = tuple(roles)
-        if any(value not in ("differential", "algebraic") for value in roles_):
-            raise ValueError("Unknown circuit element state role.")
+        roles_ = tuple(parse(value, CircuitVariableRole, "roles") for value in roles)
         size = len(roles_)
 
         def scale(value: ArrayLike | None, name: str) -> Array:

@@ -20,6 +20,7 @@ from .._dtype_names import precision_dtype_name
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._pairings import DiagonalPairing, EuclideanPairing
 from ._spaces import AbstractVectorSpace, ArraySpace, PyTreeSpace
 
@@ -62,15 +63,8 @@ class RealCoordinateEvidence(StrictModule, NonTrainableState):
         projection_kind: str,
         map_id: str,
     ) -> None:
-        if domain_kind not in ("full", "constrained_subspace"):
-            raise ValueError("Unknown real-coordinate domain kind.")
-        if norm_relation not in (
-            "isometry",
-            "scaled_isometry",
-            "coordinate_equivalence",
-            "unknown",
-        ):
-            raise ValueError("Unknown real-coordinate norm relation.")
+        domain_kind = parse(domain_kind, RealCoordinateDomainKind, "domain_kind")
+        norm_relation = parse(norm_relation, RealCoordinateNormRelation, "norm_relation")
         identifiers = tuple(
             str(value)
             for value in (

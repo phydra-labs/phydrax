@@ -16,6 +16,14 @@
   contract field of a module. Checks read only kind, rank, extent, and dtype
   metadata: they add no JAX operations and synchronize nothing. See the typing
   guide.
+- Closed selectors across the package are declared once as `TypeAlias`
+  `Literal` aliases and validated with `phydrax.typing.parse`: duplicated option
+  tables and inline membership checks were removed, equality chains over a whole
+  alias became exhaustive `match` statements, and constructors store the
+  canonical literal (for example a `numpy.str_` selector is stored as `str`).
+  Unsupported selector values still raise `ValueError`; non-string selector
+  values now raise `TypeError`, and selector error messages name the parameter.
+  `tools/audit_selectors.py` reports remaining duplication.
 - Domain geometry annotations use `phydrax.typing` forms with nominal point and
   spatial dimensions; `GeometryTransitionResult` opts into structural contracts.
   jaxtyping dtype and shape forms are refused by lint in package code.

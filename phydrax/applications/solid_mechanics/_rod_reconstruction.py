@@ -26,6 +26,7 @@ from ...linalg import (
     FunctionLinearOperator,
 )
 from ...metrix import QuaternionPoseStateGeometry
+from ...typing import parse
 from ._rod_reduction import (
     PreparedReducedRod,
     ReducedRodEvaluation,
@@ -56,12 +57,6 @@ def _positive_finite(name: str, value: float, /) -> float:
     if not isfinite(resolved) or resolved <= 0.0:
         raise ValueError(f"{name} must be finite and positive.")
     return resolved
-
-
-def _method(value: RodReconstructionMethod, /) -> RodReconstructionMethod:
-    if value not in ("auto", "pcs", "gvs"):
-        raise ValueError("method must be 'auto', 'pcs', or 'gvs'.")
-    return value
 
 
 def _unit_quaternion(value: ArrayLike, name: str, /) -> Array:
@@ -191,7 +186,7 @@ class RodReconstructionPlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(queries, RodFrameQueryPlan):
             raise TypeError("queries must be a RodFrameQueryPlan.")
-        method_ = _method(method)
+        method_ = parse(method, RodReconstructionMethod, "method")
         refinement_ = int(refinement)
         if refinement_ < 1 or refinement_ != refinement:
             raise ValueError("refinement must be a positive integer.")

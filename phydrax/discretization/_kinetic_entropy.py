@@ -16,9 +16,10 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-KineticEntropyRootStrategy = Literal["exact", "asymptotic", "hybrid"]
+KineticEntropyRootStrategy: TypeAlias = Literal["exact", "asymptotic", "hybrid"]
 # (alpha, lower, upper, active, newton steps, bisection steps, iterations)
 _RootCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
@@ -53,8 +54,7 @@ class KineticEntropyRootPlan(StrictModule, NonTrainableState):
         minimum_root: float = 1.0,
         maximum_root: float = 4.0,
     ) -> None:
-        if strategy not in ("exact", "asymptotic", "hybrid"):
-            raise ValueError(f"Unknown kinetic entropy root strategy {strategy!r}.")
+        strategy = parse(strategy, KineticEntropyRootStrategy, "strategy")
         steps = int(maximum_steps)
         residual = float(residual_tolerance)
         approximation = float(approximation_tolerance)

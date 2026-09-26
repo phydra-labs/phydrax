@@ -24,6 +24,7 @@ from phydrax._interpolation import linear_interpolate
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...stochastic import WienerRealization
+from ...typing import parse
 from ..core import PhysicalLaw, PricingLaw, StressLaw
 
 
@@ -343,8 +344,7 @@ class LiborMarketModel(StrictModule):
         ids = tuple(_identifier(value, "factor_id") for value in factor_ids)
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("factor_ids must be non-empty and unique.")
-        if measure not in ("spot", "terminal"):
-            raise ValueError("measure must be 'spot' or 'terminal'.")
+        measure = parse(measure, LMMMeasure, "measure")
         forward_count = times.shape[0] - 1
         shifts = _finite_vector(displacements, "displacements", minimum_size=1)
         sigma = jnp.asarray(volatility, dtype=jnp.float64)

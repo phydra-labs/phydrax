@@ -15,6 +15,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import normalize_least_squares_design
 from ..._strict import StrictModule
+from ...typing import parse
 from .._layout import InputLayout, StateLayout
 from .._trajectory import TrajectoryData
 from ._features import AbstractFeatureLibrary
@@ -531,10 +532,8 @@ class IntegralSINDyFormulation(AbstractSINDyFormulation):
         quadrature: WindowQuadrature = "trapezoid",
         boundary: WindowBoundary = "drop",
     ) -> None:
-        if quadrature not in ("left", "trapezoid"):
-            raise ValueError("quadrature must be 'left' or 'trapezoid'.")
-        if boundary not in ("drop", "partial"):
-            raise ValueError("boundary must be 'drop' or 'partial'.")
+        quadrature = parse(quadrature, WindowQuadrature, "quadrature")
+        boundary = parse(boundary, WindowBoundary, "boundary")
         if int(window_size) < 1 or int(stride) < 1:
             raise ValueError("window_size and stride must be positive.")
         self.formulation = "integral"
@@ -635,10 +634,8 @@ class WeakSINDyFormulation(AbstractSINDyFormulation):
             or len(set(orders)) != len(orders)
         ):
             raise ValueError("test_orders must contain unique positive integers.")
-        if quadrature not in ("left", "trapezoid"):
-            raise ValueError("quadrature must be 'left' or 'trapezoid'.")
-        if boundary not in ("drop", "partial"):
-            raise ValueError("boundary must be 'drop' or 'partial'.")
+        quadrature = parse(quadrature, WindowQuadrature, "quadrature")
+        boundary = parse(boundary, WindowBoundary, "boundary")
         if int(window_size) < 1 or int(stride) < 1:
             raise ValueError("window_size and stride must be positive.")
         self.formulation = "weak"

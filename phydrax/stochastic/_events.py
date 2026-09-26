@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._trajectory import StochasticTrajectory
 
 
@@ -27,18 +28,6 @@ PathPredicate: TypeAlias = Callable[[Array, Array], ArrayLike]
 def _identifier(value: str, name: str, /) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a non-empty string.")
-    return value
-
-
-def _direction(value: str, /) -> CrossingDirection:
-    if value not in ("up", "down", "either"):
-        raise ValueError("direction must be 'up', 'down', or 'either'.")
-    return value
-
-
-def _localization(value: str, /) -> EventLocalization:
-    if value not in ("linear", "discrete"):
-        raise ValueError("localization must be 'linear' or 'discrete'.")
     return value
 
 
@@ -148,8 +137,8 @@ class ThresholdCrossingEvent(StrictModule):
             raise ValueError("threshold must be finite.")
         self.observable = observable
         self.threshold = value
-        self.direction = _direction(direction)
-        self.localization = _localization(localization)
+        self.direction = parse(direction, CrossingDirection, "direction")
+        self.localization = parse(localization, EventLocalization, "localization")
         self.event_id = _identifier(event_id, "event_id")
 
 
@@ -179,8 +168,8 @@ class AccumulatedPathEvent(StrictModule):
             raise ValueError("threshold must be finite.")
         self.rate = rate
         self.threshold = value
-        self.direction = _direction(direction)
-        self.localization = _localization(localization)
+        self.direction = parse(direction, CrossingDirection, "direction")
+        self.localization = parse(localization, EventLocalization, "localization")
         self.event_id = _identifier(event_id, "event_id")
 
 

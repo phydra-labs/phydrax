@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -34,9 +34,10 @@ from ...solver._channel_flow import (
     ChannelSBDF2State,
     PreparedChannelSBDF2Method,
 )
+from ...typing import parse
 
 
-InflowSpatialMode = Literal["compact", "spectral"]
+InflowSpatialMode: TypeAlias = Literal["compact", "spectral"]
 
 
 def _velocity_plus(
@@ -575,8 +576,7 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
         compatibility_tolerance: float = 1.0e-10,
         maximum_preparation_bytes: int = 256 * 1024 * 1024,
     ) -> None:
-        if mode not in ("compact", "spectral"):
-            raise ValueError("Inflow mode must be 'compact' or 'spectral'.")
+        mode = parse(mode, InflowSpatialMode, "mode")
         radius = float(compact_support_radius)
         covariance_error = float(covariance_tolerance)
         compatibility = float(compatibility_tolerance)

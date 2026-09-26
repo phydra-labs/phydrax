@@ -16,6 +16,7 @@ from jax.typing import ArrayLike, DTypeLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._dem_cohesion import (
     AbstractDEMCohesionPlan,
     BagheriCapillaryBridgePlan,
@@ -50,10 +51,10 @@ class DEMBarrierCapillaryPlan(StrictModule, NonTrainableState):
         identifier = str(barrier_id)
         if not identifier:
             raise ValueError("barrier_id must be nonempty.")
-        if geometry_policy not in ("planar", "isotropic_curvature"):
-            raise ValueError("geometry_policy must be 'planar' or 'isotropic_curvature'.")
-        if law not in ("linear", "bagheri"):
-            raise ValueError("law must be 'linear' or 'bagheri'.")
+        geometry_policy = parse(
+            geometry_policy, DEMBarrierGeometryPolicy, "geometry_policy"
+        )
+        law = parse(law, DEMBarrierCapillaryLaw, "law")
         fraction = float(particle_liquid_fraction)
         reservoir = float(initial_barrier_film_volume)
         if not np.isfinite(fraction) or fraction < 0.0 or fraction > 1.0:

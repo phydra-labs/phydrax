@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._diffusion import (
     ConservativeAdvectionPlan,
     ConservativeBoundaryCondition,
@@ -59,8 +60,7 @@ class MACThermalBoundaryCondition(StrictModule, NonTrainableState):
         *,
         function_id: str | None = None,
     ) -> None:
-        if kind not in ("periodic", "temperature", "adiabatic", "heat_flux"):
-            raise ValueError("Unknown MAC thermal boundary kind.")
+        kind = parse(kind, MACThermalBoundaryKind, "kind")
         if callable(value):
             if kind not in ("temperature", "heat_flux"):
                 raise ValueError(
@@ -304,8 +304,7 @@ class MACEnthalpyTransportPlan(StrictModule, NonTrainableState):
             raise TypeError("boundaries must be MACThermalBoundarySet.")
         if boundaries.operators.prepared_id != operators.prepared_id:
             raise ValueError("MAC enthalpy boundaries must share prepared operators.")
-        if advection not in ("centered", "upwind"):
-            raise ValueError("MAC enthalpy advection must be centered or upwind.")
+        advection = parse(advection, MACEnthalpyAdvection, "advection")
         self.operators = operators
         self.boundaries = boundaries
         self.advection = advection

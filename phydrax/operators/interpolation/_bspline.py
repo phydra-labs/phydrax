@@ -37,7 +37,7 @@ from ...linalg import (
     RankPolicy,
     solve,
 )
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
 BSplineFitMode: TypeAlias = Literal["interpolate", "least_squares", "smooth"]
@@ -79,8 +79,7 @@ class BSplineInterpolationPlan(StrictModule, NonTrainableState):
             or num_intervals < 1
         ):
             raise ValueError("num_intervals must be a positive integer or None.")
-        if mode not in ("interpolate", "least_squares", "smooth"):
-            raise ValueError(f"Unknown B-spline fit mode: {mode!r}.")
+        mode = parse(mode, BSplineFitMode, "mode")
         smoothing_ = (
             (1.0e-4 if mode == "smooth" else 0.0)
             if smoothing is None
@@ -104,8 +103,7 @@ class BSplineInterpolationPlan(StrictModule, NonTrainableState):
             raise ValueError("regularization_order must lie between zero and degree.")
         if bounds not in ("error", "clip", "extrapolate", "fill"):
             raise ValueError(f"Unknown B-spline bounds mode: {bounds!r}.")
-        if boundary not in ("open", "natural", "periodic"):
-            raise ValueError(f"Unknown B-spline boundary mode: {boundary!r}.")
+        boundary = parse(boundary, BSplineBoundaryMode, "boundary")
         if boundary == "natural" and degree_ < 2:
             raise ValueError("Natural B-spline boundaries require degree at least two.")
         if boundary == "periodic" and degree_ < 1:

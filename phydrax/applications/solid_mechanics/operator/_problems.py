@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -32,7 +32,7 @@ from ....nn.operator.training._risk import (
     MechanicsCaseReduction,
     MechanicsCaseReductionResult,
 )
-from ....typing import PRNGKey
+from ....typing import parse, PRNGKey
 from ._cases import (
     MechanicsCaseBuilder,
     MechanicsOperatorCase,
@@ -41,7 +41,9 @@ from ._cases import (
 
 
 MechanicsOperatorFormulation = Literal["conservative", "residual", "mixed"]
-MechanicsCaseFunctionalKind = Literal["energy", "residual", "mixed_block", "gauge"]
+MechanicsCaseFunctionalKind: TypeAlias = Literal[
+    "energy", "residual", "mixed_block", "gauge"
+]
 
 
 class MechanicsCaseFunctional(StrictModule, NonTrainableState):
@@ -85,8 +87,7 @@ class MechanicsCaseFunctional(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mechanics functional names, query names, and IDs must be non-empty."
             )
-        if kind not in ("energy", "residual", "mixed_block", "gauge"):
-            raise ValueError("Unknown mechanics case functional kind.")
+        kind = parse(kind, MechanicsCaseFunctionalKind, "kind")
         if not callable(evaluator):
             raise TypeError("Mechanics case functional evaluators must be callable.")
         if validity is not None and not callable(validity):

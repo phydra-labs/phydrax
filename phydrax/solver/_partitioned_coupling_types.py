@@ -25,6 +25,7 @@ from ..nonlinear import (
     ImplicitRootDerivativePolicy,
     NonlinearTermination,
 )
+from ..typing import parse
 from ..units import UnitDefinition
 
 
@@ -241,8 +242,7 @@ class CouplingPort(StrictModule, NonTrainableState):
         frame: str = "scalar",
         reference_scale: float,
     ) -> None:
-        if direction not in ("input", "output"):
-            raise ValueError("Coupling port direction must be 'input' or 'output'.")
+        direction = parse(direction, CouplingDirection, "direction")
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("Coupling port space must be an AbstractVectorSpace.")
         if field_space is not None:
@@ -457,8 +457,7 @@ class CouplingSweep(StrictModule, NonTrainableState):
         *,
         subsystem_order: tuple[str, ...] = (),
     ) -> None:
-        if kind not in ("jacobi", "gauss-seidel"):
-            raise ValueError("Coupling sweep kind must be 'jacobi' or 'gauss-seidel'.")
+        kind = parse(kind, CouplingSweepKind, "kind")
         order = tuple(
             _identifier(value, "sweep subsystem ID") for value in subsystem_order
         )
@@ -605,10 +604,7 @@ class CouplingDifferentiationPolicy(StrictModule, NonTrainableState):
     policy_id: str = eqx.field(static=True)
 
     def __init__(self, mode: CouplingDifferentiationMode = "none", /) -> None:
-        if mode not in ("none", "algorithmic", "implicit"):
-            raise ValueError(
-                "Coupling differentiation mode must be 'none', 'algorithmic', or 'implicit'."
-            )
+        mode = parse(mode, CouplingDifferentiationMode, "mode")
         self.mode = mode
         self.policy_id = f"coupling-differentiation:{mode}"
 

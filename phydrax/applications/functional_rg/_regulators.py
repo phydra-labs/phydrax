@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import enum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,9 +19,10 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics import gauss_legendre_data, QuadratureRuleData
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-RegulatorName = Literal["optimized", "exponential", "power-law"]
+RegulatorName: TypeAlias = Literal["optimized", "exponential", "power-law"]
 
 
 class FunctionalRGStatus(enum.IntEnum):
@@ -40,8 +41,7 @@ class Regulator(StrictModule, NonTrainableState):
     regulator_id: str = eqx.field(static=True)
 
     def __init__(self, family: RegulatorName, /, *, power: float = 1.0) -> None:
-        if family not in ("optimized", "exponential", "power-law"):
-            raise ValueError("Unknown functional-RG regulator family.")
+        family = parse(family, RegulatorName, "family")
         power_ = float(power)
         if not np.isfinite(power_) or power_ <= 0.0:
             raise ValueError("Regulator power must be finite and positive.")

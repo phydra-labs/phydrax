@@ -8,7 +8,7 @@ from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import replace
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -33,8 +33,10 @@ from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import parse
 
-BranchFusion = Literal["sum", "product", "concat"]
+
+BranchFusion: TypeAlias = Literal["sum", "product", "concat"]
 
 
 def _query_coordinates(
@@ -550,7 +552,6 @@ class DeepONet(AbstractOperatorModel):
         self.latent_size = int(latent_size)
         self.out_size = out_size
         self.in_size = in_size
-        self.fusion = fusion
         self.branch_mixer = branch_mixer
         self.source_key = source_key
         self.query_chunk_size = (
@@ -567,8 +568,8 @@ class DeepONet(AbstractOperatorModel):
             raise ValueError("coord_dim and latent_size must be positive.")
         if self.query_chunk_size is not None and self.query_chunk_size <= 0:
             raise ValueError("query_chunk_size must be positive.")
-        if fusion not in ("sum", "product", "concat"):
-            raise ValueError("fusion must be 'sum', 'product', or 'concat'.")
+        fusion = parse(fusion, BranchFusion, "fusion")
+        self.fusion = fusion
 
         if isinstance(branch, Mapping):
             branch_items = tuple((str(name), encoder) for name, encoder in branch.items())

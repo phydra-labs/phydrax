@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 
 
 IsingSigmaChannel: TypeAlias = Literal["identity", "energy"]
@@ -247,13 +248,11 @@ class IsingSigmaVirasoroPlan(StrictModule):
 
     def __init__(self, cross_ratios: ArrayLike, channel: IsingSigmaChannel, /) -> None:
         points = np.asarray(cross_ratios, dtype=np.float64)
-        channel_value = str(channel)
         if points.ndim != 1 or points.size == 0 or not np.all(np.isfinite(points)):
             raise ValueError("cross_ratios must be one nonempty finite vector.")
         if np.any((points <= 0.0) | (points >= 1.0)):
             raise ValueError("Ising sigma cross ratios must lie in (0, 1).")
-        if channel_value not in {"identity", "energy"}:
-            raise ValueError("Ising sigma channel must be identity or energy.")
+        channel_value = parse(channel, IsingSigmaChannel, "channel")
         self.cross_ratios = jnp.asarray(points)
         self.channel = channel_value
         self.plan_id = canonical_fingerprint(

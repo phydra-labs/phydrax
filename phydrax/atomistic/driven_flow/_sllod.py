@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._driven_stress import (
     _atomistic_driven_stress_from_components,
     AtomisticDrivenStressPlan,
@@ -27,7 +28,7 @@ from .._potential_program import AtomisticHamiltonianEvaluation
 from ._cell import EvolvingFlowCellPlan, EvolvingFlowCellState, EvolvingFlowCellStepResult
 
 
-SLLODThermostatKind = Literal["none", "gaussian-isokinetic"]
+SLLODThermostatKind: TypeAlias = Literal["none", "gaussian-isokinetic"]
 
 
 class SLLODIntegratorPlan(StrictModule, NonTrainableState):
@@ -51,8 +52,7 @@ class SLLODIntegratorPlan(StrictModule, NonTrainableState):
         kinetic_tolerance = float(kinetic_relative_tolerance)
         if not math.isfinite(step) or step <= 0.0:
             raise ValueError("SLLOD time_step must be finite and positive.")
-        if thermostat not in ("none", "gaussian-isokinetic"):
-            raise ValueError("Unknown SLLOD thermostat.")
+        thermostat = parse(thermostat, SLLODThermostatKind, "thermostat")
         if not math.isfinite(kinetic_tolerance) or kinetic_tolerance < 0.0:
             raise ValueError("kinetic_relative_tolerance must be finite and nonnegative.")
         if maximum is not None and (not math.isfinite(maximum) or maximum <= 0.0):

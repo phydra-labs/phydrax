@@ -22,6 +22,7 @@ from phydrax import ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._orthogonal import OrthogonalRuleData
 
 
@@ -248,10 +249,7 @@ def gegenbauer_connection_data(
     maximum_bytes = _positive_integer(
         maximum_construction_bytes, "maximum_construction_bytes"
     )
-    if normalization not in ("standard", "monic", "orthonormal"):
-        raise ValueError(
-            "Gegenbauer normalization must be 'standard', 'monic', or 'orthonormal'."
-        )
+    normalization = parse(normalization, GegenbauerNormalization, "normalization")
     if normalization == "standard" and target_alpha == 0.0 and degree_ > 0:
         raise ValueError("The standard Gegenbauer target basis is degenerate at beta=0.")
 

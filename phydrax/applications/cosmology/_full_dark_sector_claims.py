@@ -37,6 +37,7 @@ from ...qualification import (
     SupportTuple,
 )
 from ...qualification._registry import SupportValue
+from ...typing import parse
 from ..relativistic_scattering._unit_contract import (
     LocalRelativisticFramePlan,
     RelativisticUnitContract,
@@ -1366,13 +1367,9 @@ class PromotedFullDarkSectorClaim(StrictModule, NonTrainableState):
         expected_channel = f"{definition.promotion_channel}.{claim.claim_id}"
         if promotion.channel != expected_channel:
             raise ValueError("Promotion channel does not bind this exact claim ID.")
-        if qualification_level not in (
-            "experimental",
-            "numerically-qualified",
-            "scientifically-qualified",
-            "production",
-        ):
-            raise ValueError("Unknown full dark-sector qualification level.")
+        qualification_level = parse(
+            qualification_level, FullDarkSectorQualificationLevel, "qualification_level"
+        )
         if type(admitted) is not bool:
             raise TypeError("admitted must be a Boolean.")
         unsupported = tuple(
@@ -1454,13 +1451,9 @@ def bind_full_dark_sector_promotion(
     expected_differentiation = definition.differentiation.contract()
     if differentiation.contract_id != expected_differentiation.contract_id:
         raise ValueError("Requested derivative gate does not exactly match the claim.")
-    if qualification_level not in (
-        "experimental",
-        "numerically-qualified",
-        "scientifically-qualified",
-        "production",
-    ):
-        raise ValueError("Unknown full dark-sector qualification level.")
+    qualification_level = parse(
+        qualification_level, FullDarkSectorQualificationLevel, "qualification_level"
+    )
     expected_channel = full_dark_sector_promotion_channel(claim)
     if promotion.channel != expected_channel:
         raise ValueError("Promotion channel does not bind this exact claim ID.")

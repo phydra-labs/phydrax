@@ -28,6 +28,7 @@ from ..operators.quantum._propagation import (
     unitarity_residual,
 )
 from ..operators.quantum._register import HilbertRegisterLayout
+from ..typing import parse
 
 
 RouteStrategy: TypeAlias = Literal["swap", "interval"]
@@ -142,8 +143,7 @@ class QuantumCompilationPolicy(StrictModule):
     ) -> None:
         swaps = int(maximum_swaps)
         tolerance = float(gate_tolerance)
-        if route_strategy not in ("swap", "interval"):
-            raise ValueError("route_strategy must be 'swap' or 'interval'.")
+        route_strategy = parse(route_strategy, RouteStrategy, "route_strategy")
         if swaps < 0 or not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Compilation swap/tolerance policy is invalid.")
         self.route_strategy = route_strategy

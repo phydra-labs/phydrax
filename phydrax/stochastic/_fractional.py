@@ -19,7 +19,7 @@ from jax.typing import ArrayLike, DTypeLike
 
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -230,8 +230,7 @@ def _sampling_strategy(
     _ResolvedFractionalGaussianSamplingMethod,
     str,
 ]:
-    if method not in ("dense", "davies-harte", "auto"):
-        raise ValueError("method must be 'dense', 'davies-harte', or 'auto'.")
+    method = parse(method, FractionalGaussianSamplingMethod, "method")
     if method == "dense":
         return _dense_sampler(process, nodes), "dense", "explicit:dense"
 
@@ -541,8 +540,9 @@ class FractionalGaussianRealization(StrictModule):
             raise ValueError("query times must be non-empty and finite.")
         if bool(jnp.any(query < self.support[0]) | jnp.any(query > self.support[1])):
             raise ValueError("query times must lie inside realization support.")
-        if interpolation not in ("grid", "linear"):
-            raise ValueError("interpolation must be 'grid' or 'linear'.")
+        interpolation = parse(
+            interpolation, FractionalGaussianInterpolation, "interpolation"
+        )
         if interpolation == "grid":
             indices = jnp.searchsorted(self.grid, query)
             indices = jnp.clip(indices, 0, self.grid.size - 1)

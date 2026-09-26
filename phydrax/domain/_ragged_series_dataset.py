@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,7 +20,7 @@ import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -34,9 +34,15 @@ if TYPE_CHECKING:
 
 
 RAGGED_SERIES_INDEX_KEY = "__phydrax_ragged_series_index__"
-RaggedSeriesMeasureMode = Literal["probability", "count"]
-RaggedSeriesSampling = Literal[
+RaggedSeriesMeasureMode: TypeAlias = Literal["probability", "count"]
+RaggedSeriesSampling: TypeAlias = Literal[
     "full",
+    "points_uniform",
+    "window_uniform",
+    "prefix",
+    "suffix",
+]
+RaggedSeriesWindowSampling: TypeAlias = Literal[
     "points_uniform",
     "window_uniform",
     "prefix",
@@ -219,8 +225,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         dt_arr = _as_scalar("dt", dt)
         if bool(dt_arr <= 0):
             raise ValueError("dt must be positive.")
-        if measure not in ("probability", "count"):
-            raise ValueError("measure must be 'probability' or 'count'.")
+        measure = parse(measure, RaggedSeriesMeasureMode, "measure")
 
         self.static = static_arrays
         self.series = series_arrays
@@ -473,7 +478,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         /,
         *,
         num_series_points: int,
-        sampling: RaggedSeriesSampling,
+        sampling: RaggedSeriesWindowSampling,
         key: PRNGKey = DOC_KEY0,
     ) -> dict[str, Any]:
         """Return fixed-width sampled series views for selected cases.
@@ -486,45 +491,41 @@ class RaggedSeriesDatasetDomain(JointFactor):
         k = int(num_series_points)
         if k <= 0:
             raise ValueError("num_series_points must be positive.")
-        sampling_str = str(sampling)
-        if sampling_str not in (
-            "points_uniform",
-            "window_uniform",
-            "prefix",
-            "suffix",
-        ):
-            raise ValueError(
-                "sampled_input_rows sampling must be 'points_uniform', 'window_uniform', 'prefix', or 'suffix'."
-            )
+        sampling = parse(sampling, RaggedSeriesWindowSampling, "sampling")
 
         lengths = self.lengths[idx]
         arange_k = jnp.arange(k, dtype=jnp.int32)
         arange_grid = jnp.broadcast_to(arange_k[None, :], (idx.shape[0], k))
 
-        if sampling_str == "points_uniform":
-            u = jr.uniform(key, shape=(idx.shape[0], k))
-            random_pos = jnp.floor(u * lengths[:, None].astype("float64")).astype(
-                jnp.int32
-            )
-            positions = jnp.where(lengths[:, None] >= k, random_pos, arange_grid)
-            mask = jnp.where(
-                lengths[:, None] >= k,
-                jnp.ones((idx.shape[0], k), dtype=jnp.bool_),
-                arange_grid < lengths[:, None],
-            )
-        elif sampling_str == "window_uniform":
-            max_start = jnp.maximum(lengths - k, 0)
-            u = jr.uniform(key, shape=(idx.shape[0],))
-            start = jnp.floor(u * (max_start.astype("float64") + 1.0)).astype(jnp.int32)
-            positions = start[:, None] + arange_grid
-            mask = positions < lengths[:, None]
-        elif sampling_str == "prefix":
-            positions = arange_grid
-            mask = positions < lengths[:, None]
-        else:
-            start = jnp.maximum(lengths - k, 0)
-            positions = start[:, None] + arange_grid
-            mask = positions < lengths[:, None]
+        match sampling:
+            case "points_uniform":
+                u = jr.uniform(key, shape=(idx.shape[0], k))
+                random_pos = jnp.floor(u * lengths[:, None].astype("float64")).astype(
+                    jnp.int32
+                )
+                positions = jnp.where(lengths[:, None] >= k, random_pos, arange_grid)
+                mask = jnp.where(
+                    lengths[:, None] >= k,
+                    jnp.ones((idx.shape[0], k), dtype=jnp.bool_),
+                    arange_grid < lengths[:, None],
+                )
+            case "window_uniform":
+                max_start = jnp.maximum(lengths - k, 0)
+                u = jr.uniform(key, shape=(idx.shape[0],))
+                start = jnp.floor(u * (max_start.astype("float64") + 1.0)).astype(
+                    jnp.int32
+                )
+                positions = start[:, None] + arange_grid
+                mask = positions < lengths[:, None]
+            case "prefix":
+                positions = arange_grid
+                mask = positions < lengths[:, None]
+            case "suffix":
+                start = jnp.maximum(lengths - k, 0)
+                positions = start[:, None] + arange_grid
+                mask = positions < lengths[:, None]
+            case _:
+                assert_never(sampling)
 
         positions = jnp.minimum(positions, lengths[:, None] - 1)
         return self._rows_from_positions(idx, positions, mask)
@@ -611,7 +612,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         /,
         *,
         num_series_points: int,
-        sampling: RaggedSeriesSampling = "points_uniform",
+        sampling: RaggedSeriesWindowSampling = "points_uniform",
         structure: SampleLayout | None = None,
         key: PRNGKey = DOC_KEY0,
     ) -> PointBatch:
@@ -706,4 +707,5 @@ __all__ = [
     "RaggedSeriesDatasetDomain",
     "RaggedSeriesMeasureMode",
     "RaggedSeriesSampling",
+    "RaggedSeriesWindowSampling",
 ]

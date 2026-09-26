@@ -56,6 +56,7 @@ from ..sparse import (
     SparseDerivativeVerification,
     verify_sparse_derivative,
 )
+from ..typing import parse
 from ._constraints import TerminalConstraint
 from ._dynamics import DifferentialControlDynamics
 from ._problem import _identifier, ControlProblem
@@ -201,10 +202,8 @@ class DirectCollocationDerivativePolicy(StrictModule):
         verify: bool = True,
         num_verification_probes: int = 3,
     ) -> None:
-        if compiler not in ("auto", "native"):
-            raise ValueError("compiler must be 'auto' or 'native'.")
-        if hessian not in ("limited-memory", "exact-sparse"):
-            raise ValueError("hessian must be 'limited-memory' or 'exact-sparse'.")
+        compiler = parse(compiler, SparseDerivativeCompiler, "compiler")
+        hessian = parse(hessian, DirectCollocationHessianMode, "hessian")
         chunk = None if chunk_size is None else int(chunk_size)
         if chunk is not None and chunk < 1:
             raise ValueError("chunk_size must be positive or None.")

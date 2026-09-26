@@ -16,6 +16,7 @@ from .._dtype_names import inexact_result_type
 from .._numerics import solve_weighted_least_squares
 from .._strict import StrictModule
 from ..optim import minimize, NewtonTrustRegion, OptimizationTermination
+from ..typing import parse
 
 
 ConditionalVolatilityKind: TypeAlias = Literal["garch", "gjr-garch", "egarch"]
@@ -70,8 +71,7 @@ class GARCHModel(StrictModule):
         gamma: ArrayLike = 0.0,
         kind: ConditionalVolatilityKind = "garch",
     ) -> None:
-        if kind not in ("garch", "gjr-garch", "egarch"):
-            raise ValueError("kind must be 'garch', 'gjr-garch', or 'egarch'.")
+        kind = parse(kind, ConditionalVolatilityKind, "kind")
         dtype = inexact_result_type(omega, alpha, beta, gamma)
         omega_ = jnp.asarray(omega, dtype=dtype)
         alpha_ = jnp.asarray(alpha, dtype=dtype)

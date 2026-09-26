@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Literal, Self, TypeAlias
 
+from ..typing import parse
+
 
 VariableKind: TypeAlias = Literal["across", "through"]
 
@@ -17,8 +19,9 @@ class ConnectorVariable:
     unit: str
 
     def __post_init__(self) -> None:
-        if not self.name or not self.unit or self.kind not in ("across", "through"):
+        if not self.name or not self.unit:
             raise ValueError("Connector variable invalid.")
+        object.__setattr__(self, "kind", parse(self.kind, VariableKind, "kind"))
 
 
 @dataclass(frozen=True, slots=True)

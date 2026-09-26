@@ -28,6 +28,7 @@ from ...linalg import (
     RankPolicy,
     solve,
 )
+from ...typing import parse
 from ._sindy_design import SINDyDesign
 from ._status import (
     IDENTIFICATION_INSUFFICIENT_SAMPLES,
@@ -179,8 +180,7 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
             raise ValueError("max_iterations must be positive.")
         if rcond is not None and (not np.isfinite(rcond) or rcond < 0.0):
             raise ValueError("rcond must be finite and nonnegative or None.")
-        if threshold_space not in ("normalized", "physical"):
-            raise ValueError("threshold_space must be 'normalized' or 'physical'.")
+        threshold_space = parse(threshold_space, ThresholdSpace, "threshold_space")
         resolved_zero = None if zero_tolerance is None else float(zero_tolerance)
         if resolved_zero is not None and (
             not np.isfinite(resolved_zero) or resolved_zero < 0.0

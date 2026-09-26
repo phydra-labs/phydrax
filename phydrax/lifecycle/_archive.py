@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import Any, get_args, Literal, Protocol, TypeAlias
 
 import numpy as np
 
@@ -113,9 +113,6 @@ class LifecycleQuery:
 SupportBundleDisclosure: TypeAlias = Literal[
     "arrays", "payloads", "paths", "identifiers", "free-text", "secrets"
 ]
-_FULL_SUPPORT_DISCLOSURE = frozenset(
-    {"arrays", "payloads", "paths", "identifiers", "free-text", "secrets"}
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +148,7 @@ class SupportBundleAuthorization:
         ):
             raise ValueError("Support authorization time must be a non-negative integer.")
         disclosures = frozenset(self.disclosures)
-        if disclosures != _FULL_SUPPORT_DISCLOSURE:
+        if disclosures != frozenset(get_args(SupportBundleDisclosure)):
             raise ValueError(
                 "Full-archive support authorization must explicitly grant every sensitive disclosure category."
             )

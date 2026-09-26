@@ -15,6 +15,7 @@ from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.sparse import EdgeRelation
 
+from ...typing import parse
 from ._morton import MortonAddressPlan
 from ._plane_schedule import MortonPlaneSchedulePlan
 
@@ -176,8 +177,9 @@ class MortonNeighborQueryPlan(StrictModule):
             raise ValueError(
                 "maximum_candidates must lie in [maximum_neighbors, source_capacity]."
             )
-        if distance_backend not in ("jax", "pallas"):
-            raise ValueError("distance_backend must be 'jax' or 'pallas'.")
+        distance_backend = parse(
+            distance_backend, SpatialDistanceBackend, "distance_backend"
+        )
         schedule = MortonPlaneSchedulePlan(
             address_plan,
             sources,
@@ -439,8 +441,9 @@ class MortonRadiusRelationPlan(StrictModule):
             raise ValueError("source_capacity and target_capacity must be positive.")
         if pairs < 0:
             raise ValueError("maximum_pairs must be nonnegative.")
-        if distance_backend not in ("jax", "pallas"):
-            raise ValueError("distance_backend must be 'jax' or 'pallas'.")
+        distance_backend = parse(
+            distance_backend, SpatialDistanceBackend, "distance_backend"
+        )
         schedule = MortonPlaneSchedulePlan(
             address_plan,
             sources,

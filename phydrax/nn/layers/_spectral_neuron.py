@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from numbers import Integral
-from typing import Any, cast, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -28,7 +28,7 @@ from ..._strict import StrictModule
 from ..._symmetric_coordinates import smat, svec, symmetric_packed_dimension
 from ..._trainable import NonTrainableState
 from ...linalg import HermitianPrecisionPolicy
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, network_randomness
 from .._initializers import _initializer_dict
@@ -37,8 +37,7 @@ from .._utils import _canonical_size, _get_size, _get_value_shape, SizeLike
 from ..parameters import PositiveSemidefiniteTransform
 
 
-_Monotonicity = Literal["free", "increasing", "decreasing"]
-_MONOTONICITY_MODES = frozenset(("free", "increasing", "decreasing"))
+_Monotonicity: TypeAlias = Literal["free", "increasing", "decreasing"]
 _PSD_TRANSFORM = PositiveSemidefiniteTransform()
 
 
@@ -206,12 +205,9 @@ class SpectralNeuron(_AbstractBaseModel):
             raise ValueError(
                 "SpectralNeuron monotonicity must have one entry per input feature."
             )
-        if any(mode not in _MONOTONICITY_MODES for mode in modes):
-            raise ValueError(
-                "SpectralNeuron monotonicity entries must be 'free', 'increasing', or 'decreasing'."
-            )
-        # Every entry was validated against _MONOTONICITY_MODES above.
-        canonical_modes = cast(tuple[_Monotonicity, ...], tuple(modes))
+        canonical_modes = tuple(
+            parse(mode, _Monotonicity, "monotonicity") for mode in modes
+        )
         free_indices = tuple(
             i for i, mode in enumerate(canonical_modes) if mode == "free"
         )

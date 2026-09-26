@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._cut_transition import MultivaluedCutCellTransition
 from ._mapped_geometry import CanonicalMappedGeometryPlan, CanonicalMappedGeometryState
 
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from ...solver._hybrid_event import HybridEventActionResult
 
 
-BlockAMRDerivativeMode = Literal["frozen-history", "event-aware", "relaxed"]
+BlockAMRDerivativeMode: TypeAlias = Literal["frozen-history", "event-aware", "relaxed"]
 
 
 class BlockAMRDerivativePolicy(StrictModule, NonTrainableState):
@@ -51,8 +52,7 @@ class BlockAMRDerivativePolicy(StrictModule, NonTrainableState):
         topology = float(minimum_topology_margin)
         transversality = float(minimum_transversality)
         temperature = float(relaxation_temperature)
-        if mode not in ("frozen-history", "event-aware", "relaxed"):
-            raise ValueError("Unknown block-AMR derivative mode.")
+        mode = parse(mode, BlockAMRDerivativeMode, "mode")
         if any(
             not np.isfinite(value) or value <= 0.0
             for value in (topology, transversality, temperature)

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,10 +17,11 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-DatasetSplit = Literal["train", "validation", "test"]
-PartitionLevel = Literal["case", "trajectory", "realization", "time_block"]
+DatasetSplit: TypeAlias = Literal["train", "validation", "test"]
+PartitionLevel: TypeAlias = Literal["case", "trajectory", "realization", "time_block"]
 
 
 @runtime_checkable
@@ -484,13 +485,9 @@ class PartitionAssignment(StrictModule, NonTrainableState):
         sample = str(sample_id).strip()
         group = tuple(str(value).strip() for value in group_key)
         split_ = str(split).strip()
-        if (
-            not sample
-            or not group
-            or any(not value for value in group)
-            or split_ not in ("train", "validation", "test")
-        ):
+        if not sample or not group or any(not value for value in group):
             raise ValueError("Partition assignment is invalid.")
+        split_ = parse(split_, DatasetSplit, "split")
         self.sample_id = sample
         self.group_key = group
         self.split = split_
@@ -527,9 +524,9 @@ class LeakageSafePartitionPlan(StrictModule, NonTrainableState):
             float(value) for value in (train_fraction, validation_fraction, test_fraction)
         )
         salt_ = str(salt).strip()
+        level_ = parse(level_, PartitionLevel, "level")
         if (
-            level_ not in ("case", "trajectory", "realization", "time_block")
-            or any(not np.isfinite(value) or value < 0.0 for value in fractions)
+            any(not np.isfinite(value) or value < 0.0 for value in fractions)
             or not np.isclose(sum(fractions), 1.0, rtol=0.0, atol=1e-12)
             or fractions[0] <= 0.0
             or not salt_
@@ -623,8 +620,7 @@ class LeakageSafePartition(StrictModule, NonTrainableState):
 
     def sample_ids(self, split: DatasetSplit, /) -> tuple[str, ...]:
         split_ = str(split).strip()
-        if split_ not in ("train", "validation", "test"):
-            raise ValueError("Unknown dataset split.")
+        split_ = parse(split_, DatasetSplit, "split")
         return tuple(
             value.sample_id for value in self.assignments if value.split == split_
         )

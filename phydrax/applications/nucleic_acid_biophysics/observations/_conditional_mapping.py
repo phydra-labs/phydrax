@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,12 +18,13 @@ from phydrax import ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 from ....uq._map import find_map, MAPResult
 from ....uq._posterior import ParameterSpace, PosteriorProblem
 from ._mutation_profiles import MutationProfileBatch
 
 
-MappingLawKind = Literal["binary-accessibility", "context", "hierarchical"]
+MappingLawKind: TypeAlias = Literal["binary-accessibility", "context", "hierarchical"]
 
 
 class ConditionalMappingFit(StrictModule):
@@ -69,8 +70,7 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(batch, MutationProfileBatch):
             raise TypeError("batch must be a MutationProfileBatch.")
-        if kind not in ("binary-accessibility", "context", "hierarchical"):
-            raise ValueError("Unknown conditional mutation-law kind.")
+        kind = parse(kind, MappingLawKind, "kind")
         matrix = np.asarray(design, float)
         names = tuple(parameter_names)
         scales = np.asarray(prior_scale, float)

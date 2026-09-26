@@ -22,6 +22,7 @@ from .._trainable import NonTrainableState
 from ..linalg import HermitianSpectrum
 from ..special._dtype import promote_real
 from ..special._normal import normal_quantile
+from ..typing import parse
 
 
 GaussianPathConstructionMethod: TypeAlias = Literal["chronological", "bridge", "pca"]
@@ -62,8 +63,7 @@ class GaussianPathConstructionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Gaussian path times must have finite, strictly positive intervals."
             )
-        if method not in ("chronological", "bridge", "pca"):
-            raise ValueError("method must be 'chronological', 'bridge', or 'pca'.")
+        method = parse(method, GaussianPathConstructionMethod, "method")
 
         full_rank = nodes_host.size - 1
         if factor_rank is None:

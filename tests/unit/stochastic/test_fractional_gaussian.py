@@ -366,7 +366,7 @@ def test_davies_harte_rejects_invalid_inputs_and_auto_records_fallbacks():
     small_grid = jnp.linspace(0.0, 1.0, 9)
     nonuniform_grid = jnp.linspace(0.0, 1.0, 257).at[128].add(1e-4)
 
-    with pytest.raises(ValueError, match="method must"):
+    with pytest.raises(ValueError, match="method"):
         phx.stochastic.FractionalGaussianRealization(
             process,
             jr.key(67),

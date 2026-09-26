@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 from ._subspace_diffusion import AffineSubspaceLayout, SubspaceGaussianDiffusion
 
@@ -163,8 +163,9 @@ class PathCoefficientDiffusion(StrictModule):
             raise ValueError(
                 "Coefficient process dimension must equal trajectory basis rank."
             )
-        if score_dependency not in ("global", "causal"):
-            raise ValueError("score_dependency must be 'global' or 'causal'.")
+        score_dependency = parse(
+            score_dependency, PathScoreDependency, "score_dependency"
+        )
         identifier = canonical_fingerprint(
             {
                 "kind": "path-coefficient-diffusion",

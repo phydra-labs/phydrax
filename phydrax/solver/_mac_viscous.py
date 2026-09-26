@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -46,6 +46,7 @@ from ..linalg._transform_line import (
     TransformLineSolvePlan,
     TransformLineSolveResult,
 )
+from ..typing import parse
 from ._mac_composite_projection import (
     CompositeMACProjectionPlan,
     CompositeMACProjectionResult,
@@ -241,8 +242,7 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(momentum, PreparedMACMomentumOperators):
             raise TypeError("momentum must be PreparedMACMomentumOperators.")
-        if solve_method not in ("auto", "transform", "hybrid", "iterative"):
-            raise ValueError("Unknown MAC Helmholtz solve_method.")
+        solve_method = parse(solve_method, MACHelmholtzSolveMethod, "solve_method")
         tolerance_ = float(tolerance)
         iterations = int(maximum_iterations)
         budget = int(maximum_resource_bytes)
@@ -494,26 +494,30 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
             if not hybrid_eligible:
                 hybrid = None
 
-        if method == "transform":
-            if not direct_eligible:
-                raise ValueError(
-                    "Transform Helmholtz requires a certified uniform action."
-                )
-            route = "transform"
-        elif method == "hybrid":
-            if not hybrid_eligible or fixed is None:
-                raise ValueError(
-                    "Hybrid Helmholtz requires a certified line action and fixed coefficients."
-                )
-            route = "hybrid"
-        elif method == "iterative":
-            route = "iterative"
-        elif direct_eligible:
-            route = "transform"
-        elif hybrid_eligible and fixed is not None:
-            route = "hybrid"
-        else:
-            route = "iterative"
+        match method:
+            case "transform":
+                if not direct_eligible:
+                    raise ValueError(
+                        "Transform Helmholtz requires a certified uniform action."
+                    )
+                route = "transform"
+            case "hybrid":
+                if not hybrid_eligible or fixed is None:
+                    raise ValueError(
+                        "Hybrid Helmholtz requires a certified line action and fixed coefficients."
+                    )
+                route = "hybrid"
+            case "iterative":
+                route = "iterative"
+            case "auto":
+                if direct_eligible:
+                    route = "transform"
+                elif hybrid_eligible and fixed is not None:
+                    route = "hybrid"
+                else:
+                    route = "iterative"
+            case _:
+                assert_never(method)
 
         if route == "hybrid":
             # The hybrid route requires a certified line representation and fixed

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,12 +19,13 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..integration import WeightedSampleTarget
+from ..typing import parse
 from ._particle import effective_sample_size, normalize_log_weights
 from ._posterior_reweighting import _flatten_target
 from ._posterior_terms import AbstractPosteriorTerm
 
 
-EvidenceKind = Literal["absolute", "noise-relative", "omitted-constant"]
+EvidenceKind: TypeAlias = Literal["absolute", "noise-relative", "omitted-constant"]
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -92,8 +93,7 @@ class EventPosterior(StrictModule, NonTrainableState):
             raise ValueError(
                 "Source effective sample size must lie within the active sample count."
             )
-        if evidence_kind not in ("absolute", "noise-relative", "omitted-constant"):
-            raise ValueError("Unknown event evidence kind.")
+        evidence_kind = parse(evidence_kind, EvidenceKind, "evidence_kind")
         has_evidence = log_evidence is not None
         evidence = jnp.asarray(0.0 if log_evidence is None else log_evidence).reshape(())
         if has_evidence and not bool(jnp.isfinite(evidence)):

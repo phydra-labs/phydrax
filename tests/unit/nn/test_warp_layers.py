@@ -223,7 +223,7 @@ def test_multihead_warp_validation_rejects_ambiguous_or_unsupported_contracts():
             num_heads=1,
             boundary=("periodic",),
         )
-    with pytest.raises(ValueError, match="boundary modes"):
+    with pytest.raises(ValueError, match="boundary"):
         phx.nn.layers.MultiheadWarp(
             spatial_ndim=1,
             in_channels=1,

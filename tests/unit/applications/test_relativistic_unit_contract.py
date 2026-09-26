@@ -243,22 +243,18 @@ def test_invalid_unit_and_physical_domain_inputs_are_refused():
 
 
 @pytest.mark.parametrize(
-    ("keyword", "invalid", "message"),
+    ("keyword", "invalid"),
     (
-        ("phase_space_normalization", "flat-d3p", "phase-space normalization"),
-        ("s_matrix_normalization", "implicit-delta", "S-matrix normalization"),
-        ("spin_normalization", "implicit-average", "spin normalization"),
-        ("color_normalization", "implicit-average", "color normalization"),
-        ("polarization_normalization", "implicit-gauge", "polarization normalization"),
-        (
-            "identical_particle_normalization",
-            "implicit-symmetry",
-            "identical-particle normalization",
-        ),
+        ("phase_space_normalization", "flat-d3p"),
+        ("s_matrix_normalization", "implicit-delta"),
+        ("spin_normalization", "implicit-average"),
+        ("color_normalization", "implicit-average"),
+        ("polarization_normalization", "implicit-gauge"),
+        ("identical_particle_normalization", "implicit-symmetry"),
     ),
 )
-def test_unknown_scattering_normalization_is_refused(keyword, invalid, message):
-    with pytest.raises(ValueError, match=message):
+def test_unknown_scattering_normalization_is_refused(keyword, invalid):
+    with pytest.raises(ValueError, match=keyword):
         RelativisticUnitContract(
             _scale(),
             RelativityConvention(metric_signature="mostly_minus"),

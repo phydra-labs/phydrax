@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -38,12 +38,12 @@ from phydrax.nn.operator.data import (
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
-from .....typing import PRNGKey
+from .....typing import parse, PRNGKey
 from ._fno import _activation_regularity
 
 
 CNOActivation = Literal["gelu", "silu", "tanh"]
-ConvolutionAxisPolicy = Literal[
+ConvolutionAxisPolicy: TypeAlias = Literal[
     "periodic_fourier",
     "dirichlet_sine",
     "neumann_cosine",
@@ -73,14 +73,11 @@ class ConvolutionSupportPlan(StrictModule):
         basis_identities: Sequence[str] = (),
         minimum_observed_mass: float = 1.0e-8,
     ) -> None:
-        policies = tuple(axis_policies)
-        valid = {
-            "periodic_fourier",
-            "dirichlet_sine",
-            "neumann_cosine",
-            "polynomial",
-        }
-        if not policies or any(policy not in valid for policy in policies):
+        policies = tuple(
+            parse(policy, ConvolutionAxisPolicy, "axis_policies")
+            for policy in axis_policies
+        )
+        if not policies:
             raise ValueError("Convolution support plan has an invalid axis policy.")
         identities = tuple(str(value) for value in basis_identities)
         if identities and len(identities) != len(policies):

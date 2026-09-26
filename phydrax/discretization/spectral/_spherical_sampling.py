@@ -32,6 +32,7 @@ from ...linalg import (
     RHSLayout,
     solve as linear_solve,
 )
+from ...typing import parse
 from ._spherical import SphericalSpectralDiscretization
 
 
@@ -173,8 +174,7 @@ class SphericalSamplePlan(StrictModule, NonTrainableState):
         nside_ = index(nside)
         if nside_ <= 0:
             raise ValueError("nside must be positive.")
-        if ordering not in ("ring", "nested"):
-            raise ValueError("HEALPix ordering must be 'ring' or 'nested'.")
+        ordering = parse(ordering, HealpixOrdering, "ordering")
         if ordering == "nested" and (nside_ & (nside_ - 1)):
             raise ValueError("Nested HEALPix ordering requires power-of-two nside.")
         points = _healpix_points(nside_, ordering)

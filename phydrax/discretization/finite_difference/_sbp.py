@@ -23,6 +23,7 @@ from ...linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
+from ...typing import parse
 from .._spaces import DiscreteFieldSpace
 from .._tensor_support import PreparedTensorGrid
 from ._certification import FDStabilityReport
@@ -101,9 +102,7 @@ class SBPFamily(StrictModule, NonTrainableState):
     family_id: str = eqx.field(static=True)
 
     def __init__(self, interior_order: SBPInteriorOrder, /) -> None:
-        order = int(interior_order)
-        if order not in (2, 4, 6, 8):
-            raise ValueError("Diagonal-norm SBP interior order must be 2, 4, 6, or 8.")
+        order = parse(int(interior_order), SBPInteriorOrder, "interior_order")
         norm = _NORM_BOUNDARY_WEIGHTS[order]
         self.interior_order = order
         self.closure_order = order // 2
@@ -628,18 +627,8 @@ class SATBoundaryPlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(sbp, PreparedSBPOperator):
             raise TypeError("sbp must be a PreparedSBPOperator.")
-        if lower_kind not in (
-            "none",
-            "dirichlet",
-            "neumann",
-            "robin",
-        ) or upper_kind not in (
-            "none",
-            "dirichlet",
-            "neumann",
-            "robin",
-        ):
-            raise ValueError("Unknown SAT boundary condition kind.")
+        lower_kind = parse(lower_kind, SATConditionKind, "lower_kind")
+        upper_kind = parse(upper_kind, SATConditionKind, "upper_kind")
         coefficients = tuple(
             float(value) for value in (lower_alpha, lower_beta, upper_alpha, upper_beta)
         )
@@ -796,16 +785,9 @@ class SATInterfacePlan(StrictModule, NonTrainableState):
         ):
             raise TypeError("SAT interface requires two prepared SBP operators.")
         speed_ = float(speed)
-        if (
-            not np.isfinite(speed_)
-            or speed_ == 0.0
-            or flux
-            not in (
-                "central",
-                "upwind",
-            )
-        ):
-            raise ValueError("SAT interface speed/flux is invalid.")
+        if not np.isfinite(speed_) or speed_ == 0.0:
+            raise ValueError("SAT interface speed is invalid.")
+        flux = parse(flux, SATInterfaceFlux, "flux")
         left_trace_shape = (
             left.grid.shape[: left.axis_index] + left.grid.shape[left.axis_index + 1 :]
         )

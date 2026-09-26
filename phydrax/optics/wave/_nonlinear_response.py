@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,6 +19,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import RigidFrame
+from ...typing import parse
 from ._fields import (
     _angular_frequency,
     _complex_field_values,
@@ -28,7 +29,7 @@ from ._fields import (
 from ._pulse_time import PulseTimeSpace
 
 
-AnalyticPulsePolarization = Literal["scalar", "tangential"]
+AnalyticPulsePolarization: TypeAlias = Literal["scalar", "tangential"]
 CarrierResolvedFieldKind = Literal["scalar", "lab-vector"]
 
 # CODATA 2018. Susceptibilities below are electric SI susceptibilities, so the
@@ -445,8 +446,7 @@ class AnalyticPulseField(StrictModule):
             raise TypeError("time_space must be a PulseTimeSpace.")
         if time_space.topology != "periodic-cell":
             raise ValueError("An analytic pulse requires periodic-cell pulse time.")
-        if polarization not in ("scalar", "tangential"):
-            raise ValueError("polarization must be 'scalar' or 'tangential'.")
+        polarization = parse(polarization, AnalyticPulsePolarization, "polarization")
         expected_shape = (
             space.shape + time_space.shape
             if polarization == "scalar"

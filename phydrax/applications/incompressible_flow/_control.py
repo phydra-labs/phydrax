@@ -41,10 +41,11 @@ from ...solver._mac_viscous import (
     MACSBDF2Method,
     MACSBDF2State,
 )
+from ...typing import parse
 from ._statistics import _mac_face_to_cell
 
 
-MACFlowControlKind = Literal[
+MACFlowControlKind: TypeAlias = Literal[
     "pressure_gradient",
     "bulk_velocity",
     "frozen_density_mass_flux",
@@ -108,12 +109,7 @@ class MACFlowControlTarget(StrictModule, NonTrainableState):
         schedule_id: str | None = None,
         density_id: str | None = None,
     ) -> None:
-        if kind not in (
-            "pressure_gradient",
-            "bulk_velocity",
-            "frozen_density_mass_flux",
-        ):
-            raise ValueError(f"Unknown MAC flow-control target kind {kind!r}.")
+        kind = parse(kind, MACFlowControlKind, "kind")
         raw_axes = tuple(axes)
         if any(isinstance(axis, bool) for axis in raw_axes):
             raise TypeError("MAC flow-control axes must be integer indices.")

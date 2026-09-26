@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import product
 from string import ascii_lowercase
-from typing import cast, Literal
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -46,11 +46,11 @@ from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
-from .....typing import PRNGKey
+from .....typing import parse, PRNGKey
 
 
-AliasingPolicy = Literal["collocation", "dealiased"]
-SpectralChannelMixing = Literal["depthwise", "dense"]
+AliasingPolicy: TypeAlias = Literal["collocation", "dealiased"]
+SpectralChannelMixing: TypeAlias = Literal["depthwise", "dense"]
 
 
 def _dealiased_spectral_resample(
@@ -189,10 +189,10 @@ class _ProjectedProductFourierMixer(StrictModule):
         self.aliasing = aliasing
         if self.channels <= 0 or self.interaction_order <= 0:
             raise ValueError("channels and interaction_order must be positive.")
-        if spectral_channel_mixing not in ("depthwise", "dense"):
-            raise ValueError("spectral_channel_mixing must be 'depthwise' or 'dense'.")
-        if aliasing not in ("collocation", "dealiased"):
-            raise ValueError("aliasing must be 'collocation' or 'dealiased'.")
+        spectral_channel_mixing = parse(
+            spectral_channel_mixing, SpectralChannelMixing, "spectral_channel_mixing"
+        )
+        aliasing = parse(aliasing, AliasingPolicy, "aliasing")
 
         projection_key, spectral_key = jr.split(key)
         self.projection = Linear(
@@ -549,10 +549,10 @@ class HOFNO(AbstractOperatorModel):
             raise ValueError("norm_epsilon must be positive.")
         if activation not in ("gelu", "silu", "tanh"):
             raise ValueError("activation must be 'gelu', 'silu', or 'tanh'.")
-        if spectral_channel_mixing not in ("depthwise", "dense"):
-            raise ValueError("spectral_channel_mixing must be 'depthwise' or 'dense'.")
-        if aliasing not in ("collocation", "dealiased"):
-            raise ValueError("aliasing must be 'collocation' or 'dealiased'.")
+        spectral_channel_mixing = parse(
+            spectral_channel_mixing, SpectralChannelMixing, "spectral_channel_mixing"
+        )
+        aliasing = parse(aliasing, AliasingPolicy, "aliasing")
 
         in_count = _get_size(in_channels)
         out_count = _get_size(out_channels)

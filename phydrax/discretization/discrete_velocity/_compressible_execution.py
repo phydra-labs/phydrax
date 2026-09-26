@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,11 +15,12 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._compressible_contracts import CompressibleKineticPopulationState
 from ._compressible_rules import CompressibleVelocityRule
 
 
-KineticStorageLayout = Literal[
+KineticStorageLayout: TypeAlias = Literal[
     "double-buffer-aos", "double-buffer-soa", "q-blocked", "aa"
 ]
 
@@ -120,8 +121,7 @@ class KineticStoragePlan(StrictModule, NonTrainableState):
         *,
         q_block_size: int = 16,
     ) -> None:
-        if layout not in ("double-buffer-aos", "double-buffer-soa", "q-blocked", "aa"):
-            raise ValueError(f"Unknown kinetic storage layout {layout!r}.")
+        layout = parse(layout, KineticStorageLayout, "layout")
         block = int(q_block_size)
         if block < 1:
             raise ValueError("q_block_size must be positive.")

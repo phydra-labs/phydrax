@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ..multiblock import InterfaceOrientation
 from ._discretization import LatticeBoltzmannDiscretization
 from ._geometry import LatticeBoltzmannGeometryKind
@@ -86,13 +87,10 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
         tolerance = float(scale_tolerance)
         if right.velocity_set.dimension != dimension:
             raise ValueError("LBM block dimensions must match.")
-        if (
-            not 0 <= left_axis_ < dimension
-            or not 0 <= right_axis_ < dimension
-            or left_side not in ("lower", "upper")
-            or right_side not in ("lower", "upper")
-        ):
+        if not 0 <= left_axis_ < dimension or not 0 <= right_axis_ < dimension:
             raise ValueError("LBM block interface axes or sides are invalid.")
+        left_side = parse(left_side, LatticeBoltzmannBlockSide, "left_side")
+        right_side = parse(right_side, LatticeBoltzmannBlockSide, "right_side")
         if orientation.trace_rank != dimension - 1:
             raise ValueError("Interface orientation rank must match tangential rank.")
         if left.periodic[left_axis_] or right.periodic[right_axis_]:

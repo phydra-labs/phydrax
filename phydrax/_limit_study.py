@@ -9,11 +9,12 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import numpy as np
 
 from ._fingerprint import canonical_fingerprint
+from .typing import parse
 
 
 LimitStudyStatus: TypeAlias = Literal["complete", "abstained"]
@@ -60,8 +61,7 @@ class ScientificLimitAxis:
     ) -> None:
         name_ = _identifier(name, "axis name")
         target_ = _finite(target, "axis target")
-        if transform not in ("identity", "inverse", "square", "log"):
-            raise ValueError("Unknown limit-axis transform.")
+        transform = parse(transform, AxisTransform, "transform")
         span = _finite(minimum_span, "minimum_span")
         if span < 0.0:
             raise ValueError("minimum_span must be non-negative.")
@@ -80,22 +80,25 @@ class ScientificLimitAxis:
 
     def coordinate(self, value: float, /) -> float:
         raw = _finite(value, f"{self.name} coordinate")
-        if self.transform == "identity":
-            transformed = raw
-            target = self.target
-        elif self.transform == "inverse":
-            if raw == 0.0 or self.target == 0.0:
-                raise ValueError("Inverse limit coordinates require nonzero values.")
-            transformed = 1.0 / raw
-            target = 1.0 / self.target
-        elif self.transform == "square":
-            transformed = raw * raw
-            target = self.target * self.target
-        else:
-            if raw <= 0.0 or self.target <= 0.0:
-                raise ValueError("Log limit coordinates require positive values.")
-            transformed = math.log(raw)
-            target = math.log(self.target)
+        match self.transform:
+            case "identity":
+                transformed = raw
+                target = self.target
+            case "inverse":
+                if raw == 0.0 or self.target == 0.0:
+                    raise ValueError("Inverse limit coordinates require nonzero values.")
+                transformed = 1.0 / raw
+                target = 1.0 / self.target
+            case "square":
+                transformed = raw * raw
+                target = self.target * self.target
+            case "log":
+                if raw <= 0.0 or self.target <= 0.0:
+                    raise ValueError("Log limit coordinates require positive values.")
+                transformed = math.log(raw)
+                target = math.log(self.target)
+            case _:
+                assert_never(self.transform)
         return transformed - target
 
 

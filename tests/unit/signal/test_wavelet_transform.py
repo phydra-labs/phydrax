@@ -120,7 +120,7 @@ def test_discrete_wavelet_transform_rejects_invalid_configuration_and_shapes():
         DiscreteWaveletTransform((0,), levels=0)
     with pytest.raises(ValueError, match="one value per transformed axis"):
         DiscreteWaveletTransform((0, 1), levels=1, wavelet=("haar",))
-    with pytest.raises(ValueError, match="boundaries"):
+    with pytest.raises(ValueError, match="boundary"):
         DiscreteWaveletTransform((0,), levels=1, boundary="reflect")
 
     transform = DiscreteWaveletTransform((0,), levels=3)

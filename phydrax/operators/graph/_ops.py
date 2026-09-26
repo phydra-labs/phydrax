@@ -2,7 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -19,13 +19,13 @@ from phydrax.domain.graph import (
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ...graph import segment_max, segment_mean, segment_min, segment_sum
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
 GraphReduce = Literal["sum", "mean", "max", "min"]
 GraphComponentKind = Literal["nodes", "edges", "globals"]
-GraphDivergenceSign = Literal["in_minus_out", "out_minus_in"]
-GraphFlow = Literal["source_to_target", "target_to_source"]
+GraphDivergenceSign: TypeAlias = Literal["in_minus_out", "out_minus_in"]
+GraphFlow: TypeAlias = Literal["source_to_target", "target_to_source"]
 
 
 def _graph_axis(batch: GraphBatch, /) -> str:
@@ -604,10 +604,7 @@ def graph_gradient(
     `u(receiver) - u(sender)` and returns an edge-domain field. Optional edge
     weights are evaluated on the same edge batch and multiplied into the result.
     """
-    if flow not in ("source_to_target", "target_to_source"):
-        raise ValueError(
-            "graph_gradient flow must be 'source_to_target' or 'target_to_source'."
-        )
+    flow = parse(flow, GraphFlow, "flow")
     return DomainFunction(
         domain=u.domain,
         deps=u.deps,
@@ -627,10 +624,7 @@ def graph_divergence(
     With `sign="in_minus_out"`, each edge contributes `+flux` to its receiver
     and `-flux` to its sender. `sign="out_minus_in"` flips that convention.
     """
-    if sign not in ("in_minus_out", "out_minus_in"):
-        raise ValueError(
-            "graph_divergence sign must be 'in_minus_out' or 'out_minus_in'."
-        )
+    sign = parse(sign, GraphDivergenceSign, "sign")
     return DomainFunction(
         domain=flux.domain,
         deps=flux.deps,

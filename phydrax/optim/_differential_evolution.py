@@ -27,15 +27,15 @@ from .._sampling import (
     resolve_design,
 )
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._bounded_search import _BoundedVectorDomain
 from ._finite import FiniteAxis
 from ._pareto import dominance_matrix
 
 
-SearchStrategy = Literal["best1bin", "rand1bin"]
-DifferentialEvolutionSelection = Literal["scalar", "pareto"]
-DifferentialEvolutionValidityMode = Literal["guarded", "vectorized"]
+SearchStrategy: TypeAlias = Literal["best1bin", "rand1bin"]
+DifferentialEvolutionSelection: TypeAlias = Literal["scalar", "pareto"]
+DifferentialEvolutionValidityMode: TypeAlias = Literal["guarded", "vectorized"]
 _Objective: TypeAlias = Callable[[PyTree[Array]], Array]
 _Validity: TypeAlias = Callable[[PyTree[Array]], Array]
 # (generation, population, objectives, valid, key, invalid count, best history)
@@ -222,13 +222,11 @@ class DifferentialEvolutionSearch(StrictModule):
             raise ValueError("population_size must be at least 4.")
         if generations < 0:
             raise ValueError("max_generations must be non-negative.")
-        if strategy not in ("best1bin", "rand1bin"):
-            raise ValueError("Unknown differential-evolution strategy.")
-        if selection not in ("scalar", "pareto") or validity_mode not in (
-            "guarded",
-            "vectorized",
-        ):
-            raise ValueError("Unknown selection or validity mode.")
+        strategy = parse(strategy, SearchStrategy, "strategy")
+        selection = parse(selection, DifferentialEvolutionSelection, "selection")
+        validity_mode = parse(
+            validity_mode, DifferentialEvolutionValidityMode, "validity_mode"
+        )
         objectives = int(objective_count)
         if objectives <= 0 or (selection == "scalar" and objectives != 1):
             raise ValueError(

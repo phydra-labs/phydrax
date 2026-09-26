@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, cast, Literal, TypedDict
+from typing import Any, cast, Literal, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -23,14 +23,15 @@ from ...discretization.finite_volume._hydrostatic_grid import (
 )
 from ...linalg._tridiagonal_lines import solve_tridiagonal_lines
 from ...solver._hydrostatic_free_surface import LinearImplicitFreeSurfacePlan
+from ...typing import parse
 from ._external_mode import ExternalModeSubcyclePolicy
 
 
-BoundaryKind = Literal[
+BoundaryKind: TypeAlias = Literal[
     "closed", "prescribed-elevation", "prescribed-transport", "flather", "radiation"
 ]
-MixingKind = Literal["prescribed", "ri", "kpp", "tke", "redi-gm"]
-ExternalMode = Literal["implicit", "split-explicit"]
+MixingKind: TypeAlias = Literal["prescribed", "ri", "kpp", "tke", "redi-gm"]
+ExternalMode: TypeAlias = Literal["implicit", "split-explicit"]
 
 
 def _safe_divide(numerator: Array, denominator: Array, /) -> Array:
@@ -327,14 +328,7 @@ class HydrostaticOpenBoundary(StrictModule, NonTrainableState):
         axis_ = int(axis)
         if axis_ not in (0, 1) or side not in ("lower", "upper"):
             raise ValueError("Hydrostatic boundaries require horizontal axis and side.")
-        if kind not in (
-            "closed",
-            "prescribed-elevation",
-            "prescribed-transport",
-            "flather",
-            "radiation",
-        ):
-            raise ValueError("Unknown hydrostatic open-boundary kind.")
+        kind = parse(kind, BoundaryKind, "kind")
         values = tuple(
             float(v)
             for v in (
@@ -392,8 +386,7 @@ class HydrostaticMixingPlan(StrictModule, NonTrainableState):
         gm_coefficient: float = 0.0,
         tke_coefficient: float = 0.1,
     ) -> None:
-        if kind not in ("prescribed", "ri", "kpp", "tke", "redi-gm"):
-            raise ValueError("Unknown hydrostatic mixing kind.")
+        kind = parse(kind, MixingKind, "kind")
         values = tuple(
             float(v)
             for v in (
@@ -544,8 +537,7 @@ class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
             for boundary in boundary_tuple
         ):
             raise TypeError("Hydrostatic boundaries must be HydrostaticOpenBoundary.")
-        if external_mode not in ("implicit", "split-explicit"):
-            raise ValueError("Unknown hydrostatic external mode.")
+        external_mode = parse(external_mode, ExternalMode, "external_mode")
         values = tuple(
             float(v)
             for v in (gravity, reference_density, coriolis_f0, coriolis_beta, wet_depth)

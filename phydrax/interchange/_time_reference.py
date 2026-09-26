@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,9 +17,10 @@ from .._external_resource import ResourceManifest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-TimeScale = Literal["tai", "gps", "utc", "instrument", "source-relative"]
+TimeScale: TypeAlias = Literal["tai", "gps", "utc", "instrument", "source-relative"]
 
 
 class LeapSecondTable(StrictModule, NonTrainableState):
@@ -141,8 +142,7 @@ class TimeReferenceContract(StrictModule, NonTrainableState):
         leap_seconds: LeapSecondTable | None = None,
         correction_resources: Sequence[ResourceManifest] = (),
     ) -> None:
-        if scale not in ("tai", "gps", "utc", "instrument", "source-relative"):
-            raise ValueError("Unsupported time scale.")
+        scale = parse(scale, TimeScale, "scale")
         label = str(epoch_label).strip()
         tai_epoch = float(epoch_tai_seconds)
         nominal = None if epoch_nominal_seconds is None else float(epoch_nominal_seconds)

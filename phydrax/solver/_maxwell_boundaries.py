@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import NormCompatibleInterpolationPlan, StructuredCochainBridge
+from ..typing import parse
 
 
 MaxwellBoundaryKind: TypeAlias = Literal["pec", "pmc", "impedance"]
@@ -35,8 +36,7 @@ class MaxwellBoundaryPlan(StrictModule):
         *,
         admittance: ArrayLike | None = None,
     ) -> None:
-        if kind not in ("pec", "pmc", "impedance"):
-            raise ValueError("Unknown Maxwell boundary kind.")
+        kind = parse(kind, MaxwellBoundaryKind, "kind")
         if kind == "impedance":
             if admittance is None:
                 raise ValueError("Impedance boundaries require admittance.")

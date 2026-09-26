@@ -24,6 +24,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._iterative import (
     AbstractLeastSquaresMethod,
     IterativeStepMetrics,
@@ -154,8 +155,7 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
     ) -> None:
-        if mode not in ("traditional", "subspace", "dogbox"):
-            raise ValueError("Unknown dogleg mode.")
+        mode = parse(mode, DoglegMode, "mode")
         values = tuple(
             float(value) for value in (initial_radius, minimum_radius, maximum_radius)
         )

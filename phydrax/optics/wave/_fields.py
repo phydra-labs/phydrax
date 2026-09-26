@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,9 +17,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PreparedTensorGrid
 from ...geometry import RigidFrame
+from ...typing import parse
 
 
-PlaneTopology = Literal["finite-window", "periodic-cell"]
+PlaneTopology: TypeAlias = Literal["finite-window", "periodic-cell"]
 
 
 def _complex_field_values(
@@ -105,8 +106,7 @@ class PlaneFieldSpace(StrictModule, NonTrainableState):
             )
         if not isinstance(frame, RigidFrame) or frame.dimension != 3:
             raise ValueError("frame must be a three-dimensional RigidFrame.")
-        if topology not in ("finite-window", "periodic-cell"):
-            raise ValueError("topology must be 'finite-window' or 'periodic-cell'.")
+        topology = parse(topology, PlaneTopology, "topology")
         periodic = tuple(bool(axis.periodic) for axis in grid.axes)
         required_periodicity = (topology == "periodic-cell",) * 2
         if periodic != required_periodicity:

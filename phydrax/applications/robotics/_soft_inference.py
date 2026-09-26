@@ -43,6 +43,7 @@ from ...optim import (
     StateDesignConstraint,
     StateDesignProblem,
 )
+from ...typing import parse
 
 
 CalibrationSplit: TypeAlias = Literal["train", "validation", "held_out"]
@@ -360,8 +361,7 @@ class CalibrationExperiment(StrictModule, NonTrainableState):
             raise TypeError("CalibrationExperiment residual must be callable.")
         if route_valid is not None and not callable(route_valid):
             raise TypeError("CalibrationExperiment route_valid must be callable or None.")
-        if split not in ("train", "validation", "held_out"):
-            raise ValueError("CalibrationExperiment split is invalid.")
+        split = parse(split, CalibrationSplit, "split")
         self.weight = weight
         self.residual = residual
         self.route_valid = route_valid
@@ -584,8 +584,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> CalibrationSplitEvidence:
-        if split not in ("train", "validation", "held_out"):
-            raise ValueError("Unknown calibration split.")
+        split = parse(split, CalibrationSplit, "split")
         physical = self.parameterization.to_physical(latent)
         selected = tuple(
             (experiment, block)

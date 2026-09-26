@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from ...typing import parse
 from ._results import (
     BlockKrylovDecomposition,
     GolubKahanDecomposition,
@@ -29,7 +30,7 @@ _BidiagonalState: TypeAlias = tuple[
 ]
 
 
-Orthogonalization = Literal["modified", "double", "selective", "full"]
+Orthogonalization: TypeAlias = Literal["modified", "double", "selective", "full"]
 InnerProduct = Callable[[Array, Array], Array]
 
 
@@ -81,8 +82,7 @@ def _validate(
     dimension = int(max_dimension)
     if dimension < 1 or dimension > vector.size:
         raise ValueError("max_dimension must be in [1, vector.size].")
-    if orthogonalization not in ("modified", "double", "selective", "full"):
-        raise ValueError("Unknown orthogonalization policy.")
+    orthogonalization = parse(orthogonalization, Orthogonalization, "orthogonalization")
     return vector, dimension
 
 
@@ -241,8 +241,7 @@ def block_arnoldi(
     blocks = int(max_blocks)
     if block_size < 1 or blocks < 1 or blocks * block_size > dimension:
         raise ValueError("max_blocks * block_size must lie in [1, vector dimension].")
-    if orthogonalization not in ("modified", "double", "selective", "full"):
-        raise ValueError("Unknown orthogonalization policy.")
+    orthogonalization = parse(orthogonalization, Orthogonalization, "orthogonalization")
     tolerance = _breakdown_tolerance(breakdown_tolerance, block.real.dtype)
     output = jax.eval_shape(action, block)
     if (

@@ -19,6 +19,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 RodMaterialKind: TypeAlias = Literal["stretch_shear", "bend_twist"]
@@ -77,8 +78,7 @@ class RodMaterialSite(StrictModule, NonTrainableState):
         rod_id: str,
         /,
     ) -> None:
-        if material_kind not in ("stretch_shear", "bend_twist"):
-            raise ValueError("Unknown rod material kind.")
+        material_kind = parse(material_kind, RodMaterialKind, "material_kind")
         expected_owner = "segment" if material_kind == "stretch_shear" else "junction"
         if owner_kind != expected_owner:
             raise ValueError(
@@ -130,7 +130,8 @@ class RodMaterialWorkset(StrictModule, NonTrainableState):
     ) -> None:
         sites_ = tuple(sites)
         components = int(component_count)
-        if material_kind not in ("stretch_shear", "bend_twist") or components < 1:
+        material_kind = parse(material_kind, RodMaterialKind, "material_kind")
+        if components < 1:
             raise ValueError("Rod material workset kind or component count is invalid.")
         if any(
             not isinstance(site, RodMaterialSite)

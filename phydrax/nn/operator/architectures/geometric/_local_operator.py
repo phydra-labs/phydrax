@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -20,8 +20,10 @@ from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import parse
 
-LocalGlobalFusion = Literal["sum", "concat"]
+
+LocalGlobalFusion: TypeAlias = Literal["sum", "concat"]
 
 
 def _coordinates(
@@ -452,8 +454,7 @@ class LocalGlobalOperator(AbstractOperatorModel):
         self.out_size = global_operator.out_size
         if global_operator.out_size != local_operator.out_size:
             raise ValueError("Local and global operator output sizes must match.")
-        if fusion not in ("sum", "concat"):
-            raise ValueError("fusion must be 'sum' or 'concat'.")
+        fusion = parse(fusion, LocalGlobalFusion, "fusion")
         channels = _get_size(self.out_size)
         if fusion == "concat":
             if mixer is None:

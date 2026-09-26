@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -34,6 +34,7 @@ from ..linalg._low_rank_approximation import (
     pivoted_cholesky_factor,
     randomized_nystrom_factor,
 )
+from ..typing import parse
 
 
 def _point_value_basis_metadata(
@@ -115,12 +116,12 @@ def _basis_digest(
     return digest.hexdigest()
 
 
-_ApproximationMethod = Literal[
+_ApproximationMethod: TypeAlias = Literal[
     "dense_eigh",
     "pivoted_cholesky",
     "randomized_nystrom",
 ]
-_ResidualKind = Literal["relative_frobenius", "relative_trace"]
+_ResidualKind: TypeAlias = Literal["relative_frobenius", "relative_trace"]
 
 
 class SpatialNoiseApproximation(StrictModule):
@@ -152,12 +153,7 @@ class SpatialNoiseApproximation(StrictModule):
         seed: Sequence[int] | None = None,
         sketch_size: int | None = None,
     ) -> None:
-        if method not in (
-            "dense_eigh",
-            "pivoted_cholesky",
-            "randomized_nystrom",
-        ):
-            raise ValueError(f"Unknown spatial-noise approximation method {method!r}.")
+        method = parse(method, _ApproximationMethod, "method")
         size = int(matrix_size)
         requested = int(requested_rank)
         retained = int(retained_rank)
@@ -167,8 +163,7 @@ class SpatialNoiseApproximation(StrictModule):
             raise ValueError("requested_rank must lie within the matrix size.")
         if retained <= 0 or retained > requested:
             raise ValueError("retained_rank must lie in [1, requested_rank].")
-        if residual_kind not in ("relative_frobenius", "relative_trace"):
-            raise ValueError(f"Unknown residual kind {residual_kind!r}.")
+        residual_kind = parse(residual_kind, _ResidualKind, "residual_kind")
         residual = float(residual_estimate)
         absolute = float(absolute_residual_estimate)
         threshold = float(tolerance)

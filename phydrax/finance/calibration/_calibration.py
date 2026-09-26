@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import DenseLinearOperator, FactorizationPolicy, factorize
 from ...optim import least_squares, LevenbergMarquardt, OptimizationTermination
+from ...typing import parse
 from ..core._evidence import FinanceEvidenceBinding
 from ._surface import (
     ESSVISurface,
@@ -33,7 +34,7 @@ from ._surface import (
 )
 
 
-CalibrationFamily = Literal["svi", "essvi"]
+CalibrationFamily: TypeAlias = Literal["svi", "essvi"]
 
 
 class CalibrationStatus(IntEnum):
@@ -66,8 +67,7 @@ class CalibrationPlan(StrictModule):
         initial_damping: float = 1.0e-3,
         fail_on_arbitrage: bool = True,
     ) -> None:
-        if family not in ("svi", "essvi"):
-            raise ValueError("calibration family must be svi or essvi.")
+        family = parse(family, CalibrationFamily, "family")
         expiries = jnp.asarray(slice_expiries, dtype=jnp.float64)
         if expiries.ndim != 1 or expiries.size < (1 if family == "svi" else 2):
             raise ValueError("slice_expiries has insufficient slices for the family.")

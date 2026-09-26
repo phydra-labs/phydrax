@@ -21,6 +21,7 @@ from jax.typing import ArrayLike
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule
 
+from ...typing import parse
 from ._identifiers import _canonical_text, _token
 
 
@@ -49,7 +50,6 @@ class DayCount(str, Enum):
 StubRule: TypeAlias = Literal[
     "none", "short_front", "long_front", "short_back", "long_back"
 ]
-_STUB_RULES = frozenset(("none", "short_front", "long_front", "short_back", "long_back"))
 
 
 def _integral(value: object, name: str, /, *, lower: int, upper: int) -> int:
@@ -353,8 +353,7 @@ class ScheduleRule(StrictModule):
         if start.ordinal >= end.ordinal:
             raise ValueError("schedule start must precede schedule end.")
         frequency = _integral(frequency_months, "frequency_months", lower=1, upper=1200)
-        if stub_rule not in _STUB_RULES:
-            raise ValueError("stub_rule is not supported.")
+        stub_rule = parse(stub_rule, StubRule, "stub_rule")
         if type(end_of_month) is not bool:
             raise TypeError("end_of_month must be bool.")
         lag = _integral(payment_lag_days, "payment_lag_days", lower=0, upper=10000)

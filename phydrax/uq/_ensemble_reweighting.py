@@ -42,6 +42,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..observation import CholeskyCovarianceAction, PrecisionCovarianceAction
+from ..typing import parse
 from ..units import (
     conversion_factor,
     convert_value,
@@ -59,8 +60,6 @@ EnsembleObservationUsage: TypeAlias = Literal[
 ]
 ThermodynamicClosureOutcome: TypeAlias = Literal["passed", "failed", "inconclusive"]
 
-_SOURCE_KINDS = ("physical-equilibrium", "empirical", "proposal-only")
-_OBSERVATION_USAGES = ("calibration", "model-selection", "held-out")
 _BME_CONVENTION = "gaussian-observation-plus-theta-kl-q-reference"
 _RATE_PER_SECOND = derived_unit("s^-1", ((SECOND, -1),))
 
@@ -217,11 +216,7 @@ class EnsembleSupport(StrictModule, NonTrainableState):
             raise ValueError(
                 "Reference log weights must be a vector with at least two samples."
             )
-        kind = str(source_kind).strip()
-        if kind not in _SOURCE_KINDS:
-            raise ValueError(
-                "source_kind must be physical-equilibrium, empirical, or proposal-only."
-            )
+        kind = parse(str(source_kind).strip(), EnsembleSourceKind, "source_kind")
         if kind == "physical-equilibrium":
             if not isinstance(source_id, PhysicalEquilibriumSupportProvenance):
                 raise TypeError(
@@ -374,9 +369,7 @@ class EnsembleObservablePlan(StrictModule, NonTrainableState):
         sources = _lineage_identifiers(source_ids, "Source IDs")
         cases = _lineage_identifiers(case_ids, "Case IDs")
         parents = _lineage_identifiers(parent_ids, "Parent IDs")
-        usage_ = str(usage).strip()
-        if usage_ not in _OBSERVATION_USAGES:
-            raise ValueError("usage must be calibration, model-selection, or held-out.")
+        usage_ = parse(str(usage).strip(), EnsembleObservationUsage, "usage")
         dtype = (
             covariance.lower_cholesky.dtype
             if isinstance(covariance, CholeskyCovarianceAction)

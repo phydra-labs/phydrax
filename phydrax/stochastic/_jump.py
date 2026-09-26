@@ -19,7 +19,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 JumpStatus: TypeAlias = Literal[
@@ -375,8 +375,7 @@ class JumpEventBatch(StrictModule):
         """Evaluate the piecewise-constant event trajectory at query times."""
         if self.post_states is None:
             raise ValueError("states_at requires stored pre_states and post_states.")
-        if side not in ("left", "right"):
-            raise ValueError("side must be 'left' or 'right'.")
+        side = parse(side, JumpSide, "side")
         queries = jnp.asarray(query_times, dtype=self.times.dtype)
         if queries.ndim == 1:
             queries = jnp.broadcast_to(queries, self.batch_shape + queries.shape)

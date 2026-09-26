@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 SequenceFormFactorKind: TypeAlias = Literal[
@@ -80,9 +81,9 @@ class SequenceFormFactorPlan(StrictModule, NonTrainableState):
             if site_count is None and sequence.size
             else int(site_count or 0)
         )
+        kind = parse(kind, SequenceFormFactorKind, "kind")
         if (
-            kind not in ("gaussian-chain", "freely-jointed-chain", "gaussian-ring")
-            or sequence.ndim != 1
+            sequence.ndim != 1
             or sequence.size == 0
             or np.any(sequence < 0)
             or count <= 0

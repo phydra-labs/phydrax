@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -12,6 +12,7 @@ from jax import Array
 from jax.typing import ArrayLike, DTypeLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._schema import FeatureSchema, TargetSchema
 from ._sparse_features import FeatureArray, SparseFeatures
 
@@ -162,16 +163,18 @@ class MLBatch(StrictModule):
         return self.targets
 
     def effective_weight(self, policy: WeightPolicy = "statistical", /) -> Array:
-        if policy == "none":
-            weights = jnp.ones_like(self.sample_weight)
-        elif policy == "statistical":
-            weights = self.sample_weight
-        elif policy == "measure":
-            weights = self.measure_weight
-        elif policy == "product":
-            weights = self.sample_weight * self.measure_weight
-        else:
-            raise ValueError(f"Unsupported weight policy {policy!r}.")
+        policy = parse(policy, WeightPolicy, "policy")
+        match policy:
+            case "none":
+                weights = jnp.ones_like(self.sample_weight)
+            case "statistical":
+                weights = self.sample_weight
+            case "measure":
+                weights = self.measure_weight
+            case "product":
+                weights = self.sample_weight * self.measure_weight
+            case _:
+                assert_never(policy)
         return jnp.where(self.sample_mask, weights, 0.0)
 
     def weights_valid(self, policy: WeightPolicy = "statistical", /) -> Array:

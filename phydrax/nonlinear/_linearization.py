@@ -31,6 +31,7 @@ from ..sparse import (
     PreparedSparseDerivative,
     SparseDerivativePlan,
 )
+from ..typing import parse
 from ._types import _guarded_call, NonlinearSystemProblem
 
 
@@ -56,13 +57,7 @@ class JacobianPolicy(StrictModule):
         operator: Callable[[PyTree[Any], Any], AbstractLinearOperator] | None = None,
         finite_difference_step: float = 1e-6,
     ) -> None:
-        if mode not in (
-            "autodiff",
-            "sparse",
-            "directional-finite-difference",
-            "explicit",
-        ):
-            raise ValueError("Unknown Jacobian mode.")
+        mode = parse(mode, JacobianMode, "mode")
         if mode == "sparse" and not isinstance(sparse_plan, SparseDerivativePlan):
             raise TypeError("Sparse Jacobian mode requires a SparseDerivativePlan.")
         if mode != "sparse" and sparse_plan is not None:

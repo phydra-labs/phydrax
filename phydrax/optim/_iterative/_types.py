@@ -20,6 +20,7 @@ from ..._iteration import IterationEvidence
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._tree_math import validate_real_inexact_tree as _validate_real_inexact_tree
+from ...typing import parse
 
 
 class OptimizationStatus(IntEnum):
@@ -220,15 +221,15 @@ class MinimizationProblem(StrictModule):
             not isinstance(constraint, NonlinearConstraint) for constraint in constraints_
         ):
             raise TypeError("constraints must contain NonlinearConstraint values.")
-        derivative_execution_ = (
+        derivative_execution_ = parse(
             "explicit-host"
             if derivative_execution is None and explicit_value_and_gradient is not None
             else "automatic-jax"
             if derivative_execution is None
-            else derivative_execution
+            else derivative_execution,
+            DerivativeExecutionKind,
+            "derivative_execution",
         )
-        if derivative_execution_ not in ("automatic-jax", "explicit-host"):
-            raise ValueError("Unknown derivative_execution.")
         if (explicit_value_and_gradient is None) != (
             derivative_execution_ == "automatic-jax"
         ):

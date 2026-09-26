@@ -4,16 +4,17 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-ScalarTraceSide3D = Literal["interior", "exterior"]
+ScalarTraceSide3D: TypeAlias = Literal["interior", "exterior"]
 
 
 class UnsupportedScalarBoundarySpaceError(ValueError):
@@ -64,19 +65,13 @@ class ScalarTraceConvention3D(StrictModule, NonTrainableState):
             }
         )
 
-    @staticmethod
-    def _side(side: ScalarTraceSide3D, /) -> ScalarTraceSide3D:
-        if side not in ("interior", "exterior"):
-            raise ValueError("Scalar trace side must be 'interior' or 'exterior'.")
-        return side
-
     def double_layer_dirichlet_jump(self, side: ScalarTraceSide3D, /) -> float:
         """Return the identity coefficient in ``gamma0 D`` on ``side``."""
-        return -0.5 if self._side(side) == "interior" else 0.5
+        return -0.5 if parse(side, ScalarTraceSide3D, "side") == "interior" else 0.5
 
     def single_layer_neumann_jump(self, side: ScalarTraceSide3D, /) -> float:
         """Return the identity coefficient in ``gamma1 S`` on ``side``."""
-        return 0.5 if self._side(side) == "interior" else -0.5
+        return 0.5 if parse(side, ScalarTraceSide3D, "side") == "interior" else -0.5
 
 
 SCALAR_TRACE_CONVENTION_3D = ScalarTraceConvention3D()

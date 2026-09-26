@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._pattern import SparsePattern
 
 
@@ -29,8 +30,6 @@ SparseHessianMode: TypeAlias = Literal[
 SparseDerivativeMode: TypeAlias = SparseJacobianMode | SparseHessianMode
 SparseDerivativeCompiler: TypeAlias = Literal["auto", "native"]
 SparseColoringCompiler: TypeAlias = Literal["native"]
-_JACOBIAN_MODES = ("fwd", "rev")
-_HESSIAN_MODES = ("fwd_over_rev", "rev_over_fwd", "rev_over_rev")
 
 
 class SparseColoring(StrictModule, NonTrainableState):
@@ -61,8 +60,7 @@ class SparseColoring(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(pattern, SparsePattern):
             raise TypeError("pattern must be a SparsePattern.")
-        if mode not in (*_JACOBIAN_MODES, *_HESSIAN_MODES):
-            raise ValueError(f"Unknown sparse derivative mode {mode!r}.")
+        mode = parse(mode, SparseDerivativeMode, "mode")
         if compiler != "native":
             raise ValueError(f"Unknown sparse coloring compiler {compiler!r}.")
 
@@ -260,21 +258,22 @@ def native_coloring(
     if not isinstance(pattern, SparsePattern):
         raise TypeError("pattern must be a SparsePattern.")
     if derivative_kind == "jacobian":
-        if mode is not None and mode not in _JACOBIAN_MODES:
-            raise ValueError("Jacobian mode must be 'fwd', 'rev', or None.")
-        if mode == "fwd":
-            return _native_forward_coloring(pattern, "fwd")
-        if mode == "rev":
-            return _native_reverse_coloring(pattern)
-        forward = _native_forward_coloring(pattern, "fwd")
-        reverse = _native_reverse_coloring(pattern)
-        return forward if forward.num_colors <= reverse.num_colors else reverse
+        if mode is None:
+            forward = _native_forward_coloring(pattern, "fwd")
+            reverse = _native_reverse_coloring(pattern)
+            return forward if forward.num_colors <= reverse.num_colors else reverse
+        jacobian_mode = parse(mode, SparseJacobianMode, "mode")
+        match jacobian_mode:
+            case "fwd":
+                return _native_forward_coloring(pattern, "fwd")
+            case "rev":
+                return _native_reverse_coloring(pattern)
+            case _:
+                assert_never(jacobian_mode)
     if derivative_kind == "hessian":
-        resolved_mode: SparseDerivativeMode = "fwd_over_rev" if mode is None else mode
-        if resolved_mode not in _HESSIAN_MODES:
-            raise ValueError(
-                "Hessian mode must be 'fwd_over_rev', 'rev_over_fwd', 'rev_over_rev', or None."
-            )
+        resolved_mode: SparseHessianMode = (
+            "fwd_over_rev" if mode is None else parse(mode, SparseHessianMode, "mode")
+        )
         if not pattern.symmetric:
             raise ValueError("Hessian coloring requires a symmetric sparse pattern.")
         return _native_forward_coloring(pattern, resolved_mode)

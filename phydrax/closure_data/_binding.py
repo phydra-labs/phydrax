@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -48,14 +48,15 @@ from ..discretization.spectral._dealias import (
 )
 from ..discretization.spectral._incompressible import PeriodicLerayProjector
 from ..equations._les_closures import LESParameterProvenance, ResolvedLESFilter
+from ..typing import parse
 from ._dataset import TrainOnlyNormalizer
 from ._les import LESStressConvention
 from ._state import _declared_dimension, FlowStateSchema
 
 
-ClosureDeploymentKind = Literal["conservative_face", "spectral_drift"]
-SpectralEnergyPolicy = Literal["nonincreasing", "diagnostic"]
-StressEnergyPolicy = Literal["signed", "dissipative", "bounded_backscatter"]
+ClosureDeploymentKind: TypeAlias = Literal["conservative_face", "spectral_drift"]
+SpectralEnergyPolicy: TypeAlias = Literal["nonincreasing", "diagnostic"]
+StressEnergyPolicy: TypeAlias = Literal["signed", "dissipative", "bounded_backscatter"]
 
 
 def conservative_face_numeric_revision(
@@ -292,9 +293,9 @@ class LearnedClosureBindingPlan(_AbstractLearnedClosureBinding, ExplicitFreeze):
         outputs = tuple(str(value).strip() for value in output_component_names)
         artifact = str(model_artifact_id).strip()
         normalizer = str(normalizer_provenance_id).strip()
+        deployment = parse(deployment, ClosureDeploymentKind, "deployment_kind")
         if (
-            deployment not in ("conservative_face", "spectral_drift")
-            or not schema
+            not schema
             or not inputs
             or not outputs
             or any(not value for value in (*inputs, *outputs))
@@ -617,8 +618,7 @@ class LearnedStressBindingPlan(StrictModule, NonTrainableState):
         )
         if not artifact or not normalizer:
             raise ValueError("Learned stress artifact identities must be non-empty.")
-        if policy not in ("signed", "dissipative", "bounded_backscatter"):
-            raise ValueError("Unsupported learned stress energy policy.")
+        policy = parse(policy, StressEnergyPolicy, "energy_policy")
         if policy == "bounded_backscatter":
             if (
                 fraction is None
@@ -1289,9 +1289,9 @@ class PreparedSpectralDriftHook(StrictModule):
             )
         policy = str(energy_policy).strip()
         tolerance = float(evidence_tolerance)
+        policy = parse(policy, SpectralEnergyPolicy, "energy_policy")
         if (
-            policy not in ("nonincreasing", "diagnostic")
-            or not np.isfinite(tolerance)
+            not np.isfinite(tolerance)
             or tolerance < 0.0
             or projector.state_shape != hermitian_coordinates.state_shape
             or dealiasing.retained.prepared_id != projector.discretization.prepared_id

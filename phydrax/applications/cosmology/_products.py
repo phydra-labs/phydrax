@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,20 +19,17 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
+from ...typing import parse
 from ...units import derived_unit, UnitDefinition
 from ._closure import CosmologyRealizationSignature
 from ._scales import CosmologyScaleContract
 
 
-CosmologyProductSource = Literal["native", "external"]
-MatterField = Literal["cold_baryon", "total_matter", "massive_neutrino_total"]
-MatterPowerStage = Literal["linear", "nonlinear"]
-TransferGauge = Literal["synchronous", "newtonian", "gauge-invariant"]
-ShotNoiseConvention = Literal["none", "included", "subtracted"]
-
-
-_MATTER_FIELDS = ("cold_baryon", "total_matter", "massive_neutrino_total")
-_GAUGES = ("synchronous", "newtonian", "gauge-invariant")
+CosmologyProductSource: TypeAlias = Literal["native", "external"]
+MatterField: TypeAlias = Literal["cold_baryon", "total_matter", "massive_neutrino_total"]
+MatterPowerStage: TypeAlias = Literal["linear", "nonlinear"]
+TransferGauge: TypeAlias = Literal["synchronous", "newtonian", "gauge-invariant"]
+ShotNoiseConvention: TypeAlias = Literal["none", "included", "subtracted"]
 
 
 class CosmologyProductProvenance(StrictModule, NonTrainableState):
@@ -79,8 +76,7 @@ class CosmologyProductProvenance(StrictModule, NonTrainableState):
         parents = tuple(str(value).strip() for value in parent_product_ids)
         if any(not value for value in values) or any(not value for value in parents):
             raise ValueError("Cosmology product provenance fields must be non-empty.")
-        if source_kind not in ("native", "external"):
-            raise ValueError("source_kind must be 'native' or 'external'.")
+        source_kind = parse(source_kind, CosmologyProductSource, "source_kind")
         if not isinstance(differentiation, DerivativeContract):
             raise TypeError("differentiation must be DerivativeContract.")
         (
@@ -345,14 +341,11 @@ class MatterPowerDescriptor(StrictModule, NonTrainableState):
         shot_noise: ShotNoiseConvention = "none",
         spatial_dimension: int = 3,
     ) -> None:
-        if left_field not in _MATTER_FIELDS or right_field not in _MATTER_FIELDS:
-            raise ValueError("Unknown matter field identity.")
-        if gauge not in _GAUGES:
-            raise ValueError("Unknown transfer gauge.")
-        if stage not in ("linear", "nonlinear"):
-            raise ValueError("Matter power stage must be linear or nonlinear.")
-        if shot_noise not in ("none", "included", "subtracted"):
-            raise ValueError("Unknown shot-noise convention.")
+        left_field = parse(left_field, MatterField, "left_field")
+        right_field = parse(right_field, MatterField, "right_field")
+        gauge = parse(gauge, TransferGauge, "gauge")
+        stage = parse(stage, MatterPowerStage, "stage")
+        shot_noise = parse(shot_noise, ShotNoiseConvention, "shot_noise")
         dimension = int(spatial_dimension)
         if dimension not in (1, 2, 3):
             raise ValueError("Matter power spatial dimension must be 1, 2, or 3.")
@@ -499,8 +492,7 @@ class LinearTransferDescriptor(StrictModule, NonTrainableState):
             or len(set(fields_)) != len(fields_)
         ):
             raise ValueError("Linear transfer fields must be non-empty and unique.")
-        if gauge not in _GAUGES:
-            raise ValueError("Unknown transfer gauge.")
+        gauge = parse(gauge, TransferGauge, "gauge")
         normalization_ = str(normalization).strip()
         if not normalization_:
             raise ValueError("Transfer normalization must be non-empty.")

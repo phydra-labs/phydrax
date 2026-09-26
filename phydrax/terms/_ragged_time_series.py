@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +35,7 @@ from .._interpolation import (
 from .._sampling import design_name
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._data_metrics import (
     reduce_supervised_loss,
     sample_case_indices as _sample_case_indices,
@@ -45,12 +45,12 @@ from ._data_metrics import (
 )
 
 
-RaggedTimeSeriesSampling = Literal[
+RaggedTimeSeriesSampling: TypeAlias = Literal[
     "observation_uniform",
     "case_uniform",
     "case_time_uniform",
 ]
-RaggedTimeSeriesInterpolation = Literal["nearest", "linear"]
+RaggedTimeSeriesInterpolation: TypeAlias = Literal["nearest", "linear"]
 
 
 class RaggedTimeSeriesBatch(StrictModule):
@@ -399,31 +399,10 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
             )
         sampling_ = _normalize_sampling(sampling, component.domain)
 
-        sampling_str = str(selection)
-        if sampling_str not in (
-            "observation_uniform",
-            "case_uniform",
-            "case_time_uniform",
-        ):
-            raise ValueError(
-                "selection must be 'observation_uniform', 'case_uniform', or 'case_time_uniform'."
-            )
-        sampling_value: RaggedTimeSeriesSampling
-        if sampling_str == "observation_uniform":
-            sampling_value = "observation_uniform"
-        elif sampling_str == "case_uniform":
-            sampling_value = "case_uniform"
-        else:
-            sampling_value = "case_time_uniform"
-
-        interpolation_str = str(interpolation)
-        if interpolation_str not in ("nearest", "linear"):
-            raise ValueError("interpolation must be either 'nearest' or 'linear'.")
-        interpolation_value: RaggedTimeSeriesInterpolation
-        if interpolation_str == "nearest":
-            interpolation_value = "nearest"
-        else:
-            interpolation_value = "linear"
+        sampling_value = parse(str(selection), RaggedTimeSeriesSampling, "selection")
+        interpolation_value = parse(
+            str(interpolation), RaggedTimeSeriesInterpolation, "interpolation"
+        )
 
         reduction_str = str(reduction)
         if reduction_str not in ("mean", "sum"):

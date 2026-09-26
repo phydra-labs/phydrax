@@ -14,6 +14,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ..core import Currency, FinancialTimestamp
 from ..market import DataLineage, QuoteTiePolicy
 from ..market._transforms import (
@@ -182,8 +183,7 @@ class ReturnDefinition(StrictModule):
     def __init__(
         self, *, kind: ReturnKind = "simple", maximum_gap_ns: int | None = None
     ) -> None:
-        if kind not in ("simple", "log"):
-            raise ValueError("kind must be 'simple' or 'log'.")
+        kind = parse(kind, ReturnKind, "kind")
         gap = None if maximum_gap_ns is None else int(maximum_gap_ns)
         if gap is not None and gap <= 0:
             raise ValueError("maximum_gap_ns must be positive or None.")
@@ -318,8 +318,7 @@ class RealizedMeasureDefinition(StrictModule):
         window: int,
         annualization: float = 1.0,
     ) -> None:
-        if kind not in ("variance", "volatility", "bipower-variation"):
-            raise ValueError("unsupported realized-measure kind.")
+        kind = parse(kind, RealizedMeasureKind, "kind")
         window_ = int(window)
         annualization_ = float(annualization)
         if window_ < 2 or not np.isfinite(annualization_) or annualization_ <= 0.0:

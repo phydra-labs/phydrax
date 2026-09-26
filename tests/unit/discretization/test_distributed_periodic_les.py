@@ -267,7 +267,7 @@ def test_distributed_periodic_les_resource_and_support_refusals_are_exact(monkey
     assert caught.value.report.closure_bytes > 0
     assert caught.value.report.total_bytes > caught.value.report.maximum_bytes
 
-    with pytest.raises(ValueError, match="only slab and pencil"):
+    with pytest.raises(ValueError, match="schedule"):
         DistributedPeriodicLESPlan(scientific, topology, schedule="channel")
 
     unavailable = DistributedPeriodicLESPlan(scientific, topology)

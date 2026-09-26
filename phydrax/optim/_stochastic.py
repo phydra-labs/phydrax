@@ -24,7 +24,7 @@ from .._tree_math import (
     tree_norm as _tree_norm,
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._bounds import ProjectedLBFGS
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._types import (
@@ -345,8 +345,8 @@ class ChanceConstraint(StrictModule):
         )
 
 
-ChanceCertificateMethod = Literal["exact-enumeration", "weighted-hoeffding"]
-ChanceSamplingProvenance = Literal[
+ChanceCertificateMethod: TypeAlias = Literal["exact-enumeration", "weighted-hoeffding"]
+ChanceSamplingProvenance: TypeAlias = Literal[
     "exact-enumeration", "independent", "correlated", "unknown"
 ]
 
@@ -372,17 +372,10 @@ class ChanceCertificatePolicy(StrictModule):
         confidence: float = 0.95,
     ) -> None:
         confidence_ = float(confidence)
-        if method not in ("exact-enumeration", "weighted-hoeffding"):
-            raise ValueError(
-                "method must be 'exact-enumeration' or 'weighted-hoeffding'."
-            )
-        if sampling_provenance not in (
-            "exact-enumeration",
-            "independent",
-            "correlated",
-            "unknown",
-        ):
-            raise ValueError("Unknown chance sampling provenance.")
+        method = parse(method, ChanceCertificateMethod, "method")
+        sampling_provenance = parse(
+            sampling_provenance, ChanceSamplingProvenance, "sampling_provenance"
+        )
         if not isfinite(confidence_) or not 0.0 < confidence_ < 1.0:
             raise ValueError("confidence must lie strictly between zero and one.")
         self.method = method

@@ -19,6 +19,7 @@ from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 from ._validation import canonical_identifier
+from .typing import parse
 
 
 class AdmissibilityReason(IntFlag):
@@ -94,8 +95,7 @@ def guard_derivative_validity(
     message: str = "Derivative is invalid for the accepted primal result.",
 ) -> Any:
     """Keep a primal inspectable while poisoning or rejecting invalid derivatives."""
-    if failure not in ("status", "error"):
-        raise ValueError("Derivative failure mode must be 'status' or 'error'.")
+    failure = parse(failure, DerivativeFailureMode, "failure")
     message_ = str(message).strip()
     if not message_:
         raise ValueError("Derivative failure message must be non-empty.")

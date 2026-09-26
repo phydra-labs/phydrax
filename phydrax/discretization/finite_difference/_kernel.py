@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 PatchExecutionKind: TypeAlias = Literal["vmap", "lax_map"]
@@ -52,8 +53,7 @@ class PatchKernelPlan(StrictModule, NonTrainableState):
         )
         if not functions or not all(callable(function) for function in functions):
             raise TypeError("kernel must contain one or more callables.")
-        if execution not in ("vmap", "lax_map"):
-            raise ValueError("Unknown patch execution kind.")
+        execution = parse(execution, PatchExecutionKind, "execution")
         identifier = (
             canonical_fingerprint(
                 {
@@ -197,8 +197,7 @@ class OrderedPatchKernelPlan(StrictModule, NonTrainableState):
             raise ValueError("Ordered patch kernels require a positive odd kernel size.")
         if not callable(kernel):
             raise TypeError("kernel must be callable.")
-        if direction not in ("forward", "backward"):
-            raise ValueError("Unknown sweep direction.")
+        direction = parse(direction, SweepDirection, "direction")
         identifier = (
             canonical_fingerprint(
                 {

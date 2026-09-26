@@ -9,7 +9,7 @@ import importlib
 import importlib.util
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 import scipy.io
@@ -24,6 +24,7 @@ from ...interchange import (
     AdapterStatus,
     require_lossless,
 )
+from ...typing import parse
 from ...units import (
     conversion_factor,
     derived_unit,
@@ -37,8 +38,8 @@ from ..piv import PhysicalPIVResult2D
 from ._piv_field import field_columns, field_from_columns
 
 
-PIVlabStage = Literal["original", "filtered", "smoothed"]
-PIVlabYAxis = Literal["down", "up"]
+PIVlabStage: TypeAlias = Literal["original", "filtered", "smoothed"]
+PIVlabYAxis: TypeAlias = Literal["down", "up"]
 _HDF5_SIGNATURE = b"\x89HDF\r\n\x1a\n"
 
 
@@ -59,10 +60,8 @@ def read_pivlab(
 ]:
     """Read supported PIVlab MAT or HDF5 variable layouts without MATLAB execution."""
     source = Path(path).expanduser().absolute()
-    if y_axis not in ("down", "up"):
-        raise ValueError("y_axis must explicitly be 'down' or 'up'.")
-    if stage not in ("original", "filtered", "smoothed"):
-        raise ValueError("Unknown PIVlab stage.")
+    y_axis = parse(y_axis, PIVlabYAxis, "y_axis")
+    stage = parse(stage, PIVlabStage, "stage")
     resource = read_bounded_resource(
         source.name,
         trusted_root=source.parent,
@@ -308,8 +307,7 @@ def write_pivlab(
     maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
 ) -> AdapterReport:
     """Write the documented PIVlab field-variable layout with an explicit loss report."""
-    if y_axis not in ("down", "up"):
-        raise ValueError("y_axis must explicitly be 'down' or 'up'.")
+    y_axis = parse(y_axis, PIVlabYAxis, "y_axis")
     fields_ = (
         (fields,)
         if isinstance(fields, (DenseDisplacementField2D, PhysicalPIVResult2D))

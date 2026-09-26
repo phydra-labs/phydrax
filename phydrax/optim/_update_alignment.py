@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import IntEnum
 from itertools import combinations
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,6 +30,7 @@ from .._tree_math import (
 )
 from ..ein import contract
 from ..linalg import FailurePolicy, SmallLinearSolvePlan, solve_small_linear
+from ..typing import parse
 from ._programming import (
     ConvexSolvePolicy,
     ConvexTermination,
@@ -38,7 +39,7 @@ from ._programming import (
 )
 
 
-ConflictFreeUpdateFailureMode = Literal["status", "error"]
+ConflictFreeUpdateFailureMode: TypeAlias = Literal["status", "error"]
 
 
 class ConflictFreeUpdateStatus(IntEnum):
@@ -82,8 +83,7 @@ class ConflictFreeUpdatePolicy(StrictModule, NonTrainableState):
             raise ValueError("feasibility_tolerance must be finite and nonnegative.")
         if not np.isfinite(condition) or condition <= 1.0:
             raise ValueError("maximum_condition must be finite and greater than one.")
-        if failure not in ("status", "error"):
-            raise ValueError("failure must be 'status' or 'error'.")
+        failure = parse(failure, ConflictFreeUpdateFailureMode, "failure")
         if dual_solve_policy is None:
             solver_tolerance = max(tolerance, 1e-10)
             dual = ConvexSolvePolicy(

@@ -30,6 +30,7 @@ from ....geometry.surface._contracts import (
     SurfaceSelection,
 )
 from ....geometry.surface._model import SurfaceModel
+from ....typing import parse
 from ._fast_provider import BEMExecutionEnvelope
 
 
@@ -57,8 +58,7 @@ class BoundaryRefinementPolicy(StrictModule, NonTrainableState):
         max_marked_faces: int = 100_000,
         max_target_faces: int = 1_000_000,
     ) -> None:
-        if strategy not in ("dorfler", "maximum"):
-            raise ValueError("Boundary marking strategy must be 'dorfler' or 'maximum'.")
+        strategy = parse(strategy, BoundaryMarkingStrategy, "strategy")
         fraction_ = float(fraction)
         marked_limit = int(max_marked_faces)
         target_limit = int(max_target_faces)

@@ -36,6 +36,7 @@ from ...discretization.finite_volume import (
     FiniteVolumeDecompositionPlan,
     PreparedFiniteVolumeDecomposition,
 )
+from ...typing import parse
 
 
 NumericalRelativityFormulation: TypeAlias = Literal[
@@ -47,16 +48,10 @@ NumericalRelativityFormulation: TypeAlias = Literal[
     "z4c-grmhd",
     "z4c-grrmhd",
 ]
-_FORMULATIONS = frozenset(
-    ("z4c", "grhd", "grmhd", "grrmhd", "z4c-grhd", "z4c-grmhd", "z4c-grrmhd")
-)
 
 
 def _formulation(value: str, /) -> NumericalRelativityFormulation:
-    normalized = str(value)
-    if normalized not in _FORMULATIONS:
-        raise ValueError(f"Unknown numerical-relativity formulation {normalized!r}.")
-    return normalized
+    return parse(value, NumericalRelativityFormulation, "formulation")
 
 
 def formulation_field_names(

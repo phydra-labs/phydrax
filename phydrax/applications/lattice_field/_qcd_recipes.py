@@ -65,6 +65,7 @@ from ...sampling._rhmc import (
     SeparableActionRegistry,
     SeparableActionTerm,
 )
+from ...typing import parse
 from ._distributed_qcd import (
     DistributedGaugeTheoryPlan,
     DistributedHMCPlan,
@@ -110,8 +111,7 @@ def _spectral_bounds(
     upper_ = _finite_positive(upper, "spectral_upper")
     if upper_ <= lower_:
         raise ValueError("spectral_upper must exceed spectral_lower.")
-    if evidence not in ("verified", "asserted"):
-        raise ValueError("spectral_evidence must be 'verified' or 'asserted'.")
+    evidence = parse(evidence, SpectralEvidence, "spectral_evidence")
     return lower_, upper_, evidence
 
 
@@ -476,8 +476,7 @@ class WilsonCloverNf2Recipe(StrictModule, NonTrainableState):
             raise TypeError("geometry must be SU3GaugeGeometry.")
         if not isinstance(measurements, MeasurementSchedule):
             raise TypeError("measurements must be MeasurementSchedule.")
-        if variant not in ("wilson", "clover"):
-            raise ValueError("variant must be 'wilson' or 'clover'.")
+        variant = parse(variant, FermionVariant, "variant")
         beta_ = _finite_positive(beta, "beta")
         mass_ = float(mass)
         clover = float(clover_coefficient)

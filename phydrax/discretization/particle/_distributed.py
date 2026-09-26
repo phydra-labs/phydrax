@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._pairwise import ParticleBox
 from ._precision import ParticlePrecisionPolicy
 
@@ -34,10 +35,8 @@ class ParticleBackendPolicy(StrictModule, NonTrainableState):
         *,
         determinism: ParticleDeterminism = "deterministic",
     ) -> None:
-        if backend not in ("pure-jax", "pallas", "triton"):
-            raise ValueError("Unknown particle backend.")
-        if determinism not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown particle determinism mode.")
+        backend = parse(backend, ParticleBackendKind, "backend")
+        determinism = parse(determinism, ParticleDeterminism, "determinism")
         self.backend = backend
         self.determinism = determinism
         self.policy_id = canonical_fingerprint(

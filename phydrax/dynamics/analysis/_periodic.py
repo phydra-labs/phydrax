@@ -48,6 +48,7 @@ from ...nonlinear import (
     root,
     RootLineSearch,
 )
+from ...typing import parse
 from .._evolution import AbstractDifferentiableEvolution
 from .._layout import StateLayout
 
@@ -242,8 +243,7 @@ class PeriodicOrbitProblem(StrictModule):
     ) -> None:
         if not isinstance(evolution, AbstractDifferentiableEvolution):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
-        if kind not in ("flow", "map"):
-            raise ValueError("kind must be 'flow' or 'map'.")
+        kind = parse(kind, PeriodicOrbitKind, "kind")
         if isinstance(num_segments, bool):
             raise TypeError("num_segments must be an integer.")
         segments = index(num_segments)
@@ -552,8 +552,7 @@ def solve_periodic_orbit(
     """Solve real-coordinate multiple shooting through the shared nonlinear runtime."""
     if not isinstance(problem, PeriodicOrbitProblem):
         raise TypeError("problem must be a PeriodicOrbitProblem.")
-    if linear_method not in ("dense", "matrix_free"):
-        raise ValueError("linear_method must be 'dense' or 'matrix_free'.")
+    linear_method = parse(linear_method, PeriodicLinearMethod, "linear_method")
     integer_values = (
         max_iterations,
         max_line_search,
@@ -809,8 +808,7 @@ def floquet_spectrum(
     """Compute Floquet multipliers through the shared general-eigen runtime."""
     if not isinstance(orbit, PeriodicOrbitResult):
         raise TypeError("orbit must be a PeriodicOrbitResult.")
-    if method not in ("full", "leading"):
-        raise ValueError("method must be 'full' or 'leading'.")
+    method = parse(method, FloquetMethod, "method")
     tolerance = float(stability_tolerance)
     if not np.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("stability_tolerance must be finite and positive.")

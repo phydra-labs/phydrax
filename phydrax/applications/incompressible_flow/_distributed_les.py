@@ -51,6 +51,7 @@ from ...solver._runtime_lifecycle import (
     ExactTimeSchedule,
     RuntimeCheckpointEncodingPlan,
 )
+from ...typing import parse
 from ._forcing import ConstantPowerFourierForcingPlan
 from ._production import (
     _output_schedule,
@@ -373,8 +374,7 @@ class DistributedPeriodicLESMethodPlan(StrictModule, NonTrainableState):
         *,
         safety_factor: float = 0.8,
     ) -> None:
-        if method not in ("etdrk2", "etdrk4", "ssprk33", "ssprk54"):
-            raise ValueError("Distributed LES method is unsupported.")
+        method = parse(method, DistributedPeriodicLESMethod, "method")
         safety = float(safety_factor)
         if not np.isfinite(safety) or not 0.0 < safety <= 1.0:
             raise ValueError("safety_factor must be finite and lie in (0, 1].")

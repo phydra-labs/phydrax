@@ -24,6 +24,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState
 from ..optim import AbstractRiskMeasure, CVaRRisk, EntropicRisk, MeanVarianceRisk
+from ..typing import parse
 from ._dynamics import DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
 from ._problem import ControlProblem
@@ -100,8 +101,7 @@ class SamplingMPCRealizations(StrictModule, NonTrainableState):
         campaign = str(campaign_id)
         if not posterior or not campaign:
             raise ValueError("posterior_id and campaign_id must be non-empty.")
-        if policy not in ("fixed", "resample"):
-            raise ValueError("realization policy must be 'fixed' or 'resample'.")
+        policy = parse(policy, SamplingMPCRealizationPolicy, "policy")
         identity = (
             canonical_fingerprint(
                 {
@@ -464,8 +464,7 @@ def plan_sampling_mpc(
     )
     if elites > candidates:
         raise ValueError("elite_count must not exceed candidate_count.")
-    if update not in ("predictive", "cem"):
-        raise ValueError("update must be 'predictive' or 'cem'.")
+    update = parse(update, SamplingMPCUpdate, "update")
     rate = float(update_rate)
     if not isfinite(rate) or not 0.0 <= rate <= 1.0:
         raise ValueError("update_rate must be finite and lie in [0, 1].")
@@ -474,10 +473,10 @@ def plan_sampling_mpc(
         raise ValueError("minimum_standard_deviation must be finite and non-negative.")
     if bounds is not None and not isinstance(bounds, Bounds):
         raise TypeError("bounds must be a Bounds or None.")
-    if bound_policy not in ("clip", "reject"):
-        raise ValueError("bound_policy must be 'clip' or 'reject'.")
-    if warm_start_terminal not in ("hold", "zero"):
-        raise ValueError("warm_start_terminal must be 'hold' or 'zero'.")
+    bound_policy = parse(bound_policy, SamplingMPCBoundPolicy, "bound_policy")
+    warm_start_terminal = parse(
+        warm_start_terminal, SamplingMPCWarmStartTerminal, "warm_start_terminal"
+    )
 
     risk_measure: AbstractRiskMeasure | None
     aggregation: SamplingMPCAggregation

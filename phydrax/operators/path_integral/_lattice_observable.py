@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ._scalar_lattice import Phi4LatticeAction
 
 
@@ -61,15 +62,10 @@ class LatticeObservablePlan(StrictModule):
         shape = tuple(output_shape)
         if any(value <= 0 for value in shape):
             raise ValueError("output_shape dimensions must be positive.")
-        if normalization not in (
-            "extensive",
-            "site-mean",
-            "physical-measure",
-            "pair-mean",
-        ):
-            raise ValueError("Unknown lattice-observable normalization.")
-        if output_kind not in ("real", "complex"):
-            raise ValueError("output_kind must be 'real' or 'complex'.")
+        normalization = parse(
+            normalization, LatticeObservableNormalization, "normalization"
+        )
+        output_kind = parse(output_kind, LatticeObservableKind, "output_kind")
         identifiers = str(topology_id), str(field_space_id), str(observable_id)
         if any(not value for value in identifiers):
             raise ValueError("Lattice observable identifiers must be non-empty.")

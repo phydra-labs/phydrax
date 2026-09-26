@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ..contracts._credit import DefaultEventState
 from ..core import Currency
 
@@ -293,12 +294,11 @@ class CloseoutConvention(StrictModule):
         *,
         convention_id: str,
     ) -> None:
-        if value_source not in ("risk_free", "replacement"):
-            raise ValueError("Unsupported closeout value source.")
-        if observation not in ("default_time", "mpor_end"):
-            raise ValueError("Unsupported closeout observation.")
-        if simultaneous_default not in ("counterparty", "own", "zero"):
-            raise ValueError("Unsupported simultaneous-default rule.")
+        value_source = parse(value_source, CloseoutValueSource, "value_source")
+        observation = parse(observation, CloseoutObservation, "observation")
+        simultaneous_default = parse(
+            simultaneous_default, SimultaneousDefaultRule, "simultaneous_default"
+        )
         self.value_source = value_source
         self.observation = observation
         self.simultaneous_default = simultaneous_default

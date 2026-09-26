@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellComplexTopology
+from ..typing import parse
 from ._coefficients import CoefficientDomain, PrimeField, RationalField
 from ._complex import (
     CellComplexPair,
@@ -75,8 +76,7 @@ class FiniteFieldBasis(StrictModule, NonTrainableState):
         degree_ = int(degree)
         if degree_ < 0 or degree_ > layout.max_degree:
             raise ValueError("Finite-field basis degree is outside the compact layout.")
-        if kind not in ("chain", "cochain"):
-            raise ValueError("Finite-field basis kind must be 'chain' or 'cochain'.")
+        kind = parse(kind, BasisKind, "kind")
         if not isinstance(field, PrimeField):
             raise TypeError("Finite-field bases require a PrimeField.")
         cells = []
@@ -441,8 +441,7 @@ def compute_homology(
     """Compute exact prime-field homology and optional generators on the host."""
     if not isinstance(coefficients, PrimeField):
         raise TypeError("compute_homology requires an explicit PrimeField.")
-    if representatives not in ("none", "cycles", "cocycles", "both"):
-        raise ValueError("Unknown homology representative policy.")
+    representatives = parse(representatives, RepresentativeKind, "representatives")
     policy = TopologyResourcePolicy() if resources is None else resources
     if not isinstance(policy, TopologyResourcePolicy):
         raise TypeError("resources must be a TopologyResourcePolicy.")

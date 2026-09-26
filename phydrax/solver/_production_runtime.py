@@ -13,7 +13,7 @@ import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -57,6 +57,7 @@ from ..lifecycle._migration import MigrationReport
 from ..lifecycle._repository import ObjectNotFoundError
 from ..lifecycle._resolved_run import ResolvedRunSpec
 from ..logging import emit
+from ..typing import parse
 from ._fixed_step import (
     _canonical_structured_state,
     _state_dtype,
@@ -83,7 +84,7 @@ from ._runtime_lifecycle import (
 
 
 RunStatus = Literal["ready", "running", "completed", "failed", "canceled"]
-ProductionTriggerAction = Literal["checkpoint", "publish", "stop"]
+ProductionTriggerAction: TypeAlias = Literal["checkpoint", "publish", "stop"]
 
 
 def _finite_array_tree(state: Any, /) -> Array:
@@ -1807,10 +1808,10 @@ class ProductionTriggerBinding(StrictModule, NonTrainableState):
             or any(value < 0 for value in indices)
             or (components and len(components) != len(indices))
             or any(value < 0 for value in components)
-            or action not in ("checkpoint", "publish", "stop")
             or not action_id_
         ):
             raise ValueError("Production trigger binding is invalid.")
+        action = parse(action, ProductionTriggerAction, "action")
         self.name = name_
         self.graph = graph
         self.moment_indices = indices

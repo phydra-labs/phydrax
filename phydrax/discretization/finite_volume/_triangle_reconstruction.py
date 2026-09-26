@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
 
 
@@ -174,8 +175,7 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(gradient, PreparedTriangleWLSQ):
             raise TypeError("gradient must be PreparedTriangleWLSQ.")
-        if limiter not in ("unlimited", "barth_jespersen", "venkatakrishnan"):
-            raise ValueError("Unknown triangle MUSCL limiter.")
+        limiter = parse(limiter, TriangleLimiterKind, "limiter")
         self.gradient = gradient
         self.limiter = limiter
         self.epsilon = float(epsilon)

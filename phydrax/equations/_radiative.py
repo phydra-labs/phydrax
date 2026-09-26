@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation._piecewise import linear_interpolate
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 RadiativeCoolingBoundsPolicy: TypeAlias = Literal["error", "power_law_extrapolate"]
@@ -68,8 +69,9 @@ class TabulatedCoolingCurve(StrictModule, NonTrainableState):
             or rate_scale_ <= 0.0
         ):
             raise ValueError("Cooling table and code-unit scales are invalid.")
-        if bounds_policy not in ("error", "power_law_extrapolate"):
-            raise ValueError("Unknown radiative cooling bounds policy.")
+        bounds_policy = parse(
+            bounds_policy, RadiativeCoolingBoundsPolicy, "bounds_policy"
+        )
         slopes = np.diff(values) / np.diff(nodes)
         physical_nodes = 10.0**nodes / temperature_scale_
         coefficients = (

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, get_args, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -35,7 +35,9 @@ from ...sampling.collocation import CausalTimeSlabSchedule
 from ...typing import PRNGKey
 
 
-StefanRepresentation = Literal["explicit_front", "implicit_level_set", "reference_map"]
+StefanRepresentation: TypeAlias = Literal[
+    "explicit_front", "implicit_level_set", "reference_map"
+]
 
 
 class OnePhaseStefanParameters(StrictModule, NonTrainableState):
@@ -242,13 +244,13 @@ class StefanRepresentationComparison(StrictModule, NonTrainableState):
     explicit: StefanLoss
     implicit: StefanLoss
     reference: StefanLoss
-    best_representation: str
+    best_representation: StefanRepresentation
 
     def __init__(
         self, explicit: StefanLoss, implicit: StefanLoss, reference: StefanLoss, /
     ) -> None:
         losses = jnp.asarray((explicit.total, implicit.total, reference.total))
-        names = ("explicit_front", "implicit_level_set", "reference_map")
+        names = get_args(StefanRepresentation)
         self.explicit = explicit
         self.implicit = implicit
         self.reference = reference

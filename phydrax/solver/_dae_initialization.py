@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 from enum import IntEnum
 from math import prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -30,6 +30,7 @@ from ..nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
+from ..typing import parse
 
 
 DAEInitializationMode: TypeAlias = Literal[
@@ -84,8 +85,7 @@ class DAEInitializationSpec(StrictModule):
         fixed_state: npt.ArrayLike | None = None,
         fixed_rate: npt.ArrayLike | None = None,
     ) -> None:
-        if mode not in ("index-one", "fixed-rate", "check", "custom"):
-            raise ValueError("Unknown DAE initialization mode.")
+        mode = parse(mode, DAEInitializationMode, "mode")
         if mode == "custom":
             if fixed_state is None or fixed_rate is None:
                 raise ValueError("Custom initialization requires both fixed masks.")
@@ -299,36 +299,40 @@ def _fixed_masks(
     spec: DAEInitializationSpec,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    if spec.mode == "index-one":
-        fixed_state = _role_mask(
-            system,
-            system.structure.variable_roles,
-            "differential",
-        )
-        fixed_rate = _role_mask(
-            system,
-            system.structure.variable_roles,
-            "algebraic",
-        )
-    elif spec.mode == "fixed-rate":
-        fixed_state = np.zeros(system.state_shape, dtype=np.bool_)
-        fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
-    elif spec.mode == "check":
-        fixed_state = np.ones(system.state_shape, dtype=np.bool_)
-        fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
-    else:
-        assert spec.fixed_state is not None and spec.fixed_rate is not None
-        if len(spec.fixed_state) != system.state_size:
-            raise ValueError(
-                f"Custom DAE initialization masks must contain exactly {system.state_size} entries."
+    mode = spec.mode
+    match mode:
+        case "index-one":
+            fixed_state = _role_mask(
+                system,
+                system.structure.variable_roles,
+                "differential",
             )
-        fixed_state = np.asarray(spec.fixed_state, dtype=np.bool_).reshape(
-            system.state_shape
-        )
-        fixed_rate = np.asarray(spec.fixed_rate, dtype=np.bool_).reshape(
-            system.state_shape
-        )
-    if spec.mode != "check":
+            fixed_rate = _role_mask(
+                system,
+                system.structure.variable_roles,
+                "algebraic",
+            )
+        case "fixed-rate":
+            fixed_state = np.zeros(system.state_shape, dtype=np.bool_)
+            fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
+        case "check":
+            fixed_state = np.ones(system.state_shape, dtype=np.bool_)
+            fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
+        case "custom":
+            assert spec.fixed_state is not None and spec.fixed_rate is not None
+            if len(spec.fixed_state) != system.state_size:
+                raise ValueError(
+                    f"Custom DAE initialization masks must contain exactly {system.state_size} entries."
+                )
+            fixed_state = np.asarray(spec.fixed_state, dtype=np.bool_).reshape(
+                system.state_shape
+            )
+            fixed_rate = np.asarray(spec.fixed_rate, dtype=np.bool_).reshape(
+                system.state_shape
+            )
+        case _:
+            assert_never(mode)
+    if mode != "check":
         free_count = int(np.count_nonzero(~fixed_state) + np.count_nonzero(~fixed_rate))
         if free_count != system.state_size:
             raise ValueError(

@@ -21,6 +21,7 @@ from ..._interpolation._bspline_grid import BSplineGrid
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...diagnostics import Diagnostic
+from ...typing import parse
 
 
 BoundarySide: TypeAlias = Literal["lower", "upper"]
@@ -232,12 +233,10 @@ class SignedSplineTrace(StrictModule, NonTrainableState):
     ) -> None:
         degree = int(form_degree)
         axis = int(normal_axis)
-        side_ = str(side)
         count = int(source_dof_count)
         target_axes = tuple(tuple(axes) for axes in target_component_axes)
         matrix_ = jnp.asarray(matrix)
-        if side_ not in ("lower", "upper"):
-            raise ValueError("Spline trace side must be lower or upper.")
+        side_ = parse(side, BoundarySide, "side")
         if matrix_.ndim != 2 or matrix_.shape[1] != count:
             raise ValueError("Spline trace matrix has an invalid source dimension.")
         orientation = ((-1) ** axis) * (1 if side_ == "upper" else -1)
@@ -510,11 +509,9 @@ class SplinePiolaMap(StrictModule, NonTrainableState):
 
     def __init__(self, dimension: int, kind: PiolaKind, /) -> None:
         dimension_ = int(dimension)
-        kind_ = str(kind)
         if dimension_ not in (2, 3):
             raise ValueError("Spline Piola maps require dimension two or three.")
-        if kind_ not in ("h1", "hcurl", "hdiv", "l2"):
-            raise ValueError("Unknown spline Piola map kind.")
+        kind_ = parse(kind, PiolaKind, "kind")
         self.dimension = dimension_
         self.kind = kind_
 
@@ -723,7 +720,7 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(complex_, AbstractSplineDeRhamComplex):
             raise TypeError("Relative evidence requires a spline de Rham complex.")
-        faces = tuple((int(axis), str(side)) for axis, side in boundary_faces)
+        faces = tuple((int(axis), side) for axis, side in boundary_faces)
         tolerance_ = float(tolerance)
         if tolerance_ <= 0.0 or not np.isfinite(tolerance_):
             raise ValueError("Relative cohomology tolerance must be positive and finite.")
@@ -731,9 +728,9 @@ class RelativeCohomologyEvidence(StrictModule, NonTrainableState):
             raise ValueError("Relative boundary faces must be unique.")
         validated_faces: list[tuple[int, BoundarySide]] = []
         for axis, side in faces:
-            if axis < 0 or axis >= complex_.dimension or side not in ("lower", "upper"):
+            if axis < 0 or axis >= complex_.dimension:
                 raise ValueError("Relative boundary face is invalid.")
-            validated_faces.append((axis, side))
+            validated_faces.append((axis, parse(side, BoundarySide, "side")))
 
         restrictions: list[np.ndarray] = []
         for degree in range(complex_.dimension + 1):

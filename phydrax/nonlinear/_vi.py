@@ -26,6 +26,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._linearization import prepare_jacobian
 from ._newton import _remaining_linear_steps, NewtonKrylov
 from ._prepared import (
@@ -216,8 +217,7 @@ class VariationalInequalityProblem(StrictModule):
         derivative_policy: GeneralizedDerivativePolicy | None = None,
         project_trials: bool = False,
     ) -> NonlinearSystemProblem:
-        if formulation not in ("natural", "fischer-burmeister"):
-            raise ValueError(f"Unknown complementarity formulation {formulation!r}.")
+        formulation = parse(formulation, ComplementarityFormulation, "formulation")
         policy = (
             GeneralizedDerivativePolicy()
             if derivative_policy is None
@@ -277,8 +277,7 @@ class ProjectionDerivativePolicy(StrictModule):
         branch_tolerance: float = 1e-7,
     ) -> None:
         tolerance = float(branch_tolerance)
-        if mode not in ("reject-ambiguous", "selected-generalized"):
-            raise ValueError("mode must be 'reject-ambiguous' or 'selected-generalized'.")
+        mode = parse(mode, ProjectionDerivativeMode, "mode")
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("branch_tolerance must be finite and positive.")
         self.mode = mode
@@ -435,8 +434,9 @@ class ConeSemismoothNewton(StrictModule):
         tolerance = float(certification_tolerance)
         if not isinstance(newton_, NewtonKrylov):
             raise TypeError("newton must be NewtonKrylov or None.")
-        if feasibility not in ("allow-infeasible", "preserve-cone"):
-            raise ValueError("feasibility must be 'allow-infeasible' or 'preserve-cone'.")
+        feasibility = parse(
+            feasibility, ConeVariationalInequalityFeasibility, "feasibility"
+        )
         if not isinstance(policy, ProjectionDerivativePolicy):
             raise TypeError(
                 "derivative_policy must be ProjectionDerivativePolicy or None."
@@ -668,10 +668,8 @@ class SemismoothNewton(StrictModule):
         tolerance = float(certification_tolerance)
         if not isinstance(newton_, NewtonKrylov):
             raise TypeError("newton must be NewtonKrylov or None.")
-        if formulation not in ("natural", "fischer-burmeister"):
-            raise ValueError(f"Unknown complementarity formulation {formulation!r}.")
-        if feasibility not in ("allow-infeasible", "preserve-box"):
-            raise ValueError("feasibility must be 'allow-infeasible' or 'preserve-box'.")
+        formulation = parse(formulation, ComplementarityFormulation, "formulation")
+        feasibility = parse(feasibility, VariationalInequalityFeasibility, "feasibility")
         if not isinstance(policy_, GeneralizedDerivativePolicy):
             raise TypeError(
                 "derivative_policy must be GeneralizedDerivativePolicy or None."

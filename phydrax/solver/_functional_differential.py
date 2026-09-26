@@ -21,6 +21,7 @@ from .._frozendict import frozendict
 from .._interpolation import barycentric_interpolate, linear_interpolate
 from .._polynomial._chebyshev import chebyshev_lobatto_data
 from .._strict import StrictModule
+from ..typing import parse
 
 
 FunctionalVectorField: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
@@ -254,8 +255,7 @@ class FunctionalCollocationPlan(StrictModule):
         degree_ = int(degree)
         if degree_ < 1:
             raise ValueError("degree must be at least one.")
-        if method not in ("auto", "root", "least-squares"):
-            raise ValueError("method must be 'auto', 'root', or 'least-squares'.")
+        method = parse(method, FunctionalCollocationMethod, "method")
         if not np.isfinite(rtol) or float(rtol) < 0.0:
             raise ValueError("rtol must be finite and non-negative.")
         if not np.isfinite(atol) or float(atol) < 0.0:

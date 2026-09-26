@@ -48,6 +48,7 @@ from ...solver._quantum_program import (
     DenseQuantumProgramPolicy,
     DenseQuantumProgramResult,
 )
+from ...typing import parse
 from .._schema import AbstractFittedModel
 
 
@@ -245,8 +246,7 @@ class DenseCircuitExpectationModel(AbstractFittedModel):
         program_policy: DenseQuantumProgramPolicy | None = None,
         observable_policy: DenseQuantumObservablePolicy | None = None,
     ) -> None:
-        if gradient_method not in ("autodiff", "parameter-shift"):
-            raise ValueError("Unknown circuit gradient method.")
+        gradient_method = parse(gradient_method, CircuitGradientMethod, "gradient_method")
         in_size, _ = _validate_angle_model(angle_model, template)
         circuit = _prepare_execution(template, initial_state, program_policy)
         observable_plan = plan_dense_quantum_observables(

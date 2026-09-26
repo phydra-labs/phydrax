@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -12,11 +12,12 @@ from jax.typing import ArrayLike
 from phydrax._strict import StrictModule
 
 from ..sparse import EdgeRelation, gather_routes, route_reduce
+from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
 
 
-GraphPoolReduce = Literal["sum", "mean"]
+GraphPoolReduce: TypeAlias = Literal["sum", "mean"]
 
 
 def _tree_leading_size(tree: Any, /) -> int:
@@ -55,9 +56,7 @@ def _membership_relation(
 
 
 def _pool_reduction(reduce: GraphPoolReduce, /) -> GraphPoolReduce:
-    if reduce not in ("sum", "mean"):
-        raise ValueError("Graph pool reduce must be 'sum' or 'mean'.")
-    return reduce
+    return parse(reduce, GraphPoolReduce, "reduce")
 
 
 def _valid_node_mask(graph: GraphIR, cluster_ids: jnp.ndarray, /) -> jnp.ndarray:

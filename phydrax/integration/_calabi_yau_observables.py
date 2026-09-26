@@ -20,6 +20,7 @@ from phydrax import ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._calabi_yau import ProjectiveMeasureTarget
 
 
@@ -66,8 +67,7 @@ class CalabiYauModuliObservablePlan(StrictModule):
             or len(set(labels)) != len(labels)
         ):
             raise ValueError("modulus_labels must be unique and non-empty.")
-        if kind not in {"algebraic", "harmonic"}:
-            raise ValueError("representative_kind must be algebraic or harmonic.")
+        kind = parse(kind, ModuliRepresentativeKind, "representative_kind")
         if not source or batches < 1 or maximum < 1:
             raise ValueError("Representative source and resource bounds are required.")
         if any(

@@ -20,6 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.spatial import MortonAddressPlan, MortonRadiusRelationPlan
 from ...sparse import EdgeRelation, KeyGroupPlan
+from ...typing import parse
 
 
 FoFRealization: TypeAlias = Literal["direct", "cell_list", "morton_plane"]
@@ -145,10 +146,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
             or groups <= 0
         ):
             raise ValueError("FoF finder policy is invalid.")
-        if realization not in ("direct", "cell_list", "morton_plane"):
-            raise ValueError(
-                "realization must be 'direct', 'cell_list', or 'morton_plane'."
-            )
+        realization = parse(realization, FoFRealization, "realization")
         if realization != "direct" and links <= 0:
             raise ValueError("Non-direct FoF realizations require maximum_links.")
         if cell_occupancy <= 0 or morton_occupancy <= 0:

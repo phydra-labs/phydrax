@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,7 +24,7 @@ from .._strict import StrictModule
 from ..graph._gauge_transport import GaugeStaplePlan
 from ..linalg import determinant_small_linear, SmallLinearSolvePlan
 from ..metrix import SpecialUnitaryGroup, UnitaryGroup
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 _UPDATE_ADDRESS = SampleAddress(
@@ -34,8 +34,8 @@ _EXCHANGE_ADDRESS = SampleAddress(
     "lattice-gauge", "replica-exchange", target="neighbor-pair", role="transition"
 )
 
-GaugeGroupKind = Literal["u1", "su2", "su3"]
-GaugeUpdateKind = Literal["heatbath", "overrelaxation", "mixed"]
+GaugeGroupKind: TypeAlias = Literal["u1", "su2", "su3"]
+GaugeUpdateKind: TypeAlias = Literal["heatbath", "overrelaxation", "mixed"]
 
 
 class GaugeUpdateStatus(IntEnum):
@@ -75,10 +75,8 @@ class GaugeUpdatePlan(StrictModule):
         attempts = int(rejection_attempts)
         reflections = int(overrelaxation_passes)
         subgroup_passes = int(su3_subgroup_passes)
-        if group not in ("u1", "su2", "su3"):
-            raise ValueError("group must be 'u1', 'su2', or 'su3'.")
-        if update not in ("heatbath", "overrelaxation", "mixed"):
-            raise ValueError("Unsupported gauge update kind.")
+        group = parse(group, GaugeGroupKind, "group")
+        update = parse(update, GaugeUpdateKind, "update")
         if not np.isfinite(beta) or beta < 0.0:
             raise ValueError("coupling must be finite and nonnegative.")
         if (

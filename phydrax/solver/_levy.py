@@ -26,6 +26,7 @@ from ..stochastic import (
     StochasticTrajectory,
 )
 from ..stochastic._trajectory import _TrajectoryRecord
+from ..typing import parse
 from ._solution_validation import validate_solution_arrays
 
 
@@ -163,10 +164,12 @@ class LevySDESolverDiagnostics(StrictModule):
         steps = int(num_steps)
         if steps < 0:
             raise ValueError("num_steps must be non-negative.")
-        if scheme not in ("euler", "tamed_euler"):
-            raise ValueError("Unknown Lévy SDE scheme.")
-        if small_jump_approximation not in ("truncate", "gaussian"):
-            raise ValueError("Unknown small-jump approximation.")
+        scheme = parse(scheme, LevySDEScheme, "scheme")
+        small_jump_approximation = parse(
+            small_jump_approximation,
+            LevySmallJumpApproximation,
+            "small_jump_approximation",
+        )
         self.complete_above_cutoff = complete
         self.num_large_jumps = counts
         self.smallest_radius = radii
@@ -385,10 +388,8 @@ def solve_levy_sde(
         raise ValueError("dt must be finite and positive.")
     if not isfinite(threshold) or threshold <= 0.0:
         raise ValueError("cutoff must be finite and positive.")
-    if scheme not in ("euler", "tamed_euler"):
-        raise ValueError("scheme must be 'euler' or 'tamed_euler'.")
-    if small_jumps not in ("truncate", "gaussian"):
-        raise ValueError("small_jumps must be 'truncate' or 'gaussian'.")
+    scheme = parse(scheme, LevySDEScheme, "scheme")
+    small_jumps = parse(small_jumps, LevySmallJumpApproximation, "small_jumps")
     if not isinstance(throw, bool):
         raise TypeError("throw must be a bool.")
 

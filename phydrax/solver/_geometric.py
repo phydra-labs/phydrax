@@ -16,6 +16,7 @@ from jax import Array
 
 from .._strict import StrictModule
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
+from ..typing import parse
 
 
 if TYPE_CHECKING:
@@ -381,7 +382,7 @@ class StormerVerlet(AbstractGeometricSolver):
         return terms.vf(t0, y0, args)
 
 
-RKMKMethod = Literal["midpoint", "rk4"]
+RKMKMethod: TypeAlias = Literal["midpoint", "rk4"]
 
 
 class RKMK(AbstractGeometricSolver):
@@ -403,8 +404,7 @@ class RKMK(AbstractGeometricSolver):
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("RKMK geometry must be an AbstractStateGeometry.")
         _require_exact_differential(geometry, "RKMK")
-        if method not in ("midpoint", "rk4"):
-            raise ValueError("RKMK method must be 'midpoint' or 'rk4'.")
+        method = parse(method, RKMKMethod, "method")
         self.geometry = geometry
         self.method = method
         self.solver_id = f"solver:rkmk:{method}:{geometry.geometry_id}"

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._coefficients import PrimeField
 from ._complex import CellComplexPair, CellSubcomplex, compact_boundary, CompactCellLayout
 from ._diagram import PackedPersistenceDiagram, PersistenceDiagram
@@ -551,8 +552,9 @@ def compute_persistence(
         raise TypeError("compute_persistence requires a CellFiltration.")
     if not isinstance(coefficients, PrimeField):
         raise TypeError("Persistent homology requires an explicit PrimeField.")
-    if representatives not in ("none", "cycles"):
-        raise ValueError("Persistence representatives must be 'none' or 'cycles'.")
+    representatives = parse(
+        representatives, PersistenceRepresentativeKind, "representatives"
+    )
     if relative_to is not None and not isinstance(relative_to, CellSubcomplex):
         raise TypeError("relative_to must be a CellSubcomplex or None.")
     policy = TopologyResourcePolicy() if resources is None else resources

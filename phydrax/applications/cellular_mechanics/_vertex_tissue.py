@@ -27,6 +27,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 VertexTissueDimension: TypeAlias = Literal[2, 3]
@@ -466,9 +467,7 @@ class VertexTissuePlan(StrictModule, NonTrainableState):
         minimum_edge_length: float = 1.0e-8,
         minimum_cell_measure: float = 1.0e-10,
     ) -> None:
-        if isinstance(dimension, bool) or dimension not in (2, 3):
-            raise ValueError("dimension must be 2 or 3.")
-        dimension_ = int(dimension)
+        dimension_ = parse(dimension, VertexTissueDimension, "dimension")
         vertices, vertex_active = _identifier_array("vertex_ids", vertex_ids)
         edges, edge_active = _identifier_array("edge_ids", edge_ids)
         cells, cell_active = _identifier_array("cell_ids", cell_ids)

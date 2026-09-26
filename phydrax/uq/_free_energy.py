@@ -28,6 +28,7 @@ from ..linalg._dense_pseudoinverse import (
     factor_pseudoinverse,
 )
 from ..linalg._policies import RankPolicy
+from ..typing import parse
 from ._free_energy_kernels import (
     bar_kernel,
     fep_kernel,
@@ -489,12 +490,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
         potentials = (potentials_[0], potentials_[1])
         measures_ = _identifiers(measure_ids, "measure_id", count=2)
         measures = (measures_[0], measures_[1])
-        if work_kind not in (
-            "equilibrium-difference",
-            "targeted-map",
-            "nonequilibrium-switching",
-        ):
-            raise ValueError("work_kind is not a supported reduced-work definition.")
+        work_kind = parse(work_kind, WorkKind, "work_kind")
         mapping = None if mapping_id is None else _identifier(mapping_id, "mapping_id")
         if measures[0] != measures[1] and mapping is None:
             raise ValueError(
@@ -833,10 +829,9 @@ class FreeEnergySelectionPlan(StrictModule, NonTrainableState):
             raise ValueError("Minimum samples and blocks must be positive.")
         if not math.isfinite(overlap) or overlap < 0.0 or overlap >= 1.0:
             raise ValueError("minimum_overlap must be finite and in [0, 1).")
-        if uncertainty_method not in ("analytic", "block-bootstrap"):
-            raise ValueError(
-                "uncertainty_method must be 'analytic' or 'block-bootstrap'."
-            )
+        uncertainty_method = parse(
+            uncertainty_method, UncertaintyMethod, "uncertainty_method"
+        )
         if uncertainty_method == "block-bootstrap" and replicates < 2:
             raise ValueError("Block bootstrap requires at least two replicates.")
         if uncertainty_method == "analytic" and replicates != 0:

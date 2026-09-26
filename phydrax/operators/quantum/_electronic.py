@@ -25,7 +25,7 @@ from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticScaleContract
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from ...units import BOHR, conversion_factor, HARTREE
 from ._amplitude import LogAmplitude
 from ._electronic_advanced import ElectronicVMCResourcePlan
@@ -70,8 +70,7 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         coordinate_chunk_size: int | None = None,
         compute_dtype: DTypeLike = "float64",
     ) -> None:
-        if trace_method not in ("exact", "chunked-exact"):
-            raise ValueError("trace_method must be 'exact' or 'chunked-exact'.")
+        trace_method = parse(trace_method, ElectronicTraceMethod, "trace_method")
         if trace_method == "exact":
             if coordinate_chunk_size is not None:
                 raise ValueError("coordinate_chunk_size is only valid for chunked-exact.")

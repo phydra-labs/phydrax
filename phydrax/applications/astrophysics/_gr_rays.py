@@ -31,6 +31,7 @@ from ...metrix._metric_domain import MetricDomainEvidence
 from ...metrix._spacetime_conventions import RelativityConvention
 from ...solver._differential import DifferentialProblem
 from ...solver._diffrax_backend import solve_diffrax
+from ...typing import parse
 from ...units import UnitDefinition
 from ._gr_bundles import (
     AbstractGRConstantOfMotion,
@@ -193,8 +194,7 @@ class GRRayPlan(StrictModule):
             )
         if bool(jnp.any(~jnp.isfinite(affine))) or bool(jnp.any(jnp.diff(affine) <= 0.0)):
             raise ValueError("affine_parameter must be finite and strictly increasing.")
-        if ray_kind not in ("null", "timelike"):
-            raise ValueError("ray_kind must be 'null' or 'timelike'.")
+        ray_kind = parse(ray_kind, GRRayKind, "ray_kind")
         if events is not None and any(
             margin is not None
             for margin in (capture_margin, escape_margin, domain_margin)
@@ -519,8 +519,7 @@ class GRRayResult(StrictModule):
             raise TypeError("status_evidence must be GRRayStatusEvidence.")
         if not isinstance(bundle_evidence, GRRayBundleEvidence):
             raise TypeError("bundle_evidence must be GRRayBundleEvidence.")
-        if ray_kind not in ("null", "timelike"):
-            raise ValueError("ray_kind must be 'null' or 'timelike'.")
+        ray_kind = parse(ray_kind, GRRayKind, "ray_kind")
         identities = (
             plan_id,
             result_id,

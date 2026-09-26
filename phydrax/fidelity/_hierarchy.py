@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
@@ -13,9 +13,10 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import DiscretizationBundle
 from ..discretization._core import nonempty_identifier, resolved_identifier
+from ..typing import parse
 
 
-FidelityCoupling = Literal["shared", "nested", "independent"]
+FidelityCoupling: TypeAlias = Literal["shared", "nested", "independent"]
 
 
 def _metadata_items(metadata: Mapping[str, str], /) -> tuple[tuple[str, str], ...]:
@@ -125,8 +126,7 @@ class FidelityRelation(StrictModule, NonTrainableState):
         target = nonempty_identifier("target_level_id", target_level_id)
         if source == target:
             raise ValueError("A fidelity relation cannot connect a level to itself.")
-        if coupling not in ("shared", "nested", "independent"):
-            raise ValueError("coupling must be 'shared', 'nested', or 'independent'.")
+        coupling = parse(coupling, FidelityCoupling, "coupling")
         coupling_identifier = _optional_identifier("coupling_id", coupling_id)
         if coupling != "independent" and coupling_identifier is None:
             raise ValueError("Shared or nested fidelity coupling requires coupling_id.")

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,6 +30,7 @@ from ..._identity import NumericRevision
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, FunctionLinearOperator
+from ...typing import parse
 from ._analytic_wrap import _dot, _norm, _positive, _unit, _vector3
 
 
@@ -40,7 +41,7 @@ _SOURCE_URL = (
     + _SOURCE_REVISION
     + "/OpenSim/Simulation/Wrap/WrapCylinder.cpp"
 )
-CylinderWrapSide = Literal["shortest", "positive", "negative"]
+CylinderWrapSide: TypeAlias = Literal["shortest", "positive", "negative"]
 
 
 class OpenSimCylinderWrapStatus(IntFlag):
@@ -152,8 +153,7 @@ class OpenSimCylinderRouteWrapPlan(StrictModule, NonTrainableState):
             raise ValueError("sample_count must be an integer.")
         if sample_count < 2:
             raise ValueError("sample_count must be at least two.")
-        if side not in ("shortest", "positive", "negative"):
-            raise ValueError("side must be shortest, positive, or negative.")
+        side = parse(side, CylinderWrapSide, "side")
         for value in (event_tolerance_m, residual_tolerance):
             if not isfinite(value) or value <= 0.0:
                 raise ValueError("Tolerances must be positive and finite.")

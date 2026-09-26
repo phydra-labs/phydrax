@@ -22,6 +22,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._spectral._fourier import resize_fourier_axis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 SpectralSchedule: TypeAlias = Literal["slab", "pencil", "channel"]
@@ -229,8 +230,7 @@ class SpectralLayout(StrictModule, NonTrainableState):
         entries = tuple(_partition_entry(value) for value in partition)
         if len(entries) != len(shape):
             raise ValueError("partition must explicitly describe every array dimension.")
-        if representation not in ("physical", "modal"):
-            raise ValueError("representation must be 'physical' or 'modal'.")
+        representation = parse(representation, SpectralRepresentation, "representation")
         if not isinstance(topology, SpectralMeshTopology):
             raise TypeError("topology must be SpectralMeshTopology.")
         mesh_sizes = dict(zip(topology.mesh_axis_names, topology.mesh_shape, strict=True))
@@ -567,8 +567,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             b < a for a, b in zip(shape, padded, strict=True)
         ):
             raise ValueError("padded_shape must componentwise contain spatial_shape.")
-        if schedule not in ("slab", "pencil", "channel"):
-            raise ValueError("schedule must be 'slab', 'pencil', or 'channel'.")
+        schedule = parse(schedule, SpectralSchedule, "schedule")
         dtype = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(coefficient_dtype)))
         if not jnp.issubdtype(dtype, jnp.complexfloating):
             raise TypeError(

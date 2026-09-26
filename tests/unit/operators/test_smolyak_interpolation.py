@@ -237,7 +237,7 @@ def test_interpolation_rejects_invalid_domains_rules_and_source_values():
 def test_plan_validation_and_fitted_diagnostics_are_explicit():
     with pytest.raises(ValueError, match="one rule per dimension"):
         phx.operators.SmolyakInterpolationPlan(2, 3, axis_rules=("leja",))
-    with pytest.raises(ValueError, match="Unsupported interpolation axis rule"):
+    with pytest.raises(ValueError, match="axis_rules"):
         phx.operators.SmolyakInterpolationPlan(1, 3, axis_rules="unknown")
 
     domain = _square_domain()

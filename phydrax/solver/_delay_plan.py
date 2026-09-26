@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._delay import (
     ConstantDelay,
     DelayDifferentialProblem,
@@ -194,10 +195,8 @@ def compile_delay_execution_plan(
 ) -> DelayExecutionPlan:
     """Validate and compile all static capabilities for one delay execution."""
 
-    if execution not in ("whole", "segmented"):
-        raise ValueError("execution must be 'whole' or 'segmented'.")
-    if history_mode not in ("full", "rolling"):
-        raise ValueError("history_mode must be 'full' or 'rolling'.")
+    execution = parse(execution, DelayExecutionMode, "execution")
+    history_mode = parse(history_mode, DelayHistoryMode, "history_mode")
     _validate_geometry(problem, solver)
 
     constant_lags: list[Array] = []

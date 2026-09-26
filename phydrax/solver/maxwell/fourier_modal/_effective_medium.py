@@ -20,6 +20,7 @@ from ...._identity import NumericRevision
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....circuit import ModalWaveReference
+from ....typing import parse
 from ._contracts import (
     ContinuousFourierModalLayer,
     FourierModalLayer,
@@ -124,8 +125,7 @@ class EquivalentSlabRetrievalPlan(StrictModule, NonTrainableState):
         minimum, maximum = (int(value) for value in branch_window)
         if minimum > maximum:
             raise ValueError("branch_window must be ordered.")
-        if anchor not in ("low-frequency", "known-index", "cross-thickness"):
-            raise ValueError("Unknown equivalent-slab branch anchor.")
+        anchor = parse(anchor, RetrievalAnchor, "anchor")
         anchor_value = (
             None
             if anchor_refractive_index is None

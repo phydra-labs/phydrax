@@ -32,6 +32,7 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
     TransitionSample,
 )
+from ..typing import parse
 
 
 if TYPE_CHECKING:
@@ -184,8 +185,7 @@ class SINGTransitionPlan(StrictModule):
         rank_tolerance: float = 1.0e-8,
         approximation_tolerance: float = 1.0e-4,
     ) -> None:
-        if method not in ("euler-factor", "local-linearization", "ensemble-moments"):
-            raise ValueError("Unknown SING transition method.")
+        method = parse(method, SINGTransitionMethod, "method")
         if support is not None and not isinstance(support, SINGSupportPlan):
             raise TypeError("support must be SINGSupportPlan or None.")
         if method == "euler-factor" and surrogate_provider is not None:

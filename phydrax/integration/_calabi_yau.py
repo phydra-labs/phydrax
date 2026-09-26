@@ -16,6 +16,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..geometry.complex import ProjectiveHypersurface, ProjectiveLineSamples
 from ..geometry.complex._hypersurface_patch import HypersurfacePatchGeometry
+from ..typing import parse
 from ._precision import IntegrationPrecisionPolicy
 
 
@@ -106,8 +107,7 @@ def projective_measure_target(
     measure_kind: ProjectiveMeasureKind,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> ProjectiveMeasureTarget:
-    if measure_kind not in ("fubini-study", "canonical"):
-        raise ValueError("Unknown projective measure kind.")
+    measure_kind = parse(measure_kind, ProjectiveMeasureKind, "measure_kind")
     geometry = HypersurfacePatchGeometry(hypersurface)
     log_weights = []
     for index in range(samples.homogeneous_points.shape[0]):

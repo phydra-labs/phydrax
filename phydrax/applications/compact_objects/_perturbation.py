@@ -13,6 +13,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 class PerturbationStatus(IntEnum):
@@ -179,11 +180,8 @@ class RadialBoundaryCondition(StrictModule, NonTrainableState):
         *,
         convention_id: str | None = None,
     ) -> None:
-        if horizon not in ("ingoing", "outgoing") or infinity not in (
-            "ingoing",
-            "outgoing",
-        ):
-            raise ValueError("Radial boundary senses must be 'ingoing' or 'outgoing'.")
+        horizon = parse(horizon, RadialWaveSense, "horizon")
+        infinity = parse(infinity, RadialWaveSense, "infinity")
         convention = (
             _DEFAULT_CONVENTION_ID if convention_id is None else str(convention_id)
         )

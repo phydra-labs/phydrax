@@ -19,6 +19,7 @@ from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -695,8 +696,9 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             raise ValueError(
                 "Lennard-Jones switching and cutoff-energy shifting are mutually exclusive."
             )
-        if combining_rule not in ("lorentz-berthelot", "geometric", "explicit"):
-            raise ValueError("Unknown Lennard-Jones combining rule.")
+        combining_rule = parse(
+            combining_rule, LennardJonesCombiningRule, "combining_rule"
+        )
         explicit_epsilon_ = None
         explicit_sigma_ = None
         if combining_rule == "explicit":

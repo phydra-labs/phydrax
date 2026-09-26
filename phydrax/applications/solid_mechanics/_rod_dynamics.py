@@ -34,6 +34,7 @@ from ...linalg import (
     SmallLinearSolvePlan,
     solve_small_linear,
 )
+from ...typing import parse
 from ._rod_materials import (
     LinearElasticRodMaterialPlan,
     PreparedLinearElasticRodMaterial,
@@ -256,9 +257,7 @@ class RodPlan(StrictModule, NonTrainableState):
         if not np.issubdtype(segments.dtype, np.integer):
             raise TypeError("segment_node_ids must have an integer dtype.")
         positions = _require_real_array("rest_positions", rest_positions, 2)
-        dimension = positions.shape[1]
-        if dimension not in (2, 3):
-            raise ValueError("Cosserat rods require ambient dimension 2 or 3.")
+        dimension = parse(positions.shape[1], RodDimension, "rest_positions dimension")
         segment_count = segments.shape[0]
         node_count = positions.shape[0]
         if node_count != segment_count + 1:
@@ -425,12 +424,13 @@ class RodState(StrictModule):
         velocities_ = jnp.asarray(velocities)
         orientations_ = jnp.asarray(orientations)
         angular_ = jnp.asarray(angular_velocities)
-        if positions_.ndim != 2 or positions_.shape[-1] not in (2, 3):
+        if positions_.ndim != 2:
             raise ValueError("Rod positions must have shape (nodes, 2|3).")
+        dimension = parse(positions_.shape[-1], RodDimension, "positions dimension")
         if velocities_.shape != positions_.shape:
             raise ValueError("Rod velocities must match positions.")
         segment_count = positions_.shape[0] - 1
-        if positions_.shape[-1] == 2:
+        if dimension == 2:
             if orientations_.shape != (segment_count,) or angular_.shape != (
                 segment_count,
             ):
@@ -1046,8 +1046,7 @@ class RodEndpointAttachment(StrictModule, NonTrainableState):
         *,
         attachment_id: str | None = None,
     ) -> None:
-        if endpoint not in ("start", "end"):
-            raise ValueError("endpoint must be 'start' or 'end'.")
+        endpoint = parse(endpoint, RodEndpoint, "endpoint")
         body_id = int(rigid_body_id)
         if body_id < 0:
             raise ValueError("rigid_body_id must be nonnegative.")

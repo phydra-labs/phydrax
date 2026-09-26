@@ -22,10 +22,10 @@ import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...dynamics import DiscreteStepContext, TimeGrid
+from ...typing import parse
 from ._evaluation import ControlledPathBatch
 
 
-_SAMPLE_ROLES = ("training", "holdout")
 _METHOD_ID = "pathwise-euler-open-loop-stochastic-maximum-principle"
 _CERTIFICATE = "OPEN_LOOP_SMP_STATIONARY"
 
@@ -333,9 +333,7 @@ def _positive_tolerance(value: float, owner: str, /) -> float:
 
 
 def _sample_role(value: str, /) -> SampleRole:
-    if value not in _SAMPLE_ROLES:
-        raise ValueError("sample_role must be 'training' or 'holdout'.")
-    return value
+    return parse(value, SampleRole, "sample_role")
 
 
 def _real_array(value: ArrayLike, owner: str, /) -> Array:

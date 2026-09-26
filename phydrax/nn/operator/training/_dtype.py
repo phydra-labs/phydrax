@@ -26,12 +26,13 @@ from ...._precision import (
     PrecisionResolution,
 )
 from ...._trainable import combine_parameters, partition_parameters
+from ....typing import parse
 from ..data import FunctionSamples, OperatorBatch, OperatorTargetBatch
 
 
 DTypeName: TypeAlias = RealPrecisionDType
 ComplexDTypeName: TypeAlias = ComplexPrecisionDType
-MatmulPrecisionName = Literal[
+MatmulPrecisionName: TypeAlias = Literal[
     "default",
     "high",
     "highest",
@@ -41,15 +42,6 @@ MatmulPrecisionName = Literal[
     "F32_F32_F32",
 ]
 
-_MATMUL_PRECISIONS = (
-    "default",
-    "high",
-    "highest",
-    "F16_F16_F32",
-    "BF16_BF16_F32",
-    "TF32_TF32_F32",
-    "F32_F32_F32",
-)
 _ALGORITHM_COMPUTE_DTYPES = {
     "F16_F16_F32": "float16",
     "BF16_BF16_F32": "bfloat16",
@@ -105,11 +97,11 @@ class OperatorPrecisionEvidence:
             raise ValueError(
                 "Operator complex precision must match its effective real companion."
             )
-        if (
-            self.matmul_precision is not None
-            and self.matmul_precision not in _MATMUL_PRECISIONS
-        ):
-            raise ValueError(f"Unsupported matmul precision {self.matmul_precision!r}.")
+        object.__setattr__(
+            self,
+            "matmul_precision",
+            parse(self.matmul_precision, MatmulPrecisionName | None, "matmul_precision"),
+        )
 
     def to_dict(self) -> dict[str, str | None]:
         return {
@@ -198,9 +190,10 @@ class OperatorDTypePolicy:
             self.reduction_dtype,
         ):
             _dtype(value)
-        precision = self.matmul_precision
-        if precision is not None and precision not in _MATMUL_PRECISIONS:
-            raise ValueError(f"Unsupported matmul precision {precision!r}.")
+        precision = parse(
+            self.matmul_precision, MatmulPrecisionName | None, "matmul_precision"
+        )
+        object.__setattr__(self, "matmul_precision", precision)
         required = _ALGORITHM_COMPUTE_DTYPES.get(precision)
         if required is not None and self.compute_dtype != required:
             raise ValueError(

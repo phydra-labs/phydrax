@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -52,10 +52,11 @@ from ...operators.quantum._superconductivity import (
     prepare_fermionic_bdg,
     PreparedFermionicBdG,
 )
+from ...typing import parse
 from ...units import UnitDefinition
 
 
-SuperconductingEnsemble = Literal["fixed-chemical-potential", "fixed-filling"]
+SuperconductingEnsemble: TypeAlias = Literal["fixed-chemical-potential", "fixed-filling"]
 
 
 class PairingChannelPlan(StrictModule):
@@ -262,8 +263,7 @@ class SuperconductingMeanFieldPlan(StrictModule):
             raise ValueError(
                 "Normal and pairing families use different Fourier conventions."
             )
-        if ensemble not in ("fixed-chemical-potential", "fixed-filling"):
-            raise ValueError("Unknown superconducting ensemble.")
+        ensemble = parse(ensemble, SuperconductingEnsemble, "ensemble")
         if ensemble == "fixed-chemical-potential":
             if chemical_potential is None or target_filling is not None:
                 raise ValueError("Fixed-mu closure requires only chemical_potential.")

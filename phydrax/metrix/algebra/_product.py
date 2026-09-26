@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._core import AbstractFiniteRealAlgebraSpec
 from ._layout import AlgebraElementLayout
 from ._resources import AlgebraResourceEvidence
@@ -47,8 +48,7 @@ class AlgebraProductEvidence(StrictModule, NonTrainableState):
         term_count: int,
         resource_evidence: AlgebraResourceEvidence,
     ) -> None:
-        if backend not in ("sparse", "dense"):
-            raise ValueError("Unknown algebra product backend.")
+        backend = parse(backend, AlgebraProductBackend, "backend")
         if not algebra_id or not layout_id:
             raise ValueError("Algebra product evidence IDs must be non-empty.")
         self.algebra_id = algebra_id

@@ -19,6 +19,7 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -311,8 +312,9 @@ class AgglomerativeClustering(AbstractRecipe):
         linkage: AgglomerativeLinkage = "ward",
         weight_policy: WeightPolicy = "statistical",
     ) -> None:
-        if cluster_count <= 0 or linkage not in ("ward", "centroid"):
+        if cluster_count <= 0:
             raise ValueError("invalid agglomerative clustering configuration.")
+        linkage = parse(linkage, AgglomerativeLinkage, "linkage")
         self.cluster_count = int(cluster_count)
         self.linkage = linkage
         self.weight_policy = weight_policy

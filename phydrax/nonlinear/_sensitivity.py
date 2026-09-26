@@ -37,6 +37,7 @@ from ..linalg import (
     solve as solve_linear,
     transpose,
 )
+from ..typing import parse
 from ._precision import NonlinearPrecisionPolicy
 from ._types import NonlinearSystemProblem
 
@@ -84,15 +85,7 @@ class SensitivityPolicy(StrictModule):
         linear: LinearSolvePolicy | None = None,
         precision: NonlinearPrecisionPolicy | None = None,
     ) -> None:
-        if mode not in (
-            "implicit-forward",
-            "implicit-reverse",
-            "unrolled",
-            "truncated",
-            "dlm",
-            "unsupported",
-        ):
-            raise ValueError("Unknown sensitivity mode.")
+        mode = parse(mode, SensitivityMode, "mode")
         iterations_ = int(iterations)
         truncation_ = int(truncation)
         limit = float(condition_limit)

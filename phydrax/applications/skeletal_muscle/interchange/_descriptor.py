@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,9 +15,10 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-ExternalChannelRole = Literal["coordinate", "actuator", "sensor"]
+ExternalChannelRole: TypeAlias = Literal["coordinate", "actuator", "sensor"]
 _SI_DIMENSION_COUNT = 7
 _FORCE_OWNER_PUNCTUATION = frozenset("-._:")
 
@@ -233,8 +234,7 @@ class ExternalModelQuantity(StrictModule, NonTrainableState):
         /,
     ) -> None:
         name = _identifier(quantity_name, "quantity_name")
-        if role not in ("coordinate", "actuator", "sensor"):
-            raise ValueError("role must be coordinate, actuator, or sensor.")
+        role = parse(role, ExternalChannelRole, "role")
         dimensions_ = tuple(si_dimensions)
         if len(dimensions_) != _SI_DIMENSION_COUNT or any(
             isinstance(value, (bool, np.bool_))

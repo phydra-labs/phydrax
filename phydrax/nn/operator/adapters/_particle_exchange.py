@@ -22,6 +22,7 @@ from ....discretization.particle._pairwise import (
     scatter_pair_exchange,
 )
 from ....discretization.particle._precision import ParticleAccumulation
+from ....typing import parse
 from ..data import FunctionSamples, OperatorBatch
 from ..training._trained_operator import TrainedOperator
 
@@ -160,8 +161,7 @@ class PairwiseExchangeBindingPlan(StrictModule, NonTrainableState):
         target = str(target_name).strip()
         query = str(query_name).strip()
         tolerance = float(conservation_tolerance)
-        if kind not in ("vector", "central_force", "scalar_flux"):
-            raise ValueError("Unknown pairwise exchange kind.")
+        kind = parse(kind, PairwiseExchangeKind, "exchange_kind")
         if not artifact or not source or not target or not query:
             raise ValueError("Pairwise exchange binding identities must be non-empty.")
         if accumulation not in ("fast", "deterministic", "compensated"):

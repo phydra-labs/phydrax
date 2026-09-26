@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleNeighborhoodState, PeriodicCell
 from ..graph import GraphIR
+from ..typing import parse
 from ._system import PreparedAtomisticSystem
 from ._types import AtomisticBatch
 
@@ -46,8 +47,7 @@ class AtomisticGraphExecutionPlan(StrictModule, NonTrainableState):
         dense = None if maximum_dense_atoms is None else int(maximum_dense_atoms)
         if neighbors < 0:
             raise ValueError("maximum_neighbors must be non-negative.")
-        if backend not in ("dense", "particle"):
-            raise ValueError("backend must be 'dense' or 'particle'.")
+        backend = parse(backend, AtomisticGraphBackend, "backend")
         if backend == "dense" and (dense is None or dense <= 0):
             raise ValueError(
                 "Dense graph execution requires positive maximum_dense_atoms."

@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 
 from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
+from ...typing import parse
 from .._evolution import AbstractEvolution
 from .._trajectory import TrajectoryData
 
@@ -72,8 +73,7 @@ def recurrence_seed_candidates(
     maximum_bytes = index(maximum_pair_bytes)
     if maximum_bytes < 1:
         raise ValueError("maximum_pair_bytes must be positive.")
-    if metric not in ("euclidean", "supremum"):
-        raise ValueError("metric must be 'euclidean' or 'supremum'.")
+    metric = parse(metric, RecurrenceSeedMetric, "metric")
     states = trajectory.states.reshape((trajectory.capacity, -1))
     available_pairs = max(trajectory.capacity - separation, 0)
     available_pairs = available_pairs * (available_pairs + 1) // 2

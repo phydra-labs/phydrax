@@ -27,7 +27,7 @@ from ..linalg import (
     SparseStorage,
 )
 from ..linalg._spaces import _coordinate_dtype
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._gp_likelihood import GaussianProcessLikelihoodState
 
 
@@ -69,16 +69,7 @@ class _ResolvedGaussianProcessActions(StrictModule):
         selected_indices: ArrayLike | None = None,
         requires_residual: bool = False,
     ) -> None:
-        kinds = (
-            "fixed",
-            "block-sparse",
-            "pseudo-input",
-            "lanczos",
-            "conjugate-gradient",
-            "gauss-seidel",
-        )
-        if kind not in kinds:
-            raise ValueError("Unknown Gaussian-process action kind.")
+        kind = parse(kind, GaussianProcessActionKind, "kind")
         _validate_action_operator(operator)
         action_count = operator.source.size
         mask = (

@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
+from ....typing import parse
 from .._fermionic_fock import FermionModeOrder
 
 
@@ -65,8 +66,7 @@ class LocalSpacePlan(StrictModule):
             raise ValueError(
                 "charges must be integral with shape (dimension, charge_count)."
             )
-        if statistics not in ("finite", "fermion", "spin", "boson"):
-            raise ValueError("Unknown local statistics.")
+        statistics = parse(statistics, LocalStatistics, "statistics")
         mode = None if fermion_mode_label is None else str(fermion_mode_label)
         if statistics == "fermion":
             if len(labels) != 2 or tuple(values[:, 0]) != (0, 1):

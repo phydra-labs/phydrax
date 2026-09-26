@@ -22,6 +22,7 @@ from ..._differentiation import (
 from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import prediction_fit_contract
 from .._numerics import MetricName
@@ -157,8 +158,7 @@ def initialize_centers(
         case_count *= size
     flat_x = x.reshape((case_count, n, p))
     flat_w = w.reshape((case_count, n))
-    if initialization not in ("random", "first", "k-means++"):
-        raise ValueError(f"unsupported initialization {initialization!r}.")
+    initialization = parse(initialization, ClusterInitialization, "initialization")
     if initialization == "first":
         order = jnp.argsort(
             jnp.where(flat_w > 0.0, jnp.arange(n), n), axis=-1, stable=True

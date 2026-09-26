@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import DenseLinearOperator, LinearSystem, solve
+from ..typing import parse
 
 
 ShadowingMemoryMode: TypeAlias = Literal["store", "recompute"]
@@ -88,6 +89,7 @@ def validate_shadowing_plan(
     rank = float(rank_tolerance)
     retained = int(maximum_retained_bytes)
     workspace = int(maximum_workspace_bytes)
+    parse(memory_mode, ShadowingMemoryMode, "memory_mode")
     if (
         not method
         or dimension < 1
@@ -100,7 +102,6 @@ def validate_shadowing_plan(
         or penalty < 0.0
         or not isfinite(rank)
         or rank <= 0.0
-        or memory_mode not in ("store", "recompute")
         or retained <= 0
         or workspace <= 0
     ):

@@ -8,7 +8,7 @@ import math
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,6 +30,7 @@ from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 from phydrax.nn.operator.topology import gather_operator_graph_entities
 
+from .....typing import parse
 from ._deeponet import (
     AbstractBasisTrunk,
     AbstractBranchEncoder,
@@ -37,7 +38,7 @@ from ._deeponet import (
 )
 
 
-FunctionProjectionRankPolicy = Literal["error", "regularized"]
+FunctionProjectionRankPolicy: TypeAlias = Literal["error", "regularized"]
 
 FUNCTION_PROJECTION_SUCCESS = 0
 FUNCTION_PROJECTION_INSUFFICIENT_SUPPORT = 1
@@ -87,8 +88,7 @@ class FunctionProjectionPolicy(StrictModule, NonTrainableState):
         minimum = None if min_samples is None else int(min_samples)
         if minimum is not None and minimum <= 0:
             raise ValueError("min_samples must be positive or None.")
-        if rank_policy not in ("error", "regularized"):
-            raise ValueError("rank_policy must be 'error' or 'regularized'.")
+        rank_policy = parse(rank_policy, FunctionProjectionRankPolicy, "rank_policy")
         if rank_policy == "regularized" and ridge_ <= 0.0:
             raise ValueError("rank_policy='regularized' requires positive ridge.")
 

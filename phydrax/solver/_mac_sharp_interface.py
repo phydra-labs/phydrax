@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntFlag
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -37,6 +37,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import parse
 
 
 class MACSharpInterfaceStatus(IntFlag):
@@ -950,7 +951,7 @@ class MACImmersedInterfaceProjectionPlan(StrictModule, NonTrainableState):
         )
 
 
-MACInterfaceEnforcement = Literal[
+MACInterfaceEnforcement: TypeAlias = Literal[
     "regularized-delta", "divergence-free", "sharp", "immersed-interface"
 ]
 
@@ -968,13 +969,7 @@ class MACInterfaceMethodSelector(StrictModule, NonTrainableState):
         plan: object,
         /,
     ) -> None:
-        if method not in (
-            "regularized-delta",
-            "divergence-free",
-            "sharp",
-            "immersed-interface",
-        ):
-            raise ValueError("Unknown MAC interface enforcement family.")
+        method = parse(method, MACInterfaceEnforcement, "method")
         from ._mac_dfib import MACDFIBProjectionPlan
         from ._mac_immersed_boundary import MACImmersedBoundaryProjectionPlan
 

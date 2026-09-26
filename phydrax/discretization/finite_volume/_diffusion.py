@@ -26,6 +26,7 @@ from ...linalg import (
     OperatorCapabilities,
     OperatorProperties,
 )
+from ...typing import parse
 from .._tensor_support import PreparedTensorGrid
 from ..finite_difference._certification import FDConservationReport, FDStabilityReport
 from ._precision import FiniteVolumePrecisionPolicy
@@ -53,8 +54,7 @@ class ConservativeBoundaryCondition(StrictModule, NonTrainableState):
         alpha: float | None = None,
         beta: float | None = None,
     ) -> None:
-        if kind not in ("periodic", "dirichlet", "neumann", "robin"):
-            raise ValueError("Unknown conservative boundary kind.")
+        kind = parse(kind, ConservativeBoundaryKind, "kind")
         alpha_ = (
             1.0
             if kind in ("dirichlet", "robin") and alpha is None
@@ -171,8 +171,7 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Face coefficient plan requires PreparedTensorGrid.")
-        if kind not in ("arithmetic", "harmonic", "upwind", "callable"):
-            raise ValueError("Unknown face interpolation kind.")
+        kind = parse(kind, FaceInterpolationKind, "kind")
         if (kind == "callable") != (function is not None):
             raise ValueError("Callable face interpolation requires exactly one function.")
         function_identifier = None if function_id is None else str(function_id)
@@ -872,10 +871,8 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
             raise TypeError("Conservative advection requires PreparedTensorGrid.")
         if grid.primary_entity_layout.layout_id != grid.cells().layout_id:
             raise ValueError("Conservative advection requires an interval-primary grid.")
-        if form not in ("advective", "conservative", "skew", "split_energy"):
-            raise ValueError("Unknown advection form.")
-        if reconstruction not in ("arithmetic", "upwind"):
-            raise ValueError("Unknown advection reconstruction.")
+        form = parse(form, AdvectionForm, "form")
+        reconstruction = parse(reconstruction, AdvectionReconstruction, "reconstruction")
         precision_ = FiniteVolumePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")

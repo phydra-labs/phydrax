@@ -13,6 +13,7 @@ import jax.numpy as jnp
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._costs import LinearCostEstimate
 from ._operators import (
     AbstractLinearOperator,
@@ -136,17 +137,7 @@ class LinearSolvePlan(StrictModule):
         rejected: tuple[str, ...] = (),
         candidates: tuple[LinearCostEstimate, ...] = (),
     ) -> None:
-        if backend not in (
-            "jax-structured",
-            "jax-dense",
-            "jax-sparse",
-            "host-sparse",
-            "spineax-cudss",
-            "native-krylov",
-            "native-block-krylov",
-            "lineax",
-        ):
-            raise ValueError("Unknown linear backend.")
+        backend = parse(backend, LinearBackend, "backend")
         values = (str(method), str(reason))
         if any(not value for value in values):
             raise ValueError("Plan method and reason must be non-empty.")

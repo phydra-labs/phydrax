@@ -26,6 +26,7 @@ from ....linalg import (
     LinearSystem,
     solve,
 )
+from ....typing import parse
 from ._contracts import AbstractFourierFactorizationPlan, FrequencyMaxwellMaterial
 
 
@@ -195,8 +196,7 @@ class JonesDirectFramePlan(StrictModule, NonTrainableState):
         gradient_regularization_ = float(gradient_regularization)
         if regularization_ <= 0.0 or gradient_regularization_ <= 0.0:
             raise ValueError("Jones regularization values must be positive.")
-        if differentiation not in ("mathematical", "frozen", "none"):
-            raise ValueError("Unknown Jones frame differentiation policy.")
+        differentiation = parse(differentiation, FrameDifferentiation, "differentiation")
         self.regularization = regularization_
         self.gradient_regularization = gradient_regularization_
         self.differentiation = differentiation

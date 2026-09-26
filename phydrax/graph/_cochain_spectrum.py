@@ -15,6 +15,7 @@ from scipy.sparse.linalg import eigsh
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import LaplacianEigenbasisReport, SpectralDecomposition
+from ..typing import parse
 from ._cochain import (
     CochainBoundaryKind,
     CochainBoundaryPolicy,
@@ -53,8 +54,7 @@ def _assemble_symmetric_hodge_laplacian(
     resolved_degree = int(degree)
     if resolved_degree < 0 or resolved_degree > complex_ir.max_degree:
         raise ValueError(f"degree must lie in [0, {complex_ir.max_degree}].")
-    if component not in ("complete", "lower", "upper"):
-        raise ValueError("component must be 'complete', 'lower', or 'upper'.")
+    component = parse(component, CochainLaplacianComponent, "component")
     policy = CochainBoundaryPolicy(boundary_policy)
     active = np.asarray(complex_ir.active_mask(resolved_degree, policy), dtype=np.bool_)
     metric = np.asarray(complex_ir.hodge_stars[resolved_degree], dtype=np.float64)[active]

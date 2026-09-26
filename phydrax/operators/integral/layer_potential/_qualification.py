@@ -13,6 +13,7 @@ import equinox as eqx
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
 BoundaryEvidenceLevel: TypeAlias = Literal[
@@ -27,15 +28,6 @@ BoundaryProvenanceSource: TypeAlias = Literal[
     "native", "clean-room", "adapted", "external"
 ]
 
-_EVIDENCE_LEVELS = (
-    "computed",
-    "checked-discrete",
-    "quadrature-supported",
-    "continuum-qualified",
-    "continuum-certified",
-)
-_MATURITY_LEVELS = ("Q0", "Q1", "Q2", "Q3")
-_PROVENANCE_SOURCES = ("native", "clean-room", "adapted", "external")
 _MAX_ITEMS = 256
 _MAX_TEXT_LENGTH = 4096
 _MAX_BYTES = (1 << 63) - 1
@@ -234,10 +226,8 @@ class BoundaryQualificationEvidence(StrictModule, NonTrainableState):
         claim_ = _required_text(claim, "claim")
         if claim_ not in support.claims:
             raise ValueError(f"Unknown boundary qualification claim {claim_!r}.")
-        if level not in _EVIDENCE_LEVELS:
-            raise ValueError(f"Unknown boundary evidence level {level!r}.")
-        if maturity not in _MATURITY_LEVELS:
-            raise ValueError(f"Unknown boundary maturity {maturity!r}.")
+        level = parse(level, BoundaryEvidenceLevel, "level")
+        maturity = parse(maturity, BoundaryMaturity, "maturity")
         supported_ = _strict_bool(supported, "supported")
         if supported_ != support.supports(claim_):
             raise ValueError(
@@ -360,8 +350,7 @@ class BoundaryProductProvenance(StrictModule, NonTrainableState):
                 (clean_room_record_id, "clean_room_record_id"),
             )
         )
-        if source_kind not in _PROVENANCE_SOURCES:
-            raise ValueError(f"Unknown boundary provenance source {source_kind!r}.")
+        source_kind = parse(source_kind, BoundaryProvenanceSource, "source_kind")
         product_parents = _parent_ids(parent_product_ids, "parent_product_ids")
         plan_parents = _parent_ids(parent_plan_ids, "parent_plan_ids")
         result_parents = _parent_ids(parent_result_ids, "parent_result_ids")

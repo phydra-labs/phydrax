@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import isfinite, pi
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -26,9 +26,10 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-VascularPortSide = Literal["inlet", "outlet"]
+VascularPortSide: TypeAlias = Literal["inlet", "outlet"]
 
 
 class VascularStepStatus(IntFlag):
@@ -673,8 +674,9 @@ class Vascular0DPort(StrictModule, NonTrainableState):
 
     def __init__(self, vessel_id: str, side: VascularPortSide, /) -> None:
         identifier = str(vessel_id)
-        if not identifier or side not in ("inlet", "outlet"):
-            raise ValueError("A vascular port needs a vessel ID and inlet/outlet side.")
+        if not identifier:
+            raise ValueError("A vascular port needs a non-empty vessel ID.")
+        side = parse(side, VascularPortSide, "side")
         self.vessel_id = identifier
         self.side = side
         self.port_id = f"{identifier}.{side}"

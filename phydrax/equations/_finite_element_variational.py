@@ -79,6 +79,7 @@ from ..sparse import (
     SparseCoordinateOperator,
     SparseLinearMap,
 )
+from ..typing import parse
 from ..variational import (
     Functional,
     FunctionalEvaluation,
@@ -606,8 +607,7 @@ class SIPGBoundaryCondition(StrictModule, NonTrainableState):
         robin_coefficient: VariationalCoefficient | ArrayLike | Callable | None = None,
         penalty_policy: SIPGPenaltyPolicy | None = None,
     ) -> None:
-        if kind not in ("dirichlet", "neumann", "robin"):
-            raise ValueError("Unknown SIPG boundary kind.")
+        kind = parse(kind, SIPGBoundaryKind, "kind")
         if not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet":
             raise ValueError("SIPG boundary conditions require an exterior-facet domain.")
         if penalty_policy is not None and not isinstance(

@@ -54,6 +54,7 @@ from ...solver._runtime_lifecycle import (
     ByteBoundedAsyncPublisher,
     RuntimeRestartRelation,
 )
+from ...typing import parse
 from ._status import NumericalRelativityStatus
 from ._temporal import FixedGridZ4cRuntime, Z4cRuntimeState
 
@@ -66,15 +67,6 @@ FailureCategory: TypeAlias = Literal[
     "output-failed",
     "runtime-failed",
 ]
-_FAILURE_CATEGORIES = frozenset(
-    (
-        "state-invalid",
-        "step-rejected",
-        "step-capacity-exhausted",
-        "output-failed",
-        "runtime-failed",
-    )
-)
 
 
 class _PreparedRunOptions(TypedDict, total=False):
@@ -466,8 +458,7 @@ class NumericalRelativitySupportBinding(StrictModule, NonTrainableState):
         support: SupportTuple,
         /,
     ) -> None:
-        if scope not in ("scientific", "deployment"):
-            raise ValueError("Support scope must be scientific or deployment.")
+        scope = parse(scope, SupportScope, "scope")
         profile = _identifier(profile_id, "Support profile ID")
         if not isinstance(support, SupportTuple):
             raise TypeError("support must be a SupportTuple.")
@@ -1166,8 +1157,7 @@ class NumericalRelativityFailureManifest(StrictModule, NonTrainableState):
         if type(terminal_checkpoint_id) is not str:
             raise TypeError("terminal_checkpoint_id must be a string.")
         category = _identifier(failure.category, "Failure category")
-        if category not in _FAILURE_CATEGORIES:
-            raise ValueError("Failure category is outside the production contract.")
+        category = parse(category, FailureCategory, "failure.category")
         error_code = _identifier(failure.error_code, "Failure error code")
         checkpoint_value = (
             terminal_checkpoint_id

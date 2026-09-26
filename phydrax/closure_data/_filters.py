@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,10 +16,11 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations._les_closures import ResolvedLESFilter
+from ..typing import parse
 
 
-FilterKind = Literal["identity", "box", "gaussian", "spectral_cutoff"]
-FilterBoundary = Literal["periodic", "linear"]
+FilterKind: TypeAlias = Literal["identity", "box", "gaussian", "spectral_cutoff"]
+FilterBoundary: TypeAlias = Literal["periodic", "linear"]
 LESFilterPairInput = Literal["primary-resolved"]
 
 
@@ -106,19 +107,19 @@ class FilterSpec(StrictModule, NonTrainableState):
         sigma_ = tuple(float(value) for value in sigma)
         cutoff = float(cutoff_fraction)
         boundary_ = str(boundary).strip()
+        kind_ = parse(kind_, FilterKind, "kind")
         if (
-            kind_ not in ("identity", "box", "gaussian", "spectral_cutoff")
-            or any(value <= 0 or value % 2 == 0 for value in widths_)
+            any(value <= 0 or value % 2 == 0 for value in widths_)
             or any(not np.isfinite(value) or value <= 0.0 for value in sigma_)
             or not np.isfinite(cutoff)
             or not 0.0 < cutoff <= 1.0
-            or boundary_ not in ("periodic", "linear")
             or (kind_ == "box" and not widths_)
             or (kind_ == "gaussian" and (not widths_ or len(sigma_) != len(widths_)))
             or (kind_ in ("identity", "spectral_cutoff") and (widths_ or sigma_))
             or (kind_ == "spectral_cutoff" and boundary_ != "periodic")
         ):
             raise ValueError("Filter specification is invalid.")
+        boundary_ = parse(boundary_, FilterBoundary, "boundary")
         self.kind = kind_
         self.widths = widths_
         self.sigma = sigma_

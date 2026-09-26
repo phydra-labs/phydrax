@@ -15,6 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification._registry import SupportTuple
+from ..typing import parse
 from ._chunk_repository import _digest, _identifier, RepositoryCorruptionError
 
 
@@ -48,8 +49,7 @@ class TopologyRestartRelation(StrictModule, NonTrainableState):
     ) -> None:
         source_id = _support_id(source, "source")
         target_id = _support_id(target, "target")
-        if restart_class not in ("bitwise", "tolerance", "unsupported"):
-            raise ValueError("Unknown topology restart class.")
+        restart_class = parse(restart_class, RestartClass, "restart_class")
         absolute = _finite_nonnegative(absolute_tolerance, "absolute_tolerance")
         relative = _finite_nonnegative(relative_tolerance, "relative_tolerance")
         reason_ = str(reason).strip()
@@ -182,8 +182,7 @@ class CanonicalRestartChunk(StrictModule, NonTrainableState):
         offset = _nonnegative(canonical_offset, "canonical_offset")
         count = _positive(byte_count, "byte_count")
         digest = _digest(payload_sha256, "payload_sha256")
-        if payload_class not in ("restart-state", "execution-cache"):
-            raise ValueError("Unknown restart payload class.")
+        payload_class = parse(payload_class, PayloadClass, "payload_class")
         self.logical_name = logical
         self.canonical_offset = offset
         self.byte_count = count

@@ -17,6 +17,7 @@ from ..._sampling import FullMarkovTarget, IncrementalMarkovTarget
 from ..._strict import StrictModule
 from ...metrix import AbstractStateGeometry
 from ...sampling._compact_group_hamiltonian import CompactGeometricTarget
+from ...typing import parse
 
 
 LatticeReferenceMeasure: TypeAlias = Literal[
@@ -46,8 +47,9 @@ class LatticeActionEvidence(StrictModule):
         additive_constant: float,
         evidence_id: str,
     ) -> None:
-        if reference_measure not in ("lebesgue", "flat-torus", "product-haar"):
-            raise ValueError("Unknown lattice reference measure.")
+        reference_measure = parse(
+            reference_measure, LatticeReferenceMeasure, "reference_measure"
+        )
         constant = float(additive_constant)
         if not jnp.isfinite(constant):
             raise ValueError("additive_constant must be finite.")

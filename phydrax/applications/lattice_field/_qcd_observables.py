@@ -48,7 +48,7 @@ from ...operators.path_integral._lattice_fermion import (
     WilsonDiracOperator,
 )
 from ...operators.path_integral._wilson_gauge import WilsonGaugeAction
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from ._qcd_ensembles import MeasurementWorkItem
 
 
@@ -721,8 +721,7 @@ class StochasticSourcePlan(StrictModule, NonTrainableState):
             raise ValueError("source_count must be positive.")
         if maximum <= 0 or prod(shape) * count > maximum:
             raise ValueError("Stochastic sources exceed maximum_source_values.")
-        if noise_kind not in ("z2", "z4"):
-            raise ValueError("noise_kind must be 'z2' or 'z4'.")
+        noise_kind = parse(noise_kind, NoiseKind, "noise_kind")
         source_ids = tuple(
             canonical_fingerprint(
                 {

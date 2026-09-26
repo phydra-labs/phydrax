@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from itertools import product
 from math import prod
 from string import ascii_lowercase
-from typing import cast, Literal
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -39,11 +39,11 @@ from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
 from ....._dtype_names import inexact_result_type
-from .....typing import PRNGKey
+from .....typing import parse, PRNGKey
 
 
-Factorization = Literal["dense", "cp", "tucker"]
-Activation = Literal["gelu", "silu", "tanh"]
+Factorization: TypeAlias = Literal["dense", "cp", "tucker"]
+Activation: TypeAlias = Literal["gelu", "silu", "tanh"]
 _ACTIVATIONS = {"gelu": jax.nn.gelu, "silu": jax.nn.silu, "tanh": jnp.tanh}
 
 
@@ -153,8 +153,7 @@ class SpectralConvND(StrictModule):
         self.factorization = factorization
         if self.in_channels <= 0 or self.out_channels <= 0:
             raise ValueError("in_channels and out_channels must be positive.")
-        if factorization not in ("dense", "cp", "tucker"):
-            raise ValueError("factorization must be 'dense', 'cp', or 'tucker'.")
+        factorization = parse(factorization, Factorization, "factorization")
 
         resource_policy = (
             SpectralConvolutionResourcePolicy() if resources is None else resources
@@ -657,8 +656,7 @@ class _AbstractFNO(AbstractOperatorModel):
         self.domain_padding = padding
         if self.width <= 0 or int(depth) <= 0:
             raise ValueError("width and depth must be positive.")
-        if activation not in ("gelu", "silu", "tanh"):
-            raise ValueError("activation must be 'gelu', 'silu', or 'tanh'.")
+        activation = parse(activation, Activation, "activation")
 
         in_count = _get_size(in_channels)
         out_count = _get_size(out_channels)

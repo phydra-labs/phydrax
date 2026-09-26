@@ -119,7 +119,7 @@ def test_focal_weights_remain_traceable():
 def test_classification_dispatch_rejects_unknown_selectors():
     with pytest.raises(ValueError, match="Unknown classification kind"):
         classification_probabilities(jnp.ones((2,)), kind="other")
-    with pytest.raises(ValueError, match="Unknown binary classification objective"):
+    with pytest.raises(ValueError, match="objective"):
         pointwise_classification_loss(
             jnp.asarray((0.0,)),
             jnp.asarray((1,)),

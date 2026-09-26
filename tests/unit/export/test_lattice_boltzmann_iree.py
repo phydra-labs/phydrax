@@ -64,7 +64,7 @@ def test_lbm_iree_contract_has_explicit_forward_and_vjp_abis():
     packed_vjp = contract.pack_vjp_inputs((initial,), jnp.ones_like(initial))
     assert len(packed_vjp) == 2
     assert contract.contract_id
-    with pytest.raises(ValueError, match="Unknown LBM IREE export mode"):
+    with pytest.raises(ValueError, match="mode"):
         lbm_iree.prepare_lattice_boltzmann_iree_contract(
             plan,
             initial,

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,24 +18,25 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-_LESFormula = Literal["smagorinsky", "wale", "vreman", "amd"]
-_LESFilterFamily = Literal[
+_LESFormula: TypeAlias = Literal["smagorinsky", "wale", "vreman", "amd"]
+_LESFilterFamily: TypeAlias = Literal[
     "sharp-fourier-projection",
     "implicit-grid-volume",
     "explicit-filter",
 ]
-_LESTopology = Literal["tensor-product", "unstructured"]
-_LESBoundaryClass = Literal["periodic", "wall-bounded", "open", "mixed"]
-_LESScaleRule = Literal[
+_LESTopology: TypeAlias = Literal["tensor-product", "unstructured"]
+_LESBoundaryClass: TypeAlias = Literal["periodic", "wall-bounded", "open", "mixed"]
+_LESScaleRule: TypeAlias = Literal[
     "cutoff-equivalent",
     "volume-equivalent",
     "kernel-equivalent",
 ]
-_LESCommutationStatus = Literal["commuting", "modeled", "unmodeled"]
-_LESRepeatedFilterSemantics = Literal["idempotent", "composed", "unmodeled"]
-_LESParameterSourceKind = Literal[
+_LESCommutationStatus: TypeAlias = Literal["commuting", "modeled", "unmodeled"]
+_LESRepeatedFilterSemantics: TypeAlias = Literal["idempotent", "composed", "unmodeled"]
+_LESParameterSourceKind: TypeAlias = Literal[
     "user",
     "literature",
     "a-priori",
@@ -81,12 +82,7 @@ class ResolvedLESFilter(StrictModule, NonTrainableState):
         normalized = name.strip()
         if not normalized:
             raise ValueError("Resolved LES filter name must be non-empty.")
-        if family not in (
-            "sharp-fourier-projection",
-            "implicit-grid-volume",
-            "explicit-filter",
-        ):
-            raise ValueError("Unsupported resolved LES filter family.")
+        family = parse(family, _LESFilterFamily, "family")
         if (
             not isinstance(axis_names, tuple)
             or len(axis_names) != 3
@@ -96,20 +92,17 @@ class ResolvedLESFilter(StrictModule, NonTrainableState):
         axes = (axis_names[0].strip(), axis_names[1].strip(), axis_names[2].strip())
         if len(set(axes)) != 3:
             raise ValueError("Resolved LES axis names must be unique.")
-        if topology not in ("tensor-product", "unstructured"):
-            raise ValueError("Unsupported resolved LES topology.")
-        if boundary_class not in ("periodic", "wall-bounded", "open", "mixed"):
-            raise ValueError("Unsupported resolved LES boundary class.")
-        if scale_rule not in (
-            "cutoff-equivalent",
-            "volume-equivalent",
-            "kernel-equivalent",
-        ):
-            raise ValueError("Unsupported resolved LES scale rule.")
-        if commutation_status not in ("commuting", "modeled", "unmodeled"):
-            raise ValueError("Unsupported LES filter commutation status.")
-        if repeated_filter_semantics not in ("idempotent", "composed", "unmodeled"):
-            raise ValueError("Unsupported repeated-filter semantics.")
+        topology = parse(topology, _LESTopology, "topology")
+        boundary_class = parse(boundary_class, _LESBoundaryClass, "boundary_class")
+        scale_rule = parse(scale_rule, _LESScaleRule, "scale_rule")
+        commutation_status = parse(
+            commutation_status, _LESCommutationStatus, "commutation_status"
+        )
+        repeated_filter_semantics = parse(
+            repeated_filter_semantics,
+            _LESRepeatedFilterSemantics,
+            "repeated_filter_semantics",
+        )
         expected_scale_rule = {
             "sharp-fourier-projection": "cutoff-equivalent",
             "implicit-grid-volume": "volume-equivalent",
@@ -212,8 +205,7 @@ class LESParameterProvenance(StrictModule, NonTrainableState):
         regime_ = regime.strip()
         if not discretization or not regime_:
             raise ValueError("LES discretization identity and regime must be non-empty.")
-        if source_kind not in ("user", "literature", "a-priori", "a-posteriori"):
-            raise ValueError("Unsupported LES parameter source kind.")
+        source_kind = parse(source_kind, _LESParameterSourceKind, "source_kind")
         if not isinstance(evidence_ids, tuple) or any(
             not isinstance(value, str) or not value.strip() for value in evidence_ids
         ):
@@ -515,16 +507,17 @@ def _evaluate_formula(
     if not isinstance(inputs, AlgebraicLESInputs):
         raise TypeError("inputs must be AlgebraicLESInputs.")
     strain, deviatoric_strain = _strain_tensors(inputs.velocity_gradient)
-    if formula == "smagorinsky":
-        viscosity = _smagorinsky_viscosity(coefficient, inputs, strain)
-    elif formula == "wale":
-        viscosity = _wale_viscosity(coefficient, inputs, strain)
-    elif formula == "vreman":
-        viscosity = _vreman_viscosity(coefficient, inputs)
-    elif formula == "amd":
-        viscosity = _amd_viscosity(coefficient, inputs, deviatoric_strain)
-    else:
-        raise ValueError(f"Unsupported algebraic LES formula {formula!r}.")
+    match formula:
+        case "smagorinsky":
+            viscosity = _smagorinsky_viscosity(coefficient, inputs, strain)
+        case "wale":
+            viscosity = _wale_viscosity(coefficient, inputs, strain)
+        case "vreman":
+            viscosity = _vreman_viscosity(coefficient, inputs)
+        case "amd":
+            viscosity = _amd_viscosity(coefficient, inputs, deviatoric_strain)
+        case _:
+            raise ValueError(f"Unsupported algebraic LES formula {formula!r}.")
     stress = -2.0 * viscosity[..., None, None] * deviatoric_strain
     transfer = -ein.contract("...ij,...ij->...", stress, strain, backend="jax")
     return AlgebraicLESResult(viscosity, stress, transfer)

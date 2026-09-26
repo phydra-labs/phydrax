@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,10 +15,11 @@ from jax.typing import ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-SmoothingPatchKind = Literal["cell", "edge", "node", "axisymmetric"]
-SmoothingEnergyEvidence = Literal[
+SmoothingPatchKind: TypeAlias = Literal["cell", "edge", "node", "axisymmetric"]
+SmoothingEnergyEvidence: TypeAlias = Literal[
     "none",
     "empirical-lower-like",
     "empirical-upper-like",
@@ -70,8 +71,7 @@ class SmoothingPatchLayout(StrictModule, NonTrainableState):
         shape_values = np.asarray(boundary_shape_values, dtype=np.float64)
         parameters = np.asarray(rule_points, dtype=np.float64)
         weights = np.asarray(rule_weights, dtype=np.float64)
-        if patch_kind not in ("cell", "edge", "node", "axisymmetric"):
-            raise ValueError("Unknown smoothing patch kind.")
+        patch_kind = parse(patch_kind, SmoothingPatchKind, "patch_kind")
         if owners.ndim != 1 or routes.ndim != 2 or routes.shape[0] != owners.size:
             raise ValueError("Smoothing owner/DOF routes have incompatible shapes.")
         if route_valid.shape != routes.shape or np.any(routes[route_valid] < 0):

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Any, Literal, Sequence
+from typing import Any, Literal, Sequence, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,13 +19,13 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..graph._operator_topology import OperatorTopology
 from ..nn.operator.data import FunctionSamples, OperatorAxis
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
-BoundsPolicy = Literal["global", "case_bbox"]
+BoundsPolicy: TypeAlias = Literal["global", "case_bbox"]
 GeometryComponent = Literal["interior", "boundary"]
 MeshTopologyKind = Literal["graph", "simplicial"]
-RegionalGeometryMode = Literal["fixed", "farthest_point"]
+RegionalGeometryMode: TypeAlias = Literal["fixed", "farthest_point"]
 
 
 def _shape_tuple(shape: Sequence[int], /) -> tuple[int, ...]:
@@ -75,8 +75,7 @@ class TensorGridLatentGeometry(StrictModule, NonTrainableState):
     ) -> None:
         shape_ = _shape_tuple(shape)
         coord_dim = len(shape_)
-        if bounds_policy not in ("global", "case_bbox"):
-            raise ValueError("bounds_policy must be 'global' or 'case_bbox'.")
+        bounds_policy = parse(bounds_policy, BoundsPolicy, "bounds_policy")
         if float(margin) < 0.0:
             raise ValueError("margin must be non-negative.")
         names = (
@@ -255,8 +254,7 @@ class RegionalPointLatentGeometry(StrictModule, NonTrainableState):
         dimension = int(coord_dim)
         if count <= 0 or dimension <= 0:
             raise ValueError("point_count and coord_dim must be positive.")
-        if mode not in ("fixed", "farthest_point"):
-            raise ValueError("mode must be 'fixed' or 'farthest_point'.")
+        mode = parse(mode, RegionalGeometryMode, "mode")
         if mode == "fixed":
             if fixed_points is None:
                 raise ValueError("fixed regional geometry requires fixed_points.")

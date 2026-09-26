@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._distributed import (
     DistributedSpectralExecutionPlan,
     SpectralMeshTopology,
@@ -215,10 +216,7 @@ class DistributedPeriodicLESPlan(StrictModule, NonTrainableState):
             raise TypeError("scientific must be a PreparedPeriodicAlgebraicLES.")
         if not isinstance(topology, SpectralMeshTopology):
             raise TypeError("topology must be a SpectralMeshTopology.")
-        if schedule not in ("slab", "pencil"):
-            raise ValueError(
-                "Distributed periodic LES supports only slab and pencil layouts."
-            )
+        schedule = parse(schedule, DistributedPeriodicLESSchedule, "schedule")
         checkpoints = index(checkpoint_count)
         maximum = index(maximum_bytes)
         if checkpoints < 0 or maximum <= 0:

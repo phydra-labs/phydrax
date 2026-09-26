@@ -198,7 +198,7 @@ def test_enforcement_gate_rejects_unknown_method():
     geometry = _scaled_square(1.0)
     invalid_method: Any = "unknown"
 
-    with pytest.raises(ValueError, match="method must be"):
+    with pytest.raises(ValueError, match="method"):
         geometry.make_enforcement_gate(method=invalid_method)
 
 

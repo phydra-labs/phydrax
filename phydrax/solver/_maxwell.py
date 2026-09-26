@@ -45,6 +45,7 @@ from ..linalg import (
     TolerancePolicy,
 )
 from ..topology import CellSubcomplex
+from ..typing import parse
 from ._harmonic_constraints import HarmonicConstraint
 from ._maxwell_boundaries import MaxwellBoundaryPlan, PreparedMaxwellBoundary
 from ._maxwell_observers import (
@@ -89,8 +90,7 @@ class MaxwellCochainLayout(StrictModule, NonTrainableState):
         polarization: MaxwellPolarization = "full_3d",
         /,
     ) -> None:
-        if polarization not in ("full_3d", "tez", "tmz"):
-            raise ValueError("Unknown Maxwell polarization.")
+        polarization = parse(polarization, MaxwellPolarization, "polarization")
         if isinstance(bridge, StructuredCochainBridge):
             cochain = bridge.cochain
             dimension = bridge.dimension

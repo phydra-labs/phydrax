@@ -52,6 +52,7 @@ from ...tensor_network import (
     su2_clebsch_gordan,
     su2_fusion,
 )
+from ...typing import parse
 
 
 FuzzyManyBodyStatistics: TypeAlias = Literal["boson", "fermion"]
@@ -187,7 +188,6 @@ class FuzzySphereManyBodyPlan(StrictModule):
         flux = int(twice_monopole_flux)
         particles = int(particle_count)
         projection = None if twice_projection is None else int(twice_projection)
-        statistics_ = str(statistics)
         potentials = tuple(
             sorted((int(spin), float(value)) for spin, value in pseudopotentials.items())
         )
@@ -196,10 +196,11 @@ class FuzzySphereManyBodyPlan(StrictModule):
         maximum_routes = int(maximum_nonzero_routes)
         maximum_table = int(maximum_table_bytes)
         tolerance_ = float(tolerance)
-        if flux < 1 or particles < 2 or statistics_ not in ("boson", "fermion"):
+        if flux < 1 or particles < 2:
             raise ValueError(
                 "Fuzzy many-body flux, particles, or statistics are invalid."
             )
+        statistics_ = parse(statistics, FuzzyManyBodyStatistics, "statistics")
         if statistics_ == "fermion" and particles > flux + 1:
             raise ValueError("Fermion particle count exceeds the orbital count.")
         if projection is not None and (

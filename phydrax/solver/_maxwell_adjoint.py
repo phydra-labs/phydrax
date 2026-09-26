@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 
 
 CheckpointMode: TypeAlias = Literal["full", "recompute"]
@@ -47,8 +48,9 @@ class PyTreeCheckpointedAdjointPlan(StrictModule):
         if not callable(step):
             raise TypeError("step must be callable.")
         count = int(steps)
-        if count <= 0 or mode not in ("full", "recompute"):
+        if count <= 0:
             raise ValueError("Adjoint steps/mode are invalid.")
+        mode = parse(mode, CheckpointMode, "mode")
         self.step = step
         self.steps = count
         self.mode = mode

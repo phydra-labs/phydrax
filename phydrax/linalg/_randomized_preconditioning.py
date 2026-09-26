@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._costs import PreconditionerCostEstimate
 from ._hermitian_spectral import HermitianSpectrum
 from ._materialization import MaterializationPolicy
@@ -256,8 +257,7 @@ class RandomizedNystromPreconditionerBuilder(AbstractPreconditionerBuilder):
             raise ValueError("oversampling must be non-negative.")
         if not isfinite(shift_) or shift_ <= 0.0:
             raise ValueError("shift must be finite and strictly positive.")
-        if probe_refresh not in ("reuse", "redraw"):
-            raise ValueError("probe_refresh must be 'reuse' or 'redraw'.")
+        probe_refresh = parse(probe_refresh, ProbeRefresh, "probe_refresh")
         if stabilization is not None and (
             not isfinite(float(stabilization)) or float(stabilization) <= 0.0
         ):

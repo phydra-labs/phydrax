@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, cast, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +24,7 @@ from .._precision import (
     quantize_mx,
 )
 from .._strict import StrictModule
+from ..typing import parse
 
 
 OptimizerStateLeafRole: TypeAlias = Literal[
@@ -33,8 +34,6 @@ OptimizerStateLeafRole: TypeAlias = Literal[
     "trace",
     "accumulator",
 ]
-
-_ROLES = frozenset({"exact", "first-moment", "second-moment", "trace", "accumulator"})
 
 
 class OptimizerStateCompressionPolicy(StrictModule):
@@ -165,15 +164,10 @@ def _validated_role_layout(
     role_leaves, role_treedef = jax.tree.flatten(roles)
     if role_treedef != treedef or len(role_leaves) != len(leaves):
         raise ValueError("Optimizer leaf_roles must exactly match the state treedef.")
-    normalized = tuple(str(role) for role in role_leaves)
-    if any(role not in _ROLES for role in normalized):
-        raise ValueError("Optimizer leaf_roles contains an unknown role.")
-    # Every normalized role was validated against ``_ROLES`` above.
-    return (
-        tuple(leaves),
-        treedef,
-        cast(tuple[OptimizerStateLeafRole, ...], normalized),
+    normalized = tuple(
+        parse(str(role), OptimizerStateLeafRole, "leaf_roles") for role in role_leaves
     )
+    return tuple(leaves), treedef, normalized
 
 
 def prepare_optimizer_state_compression(

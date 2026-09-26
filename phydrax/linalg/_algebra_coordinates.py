@@ -18,6 +18,7 @@ from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._algebra_spaces import AlgebraArraySpace
 from ._real_coordinates import AbstractRealCoordinateMap, RealCoordinateEvidence
 from ._spaces import ArraySpace
@@ -48,8 +49,7 @@ class AlgebraCoordinatePlan(StrictModule, NonTrainableState):
 
         if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
             raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
-        if public_storage not in ("native_complex", "real_coordinates"):
-            raise ValueError("Unknown algebra coordinate storage kind.")
+        public_storage = parse(public_storage, AlgebraCoordinateStorage, "public_storage")
         if public_storage == "native_complex" and not isinstance(
             algebra, ComplexAlgebraSpec
         ):

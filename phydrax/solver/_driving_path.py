@@ -19,6 +19,7 @@ from .._dtype_names import inexact_result_type
 from .._interpolation import bspline_evaluate, BSplineGrid
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState, parameter_field
+from ..typing import parse
 
 
 DrivingPathSide: TypeAlias = Literal["left", "right"]
@@ -31,9 +32,7 @@ def _path_id(value: str, /) -> str:
 
 
 def _side(value: DrivingPathSide, /) -> DrivingPathSide:
-    if value not in ("left", "right"):
-        raise ValueError("side must be 'left' or 'right'.")
-    return value
+    return parse(value, DrivingPathSide, "side")
 
 
 def _support_array(value: ArrayLike, /) -> Array:

@@ -8,13 +8,13 @@ import hashlib
 import json
 from dataclasses import dataclass
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 from jax import Array
 
 from ...._doc import DOC_KEY0
-from ....typing import PRNGKey
+from ....typing import parse, PRNGKey
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
 from ..distribution import AbstractProbabilisticOperatorModel
 from ._losses import (
@@ -25,7 +25,7 @@ from ._losses import (
 )
 
 
-DistributionReduction = Literal["none", "mean", "sum"]
+DistributionReduction: TypeAlias = Literal["none", "mean", "sum"]
 
 
 def operator_distribution_nll(
@@ -64,8 +64,11 @@ class OperatorDistributionNLL(AbstractOperatorLossTerm):
             raise ValueError(
                 "OperatorDistributionNLL weight must be finite and nonnegative."
             )
-        if self.reduction not in ("none", "mean", "sum"):
-            raise ValueError("reduction must be 'none', 'mean', or 'sum'.")
+        object.__setattr__(
+            self,
+            "reduction",
+            parse(self.reduction, DistributionReduction, "reduction"),
+        )
         if self.reduction == "none":
             raise ValueError(
                 "OperatorDistributionNLL used as a training term requires a scalar reduction."

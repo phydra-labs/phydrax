@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -22,6 +22,7 @@ from .._interpolation import (
     NearestTiePolicy,
 )
 from .._strict import StrictModule
+from ..typing import parse
 from ._sampled import SampledSeries
 from ._types import (
     SeriesEvaluation,
@@ -30,7 +31,7 @@ from ._types import (
 )
 
 
-NodeSide = Literal["left", "right"]
+NodeSide: TypeAlias = Literal["left", "right"]
 
 
 def _capabilities(method: SeriesInterpolation, /) -> SeriesReconstructionCapabilities:
@@ -114,8 +115,7 @@ class SampledSeriesReconstruction(StrictModule):
             raise ValueError(
                 "nearest_tie_policy must be 'lower', 'round_even', or 'upper'."
             )
-        if node_side not in ("left", "right"):
-            raise ValueError("node_side must be 'left' or 'right'.")
+        node_side = parse(node_side, NodeSide, "node_side")
         tolerance = float(snap_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("snap_tolerance must be finite and non-negative.")

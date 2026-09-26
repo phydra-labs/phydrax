@@ -22,6 +22,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._quadrature_rules import QuadratureRuleData
 
 
@@ -90,8 +91,7 @@ class AdaptiveCubatureRuleData(StrictModule, NonTrainableState):
             raise ValueError(
                 "Adaptive cubature split weights must have shape (dimension, num_points)."
             )
-        if family not in ("genz-malik", "tensor-gauss-kronrod"):
-            raise ValueError(f"Unsupported adaptive cubature family: {family!r}.")
+        family = parse(family, AdaptiveCubatureFamily, "family")
         if not source_id:
             raise ValueError("Adaptive cubature source_id must be nonempty.")
         if any(

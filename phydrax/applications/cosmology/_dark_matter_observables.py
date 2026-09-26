@@ -34,6 +34,7 @@ from ...discretization.particle import ParticleDiscretization
 from ...discretization.spectral import PeriodicFourierShellPlan
 from ...discretization.splatting import PreparedParticleGridSplat
 from ...observation import LinearObservationPlan, TheoryVector
+from ...typing import parse
 from ._halo_finder import FoFFinderResult, PeriodicFoFFinderPlan
 from ._mixed_matter import MixedCosmologyDiagnostics
 from ._nonlinear_closure import LensingPlanePlan, LightConePlan, LightConeResult
@@ -1496,8 +1497,7 @@ class MixedComponentSpectrumPlan(StrictModule, NonTrainableState):
         names = tuple(_identifier(value, "component name") for value in component_names)
         if len(names) < 2 or len(set(names)) != len(names):
             raise ValueError("Mixed spectra require at least two unique components.")
-        if normalization not in ("additive-field", "total-density-contrast"):
-            raise ValueError("Unknown mixed-spectrum normalization.")
+        normalization = parse(normalization, DarkMatterDensityConvention, "normalization")
         absolute = float(closure_absolute_tolerance)
         relative = float(closure_relative_tolerance)
         imaginary = float(imaginary_tolerance)

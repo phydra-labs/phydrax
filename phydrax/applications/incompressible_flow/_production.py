@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -63,6 +63,7 @@ from ...solver._runtime_lifecycle import (
 )
 from ...solver._semilinear_drift import SemilinearDrift
 from ...stochastic import OrnsteinUhlenbeckRealization
+from ...typing import parse
 from ._forcing import (
     ConstantPowerFourierForcingPlan,
     SolenoidalOUForcingPlan,
@@ -79,7 +80,7 @@ from ._statistics import (
 
 
 StatisticsWeighting = Literal["sample", "time"]
-ConstantPowerWiring = Literal["compiled", "adapter"]
+ConstantPowerWiring: TypeAlias = Literal["compiled", "adapter"]
 
 
 def _required_identifier(value: str, role: str, /) -> str:
@@ -1533,8 +1534,9 @@ class PeriodicSpectralProductionPlan(StrictModule):
             ou_realization, OrnsteinUhlenbeckRealization
         ):
             raise TypeError("ou_realization has the wrong type.")
-        if constant_power_wiring not in ("compiled", "adapter"):
-            raise ValueError("constant_power_wiring must be 'compiled' or 'adapter'.")
+        constant_power_wiring = parse(
+            constant_power_wiring, ConstantPowerWiring, "constant_power_wiring"
+        )
         if forcing is None and constant_power_wiring != "compiled":
             raise ValueError(
                 "constant_power_wiring='adapter' requires constant_power_forcing."

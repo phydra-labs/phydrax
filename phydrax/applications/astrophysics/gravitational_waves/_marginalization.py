@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -25,6 +25,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....integration import GaussLegendreRule, interval_rule_data
 from ....special import ive
+from ....typing import parse
 from ....uq import AbstractPosteriorTerm
 from .._photometry import ObservationDataProvenance
 from ._likelihood import GravitationalWaveLikelihoodPlan
@@ -37,7 +38,7 @@ _RECONSTRUCTION_ADDRESS = SampleAddress(
     target="joint-nuisance",
     role="posterior",
 )
-CalibrationCorrectionConvention = Literal["data", "template"]
+CalibrationCorrectionConvention: TypeAlias = Literal["data", "template"]
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -242,11 +243,11 @@ class CalibrationResponseEnsemble(StrictModule, NonTrainableState):
             or not identifiers
             or any(not value for value in identifiers)
             or len(set(identifiers)) != len(identifiers)
-            or convention not in ("data", "template")
         ):
             raise ValueError(
                 "Calibration frequency, response, detector, or convention is invalid."
             )
+        convention = parse(convention, CalibrationCorrectionConvention, "convention")
         if convention == "data":
             if np.any(curves == 0.0):
                 raise ValueError("Data-convention calibration responses must be nonzero.")

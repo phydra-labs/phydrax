@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.random as jr
@@ -13,7 +13,7 @@ from jax import Array
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._keys import EvalKey, split_eval_key
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._linear_recurrent_unit import _last_valid_array
@@ -24,7 +24,7 @@ from ..layers._selective_sequence import (
 )
 
 
-SelectiveReturnMode = Literal["sequence", "final"]
+SelectiveReturnMode: TypeAlias = Literal["sequence", "final"]
 
 
 class SelectiveSequenceModel(StrictModule, ParameterOwner):
@@ -53,8 +53,7 @@ class SelectiveSequenceModel(StrictModule, ParameterOwner):
             raise ValueError("depth must be positive.")
         if execution not in ("serial", "associative"):
             raise ValueError("execution must be 'serial' or 'associative'.")
-        if return_mode not in ("sequence", "final"):
-            raise ValueError("return_mode must be 'sequence' or 'final'.")
+        return_mode = parse(return_mode, SelectiveReturnMode, "return_mode")
         keys = jr.split(key, resolved_depth)
         block_kwargs: dict[str, Any] = {
             "inner_size": inner_size,

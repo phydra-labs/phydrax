@@ -20,6 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import StateLayout
 from ...linalg import AbstractLinearOperator, ArraySpace, BlockSpace, DualSpace
+from ...typing import parse
 from ._rod_dynamics import (
     evaluate_rod,
     PreparedRod,
@@ -164,10 +165,7 @@ class ReducedRodPlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(basis, RodStrainBasisPlan):
             raise TypeError("basis must be a RodStrainBasisPlan.")
-        if base_policy not in ("reference", "fixed"):
-            raise ValueError(
-                "base_policy must be 'reference' or 'fixed'; floating rods are unsupported."
-            )
+        base_policy = parse(base_policy, ReducedRodBasePolicy, "base_policy")
         dtype = np.dtype(basis.polynomial_coefficients.dtype)
         coordinate_count = basis.coordinate_count
         reference = (

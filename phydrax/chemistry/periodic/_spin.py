@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -28,13 +28,14 @@ from ...linalg.eigen import (
     GeneralizedEigenproblem,
 )
 from ...operators.periodic import PreparedPeriodicOrbitalPencil
+from ...typing import parse
 from ...units import UnitDefinition
 from .._result import ElectronicEnergyLedger
 from .._state import PeriodicElectronicSectorPlan
 from ._orbital_model import PeriodicHubbardMeanFieldPlan
 
 
-SpinReferenceKind = Literal["restricted", "collinear"]
+SpinReferenceKind: TypeAlias = Literal["restricted", "collinear"]
 
 
 class SpinPeriodicSCFEvidence(StrictModule, NonTrainableState):
@@ -181,8 +182,7 @@ class SpinPeriodicSCFResult(StrictModule, NonTrainableState):
             raise TypeError("energy_unit must be UnitDefinition.")
         if energy_ledger.energy_unit != energy_unit:
             raise ValueError("Spin SCF ledger and result energy units differ.")
-        if reference_kind not in ("restricted", "collinear"):
-            raise ValueError("Spin reference_kind must be restricted or collinear.")
+        reference_kind = parse(reference_kind, SpinReferenceKind, "reference_kind")
         iterations_ = int(iterations)
         if iterations_ <= 0:
             raise ValueError("Spin SCF result must report at least one iteration.")
@@ -364,8 +364,7 @@ class SpinPeriodicSCFPlan(StrictModule, NonTrainableState):
             raise ValueError("Spin SCF pencil and mean-field energy units differ.")
         if sector.charge_per_cell != 0.0:
             raise ValueError("Spin periodic SCF requires a neutral electronic sector.")
-        if reference_kind not in ("restricted", "collinear"):
-            raise ValueError("reference_kind must be restricted or collinear.")
+        reference_kind = parse(reference_kind, SpinReferenceKind, "reference_kind")
         if reference_kind == "restricted" and sector.spin_magnetization != 0.0:
             raise ValueError("Restricted periodic SCF requires zero spin magnetization.")
         orbital_count = pencil.plan.basis.orbital_count

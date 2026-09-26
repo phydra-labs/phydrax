@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from .._tree_math import validate_real_inexact_tree
 from ..linalg import PyTreeSpace
+from ..typing import parse
 from ._bounds import ProjectedLBFGS
 from ._iterative import (
     AbstractMinimizationMethod,
@@ -61,8 +62,7 @@ class MultiStartPolicy(StrictModule):
         scale = float(normal_scale)
         if count_ < 1:
             raise ValueError("Multi-start count must be positive.")
-        if generator not in ("uniform-bounds", "normal"):
-            raise ValueError("Unknown multi-start generator.")
+        generator = parse(generator, StartGenerator, "generator")
         if not isfinite(scale) or scale <= 0.0:
             raise ValueError("normal_scale must be finite and positive.")
         lanes = None if lane_count is None else int(lane_count)

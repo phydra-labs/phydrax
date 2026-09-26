@@ -27,6 +27,7 @@ from ...lifecycle import (
     read_typed_array_artifact,
     write_typed_array_artifact,
 )
+from ...typing import parse
 
 
 CoupledEnvelopeMethod: TypeAlias = Literal["fixed-symmetric", "adaptive-step-doubling"]
@@ -132,8 +133,7 @@ class CoupledEnvelopePlan(StrictModule):
         minimum_step = float(minimum_step_size)
         maximum = int(maximum_steps)
         workspace = int(maximum_workspace_bytes)
-        if method not in ("fixed-symmetric", "adaptive-step-doubling"):
-            raise ValueError("Unknown coupled-envelope method.")
+        method = parse(method, CoupledEnvelopeMethod, "method")
         if (
             not 0.0 <= fraction <= 1.0
             or distance <= 0.0

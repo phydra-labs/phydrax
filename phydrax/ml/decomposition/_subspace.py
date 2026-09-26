@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,6 +24,7 @@ from ..._differentiation import (
 from ..._model import ModelBinding
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -35,7 +36,7 @@ from .._numerics import effective_sample_size, fit_weighted_subspace
 from .._schema import AbstractFittedModel
 
 
-SubspaceGradientTarget = Literal["projector", "basis", "none"]
+SubspaceGradientTarget: TypeAlias = Literal["projector", "basis", "none"]
 
 # Encoding is an affine metric-scaled projection of the input.
 _PREDICTION_CONTRACT = DerivativeContract(
@@ -370,11 +371,9 @@ class PCA(AbstractRecipe):
     ) -> None:
         self.n_components = int(n_components)
         self.weight_policy = weight_policy
-        self.differentiate = differentiate
         if self.n_components <= 0:
             raise ValueError("n_components must be positive.")
-        if differentiate not in ("projector", "basis", "none"):
-            raise ValueError("differentiate must be 'projector', 'basis', or 'none'.")
+        self.differentiate = parse(differentiate, SubspaceGradientTarget, "differentiate")
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
@@ -407,11 +406,9 @@ class TruncatedSVD(AbstractRecipe):
     ) -> None:
         self.n_components = int(n_components)
         self.weight_policy = weight_policy
-        self.differentiate = differentiate
         if self.n_components <= 0:
             raise ValueError("n_components must be positive.")
-        if differentiate not in ("projector", "basis", "none"):
-            raise ValueError("differentiate must be 'projector', 'basis', or 'none'.")
+        self.differentiate = parse(differentiate, SubspaceGradientTarget, "differentiate")
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
@@ -456,14 +453,12 @@ class POD(AbstractRecipe):
         )
         self.centered = bool(centered)
         self.weight_policy = weight_policy
-        self.differentiate = differentiate
         self.query_layout_provenance = tuple(
             str(item) for item in query_layout_provenance
         )
         if self.n_components <= 0:
             raise ValueError("n_components must be positive.")
-        if differentiate not in ("projector", "basis", "none"):
-            raise ValueError("differentiate must be 'projector', 'basis', or 'none'.")
+        self.differentiate = parse(differentiate, SubspaceGradientTarget, "differentiate")
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key

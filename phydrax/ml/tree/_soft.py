@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +24,7 @@ from ..._differentiation import (
     SurfaceDerivative,
 )
 from ..._model import ModelBinding, ValuePort
+from ...typing import parse
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -566,32 +567,37 @@ def _fit_soft_case(
             temperature,
             depth,
         )
-        if objective == "squared_error":
-            residual = raw - y
-            data_loss = (
-                0.5
-                * jnp.sum(
-                    normalized_weight[:, None] * jnp.real(residual * jnp.conj(residual))
+        match objective:
+            case "squared_error":
+                residual = raw - y
+                data_loss = (
+                    0.5
+                    * jnp.sum(
+                        normalized_weight[:, None]
+                        * jnp.real(residual * jnp.conj(residual))
+                    )
+                    / denominator
                 )
-                / denominator
-            )
-        elif objective == "logistic":
-            data_loss = (
-                -jnp.sum(
-                    normalized_weight[:, None]
-                    * (y * jax.nn.log_sigmoid(raw) + (1.0 - y) * jax.nn.log_sigmoid(-raw))
+            case "logistic":
+                data_loss = (
+                    -jnp.sum(
+                        normalized_weight[:, None]
+                        * (
+                            y * jax.nn.log_sigmoid(raw)
+                            + (1.0 - y) * jax.nn.log_sigmoid(-raw)
+                        )
+                    )
+                    / denominator
                 )
-                / denominator
-            )
-        elif objective == "softmax":
-            data_loss = (
-                -jnp.sum(
-                    normalized_weight[:, None] * y * jax.nn.log_softmax(raw, axis=-1)
+            case "softmax":
+                data_loss = (
+                    -jnp.sum(
+                        normalized_weight[:, None] * y * jax.nn.log_softmax(raw, axis=-1)
+                    )
+                    / denominator
                 )
-                / denominator
-            )
-        else:
-            raise ValueError(f"Unsupported soft objective {objective!r}.")
+            case _:
+                assert_never(objective)
         selection = jax.nn.softmax(logits_, axis=-1)
         sparsity_penalty = jnp.mean(selection * (1.0 - selection))
         return data_loss + sparsity * sparsity_penalty
@@ -660,8 +666,9 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
                 not math.isfinite(float(value)) or value <= 0.0
             ):
                 raise ValueError(f"{name} must be finite and strictly positive.")
-        if temperature_schedule not in {"constant", "linear", "geometric"}:
-            raise ValueError("Unsupported temperature schedule.")
+        temperature_schedule = parse(
+            temperature_schedule, TemperatureSchedule, "temperature_schedule"
+        )
         if (
             temperature_schedule == "constant"
             and isinstance(initial_temperature, (int, float))
@@ -669,8 +676,7 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
             and initial_temperature != final_temperature
         ):
             raise ValueError("A constant schedule requires equal temperature endpoints.")
-        if objective not in {"squared_error", "logistic", "softmax"}:
-            raise ValueError("Unsupported soft-tree objective.")
+        objective = parse(objective, SoftObjective, "objective")
         if isinstance(sparsity, (int, float)) and sparsity < 0.0:
             raise ValueError("sparsity must be nonnegative.")
         self.tree_count = int(tree_count)

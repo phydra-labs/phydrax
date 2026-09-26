@@ -19,6 +19,7 @@ from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import parse
 from ._core import ParticleDiscretization
 from ._pairwise import (
     ParticlePairGeometry,
@@ -201,12 +202,9 @@ class AntuonoDeltaSPHDiffusionPlan(AbstractSPHDensityDiffusionPlan):
     ) -> None:
         if delta < 0.0 or regularization <= 0.0:
             raise ValueError("Density diffusion parameters are invalid.")
-        if free_surface_policy not in (
-            "disable",
-            "one-sided-corrected",
-            "smooth-taper",
-        ):
-            raise ValueError("Unknown free-surface density-diffusion policy.")
+        free_surface_policy = parse(
+            free_surface_policy, FreeSurfaceDiffusionPolicy, "free_surface_policy"
+        )
         self.delta = float(delta)
         self.regularization = float(regularization)
         self.correction = (
@@ -338,8 +336,7 @@ class MonaghanArtificialViscosityPlan(StrictModule, NonTrainableState):
     ) -> None:
         if alpha < 0.0 or beta < 0.0 or regularization <= 0.0:
             raise ValueError("Artificial-viscosity coefficients are invalid.")
-        if activation not in ("approaching-only", "always", "smooth-approach"):
-            raise ValueError("Unknown artificial-viscosity activation.")
+        activation = parse(activation, ArtificialViscosityActivation, "activation")
         self.alpha = float(alpha)
         self.beta = float(beta)
         self.regularization = float(regularization)

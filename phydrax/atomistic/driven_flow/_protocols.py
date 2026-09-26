@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,9 +14,10 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 
 
-HomogeneousFlowKind = Literal[
+HomogeneousFlowKind: TypeAlias = Literal[
     "steady-shear",
     "oscillatory-shear",
     "planar-extension",
@@ -63,14 +64,7 @@ class HomogeneousFlowProtocolPlan(StrictModule):
         gradient_axis: int = 1,
         extension_axis: int = 0,
     ) -> None:
-        if kind not in (
-            "steady-shear",
-            "oscillatory-shear",
-            "planar-extension",
-            "uniaxial-extension",
-            "biaxial-extension",
-        ):
-            raise ValueError("Unknown homogeneous flow protocol.")
+        kind = parse(kind, HomogeneousFlowKind, "kind")
         rate_ = float(rate)
         amplitude = float(strain_amplitude)
         frequency = float(angular_frequency)
@@ -132,51 +126,54 @@ class HomogeneousFlowProtocolPlan(StrictModule):
             active = active & (value < self.stop_time)
             elapsed = jnp.minimum(elapsed, self.stop_time - self.start_time)
         gradient = jnp.zeros((3, 3), dtype=value.dtype)
-        if self.kind == "oscillatory-shear":
-            instantaneous = (
-                self.strain_amplitude
-                * self.angular_frequency
-                * jnp.cos(self.angular_frequency * elapsed)
-            )
-            strain = self.strain_amplitude * jnp.sin(self.angular_frequency * elapsed)
-            gradient = gradient.at[self.flow_axis, self.gradient_axis].set(
-                jnp.where(active, instantaneous, 0.0)
-            )
-        elif self.kind == "steady-shear":
-            instantaneous = jnp.asarray(self.rate, dtype=value.dtype)
-            strain = self.rate * elapsed
-            gradient = gradient.at[self.flow_axis, self.gradient_axis].set(
-                jnp.where(active, instantaneous, 0.0)
-            )
-        elif self.kind == "planar-extension":
-            instantaneous = jnp.asarray(self.rate, dtype=value.dtype)
-            strain = self.rate * elapsed
-            axes = [axis for axis in range(3) if axis != self.extension_axis]
-            compression_axis = axes[0]
-            gradient = gradient.at[self.extension_axis, self.extension_axis].set(
-                jnp.where(active, self.rate, 0.0)
-            )
-            gradient = gradient.at[compression_axis, compression_axis].set(
-                jnp.where(active, -self.rate, 0.0)
-            )
-        elif self.kind == "uniaxial-extension":
-            instantaneous = jnp.asarray(self.rate, dtype=value.dtype)
-            strain = self.rate * elapsed
-            gradient = gradient + jnp.eye(3, dtype=value.dtype) * jnp.where(
-                active, -0.5 * self.rate, 0.0
-            )
-            gradient = gradient.at[self.extension_axis, self.extension_axis].set(
-                jnp.where(active, self.rate, 0.0)
-            )
-        else:
-            instantaneous = jnp.asarray(self.rate, dtype=value.dtype)
-            strain = self.rate * elapsed
-            gradient = gradient + jnp.eye(3, dtype=value.dtype) * jnp.where(
-                active, self.rate, 0.0
-            )
-            gradient = gradient.at[self.extension_axis, self.extension_axis].set(
-                jnp.where(active, -2.0 * self.rate, 0.0)
-            )
+        match self.kind:
+            case "oscillatory-shear":
+                instantaneous = (
+                    self.strain_amplitude
+                    * self.angular_frequency
+                    * jnp.cos(self.angular_frequency * elapsed)
+                )
+                strain = self.strain_amplitude * jnp.sin(self.angular_frequency * elapsed)
+                gradient = gradient.at[self.flow_axis, self.gradient_axis].set(
+                    jnp.where(active, instantaneous, 0.0)
+                )
+            case "steady-shear":
+                instantaneous = jnp.asarray(self.rate, dtype=value.dtype)
+                strain = self.rate * elapsed
+                gradient = gradient.at[self.flow_axis, self.gradient_axis].set(
+                    jnp.where(active, instantaneous, 0.0)
+                )
+            case "planar-extension":
+                instantaneous = jnp.asarray(self.rate, dtype=value.dtype)
+                strain = self.rate * elapsed
+                axes = [axis for axis in range(3) if axis != self.extension_axis]
+                compression_axis = axes[0]
+                gradient = gradient.at[self.extension_axis, self.extension_axis].set(
+                    jnp.where(active, self.rate, 0.0)
+                )
+                gradient = gradient.at[compression_axis, compression_axis].set(
+                    jnp.where(active, -self.rate, 0.0)
+                )
+            case "uniaxial-extension":
+                instantaneous = jnp.asarray(self.rate, dtype=value.dtype)
+                strain = self.rate * elapsed
+                gradient = gradient + jnp.eye(3, dtype=value.dtype) * jnp.where(
+                    active, -0.5 * self.rate, 0.0
+                )
+                gradient = gradient.at[self.extension_axis, self.extension_axis].set(
+                    jnp.where(active, self.rate, 0.0)
+                )
+            case "biaxial-extension":
+                instantaneous = jnp.asarray(self.rate, dtype=value.dtype)
+                strain = self.rate * elapsed
+                gradient = gradient + jnp.eye(3, dtype=value.dtype) * jnp.where(
+                    active, self.rate, 0.0
+                )
+                gradient = gradient.at[self.extension_axis, self.extension_axis].set(
+                    jnp.where(active, -2.0 * self.rate, 0.0)
+                )
+            case _:
+                assert_never(self.kind)
         rate_of_strain = 0.5 * (gradient + gradient.T)
         vorticity = 0.5 * (gradient - gradient.T)
         finite = jnp.all(jnp.isfinite(gradient)) & jnp.isfinite(strain)

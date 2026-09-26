@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._spaces import ArraySpace
 
 
@@ -151,7 +152,8 @@ class RealTrigonometricTransform(AbstractLinearTransform):
         type_ = int(transform_type)
         dtype_ = np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(dtype)))
         invalid_size = size < 1 or (kind == "dct" and type_ == 1 and size < 2)
-        if kind not in ("dct", "dst") or type_ not in (1, 2, 3, 4) or invalid_size:
+        kind = parse(kind, TrigonometricTransformKind, "kind")
+        if type_ not in (1, 2, 3, 4) or invalid_size:
             raise ValueError("Trigonometric transform kind/type/count is invalid.")
         if not jnp.issubdtype(dtype_, jnp.floating):
             raise TypeError("Real trigonometric transforms require a floating dtype.")

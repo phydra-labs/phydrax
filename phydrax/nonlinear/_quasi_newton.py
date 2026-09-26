@@ -24,6 +24,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ..typing import parse
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
@@ -219,8 +220,7 @@ class Broyden(AbstractNonlinearMethod):
         denominator_tolerance: float = 1e-12,
         precision: NonlinearPrecisionPolicy | None = None,
     ) -> None:
-        if kind not in ("good", "bad"):
-            raise ValueError("kind must be 'good' or 'bad'.")
+        kind = parse(kind, BroydenKind, "kind")
         memory_ = int(memory)
         steps = int(maximum_line_search_steps)
         scale = float(initial_scale)

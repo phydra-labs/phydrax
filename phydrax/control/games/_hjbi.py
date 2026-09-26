@@ -21,6 +21,7 @@ from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
+from ...typing import parse
 from ..stochastic._hjb import (
     _finite_real_array,
     _nonnegative_tolerance,
@@ -262,10 +263,7 @@ class _RawHJBI(NamedTuple):
 
 
 def _action_order(value: str, name: str, /) -> HJBIActionOrder:
-    order = str(value)
-    if order not in ("max_min", "min_max"):
-        raise ValueError(f"{name} must be 'max_min' or 'min_max'.")
-    return order
+    return parse(str(value), HJBIActionOrder, name)
 
 
 def _callback_scalar(

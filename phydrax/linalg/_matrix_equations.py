@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._operators import (
     AbstractLinearOperator,
     adjoint,
@@ -253,13 +254,7 @@ class MatrixEquationProblem(StrictModule):
         expected_self_adjoint_solution: bool = False,
         problem_id: str | None = None,
     ) -> None:
-        if kind not in (
-            "generalized",
-            "sylvester",
-            "continuous-lyapunov",
-            "discrete-lyapunov",
-        ):
-            raise ValueError("Unknown matrix-equation kind.")
+        kind = parse(kind, MatrixEquationKind, "kind")
         rhs = jnp.asarray(right_hand_side)
         if rhs.ndim != 2:
             raise ValueError("right_hand_side must be one rank-two matrix.")

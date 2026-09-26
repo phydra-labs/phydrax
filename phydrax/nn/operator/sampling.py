@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from math import prod
-from typing import Any, ClassVar, Literal, TYPE_CHECKING
+from typing import Any, assert_never, ClassVar, Literal, TYPE_CHECKING, TypeAlias
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,6 +18,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_mapping
 from ...graph._operator_topology import take_operator_topology
+from ...typing import parse
 from .data import (
     FunctionSamples,
     OperatorBatch,
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from .training._dataset import OperatorDataset
 
 
-SamplingStrategy = Literal[
+SamplingStrategy: TypeAlias = Literal[
     "measure_random",
     "uniform_index",
     "stratified_measure",
@@ -201,64 +202,71 @@ def select_function_samples(
     valid_indices = np.flatnonzero(valid)
     total = float(np.sum(weights[valid_indices]))
     rng = np.random.default_rng(int(seed))
-
-    if strategy == "uniform_index":
-        if requested > valid_indices.size:
-            raise ValueError("Uniform sampling without replacement exceeds valid points.")
-        chosen = rng.choice(valid_indices, size=requested, replace=False)
-        inclusion = float(requested) / float(valid_indices.size)
-        probabilities = np.full(requested, inclusion, dtype=np.float64)
-        corrected = weights[chosen] / inclusion
-    elif strategy == "measure_random":
-        distribution = weights[valid_indices] / total
-        chosen = rng.choice(
-            valid_indices,
-            size=requested,
-            replace=True,
-            p=distribution,
-        )
-        lookup = np.zeros(weights.size, dtype=np.float64)
-        lookup[valid_indices] = distribution
-        probabilities = lookup[chosen]
-        corrected = weights[chosen] / (float(requested) * probabilities)
-    elif strategy == "stratified_measure":
-        distribution = np.zeros(weights.size, dtype=np.float64)
-        distribution[valid_indices] = weights[valid_indices] / total
-        cumulative = np.cumsum(distribution)
-        positions = (np.arange(requested) + rng.random(requested)) / requested
-        chosen = np.searchsorted(cumulative, positions, side="right")
-        chosen = np.minimum(chosen, weights.size - 1)
-        probabilities = distribution[chosen]
-        corrected = np.full(requested, total / float(requested), dtype=np.float64)
-    elif strategy == "farthest_point":
-        if requested > valid_indices.size:
-            raise ValueError("Farthest-point sampling exceeds valid points.")
-        chosen_list = [int(rng.choice(valid_indices))]
-        minimum_distance = np.full(weights.size, np.inf, dtype=np.float64)
-        for _ in range(1, requested):
-            latest = coordinates[chosen_list[-1]]
-            distance = np.sum((coordinates - latest) ** 2, axis=-1)
-            minimum_distance = np.minimum(minimum_distance, distance)
-            minimum_distance[~valid] = -np.inf
-            minimum_distance[np.asarray(chosen_list, dtype=np.int64)] = -np.inf
-            chosen_list.append(int(np.argmax(minimum_distance)))
-        chosen = np.asarray(chosen_list, dtype=np.int64)
-        probabilities = np.ones(requested, dtype=np.float64)
-        selected_mass = float(np.sum(weights[chosen]))
-        corrected = weights[chosen] * (total / selected_mass)
-    elif strategy == "fixed_indices":
-        chosen = np.asarray(tuple(fixed_indices), dtype=np.int64)
-        if chosen.size != requested:
-            raise ValueError("fixed_indices length must equal the requested count.")
-        if np.unique(chosen).size != chosen.size:
-            raise ValueError("fixed_indices must be unique.")
-        if np.any(chosen < 0) or np.any(chosen >= weights.size) or np.any(~valid[chosen]):
-            raise ValueError("fixed_indices contain an invalid sample.")
-        probabilities = np.ones(requested, dtype=np.float64)
-        selected_mass = float(np.sum(weights[chosen]))
-        corrected = weights[chosen] * (total / selected_mass)
-    else:
-        raise ValueError(f"Unknown sampling strategy {strategy!r}.")
+    strategy = parse(strategy, SamplingStrategy, "strategy")
+    match strategy:
+        case "uniform_index":
+            if requested > valid_indices.size:
+                raise ValueError(
+                    "Uniform sampling without replacement exceeds valid points."
+                )
+            chosen = rng.choice(valid_indices, size=requested, replace=False)
+            inclusion = float(requested) / float(valid_indices.size)
+            probabilities = np.full(requested, inclusion, dtype=np.float64)
+            corrected = weights[chosen] / inclusion
+        case "measure_random":
+            distribution = weights[valid_indices] / total
+            chosen = rng.choice(
+                valid_indices,
+                size=requested,
+                replace=True,
+                p=distribution,
+            )
+            lookup = np.zeros(weights.size, dtype=np.float64)
+            lookup[valid_indices] = distribution
+            probabilities = lookup[chosen]
+            corrected = weights[chosen] / (float(requested) * probabilities)
+        case "stratified_measure":
+            distribution = np.zeros(weights.size, dtype=np.float64)
+            distribution[valid_indices] = weights[valid_indices] / total
+            cumulative = np.cumsum(distribution)
+            positions = (np.arange(requested) + rng.random(requested)) / requested
+            chosen = np.searchsorted(cumulative, positions, side="right")
+            chosen = np.minimum(chosen, weights.size - 1)
+            probabilities = distribution[chosen]
+            corrected = np.full(requested, total / float(requested), dtype=np.float64)
+        case "farthest_point":
+            if requested > valid_indices.size:
+                raise ValueError("Farthest-point sampling exceeds valid points.")
+            chosen_list = [int(rng.choice(valid_indices))]
+            minimum_distance = np.full(weights.size, np.inf, dtype=np.float64)
+            for _ in range(1, requested):
+                latest = coordinates[chosen_list[-1]]
+                distance = np.sum((coordinates - latest) ** 2, axis=-1)
+                minimum_distance = np.minimum(minimum_distance, distance)
+                minimum_distance[~valid] = -np.inf
+                minimum_distance[np.asarray(chosen_list, dtype=np.int64)] = -np.inf
+                chosen_list.append(int(np.argmax(minimum_distance)))
+            chosen = np.asarray(chosen_list, dtype=np.int64)
+            probabilities = np.ones(requested, dtype=np.float64)
+            selected_mass = float(np.sum(weights[chosen]))
+            corrected = weights[chosen] * (total / selected_mass)
+        case "fixed_indices":
+            chosen = np.asarray(tuple(fixed_indices), dtype=np.int64)
+            if chosen.size != requested:
+                raise ValueError("fixed_indices length must equal the requested count.")
+            if np.unique(chosen).size != chosen.size:
+                raise ValueError("fixed_indices must be unique.")
+            if (
+                np.any(chosen < 0)
+                or np.any(chosen >= weights.size)
+                or np.any(~valid[chosen])
+            ):
+                raise ValueError("fixed_indices contain an invalid sample.")
+            probabilities = np.ones(requested, dtype=np.float64)
+            selected_mass = float(np.sum(weights[chosen]))
+            corrected = weights[chosen] * (total / selected_mass)
+        case _:
+            assert_never(strategy)
 
     return SampleSelection(
         indices=tuple(chosen),

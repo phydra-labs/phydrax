@@ -9,6 +9,8 @@ from typing import Any, Literal, TypeAlias
 
 import jax.numpy as jnp
 
+from ..typing import parse
+
 
 ModelInputMode: TypeAlias = Literal["flat", "structured"]
 ModelBatchMode: TypeAlias = Literal["pointwise", "blockwise", "axis"]
@@ -45,12 +47,16 @@ class ModelBinding:
     output_labels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.input_mode not in ("flat", "structured"):
-            raise ValueError("ModelBinding.input_mode must be 'flat' or 'structured'.")
-        if self.batch_mode not in ("pointwise", "blockwise", "axis"):
-            raise ValueError(
-                "ModelBinding.batch_mode must be 'pointwise', 'blockwise', or 'axis'."
-            )
+        object.__setattr__(
+            self,
+            "input_mode",
+            parse(self.input_mode, ModelInputMode, "ModelBinding.input_mode"),
+        )
+        object.__setattr__(
+            self,
+            "batch_mode",
+            parse(self.batch_mode, ModelBatchMode, "ModelBinding.batch_mode"),
+        )
         if not isinstance(self.output_labels, tuple) or any(
             not isinstance(label, str) for label in self.output_labels
         ):

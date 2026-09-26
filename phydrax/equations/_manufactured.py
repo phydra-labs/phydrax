@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._tensor_support import PreparedTensorGrid
 from ..linalg import AbstractLinearOperator, ArraySpace
+from ..typing import parse
 
 
 ManufacturedNorm: TypeAlias = Literal["l2", "linf"]
@@ -289,8 +290,9 @@ class ManufacturedConvergencePlan(StrictModule):
             )
         if any(right <= left for left, right in zip(values, values[1:])):
             raise ValueError("Convergence resolutions must be strictly increasing.")
-        if not callable(prepare_operator) or norm not in ("l2", "linf"):
+        if not callable(prepare_operator):
             raise ValueError("Convergence operator factory/norm is invalid.")
+        norm = parse(norm, ManufacturedNorm, "norm")
         tolerance = float(rate_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("rate_tolerance must be finite and non-negative.")

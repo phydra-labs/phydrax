@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._core import ParticleDiscretization
 from ._pairwise import ParticlePairGeometry, ParticlePairRelation
 
@@ -51,15 +52,7 @@ class ParticlePopulation(StrictModule, NonTrainableState):
             raise ValueError("Particle population name must be non-empty.")
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
-        allowed = (
-            "dynamic-fluid",
-            "static-boundary",
-            "prescribed-boundary",
-            "dynamic-rigid",
-            "material-phase",
-        )
-        if role not in allowed:
-            raise ValueError("Unknown particle population role.")
+        role = parse(role, ParticlePopulationRole, "role")
         shape = None if state_shape is None else tuple(state_shape)
         if shape is not None and (not shape or any(size <= 0 for size in shape)):
             raise ValueError("state_shape must contain positive dimensions or be None.")

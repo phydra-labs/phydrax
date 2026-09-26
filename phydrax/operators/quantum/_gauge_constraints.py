@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ._register import HilbertRegisterLayout
 from ._subspaces import BasisStateSubspace, DenseQuantumSubspace, QuantumSubspace
 
@@ -356,8 +357,7 @@ def plan_gauss_physical_sector(
         raise TypeError("network must be GaussConstraintNetwork.")
     if not bool(network.valid):
         raise ValueError("Gauss physical sectors require a valid constraint network.")
-    if method not in ("exact-nullspace", "sparse-basis"):
-        raise ValueError("Unknown Gauss physical-sector method.")
+    method = parse(method, GaussSectorMethod, "method")
     selected = GaussSectorResourcePolicy() if resources is None else resources
     if not isinstance(selected, GaussSectorResourcePolicy):
         raise TypeError("resources must be GaussSectorResourcePolicy or None.")

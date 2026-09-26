@@ -12,6 +12,7 @@ import jax.tree_util as jtu
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..typing import parse
 from ._relation import EdgeRelation, RowRelation, SparseRelation
 
 
@@ -169,8 +170,7 @@ def route_reduce(
     reduction: RouteReduction = "sum",
 ) -> Any:
     """Reduce route payloads only onto the relation's declared target axis."""
-    if reduction not in ("sum", "mean", "max", "min"):
-        raise ValueError("reduction must be 'sum', 'mean', 'max', or 'min'.")
+    reduction = parse(reduction, RouteReduction, "reduction")
     if isinstance(relation, EdgeRelation):
         return jtu.tree_map(
             lambda value: _reduce_edge_leaf(relation, value, reduction), values

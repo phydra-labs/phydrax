@@ -30,6 +30,7 @@ from ..combinatorial import (
     LinearCombinatorialProblem,
     solve_restricted_combinatorial,
 )
+from ..typing import parse
 from ._branch_and_bound import (
     AbstractBranchAndBoundProblem,
     branch_and_bound,
@@ -70,8 +71,7 @@ class ConvexObjectiveEvidence(StrictModule, NonTrainableState):
         evidence_id: str,
         /,
     ) -> None:
-        if kind not in ("construction", "verified", "asserted"):
-            raise ValueError("Unknown convex objective evidence kind.")
+        kind = parse(kind, ConvexObjectiveEvidenceKind, "kind")
         identifier = str(evidence_id)
         if not identifier:
             raise ValueError("evidence_id must be nonempty.")

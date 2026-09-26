@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import sqrt
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -26,10 +26,10 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
-StochasticDesignCriterion = Literal["a-optimal", "d-optimal", "e-optimal"]
+StochasticDesignCriterion: TypeAlias = Literal["a-optimal", "d-optimal", "e-optimal"]
 
 
 class StochasticDesignResult(StrictModule):
@@ -91,8 +91,7 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Design dimension/steps must be positive and probes greater than one."
             )
-        if criterion not in ("a-optimal", "d-optimal", "e-optimal"):
-            raise ValueError("Unknown stochastic design criterion.")
+        criterion = parse(criterion, StochasticDesignCriterion, "criterion")
         policy_id = None if linear_policy_id is None else str(linear_policy_id).strip()
         if criterion == "a-optimal":
             if not isinstance(linear_policy, LinearSolvePolicy) or not policy_id:

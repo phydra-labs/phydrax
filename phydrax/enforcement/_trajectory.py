@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import comb, isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -40,11 +40,11 @@ from ..domain._trajectory_interpolation import (
     _broadcast_like,
     _RaggedTimeSeriesTable,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
-RaggedTimeSeriesHardInterpolation = Literal["linear", "cubic_hermite"]
-RaggedTimeSeriesHardGate = Literal["sin2", "sin4"]
+RaggedTimeSeriesHardInterpolation: TypeAlias = Literal["linear", "cubic_hermite"]
+RaggedTimeSeriesHardGate: TypeAlias = Literal["sin2", "sin4"]
 
 
 class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
@@ -390,10 +390,10 @@ class RaggedTimeSeriesCorrectionAction(StrictModule):
             raise TypeError(
                 "RaggedTimeSeriesCorrectionAction requires a trajectory observation."
             )
-        if interpolation not in ("linear", "cubic_hermite"):
-            raise ValueError("interpolation must be 'linear' or 'cubic_hermite'.")
-        if gate not in ("sin2", "sin4"):
-            raise ValueError("gate must be 'sin2' or 'sin4'.")
+        interpolation = parse(
+            interpolation, RaggedTimeSeriesHardInterpolation, "interpolation"
+        )
+        gate = parse(gate, RaggedTimeSeriesHardGate, "gate")
         snap = float(snap_tol)
         if not isfinite(snap) or snap < 0.0:
             raise ValueError("snap_tol must be finite and non-negative.")
@@ -491,10 +491,10 @@ class RaggedTimeSeriesCorrectionProvider(StrictModule):
             raise TypeError(
                 "RaggedTimeSeriesCorrectionProvider requires a trajectory observation."
             )
-        if interpolation not in ("linear", "cubic_hermite"):
-            raise ValueError("interpolation must be 'linear' or 'cubic_hermite'.")
-        if gate not in ("sin2", "sin4"):
-            raise ValueError("gate must be 'sin2' or 'sin4'.")
+        interpolation = parse(
+            interpolation, RaggedTimeSeriesHardInterpolation, "interpolation"
+        )
+        gate = parse(gate, RaggedTimeSeriesHardGate, "gate")
         snap = float(snap_tol)
         if not isfinite(snap) or snap < 0.0:
             raise ValueError("snap_tol must be finite and non-negative.")

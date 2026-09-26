@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Literal, TypeAlias
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._context import AstrodynamicsContext
 from ._data import AstrodynamicsDataProvenance
 from ._status import AstrodynamicsStatus
@@ -112,12 +113,7 @@ class ObservationSchedule(StrictModule, NonTrainableState):
         root = np.asarray(covariance_root, dtype=np.float64)
         mask_ = np.asarray(mask)
         labels = tuple(observable_kinds)
-        catalog = (
-            "range",
-            "range_rate",
-            "azimuth_elevation",
-            "right_ascension_declination",
-        )
+        catalog: tuple[TrackingObservable, ...] = get_args(TrackingObservable)
         count = times_.size
         if (
             times_.ndim != 1
@@ -132,7 +128,6 @@ class ObservationSchedule(StrictModule, NonTrainableState):
             or not np.issubdtype(mask_.dtype, np.bool_)
             or not labels
             or len(set(labels)) != len(labels)
-            or any(label not in catalog for label in labels)
             or np.any(kinds < 0)
             or np.any(kinds >= len(labels))
             or np.any(~np.isfinite(times_))
@@ -145,6 +140,9 @@ class ObservationSchedule(StrictModule, NonTrainableState):
             raise ValueError(
                 "Observation schedule arrays or observable catalog are invalid."
             )
+        labels = tuple(
+            parse(label, TrackingObservable, "observable_kinds") for label in labels
+        )
         kind_codes = np.asarray(
             [catalog.index(labels[int(index)]) for index in kinds],
             dtype=np.int32,

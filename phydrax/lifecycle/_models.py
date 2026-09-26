@@ -13,6 +13,7 @@ from .._fingerprint import canonical_fingerprint
 from .._identity import ArtifactBindingIdentity, NumericRevision
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 RunStatus: TypeAlias = Literal[
@@ -295,15 +296,7 @@ class RunRecord(StrictModule, NonTrainableState):
         results = _identifiers("result_ids", result_ids)
         diagnostics = _identifiers("diagnostic_ids", diagnostic_ids)
         checkpoint = _optional_identifier("checkpoint_id", checkpoint_id)
-        if status_ not in (
-            "planned",
-            "queued",
-            "running",
-            "completed",
-            "failed",
-            "canceled",
-        ):
-            raise ValueError("Unknown run status.")
+        status_ = parse(status_, RunStatus, "status")
         self.run_id = run
         self.analysis_plan_id = analysis
         self.numeric_revision_id = revision

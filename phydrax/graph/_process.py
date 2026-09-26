@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -9,10 +9,11 @@ import jax.tree_util as jtu
 
 from phydrax._strict import StrictModule
 
+from ..typing import parse
 from ._ir import GraphIR
 
 
-GraphFeatureName = Literal["nodes", "edges", "globals"]
+GraphFeatureName: TypeAlias = Literal["nodes", "edges", "globals"]
 GraphRolloutReduction = Literal["mean", "sum"]
 
 
@@ -197,8 +198,7 @@ def rollout_features(
     include_initial: bool = True,
 ) -> Any:
     """Stack one feature payload from an autoregressive graph rollout."""
-    if feature not in ("nodes", "edges", "globals"):
-        raise ValueError("feature must be 'nodes', 'edges', or 'globals'.")
+    feature = parse(feature, GraphFeatureName, "feature")
     states = rollout(stepper, graph, steps=steps, include_initial=include_initial)
     payloads = [getattr(state, feature) for state in states]
     if any(payload is None for payload in payloads):

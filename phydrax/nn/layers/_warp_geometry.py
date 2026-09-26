@@ -24,12 +24,11 @@ from ..._interpolation import (
 from ..._strict import StrictModule
 from ...linalg import inverse as matrix_inverse
 from ...metrix import DENSITY_TENSOR, SCALAR_TENSOR, TensorType
+from ...typing import parse
 
 
 WarpBoundaryMode: TypeAlias = Literal["periodic", "reflect", "clamp", "constant"]
 WarpMaskMode: TypeAlias = Literal["reject", "renormalize", "strict"]
-
-_VALID_MASK_MODES = frozenset(("reject", "renormalize", "strict"))
 
 
 class RectilinearWarpDiagnostics(StrictModule):
@@ -296,8 +295,7 @@ def sample_rectilinear_grid(
         raise ValueError(
             "Rectilinear sampling requires one boundary mode per positive-dimensional axis."
         )
-    if mask_mode not in _VALID_MASK_MODES:
-        raise ValueError("mask_mode must be 'reject', 'renormalize', or 'strict'.")
+    mask_mode = parse(mask_mode, WarpMaskMode, "mask_mode")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError("Rectilinear warping supports real-valued arrays only.")
     if array.ndim < dimensions + 1:

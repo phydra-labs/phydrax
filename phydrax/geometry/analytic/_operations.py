@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import replace
-from typing import Any, Literal, NoReturn
+from typing import Any, Literal, NoReturn, TypeAlias
 from uuid import uuid4
 
 import equinox as eqx
@@ -24,7 +24,7 @@ from phydrax._strict import StrictModule
 from ..._mass import EstimatedMass, Mass, scale_mass
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._polynomial._cubature import CubatureReference
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import (
     ClosestPointProvider,
@@ -977,7 +977,7 @@ class _ScalingKernel(GeometryKernel):
         )
 
 
-_CSGOperation = Literal["intersection", "difference"]
+_CSGOperation: TypeAlias = Literal["intersection", "difference"]
 
 
 class SharpCSG(GeometrySource):
@@ -995,8 +995,7 @@ class SharpCSG(GeometrySource):
             isinstance(child, GeometrySource) for child in children_
         ):
             raise ValueError("Sharp CSG requires at least two geometry sources.")
-        if operation not in ("intersection", "difference"):
-            raise ValueError("operation must be 'intersection' or 'difference'.")
+        operation = parse(operation, _CSGOperation, "operation")
         self.children = children_
         self.operation = operation
 

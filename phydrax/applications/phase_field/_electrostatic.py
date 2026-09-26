@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,9 +18,10 @@ from phydrax import ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-ElectrostaticEnsemble = Literal["fixed-charge", "fixed-voltage"]
+ElectrostaticEnsemble: TypeAlias = Literal["fixed-charge", "fixed-voltage"]
 
 
 class PhasePermittivityLaw(StrictModule, NonTrainableState):
@@ -87,8 +88,7 @@ class PhaseElectrostaticCouplingPlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(permittivity, PhasePermittivityLaw):
             raise TypeError("permittivity must be PhasePermittivityLaw.")
-        if ensemble not in ("fixed-charge", "fixed-voltage"):
-            raise ValueError("Unknown electrostatic control ensemble.")
+        ensemble = parse(ensemble, ElectrostaticEnsemble, "ensemble")
         tolerance = float(gauss_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Gauss-law tolerance must be nonnegative.")

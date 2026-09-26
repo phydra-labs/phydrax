@@ -30,6 +30,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 SphericalSampling: TypeAlias = Literal["mw", "mwss", "dh", "gl"]
@@ -440,14 +441,10 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         selected_execution = str(execution).lower()
         if selected_bandlimit <= abs(selected_spin):
             raise ValueError("bandlimit must exceed the absolute spin.")
-        if selected_sampling not in ("mw", "mwss", "dh", "gl"):
-            raise ValueError("sampling must be 'mw', 'mwss', 'dh', or 'gl'.")
+        sampling_value = parse(selected_sampling, SphericalSampling, "sampling")
         if selected_reality and selected_spin != 0:
             raise ValueError("reality acceleration is valid only for spin-zero fields.")
-        if selected_execution not in ("recursive", "precomputed"):
-            raise ValueError("execution must be 'recursive' or 'precomputed'.")
-        sampling_value = selected_sampling
-        execution_value = selected_execution
+        execution_value = parse(selected_execution, SphericalExecution, "execution")
         theta = np.asarray(
             s2_samples.thetas(selected_bandlimit, sampling_value), dtype=np.float64
         )

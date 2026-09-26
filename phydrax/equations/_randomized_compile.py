@@ -40,7 +40,7 @@ if TYPE_CHECKING:
         RandomizedResidualSamples,
         RandomizedResidualTerm,
     )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._compile import compile_pde_expression
 from ._ir import PDECoordinate, PDEEquation, PDEExpression, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
@@ -114,12 +114,10 @@ class RandomizedDifferentialPlan(StrictModule):
             StochasticTracePolicy,
         )
 
-        if method not in ("hutchinson", "dimension"):
-            raise ValueError("method must be 'hutchinson' or 'dimension'.")
+        method = parse(method, RandomizedDifferentialMethod, "method")
         if loss_mode not in ("u_statistic", "independent_product", "plug_in"):
             raise ValueError("Unknown randomized residual loss_mode.")
-        if node_coupling not in ("independent", "common"):
-            raise ValueError("node_coupling must be 'independent' or 'common'.")
+        node_coupling = parse(node_coupling, RandomizedNodeCoupling, "node_coupling")
         if method == "hutchinson":
             if dimension_policy is not None:
                 raise ValueError("Hutchinson plans do not accept dimension_policy.")

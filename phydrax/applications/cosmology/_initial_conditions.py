@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,13 +17,14 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.particle import ParticleDiscretization
+from ...typing import parse
 from ._background import FLRWBackground
 from ._particles import CosmologicalParticleState
 from ._products import LagrangianGrowthHistory, MatterPowerTable
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
 
-LagrangianDealiasing = Literal["none", "three_halves"]
+LagrangianDealiasing: TypeAlias = Literal["none", "three_halves"]
 
 
 class LagrangianInitialConditionResult(StrictModule):
@@ -159,8 +160,7 @@ class LagrangianPerturbationInitialConditionPlan(StrictModule, NonTrainableState
             raise ValueError("Lagrangian initial-condition domain is invalid.")
         if order_ not in (1, 2):
             raise ValueError("Lagrangian perturbation order must be 1 or 2.")
-        if dealiasing not in ("none", "three_halves"):
-            raise ValueError("Unknown Lagrangian de-aliasing policy.")
+        dealiasing = parse(dealiasing, LagrangianDealiasing, "dealiasing")
         if order_ == 1 and dealiasing != "none":
             raise ValueError("De-aliasing applies only to second-order LPT.")
         self.particles = particles

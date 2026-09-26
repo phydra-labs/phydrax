@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,7 +19,7 @@ import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._coordinate import CoordinateSpec
 from ._dataset import DatasetDomain
 from ._domain import JointFactor
@@ -36,12 +36,12 @@ if TYPE_CHECKING:
     from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 
 
-TrajectoryMeasure = Literal[
+TrajectoryMeasure: TypeAlias = Literal[
     "case_time_probability",
     "time_integral_average",
     "time_integral_sum",
 ]
-TrajectorySampling = Literal["case_time_uniform", "observation_uniform"]
+TrajectorySampling: TypeAlias = Literal["case_time_uniform", "observation_uniform"]
 
 TRAJECTORY_CASE_INDEX_KEY = "__phydrax_trajectory_case_index"
 TRAJECTORY_TIME_INDEX_KEY = "__phydrax_trajectory_time_index"
@@ -231,33 +231,8 @@ class TrajectoryDatasetDomain(JointFactor):
             raise ValueError("dt must be positive.")
         start_arr = _as_scalar("start", start)
 
-        measure_str = str(measure)
-        if measure_str not in (
-            "case_time_probability",
-            "time_integral_average",
-            "time_integral_sum",
-        ):
-            raise ValueError(
-                "measure must be one of 'case_time_probability', 'time_integral_average', or 'time_integral_sum'."
-            )
-        measure_value: TrajectoryMeasure
-        if measure_str == "case_time_probability":
-            measure_value = "case_time_probability"
-        elif measure_str == "time_integral_average":
-            measure_value = "time_integral_average"
-        else:
-            measure_value = "time_integral_sum"
-
-        sampling_str = str(sampling)
-        if sampling_str not in ("case_time_uniform", "observation_uniform"):
-            raise ValueError(
-                "sampling must be either 'case_time_uniform' or 'observation_uniform'."
-            )
-        sampling_value: TrajectorySampling
-        if sampling_str == "case_time_uniform":
-            sampling_value = "case_time_uniform"
-        else:
-            sampling_value = "observation_uniform"
+        measure_value = parse(measure, TrajectoryMeasure, "measure")
+        sampling_value = parse(sampling, TrajectorySampling, "sampling")
 
         max_length = int(jnp.max(lengths_arr))
         total_observations = int(jnp.sum(lengths_arr))

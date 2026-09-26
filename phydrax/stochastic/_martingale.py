@@ -16,7 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._jump import AbstractJumpProcess
 from ._trajectory import StochasticTrajectory
 
@@ -199,8 +199,7 @@ def martingale_increments(
         raise TypeError("problem must be a MartingaleProblem.")
     if trajectory.num_times < 2:
         raise ValueError("Martingale increments require at least two saved times.")
-    if quadrature not in ("left", "midpoint", "trapezoid"):
-        raise ValueError("quadrature must be 'left', 'midpoint', or 'trapezoid'.")
+    quadrature = parse(quadrature, MartingaleQuadrature, "quadrature")
     solution_spec = trajectory.metadata.get("spde_solution_spec")
     if solution_spec is not None:
         from ._solution import SPDESolutionSpec
@@ -552,8 +551,7 @@ def martingale_moment_loss(
     reduction: MartingaleReduction = "mean",
 ) -> Array:
     """Penalize predictable-instrument martingale moments differentiably."""
-    if reduction not in ("mean", "sum", "none"):
-        raise ValueError("reduction must be 'mean', 'sum', or 'none'.")
+    reduction = parse(reduction, MartingaleReduction, "reduction")
     resolved = (
         (lambda _state, _time: jnp.asarray(1.0),)
         if not instruments

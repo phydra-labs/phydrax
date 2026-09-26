@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from math import isfinite
 from numbers import Integral
-from typing import Any, Literal
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,6 +25,7 @@ from ..conditions._ir import ArrayCodomain, ConditionQuantifier
 from ..conditions._lowering import BoundCondition
 from ..conditions._relations import Equality, NoisyObservation
 from ..linalg._constraint_operators import PreparedConstraintOperator
+from ..typing import parse
 from ._conditional_moments import condition_gaussian, ConditionalGaussianMoments
 from ._factor_law import GaussianFactorLaw
 from ._gaussian_factor import (
@@ -40,8 +41,11 @@ from ._nonlinear_gaussian import (
 )
 
 
-ConstraintApproximation = Literal[
+ConstraintApproximation: TypeAlias = Literal[
     "exact-linear", "first-order", "cubature", "unscented", "gauss-hermite"
+]
+NonlinearConstraintApproximation: TypeAlias = Literal[
+    "first-order", "cubature", "unscented", "gauss-hermite"
 ]
 ConstraintConditioningStatus = Literal[0, 1, 2, 3]
 CONSTRAINT_CONDITIONING_SUCCESS: ConstraintConditioningStatus = 0
@@ -511,9 +515,7 @@ class LinearGaussianConstraintConditioner(StrictModule):
 class ApproximateGaussianConstraintConditioner(StrictModule):
     """Moment-matched nonlinear Gaussian conditioning with an explicit rule."""
 
-    method: Literal["first-order", "cubature", "unscented", "gauss-hermite"] = eqx.field(
-        static=True
-    )
+    method: NonlinearConstraintApproximation = eqx.field(static=True)
     numerical_jitter: Array
     rank_tolerance: Array
     support_tolerance: Array
@@ -524,7 +526,7 @@ class ApproximateGaussianConstraintConditioner(StrictModule):
 
     def __init__(
         self,
-        method: Literal["first-order", "cubature", "unscented", "gauss-hermite"],
+        method: NonlinearConstraintApproximation,
         /,
         *,
         numerical_jitter: ArrayLike = 0.0,
@@ -535,8 +537,7 @@ class ApproximateGaussianConstraintConditioner(StrictModule):
         kappa: float = 0.0,
         hermite_order: int = 3,
     ) -> None:
-        if method not in ("first-order", "cubature", "unscented", "gauss-hermite"):
-            raise ValueError("Unknown nonlinear Gaussian approximation method.")
+        method = parse(method, NonlinearConstraintApproximation, "method")
         jitter = jnp.asarray(numerical_jitter, dtype=jnp.float64)
         rank = jnp.asarray(rank_tolerance, dtype=jnp.float64)
         support = jnp.asarray(support_tolerance, dtype=jnp.float64)
@@ -590,26 +591,29 @@ class ApproximateGaussianConstraintConditioner(StrictModule):
         mean = jnp.asarray(prior_mean)
         if mean.ndim != 1 or prior_factor.event_size != mean.size:
             raise ValueError("prior_mean and prior_factor must describe one flat event.")
-        if self.method == "first-order":
-            transformed = first_order_gaussian_transform(function, mean, prior_factor)
-        elif self.method == "cubature":
-            transformed = spherical_radial_cubature(function, mean, prior_factor)
-        elif self.method == "unscented":
-            transformed = scaled_unscented_transform(
-                function,
-                mean,
-                prior_factor,
-                alpha=self.alpha,
-                beta=self.beta,
-                kappa=self.kappa,
-            )
-        else:
-            transformed = gauss_hermite_transform(
-                function,
-                mean,
-                prior_factor,
-                order=self.hermite_order,
-            )
+        match self.method:
+            case "first-order":
+                transformed = first_order_gaussian_transform(function, mean, prior_factor)
+            case "cubature":
+                transformed = spherical_radial_cubature(function, mean, prior_factor)
+            case "unscented":
+                transformed = scaled_unscented_transform(
+                    function,
+                    mean,
+                    prior_factor,
+                    alpha=self.alpha,
+                    beta=self.beta,
+                    kappa=self.kappa,
+                )
+            case "gauss-hermite":
+                transformed = gauss_hermite_transform(
+                    function,
+                    mean,
+                    prior_factor,
+                    order=self.hermite_order,
+                )
+            case _:
+                assert_never(self.method)
         condition_mean = jnp.asarray(transformed.mean)
         if condition_mean.shape != likelihood.observed.shape:
             raise ValueError("Nonlinear condition output must align with observed.")

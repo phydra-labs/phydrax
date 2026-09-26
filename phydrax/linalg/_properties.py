@@ -10,6 +10,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 PropertyEvidence: TypeAlias = Literal[
@@ -103,9 +104,10 @@ class OperatorProperties(StrictModule):
             semidefinite_evidence = supplied["positive_semidefinite"]
         if positive_evidence != "unknown" or semidefinite_evidence != "unknown":
             supplied.setdefault("self_adjoint", "transformed")
-        valid = {"unknown", "construction", "transformed", "verified", "asserted"}
-        if any(value not in valid for value in supplied.values()):
-            raise ValueError("Unknown operator-property evidence.")
+        supplied = {
+            name: parse(value, PropertyEvidence, f"evidence[{name!r}]")
+            for name, value in supplied.items()
+        }
         if any(not claims[name] for name in supplied):
             raise ValueError("Evidence may only be attached to claimed properties.")
         self.diagonal = claims["diagonal"]

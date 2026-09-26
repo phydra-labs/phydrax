@@ -19,6 +19,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, parameter_field
 from ...dynamics import HeldInputPolicy, InputLayout
+from ...typing import parse
 
 
 StopDirection: TypeAlias = Literal["below", "above"]
@@ -103,12 +104,6 @@ def _duration(value: float, /) -> float:
     return duration
 
 
-def _direction(value: StopDirection, /) -> StopDirection:
-    if value not in ("below", "above"):
-        raise ValueError("Stop direction must be 'below' or 'above'.")
-    return value
-
-
 class VoltageStopGuard(StrictModule, NonTrainableState):
     """Stop when terminal voltage crosses a dynamic lower or upper threshold."""
 
@@ -116,7 +111,7 @@ class VoltageStopGuard(StrictModule, NonTrainableState):
     guard_id: str = eqx.field(static=True)
 
     def __init__(self, direction: StopDirection, /) -> None:
-        direction_ = _direction(direction)
+        direction_ = parse(direction, StopDirection, "direction")
         self.direction = direction_
         self.guard_id = canonical_fingerprint(
             {
@@ -142,7 +137,7 @@ class CurrentStopGuard(StrictModule, NonTrainableState):
     guard_id: str = eqx.field(static=True)
 
     def __init__(self, direction: StopDirection, /) -> None:
-        direction_ = _direction(direction)
+        direction_ = parse(direction, StopDirection, "direction")
         self.direction = direction_
         self.guard_id = canonical_fingerprint(
             {
@@ -168,7 +163,7 @@ class TemperatureStopGuard(StrictModule, NonTrainableState):
     guard_id: str = eqx.field(static=True)
 
     def __init__(self, direction: StopDirection, /) -> None:
-        direction_ = _direction(direction)
+        direction_ = parse(direction, StopDirection, "direction")
         self.direction = direction_
         self.guard_id = canonical_fingerprint(
             {
@@ -196,7 +191,7 @@ class StoichiometryStopGuard(StrictModule, NonTrainableState):
 
     def __init__(self, component: str, direction: StopDirection, /) -> None:
         component_ = _identifier(component, "Stoichiometry component")
-        direction_ = _direction(direction)
+        direction_ = parse(direction, StopDirection, "direction")
         self.component = component_
         self.direction = direction_
         self.guard_id = canonical_fingerprint(

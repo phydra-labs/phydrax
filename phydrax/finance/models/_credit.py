@@ -25,6 +25,7 @@ import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ...stochastic import JUMP_INVALID_INTENSITY, JUMP_SUCCESS, PoissonClockRealization
+from ...typing import parse
 from ..contracts._credit import (
     CreditDefaultSwapContract,
     DefaultableBondContract,
@@ -173,8 +174,7 @@ class IntensityCreditModel(StrictModule):
         host = np.asarray(jax.device_get(loadings))
         if loadings.ndim != 1 or loadings.shape[0] == 0 or not np.all(np.isfinite(host)):
             raise ValueError("factor_loadings must be a non-empty finite vector.")
-        if transformation not in ("exponential", "positive_part"):
-            raise ValueError("Unsupported intensity transformation.")
+        transformation = parse(transformation, IntensityTransformation, "transformation")
         self.base = base
         self.factor_loadings = loadings
         self.transformation = transformation

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import Any, cast, Literal, SupportsFloat
+from typing import Any, cast, Literal, SupportsFloat, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -31,7 +31,7 @@ from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..ml._classification import ClassificationObjective
 from ..ml._schema import TargetSchema
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._data_metrics import (
     case_sample_count,
     normalize_case_sampling,
@@ -54,7 +54,7 @@ from ._ragged_time_series import (
 from ._trajectory_data import TrajectoryCaseTime
 
 
-TrajectoryClassificationMeasure = Literal["statistical", "physical"]
+TrajectoryClassificationMeasure: TypeAlias = Literal["statistical", "physical"]
 TrajectoryDomain = TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain
 
 
@@ -223,11 +223,7 @@ def _normalize_reduction_measure(
     if reduction not in ("mean", "sum"):
         raise ValueError("reduction must be either 'mean' or 'sum'.")
     reduction_: Literal["mean", "sum"] = "mean" if reduction == "mean" else "sum"
-    if measure not in ("statistical", "physical"):
-        raise ValueError("measure must be either 'statistical' or 'physical'.")
-    measure_: TrajectoryClassificationMeasure = (
-        "statistical" if measure == "statistical" else "physical"
-    )
+    measure_ = parse(measure, TrajectoryClassificationMeasure, "measure")
     if measure_ == "physical" and reduction_ != "sum":
         raise ValueError("Physical trajectory measure requires reduction='sum'.")
     return reduction_, measure_

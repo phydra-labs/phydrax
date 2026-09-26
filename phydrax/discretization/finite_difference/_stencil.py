@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._tensor_support import GridLocation
 from ._coefficients import StencilCoefficientPlan
 from ._request import BoundaryClosureKind, DerivativeRequest
@@ -95,15 +96,7 @@ class StencilRowReport(StrictModule, NonTrainableState):
         coefficient_plan: StencilCoefficientPlan,
         /,
     ) -> None:
-        if kind not in (
-            "interior",
-            "lower_closure",
-            "upper_closure",
-            "corner",
-            "ghost",
-            "interface",
-        ):
-            raise ValueError("Unknown stencil row kind.")
+        kind = parse(kind, StencilRowKind, "kind")
         width = int(valid_width)
         if width <= coefficient_plan.derivative_order:
             raise ValueError("Stencil row width must exceed derivative order.")
@@ -193,14 +186,7 @@ class LinearStencil(StrictModule, NonTrainableState):
             StencilRowReport(kind, int(np.count_nonzero(row_valid)), plan)
             for kind, row_valid, plan in zip(kinds, valid_, plans, strict=True)
         )
-        kind_values = (
-            "interior",
-            "lower_closure",
-            "upper_closure",
-            "corner",
-            "ghost",
-            "interface",
-        )
+        kind_values = get_args(StencilRowKind)
         kind_codes = np.asarray(
             [kind_values.index(kind) for kind in kinds], dtype=np.int8
         )

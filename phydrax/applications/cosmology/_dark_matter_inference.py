@@ -37,6 +37,7 @@ from ...observation import (
     TheoryVector,
 )
 from ...qualification import ReferenceArtifactManifest
+from ...typing import parse
 from ...uq._metrics import (
     GaussianScaleCalibrator,
     interval_calibration_diagnostics,
@@ -217,8 +218,7 @@ class SmoothFixedGridDarkMatterInferencePlan(StrictModule, NonTrainableState):
             raise TypeError("evaluator must be callable.")
         parameters = _positive_integer(parameter_count, "parameter_count")
         outputs = _positive_integer(output_count, "output_count")
-        if kind not in ("wave-fixed-grid", "mixed-fixed-grid"):
-            raise ValueError("Unknown smooth dark-matter inference kind.")
+        kind = parse(kind, SmoothDarkMatterKind, "kind")
         signature = jax.lax.stop_gradient(
             jnp.asarray(expected_branch_signature, dtype=jnp.int32).reshape((-1,))
         )

@@ -25,7 +25,7 @@ from .._numerics import (
 )
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch, BSDEProblem
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 BSDERegressionScheme: TypeAlias = Literal["explicit", "implicit"]
@@ -351,8 +351,7 @@ def solve_bsde_least_squares(
         raise TypeError("basis must implement AbstractBSDERegressionBasis.")
     if basis.state_shape != problem.state_shape:
         raise ValueError("basis state_shape must match the BSDE problem.")
-    if scheme not in ("explicit", "implicit"):
-        raise ValueError("scheme must be 'explicit' or 'implicit'.")
+    scheme = parse(scheme, BSDERegressionScheme, "scheme")
     ridge_value = float(ridge)
     rcond_value = float(rcond)
     tolerance = float(picard_tolerance)

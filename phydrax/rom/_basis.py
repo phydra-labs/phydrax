@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import ArraySpace, DiagonalPairing, LinearSubspace
 from ..ml.decomposition import SubspaceModel
+from ..typing import parse
 
 
 BasisRole: TypeAlias = Literal["state", "nonlinear-term", "residual", "roq"]
@@ -62,8 +63,7 @@ class ReducedBasisArtifact(StrictModule, NonTrainableState):
             raise TypeError("subspace must be a LinearSubspace.")
         if subspace.batch_shape:
             raise ValueError("Reduced basis artifacts require one unbatched subspace.")
-        if role not in ("state", "nonlinear-term", "residual", "roq"):
-            raise ValueError("role must identify one supported basis role.")
+        role = parse(role, BasisRole, "role")
         rank = int(np.asarray(subspace.dimension))
         if rank <= 0:
             raise ValueError("Reduced basis artifacts require positive active rank.")

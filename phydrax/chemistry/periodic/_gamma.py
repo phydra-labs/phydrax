@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -29,13 +29,14 @@ from ...linalg.eigen import (
     GeneralizedEigenproblem,
 )
 from ...operators.quantum.gaussian import FactorizedERITensor
+from ...typing import parse
 from ...units import ENERGY, LENGTH, UnitDefinition
 from .._result import ElectronicEnergyLedger
 from ._electrostatics import GTHPseudopotentialPlan
 from ._source import PeriodicProvenanceManifest
 
 
-GammaSCFClassification = Literal[
+GammaSCFClassification: TypeAlias = Literal[
     "production-supplied-gdf-rhf", "candidate-local-gth-lda-x"
 ]
 
@@ -202,9 +203,13 @@ class GammaSCFResult(StrictModule, NonTrainableState):
             or coefficients_.shape != (energies.size, energies.size)
             or density_.ndim not in (1, 2, 3)
             or not backend_
-            or classification
-            not in ("production-supplied-gdf-rhf", "candidate-local-gth-lda-x")
-            or not sources
+        ):
+            raise ValueError(
+                "Gamma SCF orbitals, density, classification, or sources are invalid."
+            )
+        classification = parse(classification, GammaSCFClassification, "classification")
+        if (
+            not sources
             or any(not value for value in sources)
             or len(set(sources)) != len(sources)
         ):

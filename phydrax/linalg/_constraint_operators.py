@@ -19,6 +19,7 @@ import phydrax.ein as ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._constraints import ConstraintMap
 from ._costs import _array_tree_storage_bytes
 from ._factorizations import (
@@ -125,8 +126,7 @@ class ConstraintOperatorEvidence(StrictModule, NonTrainableState):
             raise ValueError("Constraint rank is outside its dimensional bounds.")
         if nullity_ != source_ - rank_:
             raise ValueError("Constraint nullity must equal source dimension minus rank.")
-        if operator_kind not in ("dense", "structured", "matrix-free"):
-            raise ValueError("Unknown constraint operator kind.")
+        operator_kind = parse(operator_kind, ConstraintOperatorKind, "operator_kind")
         if factorization_kind not in ("svd", "qr"):
             raise ValueError("Unknown constraint factorization kind.")
         resources = tuple(
@@ -250,8 +250,9 @@ class ConstraintOperatorPlan(StrictModule, NonTrainableState):
             raise TypeError("resources must be a SolveResourcePolicy or None.")
         if not isinstance(materialization_, MaterializationPolicy):
             raise TypeError("materialization must be a MaterializationPolicy or None.")
-        if factorization_kind not in ("auto", "svd", "qr"):
-            raise ValueError("factorization_kind must be 'auto', 'svd', or 'qr'.")
+        factorization_kind = parse(
+            factorization_kind, ConstraintFactorizationKind, "factorization_kind"
+        )
         if factorization_kind == "qr" and (
             not require_full_row_rank or operator.source.size != operator.target.size
         ):

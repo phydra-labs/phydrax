@@ -7,13 +7,13 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 
-from ....typing import PRNGKey
+from ....typing import parse, PRNGKey
 from ..architectures import ChemicalConditionalAffineOperator
 from ..data import (
     FunctionSamples,
@@ -29,7 +29,7 @@ from ._losses import (
 )
 
 
-Reduction = Literal["mean", "sum"]
+Reduction: TypeAlias = Literal["mean", "sum"]
 
 
 def _loss_fingerprint(kind: str, payload: dict[str, Any], /) -> str:
@@ -97,8 +97,9 @@ class ChemicalConditionalAffineDriverLoss(AbstractOperatorLossTerm):
             raise ValueError("Driver loss names must be non-empty.")
         if not jnp.isfinite(self.weight):
             raise ValueError("Driver loss weight must be finite.")
-        if self.reduction not in ("mean", "sum"):
-            raise ValueError("Driver loss reduction must be 'mean' or 'sum'.")
+        object.__setattr__(
+            self, "reduction", parse(self.reduction, Reduction, "reduction")
+        )
 
     def __call__(
         self,
@@ -164,8 +165,9 @@ class ChemicalConditionalAffineTeacherForcedLoss(AbstractOperatorLossTerm):
             raise ValueError("Teacher-forced loss names must be non-empty.")
         if not jnp.isfinite(self.weight):
             raise ValueError("Teacher-forced loss weight must be finite.")
-        if self.reduction not in ("mean", "sum"):
-            raise ValueError("Teacher-forced loss reduction must be 'mean' or 'sum'.")
+        object.__setattr__(
+            self, "reduction", parse(self.reduction, Reduction, "reduction")
+        )
 
     def __call__(
         self,

@@ -8,7 +8,7 @@ import math
 from collections.abc import Mapping, Sequence
 from math import prod
 from operator import index
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,11 +30,12 @@ from ....discretization.spectral import (
 )
 from ....discretization.spectral._modal_discovery import PreparedModalSupport
 from ....domain import Domain, DomainFunction
+from ....typing import parse
 from ..._keys import EvalKey
 from ...parameters import PositiveTransform, TransformedParameter
 
 
-DecayAggregation = Literal["sum", "mean"]
+DecayAggregation: TypeAlias = Literal["sum", "mean"]
 
 
 def _component_shape(value: Sequence[int], /) -> tuple[int, ...]:
@@ -171,8 +172,7 @@ class ExponentialSpectralEnvelope(StrictModule, ParameterOwner):
         if np.any(rates < minimum) or (trainable and np.any(rates <= minimum)):
             relation = "exceed" if trainable else "be at least"
             raise ValueError(f"initial_rates must {relation} minimum_rate.")
-        if aggregation not in ("sum", "mean"):
-            raise ValueError("aggregation must be 'sum' or 'mean'.")
+        aggregation = parse(aggregation, DecayAggregation, "aggregation")
         parameter: TransformedParameter | _FixedRates
         if trainable:
             raw = _inverse_softplus(rates - minimum)

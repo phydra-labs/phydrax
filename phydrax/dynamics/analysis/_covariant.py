@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...linalg import inverse
+from ...typing import parse
 from .._evolution import AbstractDifferentiableEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid
 
@@ -196,10 +197,8 @@ def covariant_directions(
             "Covariant directions require a trivial geometry with identical "
             "point, local, and tangent dimensions."
         )
-    if kind not in ("clv", "adjoint"):
-        raise ValueError("kind must be 'clv' or 'adjoint'.")
-    if memory_mode not in ("store", "recompute"):
-        raise ValueError("memory_mode must be 'store' or 'recompute'.")
+    kind = parse(kind, CovariantDirectionKind, "kind")
+    memory_mode = parse(memory_mode, CovariantMemoryMode, "memory_mode")
     cadence = int(qr_interval)
     saving = int(save_every)
     discard = int(backward_discard)

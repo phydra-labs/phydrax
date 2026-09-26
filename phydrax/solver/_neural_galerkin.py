@@ -56,7 +56,7 @@ from ..linalg import (
     solve,
 )
 from ..nn.parameters import ParameterSubspace
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._hybrid_event import HybridReplayPolicy
@@ -200,8 +200,7 @@ class NeuralTangentSolvePolicy(StrictModule):
         maximum_relative_defect: float | None = None,
         preconditioner: AbstractPreconditionerBuilder | None = None,
     ) -> None:
-        if formulation not in ("rectangular", "gram"):
-            raise ValueError("formulation must be 'rectangular' or 'gram'.")
+        formulation = parse(formulation, TangentFormulation, "formulation")
         damping_ = float(damping)
         if not isfinite(damping_) or damping_ < 0.0:
             raise ValueError("damping must be finite and non-negative.")

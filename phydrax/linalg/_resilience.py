@@ -18,6 +18,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._binding import LinearSolveTemplate
 from ._certificates import KernelCertificate
 from ._materialization import MaterializationPolicy, materialize
@@ -38,7 +39,7 @@ from ._structured_operators import TwoSidedScaledLinearOperator
 from ._subspaces import LinearSubspace, NullspacePolicy
 
 
-EquilibrationMode = Literal["none", "ruiz", "symmetric-ruiz", "explicit"]
+EquilibrationMode: TypeAlias = Literal["none", "ruiz", "symmetric-ruiz", "explicit"]
 _RefinementState: TypeAlias = tuple[
     Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
 ]
@@ -80,8 +81,7 @@ class EquilibrationPolicy(StrictModule):
         left_scale: ArrayLike | None = None,
         right_scale: ArrayLike | None = None,
     ) -> None:
-        if mode not in ("none", "ruiz", "symmetric-ruiz", "explicit"):
-            raise ValueError("Unknown equilibration mode.")
+        mode = parse(mode, EquilibrationMode, "mode")
         steps = int(max_steps)
         tolerance_ = float(tolerance)
         minimum = float(minimum_scale)

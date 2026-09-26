@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -43,6 +43,7 @@ from ...solver._mac_immersed_step import (
     MACImmersedBoundarySBDF2State,
 )
 from ...solver._structured_incompressible import MACPressureProjectionPlan
+from ...typing import parse
 from ._boundary_turbulence import (
     PreparedVectorEquilibriumWallStress,
     VectorEquilibriumWallStressResult,
@@ -50,7 +51,7 @@ from ._boundary_turbulence import (
 from ._immersed_support import ImmersedBodyRegimePlan
 
 
-ImmersedLESMotion = Literal["fixed", "moving", "deforming"]
+ImmersedLESMotion: TypeAlias = Literal["fixed", "moving", "deforming"]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -187,8 +188,7 @@ class FixedImmersedMACLESPlan(StrictModule, NonTrainableState):
             raise TypeError("algebraic_les must be MACAlgebraicLESPlan.")
         if not isinstance(projection, MACImmersedBoundaryProjectionPlan):
             raise TypeError("projection must be MACImmersedBoundaryProjectionPlan.")
-        if motion not in ("fixed", "moving", "deforming"):
-            raise ValueError("Unknown immersed LES motion regime.")
+        motion = parse(motion, ImmersedLESMotion, "motion")
         geometry = _identifier(geometry_id, "geometry_id")
         kinematics = projection.transfer.markers.validate_kinematics(marker_kinematics)
         fraction = np.asarray(cell_fluid_fraction)

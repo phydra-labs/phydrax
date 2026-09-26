@@ -21,6 +21,7 @@ from ...stochastic._signature_features import (
     SignatureFeatures,
     time_augment_path,
 )
+from ...typing import parse
 
 
 SignatureFeatureKind: TypeAlias = Literal["signature", "logsignature"]
@@ -66,8 +67,7 @@ class CausalSignaturePolicySpec(StrictModule):
             raise ValueError(
                 "history_dimension, action_size, and depth must be positive."
             )
-        if feature_kind not in ("signature", "logsignature"):
-            raise ValueError("feature_kind must be 'signature' or 'logsignature'.")
+        feature_kind = parse(feature_kind, SignatureFeatureKind, "feature_kind")
         if feature_kind == "logsignature" and include_scalar:
             raise ValueError("logsignature features do not include a scalar level.")
         self.history_dimension = int(history_dimension)
@@ -189,8 +189,7 @@ class SignaturePolicySampleSet(StrictModule):
             )
         if bool(jnp.any(labels < 0)):
             raise ValueError("independence_labels must be nonnegative.")
-        if sample_role not in ("training", "holdout"):
-            raise ValueError("sample_role must be 'training' or 'holdout'.")
+        sample_role = parse(sample_role, PolicySampleRole, "sample_role")
         identities = _identifiers(tuple(realization_ids), "realization_ids")
         if len(identities) != num_paths:
             raise ValueError("realization_ids must contain one identity per path.")

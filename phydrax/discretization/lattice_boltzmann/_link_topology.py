@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 BoundarySide: TypeAlias = Literal["lower", "upper"]
@@ -65,11 +66,11 @@ def owner_stage(owner: LatticeBoltzmannLinkOwner, /) -> LatticeBoltzmannBoundary
 
 def _face(axis: str, side: BoundarySide, /) -> BoundaryFace:
     axis_ = str(axis)
-    if not axis_ or side not in ("lower", "upper"):
+    if not axis_:
         raise ValueError(
             "A boundary face requires a non-empty axis and lower/upper side."
         )
-    return axis_, side
+    return axis_, parse(side, BoundarySide, "side")
 
 
 class LatticeBoltzmannFaceBoundary(StrictModule, NonTrainableState):
@@ -138,8 +139,7 @@ class LatticeBoltzmannFaceBoundary(StrictModule, NonTrainableState):
                 raise ValueError("Bouzidi face link_fraction must lie in (0, 1].")
         elif fraction is not None:
             raise ValueError("Only Bouzidi faces accept link_fraction.")
-        if flow_direction not in ("any", "inlet", "outlet"):
-            raise ValueError("flow_direction must be 'any', 'inlet', or 'outlet'.")
+        flow_direction = parse(flow_direction, FlowDirection, "flow_direction")
         if owner is not LatticeBoltzmannLinkOwner.VELOCITY and flow_direction != "any":
             raise ValueError("Only velocity faces accept a directional flow constraint.")
         self.axis = axis_

@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 GhostConditionKind: TypeAlias = Literal[
@@ -122,9 +123,10 @@ class CellGhostBoundary(StrictModule, NonTrainableState):
         upper_beta: float = 1.0,
     ) -> None:
         axis_ = int(axis)
-        allowed = ("periodic", "dirichlet", "neumann", "robin")
-        if axis_ < 0 or lower_kind not in allowed or upper_kind not in allowed:
-            raise ValueError("Invalid ghost boundary axis or condition kind.")
+        if axis_ < 0:
+            raise ValueError("Invalid ghost boundary axis.")
+        lower_kind = parse(lower_kind, GhostConditionKind, "lower_kind")
+        upper_kind = parse(upper_kind, GhostConditionKind, "upper_kind")
         if (lower_kind == "periodic") != (upper_kind == "periodic"):
             raise ValueError("Periodicity must be declared on both boundary sides.")
         spacing_ = float(spacing)

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,12 +19,12 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._core import TensorTrain, TensorTrainCompressionResult, tt_svd
 
 
-DigitOrdering = Literal["blocked", "interleaved"]
-GridRule = Literal["trapezoid", "midpoint"]
+DigitOrdering: TypeAlias = Literal["blocked", "interleaved"]
+GridRule: TypeAlias = Literal["trapezoid", "midpoint"]
 
 
 def _bounded_count(count: int, maximum: int, label: str, /) -> int:
@@ -114,8 +114,7 @@ class TensorizedGrid(StrictModule):
             for lower, upper in intervals
         ):
             raise ValueError("Uniform grid bounds must be finite increasing intervals.")
-        if rule not in ("trapezoid", "midpoint"):
-            raise ValueError("Grid rule must be 'trapezoid' or 'midpoint'.")
+        rule = parse(rule, GridRule, "rule")
         nodes: list[Array] = []
         weights: list[Array] = []
         for (lower, upper), size in zip(intervals, sizes, strict=True):
@@ -209,8 +208,7 @@ class QuanticsLayout(StrictModule):
             raise ValueError("Every quantics digit base must exceed one.")
         if any(prod(axis) != size for size, axis in zip(sizes, digits, strict=True)):
             raise ValueError("Each axis size must equal the product of its digit bases.")
-        if ordering not in ("blocked", "interleaved"):
-            raise ValueError("Quantics ordering must be 'blocked' or 'interleaved'.")
+        ordering = parse(ordering, DigitOrdering, "ordering")
         if ordering == "blocked":
             digit_axes = tuple(
                 (axis, digit)

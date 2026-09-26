@@ -24,6 +24,7 @@ from ..equations._relativistic_hydrodynamics import (
 )
 from ..equations._relativistic_radiation import GRGrayM1RadiationSystem
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ..typing import parse
 from ._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
 
 
@@ -60,8 +61,7 @@ class GRM1BoundaryCondition(StrictModule, NonTrainableState):
         *,
         prescribed_moments: ArrayLike | None = None,
     ) -> None:
-        if kind not in ("outflow", "vacuum", "reflective", "prescribed"):
-            raise ValueError("Unknown GR M1 boundary kind.")
+        kind = parse(kind, GRM1BoundaryKind, "kind")
         if kind == "prescribed":
             if prescribed_moments is None:
                 raise ValueError("A prescribed M1 boundary requires moments.")
@@ -261,8 +261,7 @@ class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
             raise TypeError("system must be GRGrayM1RadiationSystem.")
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError("discretization must be FiniteVolumeDiscretization.")
-        if reconstruction not in ("piecewise_constant", "plm"):
-            raise ValueError("GR M1 reconstruction must be piecewise_constant or plm.")
+        reconstruction = parse(reconstruction, GRM1ReconstructionKind, "reconstruction")
         theta = float(plm_theta)
         cfl_ = float(cfl)
         tolerance = float(balance_tolerance)

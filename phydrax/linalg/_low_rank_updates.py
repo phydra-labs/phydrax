@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._binding import LinearSolveTemplate
 from ._factorizations import PreparedFactorization
 from ._operators import AbstractLinearOperator
@@ -42,7 +43,7 @@ from ._structured_operators import BasePlusLowRankLinearOperator
 from .backends._jax_dense import dense_lu_slogdet, DenseLUState
 
 
-BaseNonsingularity = Literal["certified", "asserted"]
+BaseNonsingularity: TypeAlias = Literal["certified", "asserted"]
 
 
 class LowRankSolveStatus(IntEnum):
@@ -111,8 +112,9 @@ class LowRankSolvePolicy(StrictModule):
         limit = float(condition_limit)
         if not math.isfinite(limit) or limit < 1.0:
             raise ValueError("condition_limit must be finite and at least one.")
-        if base_nonsingularity not in ("certified", "asserted"):
-            raise ValueError("base_nonsingularity must be 'certified' or 'asserted'.")
+        base_nonsingularity = parse(
+            base_nonsingularity, BaseNonsingularity, "base_nonsingularity"
+        )
         self.base = base_
         self.condition_limit = limit
         self.base_nonsingularity = base_nonsingularity
@@ -317,7 +319,7 @@ class LowRankSolveResult(StrictModule):
         return self.status == int(LowRankSolveStatus.SUCCESS)
 
 
-LowRankUpdateRoute = Literal[
+LowRankUpdateRoute: TypeAlias = Literal[
     "dense",
     "row-indexed",
     "column-indexed",
@@ -372,49 +374,48 @@ class LowRankUpdate(StrictModule):
         size = int(dimension)
         if size < 1:
             raise ValueError("Low-rank update dimension must be positive.")
-        if route not in (
-            "dense",
-            "row-indexed",
-            "column-indexed",
-            "skew-row-column-indexed",
-        ):
-            raise ValueError("Unknown low-rank update route.")
-        if route == "dense":
-            if left.ndim != 2 or right.shape != left.shape or left.shape[0] != size:
-                raise ValueError("Dense factors must have matching shape (n, rank).")
-            rank = left.shape[1]
-            expected_indices = (rank,)
-        elif route == "row-indexed":
-            if (
-                left.ndim != 2
-                or right.ndim != 2
-                or left.shape[0] != 0
-                or right.shape[0] != size
-                or left.shape[1] != right.shape[1]
-            ):
-                raise ValueError(
-                    "Indexed-row data must have factor shapes (0, rank) and (n, rank)."
-                )
-            rank = right.shape[1]
-            expected_indices = (rank,)
-        elif route == "column-indexed":
-            if (
-                left.ndim != 2
-                or right.ndim != 2
-                or right.shape[0] != 0
-                or left.shape[0] != size
-                or right.shape[1] != left.shape[1]
-            ):
-                raise ValueError(
-                    "Indexed-column data must have factor shapes (n, rank) and (0, rank)."
-                )
-            rank = left.shape[1]
-            expected_indices = (rank,)
-        else:
-            if left.shape != (size, 2) or right.shape != (size, 2):
-                raise ValueError("Skew row/column data must have factor shapes (n, 2).")
-            rank = 2
-            expected_indices = (1,)
+        route = parse(route, LowRankUpdateRoute, "route")
+        match route:
+            case "dense":
+                if left.ndim != 2 or right.shape != left.shape or left.shape[0] != size:
+                    raise ValueError("Dense factors must have matching shape (n, rank).")
+                rank = left.shape[1]
+                expected_indices = (rank,)
+            case "row-indexed":
+                if (
+                    left.ndim != 2
+                    or right.ndim != 2
+                    or left.shape[0] != 0
+                    or right.shape[0] != size
+                    or left.shape[1] != right.shape[1]
+                ):
+                    raise ValueError(
+                        "Indexed-row data must have factor shapes (0, rank) and (n, rank)."
+                    )
+                rank = right.shape[1]
+                expected_indices = (rank,)
+            case "column-indexed":
+                if (
+                    left.ndim != 2
+                    or right.ndim != 2
+                    or right.shape[0] != 0
+                    or left.shape[0] != size
+                    or right.shape[1] != left.shape[1]
+                ):
+                    raise ValueError(
+                        "Indexed-column data must have factor shapes (n, rank) and (0, rank)."
+                    )
+                rank = left.shape[1]
+                expected_indices = (rank,)
+            case "skew-row-column-indexed":
+                if left.shape != (size, 2) or right.shape != (size, 2):
+                    raise ValueError(
+                        "Skew row/column data must have factor shapes (n, 2)."
+                    )
+                rank = 2
+                expected_indices = (1,)
+            case _:
+                assert_never(route)
         if rank < 1:
             raise ValueError("Low-rank updates must contain at least one column.")
         if indices_.shape != expected_indices:

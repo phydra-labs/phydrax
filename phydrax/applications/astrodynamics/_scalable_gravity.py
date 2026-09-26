@@ -20,6 +20,7 @@ from ...solver._particle_gravity import (
     ParticleOctreePlan3D,
     PreparedParticleOctree3D,
 )
+from ...typing import parse
 from ._status import AstrodynamicsStatus
 
 
@@ -41,8 +42,7 @@ class CloseEncounterPolicy(StrictModule, NonTrainableState):
         collision_mode: CollisionMode = "fail",
         restitution: ArrayLike = 1.0,
     ) -> None:
-        if collision_mode not in ("fail", "merge", "bounce"):
-            raise ValueError("Unknown collision mode.")
+        collision_mode = parse(collision_mode, CollisionMode, "collision_mode")
         self.encounter_distance = jnp.asarray(encounter_distance).reshape(())
         self.collision_distance = jnp.asarray(collision_distance).reshape(())
         self.collision_mode = collision_mode

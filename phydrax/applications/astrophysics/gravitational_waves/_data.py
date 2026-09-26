@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,10 +19,11 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....series import SampledSeries
 from ....signal import hann_window, tukey_window, WelchSpectrumPlan
+from ....typing import parse
 from .._photometry import ObservationDataProvenance
 
 
-WindowKind = Literal["none", "hann", "tukey"]
+WindowKind: TypeAlias = Literal["none", "hann", "tukey"]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -328,6 +329,7 @@ class GravitationalWaveDataPlan(StrictModule, NonTrainableState):
         alpha = float(tukey_alpha)
         notch_values = tuple((float(left), float(right)) for left, right in notches)
         nyquist = 0.5 / interval if interval > 0.0 else 0.0
+        window = parse(window, WindowKind, "window")
         if (
             count < 4
             or not all(
@@ -335,7 +337,6 @@ class GravitationalWaveDataPlan(StrictModule, NonTrainableState):
             )
             or interval <= 0.0
             or not 0.0 < lower < upper < nyquist
-            or window not in ("none", "hann", "tukey")
             or not 0.0 <= alpha <= 1.0
             or any(
                 not np.isfinite(left) or not np.isfinite(right) or left >= right

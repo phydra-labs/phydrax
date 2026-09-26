@@ -28,6 +28,7 @@ from ...discretization.spectral._dealias import (
     PreparedDealiasingPlan,
 )
 from ...discretization.spectral._space import TensorSpectralDiscretization
+from ...typing import parse
 from ._background import FLRWBackground
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
@@ -105,8 +106,9 @@ class WaveDarkMatterStepPolicy(StrictModule, NonTrainableState):
             or not 0.0 < values[5] < 1.0
         ):
             raise ValueError("Wave-dark-matter step-policy values are invalid.")
-        if differentiability not in ("smooth_fixed_grid", "none"):
-            raise ValueError("Unknown wave-dark-matter differentiation policy.")
+        differentiability = parse(
+            differentiability, WaveDarkMatterDifferentiability, "differentiability"
+        )
         (
             self.maximum_phase_radians,
             self.minimum_de_broglie_cells,

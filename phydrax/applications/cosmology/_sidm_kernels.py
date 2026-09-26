@@ -22,6 +22,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...artifacts import ScientificArtifactEnvelope
 from ...qualification import ReferenceArtifactManifest
+from ...typing import parse
 from ._dark_sector_species import DarkSectorSpeciesPlan
 
 
@@ -476,8 +477,6 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
                     "export": rights[3],
                 }
             )
-        convention = str(identical_particle_convention)
-        screening = str(screening_convention)
         minimum_angle = float(minimum_scattering_angle)
         tolerance = float(normalization_tolerance)
         speed_unit_ = str(speed_unit).strip()
@@ -502,12 +501,11 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Kernel cosine nodes must be finite and strictly increasing."
             )
-        if convention not in (
-            "distinguishable-full-sphere",
-            "labeled-full-sphere",
-            "exchange-quotient",
-        ):
-            raise ValueError("Unknown identical-particle convention.")
+        convention = parse(
+            identical_particle_convention,
+            IdenticalParticleConvention,
+            "identical_particle_convention",
+        )
         if same_species and convention == "distinguishable-full-sphere":
             raise ValueError(
                 "Identical incoming species require an explicit identical convention."
@@ -520,8 +518,9 @@ class TwoBodyDifferentialKernelPlan(StrictModule, NonTrainableState):
         expected_lower = 0.0 if quotient else -1.0
         if not np.isclose(mu[0], expected_lower, rtol=0.0, atol=tolerance):
             raise ValueError("Kernel cosine support has the wrong lower endpoint.")
-        if screening not in ("finite-full-support", "hard-angular-cutoff"):
-            raise ValueError("Unknown forward-screening convention.")
+        screening = parse(
+            screening_convention, ScreeningConvention, "screening_convention"
+        )
         if not np.isfinite(minimum_angle) or minimum_angle < 0.0:
             raise ValueError("minimum_scattering_angle must be finite and nonnegative.")
         if screening == "finite-full-support":

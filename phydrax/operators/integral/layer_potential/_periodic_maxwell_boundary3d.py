@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from itertools import product
 from math import pi
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,10 +21,11 @@ from ...._trainable import NonTrainableState
 from ....discretization import PeriodicCell
 from ....discretization.bem import RWGSurfaceCurrentSpace3D
 from ....linalg import DenseLinearOperator, OperatorProperties
+from ....typing import parse
 from ._maxwell3d import MaxwellEFIEPolicy3D, prepare_maxwell_efie_3d
 
 
-PeriodicMaxwellFormulation3D = Literal["efie", "mfie", "cfie"]
+PeriodicMaxwellFormulation3D: TypeAlias = Literal["efie", "mfie", "cfie"]
 
 
 class PeriodicMaxwellBoundaryPolicy3D(StrictModule, NonTrainableState):
@@ -174,8 +175,7 @@ def prepare_periodic_maxwell_boundary_3d(
         or not cell.fully_periodic
     ):
         raise ValueError("Periodic Maxwell requires a fully periodic rank-3 cell in R3.")
-    if formulation not in ("efie", "mfie", "cfie"):
-        raise ValueError("formulation must be efie, mfie, or cfie.")
+    formulation = parse(formulation, PeriodicMaxwellFormulation3D, "formulation")
     selected = PeriodicMaxwellBoundaryPolicy3D() if policy is None else policy
     if current_space.size > selected.maximum_edges:
         raise ValueError("Periodic Maxwell edge capacity exceeded.")

@@ -16,7 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -41,21 +41,6 @@ def _digest(namespace: str, *parts: Any) -> str:
         digest.update(repr(part).encode("utf-8"))
         digest.update(b"\0")
     return digest.hexdigest()
-
-
-def _validate_role(role: str, /) -> RandomFieldRole:
-    if role not in (
-        "input",
-        "initial_condition",
-        "coefficient",
-        "boundary_data",
-        "forcing",
-        "observation",
-    ):
-        raise ValueError(
-            "role must be 'input', 'initial_condition', 'coefficient', 'boundary_data', 'forcing', or 'observation'."
-        )
-    return role
 
 
 def _validate_mode_ids(mode_ids: Sequence[str], /) -> tuple[str, ...]:
@@ -368,7 +353,7 @@ class RandomFieldSample(StrictModule):
         self.values = array
         self.sample_shape = sample
         self.spatial_shape = spatial
-        self.role = _validate_role(role)
+        self.role = parse(role, RandomFieldRole, "role")
         self.source = source
         self.field_id = field_id
         self.basis_id = basis_id
@@ -432,7 +417,7 @@ class StaticGaussianRandomField(StrictModule):
     ) -> None:
         if not isinstance(synthesis, SpatialBasisSynthesis):
             raise TypeError("synthesis must be a SpatialBasisSynthesis.")
-        resolved_role = _validate_role(role)
+        resolved_role = parse(role, RandomFieldRole, "role")
         if not isinstance(source, str) or not source:
             raise ValueError("source must be a non-empty string.")
         self.synthesis = synthesis

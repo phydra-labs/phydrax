@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import Any, assert_never, Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
@@ -44,6 +44,7 @@ from ..linalg import (
     solve,
     TolerancePolicy,
 )
+from ..typing import parse
 
 
 MACPressureRouteRequest: TypeAlias = Literal[
@@ -118,7 +119,8 @@ class MACPressureRobinSide(StrictModule, NonTrainableState):
         axis_ = int(axis)
         alpha_ = float(alpha)
         beta_ = float(beta)
-        if axis_ < 0 or side not in ("lower", "upper"):
+        side = parse(side, MACPressureSideName, "side")
+        if axis_ < 0:
             raise ValueError("Robin axis and side are invalid.")
         if (
             not np.isfinite(alpha_)
@@ -424,8 +426,7 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Pressure tolerance, iterations, resources, or epoch are invalid."
             )
-        if solve_method not in ("auto", "direct", "transform", "hybrid", "iterative"):
-            raise ValueError("Unknown MAC pressure route request.")
+        solve_method = parse(solve_method, MACPressureRouteRequest, "solve_method")
         axis = None if line_axis is None else int(line_axis)
         dimension = len(operators.discretization.cell_shape)
         if axis is not None and (axis < 0 or axis >= dimension):
@@ -472,51 +473,58 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
             and symmetric
             and not operators.discretization.grid.structured_axes[axis].periodic
         )
-        if solve_method == "transform":
-            if not transform_eligible:
-                raise ValueError(
-                    "Explicit transform pressure solve is unsupported for this coefficient/action."
-                )
-            route: MACPressureRouteKind = "transform"
-            reason = "explicit certified constant-coefficient tensor transform"
-        elif solve_method == "hybrid":
-            if not hybrid_eligible:
-                raise ValueError(
-                    "Explicit hybrid pressure solve is unsupported for this coefficient/action."
-                )
-            route = "hybrid"
-            reason = "explicit certified transform-line coefficient action"
-        elif solve_method == "direct":
-            if transform_eligible:
+        route: MACPressureRouteKind
+        match solve_method:
+            case "transform":
+                if not transform_eligible:
+                    raise ValueError(
+                        "Explicit transform pressure solve is unsupported for this coefficient/action."
+                    )
                 route = "transform"
-                reason = "explicit direct request accepted by exact tensor action"
-            elif hybrid_eligible:
+                reason = "explicit certified constant-coefficient tensor transform"
+            case "hybrid":
+                if not hybrid_eligible:
+                    raise ValueError(
+                        "Explicit hybrid pressure solve is unsupported for this coefficient/action."
+                    )
                 route = "hybrid"
-                reason = "explicit direct request accepted by exact transform-line action"
-            else:
-                raise ValueError(
-                    "Explicit direct pressure solve has no certified exact representation."
+                reason = "explicit certified transform-line coefficient action"
+            case "direct":
+                if transform_eligible:
+                    route = "transform"
+                    reason = "explicit direct request accepted by exact tensor action"
+                elif hybrid_eligible:
+                    route = "hybrid"
+                    reason = (
+                        "explicit direct request accepted by exact transform-line action"
+                    )
+                else:
+                    raise ValueError(
+                        "Explicit direct pressure solve has no certified exact representation."
+                    )
+            case "iterative":
+                route = "fgmres" if not symmetric else "pcg"
+                reason = (
+                    "explicit flexible iteration for stabilized nonsymmetric traction"
+                    if not symmetric
+                    else "explicit PCG with certified constant preconditioner"
                 )
-        elif solve_method == "iterative":
-            route = "fgmres" if not symmetric else "pcg"
-            reason = (
-                "explicit flexible iteration for stabilized nonsymmetric traction"
-                if not symmetric
-                else "explicit PCG with certified constant preconditioner"
-            )
-        elif transform_eligible:
-            route = "transform"
-            reason = "auto selected exact constant-coefficient tensor action"
-        elif hybrid_eligible:
-            route = "hybrid"
-            reason = "auto selected exact coefficient-along-line action"
-        else:
-            route = "fgmres" if not symmetric else "pcg"
-            reason = (
-                "auto selected FGMRES because stabilized traction is nonsymmetric"
-                if not symmetric
-                else "auto selected PCG because beta is not exactly separable"
-            )
+            case "auto":
+                if transform_eligible:
+                    route = "transform"
+                    reason = "auto selected exact constant-coefficient tensor action"
+                elif hybrid_eligible:
+                    route = "hybrid"
+                    reason = "auto selected exact coefficient-along-line action"
+                else:
+                    route = "fgmres" if not symmetric else "pcg"
+                    reason = (
+                        "auto selected FGMRES because stabilized traction is nonsymmetric"
+                        if not symmetric
+                        else "auto selected PCG because beta is not exactly separable"
+                    )
+            case _:
+                assert_never(solve_method)
         coefficient_id = array_tree_fingerprint(face)
         operator_id = canonical_fingerprint(
             {

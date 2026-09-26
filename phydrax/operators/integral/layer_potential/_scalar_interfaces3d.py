@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,11 +21,12 @@ from ....linalg import (
     estimate_operator_action_cost,
     IdentityLinearOperator,
 )
+from ....typing import parse
 from ._scalar_calderon3d import ScalarCalderonDP0Galerkin3D
 
 
-ScalarTransmissionSide3D = Literal["minus", "plus"]
-ScalarTransmissionOrientation3D = Literal["calderon", "reversed"]
+ScalarTransmissionSide3D: TypeAlias = Literal["minus", "plus"]
+ScalarTransmissionOrientation3D: TypeAlias = Literal["calderon", "reversed"]
 
 
 class ScalarTransmissionMaterial3D(StrictModule, NonTrainableState):
@@ -94,8 +95,9 @@ class ScalarTransmissionSideConvention3D(StrictModule, NonTrainableState):
     def __init__(
         self, normal_orientation: ScalarTransmissionOrientation3D = "calderon", /
     ) -> None:
-        if normal_orientation not in ("calderon", "reversed"):
-            raise ValueError("normal_orientation must be 'calderon' or 'reversed'.")
+        normal_orientation = parse(
+            normal_orientation, ScalarTransmissionOrientation3D, "normal_orientation"
+        )
         sign = 1 if normal_orientation == "calderon" else -1
         unbounded: ScalarTransmissionSide3D = (
             "plus" if normal_orientation == "calderon" else "minus"
@@ -149,8 +151,7 @@ class ScalarCauchyTraceBundle3D(StrictModule, NonTrainableState):
         side: ScalarTransmissionSide3D,
         material_id: str,
     ) -> None:
-        if side not in ("minus", "plus"):
-            raise ValueError("Cauchy bundle side must be 'minus' or 'plus'.")
+        side = parse(side, ScalarTransmissionSide3D, "side")
         material = str(material_id)
         if not material:
             raise ValueError("Cauchy bundles require a material identity.")

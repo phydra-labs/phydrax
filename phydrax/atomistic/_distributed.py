@@ -32,6 +32,7 @@ from ..discretization import (
     ParticleHaloState,
     ParticleNeighborhoodState,
 )
+from ..typing import parse
 from ._constraints import ConstraintProjection, PreparedDistanceConstraints
 from ._potential_program import (
     AtomisticPotentialEvaluation,
@@ -94,8 +95,7 @@ class DistributedReductionPolicy(StrictModule, NonTrainableState):
     policy_id: str = eqx.field(static=True)
 
     def __init__(self, mode: DistributedReductionMode = "deterministic", /) -> None:
-        if mode not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown distributed reduction mode.")
+        mode = parse(mode, DistributedReductionMode, "mode")
         self.mode = mode
         self.policy_id = canonical_fingerprint(
             {"kind": "distributed-atomistic-reduction", "mode": mode}
@@ -503,8 +503,7 @@ class DistributedAtomisticPlan(StrictModule, NonTrainableState):
             )
         if decomposition.box.ambient_dimension != 3:
             raise ValueError("Distributed atomistic decomposition must be 3D.")
-        if execution_mode not in ("local-reference", "collective"):
-            raise ValueError("Unknown distributed execution mode.")
+        execution_mode = parse(execution_mode, DistributedExecutionMode, "execution_mode")
         if execution_mode == "collective" and decomposition.partitions < 2:
             raise ValueError("Collective execution requires at least two partitions.")
 

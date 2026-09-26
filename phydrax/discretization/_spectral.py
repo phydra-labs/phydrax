@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import warnings
 from collections.abc import Sequence
-from typing import Any, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, assert_never, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -23,6 +23,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 if TYPE_CHECKING:
@@ -366,13 +367,7 @@ class OperatorSpectrum(StrictModule, NonTrainableState):
         )
         if nullspace.shape != values.shape:
             raise ValueError("nullspace_mask must contain one value per mode.")
-        if classification not in (
-            "discrete",
-            "pseudospectral",
-            "eigendecomposition",
-            "custom",
-        ):
-            raise ValueError("Unknown operator spectrum classification.")
+        classification = parse(classification, SpectrumClassification, "classification")
         dimension = None if spectral_dimension is None else float(spectral_dimension)
         if dimension is not None and (not np.isfinite(dimension) or dimension <= 0.0):
             raise ValueError("spectral_dimension must be finite and positive.")
@@ -1142,39 +1137,46 @@ def _basis_matrix(
 ) -> Array:
     coordinate = _normalized_nodes(nodes, quadrature_weights, periodic)
     columns: list[Array] = []
-    if basis == "fourier":
-        columns.append(jnp.ones_like(coordinate))
-        frequency = 1
-        while len(columns) < modes:
-            columns.append(jnp.sqrt(2.0) * jnp.cos(2.0 * jnp.pi * frequency * coordinate))
-            if len(columns) < modes:
+    basis = parse(basis, ModalTransformKind, "basis")
+    match basis:
+        case "fourier":
+            columns.append(jnp.ones_like(coordinate))
+            frequency = 1
+            while len(columns) < modes:
                 columns.append(
-                    jnp.sqrt(2.0) * jnp.sin(2.0 * jnp.pi * frequency * coordinate)
+                    jnp.sqrt(2.0) * jnp.cos(2.0 * jnp.pi * frequency * coordinate)
                 )
-            frequency += 1
-    elif basis == "sine":
-        columns.extend(
-            jnp.sqrt(2.0) * jnp.sin(jnp.pi * (index + 1) * coordinate)
-            for index in range(modes)
-        )
-    elif basis == "cosine":
-        columns.append(jnp.ones_like(coordinate))
-        columns.extend(
-            jnp.sqrt(2.0) * jnp.cos(jnp.pi * index * coordinate)
-            for index in range(1, modes)
-        )
-    elif basis == "legendre":
-        z = 2.0 * coordinate - 1.0
-        columns.append(jnp.ones_like(z))
-        if modes > 1:
-            columns.append(z)
-        for degree in range(2, modes):
-            columns.append(
-                ((2.0 * degree - 1.0) * z * columns[-1] - (degree - 1.0) * columns[-2])
-                / float(degree)
+                if len(columns) < modes:
+                    columns.append(
+                        jnp.sqrt(2.0) * jnp.sin(2.0 * jnp.pi * frequency * coordinate)
+                    )
+                frequency += 1
+        case "sine":
+            columns.extend(
+                jnp.sqrt(2.0) * jnp.sin(jnp.pi * (index + 1) * coordinate)
+                for index in range(modes)
             )
-    else:
-        raise ValueError("basis must be 'fourier', 'sine', 'cosine', or 'legendre'.")
+        case "cosine":
+            columns.append(jnp.ones_like(coordinate))
+            columns.extend(
+                jnp.sqrt(2.0) * jnp.cos(jnp.pi * index * coordinate)
+                for index in range(1, modes)
+            )
+        case "legendre":
+            z = 2.0 * coordinate - 1.0
+            columns.append(jnp.ones_like(z))
+            if modes > 1:
+                columns.append(z)
+            for degree in range(2, modes):
+                columns.append(
+                    (
+                        (2.0 * degree - 1.0) * z * columns[-1]
+                        - (degree - 1.0) * columns[-2]
+                    )
+                    / float(degree)
+                )
+        case _:
+            assert_never(basis)
     return jnp.stack(columns[:modes], axis=-1)
 
 

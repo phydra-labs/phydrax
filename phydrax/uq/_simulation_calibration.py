@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..integration import WeightedSampleTarget
+from ..typing import parse
 from ._multiple_testing import (
     adjust_p_values,
     MultipleTestingMethod,
@@ -36,7 +37,7 @@ _CALIBRATION_RANK_ADDRESS = SampleAddress(
     target="posterior-rank",
     role="diagnostic",
 )
-TiePolicy = Literal["interval", "randomized"]
+TiePolicy: TypeAlias = Literal["interval", "randomized"]
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -120,12 +121,12 @@ class SimulationCalibrationPlan(StrictModule):
             raise ValueError(
                 "Calibration parameter paths must be distinct and non-empty."
             )
-        if bins < 2 or minimum < bins or tie_policy not in ("interval", "randomized"):
-            raise ValueError(
-                "Calibration bins, valid-case count, or tie policy is invalid."
-            )
-        if multiple_testing_method not in ("bonferroni", "holm", "benjamini-hochberg"):
-            raise ValueError("Unknown calibration multiple-testing method.")
+        if bins < 2 or minimum < bins:
+            raise ValueError("Calibration bins or valid-case count is invalid.")
+        tie_policy = parse(tie_policy, TiePolicy, "tie_policy")
+        multiple_testing_method = parse(
+            multiple_testing_method, MultipleTestingMethod, "multiple_testing_method"
+        )
         if not 0.0 < level < 1.0:
             raise ValueError("Calibration alpha must lie strictly between zero and one.")
         self.parameter_paths = paths

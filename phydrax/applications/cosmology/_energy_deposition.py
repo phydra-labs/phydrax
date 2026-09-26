@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -22,6 +22,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
 from ...qualification import ReferenceArtifactManifest
+from ...typing import parse
 from ._closure import CosmologyRealizationSignature
 from ._products import (
     _validate_common,
@@ -32,8 +33,8 @@ from ._products import (
 from ._scales import CosmologyScaleContract
 
 
-DepositionSourceKind = Literal["native", "external"]
-ProviderExecution = Literal["host", "subprocess"]
+DepositionSourceKind: TypeAlias = Literal["native", "external"]
+ProviderExecution: TypeAlias = Literal["host", "subprocess"]
 
 
 class EnergyDepositionStatus(IntEnum):
@@ -106,8 +107,7 @@ def _admit_external(
     training_use: bool,
     export: bool,
 ) -> bool:
-    if source_kind not in ("native", "external"):
-        raise ValueError("source_kind must be 'native' or 'external'.")
+    source_kind = parse(source_kind, DepositionSourceKind, "source_kind")
     if not isinstance(differentiation, DerivativeContract):
         raise TypeError("differentiation must be a DerivativeContract.")
     external = source_kind == "external"
@@ -755,8 +755,7 @@ class ExternalEnergyDepositionProviderResult(StrictModule, NonTrainableState):
         version_ = str(provider_version).strip()
         if not provider_ or not version_:
             raise ValueError("Provider name and version must be non-empty.")
-        if execution not in ("host", "subprocess"):
-            raise ValueError("Provider execution must be 'host' or 'subprocess'.")
+        execution = parse(execution, ProviderExecution, "execution")
         if isinstance(return_code, bool) or not isinstance(return_code, int):
             raise TypeError("return_code must be an integer.")
         manifest.require_rights(

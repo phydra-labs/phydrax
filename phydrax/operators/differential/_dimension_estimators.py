@@ -19,7 +19,7 @@ from jax.typing import ArrayLike
 import phydrax.linalg as la
 
 from ..._strict import StrictModule
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from ._stochastic_estimators import (
     _directional_second_derivative,
     _prepare_hessian_action,
@@ -63,8 +63,7 @@ class DimensionSamplingPolicy(StrictModule):
         replacement = bool(replace)
         if not replacement and count > dimension:
             raise ValueError("subset_size cannot exceed dimension without replacement.")
-        if sampling not in ("uniform", "importance"):
-            raise ValueError("sampling must be 'uniform' or 'importance'.")
+        sampling = parse(sampling, DimensionSamplingMode, "sampling")
         if sampling == "uniform":
             if probabilities is not None:
                 raise ValueError(

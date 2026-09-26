@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._core import resolved_identifier
 
 
@@ -56,8 +57,7 @@ class TemporalMesh(StrictModule, NonTrainableState):
             raise ValueError(
                 "Temporal mesh nodes must be finite and strictly increasing."
             )
-        if role not in ("internal", "collocation", "driver", "path"):
-            raise ValueError("Unknown temporal mesh role.")
+        role = parse(role, TemporalMeshRole, "role")
         if role == "path" and not np.allclose(
             np.diff(values),
             np.diff(values)[0],

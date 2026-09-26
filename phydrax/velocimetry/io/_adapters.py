@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -15,12 +15,13 @@ from ...discretization import AxisDiscretization, AxisDomain, PreparedTensorGrid
 from ...dynamics import StateLayout, TrajectoryData
 from ...interchange import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
 from ...stochastic import ObservationSequence
+from ...typing import parse
 from ..piv import PhysicalPIVResult2D
 from ..tracking import to_trajectory_data as native_tracks_to_trajectory_data, TrackResult
 from ._openptv import OpenPTVTrackRecords
 
 
-PhysicalPIVValue = Literal["displacement", "velocity"]
+PhysicalPIVValue: TypeAlias = Literal["displacement", "velocity"]
 
 
 def piv_to_tensor_grid(
@@ -385,8 +386,7 @@ def _physical_field_arrays(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     if not isinstance(field, PhysicalPIVResult2D):
         raise TypeError("A right-handed calibrated PhysicalPIVResult2D is required.")
-    if value not in ("displacement", "velocity"):
-        raise ValueError("value must be 'displacement' or 'velocity'.")
+    value = parse(value, PhysicalPIVValue, "value")
     positions = np.asarray(field.positions_xy)
     values = np.asarray(
         field.displacement_xy if value == "displacement" else field.velocity_xy

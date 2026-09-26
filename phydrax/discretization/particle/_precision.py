@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 ParticleRealization: TypeAlias = Literal["dense_pairs", "cell_edge_list", "morton_tree"]
@@ -40,21 +41,9 @@ class ParticleExecutionPolicy(StrictModule, NonTrainableState):
         accumulation: ParticleAccumulation = "deterministic",
         kernel_backend: ParticleKernelBackend = "reference",
     ) -> None:
-        if realization not in ("dense_pairs", "cell_edge_list", "morton_tree"):
-            raise ValueError(
-                "realization must be 'dense_pairs', 'cell_edge_list', or 'morton_tree'."
-            )
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError(
-                "accumulation must be 'fast', 'deterministic', or 'compensated'."
-            )
-        if kernel_backend not in (
-            "reference",
-            "dense_fused",
-            "cell_fused",
-            "verlet_fused",
-        ):
-            raise ValueError("Unknown particle kernel backend.")
+        realization = parse(realization, ParticleRealization, "realization")
+        accumulation = parse(accumulation, ParticleAccumulation, "accumulation")
+        kernel_backend = parse(kernel_backend, ParticleKernelBackend, "kernel_backend")
         self.realization = realization
         self.accumulation = accumulation
         self.kernel_backend = kernel_backend

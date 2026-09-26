@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
+from ..typing import parse
 from ._newton import NewtonKrylov, NewtonTrustRegion
 from ._precision import NonlinearPrecisionPolicy
 from ._types import (
@@ -72,8 +73,7 @@ class ShardedNonlinearPolicy(StrictModule):
             raise TypeError("state_sharding must implement jax.sharding.Sharding.")
         if not isinstance(residual_sharding, jax.sharding.Sharding):
             raise TypeError("residual_sharding must implement jax.sharding.Sharding.")
-        if norm_reduction not in ("local-l2", "global-l2"):
-            raise ValueError("Unknown norm_reduction.")
+        norm_reduction = parse(norm_reduction, NormReduction, "norm_reduction")
         self.state_sharding = state_sharding
         self.residual_sharding = residual_sharding
         self.axis_name = None if axis_name is None else str(axis_name)

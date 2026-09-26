@@ -21,6 +21,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 
 
 NativeSpectrumModel: TypeAlias = Literal["sm-one-loop", "mssm-third-family-one-loop"]
@@ -92,8 +93,7 @@ class NativeSpectrumModelPlan(StrictModule):
         maximum_log_step: float = 0.1,
         maximum_steps: int = 100_000,
     ) -> None:
-        if model not in ("sm-one-loop", "mssm-third-family-one-loop"):
-            raise ValueError("Unknown native particle-spectrum model.")
+        model = parse(model, NativeSpectrumModel, "model")
         scheme_ = str(scheme).strip()
         order = int(loop_order)
         perturbative = float(perturbativity_limit)

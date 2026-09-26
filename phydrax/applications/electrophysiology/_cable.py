@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -27,6 +27,7 @@ from ...linalg import (
     TolerancePolicy,
     TreeLinearOperator,
 )
+from ...typing import parse
 from ._mechanisms import (
     evaluate_membrane_program,
     initialize_membrane_program,
@@ -40,7 +41,7 @@ from ._morphology import PreparedCellMorphology
 from ._units import ELECTROPHYSIOLOGY_UNITS
 
 
-CableScheme = Literal["backward-euler", "crank-nicolson"]
+CableScheme: TypeAlias = Literal["backward-euler", "crank-nicolson"]
 
 
 class CableSolveStatus(IntFlag):
@@ -76,8 +77,7 @@ class CableSolverPlan(StrictModule, NonTrainableState):
         tolerance = float(residual_tolerance)
         if not isfinite(step) or step <= 0.0:
             raise ValueError("dt_ms must be finite and positive.")
-        if scheme not in ("backward-euler", "crank-nicolson"):
-            raise ValueError("scheme must be 'backward-euler' or 'crank-nicolson'.")
+        scheme = parse(scheme, CableScheme, "scheme")
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("residual_tolerance must be finite and positive.")
         self.dt_ms = step

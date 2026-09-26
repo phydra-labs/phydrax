@@ -20,6 +20,7 @@ from ..discretization.finite_volume._uct import (
     AbstractUCTElectromotivePlan,
     HLLUCTElectromotivePlan,
 )
+from ..typing import parse
 
 
 VectorPotentialGaugeKind: TypeAlias = Literal[
@@ -106,8 +107,7 @@ class GRMHDVectorPotentialGauge(StrictModule, NonTrainableState):
         propagation_speed: float = 1.0,
         damping_rate: float = 0.0,
     ) -> None:
-        if kind not in ("none", "weyl", "generalized_lorenz"):
-            raise ValueError("Unknown GRMHD vector-potential gauge.")
+        kind = parse(kind, VectorPotentialGaugeKind, "kind")
         speed = float(propagation_speed)
         damping = float(damping_rate)
         if (

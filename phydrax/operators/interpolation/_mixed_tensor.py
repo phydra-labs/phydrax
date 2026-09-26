@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -22,10 +22,10 @@ from ..._frozendict import frozendict
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.spectral import PreparedSpectralAxis
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
-MixedBoundsPolicy = Literal["error", "extrapolate"]
+MixedBoundsPolicy: TypeAlias = Literal["error", "extrapolate"]
 
 
 class MixedTensorReconstructionPlan(StrictModule, NonTrainableState):
@@ -60,8 +60,9 @@ class MixedTensorReconstructionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mixed reconstruction supports Fourier, Chebyshev, and Legendre."
             )
-        if payload < 0 or bounds not in ("error", "extrapolate"):
-            raise ValueError("Invalid payload_ndim or bounds policy.")
+        if payload < 0:
+            raise ValueError("payload_ndim must be nonnegative.")
+        bounds = parse(bounds, MixedBoundsPolicy, "bounds")
         self.axes = axes_
         self.axis_labels = labels
         self.payload_ndim = payload

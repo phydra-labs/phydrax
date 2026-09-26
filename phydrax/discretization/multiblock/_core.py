@@ -15,6 +15,7 @@ from jax import Array
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._tensor_support import PreparedTensorGrid
 from ..finite_difference._mapped_grid import PreparedMappedTensorGrid
 
@@ -111,16 +112,10 @@ class BlockInterface(StrictModule, NonTrainableState):
         values = tuple(
             str(value) for value in (name, left_block, left_axis, right_block, right_axis)
         )
-        if (
-            any(not value for value in values)
-            or left_side
-            not in (
-                "lower",
-                "upper",
-            )
-            or right_side not in ("lower", "upper")
-        ):
-            raise ValueError("Block interface names, axes, and sides must be valid.")
+        if any(not value for value in values):
+            raise ValueError("Block interface names and axes must be non-empty.")
+        left_side = parse(left_side, BlockSide, "left_side")
+        right_side = parse(right_side, BlockSide, "right_side")
         if left_block == right_block:
             raise ValueError("A physical interface must connect distinct blocks.")
         if not isinstance(orientation, InterfaceOrientation):

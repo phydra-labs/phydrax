@@ -19,6 +19,7 @@ from .._interpolation._bspline_grid import BSplineGrid
 from .._interpolation._stencil import apply_gather_stencil
 from .._strict import StrictModule
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
+from ..typing import parse
 
 
 SampledInputInterpolation: TypeAlias = Literal["zero-order-hold", "linear"]
@@ -108,8 +109,7 @@ class SampledStateSpaceInput(AbstractStateSpaceInput):
         interpolation: SampledInputInterpolation,
         input_id: str,
     ) -> None:
-        if interpolation not in ("zero-order-hold", "linear"):
-            raise ValueError("interpolation must be 'zero-order-hold' or 'linear'.")
+        interpolation = parse(interpolation, SampledInputInterpolation, "interpolation")
         identifier = _name(input_id, owner="input_id")
         times_raw = jnp.asarray(times)
         values_raw = jnp.asarray(values)

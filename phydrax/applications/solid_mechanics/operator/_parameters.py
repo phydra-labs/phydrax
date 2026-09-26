@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,9 +17,10 @@ from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-MechanicsParameterRole = Literal[
+MechanicsParameterRole: TypeAlias = Literal[
     "geometry",
     "material",
     "load",
@@ -27,7 +28,7 @@ MechanicsParameterRole = Literal[
     "constraint",
     "history",
 ]
-MechanicsParameterKind = Literal[
+MechanicsParameterKind: TypeAlias = Literal[
     "continuous",
     "integer",
     "discrete",
@@ -93,17 +94,8 @@ class MechanicsParameterField(StrictModule, NonTrainableState):
         resolved_name = str(name)
         if not resolved_name:
             raise ValueError("Mechanics parameter field names must be non-empty.")
-        if role not in (
-            "geometry",
-            "material",
-            "load",
-            "boundary",
-            "constraint",
-            "history",
-        ):
-            raise ValueError("Unknown mechanics parameter field role.")
-        if kind not in ("continuous", "integer", "discrete", "categorical"):
-            raise ValueError("Unknown mechanics parameter field kind.")
+        role = parse(role, MechanicsParameterRole, "role")
+        kind = parse(kind, MechanicsParameterKind, "kind")
         resolved_shape = tuple(shape)
         if any(size <= 0 for size in resolved_shape):
             raise ValueError("Mechanics parameter field shape entries must be positive.")

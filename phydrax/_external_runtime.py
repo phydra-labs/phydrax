@@ -46,6 +46,7 @@ from ._model._component import ExecutionCapabilities
 from .artifacts import ScientificArtifactEnvelope
 from .backends._types import BackendUnavailableError
 from .logging import emit
+from .typing import parse
 
 
 def _host_only(*values: Any) -> None:
@@ -1203,8 +1204,9 @@ class HostInferenceAdapter:
         )
         if not isinstance(self.binding, ArtifactBindingIdentity):
             raise TypeError("binding must be an ArtifactBindingIdentity.")
-        if self.transport not in ("copy", "dlpack"):
-            raise ValueError("transport must be 'copy' or 'dlpack'.")
+        object.__setattr__(
+            self, "transport", parse(self.transport, ExternalTransport, "transport")
+        )
 
     @property
     def capabilities(self) -> ExecutionCapabilities:

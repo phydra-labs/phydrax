@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,19 +17,15 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-FermionicTwoParticleChannel = Literal[
+FermionicTwoParticleChannel: TypeAlias = Literal[
     "particle-hole-direct",
     "particle-hole-crossed",
     "particle-particle",
 ]
 
-_CHANNELS = (
-    "particle-hole-direct",
-    "particle-hole-crossed",
-    "particle-particle",
-)
 _OPERATOR_ORDER = ("annihilation", "creation", "annihilation", "creation")
 
 
@@ -48,8 +44,7 @@ class FermionicTwoParticleChannelConvention(StrictModule, NonTrainableState):
     convention_id: str = eqx.field(static=True)
 
     def __init__(self, channel: FermionicTwoParticleChannel, /) -> None:
-        if channel not in _CHANNELS:
-            raise ValueError("Unknown fermionic two-particle channel.")
+        channel = parse(channel, FermionicTwoParticleChannel, "channel")
         self.channel = channel
         self.operator_order = _OPERATOR_ORDER
         self.convention_id = canonical_fingerprint(

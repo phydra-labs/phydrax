@@ -16,10 +16,11 @@ import jax.numpy as jnp
 from jax import Array, lax
 from jax.typing import ArrayLike
 
+from ..typing import parse
 from ._dtype import promote_real
 
 
-_SequenceKind = Literal["j", "y", "h1", "i", "k"]
+_SequenceKind: TypeAlias = Literal["j", "y", "h1", "i", "k"]
 _SERIES_BOUNDARY = 0.75
 _MILLER_EXTRA_ORDERS = 96
 _SERIES_TERMS = 24
@@ -390,8 +391,7 @@ def _spherical_sequence_derivative(
     scaled: bool = False,
 ) -> Array:
     """Differentiate an order-leading spherical sequence using neighbor identities."""
-    if kind not in ("j", "y", "h1", "i", "k"):
-        raise ValueError("Unknown spherical-Bessel sequence kind.")
+    kind = parse(kind, _SequenceKind, "kind")
     if scaled and kind not in ("h1", "i", "k"):
         raise ValueError("Only outgoing or modified spherical sequences are scaled.")
     sequence = jnp.asarray(values)

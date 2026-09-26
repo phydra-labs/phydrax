@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,6 +18,7 @@ from ..._model import AbstractArrayModel
 from ..._model._array import value_derivative_contract
 from ..._model._component import ModelExecutionContract
 from ...geometry import regularized_heaviside_values
+from ...typing import parse
 from .._base import _AbstractBaseModel
 from .._contracts import (
     AFFINE,
@@ -31,7 +32,7 @@ from .._contracts import (
 from .._keys import EvalKey
 
 
-InterfaceDistanceSemantics = Literal["level_set", "signed_distance"]
+InterfaceDistanceSemantics: TypeAlias = Literal["level_set", "signed_distance"]
 # Clip and absolute value; the floored gradient norm; the cosine Heaviside,
 # which matches its constant branches to second order at +-width.
 _C0_PIECEWISE_LINEAR = DerivativeRegularity.piecewise_polynomial(
@@ -82,10 +83,9 @@ class InterfaceFeatureLift(_AbstractBaseModel):
         dimension = int(in_size)
         if dimension <= 0:
             raise ValueError("in_size must be positive.")
-        if distance_semantics not in ("level_set", "signed_distance"):
-            raise ValueError(
-                "distance_semantics must be 'level_set' or 'signed_distance'."
-            )
+        distance_semantics = parse(
+            distance_semantics, InterfaceDistanceSemantics, "distance_semantics"
+        )
         clip = _positive_finite(distance_clip, "distance_clip")
         width = _positive_finite(side_width, "side_width")
         floor = _positive_finite(gradient_floor, "gradient_floor")

@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Mapping
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -14,6 +14,7 @@ import phydrax.axes as cx
 
 from ..._frozendict import frozendict
 from ...graph import GraphIR
+from ...typing import parse
 from .._coordinate import CoordinateSpec
 from .._domain import JointFactor
 from .._factor_component import FactorComponent
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from .._function import DomainFunction
 
 
-GraphMeasureMode = Literal["probability", "count"]
+GraphMeasureMode: TypeAlias = Literal["probability", "count"]
 
 
 def _feature_tree_size(tree: Any, /) -> int | None:
@@ -94,8 +95,7 @@ class GraphDomain(JointFactor):
             raise TypeError("GraphDomain expects a phydrax.graph.GraphIR instance.")
         if validate:
             graph.validate()
-        if measure not in ("probability", "count"):
-            raise ValueError("GraphDomain measure must be 'probability' or 'count'.")
+        measure = parse(measure, GraphMeasureMode, "measure")
         self.graph = graph
         self._label = str(label)
         self._measure_mode = measure

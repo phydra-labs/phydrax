@@ -20,6 +20,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._certificates import SpectralInterval
 from ._operators import AbstractLinearOperator
 from ._spaces import _coordinate_dtype
@@ -174,12 +175,11 @@ class ShiftedSolvePolicy(StrictModule):
         absolute_tolerance: float = 1e-10,
         resources: ShiftedSolveResourcePolicy | None = None,
     ) -> None:
-        if method not in ("auto", "arnoldi", "lanczos"):
-            raise ValueError("Unknown shifted Krylov method.")
-        if execution not in ("retained", "streaming"):
-            raise ValueError("Unknown shifted execution mode.")
-        if differentiation not in ("runtime-shifts", "none"):
-            raise ValueError("Unknown shifted differentiation mode.")
+        method = parse(method, ShiftedKrylovMethod, "method")
+        execution = parse(execution, ShiftedExecutionMode, "execution")
+        differentiation = parse(
+            differentiation, ShiftedDifferentiationMode, "differentiation"
+        )
         if orthogonalization not in (
             "modified",
             "double",

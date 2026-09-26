@@ -25,6 +25,7 @@ from ...continuation._bifurcation import (
 )
 from ...continuation._core import ContinuationBranch, ContinuationCurveProblem
 from ...nonlinear import AbstractNonlinearMethod, NonlinearTermination
+from ...typing import parse
 from ._equilibrium import MechanicsEquilibriumProblem
 from ._stability import DynamicStabilityProblem, PhysicalStaticStabilityProblem
 
@@ -420,8 +421,7 @@ class MechanicsBranchEdge(StrictModule):
         symmetry_related: bool = False,
         edge_id: str | None = None,
     ) -> None:
-        if relation not in ("primary", "branch-switch", "imperfection", "continued"):
-            raise ValueError("Unsupported mechanics branch relation.")
+        relation = parse(relation, MechanicsBranchRelation, "relation")
         parent = _identifier(parent_branch_id, "parent_branch_id")
         child = _identifier(child_branch_id, "child_branch_id")
         if parent == child:
@@ -1128,14 +1128,7 @@ class PhysicalSelectionPolicy(StrictModule):
         user_branch_id: str | None = None,
         policy_id: str | None = None,
     ) -> None:
-        if mode not in (
-            "stable-connected",
-            "global-energy-minimum",
-            "rate-independent-energetic",
-            "dynamic-attractor",
-            "user-declared",
-        ):
-            raise ValueError("Unsupported physical selection mode.")
+        mode = parse(mode, MechanicsSelectionMode, "mode")
         tolerance = float(energy_tolerance)
         if not isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("energy_tolerance must be finite and non-negative.")

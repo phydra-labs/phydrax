@@ -21,6 +21,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
 from .._identity import callable_payload
 from .._strict import StrictModule
+from ..typing import parse
 from ..uq._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 from ._differential import DifferentialProblem
 from ._save_schedule import validate_save_times
@@ -139,18 +140,20 @@ class ProbabilisticODEMethod(StrictModule):
             raise ValueError("order must be a positive integer.")
         if order > 4:
             raise ValueError("Integrated-Wiener orders above four are unsupported.")
-        if update not in ("ek0", "ek1"):
-            raise ValueError("update must be 'ek0' or 'ek1'.")
+        update = parse(update, ProbabilisticODEUpdate, "update")
         if not isinstance(num_steps, int) or isinstance(num_steps, bool) or num_steps < 1:
             raise ValueError("num_steps must be a positive integer.")
         if not isinstance(adaptive, bool) or not isinstance(smoothing, bool):
             raise TypeError("adaptive and smoothing must be bool values.")
-        if factorization not in ("dense", "block_diagonal"):
-            raise ValueError("factorization must be 'dense' or 'block_diagonal'.")
-        if covariance_output not in ("dense", "matrix_free"):
-            raise ValueError("covariance_output must be 'dense' or 'matrix_free'.")
-        if diffusion_calibration not in ("none", "quasi_mle"):
-            raise ValueError("diffusion_calibration must be 'none' or 'quasi_mle'.")
+        factorization = parse(
+            factorization, ProbabilisticODEFactorization, "factorization"
+        )
+        covariance_output = parse(
+            covariance_output, ProbabilisticODECovarianceOutput, "covariance_output"
+        )
+        diffusion_calibration = parse(
+            diffusion_calibration, ProbabilisticODECalibration, "diffusion_calibration"
+        )
         scalar_values = {
             "base_diffusion": base_diffusion,
             "relative_tolerance": relative_tolerance,

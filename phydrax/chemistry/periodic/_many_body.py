@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...nonlinear import Bisection, NonlinearTermination, scalar_root, ScalarRootProblem
+from ...typing import parse
 from ...units import ENERGY, UnitDefinition
 from ..excited import ElectronicManifoldResult, RandomPhaseApproximationPlan
 from ..excited._tda import ExcitedStateManifoldPlan, TammDancoffPlan
@@ -28,7 +29,7 @@ from ._source import PeriodicProvenanceManifest
 
 
 DiagonalSelfEnergy = Callable[[int, Array], Array]
-BSEApproximation = Literal["tda", "full"]
+BSEApproximation: TypeAlias = Literal["tda", "full"]
 
 
 class GWQuasiparticleEvidence(StrictModule, NonTrainableState):
@@ -405,8 +406,7 @@ class BSEPostprocessResult(StrictModule, NonTrainableState):
             raise TypeError("manifold must be ElectronicManifoldResult.")
         if not isinstance(evidence, BSEPostprocessEvidence):
             raise TypeError("evidence must be BSEPostprocessEvidence.")
-        if approximation not in ("tda", "full"):
-            raise ValueError("BSE approximation must be tda or full.")
+        approximation = parse(approximation, BSEApproximation, "approximation")
         plan = str(plan_id).strip()
         if not plan:
             raise ValueError("BSE plan_id must be non-empty.")

@@ -20,6 +20,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import FunctionLinearOperator, OperatorProperties
 from ...sparse import canonical_row_route_ids, EdgeRelation, RelationExecutionPlan
+from ...typing import parse
 from .._lagrangian_marker import LagrangianMarkerDiscretization
 from .._tensor_entities import StructuredAxis, TensorEntityLayout
 from ._incompressible import FaceVelocity, PreparedMACOperators
@@ -53,12 +54,7 @@ class MACMarkerKernelPlan(StrictModule, NonTrainableState):
     kernel_id: str = eqx.field(static=True)
 
     def __init__(self, name: MACMarkerKernelName = "cubic-bspline", /) -> None:
-        if name not in (
-            "cubic-bspline",
-            "peskin-four-point",
-            "roma-three-point",
-        ):
-            raise ValueError("Unknown MAC marker kernel.")
+        name = parse(name, MACMarkerKernelName, "name")
         width = 3 if name == "roma-three-point" else 4
         regularity = 1 if name != "cubic-bspline" else 2
         self.name = name
@@ -431,8 +427,7 @@ class MACMarkerTransferPlan(StrictModule, NonTrainableState):
         if markers.ambient_dimension != dimension:
             raise ValueError("Marker and MAC dimensions differ.")
         kernel_ = MACMarkerKernelPlan() if kernel is None else kernel
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown MAC marker accumulation policy.")
+        accumulation = parse(accumulation, MACMarkerAccumulation, "accumulation")
         if not isinstance(kernel_, MACMarkerKernelPlan):
             raise TypeError("kernel must be MACMarkerKernelPlan or None.")
         axes = operators.discretization.grid.structured_axes

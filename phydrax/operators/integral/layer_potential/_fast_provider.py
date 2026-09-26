@@ -25,6 +25,7 @@ from ....linalg import (
     estimate_operator_action_cost,
     LinearCapabilityError,
 )
+from ....typing import parse
 from ._fmm2d import LaplaceFMMBackend2D
 from ._galerkin3d import (
     _LaplaceDP0StrongOperator3D,
@@ -301,8 +302,7 @@ class FusedBlockedBEMAction3D(StrictModule, NonTrainableState):
         columns = int(rhs_count)
         if columns <= 0:
             raise ValueError("rhs_count must be positive and fixed at preparation.")
-        if formulation not in ("weak", "strong"):
-            raise ValueError("formulation must be 'weak' or 'strong'.")
+        formulation = parse(formulation, BoundaryGalerkinFormulation, "formulation")
         capabilities = boundary_fast_provider_capabilities(provider, ambient_dimension=3)
         if capabilities.name != "blocked-direct-dp0-galerkin-3d":
             raise BEMFastCapabilityError(
@@ -482,8 +482,7 @@ class LaplaceDP0ExactNearProvider3D(AbstractExactNearProvider3D):
     ) -> None:
         if not isinstance(prepared, LaplaceSingleLayerDP0Galerkin3D):
             raise TypeError("Exact-near provider requires prepared 3D Laplace DP0 BEM.")
-        if formulation not in ("weak", "strong"):
-            raise ValueError("formulation must be 'weak' or 'strong'.")
+        formulation = parse(formulation, BoundaryGalerkinFormulation, "formulation")
         limit = int(max_block_entries)
         workspace_limit = int(max_block_workspace_bytes)
         if limit <= 0 or workspace_limit <= 0:

@@ -21,11 +21,12 @@ from ...tensor_train import (
     TensorTrainCompressionResult,
     TTCrossResult,
 )
+from ...typing import parse
 from ..core import FinanceEvidenceBinding, PricingLaw
 
 
 TensorApproximation: TypeAlias = TensorTrainCompressionResult | TTCrossResult
-TensorRoute = Literal["tt", "qtt"]
+TensorRoute: TypeAlias = Literal["tt", "qtt"]
 
 
 class TensorValuationApplicability(StrictModule):
@@ -67,8 +68,7 @@ class TensorValuationApplicability(StrictModule):
             raise TypeError("pricing_law must be a PricingLaw.")
         if not isinstance(grid, TensorizedGrid):
             raise TypeError("grid must be a TensorizedGrid.")
-        if route not in ("tt", "qtt"):
-            raise ValueError("route must be 'tt' or 'qtt'.")
+        route = parse(route, TensorRoute, "route")
         if route == "qtt":
             if not isinstance(quantics_layout, QuanticsLayout):
                 raise TypeError("QTT applicability requires a QuanticsLayout.")

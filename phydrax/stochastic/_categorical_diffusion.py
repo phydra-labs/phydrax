@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 CategoricalTerminalRelationship: TypeAlias = Literal["exact", "approximate", "assumed"]
@@ -294,8 +294,11 @@ class CategoricalReverseDiffusion(StrictModule):
         shape = tuple(event_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("event_shape must contain positive dimensions.")
-        if terminal_relationship not in ("exact", "approximate", "assumed"):
-            raise ValueError("Unknown categorical terminal relationship.")
+        terminal_relationship = parse(
+            terminal_relationship,
+            CategoricalTerminalRelationship,
+            "terminal_relationship",
+        )
         terminal = (
             jnp.mean(schedule.cumulative[-1], axis=0)
             if terminal_probabilities is None

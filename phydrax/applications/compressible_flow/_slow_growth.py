@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,10 +24,11 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from ...typing import parse
 from ._contracts import CompressibleFlowCaseSpec
 
 
-WallThermalMode = Literal["adiabatic", "isothermal"]
+WallThermalMode: TypeAlias = Literal["adiabatic", "isothermal"]
 SlowGrowthCoordinate = Literal["temporal", "modeled-spatial"]
 
 
@@ -1103,9 +1104,9 @@ def _model_options(
     scalars = tuple(
         value for value in (displacement, momentum, tolerance) if value is not None
     )
+    wall_thermal_mode = parse(wall_thermal_mode, WallThermalMode, "wall_thermal_mode")
     if (
-        wall_thermal_mode not in ("adiabatic", "isothermal")
-        or len(set(indices)) != len(indices)
+        len(set(indices)) != len(indices)
         or any(index not in (0, -1) for index in indices)
         or any(not np.isfinite(value) for value in scalars)
         or tolerance <= 0.0

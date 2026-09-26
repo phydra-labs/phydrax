@@ -22,6 +22,7 @@ from ..linalg._causal_linear import (
     causal_linearized_residual,
     solve_causal_least_squares,
 )
+from ..typing import parse
 from ._causal_adjoint import attach_causal_implicit_derivative
 from ._types import NonlinearStatus, NonlinearTermination
 
@@ -210,18 +211,13 @@ class CausalLinearizationPolicy(StrictModule):
         block_builder: Callable[[Any, PyTree[Any], PyTree[Any]], Array] | None = None,
         linearization_id: str | None = None,
     ) -> None:
-        if mode not in (
-            "dense-exact",
-            "diagonal-exact",
-            "diagonal-hutchinson",
-            "fixed-block",
-        ):
-            raise ValueError("Unknown causal linearization mode.")
+        mode = parse(mode, CausalLinearizationMode, "mode")
         probes = int(probe_count)
         if probes < 1:
             raise ValueError("probe_count must be positive.")
-        if probe_distribution not in ("rademacher", "normal"):
-            raise ValueError("Unknown causal probe distribution.")
+        probe_distribution = parse(
+            probe_distribution, CausalProbeDistribution, "probe_distribution"
+        )
         if mode == "fixed-block" and not callable(block_builder):
             raise TypeError("fixed-block mode requires block_builder.")
         if mode != "fixed-block" and block_builder is not None:

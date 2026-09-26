@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,7 +17,7 @@ import phydrax.axes as cx
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ...graph import batch_graphs, GraphIR, LayoutPlan
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._coordinate import CoordinateSpec
 from .._domain import JointFactor
 from .._factor_component import FactorComponent
@@ -46,12 +46,12 @@ if TYPE_CHECKING:
     from .._function import DomainFunction
 
 
-GraphTrajectoryMeasure = Literal[
+GraphTrajectoryMeasure: TypeAlias = Literal[
     "case_time_probability",
     "time_integral_average",
     "time_integral_sum",
 ]
-GraphTrajectorySampling = Literal["case_time_uniform", "observation_uniform"]
+GraphTrajectorySampling: TypeAlias = Literal["case_time_uniform", "observation_uniform"]
 
 GRAPH_TRAJECTORY_TIME_INDEX_KEY = "__phydrax_graph_trajectory_time_index__"
 
@@ -259,18 +259,8 @@ class GraphTrajectoryDatasetDomain(JointFactor):
             raise ValueError("dt must be positive.")
         start_arr = _as_scalar("start", start)
 
-        if measure not in (
-            "case_time_probability",
-            "time_integral_average",
-            "time_integral_sum",
-        ):
-            raise ValueError(
-                "measure must be 'case_time_probability', 'time_integral_average', or 'time_integral_sum'."
-            )
-        if sampling not in ("case_time_uniform", "observation_uniform"):
-            raise ValueError(
-                "sampling must be 'case_time_uniform' or 'observation_uniform'."
-            )
+        measure = parse(measure, GraphTrajectoryMeasure, "measure")
+        sampling = parse(sampling, GraphTrajectorySampling, "sampling")
 
         flat_case_parts: list[Array] = []
         flat_time_parts: list[Array] = []

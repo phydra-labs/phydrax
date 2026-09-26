@@ -14,6 +14,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ..core import FinancialTimestamp
 from ..market import MarketDataSnapshot, QuoteKey, QuoteObservation, ReferenceDataSnapshot
 
@@ -51,8 +52,7 @@ class PointInTimePanelDefinition(StrictModule):
         if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
             raise ValueError("capacity must be a positive integer.")
         capacity_ = capacity
-        if clock not in ("event", "published", "received", "available"):
-            raise ValueError("clock must name one of the four preserved clocks.")
+        clock = parse(clock, PanelClock, "clock")
         self.quote_keys = keys
         self.analysis_time = analysis_time
         self.capacity = capacity_

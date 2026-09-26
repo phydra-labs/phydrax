@@ -15,7 +15,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._ir import GraphIR
 
 
@@ -77,8 +77,9 @@ class FixedTopologyGraphDiffusion(StrictModule):
             raise TypeError("template must be a GraphIR.")
         if not isinstance(process, AbstractGaussianDiffusion):
             raise TypeError("process must implement AbstractGaussianDiffusion.")
-        if payload_kind not in ("nodes", "edges") or not payload_key:
-            raise ValueError("payload_kind/key are invalid.")
+        payload_kind = parse(payload_kind, GraphPayloadKind, "payload_kind")
+        if not payload_key:
+            raise ValueError("payload_key must be non-empty.")
         value = _payload(template, payload_kind, payload_key)
         if process.state_shape != (value.size,):
             raise ValueError(

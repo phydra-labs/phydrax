@@ -15,10 +15,12 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from phydrax.ein import contract
+from phydrax.typing import parse
 
 
 ClassificationKind: TypeAlias = Literal["binary", "multiclass", "multilabel", "ordinal"]
 ClassificationObjectiveKind: TypeAlias = Literal["nll", "soft_cross_entropy", "focal"]
+_OrdinalObjectiveKind: TypeAlias = Literal["nll", "soft_cross_entropy"]
 _RealVectorLike: TypeAlias = ArrayLike | Sequence[float]
 
 
@@ -493,15 +495,9 @@ def pointwise_classification_loss(
     """Return one unreduced classification score per observation prefix."""
     match kind:
         case "binary" | "multiclass" | "multilabel":
-            if objective not in ("nll", "soft_cross_entropy", "focal"):
-                raise ValueError(
-                    f"Unknown {kind} classification objective {objective!r}."
-                )
+            objective = parse(objective, ClassificationObjectiveKind, "objective")
         case "ordinal":
-            if objective not in ("nll", "soft_cross_entropy"):
-                raise ValueError(
-                    "Ordinal classification supports NLL or soft cross entropy."
-                )
+            objective = parse(objective, _OrdinalObjectiveKind, "objective")
         case _:
             raise ValueError(f"Unknown classification kind {kind!r}.")
 

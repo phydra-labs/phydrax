@@ -7,18 +7,19 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from operator import index
-from typing import Literal, SupportsFloat, SupportsIndex, TYPE_CHECKING
+from typing import Literal, SupportsFloat, SupportsIndex, TYPE_CHECKING, TypeAlias
 
 import numpy as np
 from numpy.typing import ArrayLike, DTypeLike, NDArray
 
+from ..typing import parse
 from ._report import AdapterReport
 
 
-InspectionLocation = Literal[
+InspectionLocation: TypeAlias = Literal[
     "cell", "face", "vertex", "particle", "marker", "point", "global"
 ]
-InspectionStateKind = Literal["candidate", "accepted"]
+InspectionStateKind: TypeAlias = Literal["candidate", "accepted"]
 
 
 def _identifier(value: str, owner: str, /) -> str:
@@ -71,16 +72,7 @@ class HostInspectionField:
 
     def __post_init__(self) -> None:
         name = _identifier(self.name, "Host inspection field name")
-        if self.location not in (
-            "cell",
-            "face",
-            "vertex",
-            "particle",
-            "marker",
-            "point",
-            "global",
-        ):
-            raise ValueError("Unknown host inspection field location.")
+        location = parse(self.location, InspectionLocation, "location")
         support_id = _identifier(self.support_id, "Host inspection support_id")
         layout_id = _identifier(self.layout_id, "Host inspection layout_id")
         representation = _identifier(
@@ -114,6 +106,7 @@ class HostInspectionField:
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "values", values)
         object.__setattr__(self, "valid", valid)
+        object.__setattr__(self, "location", location)
         object.__setattr__(self, "support_id", support_id)
         object.__setattr__(self, "layout_id", layout_id)
         object.__setattr__(self, "representation", representation)
@@ -156,8 +149,7 @@ class HostInspectionFrame:
         step = index(self.step)
         if step < 0:
             raise ValueError("Host inspection frame step must be nonnegative.")
-        if self.state_kind not in ("candidate", "accepted"):
-            raise ValueError("Host inspection state_kind must be candidate or accepted.")
+        state_kind = parse(self.state_kind, InspectionStateKind, "state_kind")
         successful = np.asarray(self.successful, dtype=np.bool_)
         if successful.shape != ():
             raise ValueError("Host inspection successful must be scalar.")
@@ -175,6 +167,7 @@ class HostInspectionFrame:
 
         object.__setattr__(self, "time", time)
         object.__setattr__(self, "step", step)
+        object.__setattr__(self, "state_kind", state_kind)
         object.__setattr__(self, "successful", bool(successful))
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "fields", fields)

@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..typing import parse
 from ._precision import TensorNetworkPrecisionPolicy
 
 
@@ -82,8 +83,7 @@ def truncated_svd(
     capacity = int(maximum_rank)
     if capacity < 1:
         raise ValueError("maximum_rank must be positive.")
-    if absorb not in ("left", "right", "split"):
-        raise ValueError("absorb must be 'left', 'right', or 'split'.")
+    absorb = parse(absorb, SingularValueAbsorption, "absorb")
     value = precision.factorization(jnp.asarray(matrix))
     if value.ndim != 2 or min(value.shape) < 1:
         raise ValueError("truncated_svd requires a nonempty rank-two matrix.")

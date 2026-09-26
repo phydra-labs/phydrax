@@ -27,6 +27,7 @@ from ...discretization.particle._relativistic_stress_transfer import (
 from ...lifecycle import CheckpointManifest, ProcessCheckpointPublication
 from ...lifecycle._repository import ArtifactRepository
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ...typing import parse
 from ._checkpoint import (
     assemble_distributed_numerical_relativity_checkpoint,
     DistributedNumericalRelativityRestart,
@@ -208,8 +209,7 @@ class EinsteinVlasovAMRStressTransferPlan(StrictModule, NonTrainableState):
             raise TypeError("target_geometry must be ADMGridGeometry.")
         if len(projection.leading_shape) != 3 or len(target_geometry.leading_shape) != 3:
             raise ValueError("Einstein-Vlasov AMR stress transfer is three-dimensional.")
-        if direction not in ("prolong", "restrict"):
-            raise ValueError("direction must be 'prolong' or 'restrict'.")
+        direction = parse(direction, StressTransferDirection, "direction")
         source_channels = jnp.where(
             projection.active[..., None], _stress_channels(projection), 0.0
         )

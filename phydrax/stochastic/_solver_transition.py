@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 from .._probability import _event_axes, _leading_shape
 from .._strict import StrictModule
 from .._trainable import fixed_field
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._jump import AbstractJumpProcess
 from ._process import AbstractPathwiseTransition
 from ._state_space import (
@@ -461,8 +461,7 @@ class JumpTransitionKernel(AbstractTransitionKernel):
         capacity = int(max_events_per_channel)
         if capacity < 1:
             raise ValueError("max_events_per_channel must be positive.")
-        if algorithm not in ("next_reaction", "direct_ssa"):
-            raise ValueError("algorithm must be 'next_reaction' or 'direct_ssa'.")
+        algorithm = parse(algorithm, JumpTransitionAlgorithm, "algorithm")
         total_capacity = None if max_events is None else int(max_events)
         if total_capacity is not None and total_capacity < 1:
             raise ValueError("max_events must be positive or None.")

@@ -29,7 +29,7 @@ from ..metrix import (
     SpecialUnitaryGroup,
     UnitaryGroup,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 _MOMENTUM_ADDRESS = SampleAddress(
@@ -64,8 +64,8 @@ _RawTransitionEvidence: TypeAlias = tuple[
 # (position, momentum, log target, force gradients, raw evidence)
 _RawTransition: TypeAlias = tuple[Array, Array, Array, Array, _RawTransitionEvidence]
 
-IntegratorKind = Literal["leapfrog", "omelyan"]
-DynamicsKind = Literal["ghmc", "nuts-reference"]
+IntegratorKind: TypeAlias = Literal["leapfrog", "omelyan"]
+DynamicsKind: TypeAlias = Literal["ghmc", "nuts-reference"]
 
 
 class SplitGroupDynamicsStatus(IntEnum):
@@ -165,10 +165,8 @@ class SplitGroupDynamicsPlan(StrictModule):
         persistence = float(momentum_persistence)
         threshold = float(divergence_threshold)
         coefficient = float(omelyan_lambda)
-        if integrator not in ("leapfrog", "omelyan"):
-            raise ValueError("integrator must be 'leapfrog' or 'omelyan'.")
-        if dynamics not in ("ghmc", "nuts-reference"):
-            raise ValueError("Unsupported split group dynamics kind.")
+        integrator = parse(integrator, IntegratorKind, "integrator")
+        dynamics = parse(dynamics, DynamicsKind, "dynamics")
         if (
             not np.isfinite(size)
             or size <= 0.0

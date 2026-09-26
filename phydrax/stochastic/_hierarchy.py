@@ -28,6 +28,7 @@ from ..fidelity import (
     FidelityPath,
     FidelityRelation,
 )
+from ..typing import parse
 
 
 RefinementAxis: TypeAlias = Literal["time", "space", "noise_rank", "surrogate", "other"]
@@ -155,10 +156,11 @@ class StochasticLevelSpec(StrictModule):
         index = int(refinement_index)
         if index < 0:
             raise ValueError("refinement_index must be non-negative.")
-        axes = tuple(refinement_axes)
-        allowed = ("time", "space", "noise_rank", "surrogate", "other")
-        if not axes or any(axis not in allowed for axis in axes):
-            raise ValueError(f"refinement_axes must contain values from {allowed!r}.")
+        axes = tuple(
+            parse(axis, RefinementAxis, "refinement_axes") for axis in refinement_axes
+        )
+        if not axes:
+            raise ValueError("refinement_axes must be non-empty.")
         if len(set(axes)) != len(axes):
             raise ValueError("refinement_axes must be unique.")
         scales = tuple(float(value) for value in resolutions)
@@ -171,10 +173,7 @@ class StochasticLevelSpec(StrictModule):
         shape = tuple(state_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("state_shape must contain positive dimensions.")
-        if noise_coupling not in ("shared", "nested", "independent"):
-            raise ValueError(
-                "noise_coupling must be 'shared', 'nested', or 'independent'."
-            )
+        noise_coupling = parse(noise_coupling, NoiseCoupling, "noise_coupling")
         identities = frozendict({} if metadata is None else metadata)
         if any(
             not isinstance(key, str) or not key or not isinstance(value, str) or not value

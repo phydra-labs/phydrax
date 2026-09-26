@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from .._uncertainty import UNCERTAINTY_SOURCES, UncertaintySource
 from ..stochastic._jump import JUMP_MAX_EVENTS, JUMP_SUCCESS, JumpEventBatch
+from ..typing import parse
 from ._conformal import FunctionalConformal, NormalizedConformal, SplitConformal
 from ._metrics import energy_score
 from ._predictive import PredictionInterval
@@ -43,14 +44,20 @@ from ._process_diagnostics import (
 )
 
 
-ProcessShiftKind = Literal[
+ProcessShiftKind: TypeAlias = Literal[
     "in_distribution",
     "rollout_horizon",
     "covariance",
     "initial_condition",
     "parameter_regime",
 ]
-ProcessConformalKind = Literal["trajectory", "observable"]
+ProcessDistributionShiftKind: TypeAlias = Literal[
+    "rollout_horizon",
+    "covariance",
+    "initial_condition",
+    "parameter_regime",
+]
+ProcessConformalKind: TypeAlias = Literal["trajectory", "observable"]
 
 
 class TrajectoryScoreDiagnostics(StrictModule):
@@ -775,8 +782,7 @@ class ProcessConformalCalibrator(StrictModule):
             raise TypeError("calibrator must be a supported conformal calibrator.")
         if not isinstance(split, ProcessValidationSplit):
             raise TypeError("split must be a ProcessValidationSplit.")
-        if kind not in ("trajectory", "observable"):
-            raise ValueError("kind must be 'trajectory' or 'observable'.")
+        kind = parse(kind, ProcessConformalKind, "kind")
         name = None if observable_name is None else str(observable_name)
         if kind == "trajectory" and name is not None:
             raise ValueError("Trajectory conformal calibration has no observable_name.")
@@ -1148,7 +1154,7 @@ class ProcessShiftEvaluationMatrix(StrictModule):
     seeds: tuple[int, ...] = eqx.field(static=True)
     baseline_index: int = eqx.field(static=True)
     nominal_coverage: float = eqx.field(static=True)
-    required_shifts: tuple[ProcessShiftKind, ...] = eqx.field(static=True)
+    required_shifts: tuple[ProcessDistributionShiftKind, ...] = eqx.field(static=True)
 
     @property
     def worst_calibrated_score_degradation_upper(self) -> Array:
@@ -1173,7 +1179,7 @@ def process_shift_evaluation_matrix(
     baseline_index: int = 0,
     nominal_coverage: float = 0.9,
     paired_reference_scores: ArrayLike | None = None,
-    required_shifts: Sequence[ProcessShiftKind] = (
+    required_shifts: Sequence[ProcessDistributionShiftKind] = (
         "rollout_horizon",
         "covariance",
         "initial_condition",
@@ -1184,28 +1190,23 @@ def process_shift_evaluation_matrix(
     """Aggregate seed-level shift outcomes without inventing unpaired confidence."""
 
     names = tuple(str(name) for name in scenario_names)
-    kinds = tuple(str(kind) for kind in shift_kinds)
+    raw_kinds = tuple(str(kind) for kind in shift_kinds)
     seed_values = tuple(seeds)
     if not names or any(not name for name in names) or len(set(names)) != len(names):
         raise ValueError("scenario_names must be non-empty and unique.")
-    valid_kinds = (
-        "in_distribution",
-        "rollout_horizon",
-        "covariance",
-        "initial_condition",
-        "parameter_regime",
-    )
-    if len(kinds) != len(names) or any(kind not in valid_kinds for kind in kinds):
+    if len(raw_kinds) != len(names):
         raise ValueError("shift_kinds must contain one valid kind per scenario.")
+    kinds = tuple(parse(kind, ProcessShiftKind, "shift_kinds") for kind in raw_kinds)
     if len(seed_values) < 2 or len(set(seed_values)) != len(seed_values):
         raise ValueError("At least two unique independent seeds are required.")
     baseline = int(baseline_index)
     if not 0 <= baseline < len(names) or kinds[baseline] != "in_distribution":
         raise ValueError("baseline_index must select an in_distribution scenario.")
-    required = tuple(str(kind) for kind in required_shifts)
-    if len(set(required)) != len(required) or any(
-        kind not in valid_kinds[1:] for kind in required
-    ):
+    required = tuple(
+        parse(str(kind), ProcessDistributionShiftKind, "required_shifts")
+        for kind in required_shifts
+    )
+    if len(set(required)) != len(required):
         raise ValueError("required_shifts must be unique supported shift kinds.")
     missing = tuple(kind for kind in required if kind not in kinds)
     if missing:
@@ -1287,12 +1288,11 @@ def process_shift_evaluation_matrix(
         ),
         paired_reference_excess=paired_excess,
         scenario_names=names,
-        # Validated above: every kind is in ``valid_kinds``; the filter only narrows.
-        shift_kinds=tuple(kind for kind in kinds if kind in valid_kinds),
+        shift_kinds=kinds,
         seeds=seed_values,
         baseline_index=baseline,
         nominal_coverage=nominal,
-        required_shifts=tuple(kind for kind in required if kind in valid_kinds),
+        required_shifts=required,
     )
 
 

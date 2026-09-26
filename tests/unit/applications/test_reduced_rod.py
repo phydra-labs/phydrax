@@ -221,7 +221,7 @@ def test_plan_and_prepared_ids_bind_content_not_display_labels():
 
 def test_only_explicit_fixed_or_native_reference_base_semantics_are_accepted():
     basis = _spatial_basis()
-    with pytest.raises(ValueError, match="floating rods are unsupported"):
+    with pytest.raises(ValueError, match="base_policy"):
         ReducedRodPlan(basis, base_policy="floating")
     with pytest.raises(ValueError, match="requires both"):
         ReducedRodPlan(

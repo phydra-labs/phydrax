@@ -23,6 +23,7 @@ from ..metrix import (
     UnitaryGroup,
 )
 from ..operators.quantum._propagation import unitarity_residual
+from ..typing import parse
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._diffrax_state_packing import DiffraxComplexStatePolicy
@@ -71,8 +72,7 @@ class UnitaryPropagatorProblem(StrictModule):
         dimension_ = int(dimension)
         if dimension_ < 1:
             raise ValueError("dimension must be positive.")
-        if group_kind not in ("unitary", "special-unitary"):
-            raise ValueError("Unknown unitary group kind.")
+        group_kind = parse(group_kind, UnitaryGroupKind, "group_kind")
         if hermiticity_tolerance < 0.0:
             raise ValueError("hermiticity_tolerance must be non-negative.")
         temporal_ = (

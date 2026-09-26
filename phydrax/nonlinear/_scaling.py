@@ -26,6 +26,7 @@ from ..linalg import (
     PyTreeSpace,
 )
 from ..linalg._spaces import _coordinate_pairing_weights, _has_diagonal_pairing
+from ..typing import parse
 from ._preconditioning import (
     _TransformationEvaluation,
     AbstractNonlinearSystemTransformation,
@@ -194,8 +195,7 @@ class NonlinearScalingPolicy(StrictModule):
         residual_floor: float = 1.0,
         explicit: NonlinearScaling | None = None,
     ) -> None:
-        if mode not in ("none", "automatic", "explicit"):
-            raise ValueError("Unknown nonlinear scaling mode.")
+        mode = parse(mode, ScalingMode, "mode")
         values = (float(state_floor), float(residual_floor))
         if any(not isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("Scaling floors must be finite and positive.")

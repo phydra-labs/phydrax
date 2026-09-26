@@ -8,13 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from .._mesh_file_profiles import mesh_file_profiles
+from ..typing import parse
 from ._report import AdapterFormatProfile
 
 
-FormatDirection = Literal["read", "write", "append"]
+FormatDirection: TypeAlias = Literal["read", "write", "append"]
 
 
 class CarrierKind(StrEnum):
@@ -46,10 +47,14 @@ class FormatCapability:
             raise ValueError("Format capability domain must be non-empty.")
         if not self.directions or len(self.directions) != len(set(self.directions)):
             raise ValueError("Format capability directions must be non-empty and unique.")
-        if any(
-            direction not in ("read", "write", "append") for direction in self.directions
-        ):
-            raise ValueError("Format capability direction is invalid.")
+        object.__setattr__(
+            self,
+            "directions",
+            tuple(
+                parse(direction, FormatDirection, "directions")
+                for direction in self.directions
+            ),
+        )
         if len(self.extensions) != len(set(self.extensions)) or any(
             not extension.startswith(".") or extension != extension.lower()
             for extension in self.extensions

@@ -27,6 +27,7 @@ from .._model import (
 )
 from .._model._component import slot_component_contracts
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._dense_pseudoinverse import apply_pseudoinverse, factor_pseudoinverse
 from ._operators import AbstractLinearOperator
 from ._policies import RankPolicy
@@ -182,18 +183,10 @@ class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
     ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be AbstractLinearOperator.")
-        strategy_ = str(strategy)
         capacity_ = int(capacity)
         degree = int(extrapolation_degree)
         tolerance = float(rank_tolerance)
-        if strategy_ not in (
-            "zero",
-            "last-solution",
-            "projection",
-            "rolling-qr",
-            "stabilized-extrapolation",
-        ):
-            raise ValueError("Unknown history initial-guess strategy.")
+        strategy_ = parse(strategy, HistoryInitialGuessStrategy, "strategy")
         if (
             capacity_ < 1
             or degree < 0

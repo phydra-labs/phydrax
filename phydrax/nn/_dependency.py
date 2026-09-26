@@ -13,6 +13,8 @@ from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
 
 import numpy as np
 
+from ..typing import parse
+
 
 OperatorDependencyKind: TypeAlias = Literal["pointwise", "finite", "global", "unknown"]
 OperatorDependencyEvidence: TypeAlias = Literal["exact", "conservative"]
@@ -82,12 +84,12 @@ class OperatorDependencySupport:
     evidence: OperatorDependencyEvidence = "conservative"
 
     def __post_init__(self) -> None:
-        if self.kind not in ("pointwise", "finite", "global", "unknown"):
-            raise ValueError(
-                "Dependency kind must be 'pointwise', 'finite', 'global', or 'unknown'."
-            )
-        if self.evidence not in ("exact", "conservative"):
-            raise ValueError("Dependency evidence must be 'exact' or 'conservative'.")
+        object.__setattr__(self, "kind", parse(self.kind, OperatorDependencyKind, "kind"))
+        object.__setattr__(
+            self,
+            "evidence",
+            parse(self.evidence, OperatorDependencyEvidence, "evidence"),
+        )
         reach = tuple(self.reach)
         if any(not isinstance(axis, AxisDependencyReach) for axis in reach):
             raise TypeError("reach must contain AxisDependencyReach entries.")

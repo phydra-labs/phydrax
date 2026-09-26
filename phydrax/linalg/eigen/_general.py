@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,6 +19,7 @@ from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from .._dense_pseudoinverse import (
     factor_pseudoinverse,
     materialize_pseudoinverse,
@@ -145,20 +146,7 @@ class GeneralEigenSelection(StrictModule):
         target: complex = 0.0,
         selection_id: str | None = None,
     ) -> None:
-        kinds = (
-            "all",
-            "finite",
-            "infinite",
-            "closest",
-            "largest-magnitude",
-            "smallest-magnitude",
-            "largest-real",
-            "smallest-real",
-            "largest-imaginary",
-            "smallest-imaginary",
-        )
-        if kind not in kinds:
-            raise ValueError("Unknown general eigenvalue selection kind.")
+        kind = parse(kind, GeneralEigenSelectionKind, "kind")
         count_ = None if count is None else int(count)
         if count_ is not None and count_ < 1:
             raise ValueError("selection count must be positive or None.")
@@ -418,8 +406,7 @@ class GeneralEigenSolvePolicy(StrictModule):
             raise TypeError("resources must be a GeneralEigenResourcePolicy.")
         if not isinstance(materialization_, MaterializationPolicy):
             raise TypeError("materialization must be a MaterializationPolicy.")
-        if singular_mass not in ("report", "error"):
-            raise ValueError("singular_mass must be 'report' or 'error'.")
+        singular_mass = parse(singular_mass, SingularMassPolicy, "singular_mass")
         if not isinstance(failure_, FailurePolicy):
             raise TypeError("failure must be a FailurePolicy.")
         if transform_solve is not None and not isinstance(
@@ -2300,30 +2287,45 @@ def _selection_indices(
     /,
 ) -> np.ndarray:
     count = selection.count
-    if selection.kind == "all":
-        candidates = np.arange(alpha.size)
-    elif selection.kind == "finite":
-        candidates = np.flatnonzero(finite)
-    elif selection.kind == "infinite":
-        candidates = np.flatnonzero(infinite)
-    else:
-        candidates = np.flatnonzero(finite)
-        values = alpha[candidates] / beta[candidates]
-        if selection.kind == "closest":
-            key = np.abs(values - selection.target)
-        elif selection.kind == "largest-magnitude":
-            key = -np.abs(values)
-        elif selection.kind == "smallest-magnitude":
-            key = np.abs(values)
-        elif selection.kind == "largest-real":
-            key = -np.real(values)
-        elif selection.kind == "smallest-real":
-            key = np.real(values)
-        elif selection.kind == "largest-imaginary":
-            key = -np.imag(values)
-        else:
-            key = np.imag(values)
-        candidates = candidates[np.argsort(key, kind="stable")]
+    kind = selection.kind
+    match kind:
+        case "all":
+            candidates = np.arange(alpha.size)
+        case "finite":
+            candidates = np.flatnonzero(finite)
+        case "infinite":
+            candidates = np.flatnonzero(infinite)
+        case (
+            "closest"
+            | "largest-magnitude"
+            | "smallest-magnitude"
+            | "largest-real"
+            | "smallest-real"
+            | "largest-imaginary"
+            | "smallest-imaginary"
+        ):
+            candidates = np.flatnonzero(finite)
+            values = alpha[candidates] / beta[candidates]
+            match kind:
+                case "closest":
+                    key = np.abs(values - selection.target)
+                case "largest-magnitude":
+                    key = -np.abs(values)
+                case "smallest-magnitude":
+                    key = np.abs(values)
+                case "largest-real":
+                    key = -np.real(values)
+                case "smallest-real":
+                    key = np.real(values)
+                case "largest-imaginary":
+                    key = -np.imag(values)
+                case "smallest-imaginary":
+                    key = np.imag(values)
+                case _:
+                    assert_never(kind)
+            candidates = candidates[np.argsort(key, kind="stable")]
+        case _:
+            assert_never(kind)
     if count is not None:
         candidates = candidates[:count]
     return np.asarray(candidates, dtype=np.int64)

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,13 +19,15 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import FreeSurfaceGeometryState, JAXPLICStageReconstruction
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from ..layers import warp_jacobian
 from .data import FunctionSamples, OperatorBatch, OperatorPrediction
 from .task import OperatorTask
 
 
-FreeBoundaryRepresentation = Literal["reference_map", "level_set", "phase_fraction"]
+FreeBoundaryRepresentation: TypeAlias = Literal[
+    "reference_map", "level_set", "phase_fraction"
+]
 
 
 class FreeBoundaryOperatorSpec(StrictModule, NonTrainableState):
@@ -47,8 +49,9 @@ class FreeBoundaryOperatorSpec(StrictModule, NonTrainableState):
         *,
         topology_changes: bool = False,
     ) -> None:
-        if representation not in ("reference_map", "level_set", "phase_fraction"):
-            raise ValueError("Unknown free-boundary representation.")
+        representation = parse(
+            representation, FreeBoundaryRepresentation, "representation"
+        )
         geometry = str(geometry_field)
         states = tuple(str(name) for name in state_fields)
         query = str(query_name)

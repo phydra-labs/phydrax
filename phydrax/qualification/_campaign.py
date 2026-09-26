@@ -6,29 +6,23 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast, Literal
+from typing import cast, get_args, Literal, TypeAlias
 
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-CampaignRoleName = Literal[
+CampaignRoleName: TypeAlias = Literal[
     "calibration",
     "model_selection",
     "interval_calibration",
     "locked_evaluation",
     "prospective",
 ]
-_ROLE_NAMES: tuple[CampaignRoleName, ...] = (
-    "calibration",
-    "model_selection",
-    "interval_calibration",
-    "locked_evaluation",
-    "prospective",
-)
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -143,11 +137,7 @@ class CampaignRole:
 
     def __post_init__(self) -> None:
         name = _identifier(self.name, "campaign role name")
-        if name not in _ROLE_NAMES:
-            raise ValueError(
-                "Campaign role must be calibration, model_selection, "
-                "interval_calibration, locked_evaluation, or prospective."
-            )
+        name = parse(name, CampaignRoleName, "campaign role name")
         object.__setattr__(self, "name", name)
         object.__setattr__(
             self,
@@ -215,7 +205,7 @@ class ScientificCampaign(StrictModule, NonTrainableState):
         role_by_name = {role.name: role for role in provided_roles}
         roles_ = tuple(
             role_by_name[name] if name in role_by_name else CampaignRole(name, ())
-            for name in _ROLE_NAMES
+            for name in get_args(CampaignRoleName)
         )
         membership = tuple(case_id for role in roles_ for case_id in role.case_ids)
         unknown = set(membership) - set(case_ids)

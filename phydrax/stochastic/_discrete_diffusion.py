@@ -17,7 +17,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 DiffusionPredictionKind: TypeAlias = Literal["epsilon", "clean", "score", "velocity"]
@@ -267,10 +267,12 @@ class AncestralGaussianDiffusion(StrictModule):
             predictor
         ):
             raise TypeError("Ancestral diffusion requires a schedule and predictor.")
-        if prediction_kind not in ("epsilon", "clean", "score", "velocity"):
-            raise ValueError("Unknown prediction kind.")
-        if terminal_relationship not in ("exact", "approximate", "assumed"):
-            raise ValueError("Unknown discrete terminal relationship.")
+        prediction_kind = parse(
+            prediction_kind, DiffusionPredictionKind, "prediction_kind"
+        )
+        terminal_relationship = parse(
+            terminal_relationship, DiscreteTerminalRelationship, "terminal_relationship"
+        )
         if not terminal_reference_id:
             raise ValueError("terminal_reference_id must be non-empty.")
         events = _event_shape(event_shape)
@@ -362,10 +364,12 @@ class DDIMTransport(StrictModule):
         count = int(num_inference_steps)
         if count <= 1 or count > schedule.num_steps:
             raise ValueError("num_inference_steps must lie in [2, schedule.num_steps].")
-        if prediction_kind not in ("epsilon", "clean", "score", "velocity"):
-            raise ValueError("Unknown prediction kind.")
-        if terminal_relationship not in ("exact", "approximate", "assumed"):
-            raise ValueError("Unknown discrete terminal relationship.")
+        prediction_kind = parse(
+            prediction_kind, DiffusionPredictionKind, "prediction_kind"
+        )
+        terminal_relationship = parse(
+            terminal_relationship, DiscreteTerminalRelationship, "terminal_relationship"
+        )
         if not terminal_reference_id:
             raise ValueError("terminal_reference_id must be non-empty.")
         stochasticity = float(eta)

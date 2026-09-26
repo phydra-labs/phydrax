@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._reference_cell import reference_cell_topology
 from ._high_order import ReferenceNodalFamily, TensorProductTabulation
 from ._precision import FiniteElementPrecisionPolicy
@@ -35,14 +36,6 @@ ReferenceAction: TypeAlias = Literal[
     "trace",
     "trace_transpose",
 ]
-_ACTION_ORDER: tuple[ReferenceAction, ...] = (
-    "interpolate",
-    "interpolate_transpose",
-    "gradient",
-    "gradient_transpose",
-    "trace",
-    "trace_transpose",
-)
 
 
 def _canonical_actions(
@@ -50,10 +43,8 @@ def _canonical_actions(
 ) -> tuple[ReferenceAction, ...]:
     if not isinstance(actions, tuple) or not actions:
         raise ValueError("Reference actions must be a nonempty tuple.")
-    unknown = tuple(action for action in actions if action not in _ACTION_ORDER)
-    if unknown:
-        raise ValueError(f"Unknown reference action {unknown[0]!r}.")
-    return tuple(action for action in _ACTION_ORDER if action in actions)
+    parsed = tuple(parse(action, ReferenceAction, "action") for action in actions)
+    return tuple(action for action in get_args(ReferenceAction) if action in parsed)
 
 
 def _rule_id(rule: ReferenceRule, data: ReferenceCellData, /) -> str:

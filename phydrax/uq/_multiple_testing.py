@@ -13,6 +13,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 MultipleTestingMethod: TypeAlias = Literal["bonferroni", "holm", "benjamini-hochberg"]
@@ -37,10 +38,7 @@ class MultipleTestingPlan(StrictModule):
         level = float(alpha)
         if not math.isfinite(level) or not 0.0 < level < 1.0:
             raise ValueError("alpha must be finite and strictly between zero and one.")
-        if method not in ("bonferroni", "holm", "benjamini-hochberg"):
-            raise ValueError(
-                "method must be 'bonferroni', 'holm', or 'benjamini-hochberg'."
-            )
+        method = parse(method, MultipleTestingMethod, "method")
         self.alpha = level
         self.method = method
 

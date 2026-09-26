@@ -16,6 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..axes._core import AxisKey
+from ..typing import parse
 from ..units._dimension import DimensionSignature
 
 
@@ -23,7 +24,6 @@ PortVariance: TypeAlias = Literal[
     "neutral", "primal", "dual", "covariant", "contravariant"
 ]
 
-_VARIANCES = frozenset({"neutral", "primal", "dual", "covariant", "contravariant"})
 _DIRECTIONS = ("input", "output")
 _ASPECTS = ("axes", "dimensions", "frame", "normalization", "space")
 
@@ -144,10 +144,7 @@ class ValuePort(StrictModule, NonTrainableState):
         axes = _optional_aligned(
             axis_keys, AxisKey, len(shape), "axis_keys", "event axis", distinct=True
         )
-        if not isinstance(variance, str):
-            raise TypeError("variance must be a string.")
-        if variance not in _VARIANCES:
-            raise ValueError(f"Unknown port variance {variance!r}.")
+        variance = parse(variance, PortVariance, "variance")
         representation_ = _identifier(representation, "representation")
         space = _optional_identifier(space_id, "space_id")
         frame = _optional_identifier(frame_id, "frame_id")

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,13 +15,14 @@ import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ..typing import parse
 from ._operators import _generic_adjoint, _id, AbstractLinearOperator
 from ._properties import OperatorCapabilities, OperatorProperties
 from ._spaces import _coordinate_dtype, _has_euclidean_pairing, ArraySpace
 
 
-OrthogonalTransformKind = Literal["fft", "dct"]
-SpectralProperty = Literal[
+OrthogonalTransformKind: TypeAlias = Literal["fft", "dct"]
+SpectralProperty: TypeAlias = Literal[
     "general",
     "self-adjoint",
     "positive-semidefinite",
@@ -55,15 +56,10 @@ class TransformDiagonalLinearOperator(AbstractLinearOperator):
         spectrum_ = jnp.asarray(spectrum)
         if spectrum_.ndim < 1 or not jnp.issubdtype(spectrum_.dtype, jnp.inexact):
             raise TypeError("spectrum must be a non-scalar inexact array.")
-        if transform not in ("fft", "dct"):
-            raise ValueError("transform must be 'fft' or 'dct'.")
-        if spectral_property not in (
-            "general",
-            "self-adjoint",
-            "positive-semidefinite",
-            "positive-definite",
-        ):
-            raise ValueError("Unknown spectral_property.")
+        transform = parse(transform, OrthogonalTransformKind, "transform")
+        spectral_property = parse(
+            spectral_property, SpectralProperty, "spectral_property"
+        )
         space_ = (
             ArraySpace(spectrum_.shape, dtype=spectrum_.dtype) if space is None else space
         )

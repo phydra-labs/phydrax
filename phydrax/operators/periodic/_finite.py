@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from itertools import product
 from math import isfinite, prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
+from ...typing import parse
 from ._family import (
     PeriodicFiniteRealization,
     PeriodicResourceError,
@@ -28,7 +29,7 @@ from ._family import (
 from ._orbital import PreparedPeriodicOrbitalPencil
 
 
-BoundaryKind = Literal["open", "periodic", "twisted", "slab"]
+BoundaryKind: TypeAlias = Literal["open", "periodic", "twisted", "slab"]
 
 
 class PeriodicFiniteBoundaryPlan(StrictModule, NonTrainableState):
@@ -65,9 +66,9 @@ class PeriodicFiniteBoundaryPlan(StrictModule, NonTrainableState):
             or any(
                 value != 0.0 and not axis for value, axis in zip(twist, axes, strict=True)
             )
-            or kind not in ("open", "periodic", "twisted", "slab")
         ):
             raise ValueError("Finite boundary shape, axes, twists, or kind are invalid.")
+        kind = parse(kind, BoundaryKind, "kind")
         expected_kind = (
             "open"
             if not any(axes)

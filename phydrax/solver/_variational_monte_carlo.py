@@ -77,7 +77,7 @@ from ..operators.quantum import (
     LogAmplitude,
     sampling_log_weight,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 if TYPE_CHECKING:
@@ -428,8 +428,7 @@ class VariationalMonteCarloPolicy(StrictModule):
             update_limit = float(max_update_norm)
             if not isfinite(update_limit) or update_limit <= 0.0:
                 raise ValueError("max_update_norm must be finite and positive.")
-        if failure_mode not in ("raise", "record"):
-            raise ValueError("failure_mode must be 'raise' or 'record'.")
+        failure_mode = parse(failure_mode, FailureMode, "failure_mode")
         if linear_policy is not None and not isinstance(linear_policy, LinearSolvePolicy):
             raise TypeError("linear_policy must be a LinearSolvePolicy or None.")
         if nullspace_policy is not None and not isinstance(

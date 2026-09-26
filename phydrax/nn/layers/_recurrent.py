@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,12 +17,13 @@ import phydrax.ein as ein
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
+from ...typing import parse
 from .._keys import EvalKey
 
 
-AffineMode = Literal["elementwise", "matrix"]
-AffineExecution = Literal["serial", "associative"]
-RecurrentTimeDirection = Literal["forward", "backward"]
+AffineMode: TypeAlias = Literal["elementwise", "matrix"]
+AffineExecution: TypeAlias = Literal["serial", "associative"]
+RecurrentTimeDirection: TypeAlias = Literal["forward", "backward"]
 
 
 def _broadcast_case_mask(mask: Array, value: Array, /) -> Array:
@@ -87,8 +88,7 @@ class RecurrentBatch(StrictModule, NonTrainableState):
         valid_array = jnp.asarray(valid, dtype=jnp.bool_)
         if valid_array.ndim < 1 or valid_array.shape[-1] <= 0:
             raise ValueError("valid must contain a non-empty trailing sequence axis.")
-        if time_direction not in ("forward", "backward"):
-            raise ValueError("time_direction must be 'forward' or 'backward'.")
+        time_direction = parse(time_direction, RecurrentTimeDirection, "time_direction")
         case_shape = tuple(valid_array.shape[:-1])
         sequence_length = valid_array.shape[-1]
         leaves = jax.tree.leaves(inputs)
@@ -188,8 +188,7 @@ class RecurrentTimeContext(StrictModule, NonTrainableState):
             raise ValueError(
                 "Recurrent context time and has_time must have equal shapes."
             )
-        if direction not in ("forward", "backward"):
-            raise ValueError("direction must be 'forward' or 'backward'.")
+        direction = parse(direction, RecurrentTimeDirection, "direction")
         time_array = eqx.error_if(
             time_array,
             jnp.any(has_time_array & ~jnp.isfinite(time_array)),
@@ -726,8 +725,7 @@ class AffineRecurrence(AbstractRecurrentCell):
         initial = jnp.asarray(initial_state)
         if initial.ndim < 1:
             raise ValueError("AffineRecurrence initial_state must have a state axis.")
-        if mode not in ("elementwise", "matrix"):
-            raise ValueError("mode must be 'elementwise' or 'matrix'.")
+        mode = parse(mode, AffineMode, "mode")
         if mode == "matrix" and initial.ndim != 1:
             raise ValueError("Matrix affine recurrence requires a vector initial state.")
         self.initial = initial

@@ -27,6 +27,7 @@ from ..operators.quantum._propagation import (
     unitarity_residual,
 )
 from ..operators.quantum._register import HilbertRegisterLayout
+from ..typing import parse
 
 
 DensityPositivityAudit: TypeAlias = Literal["full", "construction"]
@@ -94,8 +95,9 @@ class DenseQuantumProgramPolicy(StrictModule):
             raise ValueError(
                 "Dense quantum-program tolerances must be finite and non-negative."
             )
-        if density_positivity_audit not in ("full", "construction"):
-            raise ValueError("Unknown density positivity-audit policy.")
+        density_positivity_audit = parse(
+            density_positivity_audit, DensityPositivityAudit, "density_positivity_audit"
+        )
         self.maximum_state_bytes = limits[0]
         self.maximum_operation_bytes = limits[1]
         self.maximum_workspace_bytes = limits[2]

@@ -25,6 +25,7 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
+from ..typing import parse
 from ._point_cloud import PreparedPointCloudDiscretization
 
 
@@ -45,8 +46,7 @@ class PointBoundaryPlan(StrictModule):
         *,
         robin_coefficient: ArrayLike | None = None,
     ) -> None:
-        if kind not in ("dirichlet", "neumann", "robin"):
-            raise ValueError("Unknown point-cloud boundary kind.")
+        kind = parse(kind, PointBoundaryKind, "kind")
         values_ = jnp.asarray(values)
         if values_.ndim != 1:
             raise ValueError("Point boundary values must be a vector.")

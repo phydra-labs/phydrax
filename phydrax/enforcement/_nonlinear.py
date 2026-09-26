@@ -43,6 +43,7 @@ from ..nonlinear._types import (
     NonlinearTermination,
 )
 from ..optim._programming._cones import SecondOrderCone
+from ..typing import parse
 from ._feasibility import PositiveSemidefiniteProjection, SimplexProjection
 from ._lifecycle import (
     AbstractRealizationSource,
@@ -247,8 +248,7 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
         tolerance = float(certification_tolerance)
         if not isinstance(chart, AbstractCorrectionChart):
             raise TypeError("chart must be an AbstractCorrectionChart.")
-        if objective not in ("local-root", "minimum-distance"):
-            raise ValueError("Unknown nonlinear retraction objective.")
+        objective = parse(objective, RetractionObjective, "objective")
         if not isinstance(method_, AbstractNonlinearMethod):
             raise TypeError("method must be an AbstractNonlinearMethod or None.")
         if not isinstance(termination_, NonlinearTermination):

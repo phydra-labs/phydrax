@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -28,10 +28,10 @@ from phydrax.nn.models._mlp import MLP
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
-from .....typing import PRNGKey
+from .....typing import parse, PRNGKey
 
 
-KoopmanEvolution = Literal["discrete", "continuous"]
+KoopmanEvolution: TypeAlias = Literal["discrete", "continuous"]
 
 
 class KoopmanTemporalOperator(AbstractOperatorModel):
@@ -101,8 +101,7 @@ class KoopmanTemporalOperator(AbstractOperatorModel):
             raise ValueError(
                 "latent_size and hidden_size must be positive; depth cannot be negative."
             )
-        if evolution not in ("discrete", "continuous"):
-            raise ValueError("evolution must be 'discrete' or 'continuous'.")
+        self.evolution = parse(evolution, KoopmanEvolution, "evolution")
         if not self.time_axis:
             raise ValueError("time_axis must be non-empty.")
         if self.min_decay <= 0.0 or float(initial_decay) <= self.min_decay:

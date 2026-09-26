@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -10,6 +10,7 @@ import numpy as np
 from phydrax._strict import StrictModule
 
 from ..sparse import linear_apply
+from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._typed import edge_type_ids, node_type_ids
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
     from ..domain.graph import EdgeType, NodeType
 
 
-FormDegree = Literal[0, 1, 2]
+FormDegree: TypeAlias = Literal[0, 1, 2]
 
 
 def _validate_faces(faces: Any, num_vertices: int | None, /) -> tuple[np.ndarray, int]:
@@ -534,7 +535,7 @@ class SimplicialHodgeLaplacian(StrictModule):
     zero in the returned payload.
     """
 
-    form_degree: int = eqx.field(static=True)
+    form_degree: FormDegree = eqx.field(static=True)
     input_key: str | None = eqx.field(static=True)
     output_key: str | None = eqx.field(static=True)
     node_type_key: str = eqx.field(static=True)
@@ -566,9 +567,7 @@ class SimplicialHodgeLaplacian(StrictModule):
         edge_to_face_type: int = 2,
         face_to_edge_type: int = 3,
     ) -> None:
-        if form_degree not in (0, 1, 2):
-            raise ValueError("form_degree must be 0, 1, or 2.")
-        self.form_degree = int(form_degree)
+        self.form_degree = parse(form_degree, FormDegree, "form_degree")
         self.input_key = input_key
         self.output_key = output_key
         self.node_type_key = str(node_type_key)

@@ -25,6 +25,7 @@ from ..linalg import (
     ComplexCartesianCoordinates,
     RealCoordinateEvidence,
 )
+from ..typing import parse
 
 
 DiffraxComplexStateStrategy: TypeAlias = Literal["real_coordinates", "native", "reject"]
@@ -40,10 +41,7 @@ class DiffraxComplexStatePolicy(StrictModule, NonTrainableState):
     def __init__(
         self, strategy: DiffraxComplexStateStrategy = "real_coordinates", /
     ) -> None:
-        if strategy not in ("real_coordinates", "native", "reject"):
-            raise ValueError(
-                "Diffrax complex-state strategy must be 'real_coordinates', 'native', or 'reject'."
-            )
+        strategy = parse(strategy, DiffraxComplexStateStrategy, "strategy")
         self.strategy = strategy
         self.policy_id = canonical_fingerprint(
             {
@@ -131,8 +129,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         shape = tuple(state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("Diffrax state shape must contain positive dimensions.")
-        if mode not in ("real_coordinates", "native"):
-            raise ValueError("Unknown prepared Diffrax state mode.")
+        mode = parse(mode, RealizedDiffraxStateStrategy, "mode")
         if mode == "real_coordinates":
             if not isinstance(coordinates, AbstractRealCoordinateMap):
                 raise TypeError(

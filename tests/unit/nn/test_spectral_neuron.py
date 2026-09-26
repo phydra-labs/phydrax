@@ -197,7 +197,7 @@ def test_spectral_neuron_rejects_invalid_contracts_and_complex_inputs():
         phx.nn.layers.SpectralNeuron(**(kwargs | {"eigen_index": 3}))
     with pytest.raises(ValueError, match="one entry"):
         phx.nn.layers.SpectralNeuron(**(kwargs | {"monotonicity": ("free",)}))
-    with pytest.raises(ValueError, match="monotonicity entries"):
+    with pytest.raises(ValueError, match="monotonicity"):
         phx.nn.layers.SpectralNeuron(**(kwargs | {"monotonicity": ("free", "sideways")}))
     with pytest.raises(ValueError, match="initialization_radius"):
         phx.nn.layers.SpectralNeuron(**(kwargs | {"initialization_radius": 0.0}))

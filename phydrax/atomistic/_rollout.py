@@ -16,6 +16,7 @@ from .._numerics._checkpointed_scan import checkpointed_scan
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
+from ..typing import parse
 from ._barostat import (
     apply_isotropic_monte_carlo_barostat,
     IsotropicMonteCarloBarostatPlan,
@@ -60,8 +61,7 @@ class AtomisticReplayPolicy(StrictModule, NonTrainableState):
         *,
         block_size: int | None = None,
     ) -> None:
-        if mode not in ("full", "step", "block"):
-            raise ValueError("Unknown atomistic replay mode.")
+        mode = parse(mode, AtomisticReplayMode, "mode")
         size = None if block_size is None else int(block_size)
         if mode == "block":
             if size is None or size <= 0:
@@ -96,8 +96,7 @@ class AtomisticTrajectoryPlan(StrictModule, NonTrainableState):
         stride = int(sample_stride)
         if steps <= 0 or stride <= 0:
             raise ValueError("step_count and sample_stride must be positive.")
-        if retention not in ("final", "trajectory"):
-            raise ValueError("retention must be 'final' or 'trajectory'.")
+        retention = parse(retention, AtomisticRetention, "retention")
         scheduled = steps // stride
         if steps % stride:
             scheduled += 1

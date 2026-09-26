@@ -39,6 +39,7 @@ from ...linalg import (
     PreconditionerProperties,
     PyTreeSpace,
 )
+from ...typing import parse
 from ..amr._composite import CompositeAMRCellLayout
 from ..amr._core import BlockHierarchyTopology
 from ._diffusion import ConservativeBoundaryCondition, ConservativeBoundaryKind
@@ -53,7 +54,7 @@ CompositeBoundaryInput: TypeAlias = Mapping[
     ],
 ]
 CompositeBoundaryData: TypeAlias = Mapping[str, tuple[Any, Any]]
-CompositeCoarseOperatorSource = Literal["direct", "galerkin"]
+CompositeCoarseOperatorSource: TypeAlias = Literal["direct", "galerkin"]
 
 
 def _checked(value: Array, invalid: Array, message: str, /) -> Array:
@@ -965,9 +966,9 @@ def composite_amr_multigrid_builder(
     smoothers_ = tuple(smoothers)
     restrictions_ = tuple(restrictions)
     prolongations_ = tuple(prolongations)
-    source = str(coarse_operator_source)
-    if source not in ("direct", "galerkin"):
-        raise ValueError("Unknown composite AMR coarse-operator source.")
+    source = parse(
+        coarse_operator_source, CompositeCoarseOperatorSource, "coarse_operator_source"
+    )
     if not operators_ or not isinstance(operators_[0], PreparedCompositeAMRDiffusion):
         raise TypeError(
             "Composite AMR multigrid requires a prepared composite fine operator."

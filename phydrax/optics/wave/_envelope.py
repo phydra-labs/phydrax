@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import erf, prod, sqrt
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._fields import (
     _angular_frequency,
     _complex_field_values,
@@ -27,7 +28,7 @@ from ._nonlinear_response import AnalyticPulseField
 from ._pulse_time import PulseTimeSpace
 
 
-PulseEnvelopePolarization = Literal["scalar", "tangential"]
+PulseEnvelopePolarization: TypeAlias = Literal["scalar", "tangential"]
 
 
 class PulseEnvelopeField(StrictModule):
@@ -61,8 +62,7 @@ class PulseEnvelopeField(StrictModule):
             raise TypeError("plane_space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):
             raise TypeError("time_space must be a PulseTimeSpace.")
-        if polarization not in ("scalar", "tangential"):
-            raise ValueError("polarization must be 'scalar' or 'tangential'.")
+        polarization = parse(polarization, PulseEnvelopePolarization, "polarization")
         expected = (
             plane_space.shape + time_space.shape
             if polarization == "scalar"
@@ -412,8 +412,7 @@ class GaussianPulseEnvelopePlan(StrictModule, NonTrainableState):
             raise TypeError("plane_space must be a PlaneFieldSpace.")
         if not isinstance(time_space, PulseTimeSpace):
             raise TypeError("time_space must be a PulseTimeSpace.")
-        if polarization not in ("scalar", "tangential"):
-            raise ValueError("polarization must be 'scalar' or 'tangential'.")
+        polarization = parse(polarization, PulseEnvelopePolarization, "polarization")
 
         def real_array(name: str, value: ArrayLike, shape: tuple[int, ...]) -> Array:
             supplied = jnp.asarray(value)

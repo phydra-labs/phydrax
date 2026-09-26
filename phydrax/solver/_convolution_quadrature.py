@@ -35,6 +35,7 @@ from ..operators.integral._convolution_quadrature import (
     prepare_convolution_quadrature_contour,
     reconstruct_causal_history,
 )
+from ..typing import parse
 
 
 ConvolutionQuadratureAction: TypeAlias = Literal["forward", "transpose", "adjoint"]
@@ -569,8 +570,7 @@ def apply_convolution_quadrature(
     """
     if not isinstance(prepared, PreparedConvolutionQuadrature):
         raise TypeError("prepared must be PreparedConvolutionQuadrature.")
-    if action not in ("forward", "transpose", "adjoint"):
-        raise ValueError("action must be 'forward', 'transpose', or 'adjoint'.")
+    action = parse(action, ConvolutionQuadratureAction, "action")
     values = jnp.asarray(history)
     if values.ndim < 2:
         raise ValueError("history must have time and coordinate axes.")

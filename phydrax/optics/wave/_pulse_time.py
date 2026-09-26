@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
@@ -15,9 +15,10 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PreparedTensorGrid
+from ...typing import parse
 
 
-PulseTimeTopology = Literal["finite-window", "periodic-cell"]
+PulseTimeTopology: TypeAlias = Literal["finite-window", "periodic-cell"]
 
 
 class PulseTimeSpace(StrictModule, NonTrainableState):
@@ -44,8 +45,7 @@ class PulseTimeSpace(StrictModule, NonTrainableState):
             raise TypeError("temporal_grid must be a PreparedTensorGrid.")
         if len(temporal_grid.shape) != 1:
             raise ValueError("PulseTimeSpace requires an exactly one-dimensional grid.")
-        if topology not in ("finite-window", "periodic-cell"):
-            raise ValueError("topology must be 'finite-window' or 'periodic-cell'.")
+        topology = parse(topology, PulseTimeTopology, "topology")
         axis = temporal_grid.axes[0]
         if axis.primary_entity != "point":
             raise ValueError("Pulse time requires a point-primary temporal grid.")

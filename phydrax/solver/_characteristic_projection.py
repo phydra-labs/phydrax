@@ -37,6 +37,7 @@ from ..stochastic import (
     StochasticPathEnsembleResult,
 )
 from ..terms import ResidualPenalty
+from ..typing import parse
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._functional_solver import FunctionalSolver
@@ -79,8 +80,7 @@ class CharacteristicBoundaryPolicy(StrictModule):
     ) -> None:
         if not isinstance(schedule, PreparedHybridSchedule):
             raise TypeError("schedule must be PreparedHybridSchedule.")
-        if action not in ("stop", "reflect", "absorb", "reset", "periodic"):
-            raise ValueError("Unknown characteristic boundary action.")
+        action = parse(action, CharacteristicBoundaryAction, "action")
         if action in ("reflect", "reset", "periodic") and reset_map is None:
             raise ValueError(f"{action} boundary action requires reset_map.")
         intervals = jnp.asarray(brackets, dtype=jnp.float64)

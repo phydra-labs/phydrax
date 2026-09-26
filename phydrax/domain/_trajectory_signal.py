@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,7 +19,7 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._derivative import (
     DerivativeBackend,
     DerivativeBasis,
@@ -34,7 +34,7 @@ from ._structure import GridBatch, PointBatch
 from ._trajectory_dataset import TRAJECTORY_CASE_INDEX_KEY, TrajectoryDatasetDomain
 
 
-TrajectorySignalInterpolation = Literal["nearest", "linear", "cubic_hermite"]
+TrajectorySignalInterpolation: TypeAlias = Literal["nearest", "linear", "cubic_hermite"]
 
 
 def _validate_values(
@@ -246,9 +246,7 @@ def TrajectorySignal(
         raise ValueError(
             f"time_var must match the trajectory time label {domain.time_label!r}."
         )
-    interpolation_ = str(interpolation)
-    if interpolation_ not in ("nearest", "linear", "cubic_hermite"):
-        raise ValueError("interpolation must be 'nearest', 'linear', or 'cubic_hermite'.")
+    interpolation_ = parse(interpolation, TrajectorySignalInterpolation, "interpolation")
     if (
         isinstance(domain, IrregularTrajectoryDatasetDomain)
         and interpolation_ == "cubic_hermite"

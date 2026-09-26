@@ -11,9 +11,10 @@ import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 
 
-DesignName = Literal[
+DesignName: TypeAlias = Literal[
     "uniform",
     "latin_hypercube",
     "halton",
@@ -22,16 +23,6 @@ DesignName = Literal[
     "sobol",
     "sobol_scrambled",
 ]
-
-SUPPORTED_DESIGNS: tuple[DesignName, ...] = (
-    "uniform",
-    "latin_hypercube",
-    "halton",
-    "halton_scrambled",
-    "hammersley",
-    "sobol",
-    "sobol_scrambled",
-)
 
 
 class IIDDesign(StrictModule):
@@ -161,10 +152,7 @@ class DesignCapabilities(StrictModule):
 
 def normalize_design_name(name: str, /) -> DesignName:
     """Normalize and validate a reference-design name."""
-    normalized = str(name).lower()
-    if normalized not in SUPPORTED_DESIGNS:
-        raise ValueError(f"design must be one of {SUPPORTED_DESIGNS}; got {name!r}.")
-    return normalized
+    return parse(str(name).lower(), DesignName, "design")
 
 
 def resolve_design(design: DesignLike, /) -> UnitDesign:
@@ -275,7 +263,6 @@ __all__ = [
     "IIDDesign",
     "LatinHypercubeDesign",
     "RandomizedQMCDesign",
-    "SUPPORTED_DESIGNS",
     "SobolDesign",
     "UnitDesign",
     "design_capabilities",

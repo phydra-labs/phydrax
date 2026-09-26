@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._dtype_names import inexact_result_type
 from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
+from ...typing import parse
 from .._evolution import AbstractEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid
 from .._trajectory import TrajectoryData
@@ -412,8 +413,7 @@ def recurrence_quantification(
     """Build recurrence masks and standard line-based RQA statistics per case."""
     if not isinstance(data, TrajectoryData):
         raise TypeError("data must be TrajectoryData.")
-    if metric not in ("euclidean", "supremum"):
-        raise ValueError("Unsupported distance metric.")
+    metric = parse(metric, DistanceMetric, "metric")
     theiler = int(theiler_window)
     minimum_diagonal = int(minimum_diagonal_length)
     minimum_vertical = int(minimum_vertical_length)
@@ -727,8 +727,7 @@ def correlation_dimension(
     """Estimate Grassberger--Procaccia correlation dimension on declared radii."""
     if not isinstance(data, TrajectoryData):
         raise TypeError("data must be TrajectoryData.")
-    if metric not in ("euclidean", "supremum"):
-        raise ValueError("Unsupported distance metric.")
+    metric = parse(metric, DistanceMetric, "metric")
     if data.capacity > int(max_samples):
         raise ValueError("Trajectory exceeds max_samples for pairwise distances.")
     radius_values = np.asarray(radii, dtype=np.float64)
@@ -876,10 +875,8 @@ def surrogate_significance(
         raise TypeError("statistic must be callable.")
     if not isinstance(statistic_id, str) or not statistic_id:
         raise ValueError("statistic_id must be non-empty.")
-    if method not in ("shuffle", "phase_randomized", "aaft"):
-        raise ValueError("Unsupported surrogate method.")
-    if alternative not in ("greater", "less", "two_sided"):
-        raise ValueError("Unsupported surrogate alternative.")
+    method = parse(method, SurrogateMethod, "method")
+    alternative = parse(alternative, SurrogateAlternative, "alternative")
     count = int(num_surrogates)
     if count < 1:
         raise ValueError("num_surrogates must be positive.")
@@ -989,16 +986,9 @@ def summarize_chaos_uncertainty(
         or len(set(axes)) != len(axes)
     ):
         raise ValueError("Metric names and uncertainty axes must be unique and complete.")
-    allowed_sources = {
-        "initial_condition",
-        "parameter",
-        "noise",
-        "numerics",
-        "process",
-        "other",
-    }
-    if any(source not in allowed_sources for source in sources):
-        raise ValueError("Unsupported uncertainty source kind.")
+    sources = tuple(
+        parse(source, ChaosUncertaintySource, "source_kinds") for source in sources
+    )
     confidence_value = float(confidence)
     draws = int(bootstrap_samples)
     if not 0.0 < confidence_value < 1.0 or draws < 1:

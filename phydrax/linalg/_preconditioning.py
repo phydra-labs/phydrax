@@ -13,6 +13,7 @@ import numpy as np
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._assembly import (
     assemble_diagonal,
     assemble_uniform_blocks,
@@ -683,10 +684,8 @@ class PreconditioningPolicy(StrictModule):
         side: PreconditioningSide = "auto",
         refresh: PreconditionerRefreshPolicy | None = None,
     ) -> None:
-        if side not in ("auto", "left", "right"):
-            raise ValueError("side must be 'auto', 'left', or 'right'.")
-        if refresh is not None and refresh not in ("frozen", "numeric", "rebuild"):
-            raise ValueError("refresh must be 'frozen', 'numeric', or 'rebuild'.")
+        side = parse(side, PreconditioningSide, "side")
+        refresh = parse(refresh, PreconditionerRefreshPolicy | None, "refresh")
         if isinstance(source, AbstractPreconditioner):
             if setup_operator is not None:
                 raise ValueError(
@@ -704,11 +703,11 @@ class PreconditioningPolicy(StrictModule):
             self.preconditioner = None
             self.builder = source
             self.setup_operator = setup_operator
-            self.refresh_policy = source.default_refresh if refresh is None else refresh
-            if self.refresh_policy not in ("frozen", "numeric", "rebuild"):
-                raise ValueError(
-                    "Builder default_refresh must be 'frozen', 'numeric', or 'rebuild'."
-                )
+            self.refresh_policy = parse(
+                source.default_refresh if refresh is None else refresh,
+                PreconditionerRefreshPolicy,
+                "default_refresh",
+            )
         else:
             raise TypeError(
                 "source must be an AbstractPreconditioner or AbstractPreconditionerBuilder."
@@ -929,14 +928,7 @@ class PreparedPreconditioner(StrictModule):
             invalid,
             "Preconditioner numeric versions must satisfy 0 <= built_numeric_version <= numeric_version.",
         )
-        if refresh_kind not in (
-            "prepared",
-            "supplied",
-            "reused",
-            "refreshed",
-            "rebuilt",
-        ):
-            raise ValueError("Unknown preconditioner refresh kind.")
+        refresh_kind = parse(refresh_kind, PreconditionerRefreshKind, "refresh_kind")
         _validate_prepared_action(action, plan)
         self.action = action
         self.setup_operator = setup_operator

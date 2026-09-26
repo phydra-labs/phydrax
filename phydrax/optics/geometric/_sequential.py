@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from numbers import Integral, Real
-from typing import Literal, Sequence, TypeAlias
+from typing import assert_never, Literal, Sequence, TypeAlias
 
 import equinox as eqx
 import jax
@@ -25,7 +25,7 @@ from ._interface import evaluate_refractive_interface, OpticalRayState
 _BracketCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
-SurfaceKind = Literal["plane", "sphere", "conic", "even-asphere"]
+SurfaceKind: TypeAlias = Literal["plane", "sphere", "conic", "even-asphere"]
 SurfaceInteraction = Literal["transmit", "reflect"]
 
 _KIND_TAGS: dict[str, int] = {
@@ -838,35 +838,40 @@ class SequentialOpticsPlan(StrictModule, NonTrainableState):
             raise ValueError("Inactive even-asphere coefficients must be exactly zero.")
 
         for index, (kind, route) in enumerate(zip(kinds, routes, strict=True)):
-            if kind == "plane":
-                if (
-                    curvature[index] != 0.0
-                    or conic[index] != 0.0
-                    or np.any(coefficients[index] != 0.0)
-                    or np.any(active_coefficients[index])
-                ):
-                    raise ValueError("Plane rows must have exactly neutral sag data.")
-            elif kind == "sphere":
-                if curvature[index] == 0.0:
-                    raise ValueError("Sphere curvature must be nonzero.")
-                if (
-                    conic[index] != 0.0
-                    or np.any(coefficients[index] != 0.0)
-                    or np.any(active_coefficients[index])
-                ):
-                    raise ValueError(
-                        "Sphere rows must have exactly neutral conic/asphere data."
-                    )
-            elif kind == "conic":
-                if np.any(coefficients[index] != 0.0) or np.any(
-                    active_coefficients[index]
-                ):
-                    raise ValueError("Conic rows must have exactly neutral asphere data.")
-            else:
-                if not np.any(active_coefficients[index]):
-                    raise ValueError(
-                        "Even-asphere rows must declare at least one active coefficient."
-                    )
+            match kind:
+                case "plane":
+                    if (
+                        curvature[index] != 0.0
+                        or conic[index] != 0.0
+                        or np.any(coefficients[index] != 0.0)
+                        or np.any(active_coefficients[index])
+                    ):
+                        raise ValueError("Plane rows must have exactly neutral sag data.")
+                case "sphere":
+                    if curvature[index] == 0.0:
+                        raise ValueError("Sphere curvature must be nonzero.")
+                    if (
+                        conic[index] != 0.0
+                        or np.any(coefficients[index] != 0.0)
+                        or np.any(active_coefficients[index])
+                    ):
+                        raise ValueError(
+                            "Sphere rows must have exactly neutral conic/asphere data."
+                        )
+                case "conic":
+                    if np.any(coefficients[index] != 0.0) or np.any(
+                        active_coefficients[index]
+                    ):
+                        raise ValueError(
+                            "Conic rows must have exactly neutral asphere data."
+                        )
+                case "even-asphere":
+                    if not np.any(active_coefficients[index]):
+                        raise ValueError(
+                            "Even-asphere rows must declare at least one active coefficient."
+                        )
+                case _:
+                    assert_never(kind)
             if active_aperture[index] and kind != "plane":
                 radial_domain = (
                     1.0

@@ -7,7 +7,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -42,6 +42,7 @@ from ...domain._function import (
 )
 from ...domain._model_function import ConcatenatedModelEvaluator
 from ...logging import emit
+from ...typing import parse
 
 
 # Direct eager differentiation has no owner beyond its caller, who asked for the
@@ -420,7 +421,7 @@ def trace_derivative_requests(
     return tuple(dict.fromkeys(recorded))
 
 
-DerivativeExecutionStrategy = Literal["reverse", "forward", "jvp", "jet"]
+DerivativeExecutionStrategy: TypeAlias = Literal["reverse", "forward", "jvp", "jet"]
 
 
 class DerivativeExecutionPlan(StrictModule):
@@ -443,8 +444,7 @@ class DerivativeExecutionPlan(StrictModule):
     ) -> None:
         if not requests:
             raise ValueError("DerivativeExecutionPlan requires derivative requests.")
-        if strategy not in ("reverse", "forward", "jvp", "jet"):
-            raise ValueError("Unknown derivative execution strategy.")
+        strategy = parse(strategy, DerivativeExecutionStrategy, "strategy")
         self.requests = tuple(requests)
         self.strategy = strategy
         self.maximum_order = max(request.order for request in requests)

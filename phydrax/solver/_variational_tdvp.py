@@ -22,7 +22,7 @@ from ..linalg import (
     solve,
 )
 from ..operators.quantum import ComplexParameterMode
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._variational_monte_carlo import (
     _score_geometry,
     _validate_model_coordinates,
@@ -77,8 +77,7 @@ class VariationalTDVPPolicy(StrictModule):
         linear_policy: LinearSolvePolicy | None = None,
         nullspace_policy: NullspacePolicy | None = None,
     ) -> None:
-        if mode not in ("real-time", "imaginary-time"):
-            raise ValueError("mode must be 'real-time' or 'imaginary-time'.")
+        mode = parse(mode, TDVPMode, "mode")
         steps = int(num_steps)
         draws = int(draws_per_step)
         transitions = int(transitions_per_draw)

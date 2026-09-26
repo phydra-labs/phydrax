@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._diffusion import (
     ConservativeAdvectionPlan,
     ConservativeBoundaryCondition,
@@ -174,8 +175,7 @@ class MACScalarBoundaryCondition(StrictModule, NonTrainableState):
         *,
         function_id: str | None = None,
     ) -> None:
-        if kind not in ("periodic", "dirichlet", "neumann", "flux"):
-            raise ValueError("Unknown MAC scalar boundary kind.")
+        kind = parse(kind, MACScalarBoundaryKind, "kind")
         if callable(value):
             if kind != "flux":
                 raise ValueError(
@@ -427,8 +427,7 @@ class MACScalarTransport(StrictModule, NonTrainableState):
             raise ValueError(
                 "MAC scalar diffusivity must be one finite nonnegative scalar or one nonnegative value per grid axis."
             )
-        if advection not in ("centered", "upwind"):
-            raise ValueError("MAC scalar advection must be 'centered' or 'upwind'.")
+        advection = parse(advection, MACScalarAdvection, "advection")
         if source is not None and not callable(source):
             raise TypeError("MAC scalar source must be callable or None.")
         if source is None:

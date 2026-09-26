@@ -19,7 +19,7 @@ import operator
 from collections.abc import Callable
 from enum import IntEnum
 from functools import partial
-from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, final, get_args, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -40,6 +40,7 @@ from .._model._ports import intrinsic_model_ports, ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._validation import canonical_identifier
+from ..typing import parse
 
 
 if TYPE_CHECKING:
@@ -51,7 +52,6 @@ if TYPE_CHECKING:
 
 FieldTraceSide: TypeAlias = Literal["owner", "neighbor", "average"]
 FieldSupportCoverage: TypeAlias = Literal["complete", "partial"]
-_TRACE_SIDES: tuple[FieldTraceSide, ...] = ("owner", "neighbor", "average")
 _INVALID_QUERY_MESSAGE = (
     "Discrete field view query is invalid at one or more points (outside the "
     "reconstruction support, on a non-smooth locus without a bound trace side, "
@@ -133,7 +133,7 @@ class FieldTracePolicy(StrictModule, NonTrainableState):
         kind: Literal["single-valued", "cell-sided"],
         /,
         *,
-        sides: tuple[FieldTraceSide, ...] = _TRACE_SIDES,
+        sides: tuple[FieldTraceSide, ...] = get_args(FieldTraceSide),
     ) -> None:
         match kind:
             case "single-valued" | "cell-sided":
@@ -143,11 +143,14 @@ class FieldTracePolicy(StrictModule, NonTrainableState):
                     "Field trace policy kind must be 'single-valued' or 'cell-sided'."
                 )
         sides_ = tuple(sides)
-        if not sides_ or any(side not in _TRACE_SIDES for side in sides_):
-            raise ValueError(f"Trace sides must be a nonempty subset of {_TRACE_SIDES}.")
+        if not sides_:
+            raise ValueError(
+                f"Trace sides must be a nonempty subset of {get_args(FieldTraceSide)}."
+            )
+        sides_ = tuple(parse(side, FieldTraceSide, "sides") for side in sides_)
         if len(set(sides_)) != len(sides_):
             raise ValueError("Trace sides must be unique.")
-        ordered = tuple(side for side in _TRACE_SIDES if side in sides_)
+        ordered = tuple(side for side in get_args(FieldTraceSide) if side in sides_)
         self.kind = kind
         self.sides = ordered
         self.policy_id = canonical_fingerprint(
@@ -181,8 +184,7 @@ class FieldSideBinding(StrictModule, NonTrainableState):
         *,
         reconstruction_id: str,
     ) -> None:
-        if side not in _TRACE_SIDES:
-            raise ValueError(f"side must be one of {_TRACE_SIDES}.")
+        side = parse(side, FieldTraceSide, "side")
         sites_ = np.asarray(sites)
         cells = np.asarray(site_cells, dtype=np.int32)
         if sites_.ndim != 2 or sites_.shape[0] == 0:

@@ -29,6 +29,7 @@ from ...optim import (
     SecondOrderCone,
     ZeroCone,
 )
+from ...typing import parse
 from ._objectives import (
     BlackLittermanObjective,
     CVaRObjective,
@@ -71,8 +72,7 @@ class PortfolioPlan(StrictModule):
         binary_indices: tuple[int, ...],
         structure_id: str,
     ) -> None:
-        if canonical_kind not in ("lp", "qp", "conic", "mip"):
-            raise ValueError("canonical_kind is invalid.")
+        canonical_kind = parse(canonical_kind, PortfolioProgramKind, "canonical_kind")
         slices = tuple(
             (str(name), int(start), int(stop)) for name, start, stop in variable_slices
         )

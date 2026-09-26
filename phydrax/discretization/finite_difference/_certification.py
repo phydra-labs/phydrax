@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DiagonalPairing, EuclideanPairing
+from ...typing import parse
 from ._stencil import BoundaryStencilSet
 
 
@@ -178,8 +179,9 @@ class FDStabilityReport(StrictModule, NonTrainableState):
         subject_id: str,
     ) -> None:
         name = str(property_name)
-        if not name or evidence not in ("analytic", "algebraic", "numerical", "unknown"):
-            raise ValueError("Stability property name/evidence is invalid.")
+        if not name:
+            raise ValueError("Stability property name must be non-empty.")
+        evidence = parse(evidence, FDEvidenceKind, "evidence")
         residual_ = None if residual is None else float(residual)
         tolerance_ = float(tolerance)
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:

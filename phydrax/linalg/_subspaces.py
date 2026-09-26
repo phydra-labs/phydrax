@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,12 +16,13 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._certificates import KernelCertificate
 from ._spaces import _coordinate_dtype, AbstractVectorSpace
 
 
-CompatibilityMode = Literal["error", "project"]
-GaugeMode = Literal["minimum-norm", "project"]
+CompatibilityMode: TypeAlias = Literal["error", "project"]
+GaugeMode: TypeAlias = Literal["minimum-norm", "project"]
 
 
 def _basis_gram(
@@ -315,10 +316,8 @@ class NullspacePolicy(StrictModule):
             raise TypeError("right must be a LinearSubspace or None.")
         if left is not None and not isinstance(left, LinearSubspace):
             raise TypeError("left must be a LinearSubspace or None.")
-        if compatibility not in ("error", "project"):
-            raise ValueError("compatibility must be 'error' or 'project'.")
-        if gauge not in ("minimum-norm", "project"):
-            raise ValueError("gauge must be 'minimum-norm' or 'project'.")
+        compatibility = parse(compatibility, CompatibilityMode, "compatibility")
+        gauge = parse(gauge, GaugeMode, "gauge")
         self.right = right
         self.left = left
         self.certificate = certificate

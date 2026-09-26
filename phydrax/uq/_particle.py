@@ -27,7 +27,7 @@ from .._numerics import log_normalize, weight_ess
 from .._strict import StrictModule
 from .._trainable import ArrayRole, require_parameter_roles
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._checkpoint import (
     read_checkpoint_archive,
     write_checkpoint_archive,
@@ -157,8 +157,7 @@ def resample_indices(
     )
     if values.ndim != 1 or values.shape[0] < 1:
         raise ValueError("log_weights must be a non-empty one-dimensional vector.")
-    if method not in ("systematic", "stratified", "multinomial", "residual"):
-        raise ValueError(f"Unknown resampling method {method!r}.")
+    method = parse(method, ResamplingMethod, "method")
     count = values.shape[0]
     probabilities = _normalized_probabilities(
         values,
@@ -226,10 +225,8 @@ def _configuration(
     count = int(num_particles)
     if count < 1:
         raise ValueError("num_particles must be positive.")
-    if method not in ("systematic", "stratified", "multinomial", "residual"):
-        raise ValueError(f"Unknown resampling method {method!r}.")
-    if policy not in ("ess", "always", "never"):
-        raise ValueError(f"Unknown resampling policy {policy!r}.")
+    method = parse(method, ResamplingMethod, "resampling_method")
+    policy = parse(policy, ResamplingPolicy, "resampling_policy")
     level = float(threshold)
     if not np.isfinite(level) or not 0.0 < level <= 1.0:
         raise ValueError("resampling_threshold must lie in (0, 1].")

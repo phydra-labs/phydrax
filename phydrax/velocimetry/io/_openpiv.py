@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import numpy as np
 
@@ -21,14 +21,15 @@ from ...interchange import (
     AdapterStatus,
     require_lossless,
 )
+from ...typing import parse
 from ...units import TIME, UnitDefinition
 from ..imaging import DenseDisplacementField2D
 from ..piv import PhysicalPIVResult2D
 from ._piv_field import field_columns, field_from_columns
 
 
-OpenPIVCoordinateConvention = Literal["physical", "image"]
-OpenPIVValueKind = Literal["pixel-displacement", "physical-velocity"]
+OpenPIVCoordinateConvention: TypeAlias = Literal["physical", "image"]
+OpenPIVValueKind: TypeAlias = Literal["pixel-displacement", "physical-velocity"]
 
 
 def read_openpiv_text(
@@ -48,12 +49,10 @@ def read_openpiv_text(
     """Read OpenPIV text only under an explicit pixel or physical interpretation."""
     source = Path(path).expanduser().absolute()
     scale, time = _scales(pixels_per_unit, delta_t)
-    if value_kind not in ("pixel-displacement", "physical-velocity"):
-        raise ValueError(
-            "value_kind must be 'pixel-displacement' or 'physical-velocity'."
-        )
-    if coordinate_convention not in ("physical", "image"):
-        raise ValueError("coordinate_convention must be 'physical' or 'image'.")
+    value_kind = parse(value_kind, OpenPIVValueKind, "value_kind")
+    coordinate_convention = parse(
+        coordinate_convention, OpenPIVCoordinateConvention, "coordinate_convention"
+    )
     resource = read_bounded_resource(
         source.name,
         trusted_root=source.parent,
@@ -273,8 +272,9 @@ def write_openpiv_text(
 ) -> AdapterReport:
     """Write OpenPIV text only after declaring its unavoidable semantic losses."""
     scale, time = _scales(pixels_per_unit, delta_t)
-    if coordinate_convention not in ("physical", "image"):
-        raise ValueError("coordinate_convention must be 'physical' or 'image'.")
+    coordinate_convention = parse(
+        coordinate_convention, OpenPIVCoordinateConvention, "coordinate_convention"
+    )
     if isinstance(field, PhysicalPIVResult2D):
         if coordinate_convention != "physical":
             raise AdapterError(

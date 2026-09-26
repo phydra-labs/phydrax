@@ -37,6 +37,7 @@ from ...discretization.multiblock import (
     MultiblockGridPlan,
     PreparedMultiblockGrid,
 )
+from ...typing import parse
 
 
 if TYPE_CHECKING:
@@ -1428,8 +1429,7 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
         cap_latitude: float = np.deg2rad(60.0),
         hemisphere: Literal["north", "south"] = "north",
     ) -> None:
-        if kind not in ("polar-cap", "tripolar", "cubed-sphere"):
-            raise ValueError("Unknown spherical hydrostatic mosaic kind.")
+        kind = parse(kind, SphericalMosaicKind, "kind")
         shape = tuple(resolution)
         z = jnp.asarray(vertical_faces, dtype=jnp.float64)
         depth = float(rest_depth)

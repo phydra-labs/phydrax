@@ -16,6 +16,7 @@ from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunctio
 from ..._strict import StrictModule
 from ...metrix import LeviCivitaConnection, RiemannianMetric
 from ...stochastic._calculus import stratonovich_correction
+from ...typing import parse
 from ._domain_ops import (
     _factor_and_dim,
     div,
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
     from ...nn._keys import EvalKey
 
 
-StochasticInterpretation = Literal["ito", "stratonovich"]
+StochasticInterpretation: TypeAlias = Literal["ito", "stratonovich"]
 GeneratorContraction: TypeAlias = Literal["auto", "factor_hvp", "dense"]
 
 
@@ -46,9 +47,7 @@ def _require_function(value: Any, name: str, /) -> DomainFunction:
 
 
 def _require_interpretation(value: str, /) -> StochasticInterpretation:
-    if value not in ("ito", "stratonovich"):
-        raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
-    return value
+    return parse(value, StochasticInterpretation, "interpretation")
 
 
 def _join_fields(*fields: DomainFunction) -> tuple[Any, tuple[DomainFunction, ...]]:
@@ -457,8 +456,7 @@ def kolmogorov_generator(
         None if covariance is None else _require_function(covariance, "covariance")
     )
     interpretation_value = _require_interpretation(interpretation)
-    if contraction not in ("auto", "factor_hvp", "dense"):
-        raise ValueError("contraction must be 'auto', 'factor_hvp', or 'dense'.")
+    contraction = parse(contraction, GeneratorContraction, "contraction")
     if contraction == "factor_hvp" and diffusion_field is None:
         raise ValueError("factor_hvp contraction requires a diffusion factor.")
     if contraction == "factor_hvp" and metric is not None:

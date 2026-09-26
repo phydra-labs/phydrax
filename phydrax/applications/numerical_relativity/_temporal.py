@@ -21,6 +21,7 @@ from ..._numerics._ssp_runge_kutta import (
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
+from ...typing import parse
 from ._boundaries import (
     AbstractZ4cBoundary,
     PeriodicBoundary,
@@ -170,8 +171,7 @@ class FixedGridZ4cRuntime(StrictModule, NonTrainableState):
             raise ValueError("start_time must be finite.")
         if not isfinite(maximum_courant) or maximum_courant <= 0.0:
             raise ValueError("maximum_courant_number must be finite and positive.")
-        if integrator not in ("ssprk33", "ssprk54"):
-            raise ValueError("integrator must be 'ssprk33' or 'ssprk54'.")
+        integrator = parse(integrator, Z4cIntegrator, "integrator")
         if derivatives.grid_shape != grid.shape or derivatives.spacing != grid.spacing:
             raise ValueError("derivatives must be prepared for the exact fixed grid.")
         if grid.periodic != (derivatives.boundary == "periodic"):

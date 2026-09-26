@@ -22,6 +22,7 @@ from .._model._component import ModelExecutionContract, RandomnessContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._typing_plan import validate_tree
+from ..typing import parse
 from ..units._dimension import DimensionSignature
 
 
@@ -89,12 +90,14 @@ class FeatureSchema(StrictModule, NonTrainableState):
             raise ValueError("Feature names must be non-empty strings.")
         if len(set(names_)) != len(names_):
             raise ValueError("Feature names must be unique.")
-        kinds_ = ("continuous",) * len(names_) if kinds is None else tuple(kinds)
-        valid_kinds = {"continuous", "ordinal", "categorical", "boolean"}
-        if len(kinds_) != len(names_) or any(kind not in valid_kinds for kind in kinds_):
+        kinds_: tuple[FeatureKind, ...] = (
+            ("continuous",) * len(names_) if kinds is None else tuple(kinds)
+        )
+        if len(kinds_) != len(names_):
             raise ValueError(
                 "Feature kinds must align with names and use supported values."
             )
+        kinds_ = tuple(parse(kind, FeatureKind, "kinds") for kind in kinds_)
         dimensions_ = _dimensions(dimensions, len(names_), "Feature")
         ports_ = None if ports is None else _port_values(ports)
         if ports_ is not None:
@@ -206,17 +209,7 @@ class TargetSchema(StrictModule, NonTrainableState):
         dimensions: Iterable[DimensionSignature] | None = None,
         port: ValuePort | None = None,
     ) -> None:
-        valid = {
-            "continuous",
-            "binary",
-            "multiclass",
-            "multilabel",
-            "ordinal",
-            "count",
-            "ranking",
-        }
-        if kind not in valid:
-            raise ValueError(f"Unsupported target kind {kind!r}.")
+        kind = parse(kind, TargetKind, "kind")
         names_ = tuple(str(name) for name in names)
         if any(not name for name in names_) or len(set(names_)) != len(names_):
             raise ValueError("Target names must be non-empty and unique.")

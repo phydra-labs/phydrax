@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import parse
 from .._policies import FailurePolicy
 from ._problems import EigenproblemLike
 from ._self_adjoint_spectrum import (
@@ -333,8 +334,9 @@ class SelfAdjointSpectralOperatorPolicy(StrictModule):
             raise ValueError(
                 "Spectral operator tolerances must be finite and non-negative."
             )
-        if differentiation not in ("none", "frechet"):
-            raise ValueError("differentiation must be 'none' or 'frechet'.")
+        differentiation = parse(
+            differentiation, SpectralFunctionDifferentiation, "differentiation"
+        )
         failure_ = FailurePolicy() if failure is None else failure
         if not isinstance(failure_, FailurePolicy):
             raise TypeError("failure must be a FailurePolicy or None.")

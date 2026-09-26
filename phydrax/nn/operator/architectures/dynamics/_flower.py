@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod, sqrt
-from typing import Literal, TypedDict
+from typing import Literal, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax
@@ -35,11 +35,11 @@ from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatc
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
 from ....._dtype_names import inexact_result_type
-from .....typing import PRNGKey
+from .....typing import parse, PRNGKey
 
 
-FlowerTransitionMode = Literal["learned", "resolution_consistent"]
-FlowerQueryMode = Literal["coincident", "interpolate"]
+FlowerTransitionMode: TypeAlias = Literal["learned", "resolution_consistent"]
+FlowerQueryMode: TypeAlias = Literal["coincident", "interpolate"]
 
 
 class _WarpKwargs(TypedDict):
@@ -647,16 +647,13 @@ class Flower(AbstractOperatorModel):
             raise ValueError("width and levels must be positive.")
         if self.num_heads <= 0 or self.groups <= 0:
             raise ValueError("num_heads and groups must be positive.")
-        if self.transition_mode not in ("learned", "resolution_consistent"):
-            raise ValueError(
-                "transition_mode must be 'learned' or 'resolution_consistent'."
-            )
-        if self.query_mode not in ("coincident", "interpolate"):
-            raise ValueError("query_mode must be 'coincident' or 'interpolate'.")
-        if self.source_mask_mode not in ("reject", "renormalize", "strict"):
-            raise ValueError(
-                "source_mask_mode must be 'reject', 'renormalize', or 'strict'."
-            )
+        self.transition_mode = parse(
+            self.transition_mode, FlowerTransitionMode, "transition_mode"
+        )
+        self.query_mode = parse(self.query_mode, FlowerQueryMode, "query_mode")
+        self.source_mask_mode = parse(
+            self.source_mask_mode, WarpMaskMode, "source_mask_mode"
+        )
         if (
             self.levels > 1
             and self.source_mask_mode != "reject"

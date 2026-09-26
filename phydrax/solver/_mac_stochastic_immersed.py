@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -27,9 +27,10 @@ from ..linalg import (
     MatrixFunctionResult,
     OperatorProperties,
 )
+from ..typing import parse
 
 
-StochasticDifferentiationPolicy = Literal["pathwise", "weak"]
+StochasticDifferentiationPolicy: TypeAlias = Literal["pathwise", "weak"]
 MobilityProvider = Callable[[Array], AbstractLinearOperator]
 
 
@@ -190,8 +191,9 @@ class MACFluctuatingHydrodynamicsPlan(StrictModule, NonTrainableState):
             or tolerance_ <= 0.0
         ):
             raise ValueError("Thermal parameters must be finite and admissible.")
-        if differentiation not in ("pathwise", "weak"):
-            raise ValueError("Unknown stochastic differentiation policy.")
+        differentiation = parse(
+            differentiation, StochasticDifferentiationPolicy, "differentiation"
+        )
         self.noise_factor = noise_factor
         self.dissipation = dissipation
         self.matrix_function_policy = (
@@ -433,8 +435,9 @@ class FIBOverdampedPlan(StrictModule, NonTrainableState):
         epsilon = float(drift_epsilon)
         if temperature_ < 0.0 or boltzmann <= 0.0 or epsilon <= 0.0:
             raise ValueError("FIB thermal parameters must be admissible.")
-        if differentiation not in ("pathwise", "weak"):
-            raise ValueError("Unknown stochastic differentiation policy.")
+        differentiation = parse(
+            differentiation, StochasticDifferentiationPolicy, "differentiation"
+        )
         self.marker_space = marker_space
         self.mobility = mobility
         self.temperature = temperature_

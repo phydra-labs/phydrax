@@ -43,7 +43,7 @@ from ..linalg._runtime import (
     solve as solve_linear_system,
 )
 from ..linalg._spaces import ArraySpace
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._affine import (
     AbstractLinearCorrectionProvider,
     AffineBlockAssembly,
@@ -54,7 +54,7 @@ from ._affine import (
 )
 
 
-KernelCorrectionRepresentation = Literal[
+KernelCorrectionRepresentation: TypeAlias = Literal[
     "canonical", "finite-feature", "selected-section", "matrix-free"
 ]
 KernelRepresenterExactness = Literal[
@@ -399,13 +399,9 @@ class KernelCorrectionEvidence(StrictModule):
         metric_id: str,
         realization_id: str | None,
     ) -> None:
-        if representation not in (
-            "canonical",
-            "finite-feature",
-            "selected-section",
-            "matrix-free",
-        ):
-            raise ValueError("Unknown kernel correction representation.")
+        representation = parse(
+            representation, KernelCorrectionRepresentation, "representation"
+        )
         version = int(numeric_version)
         rank_ = int(rank)
         rows = int(row_count)

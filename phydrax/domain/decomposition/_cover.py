@@ -5,20 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from .._components import DomainComponent
 from .._domain import Domain
 from .._function import DomainFunction
 
 
 CoordinateMap = tuple[tuple[str, DomainFunction], ...]
-PairingTopology = Literal[
+PairingTopology: TypeAlias = Literal[
     "shared-interface",
     "overlap-volume",
     "directed-transmission",
@@ -177,13 +178,7 @@ class PairedSupport(StrictModule, NonTrainableState):
         codimension_ = int(codimension)
         if codimension_ < 0:
             raise ValueError("codimension must be non-negative.")
-        if topology not in (
-            "shared-interface",
-            "overlap-volume",
-            "directed-transmission",
-            "periodic-interface",
-        ):
-            raise ValueError("Unknown paired-support topology.")
+        topology = parse(topology, PairingTopology, "topology")
         if topology == "overlap-volume" and codimension_ != 0:
             raise ValueError("Overlap-volume pairings require codimension=0.")
         if topology != "overlap-volume" and codimension_ == 0:

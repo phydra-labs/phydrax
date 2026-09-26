@@ -20,6 +20,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._transform_line import PreparedTransformLineSolve, TransformLineSolveResult
 
 
@@ -286,8 +287,7 @@ class StructuredSolveTopologyPlan(StrictModule, NonTrainableState):
         line_size_ = int(line_size)
         count = int(partition_count)
         transverse_count = int(transverse_line_count)
-        if distribution not in ("transverse-batch", "split-line"):
-            raise ValueError("distribution must be 'transverse-batch' or 'split-line'.")
+        distribution = parse(distribution, StructuredDistribution, "distribution")
         algorithm_ = (
             "local"
             if algorithm is None and distribution == "transverse-batch"
@@ -295,8 +295,7 @@ class StructuredSolveTopologyPlan(StrictModule, NonTrainableState):
             if algorithm is None
             else algorithm
         )
-        if algorithm_ not in ("local", "partitioned-thomas", "spike", "pcr"):
-            raise ValueError("Unknown structured line algorithm.")
+        algorithm_ = parse(algorithm_, StructuredAlgorithm, "algorithm")
         if line_size_ < 2 or transverse_count < 1:
             raise ValueError(
                 "line_size must be at least two and transverse_line_count positive."

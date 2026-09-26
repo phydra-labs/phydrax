@@ -11,9 +11,10 @@ import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from .._fingerprint import canonical_fingerprint, canonical_json
+from ..typing import parse
 from ._chunk_repository import (
     ArtifactManifest,
     ArtifactRepository,
@@ -26,7 +27,7 @@ from ._repository import ObjectNotFoundError
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
-ConservationStatus = Literal["conserved", "violated", "incomplete"]
+ConservationStatus: TypeAlias = Literal["conserved", "violated", "incomplete"]
 FailureInjector = Callable[[str], None]
 
 
@@ -464,8 +465,9 @@ class EventGraphEpochManifest:
         matrix = _digest(matrix_element_revision_id, "matrix_element_revision_id")
         checkpoint = _digest(checkpoint_id, "checkpoint_id")
         owner = _identifier(commit_owner_id, "commit_owner_id")
-        if conservation_status not in ("conserved", "violated", "incomplete"):
-            raise ValueError("conservation_status is not recognized.")
+        conservation_status = parse(
+            conservation_status, ConservationStatus, "conservation_status"
+        )
         evidence = _identifiers(evidence_ids, "epoch evidence ID")
         content: dict[str, object] = {
             "kind": "dark-sector-event-graph-epoch",
@@ -535,9 +537,11 @@ class EventGraphEpochManifest:
     @classmethod
     def from_record(cls, record: Mapping[str, object], /) -> EventGraphEpochManifest:
         _require_kind(record, "dark-sector-event-graph-epoch")
-        status = _string(record, "conservation_status")
-        if status not in ("conserved", "violated", "incomplete"):
-            raise ValueError("Serialized conservation status is not recognized.")
+        status = parse(
+            _string(record, "conservation_status"),
+            ConservationStatus,
+            "conservation_status",
+        )
         result = cls(
             _string(record, "run_id"),
             _integer(record, "epoch_sequence"),

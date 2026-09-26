@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, cast, Literal, TYPE_CHECKING, TypeAlias
+from typing import Any, assert_never, cast, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import DTypeLike
 
 from ..._strict import StrictModule
+from ...typing import parse
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -1070,8 +1071,7 @@ class _AbstractCARTRecipe(AbstractRecipe):
             raise ValueError("max_leaf_nodes must be positive.")
         if ccp_alpha < 0.0:
             raise ValueError("ccp_alpha must be nonnegative.")
-        if split_search not in {"exact", "histogram", "random"}:
-            raise ValueError("Unsupported split search.")
+        split_search = parse(split_search, SplitSearch, "split_search")
         if num_classes is not None and num_classes < 2:
             raise ValueError("num_classes must be at least two.")
         self.max_depth = depth
@@ -1747,16 +1747,19 @@ def _fit_boosted(
                     row_key, recipe.subsample, (batch.sample_count,)
                 )
             if classical:
-                if objective_name == "squared_error":
-                    pseudo_target = y[case] - raw
-                elif objective_name == "logistic":
-                    pseudo_target = y[case] - jax.nn.sigmoid(raw)
-                elif objective_name == "softmax":
-                    pseudo_target = y[case] - jax.nn.softmax(raw, axis=-1)
-                else:
-                    raise ValueError(
-                        "Classical gradient boosting supports squared, logistic, and softmax objectives."
-                    )
+                match objective_name:
+                    case "squared_error":
+                        pseudo_target = y[case] - raw
+                    case "logistic":
+                        pseudo_target = y[case] - jax.nn.sigmoid(raw)
+                    case "softmax":
+                        pseudo_target = y[case] - jax.nn.softmax(raw, axis=-1)
+                    case "auto" | "poisson" | "pairwise_ranking":
+                        raise ValueError(
+                            "Classical gradient boosting supports squared, logistic, and softmax objectives."
+                        )
+                    case _:
+                        assert_never(objective_name)
                 tree = _build_tree(
                     x[case],
                     weight[case],
@@ -1904,15 +1907,7 @@ class _AbstractBoostingRecipe(_AbstractCARTRecipe):
         super().__init__(**kwargs)
         if n_estimators <= 0 or learning_rate <= 0.0:
             raise ValueError("Boosting requires positive estimators and learning rate.")
-        if objective not in {
-            "auto",
-            "squared_error",
-            "logistic",
-            "softmax",
-            "poisson",
-            "pairwise_ranking",
-        }:
-            raise ValueError("Unsupported boosting objective.")
+        objective = parse(objective, XGBObjective, "objective")
         if not (0.0 < subsample <= 1.0 and 0.0 < colsample <= 1.0):
             raise ValueError("Row and column subsampling fractions must lie in (0, 1].")
         if min(l2_regularization, l1_regularization, gamma, min_child_weight) < 0.0:

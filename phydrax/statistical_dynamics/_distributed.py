@@ -16,6 +16,7 @@ from jax.typing import ArrayLike, DTypeLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
 CovarianceStorage: TypeAlias = Literal["dense", "factor"]
@@ -185,8 +186,7 @@ class DistributedCovarianceLayout(StrictModule, NonTrainableState):
         dtype_ = np.dtype(dtype)
         if not np.issubdtype(dtype_, np.inexact):
             raise TypeError("Distributed covariance dtype must be inexact.")
-        if storage not in ("dense", "factor"):
-            raise ValueError("storage must be 'dense' or 'factor'.")
+        storage = parse(storage, CovarianceStorage, "storage")
         rank = None if factor_rank is None else int(factor_rank)
         if storage == "dense" and rank is not None:
             raise ValueError("factor_rank is only valid for factor storage.")

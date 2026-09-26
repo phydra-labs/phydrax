@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +16,7 @@ from jax import Array
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...backends._types import BackendUnavailableError
+from ...typing import parse
 
 
 RoboticsOperation: TypeAlias = Literal[
@@ -45,18 +46,7 @@ ObservationFreshness: TypeAlias = Literal[
     "state-current", "pre-step", "post-step-refreshed"
 ]
 
-ROBOTICS_OPERATIONS: tuple[RoboticsOperation, ...] = (
-    "forward-kinematics",
-    "smooth-dynamics",
-    "contact",
-    "step",
-    "sensors",
-    "model-batching",
-    "jit",
-    "vmap",
-    "jvp",
-    "vjp",
-)
+ROBOTICS_OPERATIONS: tuple[RoboticsOperation, ...] = get_args(RoboticsOperation)
 _DIFFERENTIABILITY_RANK = {"none": 0, "conditional": 1, "guaranteed": 2}
 
 
@@ -83,10 +73,7 @@ def _normalized_values(
 
 
 def _operation(value: str, /) -> RoboticsOperation:
-    operation = str(value)
-    if operation not in ROBOTICS_OPERATIONS:
-        raise ValueError(f"Unknown robotics backend operation {operation!r}.")
-    return operation
+    return parse(value, RoboticsOperation, "operation")
 
 
 class RoboticsOperationStatus(IntEnum):
@@ -468,17 +455,7 @@ class RoboticsProjectionMap(StrictModule, NonTrainableState):
         provenance: RoboticsProjectionProvenance,
         /,
     ) -> None:
-        if kind not in (
-            "qpos",
-            "qvel",
-            "control",
-            "observation",
-            "activation",
-            "length",
-            "velocity",
-            "raw-force",
-        ):
-            raise ValueError(f"Unknown robotics projection kind {kind!r}.")
+        kind = parse(kind, RoboticsProjectionKind, "kind")
         size_ = int(size)
         entries_ = tuple(entries)
         if size_ < 0:

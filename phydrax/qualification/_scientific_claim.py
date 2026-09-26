@@ -8,19 +8,22 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from numbers import Real
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._evidence import QualificationEvidence, QualificationMatrix
 from ._registry import SupportTuple
 
 
-MetricDirection = Literal["at_most", "at_least", "between"]
-MetricAggregation = Literal["pooled", "independent_unit_macro", "worst_stratum"]
+MetricDirection: TypeAlias = Literal["at_most", "at_least", "between"]
+MetricAggregation: TypeAlias = Literal[
+    "pooled", "independent_unit_macro", "worst_stratum"
+]
 _STAGE_IDS = frozenset(
     (
         "source-admission",
@@ -34,8 +37,6 @@ _STAGE_IDS = frozenset(
         "prospective-intervention",
     )
 )
-_DIRECTIONS = frozenset(("at_most", "at_least", "between"))
-_AGGREGATIONS = frozenset(("pooled", "independent_unit_macro", "worst_stratum"))
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -91,12 +92,8 @@ class ScientificMetricCriterion:
         direction = _identifier(self.direction, "metric direction")
         unit_id = _identifier(self.unit_id, "unit_id")
         aggregation = _identifier(self.aggregation, "metric aggregation")
-        if direction not in _DIRECTIONS:
-            raise ValueError("Metric direction must be at_most, at_least, or between.")
-        if aggregation not in _AGGREGATIONS:
-            raise ValueError(
-                "Metric aggregation must be pooled, independent_unit_macro, or worst_stratum."
-            )
+        direction = parse(direction, MetricDirection, "direction")
+        aggregation = parse(aggregation, MetricAggregation, "aggregation")
         lower = _bound(self.lower, "metric lower bound")
         upper = _bound(self.upper, "metric upper bound")
         if direction == "at_most" and (lower is not None or upper is None):

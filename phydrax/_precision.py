@@ -20,6 +20,7 @@ from ._dtype_names import (
 )
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
+from .typing import parse
 
 
 MicroscalingElementFormat: TypeAlias = Literal[
@@ -43,23 +44,6 @@ PrecisionRole: TypeAlias = Literal[
     "checkpoint",
     "output",
 ]
-
-_PRECISION_ROLES = frozenset(
-    (
-        "storage",
-        "coefficient",
-        "compute",
-        "factorization",
-        "preconditioner",
-        "basis",
-        "accumulation",
-        "residual",
-        "certification",
-        "communication",
-        "checkpoint",
-        "output",
-    )
-)
 
 _MX_ALIASES = {
     "mxfp8-e4m3": "float8_e4m3fn",
@@ -201,10 +185,7 @@ def _canonical_entries(
     /,
 ) -> tuple[tuple[str, PrecisionFormat | None], ...]:
     items = tuple(values.items()) if isinstance(values, Mapping) else tuple(values)
-    names = tuple(str(name) for name, _ in items)
-    if any(name not in _PRECISION_ROLES for name in names):
-        invalid = tuple(sorted(name for name in names if name not in _PRECISION_ROLES))
-        raise ValueError(f"Unknown precision roles {invalid!r}.")
+    names = tuple(parse(str(name), PrecisionRole, "precision role") for name, _ in items)
     if len(set(names)) != len(names):
         raise ValueError("Precision roles must be unique.")
     return tuple(

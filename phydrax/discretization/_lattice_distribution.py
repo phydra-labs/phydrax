@@ -22,6 +22,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._distributed_field import DistributedHaloPlan
 
 
@@ -360,9 +361,9 @@ class LatticeHaloPlan(StrictModule, NonTrainableState):
         return len(self.distributed.permutations)
 
     def _parity(self, parity: LatticeParity | None, /) -> int:
-        if parity is not None and parity not in (0, 1):
-            raise ValueError("parity must be zero, one, or None.")
-        return -1 if parity is None else int(parity)
+        if parity is None:
+            return -1
+        return parse(parity, LatticeParity, "parity")
 
     def pack(
         self,

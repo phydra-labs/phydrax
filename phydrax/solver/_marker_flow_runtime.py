@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,10 +20,13 @@ from jaxtyping import PyTree
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-MarkerFlowArtifactKind = Literal["checkpoint", "trajectory", "output", "benchmark"]
-MarkerFlowStepLimiter = Literal[
+MarkerFlowArtifactKind: TypeAlias = Literal[
+    "checkpoint", "trajectory", "output", "benchmark"
+]
+MarkerFlowStepLimiter: TypeAlias = Literal[
     "advection",
     "diffusion",
     "marker",
@@ -370,16 +373,7 @@ class MarkerFlowStepRestriction(StrictModule):
 
     @property
     def limiter(self) -> MarkerFlowStepLimiter:
-        names: tuple[MarkerFlowStepLimiter, ...] = (
-            "advection",
-            "diffusion",
-            "marker",
-            "contact",
-            "lubrication",
-            "geometry",
-            "stochastic",
-            "maximum",
-        )
+        names: tuple[MarkerFlowStepLimiter, ...] = get_args(MarkerFlowStepLimiter)
         return names[int(self.limiter_index)]
 
 
@@ -596,8 +590,7 @@ def marker_flow_artifact_reference(
     /,
 ) -> MarkerFlowArtifactReference:
     target = Path(path)
-    if kind not in ("checkpoint", "trajectory", "output", "benchmark"):
-        raise ValueError("Unknown marker-flow artifact kind.")
+    kind = parse(kind, MarkerFlowArtifactKind, "kind")
     identifier = str(identity)
     if not identifier or not target.is_file():
         raise ValueError("Marker-flow artifact identity/path is invalid.")

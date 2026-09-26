@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,9 +14,10 @@ from jax.typing import ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import parse
 
 
-SmoothingStabilizationKind = Literal[
+SmoothingStabilizationKind: TypeAlias = Literal[
     "none",
     "compatible-blend",
     "projected-gradient",
@@ -41,14 +42,7 @@ class SmoothingStabilizationPolicy(StrictModule, NonTrainableState):
         preserves_rigid_modes: bool = True,
         preserves_affine_fields: bool = True,
     ) -> None:
-        if kind not in (
-            "none",
-            "compatible-blend",
-            "projected-gradient",
-            "rank-complement",
-            "selective-volumetric",
-        ):
-            raise ValueError("Unknown smoothing stabilization kind.")
+        kind = parse(kind, SmoothingStabilizationKind, "kind")
         parameter_ = float(parameter)
         if parameter_ < 0.0 or (kind != "none" and parameter_ == 0.0):
             raise ValueError("Active stabilization requires a positive parameter.")

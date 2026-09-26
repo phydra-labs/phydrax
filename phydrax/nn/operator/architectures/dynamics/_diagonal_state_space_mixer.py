@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -31,11 +31,11 @@ from phydrax.nn.layers._physical_sequence import (
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
-from .....typing import PRNGKey
+from .....typing import parse, PRNGKey
 
 
-InputIntegration = Literal["zoh", "linear"]
-MixerExecution = Literal["recurrent", "associative"]
+InputIntegration: TypeAlias = Literal["zoh", "linear"]
+MixerExecution: TypeAlias = Literal["recurrent", "associative"]
 
 
 def _diagonal_state_space_contract_configuration(
@@ -163,10 +163,10 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
             raise ValueError("Input and output channel counts must be positive.")
         if self.state_size <= 0:
             raise ValueError("state_size must be positive.")
-        if input_integration not in ("zoh", "linear"):
-            raise ValueError("input_integration must be 'zoh' or 'linear'.")
-        if execution not in ("recurrent", "associative"):
-            raise ValueError("execution must be 'recurrent' or 'associative'.")
+        self.input_integration = parse(
+            input_integration, InputIntegration, "input_integration"
+        )
+        self.execution = parse(execution, MixerExecution, "execution")
         if not self.time_axis:
             raise ValueError("time_axis must be non-empty.")
         if self.max_direct_length <= 0:

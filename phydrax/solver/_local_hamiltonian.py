@@ -36,10 +36,13 @@ from ..operators.quantum import (
     HilbertRegisterLayout,
     unitarity_residual,
 )
+from ..typing import parse
 
 
-ProductFormulaOrder = Literal[1, 2]
-LocalHamiltonianDifferentiationMode = Literal["autodiff", "reversible-product-formula"]
+ProductFormulaOrder: TypeAlias = Literal[1, 2]
+LocalHamiltonianDifferentiationMode: TypeAlias = Literal[
+    "autodiff", "reversible-product-formula"
+]
 # (state, state cotangent, generator gradients, coefficient gradients, time
 #  gradients, hbar gradient, maximum reconstruction residual)
 _ReverseCarry: TypeAlias = tuple[
@@ -352,10 +355,10 @@ class LocalHamiltonianEvolutionPolicy(StrictModule):
         unitarity_tolerance: float = 1e-8,
         save_indices: Sequence[int] = (),
     ) -> None:
-        if order not in (1, 2):
-            raise ValueError("order must be one or two.")
-        if differentiation not in ("autodiff", "reversible-product-formula"):
-            raise ValueError("Unknown local-Hamiltonian differentiation mode.")
+        order = parse(order, ProductFormulaOrder, "order")
+        differentiation = parse(
+            differentiation, LocalHamiltonianDifferentiationMode, "differentiation"
+        )
         for name, value in (
             ("maximum_intervals", maximum_intervals),
             ("maximum_state_elements", maximum_state_elements),

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,10 +15,11 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._base import AbstractPositiveDefiniteKernel
 
 
-CompactSpace = Literal["so", "su", "stiefel", "grassmann"]
+CompactSpace: TypeAlias = Literal["so", "su", "stiefel", "grassmann"]
 
 
 class PreparedCompactHomogeneousSpectrum(StrictModule):
@@ -59,9 +60,8 @@ class PreparedCompactHomogeneousSpectrum(StrictModule):
             raise ValueError(
                 "Compact spectrum labels/eigenvalues/multiplicities are incompatible."
             )
-        if space not in ("so", "su", "stiefel", "grassmann") or not callable(
-            zonal_evaluator
-        ):
+        space = parse(space, CompactSpace, "space")
+        if not callable(zonal_evaluator):
             raise ValueError("Compact spectrum space/evaluator are unsupported.")
         if bool(jnp.any(eigenvalues < 0.0)) or bool(jnp.any(multiplicities_ <= 0.0)):
             raise ValueError(
@@ -315,13 +315,9 @@ class GeodesicRadialKernel(StrictModule):
         positive_definite_theorem: bool = False,
         kernel_id: str = "geodesic-radial",
     ) -> None:
-        if not callable(radial_function) or space not in (
-            "so",
-            "su",
-            "stiefel",
-            "grassmann",
-        ):
+        if not callable(radial_function):
             raise ValueError("Geodesic radial function/space are invalid.")
+        space = parse(space, CompactSpace, "space")
         if min(float(membership_tolerance), float(branch_tolerance)) <= 0.0:
             raise ValueError("Geodesic tolerances must be positive.")
         if space == "stiefel" and stiefel_log is None:

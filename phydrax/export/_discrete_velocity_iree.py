@@ -27,6 +27,7 @@ from ..discretization.discrete_velocity._spatial import (
     PreparedSmoothCompressibleD2V17SpatialDynamics,
     SmoothCompressibleD2VStepStatus,
 )
+from ..typing import parse
 from ._iree import IREEExportPolicy, IREEExportResult, save_iree
 
 
@@ -386,8 +387,7 @@ def prepare_discrete_velocity_iree_contract(
     """Prepare a fixed forward-only ABI without invoking an IREE compiler."""
 
     _validate_runtime_binding(dynamics, binding)
-    if mode not in ("frozen-equilibrium", "one-step", "fixed-horizon"):
-        raise ValueError("Unknown D2V IREE export mode.")
+    mode = parse(mode, DiscreteVelocityIREEExportMode, "mode")
     host = str(host_id).strip()
     if not host:
         raise ValueError("D2V IREE export requires a non-empty host_id.")

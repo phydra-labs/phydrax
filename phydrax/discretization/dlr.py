@@ -35,6 +35,7 @@ from ..linalg import (
     PreparedFactorization,
     RankPolicy,
 )
+from ..typing import parse
 
 
 ThermalStatistics: TypeAlias = Literal["fermionic", "bosonic"]
@@ -211,12 +212,6 @@ class DLRTransformResult(StrictModule):
     evidence: DLRTransformEvidence
 
 
-def _statistics(value: str, /) -> ThermalStatistics:
-    if value not in ("fermionic", "bosonic"):
-        raise ValueError("statistics must be 'fermionic' or 'bosonic'.")
-    return value
-
-
 def _positive_finite(value: float, name: str, /) -> float:
     result = float(value)
     if not isfinite(result) or result <= 0.0:
@@ -241,7 +236,7 @@ def thermal_tau_kernel(
     """
 
     beta_ = _positive_finite(beta, "beta")
-    statistics_ = _statistics(statistics)
+    statistics_ = parse(statistics, ThermalStatistics, "statistics")
     tau_ = jnp.asarray(tau)
     omega = jnp.asarray(frequencies)
     if not jnp.issubdtype(tau_.dtype, jnp.inexact):
@@ -276,7 +271,7 @@ def matsubara_frequencies(
     """Map integer labels to physical Matsubara angular frequencies."""
 
     beta_ = _positive_finite(beta, "beta")
-    statistics_ = _statistics(statistics)
+    statistics_ = parse(statistics, ThermalStatistics, "statistics")
     labels = jnp.asarray(indices)
     shift = 1 if statistics_ == "fermionic" else 0
     return (2 * labels + shift) * jnp.pi / beta_
@@ -292,7 +287,7 @@ def thermal_matsubara_kernel(
 ) -> Array:
     """Evaluate the Matsubara transform of :func:`thermal_tau_kernel`."""
 
-    statistics_ = _statistics(statistics)
+    statistics_ = parse(statistics, ThermalStatistics, "statistics")
     nu = matsubara_frequencies(indices, beta=beta, statistics=statistics_)
     omega = jnp.asarray(frequencies)
     dtype = jnp.result_type(nu, omega, 1j)
@@ -326,7 +321,7 @@ def plan_dlr_basis(
 
     beta_ = _positive_finite(beta, "beta")
     cutoff_ = _positive_finite(cutoff, "cutoff")
-    statistics_ = _statistics(statistics)
+    statistics_ = parse(statistics, ThermalStatistics, "statistics")
     if policy is not None and any(
         value is not None
         for value in (tolerance, maximum_rank, candidate_count, maximum_bytes)

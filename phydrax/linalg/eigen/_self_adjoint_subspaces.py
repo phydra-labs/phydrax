@@ -15,6 +15,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ...typing import parse
 from .._materialization import materialize
 from .._operators import AbstractLinearOperator
 from .._policies import FailurePolicy
@@ -88,8 +89,9 @@ class SelfAdjointSpectralSubspacePolicy(StrictModule):
             raise ValueError(
                 "Subspace tolerances and gaps must be finite and non-negative."
             )
-        if differentiation not in ("none", "projector"):
-            raise ValueError("differentiation must be 'none' or 'projector'.")
+        differentiation = parse(
+            differentiation, SelfAdjointSubspaceDifferentiation, "differentiation"
+        )
         failure_ = FailurePolicy() if failure is None else failure
         if not isinstance(failure_, FailurePolicy):
             raise TypeError("failure must be a FailurePolicy or None.")

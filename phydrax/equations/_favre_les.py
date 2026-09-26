@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,6 +18,7 @@ from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._les_closures import (
     AlgebraicLESInputs,
     LESFilterScale,
@@ -26,7 +27,9 @@ from ._les_closures import (
 )
 
 
-_FavreIsotropicTracePolicy = Literal["neglected", "provided-sgs-kinetic-energy"]
+_FavreIsotropicTracePolicy: TypeAlias = Literal[
+    "neglected", "provided-sgs-kinetic-energy"
+]
 
 
 class FavreLESFieldContract(StrictModule, NonTrainableState):
@@ -387,11 +390,9 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
             raise ValueError(
                 "Favre SGS kinetic-energy turbulent Schmidt number must be finite and positive."
             )
-        if isotropic_trace_policy not in (
-            "neglected",
-            "provided-sgs-kinetic-energy",
-        ):
-            raise ValueError("Unsupported Favre isotropic SGS trace policy.")
+        isotropic_trace_policy = parse(
+            isotropic_trace_policy, _FavreIsotropicTracePolicy, "isotropic_trace_policy"
+        )
         if not isinstance(species_turbulent_schmidt_numbers, tuple):
             raise TypeError(
                 "species_turbulent_schmidt_numbers must be a tuple of named values."

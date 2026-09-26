@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellComplexTopology
 from ..sparse import EdgeRelation
+from ..typing import parse
 from ._complex import CellSubcomplex, CellVertexSupport
 
 
@@ -51,8 +52,7 @@ class CellFiltration(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(complex, CellSubcomplex):
             raise TypeError("Cell filtrations require a CellSubcomplex.")
-        if direction not in ("sublevel", "superlevel"):
-            raise ValueError("Filtration direction must be 'sublevel' or 'superlevel'.")
+        direction = parse(direction, FiltrationDirection, "direction")
         source = str(source_id)
         if not source:
             raise ValueError("Filtration source_id must be non-empty.")
@@ -196,8 +196,7 @@ class PreparedVertexFiltration(StrictModule, NonTrainableState):
             raise TypeError("support must be a CellVertexSupport.")
         if support.topology_id != complex.topology.topology_id:
             raise ValueError("Vertex support belongs to a different topology.")
-        if direction not in ("sublevel", "superlevel"):
-            raise ValueError("Unknown vertex-filtration direction.")
+        direction = parse(direction, FiltrationDirection, "direction")
         self.complex = complex
         self.support = support
         self.direction = direction

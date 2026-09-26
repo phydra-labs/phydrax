@@ -18,6 +18,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import inverse_small_linear, SmallLinearSolvePlan
+from ...typing import parse
 from .._periodic_cell import PeriodicCell
 from ._pairwise import particle_pair_geometry
 
@@ -172,8 +173,7 @@ class DEMBulkStressPlan(StrictModule, NonTrainableState):
             raise ValueError("DEMBulkStressPlan origin must be a 2-D or 3-D vector.")
         if np.any(~np.isfinite(origin_)):
             raise ValueError("DEMBulkStressPlan origin must be finite.")
-        if frame not in ("cell_comoving", "laboratory"):
-            raise ValueError("frame must be 'cell_comoving' or 'laboratory'.")
+        frame = parse(frame, DEMBulkStressFrame, "frame")
         if not any(
             (
                 include_contact,

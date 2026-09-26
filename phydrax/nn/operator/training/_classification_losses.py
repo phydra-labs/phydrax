@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,7 +17,7 @@ from ...._classification import (
     classification_probabilities,
     pointwise_classification_loss,
 )
-from ....typing import PRNGKey
+from ....typing import parse, PRNGKey
 from ..data import (
     FunctionSamples,
     OperatorBatch,
@@ -33,12 +33,12 @@ from ._losses import (
 )
 
 
-OperatorSupportReduction = Literal["mean", "integral"]
-OperatorCaseReduction = Literal["mean", "sum"]
-OperatorZeroMeasure = Literal["error", "zero"]
-OperatorOverlapKind = Literal["dice", "jaccard", "tversky"]
-OperatorOverlapClassReduction = Literal["micro", "macro", "weighted"]
-OperatorEmptyOverlap = Literal["error", "zero", "one"]
+OperatorSupportReduction: TypeAlias = Literal["mean", "integral"]
+OperatorCaseReduction: TypeAlias = Literal["mean", "sum"]
+OperatorZeroMeasure: TypeAlias = Literal["error", "zero"]
+OperatorOverlapKind: TypeAlias = Literal["dice", "jaccard", "tversky"]
+OperatorOverlapClassReduction: TypeAlias = Literal["micro", "macro", "weighted"]
+OperatorEmptyOverlap: TypeAlias = Literal["error", "zero", "one"]
 
 
 def _validate_common(
@@ -64,12 +64,9 @@ def _validate_common(
         raise ValueError("prediction_field must be non-empty or None.")
     if target_field is not None and not target_field:
         raise ValueError("target_field must be non-empty or None.")
-    if support_reduction not in ("mean", "integral"):
-        raise ValueError("support_reduction must be 'mean' or 'integral'.")
-    if case_reduction not in ("mean", "sum"):
-        raise ValueError("case_reduction must be 'mean' or 'sum'.")
-    if zero_measure not in ("error", "zero"):
-        raise ValueError("zero_measure must be 'error' or 'zero'.")
+    parse(support_reduction, OperatorSupportReduction, "support_reduction")
+    parse(case_reduction, OperatorCaseReduction, "case_reduction")
+    parse(zero_measure, OperatorZeroMeasure, "zero_measure")
 
 
 def _resolve_fields(
@@ -544,12 +541,17 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
             case_reduction=self.case_reduction,
             zero_measure=self.zero_measure,
         )
-        if self.overlap not in ("dice", "jaccard", "tversky"):
-            raise ValueError("overlap must be 'dice', 'jaccard', or 'tversky'.")
-        if self.class_reduction not in ("micro", "macro", "weighted"):
-            raise ValueError("class_reduction must be 'micro', 'macro', or 'weighted'.")
-        if self.empty not in ("error", "zero", "one"):
-            raise ValueError("empty must be 'error', 'zero', or 'one'.")
+        object.__setattr__(
+            self, "overlap", parse(self.overlap, OperatorOverlapKind, "overlap")
+        )
+        object.__setattr__(
+            self,
+            "class_reduction",
+            parse(self.class_reduction, OperatorOverlapClassReduction, "class_reduction"),
+        )
+        object.__setattr__(
+            self, "empty", parse(self.empty, OperatorEmptyOverlap, "empty")
+        )
         if not jnp.isfinite(self.alpha) or not jnp.isfinite(self.beta):
             raise ValueError("Tversky alpha and beta must be finite.")
         if self.alpha < 0.0 or self.beta < 0.0:

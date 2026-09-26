@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from typing import Literal
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,15 +21,18 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import PeriodicCell
+from ...typing import parse
 from ...units import derived_unit, ENERGY, LENGTH, UnitDefinition
 
 
-StationaryEnergyKind = Literal["total-energy", "free-energy"]
-StationaryDerivativeRole = Literal[
+StationaryEnergyKind: TypeAlias = Literal["total-energy", "free-energy"]
+StationaryDerivativeRole: TypeAlias = Literal[
     "hellmann-feynman", "pulay", "entropy", "nonlocal", "ionic"
 ]
 PeriodicStationaryEnergyFunction = Callable[[Array, Array], Array]
-_REQUIRED_ROLES = frozenset(("hellmann-feynman", "pulay", "entropy", "nonlocal", "ionic"))
+_REQUIRED_ROLES: frozenset[StationaryDerivativeRole] = frozenset(
+    get_args(StationaryDerivativeRole)
+)
 
 
 class PeriodicStationaryEnergyComponent(StrictModule, NonTrainableState):
@@ -51,7 +54,12 @@ class PeriodicStationaryEnergyComponent(StrictModule, NonTrainableState):
     ) -> None:
         name_ = str(name).strip()
         definition = str(definition_id).strip()
-        if not name_ or role not in _REQUIRED_ROLES or not callable(energy_function):
+        if not name_:
+            raise ValueError(
+                "Stationary energy component name, role, or callable is invalid."
+            )
+        role = parse(role, StationaryDerivativeRole, "role")
+        if not callable(energy_function):
             raise ValueError(
                 "Stationary energy component name, role, or callable is invalid."
             )
@@ -286,8 +294,7 @@ class PeriodicStationaryDerivativeResult(StrictModule, NonTrainableState):
             raise TypeError("ledger must be PeriodicDerivativeLedger.")
         if not isinstance(evidence, PeriodicStationaryDerivativeEvidence):
             raise TypeError("evidence must be PeriodicStationaryDerivativeEvidence.")
-        if energy_kind not in ("total-energy", "free-energy"):
-            raise ValueError("energy_kind must be total-energy or free-energy.")
+        energy_kind = parse(energy_kind, StationaryEnergyKind, "energy_kind")
         energy_ = jnp.asarray(energy).reshape(())
         force = jnp.asarray(forces, dtype=energy_.dtype)
         stress_ = jnp.asarray(stress, dtype=energy_.dtype)
@@ -386,10 +393,7 @@ class PeriodicStationaryDerivativePlan(StrictModule, NonTrainableState):
             )
         if energy_unit.reference_system_id != length_unit.reference_system_id:
             raise ValueError("Stationary derivative units must share a reference system.")
-        if energy_kind not in ("total-energy", "free-energy"):
-            raise ValueError(
-                "energy_kind must explicitly select total-energy or free-energy."
-            )
+        energy_kind = parse(energy_kind, StationaryEnergyKind, "energy_kind")
         stationarity = float(stationarity_tolerance)
         step = float(directional_step)
         directional = float(directional_tolerance)

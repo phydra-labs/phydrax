@@ -30,6 +30,7 @@ from ..linalg import (
     OperatorProperties,
     prepare,
 )
+from ..typing import parse
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -74,14 +75,11 @@ class CochainFieldSpec(StrictModule, NonTrainableState):
         resolved_degree = int(degree)
         if resolved_degree < 0:
             raise ValueError("Cochain degree must be non-negative.")
-        if complex_side not in ("primal", "dual"):
-            raise ValueError("complex_side must be 'primal' or 'dual'.")
-        if cell_orientation not in ("invariant", "signed"):
-            raise ValueError("cell_orientation must be 'invariant' or 'signed'.")
-        if sampling not in ("point_value", "cell_average", "cell_integral"):
-            raise ValueError(
-                "sampling must be 'point_value', 'cell_average', or 'cell_integral'."
-            )
+        complex_side = parse(complex_side, CochainSide, "complex_side")
+        cell_orientation = parse(
+            cell_orientation, CochainCellOrientation, "cell_orientation"
+        )
+        sampling = parse(sampling, CochainSampling, "sampling")
         self.degree = resolved_degree
         self.complex_side = complex_side
         self.cell_orientation = cell_orientation
@@ -111,8 +109,7 @@ class CochainBoundaryPolicy(StrictModule, NonTrainableState):
     kind: CochainBoundaryKind = eqx.field(static=True)
 
     def __init__(self, kind: CochainBoundaryKind = "absolute") -> None:
-        if kind not in ("absolute", "relative"):
-            raise ValueError("Cochain boundary policy must be 'absolute' or 'relative'.")
+        kind = parse(kind, CochainBoundaryKind, "kind")
         self.kind = kind
 
     @property

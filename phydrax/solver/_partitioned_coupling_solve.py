@@ -17,6 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._fixed_step import FixedStepReplayPolicy
 from ._partitioned_coupling_graph import (
     CouplingGraph,
@@ -199,8 +200,7 @@ class CouplingRolloutPlan(StrictModule, NonTrainableState):
         checkpoint_stride: int = 1,
         replay: FixedStepReplayPolicy | None = None,
     ) -> None:
-        if retention not in ("final", "checkpoints", "trajectory"):
-            raise ValueError("Unknown coupling retention policy.")
+        retention = parse(retention, CouplingRetentionPolicy, "retention")
         stride = int(checkpoint_stride)
         if stride <= 0:
             raise ValueError("checkpoint_stride must be positive.")

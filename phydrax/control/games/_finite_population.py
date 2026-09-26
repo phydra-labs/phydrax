@@ -21,6 +21,7 @@ from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...stochastic import EmpiricalMeanField
+from ...typing import parse
 from ._mean_field_fixed_point import (
     MEAN_FIELD_GAME_FIXED_POINT_CANDIDATE,
     MeanFieldGameFixedPointResult,
@@ -521,11 +522,7 @@ def _optional_bound(value: ArrayLike | None, dtype: Any, /) -> Array:
 
 
 def _coverage_method(value: str, /) -> CoverageMethod:
-    if value in ("exact", "asymptotic-normal", "hoeffding", "none"):
-        return value
-    raise ValueError(
-        "coverage_method must be 'exact', 'asymptotic-normal', 'hoeffding', or 'none'."
-    )
+    return parse(value, CoverageMethod, "coverage_method")
 
 
 def _integer_labels(value: ArrayLike, count: int, /) -> Array:

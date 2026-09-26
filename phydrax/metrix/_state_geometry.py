@@ -19,6 +19,7 @@ from jaxtyping import PyTree
 import phydrax.linalg as la
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -1471,8 +1472,7 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         geometry_id: str | None = None,
     ) -> None:
         n = _dimension(dimension)
-        if retraction not in ("exponential", "cayley"):
-            raise ValueError("SO(n) retraction must be 'exponential' or 'cayley'.")
+        retraction = parse(retraction, MatrixRetraction, "retraction")
         if tolerance <= 0.0:
             raise ValueError("tolerance must be positive.")
         self.dimension = n

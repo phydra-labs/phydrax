@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,7 +18,7 @@ import phydrax.ein as ein
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._keys import EvalKey
 from ._recurrent import (
     AffineRecurrence,
@@ -28,8 +28,8 @@ from ._recurrent import (
 )
 
 
-WeightSpaceInputMode = Literal["value", "difference"]
-WeightSpaceExecution = Literal["serial", "associative"]
+WeightSpaceInputMode: TypeAlias = Literal["value", "difference"]
+WeightSpaceExecution: TypeAlias = Literal["serial", "associative"]
 
 
 class WeightSpaceState(StrictModule, NonTrainableState):
@@ -65,11 +65,9 @@ class WeightSpaceRecurrence(StrictModule, ParameterOwner):
         self.input_size = int(input_size)
         self.parameter_size = int(parameter_size)
         self.maximum_retention = float(maximum_retention)
-        self.input_mode = input_mode
         if self.input_size <= 0 or self.parameter_size <= 0:
             raise ValueError("input_size and parameter_size must be positive.")
-        if input_mode not in ("value", "difference"):
-            raise ValueError("input_mode must be 'value' or 'difference'.")
+        self.input_mode = parse(input_mode, WeightSpaceInputMode, "input_mode")
         if (
             not math.isfinite(self.maximum_retention)
             or not 0.0 < self.maximum_retention < 1.0

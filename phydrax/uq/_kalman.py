@@ -30,7 +30,7 @@ from ..stochastic._state_space import (
     state_space_key,
     StateSpaceProblem,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._covariance import _factor_and_solve_covariance_system
 
 
@@ -509,8 +509,7 @@ def _resolve_execution_method(
     method: KalmanExecutionMethod,
     /,
 ) -> str:
-    if method not in ("sequential", "parallel", "auto"):
-        raise ValueError("method must be 'sequential', 'parallel', or 'auto'.")
+    method = parse(method, KalmanExecutionMethod, "method")
     if method != "auto":
         return method
     state_size, observation_size, _, _ = _sizes(problem)
@@ -847,11 +846,9 @@ def kalman_filter(
     regularization = float(covariance_regularization)
     if not np.isfinite(regularization) or regularization < 0.0:
         raise ValueError("covariance_regularization must be finite and nonnegative.")
-    if covariance_form not in ("covariance", "square_root"):
-        raise ValueError("covariance_form must be 'covariance' or 'square_root'.")
+    covariance_form = parse(covariance_form, KalmanCovarianceForm, "covariance_form")
     if covariance_form == "square_root":
-        if method not in ("sequential", "parallel", "auto"):
-            raise ValueError("method must be 'sequential', 'parallel', or 'auto'.")
+        method = parse(method, KalmanExecutionMethod, "method")
         if method == "parallel":
             raise ValueError(
                 "Square-root Kalman filtering does not support method='parallel'."
@@ -1034,10 +1031,8 @@ def rts_smoother(
     """Apply the RTS recursion with explicit execution and covariance provenance."""
     if not isinstance(result, KalmanFilterResult):
         raise TypeError("result must be a KalmanFilterResult.")
-    if method not in ("sequential", "parallel", "auto"):
-        raise ValueError("method must be 'sequential', 'parallel', or 'auto'.")
-    if covariance_form not in ("covariance", "square_root"):
-        raise ValueError("covariance_form must be 'covariance' or 'square_root'.")
+    method = parse(method, KalmanExecutionMethod, "method")
+    covariance_form = parse(covariance_form, KalmanCovarianceForm, "covariance_form")
     if covariance_form == "square_root":
         if method == "parallel":
             raise ValueError(
@@ -1291,8 +1286,7 @@ def sample_kalman_smoother_paths(
     method: KalmanExecutionMethod = "auto",
 ) -> Array:
     """Sample coherent keyed paths with explicit temporal execution."""
-    if method not in ("sequential", "parallel", "auto"):
-        raise ValueError("method must be 'sequential', 'parallel', or 'auto'.")
+    method = parse(method, KalmanExecutionMethod, "method")
     resolved = smoother.execution_method if method == "auto" else method
     if resolved == "sequential":
         return _sequential_sample_kalman_smoother_paths(

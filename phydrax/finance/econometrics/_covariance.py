@@ -27,6 +27,7 @@ from ...ml.covariance._random_matrix import (
     MarchenkoPasturDiagnostics,
     RandomMatrixCleaningResult,
 )
+from ...typing import parse
 from ...uq._covariance import DenseCovariance
 from ..core import FinanceEvidenceBinding, PhysicalLaw
 from ._returns import ReturnResult
@@ -48,8 +49,7 @@ class CovarianceDefinition(StrictModule):
         correction: float = 1.0,
         regularization: float = 1e-8,
     ) -> None:
-        if method not in ("sample", "ledoit-wolf", "oas"):
-            raise ValueError("method must be sample, ledoit-wolf, or oas.")
+        method = parse(method, CovarianceMethod, "method")
         correction_ = float(correction)
         regularization_ = float(regularization)
         if not jnp.isfinite(correction_) or correction_ < 0.0:

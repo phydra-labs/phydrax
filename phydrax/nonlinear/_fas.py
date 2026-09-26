@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 from .._strict import StrictModule
 from .._tree_math import tree_add_scaled, tree_allfinite
 from ..linalg import AbstractVectorSpace
+from ..typing import parse
 from ._types import NonlinearProvenance, NonlinearStatus, NonlinearSystemProblem
 from ._updates import (
     AbstractNonlinearUpdate,
@@ -125,8 +126,7 @@ class FASCyclePolicy(StrictModule):
         pre_smoothing_steps: int = 1,
         post_smoothing_steps: int = 1,
     ) -> None:
-        if kind not in ("v", "w", "f"):
-            raise ValueError(f"Unknown FAS cycle kind {kind!r}.")
+        kind = parse(kind, FASCycleKind, "kind")
         pre = int(pre_smoothing_steps)
         post = int(post_smoothing_steps)
         if pre < 0 or post < 0 or pre + post == 0:

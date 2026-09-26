@@ -18,6 +18,7 @@ from jaxtyping import PyTree
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._precision import FDExecutionPrecisionPolicy
 
 
@@ -167,16 +168,9 @@ class CheckpointedFDAdjointPlan(StrictModule):
         precision: FDExecutionPrecisionPolicy | None = None,
     ) -> None:
         count = int(steps)
-        if (
-            not callable(step)
-            or count <= 0
-            or checkpointing
-            not in (
-                "full",
-                "recompute",
-            )
-        ):
-            raise ValueError("FD adjoint step/count/checkpointing is invalid.")
+        if not callable(step) or count <= 0:
+            raise ValueError("FD adjoint step/count is invalid.")
+        checkpointing = parse(checkpointing, FDCheckpointingMode, "checkpointing")
         precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, FDExecutionPrecisionPolicy):
             raise TypeError("precision must be an FDExecutionPrecisionPolicy.")

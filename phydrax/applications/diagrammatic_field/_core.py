@@ -8,7 +8,7 @@ import math
 from collections import Counter, defaultdict
 from enum import IntEnum
 from itertools import permutations
-from typing import Literal, Protocol
+from typing import Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,9 +19,10 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-FieldStatistics = Literal["boson", "fermion", "ghost"]
+FieldStatistics: TypeAlias = Literal["boson", "fermion", "ghost"]
 
 
 class DiagramStatus(IntEnum):
@@ -75,8 +76,7 @@ class FieldSpec(StrictModule, NonTrainableState):
         mass_dimension: float = 1.0,
     ) -> None:
         name_ = _identifier(name, "name")
-        if statistics not in ("boson", "fermion", "ghost"):
-            raise ValueError("statistics must be 'boson', 'fermion', or 'ghost'.")
+        statistics = parse(statistics, FieldStatistics, "statistics")
         components_ = int(components)
         dimension_ = float(mass_dimension)
         if components_ <= 0:

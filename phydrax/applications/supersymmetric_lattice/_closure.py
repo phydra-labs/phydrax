@@ -38,7 +38,7 @@ from ...linalg import (
     ShiftedSolveResult,
     solve_shifted,
 )
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from ._rhmc import (
     PreparedTwistedN2RHMC,
     sample_twisted_n2_rhmc,
@@ -460,8 +460,7 @@ def run_supersymmetric_limit_campaign(
 ) -> ScientificLimitStudyResult:
     """Run a prespecified linear/quadratic regulator, continuum, volume, or rank limit."""
 
-    if kind not in ("regulator", "continuum", "thermodynamic", "large-rank"):
-        raise ValueError("Unknown supersymmetric limit kind.")
+    kind = parse(kind, SupersymmetricLimitKind, "kind")
     points = tuple(float(value) for value in coordinates)
     observations = tuple(float(value) for value in values)
     errors = tuple(float(value) for value in standard_errors)

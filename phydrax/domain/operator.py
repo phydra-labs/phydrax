@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -37,9 +37,10 @@ from ..nn.operator.data import (
     tensor_product,
 )
 from ..nn.operator.protocols import OperatorModel
+from ..typing import parse
 
 
-OperatorDomainKind = Literal[
+OperatorDomainKind: TypeAlias = Literal[
     "points",
     "coord_separable",
     "graph",
@@ -130,15 +131,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(batch, OperatorBatch):
             raise TypeError("OperatorDomainView requires an OperatorBatch.")
-        if kind not in (
-            "points",
-            "coord_separable",
-            "graph",
-            "simplicial",
-            "ragged_series",
-            "trajectory",
-        ):
-            raise ValueError("Unknown operator domain view kind.")
+        kind = parse(kind, OperatorDomainKind, "kind")
         frozen = frozendict(layouts)
         if tuple(frozen) != tuple(batch.queries):
             raise ValueError(

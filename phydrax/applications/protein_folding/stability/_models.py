@@ -9,7 +9,7 @@ import abc
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast, Literal
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -22,6 +22,7 @@ from ...._numerics import solve_weighted_least_squares
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....qualification import ScientificCampaign
+from ....typing import parse
 from ....uq import DenseCovariance, fit_laplace, ParameterSpace, PosteriorProblem
 from ....uq._linearized import propagate_linearized
 from ..interchange._megascale import (
@@ -38,7 +39,7 @@ from ._features import (
 
 
 PredictionValidity = Literal["valid", "abstained"]
-UncertaintyKind = Literal["aleatoric", "epistemic"]
+UncertaintyKind: TypeAlias = Literal["aleatoric", "epistemic"]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -83,8 +84,7 @@ class UncertaintyComponent(StrictModule, NonTrainableState):
         values = np.asarray(variance, dtype=np.float64)
         if values.ndim != 1 or not np.all(np.isfinite(values)) or np.any(values < 0.0):
             raise ValueError("Uncertainty variances must be finite non-negative vectors.")
-        if kind not in ("aleatoric", "epistemic"):
-            raise ValueError("Uncertainty kind must be aleatoric or epistemic.")
+        kind = parse(kind, UncertaintyKind, "kind")
         if not isinstance(conditionally_independent, bool):
             raise TypeError("conditionally_independent must be boolean.")
         self.variance = jnp.asarray(values)

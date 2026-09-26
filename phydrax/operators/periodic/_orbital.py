@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -30,11 +30,14 @@ from ...operators.periodic._family import (
     PreparedPeriodicTranslationFamily,
 )
 from ...sparse import EdgeRelation
+from ...typing import parse
 from ...units import ENERGY, LENGTH, UnitDefinition
 
 
-BlochGaugeKind = Literal["lattice", "atomic"]
-SpinOrderKind = Literal["spinless", "blocked-alpha-beta", "interleaved-alpha-beta"]
+BlochGaugeKind: TypeAlias = Literal["lattice", "atomic"]
+SpinOrderKind: TypeAlias = Literal[
+    "spinless", "blocked-alpha-beta", "interleaved-alpha-beta"
+]
 
 
 class PeriodicBlochGauge(StrictModule, NonTrainableState):
@@ -44,8 +47,7 @@ class PeriodicBlochGauge(StrictModule, NonTrainableState):
     gauge_id: str = eqx.field(static=True)
 
     def __init__(self, kind: BlochGaugeKind, /) -> None:
-        if kind not in ("lattice", "atomic"):
-            raise ValueError("Periodic Bloch gauge must be 'lattice' or 'atomic'.")
+        kind = parse(kind, BlochGaugeKind, "kind")
         self.kind = kind
         self.gauge_id = canonical_fingerprint(
             {"kind": "periodic-bloch-gauge", "gauge": kind}
@@ -98,12 +100,7 @@ class PeriodicOrbitalBasisPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Periodic orbital basis length_unit must have length dimension."
             )
-        if spin_order not in (
-            "spinless",
-            "blocked-alpha-beta",
-            "interleaved-alpha-beta",
-        ):
-            raise ValueError("Periodic spin order is invalid.")
+        spin_order = parse(spin_order, SpinOrderKind, "spin_order")
         self.cell = cell
         self.centers_fractional = jnp.asarray(centers)
         self.labels = labels_

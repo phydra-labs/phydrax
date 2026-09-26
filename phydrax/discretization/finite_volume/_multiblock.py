@@ -14,6 +14,7 @@ from jax import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
+from ...typing import parse
 from ..multiblock import InterfaceOrientation
 from ._positivity import FiniteVolumeAdmissibilityReport, FluxPositivityPlan
 from ._riemann import AbstractNumericalFluxPlan
@@ -101,13 +102,12 @@ class ConservativeMultiblockInterfacePlan(StrictModule):
             raise TypeError("Multiblock FV interfaces require two discretizations.")
         left_axis_ = int(left_axis)
         right_axis_ = int(right_axis)
-        if (
-            not 0 <= left_axis_ < len(left.cell_shape)
-            or not 0 <= right_axis_ < len(right.cell_shape)
-            or left_side not in ("lower", "upper")
-            or right_side not in ("lower", "upper")
+        if not 0 <= left_axis_ < len(left.cell_shape) or not 0 <= right_axis_ < len(
+            right.cell_shape
         ):
             raise ValueError("Multiblock FV axis or side is invalid.")
+        left_side = parse(left_side, InterfaceSide, "left_side")
+        right_side = parse(right_side, InterfaceSide, "right_side")
         if left_side != "upper" or right_side != "lower":
             raise ValueError(
                 "Initial multiblock FV orientation requires upper-to-lower sides."

@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._geometry_protocol import FiniteVolumeStageMetrics
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -36,8 +37,7 @@ class UnstructuredThermalBoundaryCondition(StrictModule, NonTrainableState):
         value: float = 0.0,
         /,
     ) -> None:
-        if kind not in ("adiabatic", "temperature", "heat_flux"):
-            raise ValueError("Unknown unstructured thermal boundary kind.")
+        kind = parse(kind, UnstructuredThermalBoundaryKind, "kind")
         value_ = float(value)
         if not np.isfinite(value_) or (kind == "adiabatic" and value_ != 0.0):
             raise ValueError(

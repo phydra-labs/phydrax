@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._incompressible import FaceVelocity, PreparedMACOperators
 
 
@@ -172,8 +173,7 @@ class MACBoundarySide(StrictModule, NonTrainableState):
         axis_ = str(axis)
         if not axis_:
             raise ValueError("MAC boundary axis must be non-empty.")
-        if side not in ("lower", "upper"):
-            raise ValueError("MAC boundary side must be 'lower' or 'upper'.")
+        side = parse(side, MACBoundarySideName, "side")
         allowed = _ESSENTIAL_KINDS + _OPEN_KINDS
         if kind not in allowed:
             raise ValueError("Unknown MAC boundary kind.")

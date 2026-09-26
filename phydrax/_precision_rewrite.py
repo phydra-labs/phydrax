@@ -16,6 +16,7 @@ from jax.extend import core as jax_core
 
 from ._dtype_names import precision_dtype_name, ScalarPrecisionDType
 from ._fingerprint import canonical_fingerprint
+from .typing import parse
 
 
 RewritePrimitive: TypeAlias = Literal[
@@ -100,14 +101,7 @@ class PrecisionRewriteRule:
         output_dtype: Any,
         precision: Literal["default", "high", "highest"] = "high",
     ) -> None:
-        if primitive not in (
-            "dot_general",
-            "conv_general_dilated",
-            "reduce_sum",
-            "reduce_prod",
-            "elementwise",
-        ):
-            raise ValueError(f"Unsupported rewrite primitive family {primitive!r}.")
+        primitive = parse(primitive, RewritePrimitive, "primitive")
         if precision not in ("default", "high", "highest"):
             raise ValueError("precision must be default, high, or highest.")
         object.__setattr__(self, "primitive", primitive)

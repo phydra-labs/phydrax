@@ -18,6 +18,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator, DenseLinearOperator
@@ -125,8 +126,7 @@ class GaussSeidelPreconditioner(AbstractPreconditioner, NonTrainableState):
         relaxation: float = 1.0,
         previous: "GaussSeidelPreconditioner | None" = None,
     ) -> None:
-        if direction not in ("forward", "backward", "symmetric"):
-            raise ValueError(f"Unknown Gauss-Seidel direction {direction!r}.")
+        direction = parse(direction, GaussSeidelDirection, "direction")
         omega = float(relaxation)
         if not isfinite(omega) or omega <= 0.0 or omega >= 2.0:
             raise ValueError("Gauss-Seidel relaxation must lie strictly between 0 and 2.")
@@ -282,8 +282,7 @@ class GaussSeidelPreconditionerBuilder(AbstractPreconditionerBuilder):
         direction: GaussSeidelDirection = "symmetric",
         relaxation: float = 1.0,
     ) -> None:
-        if direction not in ("forward", "backward", "symmetric"):
-            raise ValueError(f"Unknown Gauss-Seidel direction {direction!r}.")
+        direction = parse(direction, GaussSeidelDirection, "direction")
         omega = float(relaxation)
         if not isfinite(omega) or omega <= 0.0 or omega >= 2.0:
             raise ValueError("Gauss-Seidel relaxation must lie strictly between 0 and 2.")

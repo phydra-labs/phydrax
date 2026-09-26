@@ -13,6 +13,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import fixed_field
+from ..typing import parse
 from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import (
@@ -361,8 +362,7 @@ class BlockFactorizationPreconditioner(AbstractPreconditioner):
             raise TypeError("schur_operator must be a SchurComplementLinearOperator.")
         if not isinstance(schur_action, AbstractPreconditioner):
             raise TypeError("schur_action must be an AbstractPreconditioner.")
-        if form not in ("diagonal", "lower", "upper", "ldu"):
-            raise ValueError("Unknown block factorization form.")
+        form = parse(form, BlockFactorizationForm, "form")
         pivot_action = schur_operator.inverse_action
         _validate_fixed_action(pivot_action, schur_operator.upper_block.target, "pivot")
         _validate_fixed_action(schur_action, schur_operator.source, "Schur")
@@ -527,8 +527,7 @@ class BlockFactorizationPreconditionerBuilder(AbstractPreconditionerBuilder):
     ) -> None:
         pivot_id = _source_identifier(pivot_solver)
         schur_id = _source_identifier(schur_solver)
-        if form not in ("diagonal", "lower", "upper", "ldu"):
-            raise ValueError("form must be 'diagonal', 'lower', 'upper', or 'ldu'.")
+        form = parse(form, BlockFactorizationForm, "form")
         if schur_setup_operator is not None and not isinstance(
             schur_setup_operator, AbstractLinearOperator
         ):

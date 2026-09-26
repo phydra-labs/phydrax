@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
@@ -19,13 +19,14 @@ from phydrax.linalg import AbstractLinearOperator, RankPolicy, SolveResourcePoli
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._trace_extension import (
     DiscreteTraceCorrectionProvider,
     PreparedTraceExtension,
 )
 
 
-InterfaceGauge = Literal["minimum_energy", "minus_only", "plus_only"]
+InterfaceGauge: TypeAlias = Literal["minimum_energy", "minus_only", "plus_only"]
 
 
 class OrientedInterfaceSupport(StrictModule, NonTrainableState):
@@ -161,9 +162,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
             raise ValueError(
                 "Interface trace target does not match the declared common trace space."
             )
-        gauge_ = str(gauge)
-        if gauge_ not in ("minimum_energy", "minus_only", "plus_only"):
-            raise ValueError("Unknown two-sided interface correction gauge.")
+        gauge_ = parse(str(gauge), InterfaceGauge, "gauge")
         gauge_id = None if gauge_certificate_id is None else str(gauge_certificate_id)
         if gauge_ != "minimum_energy" and (gauge_id is None or not gauge_id):
             raise ValueError(

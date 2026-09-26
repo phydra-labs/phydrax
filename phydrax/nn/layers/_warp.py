@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import cast, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -17,7 +16,7 @@ from ..._doc import DOC_KEY0
 from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._keys import EvalKey
 from ._linear import Linear
 from ._warp_geometry import (
@@ -25,12 +24,9 @@ from ._warp_geometry import (
     RectilinearWarpDiagnostics,
     sample_rectilinear_grid,
     warp_jacobian,
+    WarpBoundaryMode,
     WarpMaskMode,
 )
-
-
-WarpBoundaryMode: TypeAlias = Literal["periodic", "reflect", "clamp", "constant"]
-_VALID_BOUNDARY_MODES = frozenset(("periodic", "reflect", "clamp", "constant"))
 
 
 def _boundary_modes(
@@ -43,12 +39,7 @@ def _boundary_modes(
         raise ValueError(
             f"boundary must provide one mode per spatial axis; expected {spatial_ndim}, got {len(modes)}."
         )
-    invalid = tuple(mode for mode in modes if mode not in _VALID_BOUNDARY_MODES)
-    if invalid:
-        raise ValueError(
-            f"boundary modes must be 'periodic', 'reflect', 'clamp', or 'constant'; got {invalid}."
-        )
-    return cast(tuple[WarpBoundaryMode, ...], modes)
+    return tuple(parse(mode, WarpBoundaryMode, "boundary") for mode in modes)
 
 
 def _normalized_lattice(

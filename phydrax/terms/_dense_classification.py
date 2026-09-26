@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -43,7 +43,7 @@ from ..ml._overlap import (
     reduce_overlap_score,
 )
 from ..ml._schema import TargetSchema
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._data_metrics import (
     configured_case_indices,
     sample_case_indices,
@@ -52,8 +52,8 @@ from ._data_metrics import (
 )
 
 
-SiteReduction = Literal["mean", "integral"]
-SupportMeasure = Literal["statistical", "physical"]
+SiteReduction: TypeAlias = Literal["mean", "integral"]
+SupportMeasure: TypeAlias = Literal["statistical", "physical"]
 
 
 class DenseSiteClassificationBatch(StrictModule):
@@ -654,8 +654,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         objective_ = ClassificationObjective.nll() if objective is None else objective
         if not isinstance(objective_, ClassificationObjective):
             raise TypeError("objective must be a ClassificationObjective.")
-        if site_reduction not in ("mean", "integral"):
-            raise ValueError("site_reduction must be 'mean' or 'integral'.")
+        site_reduction = parse(site_reduction, SiteReduction, "site_reduction")
         super().__init__(
             field,
             component,
@@ -904,8 +903,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
     ) -> None:
         if not isinstance(score, OverlapScoreConfig):
             raise TypeError("score must be an OverlapScoreConfig.")
-        if support_measure not in ("statistical", "physical"):
-            raise ValueError("support_measure must be 'statistical' or 'physical'.")
+        support_measure = parse(support_measure, SupportMeasure, "support_measure")
         objective_ = ClassificationObjective.nll() if objective is None else objective
         if not isinstance(objective_, ClassificationObjective):
             raise TypeError("objective must be a ClassificationObjective.")

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from ..._trainable import NonTrainableState
 from ...discretization.fem import SumFactorizationPlan
 from ...linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
 from ...sparse import ElementTensorOperator, SparseCoordinateOperator
+from ...typing import parse
 
 
 class PartialAssemblyOperator(StrictModule, NonTrainableState):
@@ -140,7 +141,7 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
         )
 
 
-TensorProductAction = Literal["mass", "diffusion"]
+TensorProductAction: TypeAlias = Literal["mass", "diffusion"]
 
 
 class FiniteElementMassPolicy(StrictModule, NonTrainableState):
@@ -270,9 +271,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(plan, SumFactorizationPlan):
             raise TypeError("plan must be SumFactorizationPlan.")
-        kind = str(action_kind)
-        if kind not in ("mass", "diffusion"):
-            raise ValueError("Unknown tensor-product action kind.")
+        kind = parse(action_kind, TensorProductAction, "action_kind")
         data = jnp.asarray(quadrature_data)
         routes = jnp.asarray(gathers, dtype=jnp.int32)
         size = int(global_size)

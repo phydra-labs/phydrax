@@ -15,6 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification._registry import SupportTuple
+from ..typing import parse
 
 
 ChunkEncoding: TypeAlias = Literal["identity", "zlib"]
@@ -362,8 +363,7 @@ class ChunkRecord(StrictModule, NonTrainableState):
         encoded_size_ = _nonnegative(encoded_size, "encoded_size")
         plaintext_digest = _digest(plaintext_sha256, "plaintext_sha256")
         encoded_digest = _digest(encoded_sha256, "encoded_sha256")
-        if encoding not in ("identity", "zlib"):
-            raise ValueError("Chunk encoding must be 'identity' or 'zlib'.")
+        encoding = parse(encoding, ChunkEncoding, "encoding")
         key = _object_key(object_key)
         self.transaction_id = transaction
         self.logical_name = logical
@@ -398,9 +398,7 @@ class ChunkRecord(StrictModule, NonTrainableState):
     @classmethod
     def from_record(cls, record: Mapping[str, object], /) -> ChunkRecord:
         _record_kind(record, "artifact-chunk")
-        encoding = _required_string(record, "encoding")
-        if encoding not in ("identity", "zlib"):
-            raise ValueError("Serialized chunk has an unsupported encoding.")
+        encoding = parse(_required_string(record, "encoding"), ChunkEncoding, "encoding")
         value = cls(
             _required_string(record, "transaction_id"),
             _required_string(record, "logical_name"),

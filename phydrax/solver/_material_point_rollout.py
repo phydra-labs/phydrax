@@ -27,6 +27,7 @@ from ..discretization.mpm import (
     PreparedMPMDynamics,
 )
 from ..equations import MaterialPointArguments
+from ..typing import parse
 
 
 MPMReplayMode: TypeAlias = Literal["full", "step", "block"]
@@ -50,8 +51,7 @@ class MPMReplayPolicy(StrictModule, NonTrainableState):
         *,
         block_size: int | None = None,
     ) -> None:
-        if mode not in ("full", "step", "block"):
-            raise ValueError("Unknown MPM replay mode.")
+        mode = parse(mode, MPMReplayMode, "mode")
         size = None if block_size is None else int(block_size)
         if mode == "block":
             if size is None or size <= 0:
@@ -184,8 +184,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Scheduled MPM rollout requires an all-active internal mesh."
             )
-        if retention not in ("final", "checkpoints", "trajectory"):
-            raise ValueError("Unknown MPM retention mode.")
+        retention = parse(retention, MPMRetentionMode, "retention")
         stride = int(checkpoint_stride)
         if stride <= 0:
             raise ValueError("checkpoint_stride must be positive.")

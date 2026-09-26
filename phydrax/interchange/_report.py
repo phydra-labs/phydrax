@@ -6,17 +6,20 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from enum import IntEnum
-from typing import final, Literal
+from typing import final, Literal, TypeAlias
 
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-_AdapterDirection = Literal["import", "export"]
-_AdapterLossCategory = Literal["dropped", "synthesized", "transformed", "unsupported"]
+_AdapterDirection: TypeAlias = Literal["import", "export"]
+_AdapterLossCategory: TypeAlias = Literal[
+    "dropped", "synthesized", "transformed", "unsupported"
+]
 
 
 class AdapterStatus(IntEnum):
@@ -57,10 +60,8 @@ class AdapterLoss(StrictModule, NonTrainableState):
         rationale_ = str(rationale).strip()
         if not path_ or not rationale_:
             raise ValueError("Adapter loss paths and rationales must be non-empty.")
-        if direction not in ("import", "export"):
-            raise ValueError("Adapter loss direction must be 'import' or 'export'.")
-        if category not in ("dropped", "synthesized", "transformed", "unsupported"):
-            raise ValueError("Unknown adapter loss category.")
+        direction = parse(direction, _AdapterDirection, "direction")
+        category = parse(category, _AdapterLossCategory, "category")
         affected_capability_ids_ = tuple(
             sorted(_strings(affected_capability_ids, "affected_capability_ids"))
         )

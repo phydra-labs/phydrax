@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._high_resolution_extended import _HighOrderTENOPlan, TENOQualification
 
 
@@ -167,8 +168,7 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
         cutoff_ = float(cutoff)
         power_ = int(power)
         order_ = int(order)
-        if method not in ("weno_z", "teno", "mp5"):
-            raise ValueError("Unknown high-resolution reconstruction method.")
+        method = parse(method, HighResolutionMethod, "method")
         if (
             order_ != order
             or (method == "teno" and order_ not in (5, 6, 8))

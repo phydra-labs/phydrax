@@ -21,6 +21,7 @@ from ..._interpolation import apply_gather_stencil, GatherStencil
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.simplicial import AffineSimplexMap
+from ...typing import parse
 from .._cell_mesh import CellMesh
 from .._measure import DiscreteMeasure
 from ..particle._population import ParticlePopulationState
@@ -137,10 +138,8 @@ class SimplicialBarycentricSplatAssignment(StrictModule, NonTrainableState):
         tie_tolerance: float = 1.0e-10,
         maximum_candidates: int = 64,
     ) -> None:
-        if boundary not in ("reject", "drop"):
-            raise ValueError("boundary must be 'reject' or 'drop'.")
-        if geometry_ad not in ("piecewise", "frozen"):
-            raise ValueError("geometry_ad must be 'piecewise' or 'frozen'.")
+        boundary = parse(boundary, MeshSplatBoundaryPolicy, "boundary")
+        geometry_ad = parse(geometry_ad, MeshSplatGeometryAD, "geometry_ad")
         tolerance = float(tie_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("tie_tolerance must be finite and nonnegative.")
@@ -306,12 +305,11 @@ class MeshCompactKernelSplatAssignment(StrictModule, NonTrainableState):
             raise ValueError("support_radius must be finite and positive.")
         if width <= 0:
             raise ValueError("maximum_entities_per_particle must be positive.")
-        if partition_policy not in ("normalize", "raw"):
-            raise ValueError("partition_policy must be 'normalize' or 'raw'.")
-        if boundary not in ("reject", "drop"):
-            raise ValueError("boundary must be 'reject' or 'drop'.")
-        if geometry_ad not in ("piecewise", "frozen"):
-            raise ValueError("geometry_ad must be 'piecewise' or 'frozen'.")
+        partition_policy = parse(
+            partition_policy, MeshPartitionPolicy, "partition_policy"
+        )
+        boundary = parse(boundary, MeshSplatBoundaryPolicy, "boundary")
+        geometry_ad = parse(geometry_ad, MeshSplatGeometryAD, "geometry_ad")
         self.support_radius = radius
         self.maximum_entities_per_particle = width
         self.partition_policy = partition_policy

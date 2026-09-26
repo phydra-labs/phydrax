@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import cast, Literal, TypeAlias
+from typing import assert_never, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics import normalize_least_squares_design
 from ..._strict import StrictModule
 from ...data_utils import train_test_split_indices
+from ...typing import parse
 from .._evolution import DiscreteEvolution
 from .._layout import InputLayout
 from .._system import (
@@ -333,8 +334,7 @@ class SINDySelectionPolicy(StrictModule):
         complexity_weight: float = 0.0,
         combined_weights: Sequence[float] = (1.0, 1.0, 1.0),
     ) -> None:
-        if criterion not in ("equation", "one_step", "rollout", "combined", "bic"):
-            raise ValueError("Unsupported selection criterion.")
+        criterion = parse(criterion, SelectionCriterion, "criterion")
         if not 0.0 < float(validation_fraction) < 1.0:
             raise ValueError("validation_fraction must lie in (0, 1).")
         if int(rollout_horizon) < 1 or int(max_rollouts) < 1:
@@ -431,6 +431,7 @@ def select_sindy_model(
     needs_one_step = resolved_policy.criterion in ("one_step", "combined")
     needs_rollout = resolved_policy.criterion in ("rollout", "combined")
     not_computed = jnp.asarray(jnp.nan, dtype=design.matrix.dtype)
+    criterion = resolved_policy.criterion
     for regressor in candidates_policies:
         regression = regressor.fit(training)
         candidate = _result_from_regression(problem, design, regression)
@@ -458,23 +459,26 @@ def select_sindy_model(
             else not_computed
         )
         complexity = jnp.sum(candidate.support).astype(design.matrix.dtype)
-        if resolved_policy.criterion == "equation":
-            base_score = equation
-        elif resolved_policy.criterion == "one_step":
-            base_score = one_step
-        elif resolved_policy.criterion == "rollout":
-            base_score = rollout
-        elif resolved_policy.criterion == "bic":
-            count = jnp.maximum(jnp.sum(design.valid & validation_mask), 1)
-            base_score = count * jnp.log(
-                jnp.maximum(equation, jnp.finfo(equation.dtype).tiny)
-            ) + complexity * jnp.log(count)
-        else:
-            base_score = (
-                resolved_policy.combined_weights[0] * equation
-                + resolved_policy.combined_weights[1] * one_step
-                + resolved_policy.combined_weights[2] * rollout
-            )
+        match criterion:
+            case "equation":
+                base_score = equation
+            case "one_step":
+                base_score = one_step
+            case "rollout":
+                base_score = rollout
+            case "bic":
+                count = jnp.maximum(jnp.sum(design.valid & validation_mask), 1)
+                base_score = count * jnp.log(
+                    jnp.maximum(equation, jnp.finfo(equation.dtype).tiny)
+                ) + complexity * jnp.log(count)
+            case "combined":
+                base_score = (
+                    resolved_policy.combined_weights[0] * equation
+                    + resolved_policy.combined_weights[1] * one_step
+                    + resolved_policy.combined_weights[2] * rollout
+                )
+            case _:
+                assert_never(criterion)
         valid_candidate = candidate.valid & jnp.isfinite(base_score)
         score = jnp.where(
             valid_candidate,

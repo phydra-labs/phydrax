@@ -18,7 +18,7 @@ import numpy as np
 from jax import Array
 
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 LevyAreaKind: TypeAlias = Literal["brownian", "space_time", "space_time_time"]
@@ -156,10 +156,7 @@ class WienerRealization(StrictModule):
         tolerance_value = float(tolerance)
         if not isfinite(tolerance_value) or tolerance_value <= 0.0:
             raise ValueError("WienerRealization tolerance must be finite and positive.")
-        if levy_area not in ("brownian", "space_time", "space_time_time"):
-            raise ValueError(
-                "levy_area must be 'brownian', 'space_time', or 'space_time_time'."
-            )
+        levy_area = parse(levy_area, LevyAreaKind, "levy_area")
         if algorithm != "virtual_tree":
             raise ValueError("The only supported Wiener algorithm is 'virtual_tree'.")
         if noise_id is not None and (not isinstance(noise_id, str) or not noise_id):

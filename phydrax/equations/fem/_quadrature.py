@@ -4,22 +4,23 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-QuadratureAccuracyKind = Literal[
+QuadratureAccuracyKind: TypeAlias = Literal[
     "exact-polynomial",
     "collocated",
     "overintegrated",
     "explicit-rule",
 ]
-QuadratureRole = Literal[
+QuadratureRole: TypeAlias = Literal[
     "volume",
     "interior-facet",
     "exterior-facet",
@@ -42,16 +43,9 @@ class QuadratureAccuracyPolicy(StrictModule, NonTrainableState):
         overintegration_factor: float = 1.5,
         explicit_degree: int | None = None,
     ) -> None:
-        kind_ = str(kind)
         factor = float(overintegration_factor)
         degree = None if explicit_degree is None else int(explicit_degree)
-        if kind_ not in (
-            "exact-polynomial",
-            "collocated",
-            "overintegrated",
-            "explicit-rule",
-        ):
-            raise ValueError("Unknown quadrature accuracy policy.")
+        kind_ = parse(kind, QuadratureAccuracyKind, "kind")
         if factor < 1.0:
             raise ValueError("Quadrature overintegration factor must be at least one.")
         if kind_ == "explicit-rule" and (degree is None or degree < 0):
@@ -131,13 +125,8 @@ class QuadratureEvidence(StrictModule, NonTrainableState):
         exact: bool,
         aliasing_status: str,
     ) -> None:
-        if role not in (
-            "volume",
-            "interior-facet",
-            "exterior-facet",
-            "projection",
-            "observation",
-        ) or not isinstance(policy, QuadratureAccuracyPolicy):
+        role = parse(role, QuadratureRole, "role")
+        if not isinstance(policy, QuadratureAccuracyPolicy):
             raise ValueError("Quadrature evidence role/policy is invalid.")
         degree = int(selected_degree)
         aliasing = str(aliasing_status)

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -27,6 +27,7 @@ from ..nn.operator.data import (
 )
 from ..nn.operator.protocols import OperatorModel
 from ..nn.operator.training import OperatorLinearization
+from ..typing import parse
 from ._covariance import AbstractCovariance
 from ._linearized import LinearizedPropagationResult, propagate_linearized_map
 from ._predictive import (
@@ -37,15 +38,13 @@ from ._predictive import (
 )
 
 
-ValidPolicy = Literal["record", "raise"]
+ValidPolicy: TypeAlias = Literal["record", "raise"]
 _OPERATOR_POINT_DIM = "__phydra_operator_point"
 _OPERATOR_CHANNEL_DIM = "__phydra_operator_channel"
 
 
 def _validate_valid_policy(value: ValidPolicy) -> ValidPolicy:
-    if value not in ("record", "raise"):
-        raise ValueError("valid_policy must be 'record' or 'raise'.")
-    return value
+    return parse(value, ValidPolicy, "valid_policy")
 
 
 def _physical_dims(

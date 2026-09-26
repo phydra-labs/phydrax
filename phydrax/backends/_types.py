@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from .._strict import StrictModule
+from ..typing import parse
 
 
 BackendExecution: TypeAlias = Literal["host", "device"]
@@ -146,8 +147,7 @@ class BackendCapabilities(StrictModule):
             raise ValueError("Backend name and problem kinds must be non-empty.")
         if not dtypes or any(not value for value in dtypes):
             raise ValueError("Backend coordinate dtypes must be non-empty.")
-        if execution not in ("host", "device"):
-            raise ValueError("Backend execution must be 'host' or 'device'.")
+        execution = parse(execution, BackendExecution, "execution")
         if execution == "device" and bool(host_only):
             raise ValueError("A device backend cannot be declared host-only.")
         self.backend = backend_

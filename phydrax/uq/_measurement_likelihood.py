@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,10 +19,11 @@ from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
+from ..typing import parse
 from ._posterior_terms import AbstractPosteriorTerm
 
 
-CovarianceBatching = Literal["shared", "per_case"]
+CovarianceBatching: TypeAlias = Literal["shared", "per_case"]
 CovarianceValue = ArrayLike | Callable[[PyTree[Any]], ArrayLike]
 
 
@@ -446,9 +447,7 @@ def _field_data(value: ArrayLike | cx.AxisArray, /) -> Array:
 
 
 def _validate_batching(value: str, /, *, owner: str) -> CovarianceBatching:
-    if value not in ("shared", "per_case"):
-        raise ValueError(f"{owner} must be 'shared' or 'per_case'.")
-    return value
+    return parse(value, CovarianceBatching, owner)
 
 
 def _label(value: str, /) -> str:

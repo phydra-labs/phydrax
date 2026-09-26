@@ -200,7 +200,7 @@ def test_tensor_contracts_reject_invalid_variance_and_shapes():
     metric = phx.metrix.euclidean_metric(chart)
     point = jnp.zeros(2)
 
-    with pytest.raises(ValueError, match="Tensor variance"):
+    with pytest.raises(ValueError, match="variance"):
         phx.metrix.TensorType(("invalid",))
     with pytest.raises(ValueError, match="covariant source axis"):
         phx.metrix.raise_index(

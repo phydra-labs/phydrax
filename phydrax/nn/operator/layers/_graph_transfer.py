@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod, sqrt
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -25,14 +25,14 @@ from ....graph._query_batch import (
     query_neighbors,
     QueryNeighborhood,
 )
-from ....typing import PRNGKey
+from ....typing import parse, PRNGKey
 from ..._keys import EvalKey, split_eval_key
 from ...layers._linear import Linear
 from ...models._mlp import MLP
 
 
-TransferReduction = Literal["integral", "normalized"]
-MultiscaleFusion = Literal["concat", "gated"]
+TransferReduction: TypeAlias = Literal["integral", "normalized"]
+MultiscaleFusion: TypeAlias = Literal["concat", "gated"]
 
 
 def _feature_array(
@@ -157,8 +157,7 @@ class GraphKernelTransfer(StrictModule):
             raise ValueError("neighbors must be positive.")
         if radius is not None and float(radius) <= 0.0:
             raise ValueError("radius must be positive when supplied.")
-        if reduction not in ("integral", "normalized"):
-            raise ValueError("reduction must be 'integral' or 'normalized'.")
+        reduction = parse(reduction, TransferReduction, "reduction")
         if float(coordinate_scale) <= 0.0:
             raise ValueError("coordinate_scale must be positive.")
         if target_chunk_size is not None and int(target_chunk_size) <= 0:
@@ -611,8 +610,7 @@ class MultiscaleGraphTransfer(StrictModule):
             if transfer.radius is None:
                 raise ValueError("Every multiscale transfer requires an explicit radius.")
             radii.append(float(transfer.radius))
-        if fusion not in ("concat", "gated"):
-            raise ValueError("fusion must be 'concat' or 'gated'.")
+        fusion = parse(fusion, MultiscaleFusion, "fusion")
         embeddings = tuple(
             GeometryMomentEmbedding(
                 coord_dim,

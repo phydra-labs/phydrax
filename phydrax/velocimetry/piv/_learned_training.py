@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -40,7 +40,7 @@ from ..._training_kernel import (
 )
 from ..._training_objective import _ObjectiveContribution
 from ...imaging import ImagePlaneSupport
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from ._learned_model import AbstractDensePIVModel
 from ._learned_primitives import (
     MultiScaleRobustPIVLoss,
@@ -50,7 +50,7 @@ from ._learned_primitives import (
 )
 
 
-DatasetPartition = Literal["training", "validation", "held-out"]
+DatasetPartition: TypeAlias = Literal["training", "validation", "held-out"]
 
 
 class LearnedPIVDataset(StrictModule, NonTrainableState):
@@ -167,8 +167,7 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
                 raise TypeError("geometry must be an ImagePlaneSupport or None.")
             if geometry.image_shape != (rows, columns):
                 raise ValueError("Dataset geometry must match the image spatial shape.")
-        if partition not in ("training", "validation", "held-out"):
-            raise ValueError("partition must be 'training', 'validation', or 'held-out'.")
+        partition = parse(partition, DatasetPartition, "partition")
         identifiers = (
             tuple(f"case-{index}" for index in range(batch_size))
             if not scenario_ids

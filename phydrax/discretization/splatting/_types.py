@@ -14,6 +14,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 SplatAccumulation: TypeAlias = Literal["fast", "deterministic", "compensated"]
@@ -34,12 +35,8 @@ class SplatExecutionPolicy(StrictModule, NonTrainableState):
         accumulation: SplatAccumulation = "deterministic",
         geometry_ad: SplatGeometryAD = "piecewise",
     ) -> None:
-        if accumulation not in ("fast", "deterministic", "compensated"):
-            raise ValueError(
-                "accumulation must be 'fast', 'deterministic', or 'compensated'."
-            )
-        if geometry_ad not in ("piecewise", "frozen"):
-            raise ValueError("geometry_ad must be 'piecewise' or 'frozen'.")
+        accumulation = parse(accumulation, SplatAccumulation, "accumulation")
+        geometry_ad = parse(geometry_ad, SplatGeometryAD, "geometry_ad")
         self.accumulation = accumulation
         self.geometry_ad = geometry_ad
         self.policy_id = canonical_fingerprint(

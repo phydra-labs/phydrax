@@ -18,6 +18,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.spectral._space import TensorSpectralDiscretization
+from ..typing import parse
 
 
 InteractionKind: TypeAlias = Literal["nl", "ql", "gql"]
@@ -275,8 +276,7 @@ class InteractionPartition(StrictModule, NonTrainableState):
         return selected + coordinate.astype(value.dtype) * (nonlinear - selected)
 
     def selector(self, model: InteractionKind, /) -> Callable:
-        if model not in ("nl", "ql", "gql"):
-            raise ValueError("model must be 'nl', 'ql', or 'gql'.")
+        model = parse(model, InteractionKind, "model")
 
         def apply(
             bilinear: BilinearAction,

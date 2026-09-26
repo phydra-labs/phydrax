@@ -25,6 +25,7 @@ from ..discretization import (
     TensorGridPlan,
     UniformCellAxisSpec,
 )
+from ..typing import parse
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -178,8 +179,7 @@ class EwaldReferencePotential(AbstractAtomisticEnergyTerm, NonTrainableState):
             or group < 0
         ):
             raise ValueError("Ewald parameters, name, and force group are invalid.")
-        if neutrality not in ("require-neutral", "uniform-background"):
-            raise ValueError("Unknown charge-neutrality policy.")
+        neutrality = parse(neutrality, ChargeNeutralityPolicy, "neutrality")
         self.alpha = alpha_
         self.real_cutoff = cutoff
         self.reciprocal_extent = extent
@@ -393,13 +393,13 @@ class ParticleMeshEwaldPotential(AbstractAtomisticEnergyTerm, NonTrainableState)
             or len(shape) != 3
             or any(value < 4 for value in shape)
             or degree not in (1, 2, 3)
-            or neutrality not in ("require-neutral", "uniform-background")
             or not math.isfinite(tolerance)
             or tolerance <= 0.0
             or not identifier
             or group < 0
         ):
             raise ValueError("Particle-mesh Ewald parameters are invalid.")
+        neutrality = parse(neutrality, ChargeNeutralityPolicy, "neutrality")
         self.alpha = alpha_
         self.real_cutoff = cutoff
         self.grid_shape = shape

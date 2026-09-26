@@ -15,6 +15,7 @@ from jax import Array
 from ..._numerics import solve_weighted_least_squares
 from ..._strict import StrictModule
 from ...operators.interpolation import BSplineInterpolationPlan, fit_bspline
+from ...typing import parse
 from .._trajectory import TrajectoryData
 
 
@@ -63,8 +64,7 @@ def finite_difference_derivative(
     """Estimate irregular-grid derivatives without crossing invalid transitions."""
     if not isinstance(data, TrajectoryData):
         raise TypeError("data must be TrajectoryData.")
-    if endpoint not in ("invalid", "one-sided"):
-        raise ValueError("endpoint must be 'invalid' or 'one-sided'.")
+    endpoint = parse(endpoint, FiniteDifferenceEndpoint, "endpoint")
     event_rank = len(data.state_layout.shape)
     case_rank = len(data.case_shape)
     derivative = jnp.full_like(data.states, jnp.nan)

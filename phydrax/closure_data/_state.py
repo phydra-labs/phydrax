@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,10 +16,11 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import ValuePort
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ..units import DimensionSignature, parse_unit
 
 
-StateRepresentation = Literal["nondimensional", "dimensional"]
+StateRepresentation: TypeAlias = Literal["nondimensional", "dimensional"]
 
 
 def _declared_dimension(unit: str, owner: str, /) -> DimensionSignature:
@@ -246,12 +247,11 @@ class ClosureSnapshot(StrictModule, NonTrainableState):
         )
         parents = tuple(str(value).strip() for value in parent_ids)
         representation_ = str(representation).strip()
-        if (
-            not np.isfinite(time_value)
-            or any(not value for value in (*identifiers, *parents))
-            or representation_ not in ("nondimensional", "dimensional")
+        if not np.isfinite(time_value) or any(
+            not value for value in (*identifiers, *parents)
         ):
             raise ValueError("Closure snapshot metadata is invalid.")
+        representation_ = parse(representation_, StateRepresentation, "representation")
         content = array_tree_fingerprint(array)
         self.values = array
         self.schema = schema

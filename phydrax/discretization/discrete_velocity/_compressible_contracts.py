@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,15 +14,16 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
-CompressibleKineticModelKind = Literal[
+CompressibleKineticModelKind: TypeAlias = Literal[
     "guided-d3q39",
     "entropic-d3q343",
     "filtered-d3q33",
     "adaptive-gauge",
 ]
-KineticPopulationRole = Literal[
+KineticPopulationRole: TypeAlias = Literal[
     "particle",
     "internal-energy",
     "thermal",
@@ -48,8 +49,7 @@ class KineticPopulationFieldSpec(StrictModule, NonTrainableState):
     ) -> None:
         if not name:
             raise ValueError("Population field name must be non-empty.")
-        if role not in ("particle", "internal-energy", "thermal"):
-            raise ValueError(f"Unknown kinetic population role {role!r}.")
+        role = parse(role, KineticPopulationRole, "role")
         count = int(population_count)
         if count < 1:
             raise ValueError("population_count must be positive.")
@@ -218,13 +218,7 @@ class CompressibleKineticSupportTuple(StrictModule, NonTrainableState):
         precision_id: str,
         execution_id: str,
     ) -> None:
-        if model_kind not in (
-            "guided-d3q39",
-            "entropic-d3q343",
-            "filtered-d3q33",
-            "adaptive-gauge",
-        ):
-            raise ValueError(f"Unknown compressible kinetic model {model_kind!r}.")
+        model_kind = parse(model_kind, CompressibleKineticModelKind, "model_kind")
         identifiers = (rule_id, collision_id, transport_id, precision_id, execution_id)
         if any(not value for value in identifiers):
             raise ValueError("Support-tuple identifiers must be non-empty.")

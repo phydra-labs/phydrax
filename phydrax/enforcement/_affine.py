@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -42,6 +42,7 @@ from ..linalg._constraint_operators import (
 )
 from ..linalg._operators import BlockLinearOperator, FunctionLinearOperator
 from ..linalg._spaces import AbstractVectorSpace, ArraySpace, BlockSpace
+from ..typing import parse
 from ._lifecycle import (
     RealizationLifecyclePhase,
     RealizationLifecycleState,
@@ -55,8 +56,8 @@ from ._realization import (
 )
 
 
-AffineCompatibility = Literal["strict", "generalized"]
-AffineExactnessScope = Literal["continuum", "realization"]
+AffineCompatibility: TypeAlias = Literal["strict", "generalized"]
+AffineExactnessScope: TypeAlias = Literal["continuum", "realization"]
 
 
 def _identifier(value: str | None, payload: Mapping[str, Any], name: str, /) -> str:
@@ -237,10 +238,8 @@ class AffineProjectionPolicy(StrictModule):
         relative_tolerance: Any = 1e-8,
         verify_projection: bool = True,
     ) -> None:
-        if compatibility not in ("strict", "generalized"):
-            raise ValueError("compatibility must be 'strict' or 'generalized'.")
-        if exactness_scope not in ("continuum", "realization"):
-            raise ValueError("exactness_scope must be 'continuum' or 'realization'.")
+        compatibility = parse(compatibility, AffineCompatibility, "compatibility")
+        exactness_scope = parse(exactness_scope, AffineExactnessScope, "exactness_scope")
         absolute = jnp.asarray(absolute_tolerance)
         relative = jnp.asarray(relative_tolerance)
         if absolute.shape or relative.shape or bool(absolute < 0) or bool(relative < 0):

@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ..finite_difference._certification import FDStabilityReport
 from ..finite_difference._sbp import PreparedSBPOperator
 from ._core import (
@@ -86,16 +87,9 @@ class MultiblockSATCoupling(StrictModule, NonTrainableState):
                 "SBP operators must align with the interface blocks and normals."
             )
         speed_ = float(speed)
-        if (
-            not np.isfinite(speed_)
-            or speed_ == 0.0
-            or flux
-            not in (
-                "central",
-                "upwind",
-            )
-        ):
-            raise ValueError("Multiblock SAT speed/flux is invalid.")
+        if not np.isfinite(speed_) or speed_ == 0.0:
+            raise ValueError("Multiblock SAT speed is invalid.")
+        flux = parse(flux, MultiblockNumericalFlux, "flux")
         left_trace_shape = (
             left.grid.shape[: left.axis_index] + left.grid.shape[left.axis_index + 1 :]
         )

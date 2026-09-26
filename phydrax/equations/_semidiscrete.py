@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -32,11 +32,12 @@ from ..linalg import (
     FunctionLinearOperator,
     OperatorProperties,
 )
+from ..typing import parse
 from ._ir import PDEExpression, PDEField, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
 
 
-SemidiscreteCompilationMethod = Literal["auto", "direct", "semilinear"]
+SemidiscreteCompilationMethod: TypeAlias = Literal["auto", "direct", "semilinear"]
 ResolvedSemidiscreteMethod = Literal[
     "direct",
     "semilinear-matrix-free",
@@ -2493,8 +2494,7 @@ def compile_semidiscrete_pde(
     from ..discretization.spectral import SphericalSpectralDiscretization
     from ..solver._semilinear_drift import SemilinearDrift
 
-    if method not in ("auto", "direct", "semilinear"):
-        raise ValueError("method must be 'auto', 'direct', or 'semilinear'.")
+    method = parse(method, SemidiscreteCompilationMethod, "method")
     if (
         isinstance(
             discretization,

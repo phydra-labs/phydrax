@@ -15,7 +15,7 @@ from ..._differentiation import AbstractConstructionCertificate, DerivativeRegul
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._model import INPUT_CONVEX_CERTIFICATE_KEY
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from .._contracts import AFFINE, compose_regularity, sum_regularity
 from .._keys import EvalKey, fold_in_eval_key
@@ -26,8 +26,8 @@ from ..layers._linear import Linear
 from ..parameters import PositiveTransform
 
 
-ConvexActivation = Literal["softplus", "relu", "squared_relu"]
-InputConvexConstruction = Literal[
+ConvexActivation: TypeAlias = Literal["softplus", "relu", "squared_relu"]
+InputConvexConstruction: TypeAlias = Literal[
     "input-convex-network", "partially-input-convex-network"
 ]
 _CanonicalSize: TypeAlias = int | tuple[int, ...] | Literal["scalar"]
@@ -97,17 +97,12 @@ class InputConvexCertificate(AbstractConstructionCertificate):
         depth: int,
         width_size: int,
     ) -> None:
-        if construction not in (
-            "input-convex-network",
-            "partially-input-convex-network",
-        ):
-            raise ValueError("Unknown input-convex construction.")
+        construction = parse(construction, InputConvexConstruction, "construction")
         if (context_size is None) != (construction == "input-convex-network"):
             raise ValueError(
                 "Only partially input-convex constructions declare a context size."
             )
-        if activation not in ("softplus", "relu", "squared_relu"):
-            raise ValueError("activation must be 'softplus', 'relu', or 'squared_relu'.")
+        activation = parse(activation, ConvexActivation, "activation")
         depth_ = int(depth)
         width = int(width_size)
         if depth_ <= 0 or width <= 0:

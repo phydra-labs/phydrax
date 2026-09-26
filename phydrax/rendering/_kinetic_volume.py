@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,9 +15,10 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 
 
-KineticVolumeProjection = Literal["slice", "maximum", "mean"]
+KineticVolumeProjection: TypeAlias = Literal["slice", "maximum", "mean"]
 
 
 class KineticVolumeRenderEvidence(StrictModule):
@@ -52,8 +53,7 @@ class KineticVolumeRenderPlan(StrictModule, NonTrainableState):
         lower_bound: float | None = None,
         upper_bound: float | None = None,
     ) -> None:
-        if projection not in ("slice", "maximum", "mean"):
-            raise ValueError(f"Unknown kinetic volume projection {projection!r}.")
+        projection = parse(projection, KineticVolumeProjection, "projection")
         axis_value = int(axis)
         index = int(slice_index)
         lower = None if lower_bound is None else float(lower_bound)

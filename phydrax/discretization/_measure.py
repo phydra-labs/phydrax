@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._core import nonempty_identifier, resolved_identifier
 
 
@@ -54,8 +55,7 @@ class DiscreteMeasure(StrictModule, NonTrainableState):
         name_ = nonempty_identifier("name", name)
         support_id_ = nonempty_identifier("support_id", support_id)
         entity_set_id_ = nonempty_identifier("entity_set_id", entity_set_id)
-        if normalization not in ("physical", "probability", "counting", "signed"):
-            raise ValueError("Unknown measure normalization.")
+        normalization = parse(normalization, MeasureNormalization, "normalization")
         values = np.asarray(weights)
         if values.ndim != 1:
             raise ValueError("Discrete measure weights must be rank-1.")

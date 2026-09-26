@@ -39,6 +39,7 @@ from ...linalg.eigen import (
     RestartedLanczos,
 )
 from ...tensor_network import su2_wigner_3j, su2_wigner_6j
+from ...typing import parse
 from ...units import ENERGY, UnitDefinition
 from ._identity import MonopoleLandauLevel
 
@@ -176,14 +177,14 @@ class HaldaneSpherePlan(StrictModule, NonTrainableState):
         flux_offset: int = 0,
     ) -> None:
         particles = int(particle_count)
-        statistics_ = str(statistics)
         offset = int(flux_offset)
         if not isinstance(manifold, MonopoleLandauLevel):
             raise TypeError("manifold must be MonopoleLandauLevel.")
         if not isinstance(energy_scale, QuantumHallEnergyScale):
             raise TypeError("energy_scale must be QuantumHallEnergyScale.")
-        if particles < 2 or statistics_ not in ("fermion", "boson"):
+        if particles < 2:
             raise ValueError("Haldane sphere particles or statistics are invalid.")
+        statistics_ = parse(statistics, HallStatistics, "statistics")
         if statistics_ == "fermion" and particles > manifold.orbital_count:
             raise ValueError("Fermion particle count exceeds the sphere orbital count.")
         if (filling is None) != (shift is None):

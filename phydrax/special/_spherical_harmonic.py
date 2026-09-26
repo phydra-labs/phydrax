@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import math
 from numbers import Integral
-from typing import Literal
+from typing import assert_never, Literal, TypeAlias
 
 import jax.numpy as jnp
 from jax import Array, lax
 from jax.typing import ArrayLike
 
+from ..typing import parse
 from ._dtype import (
     _exact_zero,
     _positive_log,
@@ -27,7 +28,7 @@ from ._dtype import (
 )
 
 
-AssociatedLegendreNormalization = Literal[
+AssociatedLegendreNormalization: TypeAlias = Literal[
     "unnormalized",
     "schmidt",
     "fully_normalized",
@@ -211,20 +212,19 @@ def _real_harmonic_scale(
     /,
 ) -> float:
     multiplicity = 2.0 if order > 0 else 1.0
-    if normalization == "unnormalized":
-        log_scale = 0.5 * (
-            math.log(4.0 * math.pi / (2 * degree + 1))
-            + math.lgamma(degree + order + 1)
-            - math.lgamma(degree - order + 1)
-        )
-    elif normalization == "schmidt":
-        log_scale = 0.5 * math.log(multiplicity * 4.0 * math.pi / (2 * degree + 1))
-    elif normalization == "fully_normalized":
-        log_scale = 0.5 * math.log(multiplicity * 4.0 * math.pi)
-    else:
-        raise ValueError(
-            f"Unsupported associated-Legendre normalization: {normalization!r}"
-        )
+    match normalization:
+        case "unnormalized":
+            log_scale = 0.5 * (
+                math.log(4.0 * math.pi / (2 * degree + 1))
+                + math.lgamma(degree + order + 1)
+                - math.lgamma(degree - order + 1)
+            )
+        case "schmidt":
+            log_scale = 0.5 * math.log(multiplicity * 4.0 * math.pi / (2 * degree + 1))
+        case "fully_normalized":
+            log_scale = 0.5 * math.log(multiplicity * 4.0 * math.pi)
+        case _:
+            assert_never(normalization)
     phase = 1.0 if condon_shortley or order % 2 == 0 else -1.0
     return phase * math.exp(log_scale)
 
@@ -242,10 +242,7 @@ def _real_spherical_harmonic_table(
     limit = int(maximum_degree)
     if limit < 0:
         raise ValueError("maximum_degree must be nonnegative")
-    if normalization not in ("unnormalized", "schmidt", "fully_normalized"):
-        raise ValueError(
-            f"Unsupported associated-Legendre normalization: {normalization!r}"
-        )
+    normalization = parse(normalization, AssociatedLegendreNormalization, "normalization")
 
     (unit_vector,) = promote_real("spherical_harmonic_table", unit_vector)
     if unit_vector.shape != (3,):

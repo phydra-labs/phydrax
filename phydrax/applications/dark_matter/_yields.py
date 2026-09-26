@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,12 +20,13 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...qualification import ReferenceArtifactManifest
+from ...typing import parse
 from ..astrophysics._operators import SpectralField
 from ..astrophysics._photometry import ObservationDataProvenance
 
 
 DarkMatterProcessKind = Literal["annihilation", "decay"]
-ProviderExecution = Literal["host", "subprocess"]
+ProviderExecution: TypeAlias = Literal["host", "subprocess"]
 
 
 class YieldProviderStatus(IntEnum):
@@ -464,8 +465,7 @@ class ExternalYieldProviderResult(StrictModule, NonTrainableState):
             raise TypeError("External yield results require a spectrum and manifest.")
         provider_ = _identifier(provider, "provider")
         version_ = _identifier(provider_version, "provider_version")
-        if execution not in ("host", "subprocess"):
-            raise ValueError("Provider execution must be 'host' or 'subprocess'.")
+        execution = parse(execution, ProviderExecution, "execution")
         if isinstance(return_code, bool) or not isinstance(return_code, int):
             raise TypeError("return_code must be an integer.")
         manifest.require_rights(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -12,10 +12,10 @@ from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 
 
-OrdinalCutpointAnchor = Literal["mean", "fixed_first"]
+OrdinalCutpointAnchor: TypeAlias = Literal["mean", "fixed_first"]
 
 
 def _inverse_softplus(value: Array, /) -> Array:
@@ -48,8 +48,7 @@ class OrderedOrdinalCutpoints(StrictModule, ParameterOwner):
         gap_floor = float(minimum_gap)
         if not jnp.isfinite(gap_floor) or gap_floor <= 0.0:
             raise ValueError("minimum_gap must be finite and strictly positive.")
-        if anchor not in ("mean", "fixed_first"):
-            raise ValueError("anchor must be 'mean' or 'fixed_first'.")
+        anchor = parse(anchor, OrdinalCutpointAnchor, "anchor")
         if not jnp.isfinite(float(anchor_value)):
             raise ValueError("anchor_value must be finite.")
         cutpoint_count = count - 1

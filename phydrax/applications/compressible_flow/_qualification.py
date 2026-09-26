@@ -23,6 +23,7 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from ...typing import parse
 
 
 CompressibleWaveKind: TypeAlias = Literal[
@@ -66,9 +67,9 @@ class CompressibleReferenceWavePlan(StrictModule, NonTrainableState):
         wave = tuple(float(value) for value in wave_vector)
         amplitude_ = float(amplitude)
         sign = int(propagation_sign)
+        kind = parse(kind, CompressibleWaveKind, "kind")
         if (
-            kind not in ("isentropic", "acoustic", "entropy", "vorticity")
-            or base.ndim != 1
+            base.ndim != 1
             or len(wave) not in (1, 2, 3)
             or any(not np.isfinite(value) for value in (*np.asarray(base), *wave))
             or np.linalg.norm(np.asarray(wave)) <= 0.0

@@ -189,7 +189,7 @@ def test_static_random_field_roles_are_explicit(role):
 def test_static_random_field_rejects_implicit_or_unknown_semantics():
     basis = _periodic_basis(8, ("constant",))
     synthesis = phx.stochastic.SpatialBasisSynthesis.from_spatial_noise_basis(basis)
-    with pytest.raises(ValueError, match="role must be"):
+    with pytest.raises(ValueError, match="role"):
         phx.stochastic.StaticGaussianRandomField(synthesis, role="process")
     field = phx.stochastic.StaticGaussianRandomField(synthesis)
     with pytest.raises(ValueError, match="transform_id"):

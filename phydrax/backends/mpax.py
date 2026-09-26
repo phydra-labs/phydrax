@@ -10,6 +10,7 @@ import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._availability import import_backend_module, probe_backend
 from ._types import AbstractExternalBackend, BackendAvailability, BackendCapabilities
 
@@ -85,10 +86,8 @@ class MPAXPlan(StrictModule):
         feasibility_polishing: bool = False,
         unroll: bool = False,
     ) -> None:
-        if algorithm not in ("rapdhg", "r2hpdhg"):
-            raise ValueError("algorithm must be 'rapdhg' or 'r2hpdhg'.")
-        if representation not in ("dense", "sparse"):
-            raise ValueError("representation must be 'dense' or 'sparse'.")
+        algorithm = parse(algorithm, MPAXAlgorithm, "algorithm")
+        representation = parse(representation, MPAXRepresentation, "representation")
         values = tuple(
             float(value)
             for value in (

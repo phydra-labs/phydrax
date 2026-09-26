@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
-from typing import Any, Literal, TypeAlias
+from typing import Any, assert_never, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -50,6 +50,7 @@ from ...nonlinear import (
     refresh_nonlinear,
 )
 from ...sparse import SparseCoordinateOperator
+from ...typing import parse
 from ._force_density_loads import (
     AbstractForceDensityLoadModel,
     evaluate_force_density_load,
@@ -258,13 +259,7 @@ class ForceDensityProblem(StrictModule, NonTrainableState):
         model = FixedNodalLoadModel() if load_model is None else load_model
         if not isinstance(model, AbstractForceDensityLoadModel):
             raise TypeError("load_model must be an AbstractForceDensityLoadModel.")
-        if sign_mode not in (
-            "tension",
-            "compression",
-            "fixed-mixed",
-            "unrestricted",
-        ):
-            raise ValueError("Unknown force-density sign mode.")
+        sign_mode = parse(sign_mode, ForceDensitySignMode, "sign_mode")
         signs = None
         if sign_mode == "fixed-mixed":
             if fixed_signs is None:
@@ -444,16 +439,23 @@ def _validated_force_densities(
     active = structure.member_valid
     margin = jnp.asarray(problem.tolerances.minimum_force_density, dtype=densities.dtype)
     invalid = active & (~jnp.isfinite(densities) | (jnp.abs(densities) < margin))
-    if problem.sign_mode == "tension":
-        invalid = invalid | (active & (densities <= margin))
-    elif problem.sign_mode == "compression":
-        invalid = invalid | (active & (densities >= -margin))
-    elif problem.sign_mode == "fixed-mixed":
-        if problem.fixed_signs is None:
-            raise RuntimeError("Fixed-mixed signs are unavailable.")
-        invalid = invalid | (
-            active & (jnp.sign(densities) != problem.fixed_signs.astype(densities.dtype))
-        )
+    sign_mode = problem.sign_mode
+    match sign_mode:
+        case "tension":
+            invalid = invalid | (active & (densities <= margin))
+        case "compression":
+            invalid = invalid | (active & (densities >= -margin))
+        case "fixed-mixed":
+            if problem.fixed_signs is None:
+                raise RuntimeError("Fixed-mixed signs are unavailable.")
+            invalid = invalid | (
+                active
+                & (jnp.sign(densities) != problem.fixed_signs.astype(densities.dtype))
+            )
+        case "unrestricted":
+            pass
+        case _:
+            assert_never(sign_mode)
     checked = eqx.error_if(
         densities,
         jnp.any(invalid),

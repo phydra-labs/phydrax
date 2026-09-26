@@ -18,7 +18,7 @@ from jax.typing import ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._dense_inverse import dense_inverse
 from ._operators import DenseLinearOperator
 from ._policies import DenseLU, FailurePolicy, LinearSolvePolicy
@@ -964,8 +964,7 @@ def _resolve_gaussian_markov_method(
     method: GaussianMarkovExecutionMethod,
     /,
 ) -> Literal["sequential", "parallel"]:
-    if method not in ("sequential", "parallel", "auto"):
-        raise ValueError("method must be 'sequential', 'parallel', or 'auto'.")
+    method = parse(method, GaussianMarkovExecutionMethod, "method")
     if method != "auto":
         return method
     return "parallel" if num_nodes >= 64 and state_size <= 32 else "sequential"

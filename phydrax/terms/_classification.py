@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -34,7 +34,7 @@ from .._likelihoods import (
 from ..ml._classification import ClassificationObjective
 from ..ml._schema import TargetSchema
 from ..ml.metrics._base import METRIC_INVALID_INPUT, METRIC_SUCCESS
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._likelihood import (
     _AbstractSupervisedDatasetObservationTerm,
     _AbstractSupervisedLikelihoodTerm,
@@ -42,7 +42,7 @@ from ._likelihood import (
 from ._supervised_dataset import SupervisedDatasetBatch
 
 
-ClassificationKind = Literal["binary", "multiclass", "multilabel"]
+ClassificationKind: TypeAlias = Literal["binary", "multiclass", "multilabel"]
 
 
 def _canonical_hard_targets(
@@ -253,26 +253,27 @@ class SupervisedClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         if not isinstance(target_schema, TargetSchema):
             raise TypeError("target_schema must be a TargetSchema.")
         kind = target_schema.kind
-        if kind == "binary":
-            class_count = 2
-            likelihood = ScalarNaturalExponentialFamilyLikelihood(BernoulliFamily())
-        elif kind == "multiclass":
-            class_count = target_schema.num_classes
-            if class_count < 2:
-                raise ValueError(
-                    "Multiclass classification requires class_labels for every class."
+        match kind:
+            case "binary":
+                class_count = 2
+                likelihood = ScalarNaturalExponentialFamilyLikelihood(BernoulliFamily())
+            case "multiclass":
+                class_count = target_schema.num_classes
+                if class_count < 2:
+                    raise ValueError(
+                        "Multiclass classification requires class_labels for every class."
+                    )
+                likelihood = CategoricalExponentialFamilyLikelihood(
+                    CategoricalFamily(class_count),
+                    prediction_coordinates="full_logits",
                 )
-            likelihood = CategoricalExponentialFamilyLikelihood(
-                CategoricalFamily(class_count),
-                prediction_coordinates="full_logits",
-            )
-        elif kind == "multilabel":
-            class_count = target_schema.num_labels
-            likelihood = IndependentBernoulliLikelihood(class_count)
-        else:
-            raise ValueError(
-                "SupervisedClassificationTerm supports binary, multiclass, and multilabel TargetSchema kinds."
-            )
+            case "multilabel":
+                class_count = target_schema.num_labels
+                likelihood = IndependentBernoulliLikelihood(class_count)
+            case _:
+                raise ValueError(
+                    "SupervisedClassificationTerm supports binary, multiclass, and multilabel TargetSchema kinds."
+                )
         encoded = _canonical_hard_targets(
             targets,
             kind=kind,
@@ -511,15 +512,11 @@ class SupervisedFocalClassificationTerm(_AbstractSupervisedDatasetObservationTer
         indices: ArrayLike | None = None,
         label: str | None = None,
     ) -> None:
-        if not isinstance(target_schema, TargetSchema) or target_schema.kind not in (
-            "binary",
-            "multiclass",
-            "multilabel",
-        ):
+        if not isinstance(target_schema, TargetSchema):
             raise ValueError(
                 "Focal classification requires a hard classification schema."
             )
-        kind = target_schema.kind
+        kind = parse(target_schema.kind, ClassificationKind, "target_schema.kind")
         class_count = (
             2
             if kind == "binary"

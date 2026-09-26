@@ -22,6 +22,7 @@ from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
+from ...typing import parse
 from ..stochastic._hjb import (
     _finite_real_array,
     _nonnegative_tolerance,
@@ -187,9 +188,7 @@ class CoupledHJBPolicyIterationPlan(StrictModule, NonTrainableState):
         damping_value = float(damping)
         if not np.isfinite(damping_value) or not 0.0 < damping_value <= 1.0:
             raise ValueError("damping must be finite and in (0, 1].")
-        update_name = str(update)
-        if update_name not in ("jacobi", "gauss_seidel"):
-            raise ValueError("update must be 'jacobi' or 'gauss_seidel'.")
+        update_name = parse(str(update), CoupledHJBUpdate, "update")
         identifier = str(plan_id)
         if not identifier:
             raise ValueError("plan_id must be non-empty.")

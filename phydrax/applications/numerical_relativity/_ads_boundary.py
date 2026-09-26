@@ -19,6 +19,7 @@ from phydrax.linalg import inverse
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import parse
 from ._conformal_einstein import ConformalEinsteinState
 
 
@@ -61,8 +62,6 @@ class AdSConformalBoundaryPlan(StrictModule):
         require_corner_compatibility: bool = True,
     ) -> None:
         axis = int(spatial_axis)
-        side_value = str(side)
-        policy = str(radiation_policy)
         metric = np.asarray(target_induced_metric, dtype=np.float64)
         incoming = float(target_incoming_radiation)
         tolerances = tuple(
@@ -76,10 +75,10 @@ class AdSConformalBoundaryPlan(StrictModule):
                 corner_tolerance,
             )
         )
-        if axis not in (0, 1, 2) or side_value not in {"lower", "upper"}:
+        if axis not in (0, 1, 2):
             raise ValueError("AdS boundary axis or side is invalid.")
-        if policy not in {"reflecting", "driven", "dissipative"}:
-            raise ValueError("Unknown AdS radiation policy.")
+        side_value = parse(side, AdSBoundarySide, "side")
+        policy = parse(radiation_policy, AdSRadiationPolicy, "radiation_policy")
         if metric.shape != (3, 3) or not np.all(np.isfinite(metric)):
             raise ValueError("target_induced_metric must be one finite 3x3 tensor.")
         if not np.allclose(metric, metric.T):

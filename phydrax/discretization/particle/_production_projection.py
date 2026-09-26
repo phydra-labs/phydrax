@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...typing import parse
 from ._dfsph import DFSPHFactorState, PreparedDFSPH
 from ._iisph import PreparedIISPH
 from ._qualification import ParticleConstraintResiduals
@@ -204,8 +205,7 @@ class ProjectedIterationAccelerationPlan(StrictModule, NonTrainableState):
         relaxation_minimum: float = 0.3,
         relaxation_maximum: float = 0.9,
     ) -> None:
-        if kind not in ("reference", "chebyshev", "anderson"):
-            raise ValueError("Unknown projection acceleration kind.")
+        kind = parse(kind, ProjectionAccelerationKind, "kind")
         if not 0.0 < relaxation_minimum <= relaxation_maximum <= 1.0:
             raise ValueError("Projection relaxation bounds are invalid.")
         self.kind = kind

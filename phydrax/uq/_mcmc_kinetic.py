@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,9 +19,10 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..nn.parameters import ParameterSubspace
+from ..typing import parse
 
 
-MCMCKineticKind = Literal["diagonal", "blocks", "diagonal_low_rank"]
+MCMCKineticKind: TypeAlias = Literal["diagonal", "blocks", "diagonal_low_rank"]
 
 
 class MCMCMassAdaptationPlan(StrictModule):
@@ -43,8 +44,7 @@ class MCMCMassAdaptationPlan(StrictModule):
         rank: int = 0,
         memory_cap_bytes: int = 2**30,
     ) -> None:
-        if kind not in ("diagonal", "blocks", "diagonal_low_rank"):
-            raise ValueError("Unknown MCMC kinetic kind.")
+        kind = parse(kind, MCMCKineticKind, "kind")
         blocks = tuple(tuple(str(path) for path in block) for block in parameter_blocks)
         cap = int(memory_cap_bytes)
         if cap <= 0:

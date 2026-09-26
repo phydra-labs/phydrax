@@ -31,6 +31,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..artifacts import ArtifactManifest
+from ..typing import parse
 from ._report import (
     AdapterError,
     AdapterFormatProfile,
@@ -44,7 +45,6 @@ from ._report import (
 BlackHoleArtifactKind: TypeAlias = Literal[
     "field", "image", "visibility", "waveform", "numeric-model"
 ]
-_ARTIFACT_KINDS = frozenset(("field", "image", "visibility", "waveform", "numeric-model"))
 _NUMERIC_MODEL_FORMATS = frozenset(("onnx", "safetensors", "npz", "phydrax-ml-artifact"))
 _REQUIRED_SEMANTICS: dict[str, frozenset[str]] = {
     "field": frozenset(
@@ -157,8 +157,7 @@ class BlackHoleArtifactRights(StrictModule, NonTrainableState):
         model_execution: bool,
         export: bool,
     ) -> None:
-        if artifact_kind not in _ARTIFACT_KINDS:
-            raise ValueError("Unknown black-hole artifact kind.")
+        artifact_kind = parse(artifact_kind, BlackHoleArtifactKind, "artifact_kind")
         if type(size_bytes) is not int:
             raise TypeError("Artifact rights byte size must be an exact integer.")
         size = size_bytes
@@ -339,8 +338,7 @@ class BlackHoleArtifactSchema(StrictModule, NonTrainableState):
         semantic_bindings: Mapping[str, str] | Sequence[tuple[str, str]],
         /,
     ) -> None:
-        if artifact_kind not in _ARTIFACT_KINDS:
-            raise ValueError("Unknown black-hole artifact kind.")
+        artifact_kind = parse(artifact_kind, BlackHoleArtifactKind, "artifact_kind")
         source = _identifier(source_format, "Source format").lower()
         if artifact_kind == "numeric-model" and source not in _NUMERIC_MODEL_FORMATS:
             raise ValueError(

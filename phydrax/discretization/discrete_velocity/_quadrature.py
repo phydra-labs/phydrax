@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 
 
 VelocityTransportKind: TypeAlias = Literal["integer_lattice", "off_lattice"]
@@ -179,8 +180,7 @@ class CertifiedDiscreteVelocityQuadrature(StrictModule, NonTrainableState):
             raise ValueError(
                 "Quadrature data, temperature, degree, or tolerance is invalid."
             )
-        if transport_kind not in ("integer_lattice", "off_lattice"):
-            raise ValueError("Unknown discrete-velocity transport kind.")
+        transport_kind = parse(transport_kind, VelocityTransportKind, "transport_kind")
         integer_residual = float(
             np.max(np.abs(velocity_values - np.rint(velocity_values)))
         )

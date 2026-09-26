@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import ClassVar, Literal, Protocol, runtime_checkable
+from typing import ClassVar, Literal, Protocol, runtime_checkable, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,11 +20,12 @@ from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 from .metrix.algebra import ComplexAlgebraSpec
+from .typing import parse
 
 
 _CANONICAL_COMPLEX_ALGEBRA_ID = ComplexAlgebraSpec().algebra_id
 
-HolomorphicParameterCoverage = Literal[
+HolomorphicParameterCoverage: TypeAlias = Literal[
     "finite-subspace",
     "finite-parametric-family",
 ]
@@ -159,11 +160,9 @@ class HolomorphicMapCertificate(AbstractConstructionCertificate):
             )
         if any(not value for value in dependencies):
             raise ValueError("Holomorphic construction dependency IDs must be non-empty.")
-        if parameter_coverage not in (
-            "finite-subspace",
-            "finite-parametric-family",
-        ):
-            raise ValueError("Unknown holomorphic parameter coverage.")
+        parameter_coverage = parse(
+            parameter_coverage, HolomorphicParameterCoverage, "parameter_coverage"
+        )
         if parameter_coverage == "finite-subspace" and not linear_in_parameters:
             raise ValueError(
                 "Finite-subspace holomorphic maps must be linear in their parameters."

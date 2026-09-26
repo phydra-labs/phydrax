@@ -17,6 +17,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from ..typing import parse
 
 
 MeshfreeOperatorKind: TypeAlias = Literal["value", "gradient", "laplacian"]
@@ -201,10 +202,8 @@ def prepare_meshfree_operator(
 ) -> PreparedMeshfreeOperator:
     if not isinstance(plan, MeshfreeStencilPlan):
         raise TypeError("plan must be MeshfreeStencilPlan.")
-    if kind not in ("value", "gradient", "laplacian"):
-        raise ValueError("Unknown meshfree operator kind.")
-    if method not in ("rbf-fd", "gmls"):
-        raise ValueError("Unknown meshfree method.")
+    kind = parse(kind, MeshfreeOperatorKind, "kind")
+    method = parse(method, MeshfreeMethod, "method")
     dimension = plan.coordinates.shape[1]
     axis_ = 0 if axis is None else int(axis)
     if kind == "gradient" and not 0 <= axis_ < dimension:

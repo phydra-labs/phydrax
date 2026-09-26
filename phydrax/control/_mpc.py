@@ -37,6 +37,7 @@ from ..optim._programming import (
     PreparedQPSensitivity,
     QuadraticProgram,
 )
+from ..typing import parse
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
 from ._qp_compiler import (
@@ -153,8 +154,7 @@ class RecedingHorizonMPC(StrictModule):
             raise ValueError(
                 f"prediction_horizon must be an integer in [1, {specification.horizon}]."
             )
-        if terminal_policy not in ("global", "always", "none"):
-            raise ValueError("terminal_policy must be 'global', 'always', or 'none'.")
+        terminal_policy = parse(terminal_policy, MPCTerminalPolicy, "terminal_policy")
         self.specification = specification
         self.prediction_horizon = prediction_horizon
         self.terminal_policy = terminal_policy

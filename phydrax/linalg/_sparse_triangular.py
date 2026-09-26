@@ -17,6 +17,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from .._strict import StrictModule
+from ..typing import parse
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 
 
@@ -207,8 +208,7 @@ def analyze_sparse_triangular(
     unit_diagonal: bool = False,
 ) -> SparseTriangularAnalysis:
     """Analyze one immutable CSR triangular pattern on the host."""
-    if triangle not in ("lower", "upper"):
-        raise ValueError(f"Unknown sparse triangle {triangle!r}.")
+    triangle = parse(triangle, SparseTriangle, "triangle")
     storage = _storage(operator_or_storage)
     indices, indptr = _validated_host_pattern(storage)
     diagonal, levels = _orientation_analysis(

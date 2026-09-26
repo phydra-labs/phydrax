@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -28,9 +28,10 @@ from ..discretization.spectral._space import TensorSpectralDiscretization
 from ..linalg import ArraySpace, DiagonalLinearOperator
 from ..solver._etdrk import ETDRKMethod, PreparedETDRKMethod
 from ..solver._semilinear_drift import SemilinearDrift
+from ..typing import parse
 
 
-DissipationOrder = Literal[1, 2, 3, 4]
+DissipationOrder: TypeAlias = Literal[1, 2, 3, 4]
 BilinearSelector = Callable[[Callable[[Array, Array], Array], Array, ArrayLike], Array]
 
 
@@ -137,10 +138,10 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
             or drag < 0.0
             or not np.isfinite(viscosity_)
             or viscosity_ < 0.0
-            or order not in (1, 2, 3, 4)
-            or not np.isfinite(tolerance)
-            or tolerance < 0.0
         ):
+            raise ValueError("Beta-plane coefficients and tolerances are invalid.")
+        order = parse(order, DissipationOrder, "dissipation_order")
+        if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("Beta-plane coefficients and tolerances are invalid.")
         waves, squared, inverse, admissible, volume = _modal_geometry(discretization)
         if dealiasing is None:

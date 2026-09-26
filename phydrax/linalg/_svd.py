@@ -18,6 +18,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._materialization import MaterializationPolicy, materialize
 from ._operators import AbstractLinearOperator, adjoint
 from ._policies import FailurePolicy, RankPolicy
@@ -155,10 +156,10 @@ class SVDSolvePolicy(StrictModule):
         count_ = int(count)
         if count_ < 1:
             raise ValueError("SVD count must be positive.")
-        if which not in ("largest", "smallest"):
-            raise ValueError("SVD target must be 'largest' or 'smallest'.")
-        if differentiation not in ("none", "singular-values"):
-            raise ValueError("SVD differentiation must be 'none' or 'singular-values'.")
+        which = parse(which, SVDTarget, "which")
+        differentiation = parse(
+            differentiation, SVDDifferentiationMode, "differentiation"
+        )
         tolerance_ = SVDTolerancePolicy() if tolerance is None else tolerance
         rank_ = RankPolicy() if rank is None else rank
         materialization_ = (

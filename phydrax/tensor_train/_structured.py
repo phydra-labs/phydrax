@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,10 +15,11 @@ from jax.typing import ArrayLike, DTypeLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._core import TensorTrain, TensorTrainOperator
 
 
-BoundaryKind = Literal["periodic", "dirichlet", "neumann"]
+BoundaryKind: TypeAlias = Literal["periodic", "dirichlet", "neumann"]
 
 
 class BoundaryPolicy(StrictModule):
@@ -28,8 +29,7 @@ class BoundaryPolicy(StrictModule):
     policy_id: str = eqx.field(static=True)
 
     def __init__(self, kind: BoundaryKind, /) -> None:
-        if kind not in ("periodic", "dirichlet", "neumann"):
-            raise ValueError("Boundary kind must be periodic, dirichlet, or neumann.")
+        kind = parse(kind, BoundaryKind, "kind")
         self.kind = kind
         self.policy_id = canonical_fingerprint(
             {"kind": "tensor-train-boundary-policy", "boundary": kind}

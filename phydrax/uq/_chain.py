@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
@@ -14,23 +14,19 @@ import jax.random as jr
 from jax import Array
 from jaxtyping import PyTree
 
+from ..typing import parse
 
-ChainMethod = Literal["sequential", "vectorized"]
-NUTSChainMethod = Literal["sequential", "vectorized", "interleaved"]
+
+ChainMethod: TypeAlias = Literal["sequential", "vectorized"]
+NUTSChainMethod: TypeAlias = Literal["sequential", "vectorized", "interleaved"]
 
 
 def _validate_chain_method(value: ChainMethod, /) -> ChainMethod:
-    if value not in ("sequential", "vectorized"):
-        raise ValueError("chain_method must be 'sequential' or 'vectorized'.")
-    return value
+    return parse(value, ChainMethod, "chain_method")
 
 
 def _validate_nuts_chain_method(value: NUTSChainMethod, /) -> NUTSChainMethod:
-    if value not in ("sequential", "vectorized", "interleaved"):
-        raise ValueError(
-            "chain_method must be 'sequential', 'vectorized', or 'interleaved'."
-        )
-    return value
+    return parse(value, NUTSChainMethod, "chain_method")
 
 
 def _prepare_chain_positions(

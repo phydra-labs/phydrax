@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -9,11 +9,10 @@ import jax.numpy as jnp
 from phydrax._strict import StrictModule
 
 from ..sparse import EdgeRelation, gather_routes, mask_routes, route_reduce
+from ..typing import parse
 from ._graph import ensure_graph
 from ._ir import GraphIR
-
-
-GraphFlow = Literal["source_to_target", "target_to_source"]
+from ._typed import GraphFlow
 
 
 def _as_feature_mapping(value: Any, /) -> dict[str, Any]:
@@ -81,8 +80,7 @@ def _oriented_relation(
         raise ValueError(
             "Equivariant graph operators require explicit senders/receivers."
         )
-    if flow not in ("source_to_target", "target_to_source"):
-        raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+    flow = parse(flow, GraphFlow, "flow")
     return graph.edge_relation(node_count=node_count, flow=flow)
 
 
@@ -196,8 +194,7 @@ class EquivariantGraphConvolution(StrictModule):
         normalize: bool = False,
         eps: float = 1e-30,
     ) -> None:
-        if flow not in ("source_to_target", "target_to_source"):
-            raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+        flow = parse(flow, GraphFlow, "flow")
         if scalar_output_key is None and vector_output_key is None:
             raise ValueError("At least one output key must be provided.")
         self.radial_fn = radial_fn

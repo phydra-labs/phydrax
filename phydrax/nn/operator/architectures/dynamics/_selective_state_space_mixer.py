@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -26,11 +26,11 @@ from phydrax.nn.layers._physical_sequence import (
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
-from .....typing import PRNGKey
+from .....typing import parse, PRNGKey
 
 
-SelectiveInputIntegration = Literal["zoh", "linear"]
-SelectiveExecution = Literal["recurrent", "associative"]
+SelectiveInputIntegration: TypeAlias = Literal["zoh", "linear"]
+SelectiveExecution: TypeAlias = Literal["recurrent", "associative"]
 
 
 class SelectiveStateSpaceDiagnostics(StrictModule):
@@ -125,10 +125,10 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
         self.approximation = "input-selective-diagonal"
         if self.state_size <= 0:
             raise ValueError("state_size must be positive.")
-        if input_integration not in ("zoh", "linear"):
-            raise ValueError("input_integration must be 'zoh' or 'linear'.")
-        if execution not in ("recurrent", "associative"):
-            raise ValueError("execution must be 'recurrent' or 'associative'.")
+        self.input_integration = parse(
+            input_integration, SelectiveInputIntegration, "input_integration"
+        )
+        self.execution = parse(execution, SelectiveExecution, "execution")
         if not self.time_axis:
             raise ValueError("time_axis must be non-empty.")
         in_count = _get_size(self.in_size)
@@ -445,9 +445,11 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
         values, schedule, valid, resets, state0 = self._prepare_sequence(
             inputs, times, mask, reset, initial_state
         )
-        selected = self.execution if execution is None else execution
-        if selected not in ("recurrent", "associative"):
-            raise ValueError("execution must be 'recurrent' or 'associative'.")
+        selected = parse(
+            self.execution if execution is None else execution,
+            SelectiveExecution,
+            "execution",
+        )
         states, effective_step, continuation = self._state_trajectory(
             values,
             schedule,

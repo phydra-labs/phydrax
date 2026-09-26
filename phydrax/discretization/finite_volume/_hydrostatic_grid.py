@@ -15,10 +15,11 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._structured import FiniteVolumeDiscretization
 
 
-VerticalCoordinate = Literal["zstar", "partial-z"]
+VerticalCoordinate: TypeAlias = Literal["zstar", "partial-z"]
 HorizontalCoordinate = Literal["cartesian", "latitude-longitude"]
 _AxisBoundaryValues: TypeAlias = tuple[ArrayLike | None, ArrayLike | None]
 _BoundaryValues: TypeAlias = tuple[_AxisBoundaryValues, _AxisBoundaryValues]
@@ -476,8 +477,9 @@ class TensorZHydrostaticGridPlan(StrictModule, NonTrainableState):
             raise ValueError("rest_depth must match the horizontal cell shape.")
         if bool(jnp.any(~jnp.isfinite(depth))) or bool(jnp.any(depth < 0.0)):
             raise ValueError("rest_depth must be finite and nonnegative.")
-        if vertical_coordinate not in ("zstar", "partial-z"):
-            raise ValueError("Unknown hydrostatic vertical-coordinate policy.")
+        vertical_coordinate = parse(
+            vertical_coordinate, VerticalCoordinate, "vertical_coordinate"
+        )
         wet = float(wet_depth)
         fraction = float(minimum_partial_fraction)
         if not np.isfinite(wet) or wet < 0.0 or not 0.0 < fraction <= 1.0:

@@ -17,6 +17,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._assembly import assemble_diagonal
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
@@ -198,13 +199,11 @@ class ChebyshevPreconditioner(AbstractPreconditioner, NonTrainableState):
         )
         lower_ = jax.lax.stop_gradient(lower_)
         upper_ = jax.lax.stop_gradient(upper_)
-        if scaling not in ("none", "symmetric-jacobi"):
-            raise ValueError("Unknown Chebyshev scaling.")
+        scaling = parse(scaling, ChebyshevScaling, "scaling")
         scaled_effective = isinstance(effective_operator, _SymmetricJacobiLinearOperator)
         if (scaling == "symmetric-jacobi") != scaled_effective:
             raise ValueError("scaling must match the effective operator representation.")
-        if bounds_source not in ("explicit", "estimated"):
-            raise ValueError("Unknown Chebyshev bounds source.")
+        bounds_source = parse(bounds_source, ChebyshevBoundsSource, "bounds_source")
         if not isinstance(properties, PreconditionerProperties):
             raise TypeError("properties must be PreconditionerProperties.")
         builder_id_ = str(builder_id)
@@ -357,8 +356,7 @@ class ChebyshevPreconditionerBuilder(AbstractPreconditionerBuilder):
             raise ValueError("estimation_steps must be at least one.")
         if not np.isfinite(margin_) or margin_ < 0.0 or margin_ >= 1.0:
             raise ValueError("margin must be finite and satisfy 0 <= margin < 1.")
-        if scaling not in ("none", "symmetric-jacobi"):
-            raise ValueError("scaling must be either 'none' or 'symmetric-jacobi'.")
+        scaling = parse(scaling, ChebyshevScaling, "scaling")
         if properties is not None and not isinstance(
             properties, PreconditionerProperties
         ):

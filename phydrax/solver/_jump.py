@@ -37,6 +37,7 @@ from ..stochastic import (
     WienerRealization,
 )
 from ..stochastic._trajectory import _TrajectoryRecord
+from ..typing import parse
 from ._differential import DifferentialProblem
 from ._hybrid_event import (
     empty_hybrid_event_tape,
@@ -541,8 +542,7 @@ class JumpSolution(StrictModule):
             raise TypeError("events must be a JumpEventBatch.")
         if not isinstance(realization, PoissonClockRealization):
             raise TypeError("realization must be a PoissonClockRealization.")
-        if algorithm not in ("next_reaction", "direct_ssa"):
-            raise ValueError("Unknown jump algorithm.")
+        algorithm = parse(algorithm, JumpAlgorithm, "algorithm")
         arrays = validate_solution_arrays(
             times,
             states,
@@ -854,8 +854,7 @@ def finite_state_generator(
         raise TypeError("process must implement AbstractJumpProcess.")
     if process.mark_shape:
         raise ValueError("Finite generators currently require unmarked jump processes.")
-    if boundary_policy not in ("error", "suppress", "leak"):
-        raise ValueError("Unknown boundary_policy.")
+    boundary_policy = parse(boundary_policy, GeneratorBoundaryPolicy, "boundary_policy")
     state_values = jnp.asarray(states)
     if state_values.ndim != len(process.state_shape) + 1:
         raise ValueError("states must have one leading enumeration axis.")

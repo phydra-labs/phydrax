@@ -23,6 +23,7 @@ from ...linalg._tridiagonal_lines import (
     solve_tridiagonal_lines,
     TridiagonalLineSolveResult,
 )
+from ...typing import parse
 from ..contracts._options import OptionType, VanillaPayoff
 from ..core._currency import Currency
 from ..core._evidence import FinanceEvidenceBinding
@@ -32,7 +33,7 @@ from ..models._jump import KouJumpDiffusionModel, MertonJumpDiffusionModel
 from ._types import ValuationEvidence, ValuationResult
 
 
-ExerciseRoute = Literal["european", "american"]
+ExerciseRoute: TypeAlias = Literal["european", "american"]
 _ThetaCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
@@ -113,8 +114,7 @@ class PDEProblem(StrictModule):
             )
         if not isinstance(payoff, VanillaPayoff):
             raise TypeError("payoff must be VanillaPayoff.")
-        if exercise_route not in ("european", "american"):
-            raise ValueError("PDE exercise_route must be european or american.")
+        exercise_route = parse(exercise_route, ExerciseRoute, "exercise_route")
         if currency is not None and not isinstance(currency, Currency):
             raise TypeError("currency must be Currency or None.")
         if evidence_binding is not None and not isinstance(

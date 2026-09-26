@@ -20,6 +20,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...integration._deformed_measure import DeformedMeasureState
+from ...typing import parse
 
 
 MechanicalLoadSupport: TypeAlias = Literal["body", "boundary", "discrete"]
@@ -170,16 +171,13 @@ class MechanicalLoadSemantics(StrictModule, NonTrainableState):
         closure_id: str | None = None,
         orientation_id: str | None = None,
     ) -> None:
-        if support not in ("body", "boundary", "discrete"):
-            raise ValueError("Unknown mechanical load support.")
-        if configuration not in ("reference", "current"):
-            raise ValueError("Unknown mechanical load configuration.")
-        if measure_frame not in ("reference", "current"):
-            raise ValueError("Unknown mechanical load measure frame.")
-        if load_frame not in ("reference", "current"):
-            raise ValueError("Unknown mechanical load vector frame.")
-        if conservativity not in ("potential", "virtual_work"):
-            raise ValueError("Unknown mechanical load conservative routing.")
+        support = parse(support, MechanicalLoadSupport, "support")
+        configuration = parse(configuration, MechanicalLoadFrame, "configuration")
+        measure_frame = parse(measure_frame, MechanicalLoadFrame, "measure_frame")
+        load_frame = parse(load_frame, MechanicalLoadFrame, "load_frame")
+        conservativity = parse(
+            conservativity, MechanicalLoadConservativity, "conservativity"
+        )
         certified = bool(potential_certified)
         if conservativity == "potential" and not certified:
             raise ValueError("Potential routing requires a certified load potential.")

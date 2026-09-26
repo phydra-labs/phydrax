@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import cast, Literal
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,9 +17,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._conservation_boundary import AbstractConservationBoundary
 from ...discretization.fem._mortar import FiniteElementMortarPlan
+from ...typing import parse
 
 
-DGTraceRouteKind = Literal["conforming", "mortar", "boundary", "periodic"]
+DGTraceRouteKind: TypeAlias = Literal["conforming", "mortar", "boundary", "periodic"]
 
 
 class PreparedDGTraceRoute(StrictModule, NonTrainableState):
@@ -57,8 +58,7 @@ class PreparedDGTraceRoute(StrictModule, NonTrainableState):
         coordinate_transform: ArrayLike | tuple[()] = (),
         route_id: str,
     ) -> None:
-        if route_kind not in ("conforming", "mortar", "boundary", "periodic"):
-            raise ValueError("Unknown DG trace route kind.")
+        route_kind = parse(route_kind, DGTraceRouteKind, "route_kind")
         owner = jnp.asarray(owner_dofs, dtype=jnp.int32)
         neighbor = jnp.asarray(neighbor_dofs, dtype=jnp.int32)
         owner_basis_ = jnp.asarray(owner_basis)

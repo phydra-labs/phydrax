@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,10 +30,10 @@ from ..domain._derivative import (
 )
 from ..domain._evaluation import BatchEvaluator
 from ..linalg._constraint_operators import PreparedConstraintOperator
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
-FiberExactnessScope = Literal["continuum", "realization"]
+FiberExactnessScope: TypeAlias = Literal["continuum", "realization"]
 FiberDerivativeAction = Callable[..., DomainFunction | None]
 
 
@@ -51,12 +51,6 @@ def _names(values: Sequence[str], /) -> tuple[str, ...]:
     if not names or any(not name for name in names) or len(set(names)) != len(names):
         raise ValueError("Fiber field names must be nonempty and unique.")
     return names
-
-
-def _scope(value: str, /) -> FiberExactnessScope:
-    if value not in ("continuum", "realization"):
-        raise ValueError("Exactness scope must be 'continuum' or 'realization'.")
-    return value
 
 
 def _checked(
@@ -462,7 +456,12 @@ class AnalyticFiberProjectionUnit(StrictModule):
             self.condition_ids,
             self.exactness_scope,
             self.numeric_version,
-        ) = names, ids, _scope(exactness_scope), version
+        ) = (
+            names,
+            ids,
+            parse(exactness_scope, FiberExactnessScope, "exactness_scope"),
+            version,
+        )
         self.unit_id = _id(
             unit_id,
             {
@@ -645,7 +644,13 @@ class SeparableFiberProjectionUnit(StrictModule):
             self.field_names,
             self.condition_ids,
             self.exactness_scope,
-        ) = reduction, evidence, names, ids, _scope(exactness_scope)
+        ) = (
+            reduction,
+            evidence,
+            names,
+            ids,
+            parse(exactness_scope, FiberExactnessScope, "exactness_scope"),
+        )
         self.unit_id = _id(
             unit_id,
             {

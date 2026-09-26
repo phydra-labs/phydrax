@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._collision import macroscopic_raw_moments, quadratic_equilibrium
 from ._lattice import LatticeBoltzmannVelocitySet
 from ._precision import LatticeBoltzmannPrecisionPolicy
@@ -413,7 +414,7 @@ class PreparedLatticeBoltzmannAMRTransfer(StrictModule, NonTrainableState):
         return coarse, evidence
 
 
-LatticeBoltzmannAMRScalingKind = Literal["acoustic", "diffusive", "declared"]
+LatticeBoltzmannAMRScalingKind: TypeAlias = Literal["acoustic", "diffusive", "declared"]
 
 
 class LatticeBoltzmannAMRScalingPolicy(StrictModule, NonTrainableState):
@@ -432,8 +433,7 @@ class LatticeBoltzmannAMRScalingPolicy(StrictModule, NonTrainableState):
         declared_substeps: Sequence[int] = (),
         viscosity_tolerance: float = 1.0e-10,
     ) -> None:
-        if kind not in ("acoustic", "diffusive", "declared"):
-            raise ValueError("Unknown LBM AMR scaling kind.")
+        kind = parse(kind, LatticeBoltzmannAMRScalingKind, "kind")
         steps = tuple(declared_substeps)
         if any(value < 1 for value in steps):
             raise ValueError("Declared AMR substep counts must be positive.")

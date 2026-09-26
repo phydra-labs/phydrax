@@ -16,7 +16,7 @@ from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 
 
 HawkesTiePolicy: TypeAlias = Literal["simultaneous", "ordered"]
@@ -177,8 +177,7 @@ class HawkesLikelihoodPlan(StrictModule):
         channels = int(channel_count)
         if capacity_ < 1 or channels < 1:
             raise ValueError("capacity and channel_count must be positive.")
-        if tie_policy not in ("simultaneous", "ordered"):
-            raise ValueError("tie_policy must be 'simultaneous' or 'ordered'.")
+        tie_policy = parse(tie_policy, HawkesTiePolicy, "tie_policy")
         self.capacity = capacity_
         self.channel_count = channels
         self.tie_policy = tie_policy

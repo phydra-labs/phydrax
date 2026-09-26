@@ -16,6 +16,7 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import parse
 from ._costs import PreconditionerCostEstimate
 from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator, AdjointLinearOperator
@@ -451,8 +452,7 @@ class MultiplicativeSubspaceCorrectionPreconditioner(AbstractPreconditioner):
         builder_id: str | None = None,
         preconditioner_id: str | None = None,
     ) -> None:
-        if sweep not in ("forward", "backward", "symmetric"):
-            raise ValueError("sweep must be 'forward', 'backward', or 'symmetric'.")
+        sweep = parse(sweep, SubspaceCorrectionSweep, "sweep")
         terms_ = _validate_terms(terms)
         local_operators = _local_setup_operators(terms_, setup_operator)
         _validate_prepared_terms(terms_, local_operators)
@@ -765,8 +765,7 @@ class MultiplicativeSubspaceCorrectionBuilder(AbstractPreconditionerBuilder):
         sweep: SubspaceCorrectionSweep = "forward",
         properties: PreconditionerProperties | None = None,
     ) -> None:
-        if sweep not in ("forward", "backward", "symmetric"):
-            raise ValueError("sweep must be 'forward', 'backward', or 'symmetric'.")
+        sweep = parse(sweep, SubspaceCorrectionSweep, "sweep")
         terms_ = _validate_terms(terms)
         if properties is not None and not isinstance(
             properties, PreconditionerProperties

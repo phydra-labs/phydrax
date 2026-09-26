@@ -14,6 +14,7 @@ from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._spaces import AbstractVectorSpace, PyTreeSpace
 
 
@@ -24,8 +25,9 @@ class LinearizationPolicy(StrictModule):
     rematerialization: RematerializationPolicy = eqx.field(static=True)
 
     def __init__(self, rematerialization: RematerializationPolicy = "store", /) -> None:
-        if rematerialization not in ("store", "rematerialize"):
-            raise ValueError("Unknown linearization rematerialization policy.")
+        rematerialization = parse(
+            rematerialization, RematerializationPolicy, "rematerialization"
+        )
         self.rematerialization = rematerialization
 
 

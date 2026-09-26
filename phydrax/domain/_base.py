@@ -16,7 +16,7 @@ from jax import Array
 from .._doc import DOC_KEY0
 from .._mass import ExactMass, Mass, UnknownMass
 from .._strict import StrictModule
-from ..typing import AnyShape, Bool, Dim, Float, Int32, PRNGKey, Scalar
+from ..typing import AnyShape, Bool, Dim, Float, Int32, parse, PRNGKey, Scalar
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -366,10 +366,7 @@ class AbstractGeometry(JointFactor):
         saturation, linear = _validate_enforcement_gate_fractions(
             saturation_fraction, linear_fraction
         )
-        if method not in ("auto", "global_r_equivalence", "compact"):
-            raise ValueError(
-                f"method must be 'auto', 'global_r_equivalence', or 'compact', got {method!r}."
-            )
+        method = parse(method, EnforcementGateMethod, "method")
         builder = self._enforcement_gate_builder
         if builder is not None:
             return builder(

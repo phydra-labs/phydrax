@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import parse
 from ._boundary_open import (
     apply_open_boundaries,
     LatticeBoltzmannBoundaryState,
@@ -131,11 +132,11 @@ class LatticeBoltzmannBoundaryPlan(StrictModule, NonTrainableState):
         faces_list: list[WallFace] = []
         for axis, side in moving_faces:
             axis_ = str(axis)
-            if not axis_ or side not in ("lower", "upper"):
+            if not axis_:
                 raise ValueError(
                     "Moving wall faces require an axis and lower/upper side."
                 )
-            faces_list.append((axis_, side))
+            faces_list.append((axis_, parse(side, WallSide, "side")))
         faces = tuple(faces_list)
         if len(set(faces)) != len(faces):
             raise ValueError("Moving wall faces must be unique.")

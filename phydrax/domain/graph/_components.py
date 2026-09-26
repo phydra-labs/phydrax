@@ -3,18 +3,19 @@
 #
 
 from collections.abc import Mapping
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
+from ...typing import parse
 from .._components import Interior, Selection
 
 
-GraphComponentKind = Literal["nodes", "edges", "globals"]
-CochainCellRegion = Literal["all", "interior", "boundary"]
+GraphComponentKind: TypeAlias = Literal["nodes", "edges", "globals"]
+CochainCellRegion: TypeAlias = Literal["all", "interior", "boundary"]
 
 
 def _entity_indices(indices: ArrayLike, /) -> Array:
@@ -120,10 +121,7 @@ class CochainCells(Selection):
         resolved_degree = int(degree)
         if resolved_degree < 0:
             raise ValueError("Cochain cell degree must be non-negative.")
-        if region not in ("all", "interior", "boundary"):
-            raise ValueError(
-                "Cochain cell region must be 'all', 'interior', or 'boundary'."
-            )
+        region = parse(region, CochainCellRegion, "region")
         self.degree = resolved_degree
         self.region = region
 

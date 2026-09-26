@@ -4,7 +4,7 @@
 """Batch-aware graph-domain model adapters."""
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -15,14 +15,14 @@ import phydrax.axes as cx
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ...graph import GraphIR, rollout_features, segment_sum
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._evaluation import BatchEvaluator
 from .._function import DomainFunction
 from ._batch import GRAPH_ENTITY_INDEX_KEY, GRAPH_GRAPH_INDEX_KEY, GraphBatch
 from ._components import GraphComponentKind
 
 
-GraphModelOutput = Literal["nodes", "edges", "globals"]
+GraphModelOutput: TypeAlias = Literal["nodes", "edges", "globals"]
 
 
 def _graph_axis(batch: GraphBatch, /) -> str:
@@ -360,8 +360,7 @@ class GraphModel(StrictModule, BatchEvaluator):
         global_input_key: str | None = None,
         output_key: str | None = None,
     ) -> None:
-        if output not in ("nodes", "edges", "globals"):
-            raise ValueError("GraphModel output must be 'nodes', 'edges', or 'globals'.")
+        output = parse(output, GraphModelOutput, "output")
         self.module = module
         self.input_fn = input_fn
         self.edge_input_fn = edge_input_fn
@@ -502,10 +501,7 @@ class GraphRolloutModel(StrictModule, BatchEvaluator):
     ) -> None:
         if int(steps) < 0:
             raise ValueError("GraphRolloutModel steps must be non-negative.")
-        if feature not in ("nodes", "edges", "globals"):
-            raise ValueError(
-                "GraphRolloutModel feature must be 'nodes', 'edges', or 'globals'."
-            )
+        feature = parse(feature, GraphModelOutput, "feature")
         self.stepper = stepper
         self.steps = int(steps)
         self.include_initial = bool(include_initial)

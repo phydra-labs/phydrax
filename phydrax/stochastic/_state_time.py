@@ -16,6 +16,7 @@ import phydrax.axes as cx
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..integration._targets import WeightedSampleTarget
+from ..typing import parse
 from ._integration import _trajectory_arrays
 from ._trajectory import StochasticTrajectory
 
@@ -130,8 +131,7 @@ def trajectory_state_time_samples(
     """Adapt every valid trajectory node to a weighted state-time particle batch."""
     if not isinstance(trajectory, StochasticTrajectory):
         raise TypeError("trajectory must be a StochasticTrajectory.")
-    if mode not in ("global", "per_time"):
-        raise ValueError("mode must be 'global' or 'per_time'.")
+    mode = parse(mode, TrajectoryStateTimeMode, "mode")
     if not state_label or not time_label or state_label == time_label:
         raise ValueError("state_label and time_label must be distinct non-empty strings.")
     states, valid, leading_axes, realization_axes = _trajectory_arrays(trajectory)

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import parse
 from ._coefficients import PrimeField
 from ._complex import CellComplexPair, CellSubcomplex
 from ._filtration import CellFiltration
@@ -26,7 +27,7 @@ from ._maps import CellularChainMap, CellularPairMap, chain_coordinate_id
 from ._resources import TopologyResourcePolicy
 
 
-ExtendedComponentKind = Literal[
+ExtendedComponentKind: TypeAlias = Literal[
     "ordinary", "relative", "extended_positive", "extended_negative"
 ]
 
@@ -52,13 +53,7 @@ class ExtendedPersistenceComponent(StrictModule, NonTrainableState):
         death_nodes: ArrayLike,
         /,
     ) -> None:
-        if kind not in (
-            "ordinary",
-            "relative",
-            "extended_positive",
-            "extended_negative",
-        ):
-            raise ValueError("Unknown extended-persistence component kind.")
+        kind = parse(kind, ExtendedComponentKind, "kind")
         arrays = tuple(
             np.asarray(value)
             for value in (degrees, birth_values, death_values, birth_nodes, death_nodes)

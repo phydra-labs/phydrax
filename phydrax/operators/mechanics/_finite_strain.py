@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,9 +17,10 @@ import phydrax.ein as ein
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import parse
 
 
-VolumetricConstraintKind = Literal["jacobian", "logarithmic"]
+VolumetricConstraintKind: TypeAlias = Literal["jacobian", "logarithmic"]
 _FINITE_STRAIN_SOLVE_PLAN = SmallLinearSolvePlan(3)
 
 
@@ -128,11 +129,7 @@ class VolumetricConstraint(StrictModule, NonTrainableState):
     kind: VolumetricConstraintKind = eqx.field(static=True)
 
     def __init__(self, kind: VolumetricConstraintKind = "jacobian", /) -> None:
-        if kind not in ("jacobian", "logarithmic"):
-            raise ValueError(
-                "Volumetric constraint kind must be 'jacobian' or 'logarithmic'."
-            )
-        self.kind = kind
+        self.kind = parse(kind, VolumetricConstraintKind, "kind")
 
     def value(self, deformation_gradient: FiniteStrainKinematics | ArrayLike, /) -> Array:
         kinematics = finite_strain_kinematics(deformation_gradient)

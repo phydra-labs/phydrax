@@ -19,6 +19,7 @@ from .._array_tree import ArrayPyTreeSchema
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import ExecutableSignature, NumericRevision, SemanticProvenance
 from .._strict import StrictModule
+from ..typing import parse
 from ._layout import StateLayout
 
 
@@ -26,8 +27,6 @@ PlantVectorRole: TypeAlias = Literal["local", "tangent", "local_cotangent", "cot
 PlantModeRole: TypeAlias = Literal[
     "point", "local", "tangent", "local_cotangent", "cotangent"
 ]
-_PLANT_VECTOR_ROLES = ("local", "tangent", "local_cotangent", "cotangent")
-_PLANT_MODE_ROLES = ("point", *_PLANT_VECTOR_ROLES)
 _DISCRETE_KINDS = frozenset("biu")
 _INEXACT_KINDS = frozenset("fc")
 
@@ -247,8 +246,7 @@ class PlantModeSidecar(StrictModule):
             raise TypeError(
                 "Dynamic mode sidecar values must have boolean or integer dtypes."
             )
-        if role not in _PLANT_MODE_ROLES:
-            raise ValueError("Unknown dynamic mode sidecar role.")
+        role = parse(role, PlantModeRole, "role")
         binding = {
             "semantic_id": _identifier(semantic_id, "semantic_id"),
             "numeric_revision_id": _identifier(
@@ -409,8 +407,7 @@ class EncodedPlantVector(StrictModule):
         codec_id: str,
         mode_sidecar: PlantModeSidecar | None = None,
     ) -> None:
-        if role not in _PLANT_VECTOR_ROLES:
-            raise ValueError("Unknown encoded plant vector role.")
+        role = parse(role, PlantVectorRole, "role")
         binding = {
             "semantic_id": _identifier(semantic_id, "semantic_id"),
             "numeric_revision_id": _identifier(

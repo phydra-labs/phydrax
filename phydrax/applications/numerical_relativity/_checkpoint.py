@@ -50,6 +50,7 @@ from ...solver._grmhd_ct import GRMHDConstrainedTransportPlan, GRMHDCTState
 from ...solver._grmhd_runtime import GRMHDState
 from ...solver._grrmhd_runtime import GRRMHDState
 from ...solver._relativistic_finite_volume import GRHDFiniteVolumeState
+from ...typing import parse
 from ._coupled_runtime import CoupledEvolutionState
 from ._distributed import _formulation, NumericalRelativityFormulation
 from ._matter_coupling import CoupledBudget
@@ -113,11 +114,9 @@ class NumericalRelativityRestartPolicy(StrictModule, NonTrainableState):
         absolute_tolerance: float = 0.0,
         relative_tolerance: float = 0.0,
     ) -> None:
-        relation_ = str(relation)
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
-        if relation_ not in ("exact", "tolerance"):
-            raise ValueError("Restart relation must be 'exact' or 'tolerance'.")
+        relation_ = parse(relation, RestartRelation, "relation")
         if (
             not np.isfinite(absolute)
             or absolute < 0.0

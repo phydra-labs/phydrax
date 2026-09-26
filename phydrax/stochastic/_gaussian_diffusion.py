@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,14 +16,14 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._probability import _leading_shape, AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._process import (
     AbstractMarginalTransitionLaw,
     DiagonalGaussianProcessDistribution,
 )
 
 
-TerminalReferenceRelationship = Literal["exact", "asymptotic", "external"]
+TerminalReferenceRelationship: TypeAlias = Literal["exact", "asymptotic", "external"]
 
 
 def _identifier(value: str, /, *, owner: str) -> str:
@@ -71,8 +71,7 @@ class DiffusionTerminalReference(StrictModule):
             raise ValueError("A diffusion terminal reference must be unbatched.")
         if law.density_measure_kind != "lebesgue":
             raise ValueError("A Gaussian diffusion terminal reference must be Lebesgue.")
-        if relationship not in ("exact", "asymptotic", "external"):
-            raise ValueError("Unknown terminal-reference relationship.")
+        relationship = parse(relationship, TerminalReferenceRelationship, "relationship")
         residual = jnp.asarray(residual_signal_scale, dtype=jnp.float64).reshape(())
         if bool(~jnp.isfinite(residual)) or float(residual) < 0.0:
             raise ValueError("residual_signal_scale must be finite and nonnegative.")

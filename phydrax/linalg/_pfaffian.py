@@ -20,9 +20,10 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 
 
-SkewMode = Literal["require", "project"]
+SkewMode: TypeAlias = Literal["require", "project"]
 
 
 _PfaffianCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
@@ -65,8 +66,7 @@ class PfaffianPolicy(StrictModule):
         max_storage_bytes: int = 512 * 1024 * 1024,
         max_workspace_bytes: int = 512 * 1024 * 1024,
     ) -> None:
-        if skew_mode not in ("require", "project"):
-            raise ValueError("skew_mode must be 'require' or 'project'.")
+        skew_mode = parse(skew_mode, SkewMode, "skew_mode")
         antisymmetry = float(antisymmetry_tolerance)
         pivot = float(pivot_tolerance)
         if any(

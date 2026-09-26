@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
 from math import isfinite, sqrt
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,7 +19,7 @@ from jax import Array
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
-from ...typing import PRNGKey
+from ...typing import parse, PRNGKey
 from .._keys import EvalKey, split_eval_key
 from ._recurrent import (
     _recurrent_output_from_state,
@@ -29,7 +29,7 @@ from ._recurrent import (
 )
 
 
-RNNActivation = Literal["tanh", "relu"]
+RNNActivation: TypeAlias = Literal["tanh", "relu"]
 
 
 def _validate_widths(input_size: int, hidden_size: int, /) -> tuple[int, int]:
@@ -287,8 +287,7 @@ class RNNCell(AbstractRecurrentCell):
         key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
-        if activation not in ("tanh", "relu"):
-            raise ValueError("activation must be 'tanh' or 'relu'.")
+        activation = parse(activation, RNNActivation, "activation")
         self.activation = activation
         resolved_dtype = _validate_real_dtype(dtype)
         input_key, hidden_key, bias_key = jr.split(key, 3)

@@ -19,6 +19,7 @@ from ...linalg import (
     MaterializationPolicy,
     SolveResourcePolicy,
 )
+from ...typing import parse
 from ._types import ConvexProgramCapabilities
 
 
@@ -466,8 +467,7 @@ class ConvexDifferentiationPolicy(StrictModule):
         centering_tolerance: float = 1e-8,
         maximum_centering_steps: int = 32,
     ) -> None:
-        if mode not in ("active-set-kkt", "barrier-kkt", "algorithmic", "none"):
-            raise ValueError("Unknown convex-program differentiation mode.")
+        mode = parse(mode, ConvexDifferentiationMode, "mode")
         active = float(active_tolerance)
         strict = float(strict_complementarity_tolerance)
         centering = float(centering_tolerance)

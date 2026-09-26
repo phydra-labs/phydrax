@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,9 +18,10 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...stochastic import WienerRealization
+from ...typing import parse
 
 
-PhaseFieldNoiseKind = Literal["allen-cahn", "cahn-hilliard"]
+PhaseFieldNoiseKind: TypeAlias = Literal["allen-cahn", "cahn-hilliard"]
 
 
 class PhaseFieldNoiseEvidence(StrictModule):
@@ -52,8 +53,7 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
         amplitude: ArrayLike = 1.0,
         conservation_weights: ArrayLike | None = None,
     ) -> None:
-        if kind not in ("allen-cahn", "cahn-hilliard"):
-            raise ValueError("Unknown phase-field noise kind.")
+        kind = parse(kind, PhaseFieldNoiseKind, "kind")
         if not isinstance(realization, WienerRealization):
             raise TypeError("realization must be WienerRealization.")
         modes = np.asarray(basis)

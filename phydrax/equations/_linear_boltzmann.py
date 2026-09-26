@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,9 +16,10 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._angular_quadrature import CertifiedSlabAngularQuadrature
+from ..typing import parse
 
 
-TransportBoundaryKind = Literal["vacuum", "incident", "reflecting"]
+TransportBoundaryKind: TypeAlias = Literal["vacuum", "incident", "reflecting"]
 
 
 class SlabTransportBoundaryPlan(StrictModule, NonTrainableState):
@@ -40,12 +41,8 @@ class SlabTransportBoundaryPlan(StrictModule, NonTrainableState):
         right_incident: ArrayLike | None = None,
     ) -> None:
         groups = int(group_count)
-        if left_kind not in ("vacuum", "incident", "reflecting") or right_kind not in (
-            "vacuum",
-            "incident",
-            "reflecting",
-        ):
-            raise ValueError("Unknown slab transport boundary kind.")
+        left_kind = parse(left_kind, TransportBoundaryKind, "left_kind")
+        right_kind = parse(right_kind, TransportBoundaryKind, "right_kind")
         shape = (groups, quadrature.angle_count)
         left = (
             np.zeros(shape)

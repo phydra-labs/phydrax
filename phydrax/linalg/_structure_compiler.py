@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import parse
 from ._materialization import MaterializationPolicy, materialize
 from ._operators import (
     AbstractLinearOperator,
@@ -89,21 +90,14 @@ class StructureCompilationPolicy(StrictModule):
         materialization: MaterializationPolicy | None = None,
     ) -> None:
         candidates_ = tuple(candidates)
-        valid = {
-            "diagonal",
-            "permutation",
-            "tridiagonal",
-            "triangular",
-            "banded",
-            "dct-diagonal",
-            "fft-diagonal",
-        }
         if not candidates_ or len(set(candidates_)) != len(candidates_):
             raise ValueError(
                 "candidates must be a non-empty sequence without duplicates."
             )
-        if any(candidate not in valid for candidate in candidates_):
-            raise ValueError("Unknown structure compiler candidate.")
+        candidates_ = tuple(
+            parse(candidate, StructureCandidate, f"candidates[{index}]")
+            for index, candidate in enumerate(candidates_)
+        )
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)
         if (
@@ -120,8 +114,7 @@ class StructureCompilationPolicy(StrictModule):
         bandwidth = int(max_bandwidth)
         if bandwidth < 0:
             raise ValueError("max_bandwidth must be non-negative.")
-        if fallback not in ("dense", "error"):
-            raise ValueError("fallback must be 'dense' or 'error'.")
+        fallback = parse(fallback, CompilerFallback, "fallback")
         materialization_ = (
             MaterializationPolicy() if materialization is None else materialization
         )

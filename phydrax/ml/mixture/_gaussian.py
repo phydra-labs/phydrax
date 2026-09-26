@@ -24,6 +24,7 @@ from ..._differentiation import (
 )
 from ..._model._array import value_derivative_contract
 from ..._strict import StrictModule
+from ...typing import parse
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
     AbstractRecipe,
@@ -654,12 +655,9 @@ class GaussianMixture(AbstractRecipe):
     ) -> None:
         if component_count <= 0 or max_iterations <= 0:
             raise ValueError("component_count and max_iterations must be positive.")
-        if (
-            covariance_type not in ("full", "tied", "diagonal", "spherical")
-            or initialization not in ("random", "first")
-            or empty_policy not in ("retain", "reseed", "error")
-        ):
-            raise ValueError("unsupported Gaussian mixture policy.")
+        covariance_type = parse(covariance_type, CovarianceType, "covariance_type")
+        initialization = parse(initialization, MixtureInitialization, "initialization")
+        empty_policy = parse(empty_policy, EmptyComponentPolicy, "empty_policy")
         self.component_count = int(component_count)
         self.covariance_type = covariance_type
         self.max_iterations = int(max_iterations)
@@ -782,12 +780,9 @@ class BayesianGaussianMixture(AbstractRecipe):
     ) -> None:
         if component_count <= 0 or max_iterations <= 0:
             raise ValueError("component_count and max_iterations must be positive.")
-        if (
-            covariance_type not in ("full", "tied", "diagonal", "spherical")
-            or initialization not in ("random", "first")
-            or empty_policy not in ("retain", "reseed", "error")
-        ):
-            raise ValueError("unsupported Bayesian Gaussian mixture policy.")
+        covariance_type = parse(covariance_type, CovarianceType, "covariance_type")
+        initialization = parse(initialization, MixtureInitialization, "initialization")
+        empty_policy = parse(empty_policy, EmptyComponentPolicy, "empty_policy")
         self.component_count = int(component_count)
         self.covariance_type = covariance_type
         self.concentration = _positive_scalar(concentration, "concentration")

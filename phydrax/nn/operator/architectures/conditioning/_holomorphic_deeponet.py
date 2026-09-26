@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,6 +30,7 @@ from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import parse
 from ._deeponet import (
     AbstractBasisTrunk,
     AbstractBranchEncoder,
@@ -37,7 +38,9 @@ from ._deeponet import (
 )
 
 
-HolomorphicTrunkMode = Literal["unconstrained", "fixed-target", "variable-target"]
+HolomorphicTrunkMode: TypeAlias = Literal[
+    "unconstrained", "fixed-target", "variable-target"
+]
 
 
 class ConditionalHolomorphicMapCertificate(AbstractConstructionCertificate):
@@ -88,8 +91,7 @@ class ConditionalHolomorphicMapCertificate(AbstractConstructionCertificate):
             raise ValueError(
                 "Conditional holomorphic certificate dimensions are invalid."
             )
-        if trunk_mode not in ("unconstrained", "fixed-target", "variable-target"):
-            raise ValueError("Unknown conditional holomorphic trunk mode.")
+        trunk_mode = parse(trunk_mode, HolomorphicTrunkMode, "trunk_mode")
         if not frame_id_ or not layout or not bias or not branches or not fusion:
             raise ValueError("Conditional holomorphic identifiers must be nonempty.")
         if trunk_mode == "unconstrained" and operator_id is not None:
