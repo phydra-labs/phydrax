@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.conditions._ir import Condition
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
@@ -101,7 +102,9 @@ def _boundary_piece_where(
     local_fn = _ensure_special_kwonly_args(local)
     global_fn = _ensure_special_kwonly_args(global_filter.func)
 
-    def _conjunction(point, *, key=None, **kwargs):
+    def _conjunction(
+        point: Array, *, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         return jnp.logical_and(
             local_fn(point, key=key, **kwargs),
             global_fn(point, key=key, **kwargs),
@@ -795,7 +798,9 @@ class _BoundaryWeightedQuotientCallable(StrictModule, DerivativeRuleProvider):
         self.remainder_weight_pos = remainder_weight_pos
         self.base_pos = base_pos
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         num = jnp.asarray(0.0, dtype=jnp.float64)
         den = jnp.asarray(0.0, dtype=jnp.float64)
 
@@ -945,7 +950,10 @@ class _BoundaryBlendOverlay(StrictModule):
         piece_functions: list[DomainFunction] = []
 
         for c, w in zip(self.pieces, self.weights, strict=True):
-            u_piece = c.transform.apply(
+            transform = c.transform
+            # Boundary-stage specifications are local ansätze, which always carry one.
+            assert transform is not None
+            u_piece = transform.apply(
                 u,
                 get_field,
                 _unfiltered_component(c.component),
@@ -1020,7 +1028,7 @@ def _complement_where(wheres: Sequence[Callable | None], /) -> Callable | None:
     if not wheres:
         return lambda x: jnp.asarray(True)
 
-    def _union(x):
+    def _union(x: Array) -> Array:
         fn = wheres[0]
         assert callable(fn)
         out = fn(x)
@@ -1029,7 +1037,7 @@ def _complement_where(wheres: Sequence[Callable | None], /) -> Callable | None:
             out = jnp.logical_or(out, fn(x))
         return out
 
-    def _comp(x):
+    def _comp(x: Array) -> Array:
         return jnp.logical_not(_union(x))
 
     return _comp
@@ -1227,10 +1235,12 @@ class _InteriorAnchorOverlay(StrictModule):
                 m = m * (jnp.maximum(t - t0, 0.0) ** int(q))
             return m
 
-        def _correction(*args: Any, key=None, **kwargs: Any):
+        def _correction(
+            *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+        ) -> Array:
             z = {lbl: args[idx[lbl]] for lbl in deps}
 
-            def _u0_at_anchor(*dep_vals):
+            def _u0_at_anchor(*dep_vals: Array) -> Array:
                 return jnp.asarray(
                     u0.func(*dep_vals, key=key, **kwargs), dtype=jnp.float64
                 )
@@ -1803,7 +1813,9 @@ class _FieldEnforcementPipeline(StrictModule):
                 for factor in gate_factors
             )
 
-            def _gate(*args, key=None, **kwargs):
+            def _gate(
+                *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+            ) -> Array:
                 del key, kwargs
                 value = jnp.asarray(1.0, dtype=jnp.float64)
                 for arg, gate, power in zip(
@@ -1902,7 +1914,12 @@ class EnforcementProgram(StrictModule):
             raise TypeError(
                 "realization_specs must contain only typed realization specifications."
             )
-        condition_ids = tuple(spec.condition.condition_id for spec in typed)
+        # Specifications carrying a realization always hold a typed ``Condition``.
+        condition_ids = tuple(
+            spec.condition.condition_id
+            for spec in typed
+            if isinstance(spec.condition, Condition)
+        )
         if len(set(condition_ids)) != len(condition_ids):
             raise ValueError("Typed realization condition identifiers must be unique.")
         self.pipelines = frozendict(pipelines)
@@ -2016,6 +2033,8 @@ class EnforcementProgram(StrictModule):
                     "Typed realization specification lost its realization."
                 )
             condition = spec.condition
+            # EnforcementSpec pairs every realization with a typed ``Condition``.
+            assert isinstance(condition, Condition)
             condition_id = condition.condition_id
             context = ConditionEvaluationContext(
                 condition,

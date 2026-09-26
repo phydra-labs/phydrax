@@ -168,7 +168,7 @@ class PreparedKerrPockelsMaxwellConstitutive(AbstractPreparedMaxwellConstitutive
             raise TypeError("Kerr/Pockels inversion currently requires real fields.")
         initial = displacement / self.permittivity
 
-        def body(_, electric):
+        def body(_: Array, electric: Array) -> Array:
             residual = self.electric_displacement(electric, None) - displacement
             derivative = (
                 self.permittivity

@@ -286,15 +286,22 @@ def _size_control_scopes(control: SizeControl, /) -> tuple[MeshingScope, ...]:
 def _validated_semantic_controls(
     target: CellMeshingTarget,
     scope: MeshingScope,
-    size_controls,
-    protected_features,
-    region_controls,
-    patch_controls,
-    periodic_constraints,
-    size_combination,
-    size_compliance,
+    size_controls: tuple[SizeControl, ...],
+    protected_features: tuple[ProtectedFeature, ...],
+    region_controls: tuple[RegionControl, ...],
+    patch_controls: tuple[PatchControl, ...],
+    periodic_constraints: tuple[PeriodicConstraint, ...],
+    size_combination: SizeCombinationPolicy,
+    size_compliance: SizeCompliancePolicy | None,
     /,
-):
+) -> tuple[
+    tuple[SizeControl, ...],
+    tuple[ProtectedFeature, ...],
+    tuple[RegionControl, ...],
+    tuple[PatchControl, ...],
+    tuple[PeriodicConstraint, ...],
+    SizeCompliancePolicy,
+]:
     if not isinstance(scope, MeshingScope):
         raise TypeError("scope must be MeshingScope.")
     expected_scope_dimension = (

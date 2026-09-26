@@ -230,7 +230,7 @@ def _grid_points_from_case_time(
 
     data_samples = domain.input_rows(case_idx)
 
-    def _to_data_field(v: ArrayLike):
+    def _to_data_field(v: ArrayLike) -> cx.AxisArray:
         arr = jnp.asarray(v)
         if arr.ndim == 0:
             raise ValueError("Trajectory input rows must retain a case axis.")

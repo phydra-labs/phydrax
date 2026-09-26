@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,6 +22,12 @@ from ..discretization.finite_volume._unstructured_incompressible import (
 )
 from ._favre_les import FavreLESInputs, FavreLESResult, PreparedFavreLESModel
 from ._ksgs import KSGSInputs, KSGSResult, KSGSState, StaticKSGSPlan
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume import UnstructuredFiniteVolumeDiscretization
+    from ..linalg import LinearSolvePolicy
+    from ..solver._unstructured_les import UnstructuredLowMachLESFixedStepMethod
 
 
 _CLOSED_BOUNDARY_POLICY = "impermeable-zero-viscous-traction-adiabatic-zero-species-flux"
@@ -417,8 +424,8 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
         maximum_source_fraction: float = 0.25,
         pressure_tolerance: float = 1.0e-9,
         pressure_iterations: int = 200,
-        linear_policy=None,
-    ):
+        linear_policy: LinearSolvePolicy | None = None,
+    ) -> UnstructuredLowMachLESFixedStepMethod:
         """Bind the pressure-corrected transactional transition to one exact step."""
 
         from ..solver._unstructured_les import UnstructuredLowMachLESFixedStepMethod
@@ -827,6 +834,9 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
         if self.plan.ksgs_plan is not None:
             if state.ksgs is None or ksgs_transport is None:
                 raise ValueError("Prepared KSGS transport requires KSGS state.")
+            # KSGS state presence fixes kinetic energy and raw production above.
+            assert kinetic_energy is not None
+            assert ksgs_raw_production_density is not None
             ksgs_gradient = self.operators.nonorthogonal_face_gradient(
                 kinetic_energy, "KSGS kinetic energy"
             )
@@ -1009,6 +1019,8 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
         )
         modeled_energy_split_residual = jnp.asarray(0.0, dtype=density.dtype)
         if ksgs_raw_production_density is not None:
+            # Raw production exists only with KSGS, which also limits production.
+            assert ksgs_production_density is not None
             modeled_energy_split_residual = jnp.sum(
                 discretization.cell_volumes.astype(density.dtype)
                 * (
@@ -1043,7 +1055,7 @@ class PreparedUnstructuredLowMachLES(StrictModule, NonTrainableState):
             & (shared_scalar_residual <= tolerance)
             & (shared_enthalpy_residual <= tolerance)
         )
-        if ksgs_transport_balance is not None:
+        if ksgs_transport_balance is not None and ksgs_transport_scale is not None:
             conservative = conservative & jnp.all(
                 jnp.abs(ksgs_transport_balance) <= tolerance * ksgs_transport_scale
             )
@@ -1166,7 +1178,9 @@ def _face_average(
     return jnp.where(mask, average, value[owner])
 
 
-def _negative_divergence(flux: Array, discretization, /) -> Array:
+def _negative_divergence(
+    flux: Array, discretization: UnstructuredFiniteVolumeDiscretization, /
+) -> Array:
     owner = discretization.owner_cells
     neighbor = discretization.neighbor_cells
     interior = neighbor >= 0
@@ -1181,7 +1195,12 @@ def _negative_divergence(flux: Array, discretization, /) -> Array:
     return -net / volumes
 
 
-def _global_balance(rate: Array, flux: Array, discretization, /) -> Array:
+def _global_balance(
+    rate: Array,
+    flux: Array,
+    discretization: UnstructuredFiniteVolumeDiscretization,
+    /,
+) -> Array:
     trailing = rate.shape[1:]
     volume_shape = (discretization.cell_count,) + (1,) * len(trailing)
     volumes = discretization.cell_volumes.astype(rate.dtype).reshape(volume_shape)
@@ -1191,7 +1210,12 @@ def _global_balance(rate: Array, flux: Array, discretization, /) -> Array:
     return jnp.sum(volumes * rate, axis=0) + jnp.sum(boundary_flux, axis=0)
 
 
-def _global_balance_scale(rate: Array, flux: Array, discretization, /) -> Array:
+def _global_balance_scale(
+    rate: Array,
+    flux: Array,
+    discretization: UnstructuredFiniteVolumeDiscretization,
+    /,
+) -> Array:
     trailing = rate.shape[1:]
     volume_shape = (discretization.cell_count,) + (1,) * len(trailing)
     volumes = discretization.cell_volumes.astype(rate.dtype).reshape(volume_shape)

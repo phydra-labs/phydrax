@@ -151,7 +151,7 @@ class ThinWallBubbleState(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-def _wall_energy(plan: ThinWallBubblePlan, radius, velocity):
+def _wall_energy(plan: ThinWallBubblePlan, radius: Array, velocity: Array) -> Array:
     gamma = 1.0 / jnp.sqrt(
         jnp.maximum(1.0 - velocity * velocity, jnp.finfo(radius.dtype).tiny)
     )
@@ -160,7 +160,9 @@ def _wall_energy(plan: ThinWallBubblePlan, radius, velocity):
     return area * plan.surface_tension * gamma - volume * plan.vacuum_energy_difference
 
 
-def _particle_energy(plan: ThinWallBubblePlan, particles: BubbleParticleEnsemble):
+def _particle_energy(
+    plan: ThinWallBubblePlan, particles: BubbleParticleEnsemble
+) -> tuple[Array, Array]:
     masses = jnp.where(particles.inside, plan.inside_mass, plan.outside_mass)
     energy = jnp.sqrt(
         jnp.sum(particles.momenta * particles.momenta, axis=-1) + masses * masses
@@ -378,7 +380,9 @@ def simulate_thin_wall_bubble(
     ):
         raise TypeError("plan and initial must use phase-transition types.")
 
-    def step(state, _):
+    def step(
+        state: ThinWallBubbleState, _: None
+    ) -> tuple[ThinWallBubbleState, tuple[Array, Array, Array, Array, Array, Array]]:
         result = step_thin_wall_bubble(plan, state)
         summary = (
             result.state.radius,

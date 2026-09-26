@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._strict import StrictModule
 from ...discretization.finite_volume._hybrid_diffusion import HybridMimeticDiffusion
@@ -24,7 +26,10 @@ from ...nonlinear import (
 )
 
 
-def _face_components(value, faces, components, name):
+_TransportArgs: TypeAlias = tuple[Array, Array, Array, Array, Array]
+
+
+def _face_components(value: ArrayLike, faces: int, components: int, name: str) -> Array:
     array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape not in ((), (components,), (faces, components)):
         raise ValueError(
@@ -33,7 +38,9 @@ def _face_components(value, faces, components, name):
     return jnp.broadcast_to(array, (faces, components))
 
 
-def _integrated_divergence(discretization, face_rates):
+def _integrated_divergence(
+    discretization: UnstructuredFiniteVolumeDiscretization, face_rates: Array
+) -> Array:
     """Scatter one owner-oriented integrated rate, without multiplying by area."""
     neighbor = discretization.neighbor_cells
     shape = (discretization.cell_count,) + face_rates.shape[1:]
@@ -211,8 +218,13 @@ class ComponentTransport(StrictModule):
         )
 
     def _fields(
-        self, previous_inventory, water_volumes, face_water_rates, boundary, source
-    ):
+        self,
+        previous_inventory: ArrayLike,
+        water_volumes: ArrayLike,
+        face_water_rates: ArrayLike,
+        boundary: TransportBoundary,
+        source: ArrayLike,
+    ) -> tuple[Array, Array, Array, Array]:
         d, nb = self.discretization, len(self.component_names)
         inventory, volumes, rates = (
             jnp.asarray(previous_inventory, dtype=jnp.float64),
@@ -321,14 +333,16 @@ class ComponentTransport(StrictModule):
         upstream = jnp.where((q >= 0)[:, None], c[d.owner_cells], downstream)
         return q[:, None] * upstream
 
-    def _dispersion_fields(self, concentrations, face_concentrations):
-        dispersion = self.dispersion
-        if dispersion is None:
+    def _dispersion_fields(
+        self, concentrations: Array, face_concentrations: Array
+    ) -> tuple[Array, Array, Array]:
+        dispersion, tensor = self.dispersion, self.dispersion_tensor
+        if dispersion is None or tensor is None:
             raise ValueError(
                 "Dispersion fields require a prepared hybrid diffusion operator."
             )
         local = jax.vmap(
-            lambda c, f: dispersion.local_fluxes(c, f, self.dispersion_tensor),
+            lambda c, f: dispersion.local_fluxes(c, f, tensor),
             in_axes=(1, 1),
             out_axes=2,
         )(concentrations, face_concentrations)
@@ -340,7 +354,7 @@ class ComponentTransport(StrictModule):
 
     def residual(
         self,
-        state,
+        state: PyTree[Array],
         previous_inventory: ArrayLike,
         water_volumes: ArrayLike,
         face_water_rates: ArrayLike,
@@ -348,7 +362,7 @@ class ComponentTransport(StrictModule):
         boundary: TransportBoundary,
         *,
         source: ArrayLike = 0.0,
-    ):
+    ) -> PyTree[Array]:
         """Unscaled inventory (mol) and hybrid trace equations for monolithic use.
 
         Without dispersion state/residual is (cells,components). With dispersion
@@ -438,7 +452,7 @@ class ComponentTransport(StrictModule):
             )
             initial_state = (initial, traces)
 
-        def scaled(state, args):
+        def scaled(state: PyTree[Array], args: _TransportArgs) -> PyTree[Array]:
             old, volume, water, step_time, forcing = args
             physical = self.residual(
                 state, old, volume, water, step_time, boundary, source=forcing
@@ -450,7 +464,9 @@ class ComponentTransport(StrictModule):
             )
             return physical[0] / scale, physical[1] / trace_scale
 
-        def valid(state, residual, auxiliary, args):
+        def valid(
+            state: PyTree[Array], residual: object, auxiliary: object, args: object
+        ) -> Array:
             c = state if self.dispersion is None else state[0]
             return jnp.all(jnp.isfinite(c) & (~signs | (c >= 0)))
 
@@ -476,7 +492,7 @@ class ComponentTransport(StrictModule):
         traces = None if self.dispersion is None else root.state[1]
         flux = self.advective_fluxes(c, q, boundary)
         if self.dispersion is not None:
-            flux = flux + self._dispersion_fields(c, traces)[2]
+            flux = flux + self._dispersion_fields(c, root.state[1])[2]
         new_inventory = volumes[:, None] * c
         boundary_flux = jnp.sum(
             jnp.where((self.discretization.neighbor_cells < 0)[:, None], flux, 0.0),

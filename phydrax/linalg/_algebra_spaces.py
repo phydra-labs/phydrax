@@ -12,7 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ._pairings import AbstractPairing
@@ -30,7 +30,7 @@ class AlgebraCoefficientPairing(AbstractPairing):
             {"kind": "algebra-coefficient-pairing", "algebra": identifier}
         )
 
-    def inner(self, left, right, /) -> Array:
+    def inner(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         left_ = jnp.asarray(left)
         right_ = jnp.asarray(right)
         if left_.shape != right_.shape:
@@ -39,13 +39,13 @@ class AlgebraCoefficientPairing(AbstractPairing):
             raise TypeError("Algebra coefficient pairing requires real coordinates.")
         return jnp.vdot(left_, right_)
 
-    def riesz(self, vector, /) -> Array:
+    def riesz(self, vector: ArrayLike, /) -> Array:
         value = jnp.asarray(vector)
         if jnp.iscomplexobj(value):
             raise TypeError("Algebra coefficient coordinates must be real.")
         return value
 
-    def inverse_riesz(self, covector, /) -> Array:
+    def inverse_riesz(self, covector: ArrayLike, /) -> Array:
         return self.riesz(covector)
 
 
@@ -120,7 +120,7 @@ class AlgebraArraySpace(AbstractVectorSpace):
     def structure(self, /) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct(self.shape, self.dtype)
 
-    def validate(self, vector, /) -> Array:
+    def validate(self, vector: ArrayLike, /) -> Array:
         value = jnp.asarray(vector)
         if value.shape != self.shape:
             raise ValueError(
@@ -132,19 +132,19 @@ class AlgebraArraySpace(AbstractVectorSpace):
             )
         return value
 
-    def inner(self, left, right, /) -> Array:
+    def inner(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         return self.pairing.inner(self.validate(left), self.validate(right))
 
-    def riesz(self, vector, /) -> Array:
+    def riesz(self, vector: ArrayLike, /) -> Array:
         return self.pairing.riesz(self.validate(vector))
 
-    def inverse_riesz(self, covector, /) -> Array:
+    def inverse_riesz(self, covector: ArrayLike, /) -> Array:
         return self.pairing.inverse_riesz(self.validate(covector))
 
-    def flatten(self, vector, /) -> Array:
+    def flatten(self, vector: ArrayLike, /) -> Array:
         return self.validate(vector).reshape((-1,))
 
-    def unflatten(self, coordinates, /) -> Array:
+    def unflatten(self, coordinates: ArrayLike, /) -> Array:
         value = jnp.asarray(coordinates)
         if value.shape != (prod(self.shape),) or np.dtype(value.dtype) != self.dtype:
             raise ValueError("Algebra coordinates do not match the flattened space.")

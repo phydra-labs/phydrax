@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -327,7 +329,11 @@ def maximum_mark(
     return jnp.asarray(np.sort(ids[order[:count]]))
 
 
-def _triangle_children(cell, marked_local_edges, midpoint_by_local):
+def _triangle_children(
+    cell: np.ndarray,
+    marked_local_edges: tuple[int, ...],
+    midpoint_by_local: Mapping[int, int],
+) -> tuple[tuple[int, ...], ...]:
     a, b, c = (int(value) for value in cell)
     marked = tuple(sorted(marked_local_edges))
     if marked == (0,):

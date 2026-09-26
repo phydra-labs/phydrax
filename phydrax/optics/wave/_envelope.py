@@ -215,7 +215,7 @@ def prepare_pulse_envelope_bridge(
             "kind": "prepared-pulse-envelope-bridge",
             "plan": plan.plan_id,
             "carrier_mode": carrier_mode,
-            "aligned_carrier": aligned.hex(),
+            "aligned_carrier": float(aligned).hex(),
             "envelope_supported_modes": np.flatnonzero(envelope_supported).tolist(),
         }
     )
@@ -652,9 +652,9 @@ def sample_gaussian_pulse_envelope(
         1j * (plan.carrier_phase + 0.5 * plan.chirp * prepared.temporal_displacement**2)
     )
     scalar = magnitude * phase[None, None, :]
-    values = (
-        scalar if plan.polarization == "scalar" else scalar[..., None] * plan.jones_vector
-    )
+    # Tangential envelopes are exactly those constructed with a Jones vector.
+    jones_vector = plan.jones_vector
+    values = scalar if jones_vector is None else scalar[..., None] * jones_vector
     spatial_spectrum = jnp.fft.fftn(values, axes=(0, 1), norm="ortho")
     spectrum = jnp.fft.ifft(spatial_spectrum, axis=2, norm="ortho")
     edge_mask = prepared.spectral_edge_mask.reshape(

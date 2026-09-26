@@ -44,7 +44,9 @@ def _value_deps(component: ConditionSupport, /) -> tuple[str, ...]:
     return component.domain.labels
 
 
-def _condition_value(value: ConditionValue | None, on: ConditionSupport, default: float):
+def _condition_value(
+    value: ConditionValue | None, on: ConditionSupport, default: float
+) -> DomainFunction | ArrayLike:
     if value is None:
         return default
     if isinstance(value, DomainFunction):

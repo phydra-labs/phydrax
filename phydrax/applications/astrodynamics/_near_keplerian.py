@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +21,11 @@ from ._status import AstrodynamicsStatus
 from ._two_body import propagate_universal_kepler, UniversalKeplerPolicy
 
 
-def _norm(value: Array, /, *, axis=-1) -> Array:
+_WisdomHolmanCarry: TypeAlias = tuple[Array, Array, Array, Array]
+_WisdomHolmanOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+
+
+def _norm(value: Array, /, *, axis: int = -1) -> Array:
     return jnp.sqrt(jnp.sum(value * value, axis=axis))
 
 
@@ -158,7 +164,7 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
     def _kepler_drift(
         self, position: Array, velocity: Array, delta_time: Array, /
     ) -> tuple[Array, Array, Array]:
-        def one(r, v, mass):
+        def one(r: Array, v: Array, mass: Array) -> tuple[Array, Array, Array]:
             state = CartesianOrbitState(r, v, self.context)
             result = propagate_universal_kepler(
                 state,
@@ -237,7 +243,9 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
         )
         initial_valid = corrector_valid & perturbation_valid
 
-        def step(carry, _):
+        def step(
+            carry: _WisdomHolmanCarry, _: None
+        ) -> tuple[_WisdomHolmanCarry, _WisdomHolmanOutput]:
             position, velocity, perturbation, active = carry
             half_velocity = velocity + 0.5 * dt * perturbation
             next_position, drift_velocity, drift_valid = self._kepler_drift(

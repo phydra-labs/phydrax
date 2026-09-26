@@ -35,7 +35,7 @@ from .._method import DensityFunctionalPlan
 from .._model import ElectronicReferenceKind
 from .._state import MolecularElectronicSectorPlan, PreparedMolecularElectronicSector
 from ._functional import NativeXCFunctional
-from ._grid import MolecularDFTGridPlan, PreparedMolecularDFTGrid
+from ._grid import MolecularDFTGridPlan, MolecularGridEvaluation, PreparedMolecularDFTGrid
 from ._mean_field import (
     ElectronicOccupationPlan,
     InitialGuessKind,
@@ -204,7 +204,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
         overlap: Array,
         orthogonalizer: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         if self.guess.kind is InitialGuessKind.HUCKEL:
             diagonal = jnp.diag(core)
             guess_hamiltonian = 0.875 * (diagonal[:, None] + diagonal[None, :]) * overlap
@@ -215,7 +215,9 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             guess_hamiltonian = core
         return _diagonalize(guess_hamiltonian, orthogonalizer)
 
-    def _fixed_quantities(self, positions: Array, /):
+    def _fixed_quantities(
+        self, positions: Array, /
+    ) -> tuple[Array, Array, Array, Array, Array, MolecularGridEvaluation, Array, Array]:
         charges = jnp.asarray(self.system.atomic_numbers, dtype=positions.dtype)
         overlap = overlap_matrix(self.basis, positions)
         core = kinetic_matrix(self.basis, positions) + nuclear_attraction_matrix(
@@ -258,7 +260,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
         /,
         *,
         initial_guess: ElectronicInitialGuessState | None = None,
-    ):
+    ) -> RestrictedMeanFieldState | UnrestrictedMeanFieldState:
         coordinate = jnp.asarray(positions)
         guess_density = self._validated_initial_guess(initial_guess)
         (
@@ -304,18 +306,18 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
 
     def _solve_restricted(
         self,
-        coordinate,
-        overlap,
-        core,
-        eri,
-        exchange_eri,
-        nuclear,
-        weights,
-        ao,
-        gradient,
-        orthogonalizer,
-        guess_density,
-    ):
+        coordinate: Array,
+        overlap: Array,
+        core: Array,
+        eri: Array,
+        exchange_eri: Array,
+        nuclear: Array,
+        weights: Array,
+        ao: Array,
+        gradient: Array,
+        orthogonalizer: Array,
+        guess_density: Array | None,
+    ) -> RestrictedMeanFieldState:
         orbital_energies, coefficients = self._initial_coefficients(
             core, overlap, orthogonalizer
         )
@@ -452,18 +454,18 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
 
     def _solve_unrestricted(
         self,
-        coordinate,
-        overlap,
-        core,
-        eri,
-        exchange_eri,
-        nuclear,
-        weights,
-        ao,
-        gradient,
-        orthogonalizer,
-        guess_density,
-    ):
+        coordinate: Array,
+        overlap: Array,
+        core: Array,
+        eri: Array,
+        exchange_eri: Array,
+        nuclear: Array,
+        weights: Array,
+        ao: Array,
+        gradient: Array,
+        orthogonalizer: Array,
+        guess_density: Array | None,
+    ) -> UnrestrictedMeanFieldState:
         alpha_energies, alpha_coefficients = self._initial_coefficients(
             core, overlap, orthogonalizer
         )
@@ -672,7 +674,10 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
         )
 
     def analytic_gradient_atomic_units(
-        self, positions: ArrayLike, state, /
+        self,
+        positions: ArrayLike,
+        state: RestrictedMeanFieldState | UnrestrictedMeanFieldState,
+        /,
     ) -> MolecularGradientResult:
         coordinate = jnp.asarray(positions)
         if state.owner_id != mean_field_owner_id(self.plan_id, coordinate):
@@ -702,7 +707,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             raise TypeError("Kohn-Sham gradient requires an RKS or UKS state.")
         charges = jnp.asarray(self.system.atomic_numbers, dtype=coordinate.dtype)
 
-        def stationary_energy(value):
+        def stationary_energy(value: Array) -> Array:
             overlap = overlap_matrix(self.basis, value)
             del overlap
             core = kinetic_matrix(self.basis, value) + nuclear_attraction_matrix(
@@ -747,7 +752,9 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def evaluate(self, positions: ArrayLike, /):
+    def evaluate(
+        self, positions: ArrayLike, /
+    ) -> tuple[RestrictedMeanFieldState | UnrestrictedMeanFieldState, Array]:
         coordinate = jnp.asarray(positions)
         length_to_bohr = float(
             conversion_factor(self.system.units.scale.length_unit, BOHR)

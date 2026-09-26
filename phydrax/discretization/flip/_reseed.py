@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -324,7 +326,10 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
         )
 
 
-def jax_tree_where(predicate, candidate, current):
+_T = TypeVar("_T")
+
+
+def jax_tree_where(predicate: Array, candidate: _T, current: _T) -> _T:
 
     return jax.tree.map(
         lambda proposed, old: jnp.where(predicate, proposed, old), candidate, current

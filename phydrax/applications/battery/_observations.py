@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -449,7 +449,8 @@ class BatteryTimeSeriesRecord(StrictModule, NonTrainableState):
 
     @property
     def source_current_sign(self) -> BatteryCurrentSign:
-        return self.source_units.current_sign
+        # BatterySourceUnits.__post_init__ normalizes current_sign to the enum.
+        return cast(BatteryCurrentSign, self.source_units.current_sign)
 
     @property
     def canonical_current_sign(self) -> BatteryCurrentSign:

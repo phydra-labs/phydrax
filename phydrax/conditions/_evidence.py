@@ -107,15 +107,15 @@ class AffineProjectionCertificate(ConditionCertificate):
 
     def __init__(
         self,
-        stamp,
-        residual_norm,
-        tolerance,
-        verified,
+        stamp: ConditionRealizationStamp,
+        residual_norm: ArrayLike,
+        tolerance: ArrayLike,
+        verified: ArrayLike,
         /,
         *,
-        certificate_id,
-        rank,
-        nullity,
+        certificate_id: str,
+        rank: int,
+        nullity: int,
     ) -> None:
         rank_ = int(rank)
         nullity_ = int(nullity)
@@ -139,7 +139,15 @@ class NonlinearRetractionCertificate(ConditionCertificate):
     iterations: int = eqx.field(static=True)
 
     def __init__(
-        self, stamp, residual_norm, tolerance, verified, /, *, certificate_id, iterations
+        self,
+        stamp: ConditionRealizationStamp,
+        residual_norm: ArrayLike,
+        tolerance: ArrayLike,
+        verified: ArrayLike,
+        /,
+        *,
+        certificate_id: str,
+        iterations: int,
     ) -> None:
         iterations_ = int(iterations)
         if iterations_ < 0:
@@ -162,14 +170,14 @@ class FeasibilityCertificate(ConditionCertificate):
 
     def __init__(
         self,
-        stamp,
-        residual_norm,
-        tolerance,
-        verified,
-        maximum_violation,
+        stamp: ConditionRealizationStamp,
+        residual_norm: ArrayLike,
+        tolerance: ArrayLike,
+        verified: ArrayLike,
+        maximum_violation: ArrayLike,
         /,
         *,
-        certificate_id,
+        certificate_id: str,
     ) -> None:
         self.stamp = stamp
         self.certificate_id = _identifier(certificate_id, "certificate_id")

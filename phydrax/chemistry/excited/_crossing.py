@@ -190,15 +190,15 @@ class CrossingOptimizationResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        positions,
-        energies,
-        projected_gradient_norm,
-        branching,
-        trajectory,
-        iterations,
-        successful,
-        plan_id,
-        provider_id,
+        positions: ArrayLike,
+        energies: ArrayLike,
+        projected_gradient_norm: ArrayLike,
+        branching: BranchingPlaneResult,
+        trajectory: ArrayLike,
+        iterations: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
+        provider_id: str,
         /,
     ) -> None:
         position = jnp.asarray(positions)

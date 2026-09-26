@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -233,7 +235,7 @@ class PreparedMultiphaseWCSPHDynamics(StrictModule, NonTrainableState):
         target, source = self.assembly.state_layout.unpack(state)
         return target, source
 
-    def __call__(self, time: Array, state: Array, args=None, /) -> Array:
+    def __call__(self, time: Array, state: Array, args: Any = None, /) -> Array:
         target_state, source_state = self.unpack(state)
         target_rate = self.target.dynamics(time, target_state, args)
         source_rate = self.source.dynamics(time, source_state, args)
@@ -267,7 +269,7 @@ class PreparedMultiphaseWCSPHDynamics(StrictModule, NonTrainableState):
         )
 
     def diagnostics(
-        self, time: Array, state: Array, args=None, /
+        self, time: Array, state: Array, args: Any = None, /
     ) -> MultiphaseSPHDiagnostics:
         target_state, source_state = self.unpack(state)
         target_position, _, _ = self.target.dynamics.state_layout.unpack(target_state)

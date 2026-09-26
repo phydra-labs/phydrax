@@ -84,7 +84,9 @@ _D3Q27_EXPONENTS = (
 )
 
 
-def _default_exponents(velocity_set: LatticeBoltzmannVelocitySet, /):
+def _default_exponents(
+    velocity_set: LatticeBoltzmannVelocitySet, /
+) -> tuple[tuple[int, ...], ...]:
     key = (velocity_set.dimension, velocity_set.population_count)
     if key == (2, 9):
         return _D2Q9_EXPONENTS

@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,6 +20,8 @@ from ..discretization.particle import (
     conversion_state_admissible,
     ParticleConversionLedger,
     ParticleConversionState,
+    ParticleInternalBatchState,
+    PreparedParticleInternalBatch,
 )
 from ..discretization.particle._particle_internal_unstructured import (
     PreparedUnstructuredParticleInternalMesh,
@@ -36,6 +40,16 @@ from ..linalg import (
 from ..sparse import SparseLinearMap
 from ._differential import DifferentialProblem
 from ._rosenbrock_replay import solve_rosenbrock
+
+
+if TYPE_CHECKING:
+    from ..equations._particle_thermochemistry import (
+        ParticleThermochemicalMaterialBundle,
+        ParticleTransportBoundary,
+    )
+
+
+_SourceIntegrals: TypeAlias = tuple[Array, tuple[Array, ...], Array, Array]
 
 
 class ParticleConversionBackend(StrEnum):
@@ -96,7 +110,7 @@ def advance_particle_conversion(
     dynamics: PreparedParticleConversionDynamics,
     plan: ParticleConversionSolverPlan,
     state: ParticleConversionState,
-    boundaries,
+    boundaries: Sequence[ParticleTransportBoundary],
     time: Array,
     step_size: Array,
     /,
@@ -225,7 +239,14 @@ def advance_particle_conversion(
     )
 
 
-def _reference_step(dynamics, state, boundaries, time, step_size, substeps):
+def _reference_step(
+    dynamics: PreparedParticleConversionDynamics,
+    state: ParticleConversionState,
+    boundaries: tuple[ParticleTransportBoundary, ...],
+    time: Array,
+    step_size: Array,
+    substeps: int,
+) -> tuple[ParticleConversionState, _SourceIntegrals, Array]:
     initial, main_size = _pack_state(state)
     auxiliary_size = 3 + sum(
         value.shape[-1] for value in state.ledger.initial_species_amount
@@ -234,7 +255,7 @@ def _reference_step(dynamics, state, boundaries, time, step_size, substeps):
         (initial, jnp.zeros((auxiliary_size,), dtype=initial.dtype))
     )
 
-    def drift(current_time, vector, args):
+    def drift(current_time: Array, vector: Array, args: object) -> Array:
         del current_time, args
         current = _unpack_state(vector[:main_size], state)
         evaluation = dynamics.evaluate(current, boundaries)
@@ -279,7 +300,13 @@ def _reference_step(dynamics, state, boundaries, time, step_size, substeps):
     )
 
 
-def _structured_step(dynamics, state, boundaries, step_size, substeps):
+def _structured_step(
+    dynamics: PreparedParticleConversionDynamics,
+    state: ParticleConversionState,
+    boundaries: tuple[ParticleTransportBoundary, ...],
+    step_size: Array,
+    substeps: int,
+) -> tuple[ParticleConversionState, _SourceIntegrals, Array]:
     current = state
     total_boundary_heat = jnp.zeros((), dtype=step_size.dtype)
     total_reaction_heat = jnp.zeros((), dtype=step_size.dtype)
@@ -394,12 +421,19 @@ def _structured_step(dynamics, state, boundaries, step_size, substeps):
     )
 
 
-def _implicit_transport_step(prepared, state, material, boundary, step_size):
-    if isinstance(prepared.mesh, PreparedUnstructuredParticleInternalMesh):
+def _implicit_transport_step(
+    prepared: PreparedParticleInternalBatch,
+    state: ParticleInternalBatchState,
+    material: ParticleThermochemicalMaterialBundle,
+    boundary: ParticleTransportBoundary,
+    step_size: Array,
+) -> tuple[ParticleInternalBatchState, Array]:
+    mesh = prepared.mesh
+    if isinstance(mesh, PreparedUnstructuredParticleInternalMesh):
         return _implicit_unstructured_transport_step(
-            prepared, state, material, boundary, step_size
+            prepared, mesh, state, material, boundary, step_size
         )
-    metrics = prepared.mesh.metrics(state.outer_scale)
+    metrics = mesh.metrics(state.outer_scale)
     thermo = material.thermodynamics.state(
         state.internal_energy,
         state.species_amount,
@@ -498,16 +532,17 @@ def _implicit_transport_step(prepared, state, material, boundary, step_size):
 
 
 def _implicit_unstructured_transport_step(
-    prepared,
-    state,
-    material,
-    boundary,
-    step_size,
-):
+    prepared: PreparedParticleInternalBatch,
+    mesh: PreparedUnstructuredParticleInternalMesh,
+    state: ParticleInternalBatchState,
+    material: ParticleThermochemicalMaterialBundle,
+    boundary: ParticleTransportBoundary,
+    step_size: Array,
+) -> tuple[ParticleInternalBatchState, Array]:
     active_cells = jnp.broadcast_to(
         state.active[:, None], (prepared.particle_count, prepared.cell_capacity)
     )
-    metrics = prepared.mesh.metrics(state.outer_scale, active_cells=active_cells)
+    metrics = mesh.metrics(state.outer_scale, active_cells=active_cells)
     thermo = material.thermodynamics.state(
         state.internal_energy,
         state.species_amount,
@@ -546,9 +581,9 @@ def _implicit_unstructured_transport_step(
         axis=-1,
     )
     heat_operator = SparseLinearMap(
-        prepared.mesh.transport_relation,
+        mesh.transport_relation,
         heat_coefficients,
-        operator_id=f"{prepared.mesh.prepared_id}:heat-transport",
+        operator_id=f"{mesh.prepared_id}:heat-transport",
     )
     area_fraction = metrics.face_measures / jnp.maximum(
         metrics.surface_measure[:, None],
@@ -623,9 +658,9 @@ def _implicit_unstructured_transport_step(
         axis=-1,
     )
     species_operator = SparseLinearMap(
-        prepared.mesh.transport_relation,
+        mesh.transport_relation,
         species_coefficients,
-        operator_id=f"{prepared.mesh.prepared_id}:species-transport",
+        operator_id=f"{mesh.prepared_id}:species-transport",
     )
     right = jnp.swapaxes(state.species_amount, 1, 2) / step_size
     right = right.at[..., owner].add(
@@ -653,7 +688,7 @@ def _implicit_unstructured_transport_step(
     return candidate, successful
 
 
-def _pack_state(state):
+def _pack_state(state: ParticleConversionState) -> tuple[Array, int]:
     values = []
     for batch in state.batches:
         values.append(batch.internal_energy.reshape(-1))
@@ -662,7 +697,9 @@ def _pack_state(state):
     return packed, packed.shape[0]
 
 
-def _unpack_state(vector, template):
+def _unpack_state(
+    vector: Array, template: ParticleConversionState
+) -> ParticleConversionState:
     cursor = 0
     batches = []
     for batch in template.batches:
@@ -686,7 +723,7 @@ def _unpack_state(vector, template):
     return ParticleConversionState(tuple(batches), template.ledger, template.state_id)
 
 
-def _pack_rates(evaluation):
+def _pack_rates(evaluation: ParticleConversionEvaluation) -> Array:
     values = []
     for batch in evaluation.batches:
         values.append(batch.internal_energy_rate.reshape(-1))
@@ -694,7 +731,7 @@ def _pack_rates(evaluation):
     return jnp.concatenate(tuple(values))
 
 
-def _source_rates(evaluation):
+def _source_rates(evaluation: ParticleConversionEvaluation) -> _SourceIntegrals:
     boundary_heat = jnp.sum(
         jnp.stack(
             tuple(
@@ -730,7 +767,11 @@ def _source_rates(evaluation):
     return boundary_heat, boundary_species, reaction_heat, phase_heat
 
 
-def _update_ledger(previous, candidate, sources):
+def _update_ledger(
+    previous: ParticleConversionState,
+    candidate: ParticleConversionState,
+    sources: _SourceIntegrals,
+) -> ParticleConversionState:
     boundary_heat, boundary_species, reaction_heat, phase_heat = sources
     ledger = ParticleConversionLedger(
         previous.ledger.initial_internal_energy,
@@ -753,7 +794,7 @@ def _update_ledger(previous, candidate, sources):
     return ParticleConversionState(candidate.batches, ledger, candidate.state_id)
 
 
-def _tridiagonal_bands(lower, diagonal, upper):
+def _tridiagonal_bands(lower: Array, diagonal: Array, upper: Array) -> Array:
     bands = jnp.zeros(
         diagonal.shape[:-1] + (3, diagonal.shape[-1]),
         dtype=diagonal.dtype,
@@ -763,7 +804,7 @@ def _tridiagonal_bands(lower, diagonal, upper):
     return bands.at[..., 0, 1:].set(upper)
 
 
-def _harmonic_mean(left, right):
+def _harmonic_mean(left: Array, right: Array) -> Array:
     denominator = left + right
     return jnp.where(denominator > 0.0, 2.0 * left * right / denominator, 0.0)
 

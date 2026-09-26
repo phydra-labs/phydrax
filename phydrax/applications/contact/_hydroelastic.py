@@ -119,7 +119,9 @@ def evaluate_hydroelastic_contact(
         raise ValueError("Hydroelastic relative velocity has invalid shape.")
     compression = jnp.maximum(-kinematics.gap, 0.0)
 
-    def side_pressure(material, supplied):
+    def side_pressure(
+        material: HydroelasticMaterialPlan | None, supplied: ArrayLike | None
+    ) -> Array:
         if supplied is not None:
             value = jnp.asarray(supplied, dtype=kinematics.gap.dtype)
             if value.shape != (interface.capacity,):

@@ -12,7 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.ein as ein
 
@@ -274,7 +274,9 @@ class ElasticityLayerPotential3D(_AbstractTrialSpaceField):
             raise ValueError("Replacement density must preserve (source_node_count, 3).")
         return eqx.tree_at(lambda potential: potential.density, self, values)
 
-    def __call__(self, target: ArrayLike, /, *, key=None) -> Array:
+    def __call__(
+        self, target: ArrayLike, /, *, key: Key[Array, ""] | None = None
+    ) -> Array:
         del key
         point = jnp.asarray(target, dtype=self.panelization.points.dtype)
         if point.shape != (3,):
@@ -775,7 +777,7 @@ def prepare_elasticity_single_layer_dp0_3d(
         numeric_version=binding.numeric_version,
         face_count=face_count,
         component_count=binding.component_count,
-        pair_counts=tuple(counts),
+        pair_counts=(counts[0], counts[1], counts[2], counts[3]),
         quadrature_evaluations=evaluations,
         maximum_quadrature_error=selected.precision.decision(jnp.asarray(maximum_error)),
         preparation_workspace_bytes=workspace_bytes,

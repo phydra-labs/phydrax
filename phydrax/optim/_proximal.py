@@ -7,13 +7,13 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._precision import inexact_result_type
 from .._strict import StrictModule
@@ -32,6 +32,35 @@ from ._iterative._types import (
     OptimizationStatus,
     OptimizationTermination,
 )
+
+
+# (evaluations, rate, accepted, candidate, smooth, nonsmooth, gradient)
+_ProposalCarry: TypeAlias = tuple[
+    Array, Array, Array, PyTree[Array], Array, Array, PyTree[Array]
+]
+# Proposal carry followed by the reference smooth value and gradient.
+_FirstOrderProposal: TypeAlias = tuple[
+    Array, Array, Array, PyTree[Array], Array, Array, PyTree[Array], Array, PyTree[Array]
+]
+# First-order proposal followed by the dense Hessian-action count.
+_NewtonProposal: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    PyTree[Array],
+    Array,
+    Array,
+    PyTree[Array],
+    Array,
+    PyTree[Array],
+    Array,
+]
+# Proposal carry followed by the reference-evaluation count.
+_RestartProposal: TypeAlias = tuple[
+    Array, Array, Array, PyTree[Array], Array, Array, PyTree[Array], Array
+]
+_NewtonCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_ProximalStepOutput: TypeAlias = tuple[PyTree[Array], "ProximalState"]
 
 
 def _tree_sum_squares(tree: PyTree[Any], /) -> Array:
@@ -94,7 +123,8 @@ class L1Functional(AbstractProximalFunctional):
         leaves = jax.tree.leaves(parameters)
         if not leaves:
             raise ValueError("parameters must contain at least one array leaf.")
-        return self.weight * sum(jnp.sum(jnp.abs(leaf)) for leaf in leaves)
+        # Leaves are validated nonempty above, so the leaf sum is an array.
+        return self.weight * cast(Array, sum(jnp.sum(jnp.abs(leaf)) for leaf in leaves))
 
     def proximal(self, parameters: PyTree[Any], step_size: Any, /) -> PyTree[Array]:
         rate = jnp.asarray(step_size)
@@ -180,7 +210,9 @@ class BoxIndicator(AbstractProximalFunctional):
         self.lower = lower
         self.upper = upper
 
-    def _bounds(self, parameters: PyTree[Any], /):
+    def _bounds(
+        self, parameters: PyTree[Any], /
+    ) -> tuple[PyTree[Array], PyTree[Array], Array]:
         lower = _broadcast_bound(self.lower, parameters)
         upper = _broadcast_bound(self.upper, parameters)
         valid = jax.tree.reduce(
@@ -276,14 +308,15 @@ class GroupLassoFunctional(AbstractProximalFunctional):
         leaves = jax.tree.leaves(parameters)
         if not leaves:
             raise ValueError("parameters must contain at least one array leaf.")
-        return self.weight * sum(
-            jnp.sum(self._norm(leaf, keepdims=False)) for leaf in leaves
+        # Leaves are validated nonempty above, so the leaf sum is an array.
+        return self.weight * cast(
+            Array, sum(jnp.sum(self._norm(leaf, keepdims=False)) for leaf in leaves)
         )
 
     def proximal(self, parameters: PyTree[Any], step_size: Any, /) -> PyTree[Array]:
         rate = jnp.asarray(step_size)
 
-        def shrink(leaf):
+        def shrink(leaf: Array) -> Array:
             norm = self._norm(leaf, keepdims=True)
             scale = jnp.maximum(0.0, 1.0 - rate * self.weight / jnp.maximum(norm, 1e-30))
             return scale * leaf
@@ -302,7 +335,7 @@ class NuclearNormFunctional(AbstractProximalFunctional):
             raise ValueError("weight must be finite and non-negative.")
         self.weight = weight_
 
-    def _validate(self, parameters: PyTree[Any], /):
+    def _validate(self, parameters: PyTree[Any], /) -> list[ArrayLike]:
         leaves = jax.tree.leaves(parameters)
         if not leaves:
             raise ValueError("parameters must contain at least one array leaf.")
@@ -312,15 +345,16 @@ class NuclearNormFunctional(AbstractProximalFunctional):
 
     def value(self, parameters: PyTree[Any], /) -> Array:
         leaves = self._validate(parameters)
-        return self.weight * sum(
-            jnp.sum(jnp.linalg.svd(leaf, compute_uv=False)) for leaf in leaves
+        # ``_validate`` rejects empty leaves, so the leaf sum is an array.
+        return self.weight * cast(
+            Array, sum(jnp.sum(jnp.linalg.svd(leaf, compute_uv=False)) for leaf in leaves)
         )
 
     def proximal(self, parameters: PyTree[Any], step_size: Any, /) -> PyTree[Array]:
         self._validate(parameters)
         rate = jnp.asarray(step_size)
 
-        def shrink(matrix):
+        def shrink(matrix: Array) -> Array:
             left, singular, right = jnp.linalg.svd(matrix, full_matrices=False)
             singular = jnp.maximum(singular - rate * self.weight, 0.0)
             return (left * singular[..., None, :]) @ right
@@ -376,7 +410,7 @@ class ProximalProblem(StrictModule):
         parameters: PyTree[Any],
         args: Any = None,
         /,
-    ):
+    ) -> tuple[tuple[Array, Any], PyTree[Array]]:
         return self.smooth.value_and_gradient(parameters, args)
 
     def stationarity(
@@ -775,10 +809,10 @@ def _first_order_proposal(
     termination: OptimizationTermination,
     args: Any,
     /,
-):
+) -> _FirstOrderProposal:
     (reference_value, _), reference_gradient = problem.value_and_gradient(reference, args)
 
-    def condition(carry):
+    def condition(carry: _ProposalCarry) -> Array:
         evaluations, rate, accepted, *_ = carry
         return (
             (evaluations < method.maximum_backtracking_steps)
@@ -787,7 +821,7 @@ def _first_order_proposal(
             & _within_evaluation_budget(state, evaluations, termination)
         )
 
-    def body(carry):
+    def body(carry: _ProposalCarry) -> _ProposalCarry:
         (
             evaluations,
             rate,
@@ -861,7 +895,7 @@ def _proximal_newton_proposal(
     termination: OptimizationTermination,
     args: Any,
     /,
-):
+) -> _NewtonProposal:
     flat_parameters, unravel = ravel_pytree(parameters)
     if flat_parameters.size > method.max_dense_dimension:
         raise ValueError(
@@ -869,7 +903,7 @@ def _proximal_newton_proposal(
             f"max_dense_dimension={method.max_dense_dimension}."
         )
 
-    def flat_smooth(candidate):
+    def flat_smooth(candidate: Array) -> Array:
         return problem.smooth.value(unravel(candidate), args)[0]
 
     smooth, gradient = jax.value_and_grad(flat_smooth)(flat_parameters)
@@ -883,7 +917,7 @@ def _proximal_newton_proposal(
     )
     inner_rate = 1.0 / model_lipschitz
 
-    def inner_body(_, candidate_flat):
+    def inner_body(_: Array, candidate_flat: Array) -> Array:
         model_gradient = gradient + model_hessian @ (candidate_flat - flat_parameters)
         candidate = unravel(candidate_flat)
         model_gradient_tree = unravel(model_gradient)
@@ -906,7 +940,7 @@ def _proximal_newton_proposal(
         - current_nonsmooth
     )
 
-    def condition(carry):
+    def condition(carry: _NewtonCarry) -> Array:
         evaluations, rate, accepted, *_ = carry
         return (
             (evaluations < method.maximum_backtracking_steps)
@@ -915,7 +949,7 @@ def _proximal_newton_proposal(
             & _within_evaluation_budget(state, evaluations, termination)
         )
 
-    def body(carry):
+    def body(carry: _NewtonCarry) -> _NewtonCarry:
         (
             evaluations,
             rate,
@@ -1001,12 +1035,12 @@ def _proximal_step(
     *,
     termination: OptimizationTermination,
     args: Any,
-):
+) -> _ProximalStepOutput:
     converged = state.stationarity <= termination.optimality_threshold(
         state.initial_stationarity
     )
 
-    def finish(_):
+    def finish(_: None) -> _ProximalStepOutput:
         return parameters, eqx.tree_at(
             lambda value: (value.status, value.metrics),
             state,
@@ -1021,9 +1055,11 @@ def _proximal_step(
             ),
         )
 
-    def take_step(_):
+    def take_step(_operand: None) -> _ProximalStepOutput:
         reference = state.extrapolated if method.accelerated else parameters
         if method.proximal_newton:
+            # Only ProximalNewton declares proximal_newton; its proposal needs its controls.
+            assert isinstance(method, ProximalNewton)
             proposal = _proximal_newton_proposal(
                 method,
                 problem,
@@ -1085,7 +1121,7 @@ def _proximal_step(
                 ),
             )
 
-            def recompute_from_accepted(_):
+            def recompute_from_accepted(_operand: None) -> _RestartProposal:
                 (
                     retry_evaluations,
                     retry_rate,
@@ -1117,7 +1153,7 @@ def _proximal_step(
                     jnp.asarray(2, dtype=jnp.int32),
                 )
 
-            def keep_extrapolated(_):
+            def keep_extrapolated(_: None) -> _RestartProposal:
                 return (
                     first_evaluations,
                     first_rate,
@@ -1263,7 +1299,7 @@ def _solve_proximal(
     state = method.prepare_state(problem, parameters, args=args)
     dynamic_state, static_state = eqx.partition(state, eqx.is_array)
 
-    def condition(carry):
+    def condition(carry: tuple[PyTree[Array], PyTree[Any]]) -> Array:
         _, current = carry
         within_evaluations = (
             jnp.asarray(True)
@@ -1276,7 +1312,9 @@ def _solve_proximal(
             & within_evaluations
         )
 
-    def body(carry):
+    def body(
+        carry: tuple[PyTree[Array], PyTree[Any]],
+    ) -> tuple[PyTree[Array], PyTree[Any]]:
         current_parameters, dynamic = carry
         current_state = eqx.combine(dynamic, static_state)
         next_parameters, next_state = method.step(

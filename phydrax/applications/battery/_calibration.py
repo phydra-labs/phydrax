@@ -67,7 +67,7 @@ _CHANNEL_UNIT = dict(
 )
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be a non-empty canonical identifier.")
     return value
@@ -932,13 +932,13 @@ def prepare_battery_posterior(
 
     prepared = _prepared(calibration)
 
-    def log_likelihood(physical):
+    def log_likelihood(physical: PyTree[Any]) -> Array:
         return prepared.physical_log_likelihood(physical)
 
-    def predict(physical):
+    def predict(physical: PyTree[Any]) -> tuple[Array, ...]:
         return prepared.physical_prediction(physical)
 
-    def gauss_newton_residual(physical):
+    def gauss_newton_residual(physical: PyTree[Any]) -> Array:
         return prepared.physical_residual(physical)
 
     return PosteriorProblem(

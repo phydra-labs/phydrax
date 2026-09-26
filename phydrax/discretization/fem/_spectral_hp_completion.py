@@ -34,7 +34,11 @@ from ._high_order import (
     lagrange_1d_tabulation,
     SimplexNodalFamily,
 )
-from ._hp import FiniteElementHPLineage, FiniteElementHPTopology
+from ._hp import (
+    FiniteElementHPLineage,
+    FiniteElementHPLineageKind,
+    FiniteElementHPTopology,
+)
 from ._hp_runtime import (
     finite_element_hp_balance_error,
     FiniteElementHPGeometry,
@@ -159,7 +163,7 @@ def refine_anisotropic_hp_cells(
     next_global = int(np.max(identifiers[allocated], initial=-1)) + 1
     source_routes = []
     target_routes = []
-    relations = []
+    relations: list[FiniteElementHPLineageKind] = []
     marked_set = set(marked_slots.tolist())
     for slot in np.flatnonzero(active):
         if int(slot) not in marked_set:
@@ -269,7 +273,7 @@ def resize_hp_forest(
     if capacity < 1:
         raise ValueError("hp forest capacity must be positive.")
 
-    def pad(vector, shape, fill):
+    def pad(vector: ArrayLike, shape: tuple[int, ...], fill: float) -> np.ndarray:
         result = np.full(shape, fill, dtype=np.asarray(vector).dtype)
         slices = tuple(
             slice(0, min(old, new))
@@ -589,7 +593,7 @@ class TensorDeRhamComplex(StrictModule, NonTrainableState):
         for power in range(1, p + 1):
             derivative[power - 1, power] = power
 
-        def kron_factors(factors):
+        def kron_factors(factors: Sequence[np.ndarray]) -> np.ndarray:
             result = factors[0]
             for factor in factors[1:]:
                 result = np.kron(result, factor)
@@ -786,6 +790,8 @@ class HybridReferenceFamily(StrictModule, NonTrainableState):
                 raise ValueError("Prism degree tuples must be (triangle, axial).")
             triangle_degree, axial_degree = (int(value) for value in degree)
         else:
+            if isinstance(degree, tuple):
+                raise TypeError("Only prism references accept (triangle, axial) degrees.")
             triangle_degree = axial_degree = int(degree)
         p = triangle_degree
         q = axial_degree
@@ -1043,7 +1049,9 @@ class TensorDeRhamTransferPlan(StrictModule, NonTrainableState):
                 "Compatible p transfer requires equal dimensions and nested degree."
             )
 
-        def tensor_embedding(source_degrees, target_degrees):
+        def tensor_embedding(
+            source_degrees: tuple[int, ...], target_degrees: tuple[int, ...]
+        ) -> np.ndarray:
             source_indices = tuple(
                 product(*(range(value + 1) for value in source_degrees))
             )
@@ -1056,7 +1064,10 @@ class TensorDeRhamTransferPlan(StrictModule, NonTrainableState):
                 matrix[target_position[exponent], column] = 1.0
             return matrix
 
-        def block_embedding(source_components, target_components):
+        def block_embedding(
+            source_components: Sequence[tuple[int, ...]],
+            target_components: Sequence[tuple[int, ...]],
+        ) -> np.ndarray:
             source_widths = [
                 int(np.prod(np.asarray(value) + 1)) for value in source_components
             ]
@@ -1278,7 +1289,7 @@ class HybridMortarPlan(StrictModule, NonTrainableState):
             value for value in product(range(p + 1), repeat=dimension) if sum(value) <= p
         )
 
-        def interpolation(nodes):
+        def interpolation(nodes: np.ndarray) -> np.ndarray:
             vandermonde = np.stack(
                 [
                     np.prod(nodes ** np.asarray(exponent), axis=1)

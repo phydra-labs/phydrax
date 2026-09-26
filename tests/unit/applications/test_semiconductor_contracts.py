@@ -1,3 +1,5 @@
+from itertools import combinations
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -160,6 +162,49 @@ def test_native_affine_simplex_preserves_linear_energy_and_persistent_identity(
     )
     with pytest.raises(ValueError):
         support.resolve_scope(stale_scope)
+
+
+def test_native_multi_block_tetrahedra_bind_exact_face_scopes():
+    points = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0],
+    ]
+    mesh = CellMesh(
+        points,
+        (
+            CellBlock("lower", "tetrahedron", [[0, 1, 2, 3]]),
+            CellBlock("upper", "tetrahedron", [[1, 2, 3, 4]], global_ids=[1]),
+        ),
+    )
+    result = certify_cell_mesh(mesh, SpatialCoordinateContract.si())
+    support = TransportSupport.from_meshing(result)
+    faces = result.mesh.entity_set(2)
+    selected = {
+        frozenset(
+            np.flatnonzero(
+                support.resolve_scope(
+                    MeshingScope(
+                        support.source_id,
+                        support.source_revision,
+                        MeshingEntityKind.MESH,
+                        2,
+                        faces.entity_set_id,
+                        faces.entity_ids[index : index + 1],
+                    )
+                )
+            ).tolist()
+        )
+        for index in range(len(faces.entity_ids))
+    }
+    expected = {
+        frozenset(face)
+        for cell in ((0, 1, 2, 3), (1, 2, 3, 4))
+        for face in combinations(cell, 3)
+    }
+    assert selected == expected
 
 
 def test_native_obtuse_simplex_rejects_negative_two_point_metric():

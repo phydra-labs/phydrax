@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import equinox as eqx
@@ -28,11 +29,11 @@ class EnergyTarget(StrictModule):
 
     def __init__(
         self,
-        energy,
-        event_shape,
+        energy: Callable[[Array], ArrayLike],
+        event_shape: Sequence[int],
         /,
         *,
-        support=None,
+        support: Callable[[Array], ArrayLike] | None = None,
         temperature: float = 1.0,
         target_id: str | None = None,
         normalizer_status: str = "unknown",
@@ -117,7 +118,7 @@ class PersistentContrastiveDivergence(StrictModule):
     def __init__(
         self,
         target: EnergyTarget,
-        reference_sampler,
+        reference_sampler: Callable[[Key[Array, ""], tuple[int, ...]], ArrayLike],
         /,
         *,
         step_size: float,
@@ -148,7 +149,9 @@ class PersistentContrastiveDivergence(StrictModule):
             }
         )
 
-    def initialize(self, key: Key[Array, ""], particle_count: int, /):
+    def initialize(
+        self, key: Key[Array, ""], particle_count: int, /
+    ) -> PersistentEnergyState:
         count = int(particle_count)
         if count <= 0:
             raise ValueError("particle_count must be positive.")
@@ -193,7 +196,7 @@ class PersistentContrastiveDivergence(StrictModule):
         expanded = refresh.reshape(refresh.shape + (1,) * len(self.target.event_shape))
         initial = jnp.where(expanded, fresh, state.particles)
 
-        def one_step(particles, key):
+        def one_step(particles: Array, key: Key[Array, ""]) -> tuple[Array, None]:
             keys = jr.split(key, particles.shape[0])
             gradients = jax.vmap(
                 lambda particle: jax.grad(self.target.energy_value)(particle)

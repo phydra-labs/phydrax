@@ -183,7 +183,12 @@ def plan_kkt(
     )
 
 
-def _augmented_matrix(hessian, jacobian, primal_regularization, dual_regularization):
+def _augmented_matrix(
+    hessian: Array,
+    jacobian: Array,
+    primal_regularization: Array,
+    dual_regularization: Array,
+) -> Array:
     n = hessian.shape[0]
     m = jacobian.shape[0]
     return jnp.block(
@@ -239,7 +244,7 @@ def factor_kkt(
         maximum_dense_dimension=plan.primal_dimension + plan.constraint_dimension,
     )
 
-    def prepare_current(value):
+    def prepare_current(value: Array) -> tuple[PreparedLinearSolve, InertiaEvidence]:
         prepared_linear = prepare_linear(
             LinearSystem(DenseLinearOperator(value)),
             linear_policy,

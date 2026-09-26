@@ -37,6 +37,7 @@ from ._dmrg import (
     solve_finite_dmrg,
 )
 from ._matrix_product_tdvp import (
+    FiniteTDVPAlgorithm,
     FiniteTDVPPolicy,
     FiniteTDVPProblem,
     solve_finite_tdvp,
@@ -181,7 +182,7 @@ class FiniteResponsePolicy(StrictModule):
     step_size: float = eqx.field(static=True)
     steps: int = eqx.field(static=True)
     maximum_bond_dimension: int = eqx.field(static=True)
-    tdvp_algorithm: str = eqx.field(static=True)
+    tdvp_algorithm: FiniteTDVPAlgorithm = eqx.field(static=True)
     damping: float = eqx.field(static=True)
     hermiticity_tolerance: float = eqx.field(static=True)
     maximum_history_elements: int = eqx.field(static=True)
@@ -196,7 +197,7 @@ class FiniteResponsePolicy(StrictModule):
         step_size: float,
         steps: int,
         maximum_bond_dimension: int,
-        tdvp_algorithm: str = "two-site",
+        tdvp_algorithm: FiniteTDVPAlgorithm = "two-site",
         damping: float = 0.0,
         hermiticity_tolerance: float = 1e-9,
         maximum_history_elements: int = 10_000_000,

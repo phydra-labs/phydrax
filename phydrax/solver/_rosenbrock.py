@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -39,6 +39,7 @@ from ._temporal_precision import TemporalPrecisionPolicy
 
 
 _DEFAULT_ARGS = object()
+_RosenbrockStepOutputs: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class RosenbrockWMethod(StrictModule, NonTrainableState):
@@ -214,7 +215,9 @@ class _ShiftedJacobianAction(StrictModule):
         return direction - self.scale * self.jacobian(direction)
 
 
-def _time_derivative(problem: DifferentialProblem, time: Array, state: Array, args: Any):
+def _time_derivative(
+    problem: DifferentialProblem, time: Array, state: Array, args: Any
+) -> Array:
     return jax.jvp(
         lambda value: jnp.asarray(problem.drift(value, state, args)),
         (time,),
@@ -411,11 +414,13 @@ def _solve_rosenbrock_fixed(
     runtime_args = problem.args if args is _DEFAULT_ARGS else args
     space = ArraySpace(problem.initial_state.shape, dtype=problem.initial_state.dtype)
 
-    def advance(carry, values):
+    def advance(
+        carry: tuple[Array, Array], values: tuple[Array, Array]
+    ) -> tuple[tuple[Array, Array], _RosenbrockStepOutputs]:
         state, prior_valid = carry
         time, step_size = values
 
-        def solve_step(_):
+        def solve_step(_: None) -> _RosenbrockStepOutputs:
             result = _rosenbrock_step(
                 problem,
                 selected,
@@ -434,7 +439,7 @@ def _solve_rosenbrock_fixed(
                 jnp.sum(result.iterations, dtype=jnp.int32),
             )
 
-        def skip_step(_):
+        def skip_step(_: None) -> _RosenbrockStepOutputs:
             return (
                 jnp.full_like(state, jnp.nan),
                 jnp.asarray(False),

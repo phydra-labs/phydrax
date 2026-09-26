@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import prod
 from numbers import Integral
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -26,6 +26,10 @@ from ..coresets import (
     MomentRecombination,
 )
 from ._trajectory import StochasticDriverSegmentReference, StochasticTrajectory
+
+
+if TYPE_CHECKING:
+    from ..nn.operator.training import OperatorDataset
 
 
 TrajectoryBlockWeighting = Literal["trajectory", "block", "duration"]
@@ -128,7 +132,7 @@ class TrajectoryBlockCoreset:
     weighting: TrajectoryBlockWeighting
     objective: str
 
-    def to_operator_dataset(self):
+    def to_operator_dataset(self) -> OperatorDataset:
         """Lower selected blocks to canonical weighted operator cases."""
         return trajectory_block_coreset_to_operator_dataset(self)
 
@@ -279,7 +283,7 @@ def _references(
 def trajectory_block_coreset_to_operator_dataset(
     coreset: TrajectoryBlockCoreset,
     /,
-):
+) -> OperatorDataset:
     """Lower block endpoints to one weighted canonical OperatorDataset."""
     if not isinstance(coreset, TrajectoryBlockCoreset):
         raise TypeError("coreset must be a TrajectoryBlockCoreset.")

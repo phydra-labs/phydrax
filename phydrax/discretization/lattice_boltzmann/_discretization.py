@@ -10,6 +10,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import PrecisionEvidenceEnvelope
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -245,7 +246,7 @@ class LatticeBoltzmannDiscretization(AbstractPreparedDiscretization):
         self.preparation = preparation
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.precision.evidence()
 
     @property

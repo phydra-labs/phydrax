@@ -17,6 +17,10 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._gas_dynamics import HomogeneousMixtureCompressibleNavierStokesSystem
+from ._homogeneous_thermodynamics import (
+    DensityEnergyStateResult,
+    HomogeneousHelmholtzPlan,
+)
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractEntropyDiffusionSystem,
@@ -306,7 +310,7 @@ class SpalartAllmarasCompressibleSystem(
         )
 
     @property
-    def thermodynamics(self):
+    def thermodynamics(self) -> HomogeneousHelmholtzPlan:
         return self.base.thermodynamics
 
     @property
@@ -359,7 +363,7 @@ class SpalartAllmarasCompressibleSystem(
     def temperature(self, state: ArrayLike, /) -> Array:
         return self.base.temperature(self.gas_state(state))
 
-    def recover_thermodynamics(self, state: ArrayLike, /):
+    def recover_thermodynamics(self, state: ArrayLike, /) -> DensityEnergyStateResult:
         return self.base.recover_thermodynamics(self.gas_state(state))
 
     def working_variable(self, state: ArrayLike, /) -> Array:

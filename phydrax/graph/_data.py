@@ -131,31 +131,31 @@ class Batch(StrictModule):
         self.data = data
 
     @property
-    def x(self):
+    def x(self) -> jnp.ndarray | None:
         return self.data.x
 
     @property
-    def edge_index(self):
+    def edge_index(self) -> jnp.ndarray | None:
         return self.data.edge_index
 
     @property
-    def edge_attr(self):
+    def edge_attr(self) -> jnp.ndarray | None:
         return self.data.edge_attr
 
     @property
-    def y(self):
+    def y(self) -> jnp.ndarray | None:
         return self.data.y
 
     @property
-    def pos(self):
+    def pos(self) -> jnp.ndarray | None:
         return self.data.pos
 
     @property
-    def batch(self):
+    def batch(self) -> jnp.ndarray | None:
         return self.data.batch
 
     @property
-    def ptr(self):
+    def ptr(self) -> jnp.ndarray | None:
         return self.data.ptr
 
     @property

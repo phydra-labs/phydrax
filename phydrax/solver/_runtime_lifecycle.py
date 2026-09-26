@@ -11,13 +11,14 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextvars import copy_context
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, TracebackType
 from typing import Any, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._array_archive import (
@@ -976,7 +977,7 @@ class StreamingObservablePlan(StrictModule, NonTrainableState):
         )
 
     def initial_state(
-        self, shape: tuple[int, ...], dtype=jnp.float64, /
+        self, shape: tuple[int, ...], dtype: DTypeLike = jnp.float64, /
     ) -> StreamingObservableState:
         zeros = jnp.zeros(shape, dtype=dtype)
         return StreamingObservableState(
@@ -1076,7 +1077,9 @@ class AcceptedStepTrigger(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, dtype=jnp.float64, /) -> AcceptedStepTriggerState:
+    def initial_state(
+        self, dtype: DTypeLike = jnp.float64, /
+    ) -> AcceptedStepTriggerState:
         return AcceptedStepTriggerState(
             jnp.asarray(False),
             jnp.asarray(0, dtype=jnp.int64),
@@ -1213,7 +1216,12 @@ class BoundedAsyncPublisher:
     def __enter__(self) -> BoundedAsyncPublisher:
         return self
 
-    def __exit__(self, exception_type, exception, traceback) -> None:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         del exception_type, exception, traceback
         self.close()
 
@@ -1336,7 +1344,12 @@ class ByteBoundedAsyncPublisher:
     def __enter__(self) -> ByteBoundedAsyncPublisher:
         return self
 
-    def __exit__(self, exception_type, exception, traceback) -> None:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         del exception_type, exception, traceback
         self.close()
 
@@ -1425,7 +1438,7 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, dtype=jnp.float64, /) -> StreamingMomentState:
+    def initial_state(self, dtype: DTypeLike = jnp.float64, /) -> StreamingMomentState:
         return StreamingMomentState(
             jnp.asarray(0.0, dtype=dtype),
             jnp.zeros(self.value_shape, dtype=dtype),
@@ -1631,7 +1644,9 @@ class AcceptedStepTriggerGraph(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, dtype=jnp.float64, /) -> AcceptedStepTriggerGraphState:
+    def initial_state(
+        self, dtype: DTypeLike = jnp.float64, /
+    ) -> AcceptedStepTriggerGraphState:
         return AcceptedStepTriggerGraphState(
             tuple(value.initial_state(dtype) for value in self.triggers),
             jnp.asarray(0, dtype=jnp.int32),

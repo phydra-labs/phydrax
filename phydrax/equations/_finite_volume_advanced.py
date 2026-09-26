@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -26,7 +26,7 @@ class HydrostaticLayerCoupling(StrictModule, NonTrainableState):
     coupling_id: str = eqx.field(static=True)
 
     @classmethod
-    def from_densities(cls, densities: ArrayLike, gravity: float = 9.81, /):
+    def from_densities(cls, densities: ArrayLike, gravity: float = 9.81, /) -> Self:
         rho, gravity_ = np.asarray(densities, dtype=np.float64), float(gravity)
         if (
             rho.ndim != 1
@@ -134,7 +134,9 @@ class MultilayerShallowWaterSystem(AbstractAdmissibleSystem, NonTrainableState):
         momentum = momentum.at[..., :, int(axis)].add(pressure)
         return jnp.concatenate((mass, momentum.reshape(momentum.shape[:-2] + (-1,))), -1)
 
-    def signal_bounds(self, left, right, axis, args=None, /):
+    def signal_bounds(
+        self, left: Array, right: Array, axis: int, args: Any = None, /
+    ) -> tuple[Array, Array]:
         del args
         hl, ql = self.split(left)
         hr, qr = self.split(right)
@@ -152,11 +154,15 @@ class MultilayerShallowWaterSystem(AbstractAdmissibleSystem, NonTrainableState):
         )
         return lower, upper
 
-    def max_wave_speed(self, left, right, axis, args=None, /):
+    def max_wave_speed(
+        self, left: Array, right: Array, axis: int, args: Any = None, /
+    ) -> Array:
         lower, upper = self.signal_bounds(left, right, axis, args)
         return jnp.maximum(jnp.abs(lower), jnp.abs(upper))
 
-    def normal_signal_bounds(self, left, right, normal, args=None, /):
+    def normal_signal_bounds(
+        self, left: Array, right: Array, normal: Array, args: Any = None, /
+    ) -> tuple[Array, Array]:
         del args
         normal_ = jnp.asarray(normal)
         if normal_.ndim == 0 or normal_.shape[-1] != self.dimension:
@@ -319,7 +325,9 @@ class ShallowWaterExnerSystem(AbstractAdmissibleSystem, NonTrainableState):
             axis=-1,
         )
 
-    def signal_bounds(self, left, right, axis, args=None, /):
+    def signal_bounds(
+        self, left: Array, right: Array, axis: int, args: Any = None, /
+    ) -> tuple[Array, Array]:
         return self.base.signal_bounds(
             jnp.asarray(left)[..., :-1],
             jnp.asarray(right)[..., :-1],
@@ -327,7 +335,9 @@ class ShallowWaterExnerSystem(AbstractAdmissibleSystem, NonTrainableState):
             args,
         )
 
-    def normal_signal_bounds(self, left, right, normal, args=None, /):
+    def normal_signal_bounds(
+        self, left: Array, right: Array, normal: Array, args: Any = None, /
+    ) -> tuple[Array, Array]:
         return self.base.normal_signal_bounds(
             jnp.asarray(left)[..., :-1],
             jnp.asarray(right)[..., :-1],
@@ -347,7 +357,9 @@ class ShallowWaterExnerSystem(AbstractAdmissibleSystem, NonTrainableState):
             -1,
         )
 
-    def max_wave_speed(self, left, right, axis, args=None, /):
+    def max_wave_speed(
+        self, left: Array, right: Array, axis: int, args: Any = None, /
+    ) -> Array:
         water = self.base.max_wave_speed(
             jnp.asarray(left)[..., :-1], jnp.asarray(right)[..., :-1], axis, args
         )

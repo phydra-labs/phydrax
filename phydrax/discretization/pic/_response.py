@@ -114,7 +114,10 @@ class PICParticleResponsePlan(StrictModule, NonTrainableState):
             )
             components.append(deposited.density)
             successful = successful & deposited.successful
-        current = self.transfer.bridge.pack_edge_circulation(tuple(components))
+        # The plan admits only three-dimensional bridges, so there are three components.
+        current = self.transfer.bridge.pack_edge_circulation(
+            (components[0], components[1], components[2])
+        )
         finite = jnp.all(jnp.isfinite(current))
         return PICParticleResponseResult(
             current, finite, successful & finite, self.plan_id

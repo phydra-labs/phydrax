@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from ..._fingerprint import canonical_fingerprint
@@ -532,7 +533,7 @@ def pseudofermion_force(
     stopped = jax.tree.map(jax.lax.stop_gradient, shifted.value)
     active = jnp.abs(function.residues) > 0
 
-    def differentiated_action(candidate):
+    def differentiated_action(candidate: Array) -> Array:
         candidate_normal = _DiracNormalOperator(term.dirac.with_links(candidate))
         total = jnp.asarray(0.0, dtype=jnp.real(links_).dtype)
         for index in range(function.num_poles):
@@ -643,7 +644,7 @@ def _validate_dirac_interval(
             "The spectral interval does not certify this Dirac normal operator."
         )
     lower = jnp.asarray(interval.lower)
-    if not isinstance(lower, jax.core.Tracer) and float(lower) <= 0.0:
+    if not isinstance(lower, jax_core.Tracer) and float(lower) <= 0.0:
         raise ValueError(
             "Pseudofermions require a strictly positive spectral lower bound."
         )
@@ -663,7 +664,7 @@ def _validate_approximation(
         raise ValueError(f"{name} uses a different spectral interval.")
     if approximation.target.target_id != target.target_id:
         raise ValueError(f"{name} approximates the wrong scalar function.")
-    if not isinstance(approximation.successful, jax.core.Tracer) and not bool(
+    if not isinstance(approximation.successful, jax_core.Tracer) and not bool(
         approximation.successful
     ):
         raise ValueError(f"{name} did not satisfy its requested approximation contract.")

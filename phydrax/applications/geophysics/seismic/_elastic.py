@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -262,7 +260,9 @@ class PeriodicIsotropicElasticWavePlan(StrictModule, NonTrainableState):
         )
         initial = self.initial_state()
 
-        def body(state: ElasticWaveState, sources) -> tuple[ElasticWaveState, Any]:
+        def body(
+            state: ElasticWaveState, sources: tuple[Array, Array]
+        ) -> tuple[ElasticWaveState, tuple[Array, Array]]:
             force, moment = sources
             force_density = (
                 jnp.stack(

@@ -4,7 +4,7 @@
 
 from typing import Any, TypeAlias
 
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import (
     ComponentSum,
@@ -94,7 +94,14 @@ class _RiemannianNormalCallable(StrictModule):
     def __init__(self, boundary: RiemannianHypersurface, /) -> None:
         self.boundary = boundary
 
-    def __call__(self, coordinates, /, *, key=None, **kwargs: Any):
+    def __call__(
+        self,
+        coordinates: ArrayLike,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         del key, kwargs
         return self.boundary.unit_normal(coordinates)
 

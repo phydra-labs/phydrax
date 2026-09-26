@@ -248,7 +248,7 @@ class FiniteElementPatchPreconditioner(AbstractPreconditioner):
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> PyTree[Array]:
         coordinates = self.space.flatten(self.space.validate(residual))
         safe_routes = jnp.maximum(self.plan.gathers, 0)
         local = coordinates[safe_routes]

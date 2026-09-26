@@ -304,7 +304,7 @@ def _rk4ip_step(
 ) -> tuple[Array, Array]:
     generator = prepared.linear_generator.reshape((1, 1, -1))
 
-    def rhs(interaction_state, position):
+    def rhs(interaction_state: Array, position: float) -> tuple[Array, Array]:
         physical = jnp.exp(generator * position) * interaction_state
         source, finite = _nonlinear_source(prepared, physical, carrier)
         return jnp.exp(-generator * position) * source, finite

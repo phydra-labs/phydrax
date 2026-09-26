@@ -189,7 +189,7 @@ def spin_boson_dephasing_comparison(
     )
     heom = solve_heom(heom_problem, step_size=step_size, steps=steps)
 
-    def kernel(lag, density):
+    def kernel(lag: Array, density: Array) -> Array:
         correlation = expansion(lag)
         return -jnp.real(correlation) * (
             sigma_z @ (sigma_z @ density - density @ sigma_z)

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -20,6 +22,11 @@ from ._unbalanced_results import (
     UnbalancedSinkhornDiagnostics,
     UnbalancedSinkhornResult,
 )
+
+
+# (source_potential, target_potential, fixed_residual, first_converged,
+#  converged, failed)
+_UnbalancedCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class UnbalancedSinkhorn(StrictModule):
@@ -139,7 +146,9 @@ class UnbalancedSinkhorn(StrictModule):
             jnp.asarray(False),
         )
 
-        def fixed_point(source_potential, target_potential):
+        def fixed_point(
+            source_potential: Array, target_potential: Array
+        ) -> tuple[Array, Array]:
             next_source = (
                 -source_exponent
                 * epsilon
@@ -174,7 +183,7 @@ class UnbalancedSinkhorn(StrictModule):
             )
             return next_source + shift, next_target - shift
 
-        def step(carry, index):
+        def step(carry: _UnbalancedCarry, index: Array) -> tuple[_UnbalancedCarry, Array]:
             (
                 source_potential,
                 target_potential,
@@ -185,7 +194,7 @@ class UnbalancedSinkhorn(StrictModule):
             ) = carry
             frozen = failed | (converged if self.early_stop else False)
 
-            def update(_):
+            def update(_: None) -> tuple[Array, Array, Array, Array]:
                 next_source, next_target = fixed_point(
                     source_potential,
                     target_potential,
@@ -204,7 +213,7 @@ class UnbalancedSinkhorn(StrictModule):
                 )
                 return next_source, next_target, residual, ~finite
 
-            def keep(_):
+            def keep(_: None) -> tuple[Array, Array, Array, Array]:
                 return source_potential, target_potential, fixed_residual, failed
 
             next_source, next_target, next_residual, next_failed = jax.lax.cond(

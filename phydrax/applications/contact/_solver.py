@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntFlag
 from math import isfinite
-from typing import Any
+from typing import Any, cast, Protocol
 
 import equinox as eqx
 import jax
@@ -478,11 +479,18 @@ def _array_norm(space: ArraySpace, value: Array, /) -> Array:
     return jnp.sqrt(jnp.maximum(jnp.real(space.inner(value, value)), 0.0))
 
 
+class _CoordinateRuntime(Protocol):
+    @property
+    def coordinates(self) -> Array: ...
+
+
 def _full_positions(
     problem: CompiledFiniteElementProblem, state: Array, args: Any, /
 ) -> Array:
     full = problem.expand(state, args)
-    coordinates = problem._execution_context(args).runtime.coordinates
+    # The prepared nodal discretization validated this coordinate-bearing runtime.
+    runtime = cast(_CoordinateRuntime, problem._execution_context(args).runtime)
+    coordinates = runtime.coordinates
     if full.shape != coordinates.shape:
         raise ValueError(
             "Certified inversion stepping requires nodal displacement matching FE coordinates."
@@ -502,8 +510,8 @@ def _solve_contact_minimization(
     subproblem: SteihaugToint,
     initial: Array,
     args: Any,
-    inertial_energy,
-    extra_energy,
+    inertial_energy: Callable[[Array], Array],
+    extra_energy: Callable[[Array, ContactCandidateEpoch], Array],
 ) -> tuple[
     Array,
     ContactCandidateEpoch,
@@ -530,7 +538,9 @@ def _solve_contact_minimization(
     last_inversion: InversionStepEvidence | None = None
     rejection = int(ContactRejectionReason.NONE)
 
-    def build_epoch(value, end_value=None):
+    def build_epoch(
+        value: Array, end_value: Array | None = None
+    ) -> ContactCandidateEpoch:
         positions = scene.positions(value)
         end_positions = None if end_value is None else scene.positions(end_value)
         return search.build(
@@ -543,7 +553,7 @@ def _solve_contact_minimization(
     if not bool(epoch.successful):
         rejection |= int(ContactRejectionReason.SEARCH)
 
-    def total_energy(value, current_epoch):
+    def total_energy(value: Array, current_epoch: ContactCandidateEpoch) -> Array:
         return (
             inertial_energy(value)
             + problem.potential(value, args)
@@ -778,7 +788,7 @@ def solve_finite_element_contact_step(
         prepared.step_size, mechanics.displacement.dtype
     )
 
-    def inertial_energy(displacement):
+    def inertial_energy(displacement: Array) -> Array:
         delta = displacement - predictor
         mass_delta = plan.problem.state_space.inverse_riesz(reduced_mass.mv(delta))
         return (
@@ -799,41 +809,43 @@ def solve_finite_element_contact_step(
     result = None
     for lag_iteration in range(maximum_lag_iterations):
         lag_iterations = lag_iteration + 1
-        if plan.friction is not None and friction_state is None:
-            initial_positions = plan.scene.positions(displacement)
-            initial_epoch = plan.search.build(plan.scene, np.asarray(initial_positions))
-            if not bool(initial_epoch.successful):
-                raise ValueError(
-                    "Initial friction lag state requires a complete contact epoch."
-                )
-            friction_state = plan.friction.build_state(
-                initial_positions,
-                initial_epoch,
-                state_version=previous.state_version,
-            )
-
         if plan.friction is None:
             extra_energy = lambda value, current_epoch: jnp.asarray(
                 0.0, dtype=value.dtype
             )
         else:
+            friction = plan.friction
+            if friction_state is None:
+                initial_positions = plan.scene.positions(displacement)
+                initial_epoch = plan.search.build(
+                    plan.scene, np.asarray(initial_positions)
+                )
+                if not bool(initial_epoch.successful):
+                    raise ValueError(
+                        "Initial friction lag state requires a complete contact epoch."
+                    )
+                friction_state = friction.build_state(
+                    initial_positions,
+                    initial_epoch,
+                    state_version=previous.state_version,
+                )
             velocity_scale = plan.method.position_to_velocity_scale(
                 prepared.step_size, displacement.dtype
             )
             active_friction_state = friction_state
 
             def extra_energy(
-                value,
-                current_epoch,
-                lag_state=active_friction_state,
-                scale=velocity_scale,
-            ):
+                value: Array,
+                current_epoch: ContactCandidateEpoch,
+                lag_state: ContactFrictionState = active_friction_state,
+                scale: Array = velocity_scale,
+            ) -> Array:
                 del current_epoch
                 velocity_value, _ = plan.method.rates(
                     value, mechanics, prepared.step_size
                 )
                 surface_velocity = plan.scene.map_values(velocity_value)
-                return plan.friction.energy(surface_velocity, lag_state) / scale
+                return friction.energy(surface_velocity, lag_state) / scale
 
         result = _solve_contact_minimization(
             problem=plan.problem,
@@ -870,10 +882,10 @@ def solve_finite_element_contact_step(
             state_version=previous.state_version + 1,
         )
         lag_residual = plan.friction.lag_residual(
-            friction_state, candidate_friction_state
+            active_friction_state, candidate_friction_state
         )
         friction_evaluation = plan.friction.evaluate(
-            plan.scene.map_values(velocity_value), friction_state
+            plan.scene.map_values(velocity_value), active_friction_state
         )
         if bool(lag_residual <= plan.friction.plan.lag_tolerance):
             friction_state = candidate_friction_state

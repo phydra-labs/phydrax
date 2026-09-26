@@ -41,7 +41,7 @@ class NollZernikeOPD(StrictModule):
         pupil_radius: ArrayLike,
         /,
         *,
-        pupil_center: ArrayLike = (0.0, 0.0),
+        pupil_center: ArrayLike | tuple[float, float] = (0.0, 0.0),
     ) -> None:
         indices = tuple(noll_indices)
         if not indices or any(index <= 0 for index in indices):
@@ -150,7 +150,7 @@ def noll_zernike(
     /,
     *,
     pupil_radius: ArrayLike = 1.0,
-    pupil_center: ArrayLike = (0.0, 0.0),
+    pupil_center: ArrayLike | tuple[float, float] = (0.0, 0.0),
 ) -> Array:
     """Evaluate one continuous unit-RMS Noll mode, zero outside the pupil."""
     coordinates = jnp.asarray(transverse_coordinates)

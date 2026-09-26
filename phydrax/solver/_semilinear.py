@@ -46,6 +46,8 @@ _ResolvedSemilinearSPDEScheme: TypeAlias = Literal[
     "exponential_euler",
     "exponential_milstein",
 ]
+_SemilinearScanCarry: TypeAlias = tuple[Array, Array, Array]
+_SemilinearScanItem: TypeAlias = tuple[Array, Array, Array]
 
 
 def _semilinear_solution_bundle(
@@ -350,7 +352,7 @@ def _milstein_increment(
     """Compute the commutative Milstein correction with factor JVPs."""
     directions = jnp.moveaxis(diffusion, -1, 0)
 
-    def differentiate(direction):
+    def differentiate(direction: Array) -> Array:
         return jax.jvp(
             lambda value: _diffusion_columns(problem, time, value),
             (state,),
@@ -527,8 +529,12 @@ def solve_semilinear_spde(
     ):
         matrix_operator = drift.spectral_representation.operator
 
-    def one_path(path_key, path_sign, wiener_increments):
-        def advance(carry, item):
+    def one_path(
+        path_key: Array, path_sign: Array, wiener_increments: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        def advance(
+            carry: _SemilinearScanCarry, item: _SemilinearScanItem
+        ) -> tuple[_SemilinearScanCarry, tuple[Array, Array]]:
             time, state, path_valid = carry
             step_value, step_index, wiener_increment = item
             nonlinear = drift.nonlinear(time, state, spde.problem.args)

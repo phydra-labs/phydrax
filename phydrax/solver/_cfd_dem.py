@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -23,6 +23,9 @@ from ..equations._cfd_dem import (
     evaluate_unresolved_cfd_dem,
     UnresolvedCFDEMCouplingPlan,
 )
+
+
+_SubstepCarry: TypeAlias = tuple[DEMRuntimeState, Array, Array, Array, Array]
 
 
 class CFDEMCouplingSchedulePlan(StrictModule, NonTrainableState):
@@ -108,12 +111,15 @@ def advance_cfd_dem_window(
     macro_dt = jnp.asarray(
         fluid_step_size, dtype=state.dem_state.kinematics.position.dtype
     )
-    if not np.isfinite(float(fluid_step_size)) or float(fluid_step_size) <= 0.0:
+    step_value = float(np.asarray(fluid_step_size))
+    if not np.isfinite(step_value) or step_value <= 0.0:
         raise ValueError("fluid_step_size must be finite and positive.")
     dem_dt = macro_dt / schedule.dem_substeps
     indices = jnp.arange(schedule.dem_substeps, dtype=jnp.int32)
 
-    def substep(carry, index):
+    def substep(
+        carry: _SubstepCarry, index: Array
+    ) -> tuple[_SubstepCarry, CFDEMCouplingEvaluation]:
         dem_state, particle_impulse, fluid_impulse, work, prior_success = carry
         subtime = jnp.asarray(time, dtype=macro_dt.dtype) + index * dem_dt
         first = evaluate_unresolved_cfd_dem(

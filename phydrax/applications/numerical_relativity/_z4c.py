@@ -587,7 +587,7 @@ def evaluate_z4c_rhs(
         "ij...,ij...->...", physical_inverse, lapse_hessian, backend="jax"
     )
     shift_gradient = derivatives.gradient(state.shift)
-    shift_divergence = sum(shift_gradient[index, index] for index in range(3))
+    shift_divergence = shift_gradient[0, 0] + shift_gradient[1, 1] + shift_gradient[2, 2]
     shift_hessian = derivatives.hessian(state.shift)
     stress_trace = ein.contract(
         "ij...,ij...->...", physical_inverse, stress_covariant, backend="jax"

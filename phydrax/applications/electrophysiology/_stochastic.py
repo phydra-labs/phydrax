@@ -191,7 +191,9 @@ def _multinomial_exact(key: Array, count: Array, probabilities: Array, /) -> Arr
     state_count = probabilities.shape[0]
     draws = jnp.zeros((state_count,), dtype=jnp.int32)
 
-    def sample(destination, carry):
+    def sample(
+        destination: Array, carry: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         output, remaining_count, remaining_probability = carry
         probability = jnp.where(
             remaining_probability > 0.0,

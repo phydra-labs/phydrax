@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from itertools import pairwise
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,6 +18,11 @@ from ..._trainable import NonTrainableState
 from ._context import AstrodynamicsContext, FrameDefinition
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
+
+
+_KinematicEvaluator: TypeAlias = Callable[
+    [Array, Any], tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
+]
 
 
 class KinematicTransformEvaluation(StrictModule):
@@ -33,16 +38,14 @@ class KinematicTransformEvaluation(StrictModule):
 class KinematicFrameTransform(StrictModule, NonTrainableState):
     """Pure source-to-target rotation and moving-origin transform."""
 
-    evaluator: Callable
+    evaluator: _KinematicEvaluator
     source_frame: FrameDefinition
     target_frame: FrameDefinition
     transform_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        evaluator: Callable[
-            [Array, Any], tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
-        ],
+        evaluator: _KinematicEvaluator,
         source_frame: FrameDefinition,
         target_frame: FrameDefinition,
         /,
@@ -193,7 +196,7 @@ class ConstantKinematicEvaluator(StrictModule):
             translation_velocity, dtype=rotation_.dtype
         )
 
-    def __call__(self, time: Array, args: Any, /):
+    def __call__(self, time: Array, args: Any, /) -> tuple[Array, Array, Array, Array]:
         del time, args
         return (
             self.rotation,

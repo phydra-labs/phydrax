@@ -214,7 +214,7 @@ def save_lattice_boltzmann_iree(
     )
     lattice_boltzmann_iree_availability().require("compiled-inference")
 
-    def forward(*inputs, key=None):
+    def forward(*inputs: Array, key: Array | None = None) -> Array:
         if key is not None:
             raise ValueError("IREE LBM export requires key=None.")
         populations, *runtime_values = inputs
@@ -256,7 +256,7 @@ def save_lattice_boltzmann_iree(
         name_to_index[name] for name in contract.differentiable_input_names
     )
 
-    def transpose(*inputs, key=None):
+    def transpose(*inputs: Array, key: Array | None = None) -> tuple[Array, ...]:
         if key is not None:
             raise ValueError("IREE LBM VJP export requires key=None.")
         *primals, cotangent = inputs

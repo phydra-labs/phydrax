@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -27,6 +27,9 @@ from ._schema import DesignState, ParameterId, ParameterSchema
 if TYPE_CHECKING:
     from ...optim import DifferentialEvolutionSearch
     from ._search import DesignSearchResult
+
+
+_SolveState: TypeAlias = tuple[Array, Array, Array]
 
 
 class AbstractDesignConstraint(StrictModule):
@@ -75,7 +78,13 @@ class ParameterTarget(AbstractDesignConstraint):
         self.target = jnp.asarray(target, dtype=jnp.float64)
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
-    def residual(self, kernel, schema, state, /):
+    def residual(
+        self,
+        kernel: GeometryKernel,
+        schema: ParameterSchema,
+        state: DesignState,
+        /,
+    ) -> Array:
         del kernel
         value = state.values[schema.index(self.parameter_id)]
         return self._weighted((value - self.target) / self.scale).reshape((-1,))
@@ -103,7 +112,13 @@ class ParameterEquality(AbstractDesignConstraint):
         self.second = second
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
-    def residual(self, kernel, schema, state, /):
+    def residual(
+        self,
+        kernel: GeometryKernel,
+        schema: ParameterSchema,
+        state: DesignState,
+        /,
+    ) -> Array:
         del kernel
         first = state.values[schema.index(self.first)]
         second = state.values[schema.index(self.second)]
@@ -129,7 +144,13 @@ class MeasureTarget(AbstractDesignConstraint):
         self.target = jnp.asarray(target, dtype=jnp.float64).reshape(())
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
-    def residual(self, kernel, schema, state, /):
+    def residual(
+        self,
+        kernel: GeometryKernel,
+        schema: ParameterSchema,
+        state: DesignState,
+        /,
+    ) -> Array:
         del schema
         mass = require_exact_mass(
             kernel.interior_mass(state),
@@ -157,7 +178,13 @@ class BoundaryMeasureTarget(AbstractDesignConstraint):
         self.target = jnp.asarray(target, dtype=jnp.float64).reshape(())
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
-    def residual(self, kernel, schema, state, /):
+    def residual(
+        self,
+        kernel: GeometryKernel,
+        schema: ParameterSchema,
+        state: DesignState,
+        /,
+    ) -> Array:
         del schema
         mass = require_exact_mass(
             kernel.boundary_mass(state),
@@ -186,7 +213,13 @@ class BoundaryPoints(AbstractDesignConstraint):
         self.points = points_
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
-    def residual(self, kernel, schema, state, /):
+    def residual(
+        self,
+        kernel: GeometryKernel,
+        schema: ParameterSchema,
+        state: DesignState,
+        /,
+    ) -> Array:
         del schema
         return self._weighted(kernel.boundary_field(state, self.points) / self.scale)
 
@@ -216,7 +249,13 @@ class InteriorClearance(AbstractDesignConstraint):
         self.clearance = jnp.asarray(clearance, dtype=jnp.float64).reshape(())
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
-    def residual(self, kernel, schema, state, /):
+    def residual(
+        self,
+        kernel: GeometryKernel,
+        schema: ParameterSchema,
+        state: DesignState,
+        /,
+    ) -> Array:
         del schema
         field = kernel.boundary_field(state, self.points)
         return self._weighted(jax.nn.relu(field + self.clearance) / self.scale)
@@ -247,7 +286,13 @@ class ExteriorClearance(AbstractDesignConstraint):
         self.clearance = jnp.asarray(clearance, dtype=jnp.float64).reshape(())
         self.scale = jnp.asarray(scale, dtype=jnp.float64).reshape(())
 
-    def residual(self, kernel, schema, state, /):
+    def residual(
+        self,
+        kernel: GeometryKernel,
+        schema: ParameterSchema,
+        state: DesignState,
+        /,
+    ) -> Array:
         del schema
         field = kernel.boundary_field(state, self.points)
         return self._weighted(jax.nn.relu(self.clearance - field) / self.scale)
@@ -262,7 +307,13 @@ class BRepSeamCompatibility(AbstractDesignConstraint):
             raise ValueError("tolerance must be finite and positive.")
         self.tolerance = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
 
-    def residual(self, kernel, schema, state, /):
+    def residual(
+        self,
+        kernel: GeometryKernel,
+        schema: ParameterSchema,
+        state: DesignState,
+        /,
+    ) -> Array:
         del schema
         if not isinstance(kernel, SeamDiagnosticsProvider):
             raise TypeError(
@@ -281,11 +332,11 @@ class ConstraintSolveResult(StrictModule):
     def __init__(
         self,
         *,
-        state,
-        residual,
-        residual_norm,
-        converged,
-        iterations,
+        state: DesignState,
+        residual: ArrayLike,
+        residual_norm: ArrayLike,
+        converged: ArrayLike,
+        iterations: ArrayLike,
     ) -> None:
         self.state = state
         self.residual = jnp.asarray(residual, dtype=jnp.float64)
@@ -343,7 +394,10 @@ class DesignConstraintSystem(StrictModule):
         self.upper_bounds = jnp.asarray(np.concatenate(upper), dtype=jnp.float64)
 
     @staticmethod
-    def _validate_constraints(geometry, constraints) -> None:
+    def _validate_constraints(
+        geometry: CompiledGeometry,
+        constraints: tuple[AbstractDesignConstraint, ...],
+    ) -> None:
         schema = geometry.schema
         for constraint in constraints:
             if isinstance(constraint, ParameterTarget):
@@ -465,20 +519,20 @@ class DesignConstraintSystem(StrictModule):
             raise TypeError("initial_state must be a DesignState or None.")
         initial = self.pack(state)
 
-        def residual_vector(vector):
+        def residual_vector(vector: Array) -> Array:
             return self.residual(self.unpack(vector, base_state=state))
 
         initial_norm = jnp.linalg.norm(residual_vector(initial))
-        loop_state = (
+        loop_state: _SolveState = (
             initial,
             initial_norm <= tolerance,
             jnp.asarray(0, dtype=jnp.int32),
         )
 
-        def iteration(_, state):
+        def iteration(_: int | Array, state: _SolveState) -> _SolveState:
             vector, converged, count = state
 
-            def update(current):
+            def update(current: Array) -> Array:
                 values = residual_vector(current)
                 jacobian = jax.jacfwd(residual_vector)(current)
                 normal = jacobian.T @ jacobian + damping * jnp.eye(
@@ -486,13 +540,13 @@ class DesignConstraintSystem(StrictModule):
                 )
                 step = jnp.linalg.solve(normal, -(jacobian.T @ values))
                 current_loss = jnp.sum(values * values)
-                search_state = (
+                search_state: _SolveState = (
                     jnp.asarray(1.0, dtype=current.dtype),
                     current,
                     current_loss,
                 )
 
-                def search(_, trial_state):
+                def search(_: int | Array, trial_state: _SolveState) -> _SolveState:
                     alpha, best, best_loss = trial_state
                     candidate = jnp.clip(
                         current + alpha * step,

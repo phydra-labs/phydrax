@@ -107,7 +107,7 @@ class AlgebraAnalyticLayer(StrictModule, ParameterOwner):
         if value.shape != (self.weights.shape[1], self.weights.shape[2]):
             raise ValueError("Algebra analytic layer input has the wrong shape.")
 
-        def neuron(weights, bias):
+        def neuron(weights: Array, bias: Array) -> Array:
             terms = jax.vmap(
                 lambda weight, entry: (
                     self.product(weight, entry)

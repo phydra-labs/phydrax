@@ -126,10 +126,19 @@ def heston_log_price_characteristic_function(
     )
 
 
-def _market_inputs(spot, strike, maturity, rate, dividend_yield):
-    spot_, strike_, maturity_, rate_, dividend = tuple(
-        jnp.asarray(value, dtype=jnp.float64)
-        for value in (spot, strike, maturity, rate, dividend_yield)
+def _market_inputs(
+    spot: ArrayLike,
+    strike: ArrayLike,
+    maturity: ArrayLike,
+    rate: ArrayLike,
+    dividend_yield: ArrayLike,
+) -> tuple[Array, Array, Array, Array, Array]:
+    spot_, strike_, maturity_, rate_, dividend = (
+        jnp.asarray(spot, dtype=jnp.float64),
+        jnp.asarray(strike, dtype=jnp.float64),
+        jnp.asarray(maturity, dtype=jnp.float64),
+        jnp.asarray(rate, dtype=jnp.float64),
+        jnp.asarray(dividend_yield, dtype=jnp.float64),
     )
     if any(value.shape != () for value in (spot_, strike_, maturity_, rate_, dividend)):
         raise ValueError("transform valuation currently requires scalar market inputs.")
@@ -148,7 +157,14 @@ def _market_inputs(spot, strike, maturity, rate, dividend_yield):
     return spot_, strike_, maturity_, rate_, dividend
 
 
-def _bounds(spot, strike, maturity, rate, dividend, kind):
+def _bounds(
+    spot: Array,
+    strike: Array,
+    maturity: Array,
+    rate: Array,
+    dividend: Array,
+    kind: OptionType,
+) -> tuple[Array, Array]:
     discount = jnp.exp(-rate * maturity)
     carry = jnp.exp(-dividend * maturity)
     if kind is OptionType.CALL:
@@ -233,7 +249,9 @@ def evaluate_heston_fourier(
     )
 
 
-def _cos_payoff_coefficients(frequencies, lower, upper, log_strike):
+def _cos_payoff_coefficients(
+    frequencies: Array, lower: Array, upper: Array, log_strike: Array
+) -> Array:
     omega = frequencies
     c = log_strike
     d = upper

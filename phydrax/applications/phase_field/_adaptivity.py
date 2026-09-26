@@ -20,7 +20,12 @@ from ...discretization import (
     lagrange_element,
     refine_triangles_local,
 )
-from ...discretization.fem import FiniteElementHPTransaction
+from ...discretization.fem import (
+    FiniteElementDiscretization,
+    FiniteElementHPEpoch,
+    FiniteElementHPTransaction,
+)
+from ...equations import MaterialTransaction
 from ...linalg import ArraySpace
 from ...solver import (
     FiniteElementAcceptedState,
@@ -81,7 +86,9 @@ class PhaseFieldAdaptiveEpoch(StrictModule, NonTrainableState):
         )
 
 
-def _integration_weights(discretization, field_index: int, /) -> Array:
+def _integration_weights(
+    discretization: FiniteElementDiscretization, field_index: int, /
+) -> Array:
     space = discretization.field_spaces[field_index].vector_space
     if not isinstance(space, ArraySpace):
         raise TypeError("Adaptive phase-field integration weights require ArraySpace.")
@@ -304,7 +311,13 @@ class PhaseFieldHPTransactionPlan(StrictModule, NonTrainableState):
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("hp phase-field mass tolerance must be nonnegative.")
 
-        def certify(epoch, fields, materials, transaction, args):
+        def certify(
+            epoch: FiniteElementHPEpoch,
+            fields: tuple[Array, ...],
+            materials: MaterialTransaction | None,
+            transaction: FiniteElementHPTransaction,
+            args: object,
+        ) -> Array:
             del epoch, materials, args
             finite = jnp.all(
                 jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in fields))

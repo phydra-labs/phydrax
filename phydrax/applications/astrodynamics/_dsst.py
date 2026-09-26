@@ -91,7 +91,7 @@ class DsstPlan(StrictModule, NonTrainableState):
         if not isinstance(initial, ModifiedEquinoctialElements):
             raise TypeError("initial must be ModifiedEquinoctialElements.")
 
-        def step(elements, interval):
+        def step(elements: Array, interval: Array) -> tuple[Array, tuple[Array, Array]]:
             start, end = interval
             dt = end - start
             k1 = self._rate(start, elements, args)

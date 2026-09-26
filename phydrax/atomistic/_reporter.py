@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import equinox as eqx
 import jax.numpy as jnp
 
@@ -28,7 +30,7 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        sink,
+        sink: AbstractAtomisticTrajectorySinkPlan,
         /,
         *,
         stride: int = 1,
@@ -134,7 +136,12 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
         )
 
     def write_states(
-        self, dynamics: PreparedAtomisticDynamics, states, /, *, append: bool = False
+        self,
+        dynamics: PreparedAtomisticDynamics,
+        states: Iterable[AtomisticDynamicsState],
+        /,
+        *,
+        append: bool = False,
     ) -> int:
         count = 0
         with self.sink.open(append=append) as writer:

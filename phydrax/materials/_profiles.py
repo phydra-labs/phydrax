@@ -4,7 +4,7 @@
 from ..qualification import CapabilityProfile, SupportTuple
 
 
-def materials_candidate_profiles():
+def materials_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     specs = (
         ("materials.identity-history", {"state": "temperature-pressure-phase-history"}),
         ("materials.homogenization", {"methods": "voigt-reuss-hill"}),

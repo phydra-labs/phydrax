@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import cast, Literal
 
 import equinox as eqx
 
@@ -168,7 +168,8 @@ class CampaignRole:
         if not isinstance(case_ids, Sequence) or isinstance(case_ids, str):
             raise TypeError("Serialized campaign role case_ids must be a sequence.")
         return cls(
-            str(record["name"]),
+            # __post_init__ rejects names outside CampaignRoleName.
+            cast(CampaignRoleName, str(record["name"])),
             tuple(str(value) for value in case_ids),
         )
 
@@ -344,7 +345,7 @@ class ScientificCampaign(StrictModule, NonTrainableState):
         return {**self._content_record(), "campaign_id": self.campaign_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ScientificCampaign:
+    def from_record(cls, record: object, /) -> ScientificCampaign:
         """Reconstruct and content-verify a serialized scientific campaign."""
         if not isinstance(record, Mapping):
             raise TypeError("Scientific-campaign record must be a mapping.")

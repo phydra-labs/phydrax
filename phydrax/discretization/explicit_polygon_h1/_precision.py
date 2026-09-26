@@ -9,6 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import (
@@ -93,25 +94,25 @@ class ExplicitPolygonH1PrecisionPolicy(StrictModule, NonTrainableState):
             },
         )
 
-    def geometry(self, value: Any, /):
+    def geometry(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.geometry_dtype)
 
-    def basis(self, value: Any, /):
+    def basis(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.basis_dtype)
 
-    def factorization(self, value: Any, /):
+    def factorization(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.factorization_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
         return array.astype(self.accumulation_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.output_dtype)
 
-    def certification(self, value: Any, /):
+    def certification(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.certification_dtype)
 
     def evidence(self) -> PrecisionEvidenceEnvelope:
@@ -124,18 +125,14 @@ class ExplicitPolygonH1PrecisionPolicy(StrictModule, NonTrainableState):
         return PrecisionEvidenceEnvelope(resolution, dict(resolution.effective))
 
     def validate_backend(self) -> None:
-        if (
-            "float64"
-            in (
-                self.geometry_dtype,
-                self.basis_dtype,
-                self.factorization_dtype,
-                self.accumulation_dtype,
-                self.output_dtype,
-                self.certification_dtype,
-            )
-            and not jax.config.x64_enabled
-        ):
+        if "float64" in (
+            self.geometry_dtype,
+            self.basis_dtype,
+            self.factorization_dtype,
+            self.accumulation_dtype,
+            self.output_dtype,
+            self.certification_dtype,
+        ) and not bool(jax.config.read("jax_enable_x64")):
             raise ValueError("Requested explicit polygon float64 precision is disabled.")
 
 

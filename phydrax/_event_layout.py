@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Iterable
 from math import prod
 from typing import Any
 
@@ -18,7 +19,7 @@ from ._strict import StrictModule
 from .domain._measure import MeasureKind
 
 
-def _shape(value, /, *, owner: str) -> tuple[int, ...]:
+def _shape(value: Iterable[int], /, *, owner: str) -> tuple[int, ...]:
     shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} must contain positive dimensions.")
@@ -58,7 +59,9 @@ class ArrayEventLayout(AbstractEventLayout):
     measure_kind: MeasureKind = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, event_shape, /, *, layout_id: str | None = None) -> None:
+    def __init__(
+        self, event_shape: Iterable[int], /, *, layout_id: str | None = None
+    ) -> None:
         shape = _shape(event_shape, owner="event_shape")
         size = prod(shape)
         resolved = layout_id or canonical_fingerprint(
@@ -98,7 +101,9 @@ class ComplexEventLayout(AbstractEventLayout):
     measure_kind: MeasureKind = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, event_shape, /, *, layout_id: str | None = None) -> None:
+    def __init__(
+        self, event_shape: Iterable[int], /, *, layout_id: str | None = None
+    ) -> None:
         shape = _shape(event_shape, owner="event_shape")
         size = prod(shape)
         resolved = layout_id or canonical_fingerprint(

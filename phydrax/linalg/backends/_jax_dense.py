@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,12 +21,21 @@ from .._operators import DenseLinearOperator
 from .._pairings import DiagonalPairing, EuclideanPairing
 from .._plans import LinearSolvePlan
 from .._policies import DenseCholesky, DenseLU, DenseQR, DenseSVD
-from .._problems import LeastSquaresProblem, MinimumNormProblem
+from .._problems import AbstractLinearProblem, LeastSquaresProblem, MinimumNormProblem
 from .._properties import LinearCapabilityError
 from .._rank import numerical_rank_data
 from .._results import LinearSolveStatus
 from .._space_extensions import AxisArraySpace, TensorProductSpace
-from .._spaces import ArraySpace, BlockSpace, DualSpace, PyTreeSpace
+from .._spaces import (
+    AbstractVectorSpace,
+    ArraySpace,
+    BlockSpace,
+    DualSpace,
+    PyTreeSpace,
+)
+
+
+_RefinementCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class DenseBackendOutput(StrictModule):
@@ -99,7 +108,7 @@ class DenseSVDState(StrictModule):
     target_size: int = eqx.field(static=True)
 
 
-def prepare_dense(problem, plan: LinearSolvePlan, /) -> Any:
+def prepare_dense(problem: AbstractLinearProblem, plan: LinearSolvePlan, /) -> Any:
     """Materialize and factor one dense execution plan."""
     matrix = (
         problem.operator.matrix
@@ -257,7 +266,7 @@ def solve_dense_transformed(
         transformed_rhs = state.inverse_square_root_metric[..., :, None] * rhs
         rhs_flat = _flat_batch(transformed_rhs, state.batch_shape)
 
-        def solve_one(cholesky, b):
+        def solve_one(cholesky: Array, b: Array) -> Array:
             intermediate = jsp.linalg.solve_triangular(jnp.conj(cholesky), b, lower=True)
             return jsp.linalg.solve_triangular(cholesky.T, intermediate, lower=False)
 
@@ -357,7 +366,7 @@ def _prepare_mixed_precision_lu(
 
 def _prepare_cholesky(
     matrix: Array,
-    space,
+    space: AbstractVectorSpace,
     batch_shape: tuple[int, ...],
     /,
 ) -> DenseCholeskyState:
@@ -384,7 +393,7 @@ def _prepare_cholesky(
     )
 
 
-def _metric_diagonal(space, /) -> Array:
+def _metric_diagonal(space: AbstractVectorSpace, /) -> Array:
     if isinstance(space, (AxisArraySpace, TensorProductSpace)):
         return _metric_diagonal(space.delegate)
     if isinstance(space, (ArraySpace, PyTreeSpace)):
@@ -407,7 +416,7 @@ def _metric_diagonal(space, /) -> Array:
 
 
 def _least_squares_design(
-    problem,
+    problem: AbstractLinearProblem,
     matrix: Array,
     plan: LinearSolvePlan,
     /,
@@ -628,7 +637,7 @@ def _solve_mixed_precision_lu(
     factor = _flat_batch(state.factor, state.batch_shape)
     pivots = _flat_batch(state.pivots, state.batch_shape)
 
-    def solve_low(value):
+    def solve_low(value: Array) -> Array:
         flattened = _flat_batch(value.astype(state.factor.dtype), state.batch_shape)
         solved = jax.vmap(
             lambda lu, pivot, b: jsp.linalg.lu_solve(
@@ -662,7 +671,7 @@ def _solve_mixed_precision_lu(
     )
     refinement_steps = jnp.zeros_like(residual_norm, dtype=jnp.int32)
 
-    def refine(_, carry):
+    def refine(_: Array, carry: _RefinementCarry) -> _RefinementCarry:
         current, current_residual, current_norm, refining, counts = carry
         correction_rhs = jnp.where(
             refining[..., None, :],
@@ -720,7 +729,7 @@ def _solve_cholesky(state: DenseCholeskyState, rhs: Array, /) -> DenseBackendOut
     transformed_rhs = state.square_root_metric[..., :, None] * rhs
     rhs_flat = _flat_batch(transformed_rhs, state.batch_shape)
 
-    def solve_one(cholesky, b):
+    def solve_one(cholesky: Array, b: Array) -> Array:
         intermediate = jsp.linalg.solve_triangular(cholesky, b, lower=True)
         return jsp.linalg.solve_triangular(
             jnp.conj(cholesky.T), intermediate, lower=False

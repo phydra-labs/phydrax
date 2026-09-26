@@ -311,7 +311,9 @@ def _svi_transformed(raw: Array) -> tuple[Array, Array, Array, Array, Array]:
     )
 
 
-def _essvi_transformed(plan: CalibrationPlan, raw: Array):
+def _essvi_transformed(
+    plan: CalibrationPlan, raw: Array
+) -> tuple[Array, Array, Array, Array]:
     count = plan.slice_expiries.size
     theta = jnp.cumsum(jax.nn.softplus(raw[:count]) + 1.0e-10)
     rho = 0.999 * jnp.tanh(raw[count : 2 * count])

@@ -142,7 +142,7 @@ def form_reliability(
     """Hasofer--Lind--Rackwitz--Fiessler iteration in standard-normal space."""
     factor = jnp.linalg.cholesky(model.covariance)
 
-    def margin_standard(value):
+    def margin_standard(value: Array) -> Array:
         return limit_state.margin(model.mean + factor @ value)
 
     point = jnp.zeros((model.dimension,), dtype=model.mean.dtype)

@@ -8,18 +8,19 @@ import functools
 import hashlib
 import json
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from math import ceil, inf, isfinite, isnan, log, nan
 from pathlib import Path
-from typing import Any, ClassVar, final, Literal, NamedTuple
+from typing import Any, ClassVar, final, Literal, NamedTuple, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+from jaxtyping import Key, PyTree
 
 from ...._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ...._execution_runtime import ExecutionGroup
@@ -60,8 +61,10 @@ from ...._training_kernel import (
     KernelUpdateContext,
     OptaxUpdateRule,
     prepare_training_kernel,
+    PreparedTrainingKernel,
     SubspaceTrainingTree,
     training_accepted_site_key,
+    TrainingAttemptEvidence,
     TrainingAttemptOutcome,
     TrainingKernelSpec,
     TrainingKernelState,
@@ -101,7 +104,12 @@ from ...parameters._low_rank import (
     validate_low_rank_subspace,
 )
 from ..capabilities import OperatorTrainingEvidence
-from ..data import OperatorBatch, OperatorTargetBatch, slice_operator_batch
+from ..data import (
+    OperatorBatch,
+    OperatorPrediction,
+    OperatorTargetBatch,
+    slice_operator_batch,
+)
 from ..engine import AbstractOperatorModel
 from ..metrics import operator_l2_loss
 from ..sampling import InMemoryOperatorCaseSource, OperatorCaseSource
@@ -685,12 +693,16 @@ def _loss_scaled(
     return numerator
 
 
-def _loss_scaled_forward(policy, numerator, scale):
+def _loss_scaled_forward(
+    policy: OperatorLossScalePolicy, numerator: jax.Array, scale: jax.Array
+) -> tuple[jax.Array, jax.Array]:
     del policy
     return numerator, scale
 
 
-def _loss_scaled_backward(policy, scale, cotangent):
+def _loss_scaled_backward(
+    policy: OperatorLossScalePolicy, scale: jax.Array, cotangent: jax.Array
+) -> tuple[jax.Array, jax.Array]:
     return (
         policy.scale_loss(cotangent, OperatorLossScaleState(scale)),
         jnp.zeros_like(scale),
@@ -709,12 +721,16 @@ def _loss_unscaled(
     return parameters
 
 
-def _loss_unscaled_forward(policy, parameters, scale):
+def _loss_unscaled_forward(
+    policy: OperatorLossScalePolicy, parameters: PyTree, scale: jax.Array
+) -> tuple[PyTree, jax.Array]:
     del policy
     return parameters, scale
 
 
-def _loss_unscaled_backward(policy, scale, cotangents):
+def _loss_unscaled_backward(
+    policy: OperatorLossScalePolicy, scale: jax.Array, cotangents: PyTree
+) -> tuple[PyTree, jax.Array]:
     return (
         policy.unscale_gradients(cotangents, OperatorLossScaleState(scale)),
         jnp.zeros_like(scale),
@@ -736,12 +752,16 @@ def _prescribed_gradient(value: jax.Array, parameters: Any, gradient: Any) -> ja
     return value
 
 
-def _prescribed_gradient_forward(value, parameters, gradient):
+def _prescribed_gradient_forward(
+    value: jax.Array, parameters: PyTree, gradient: PyTree[jax.Array]
+) -> tuple[jax.Array, PyTree[jax.Array]]:
     del parameters
     return value, gradient
 
 
-def _prescribed_gradient_backward(gradient, cotangent):
+def _prescribed_gradient_backward(
+    gradient: PyTree[jax.Array], cotangent: jax.Array
+) -> tuple[jax.Array, PyTree[jax.Array], PyTree[jax.Array]]:
     return (
         jnp.zeros_like(cotangent),
         jax.tree.map(lambda leaf: cotangent.astype(leaf.dtype) * leaf, gradient),
@@ -750,6 +770,21 @@ def _prescribed_gradient_backward(gradient, cotangent):
 
 
 _prescribed_gradient.defvjp(_prescribed_gradient_forward, _prescribed_gradient_backward)
+
+
+class _ContributionDiagnostics(TypedDict):
+    """(numerator, support, log_scale) of the total and of every component."""
+
+    total: tuple[jax.Array, jax.Array, jax.Array]
+    components: tuple[tuple[jax.Array, jax.Array, jax.Array], ...]
+
+
+_ObjectiveEvaluation: TypeAlias = tuple[
+    _ObjectiveContribution, PyTree, Mapping[str, object]
+]
+_LossComponents: TypeAlias = tuple[
+    _ObjectiveContribution, tuple[_ObjectiveContribution, ...]
+]
 
 
 class _OperatorFitPayload(NamedTuple):
@@ -1169,7 +1204,7 @@ def _resolve_operator_fit_optimizer(
     learning_rate: float,
     optimizer_id: str | None,
     /,
-):
+) -> tuple[dict[str, str], optax.GradientTransformation, str]:
     target_aliases = _rollout_target_aliases(
         model,
         specified_terms,
@@ -1312,7 +1347,9 @@ def fit_operator(
     )
     output_binding = _resolve_output_binding(model, task, output_ports, port_mapping)
     output_routes = (
-        None if output_binding is None else _operator_output_routes(task, *output_binding)
+        None
+        if task is None or output_binding is None
+        else _operator_output_routes(task, *output_binding)
     )
     target_aliases, optimizer, resolved_optimizer_id = _resolve_operator_fit_optimizer(
         model,
@@ -1459,7 +1496,9 @@ def fit_operator(
         else SubspaceTrainingTree.from_subspace(effective_subspace)
     )
 
-    def fit_model(tree):
+    def fit_model(
+        tree: AbstractOperatorModel | SubspaceTrainingTree,
+    ) -> AbstractOperatorModel:
         return tree.model() if isinstance(tree, SubspaceTrainingTree) else tree
 
     if normalization == "fit":
@@ -1613,11 +1652,11 @@ def fit_operator(
         raise ValueError("Gradient composition requires at least one operator objective.")
 
     def predict_for_loss(
-        evaluated_model,
-        batch,
-        physical_batch,
-        key,
-    ):
+        evaluated_model: AbstractOperatorModel,
+        batch: OperatorBatch,
+        physical_batch: OperatorBatch,
+        key: Key[jax.Array, ""],
+    ) -> tuple[OperatorPrediction, OperatorPrediction]:
         if task is None:
             raw_prediction = _operator_prediction(
                 evaluated_model,
@@ -1683,7 +1722,8 @@ def fit_operator(
             if isinstance(optimizer, optax.GradientTransformationExtraArgs)
             else optax.GradientTransformation
         )
-        optimizer = transformation_type(compressed.init, compressed.update)
+        # optax types optimizer states as ArrayTree; this state is an Equinox PyTree.
+        optimizer = transformation_type(compressed.init, compressed.update)  # ty: ignore[invalid-argument-type]
         compression_record = {
             "format": repr(optimizer_state_compression.format),
             "block_axes": optimizer_state_compression.block_axes,
@@ -1698,21 +1738,21 @@ def fit_operator(
     )
 
     def loss_components(
-        current_model,
-        target_model,
-        batch,
-        targets,
-        physical_batch,
-        physical_targets,
-        case_log_weights,
-        case_mask,
-        sampling_probabilities,
-        key,
-        step,
-        active_rollout_horizon,
+        current_model: AbstractOperatorModel,
+        target_model: AbstractOperatorModel | None,
+        batch: OperatorBatch,
+        targets: OperatorTargetBatch,
+        physical_batch: OperatorBatch,
+        physical_targets: OperatorTargetBatch,
+        case_log_weights: jax.Array,
+        case_mask: jax.Array,
+        sampling_probabilities: jax.Array,
+        key: Key[jax.Array, ""],
+        step: jax.Array,
+        active_rollout_horizon: int | None,
         *,
         training: bool,
-    ):
+    ) -> _LossComponents:
         storage_model = current_model if training else inference_mode(current_model)
         evaluated_model = resolved_dtype.compute_model(storage_model)
         scanned = None
@@ -1721,6 +1761,7 @@ def fit_operator(
             assert task is not None
             assert rollout_route is not None
             assert rollout_policy is not None
+            assert output_routes is not None
             _, scanned = _operator_rollout_scan(
                 _operator_prediction,
                 evaluated_model,
@@ -1781,7 +1822,9 @@ def fit_operator(
             target_physical_prediction=target_physical_prediction,
         )
 
-        def recurrent_contribution(term):
+        def recurrent_contribution(
+            term: SupervisedOperatorRolloutLoss | ResidualOperatorRolloutLoss,
+        ) -> _ObjectiveContribution:
             assert scanned is not None
             assert rollout_policy is not None
             assert rollout_route is not None
@@ -1946,7 +1989,12 @@ def fit_operator(
     private_physical_schema = operator_fit_schema(physical_first, target=physical_targets)
     has_targets = target_policy is not None
 
-    def payload_models(parameters_, model_state, fixed, payload):
+    def payload_models(
+        parameters_: PyTree,
+        model_state: PyTree,
+        fixed: PyTree,
+        payload: _OperatorFitPayload,
+    ) -> tuple[AbstractOperatorModel, AbstractOperatorModel | None]:
         current_model = fit_model(combine_parameters(parameters_, model_state, fixed))
         target_model = (
             None
@@ -1957,7 +2005,13 @@ def fit_operator(
         )
         return current_model, target_model
 
-    def payload_components(parameters_, model_state, fixed, payload, key):
+    def payload_components(
+        parameters_: PyTree,
+        model_state: PyTree,
+        fixed: PyTree,
+        payload: _OperatorFitPayload,
+        key: Key[jax.Array, ""],
+    ) -> _LossComponents:
         current_model, target_model = payload_models(
             parameters_, model_state, fixed, payload
         )
@@ -1977,7 +2031,10 @@ def fit_operator(
             training=True,
         )
 
-    def contribution_diagnostics(total, components):
+    def contribution_diagnostics(
+        total: _ObjectiveContribution,
+        components: tuple[_ObjectiveContribution, ...],
+    ) -> _ContributionDiagnostics:
         return {
             "total": (total.numerator, total.support, total.log_scale),
             "components": tuple(
@@ -1986,7 +2043,13 @@ def fit_operator(
             ),
         }
 
-    def direct_contribution(parameters_, model_state, fixed, payload, keys):
+    def direct_contribution(
+        parameters_: PyTree,
+        model_state: PyTree,
+        fixed: PyTree,
+        payload: _OperatorFitPayload,
+        keys: TrainingKeys,
+    ) -> _ObjectiveEvaluation:
         candidate = (
             parameters_
             if loss_scale_policy is None
@@ -2006,10 +2069,20 @@ def fit_operator(
             contribution_diagnostics(total, components),
         )
 
-    def component_contribution(parameters_, model_state, fixed, payload, keys):
+    def component_contribution(
+        parameters_: PyTree,
+        model_state: PyTree,
+        fixed: PyTree,
+        payload: _OperatorFitPayload,
+        keys: TrainingKeys,
+    ) -> _ObjectiveEvaluation:
         key = keys.attempt_key(_LOSS_KEY_SITE)
 
-        def component_objective(candidate):
+        def component_objective(
+            candidate: PyTree,
+        ) -> tuple[
+            tuple[jax.Array, jax.Array], tuple[_ContributionDiagnostics, jax.Array]
+        ]:
             total, components = payload_components(
                 candidate, model_state, fixed, payload, key
             )
@@ -2073,24 +2146,30 @@ def fit_operator(
             },
         )
 
-    def private_contribution(parameters_, model_state, fixed, payload, keys):
+    def private_contribution(
+        parameters_: PyTree,
+        model_state: PyTree,
+        fixed: PyTree,
+        payload: _OperatorFitPayload,
+        keys: TrainingKeys,
+    ) -> _ObjectiveEvaluation:
         assert private_prepared is not None
 
         def private_objective(
-            current_parameters,
-            target_parameters,
-            case_indices,
-            batch_arrays,
-            target_arrays,
-            physical_batch_arrays,
-            physical_target_arrays,
-            case_log_weights,
-            case_mask,
-            sampling_probabilities,
-            key,
-            step,
-            active_rollout_horizon,
-        ):
+            current_parameters: PyTree,
+            target_parameters: PyTree,
+            case_indices: jax.Array,
+            batch_arrays: OperatorBatch,
+            target_arrays: OperatorTargetBatch,
+            physical_batch_arrays: OperatorBatch,
+            physical_target_arrays: OperatorTargetBatch,
+            case_log_weights: jax.Array,
+            case_mask: jax.Array,
+            sampling_probabilities: jax.Array,
+            key: Key[jax.Array, ""],
+            step: jax.Array,
+            active_rollout_horizon: int | None,
+        ) -> jax.Array:
             batch = eqx.combine(batch_arrays, private_batch_static)
             targets = eqx.combine(target_arrays, private_targets_static)
             physical_batch = eqx.combine(
@@ -2193,7 +2272,13 @@ def fit_operator(
             },
         )
 
-    def operator_objective(parameters_, model_state, fixed, payload, keys):
+    def operator_objective(
+        parameters_: PyTree,
+        model_state: PyTree,
+        fixed: PyTree,
+        payload: _OperatorFitPayload,
+        keys: TrainingKeys,
+    ) -> _ObjectiveEvaluation:
         if private_prepared is not None:
             return private_contribution(parameters_, model_state, fixed, payload, keys)
         if gradient_composition is not None or update_alignment is not None:
@@ -2255,28 +2340,49 @@ def fit_operator(
     elif checkpoint is not None:
         raise ValueError("Checkpointed operator fits require trainable parameters.")
 
-    def evaluation_model_of(state):
+    def evaluation_model_of(
+        state: TrainingKernelState | None,
+    ) -> AbstractOperatorModel:
         if kernel is None:
             return model
+        # A prepared kernel always has an initialized kernel state.
+        assert state is not None
         evaluated = kernel.rule.evaluation_parameters(state.rule_state, state.parameters)
         return fit_model(combine_parameters(evaluated, state.model_state, kernel.fixed))
 
-    def target_model_of(state):
+    def target_model_of(
+        state: TrainingKernelState | None,
+    ) -> AbstractOperatorModel | None:
         if not has_targets:
             return None
-        return model if kernel is None else fit_model(kernel.target_tree(state))
+        if kernel is None:
+            return model
+        # A prepared kernel always has an initialized kernel state.
+        assert state is not None
+        return fit_model(kernel.target_tree(state))
 
-    def attempt(kernel_, state, payload):
+    def attempt(
+        kernel_: PreparedTrainingKernel,
+        state: TrainingKernelState,
+        payload: _OperatorFitPayload,
+    ) -> tuple[TrainingKernelState, TrainingAttemptEvidence]:
         return kernel_.attempt(state, payload)
 
-    def accumulate(kernel_, state, payload):
+    def accumulate(
+        kernel_: PreparedTrainingKernel,
+        state: TrainingKernelState,
+        payload: _OperatorFitPayload,
+    ) -> tuple[TrainingKernelState, tuple[Any, ...]]:
         return kernel_.accumulate_with_diagnostics(state, payload)
 
     run_attempt = eqx.filter_jit(attempt) if jit else attempt
     run_accumulation = eqx.filter_jit(accumulate) if jit else accumulate
     evaluation_model = evaluation_model_of(kernel_state)
 
-    def add_window_metrics(accumulators, diagnostics):
+    def add_window_metrics(
+        accumulators: list[_ObjectiveAccumulator],
+        diagnostics: _ContributionDiagnostics,
+    ) -> list[_ObjectiveAccumulator]:
         if private_prepared is not None:
             return accumulators
         contributions = (_ObjectiveContribution(*diagnostics["total"]),) + tuple(
@@ -2293,7 +2399,7 @@ def fit_operator(
         *,
         start_batch: int = 0,
         retained_first: OperatorTrainingBatch | None = None,
-    ):
+    ) -> Iterator[OperatorTrainingBatch]:
         if private_prepared is not None:
             if int(epoch) != 0 or retained_first is not None:
                 raise ValueError(
@@ -2390,7 +2496,12 @@ def fit_operator(
             )
         )
 
-    def evaluate(current_model, target_model, loader: OperatorBatchLoader, step: int):
+    def evaluate(
+        current_model: AbstractOperatorModel,
+        target_model: AbstractOperatorModel | None,
+        loader: OperatorBatchLoader,
+        step: int,
+    ) -> dict[str, float]:
         metric_accumulators = [_ObjectiveAccumulator() for _ in metric_names]
         batch_count = 0
         active_rollout_horizon = resolved_active_horizon(step)

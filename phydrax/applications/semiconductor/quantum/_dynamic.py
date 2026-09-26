@@ -16,18 +16,28 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from .... import linalg as la
 from ...._strict import StrictModule
-from ....dynamics import DiscreteEvolution, DiscreteSystem, evolve, StateLayout, TimeGrid
+from ....dynamics import (
+    DiscreteEvolution,
+    DiscreteStepContext,
+    DiscreteSystem,
+    evolve,
+    StateLayout,
+    TimeGrid,
+)
 from ....ein import contract
 from ....linalg import eigen
-from ._basis import _array, HBAR, KB, Q
+from ._basis import _array, HBAR, KB, Q, QuantumResources
 from ._coherent import CoherentDevice
+from ._leads import SemiInfiniteLead
 
 
-def _hermitian_spectrum(matrix, resources):
+def _hermitian_spectrum(
+    matrix: Array, resources: QuantumResources
+) -> tuple[Array, Array, Array]:
     """Explicit bounded dense *Hamiltonian*, never a dense Green inverse."""
     n = matrix.shape[0]
     op = la.DenseLinearOperator(matrix / Q)
@@ -60,7 +70,12 @@ def _hermitian_spectrum(matrix, resources):
     return result.eigenvalues * Q, result.eigenvectors, result.successful
 
 
-def _finite_hamiltonian(device, sites, device_shift=None, lead_shift=None):
+def _finite_hamiltonian(
+    device: CoherentDevice,
+    sites: int,
+    device_shift: Array | None = None,
+    lead_shift: Array | None = None,
+) -> Array:
     h = device.hamiltonian
     ds = jnp.zeros(h.size) if device_shift is None else device_shift
     ls = jnp.zeros(2) if lead_shift is None else lead_shift
@@ -83,7 +98,7 @@ def _finite_hamiltonian(device, sites, device_shift=None, lead_shift=None):
     return jnp.diag(diagonal) + jnp.diag(off, 1) + jnp.diag(off, -1)
 
 
-def _lead_modes(lead, sites):
+def _lead_modes(lead: SemiInfiniteLead, sites: int) -> tuple[Array, Array]:
     k = jnp.pi * jnp.arange(1, sites + 1) / (sites + 1)
     vectors = jnp.sqrt(2 / (sites + 1)) * jnp.sin(
         jnp.arange(1, sites + 1)[:, None] * k[None, :]
@@ -91,7 +106,7 @@ def _lead_modes(lead, sites):
     return lead.onsite + 2 * lead.hopping * jnp.cos(k), vectors
 
 
-def lead_memory_kernel(lead, times, *, sites):
+def lead_memory_kernel(lead: SemiInfiniteLead, times: ArrayLike, *, sites: int) -> Array:
     """Retarded elimination kernel K(t)=V exp(-i Hlead t/hbar) V†/hbar².
 
     Units s^-2; the amplitude equation contains -integral K(t-s) a(s) ds.
@@ -124,7 +139,9 @@ class QuantumInitialState(StrictModule):
     device_correlation: Array | None
     preparation: str = eqx.field(static=True)
 
-    def __init__(self, *, preparation, device_correlation=None) -> None:
+    def __init__(
+        self, *, preparation: str, device_correlation: ArrayLike | None = None
+    ) -> None:
         if preparation not in ("partitioned", "equilibrium"):
             raise ValueError("Preparation must be partitioned or equilibrium.")
         if (preparation == "partitioned") != (device_correlation is not None):
@@ -161,7 +178,12 @@ class QuantumPulse(StrictModule):
     device_energy_shifts: Array
     lead_energy_shifts: Array
 
-    def __init__(self, times, device_energy_shifts, lead_energy_shifts) -> None:
+    def __init__(
+        self,
+        times: ArrayLike,
+        device_energy_shifts: ArrayLike,
+        lead_energy_shifts: ArrayLike,
+    ) -> None:
         t = _array(times, "pulse times")
         d = _array(device_energy_shifts, "device energy shifts")
         l = _array(lead_energy_shifts, "lead energy shifts")
@@ -211,7 +233,9 @@ class QuantumTransientResult(StrictModule):
     successful: Array
 
 
-def _initial_correlation(device, initial, sites):
+def _initial_correlation(
+    device: CoherentDevice, initial: QuantumInitialState, sites: int
+) -> tuple[Array, Array]:
     n, nm = device.hamiltonian.size, device.transverse.offsets.size
     dim = n + 2 * sites
     r = device.hamiltonian.resources
@@ -233,6 +257,8 @@ def _initial_correlation(device, initial, sites):
         )
         return contract("ik,mk,jk->mij", vectors, f, vectors.conj(), backend="jax"), ok
     rho = initial.device_correlation
+    # QuantumInitialState requires a correlation exactly for partitioned preparation.
+    assert rho is not None
     if rho.shape != (nm, n, n):
         raise ValueError(
             "Initial device correlation does not match the admitted mode/cell populations."
@@ -267,7 +293,9 @@ def _initial_correlation(device, initial, sites):
     return result, valid
 
 
-def _transient_once(device, initial, pulse, sites):
+def _transient_once(
+    device: CoherentDevice, initial: QuantumInitialState, pulse: QuantumPulse, sites: int
+) -> QuantumTransientResult:
     n, nm = device.hamiltonian.size, device.transverse.offsets.size
     dim, steps = n + 2 * sites, pulse.times.size - 1
     resources = device.hamiltonian.resources
@@ -296,7 +324,7 @@ def _transient_once(device, initial, pulse, sites):
         eigen_valid.append(ok)
     hs, us = jnp.stack(hamiltonians), jnp.stack(unitaries)
 
-    def transition(context, state, args):
+    def transition(context: DiscreteStepContext, state: Array, args: Array) -> Array:
         rho = state[0] + 1j * state[1]
         u = args[context.step_index]
         advanced = u[None, :, :] @ rho @ u.conj().T[None, :, :]
@@ -450,7 +478,14 @@ def _transient_once(device, initial, pulse, sites):
     )
 
 
-def solve_quantum_transient(device, initial, pulse, *, lead_sites=32, tolerance=1e-4):
+def solve_quantum_transient(
+    device: CoherentDevice,
+    initial: QuantumInitialState,
+    pulse: QuantumPulse,
+    *,
+    lead_sites: int = 32,
+    tolerance: float = 1e-4,
+) -> QuantumTransientResult:
     """Execute two lead dilations and compare physical observables and memory.
 
     Currents are charge/energy fluxes *into* the device; they are conduction

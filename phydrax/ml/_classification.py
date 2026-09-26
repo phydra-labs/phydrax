@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from itertools import pairwise
 from typing import Literal
 
@@ -42,7 +42,7 @@ class ClassificationObjective(StrictModule, NonTrainableState):
             raise ValueError("gamma must be finite and nonnegative.")
         if alpha is None:
             alpha_value: float | tuple[float, ...] | None = None
-        elif np.isscalar(alpha):
+        elif isinstance(alpha, (str, bytes)) or not isinstance(alpha, Iterable):
             alpha_value = float(alpha)
             if not np.isfinite(alpha_value):
                 raise ValueError("alpha must be finite.")

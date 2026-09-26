@@ -2,6 +2,8 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 from ._clifford import clifford_dirac
 from ._dimension_estimators import (
     coordinate_divergence_samples,
@@ -176,7 +178,7 @@ _STOCHASTIC_OPERATOR_EXPORTS = frozenset(
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in _STOCHASTIC_OPERATOR_EXPORTS:
         from . import _stochastic_ops as module
 

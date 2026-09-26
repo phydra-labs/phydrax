@@ -294,7 +294,7 @@ def estimate_spectral_regularity(
     y = jnp.log(jnp.where(usable, sums / jnp.maximum(count, 1), 1.0))
     weights = usable.astype("float64")
 
-    def slope(x):
+    def slope(x: Array) -> tuple[Array, Array, Array]:
         mean_x = jnp.sum(weights * x) / jnp.maximum(jnp.sum(weights), 1.0)
         mean_y = jnp.sum(weights * y) / jnp.maximum(jnp.sum(weights), 1.0)
         centered_x = x - mean_x
@@ -394,7 +394,7 @@ def recover_missing_modes(
         dtype=jnp.result_type(matrix.dtype, target.dtype),
     )
 
-    def step(_, coefficients):
+    def step(_: int, coefficients: Array) -> Array:
         residual = contract("mn,...n->...m", matrix, coefficients) - target
         gradient = (
             contract("mn,...m->...n", jnp.conj(matrix), residual)

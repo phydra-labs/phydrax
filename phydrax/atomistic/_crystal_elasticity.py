@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import isfinite
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -76,19 +78,19 @@ class CrystalElasticityResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        energy,
-        stress,
-        elastic_tensor,
-        voigt_stiffness,
-        stability_eigenvalues,
-        stress_residual,
-        elastic_residual,
-        stability_tolerance,
-        successful,
-        energy_unit,
-        stress_unit,
-        potential_kind_ids,
-        system_id,
+        energy: ArrayLike,
+        stress: ArrayLike,
+        elastic_tensor: ArrayLike,
+        voigt_stiffness: ArrayLike,
+        stability_eigenvalues: ArrayLike,
+        stress_residual: ArrayLike,
+        elastic_residual: ArrayLike,
+        stability_tolerance: float,
+        successful: ArrayLike,
+        energy_unit: UnitDefinition,
+        stress_unit: UnitDefinition,
+        potential_kind_ids: Iterable[str],
+        system_id: str,
         /,
     ) -> None:
         self.energy = jnp.asarray(energy).reshape(())
@@ -360,7 +362,9 @@ class CrystalElasticityPlan(StrictModule, NonTrainableState):
             and float(elastic_residual) <= self.elastic_symmetry_tolerance
         )
         units = self.potential.system.plan.units
-        kinds = tuple(term.kind.value for term in self.potential.plan.terms)
+        # The constructor admits only ManyBodyPotential terms.
+        terms = cast(tuple[ManyBodyPotential, ...], self.potential.plan.terms)
+        kinds = tuple(term.kind.value for term in terms)
         return CrystalElasticityResult(
             energy,
             stress,

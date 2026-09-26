@@ -11,7 +11,7 @@ from typing import Any, cast, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jaxtyping import Array, ArrayLike, Key, PyTree
 
 import phydrax.axes as cx
 
@@ -73,12 +73,12 @@ class SobolResult(StrictModule):
 
 
 def sobol_indices(
-    function,
+    function: Callable[..., object],
     distributions: Mapping[str, AbstractDistribution],
     /,
     *,
     num_samples: int,
-    key,
+    key: Key[Array, ""] | None,
     sampler: str = "sobol_scrambled",
     batch_size: int | None = None,
     parameter_dim: str = "__phydra_uq_parameter",
@@ -204,21 +204,21 @@ def sobol_indices(
 
 
 def _evaluate_design(
-    function,
+    function: Callable[..., object],
     names: tuple[str, ...],
-    design,
+    design: Array,
     /,
     *,
     batch_size: int | None,
     call_style: Literal["keywords", "mapping"],
     **kwargs: Any,
-):
+) -> tuple[Array, tuple[str | None, ...]]:
     count = design.shape[0]
     chunk = count if batch_size is None else int(batch_size)
     if chunk <= 0:
         raise ValueError("batch_size must be positive.")
 
-    def evaluate(row):
+    def evaluate(row: Array) -> object:
         arguments = {name: row[index] for index, name in enumerate(names)}
         if call_style == "keywords":
             return function(**arguments, **kwargs)
@@ -239,7 +239,7 @@ def _evaluate_design(
         output_dims = (None,) * template_data.ndim
         returns_field = False
 
-    def evaluate_data(row):
+    def evaluate_data(row: Array) -> Array:
         value = evaluate(row)
         if returns_field:
             if not isinstance(value, cx.AxisArray):
@@ -262,13 +262,13 @@ def _evaluate_design(
 
 
 def _reduce_sample_outputs(
-    values,
+    values: Array,
     /,
     *,
     reduction: Literal["mean", "sum"],
     mask: ArrayLike | None,
     weights: ArrayLike | None,
-):
+) -> Array:
     output_shape = values.shape[1:]
     effective = jnp.ones(output_shape, dtype=values.dtype)
     if mask is not None:
@@ -611,7 +611,7 @@ def fixed_noise_pathwise_gradient(
     if not noise_id:
         raise ValueError("noise_id must be non-empty.")
 
-    def evaluate(value):
+    def evaluate(value: PyTree[Array]) -> tuple[ArrayLike, ArrayLike]:
         response = function(value, noise)
         return response, response
 
@@ -677,7 +677,7 @@ def resampling_score_gradient(
         raise ValueError("Every log-weight score must share the particle axis.")
     weights = jax.nn.softmax(logits)
 
-    def score_mean(score):
+    def score_mean(score: ArrayLike) -> Array:
         return jnp.tensordot(weights, jnp.asarray(score), axes=((0,), (0,)))
 
     centered_scores = jax.tree_util.tree_map(
@@ -867,7 +867,7 @@ def exponential_family_parameter_fisher_action(
         raise ValueError("method_id must be non-empty.")
     penalty = _validate_regularization(regularization)
 
-    def natural_values_fn(values):
+    def natural_values_fn(values: PyTree[Array]) -> Array:
         coordinates = natural_fn(values)
         if isinstance(coordinates, NaturalCoordinates):
             family.natural_domain(coordinates)
@@ -983,7 +983,7 @@ def empirical_observability_directions(
     )
     pullback = jax.linear_transpose(pushforward, center)
 
-    def action(flat_vector):
+    def action(flat_vector: Array) -> Array:
         vector = flat_vector.reshape(shape)
         value = pullback(pushforward(vector))[0]
         return value.reshape(-1) + penalty * flat_vector
@@ -1019,7 +1019,7 @@ def empirical_controllability_directions(
     penalty = _validate_regularization(regularization)
     pullback = jax.linear_transpose(pushforward, control)
 
-    def action(flat_vector):
+    def action(flat_vector: Array) -> Array:
         vector = flat_vector.reshape(response_shape)
         input_covector = pullback(vector)[0]
         value = pushforward(input_covector)

@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 import phydrax.linalg as la
@@ -25,13 +25,16 @@ from ...discretization._cell_complex import (
     PolyhedralConnectivity,
 )
 from ...discretization._conservation_boundary import (
+    AbstractConservationBoundary,
     evaluate_conservation_boundary,
     PrescribedNormalFluxBoundary,
+    SourceFunction,
 )
 from ...discretization._reference_cell import reference_cell_topology
 from ...discretization.fem._boundary import FiniteElementBoundarySet
 from ...discretization.fem._generic import (
     FiniteElementDiscretization,
+    FiniteElementRuntimeData,
     IntegrationDomain,
 )
 from ...discretization.fem._geometry_quality import (
@@ -41,6 +44,7 @@ from ...discretization.fem._geometry_quality import (
 from ...discretization.fem._mortar import (
     serial_finite_element_mortar_plan,
 )
+from ...discretization.fem._reference import FiniteElementSpec
 from ...discretization.fem._reference_operator import _map_edge_rule, _map_face_rule
 from ...discretization.finite_volume._riemann import (
     AbstractArbitraryNormalNumericalFluxPlan,
@@ -76,6 +80,23 @@ from ._trace_routes import (
 )
 from ._viscous_conservation import ViscousDGPlan
 from ._well_balanced import WellBalancedEquilibriumPlan
+
+
+if TYPE_CHECKING:
+    from ...integration._rules import ReferenceRule
+
+
+# (primal, pushforward, pullback) of a prepared nodal DG linearization.
+_NodalDGLinearization: TypeAlias = tuple[
+    PyTree[Array],
+    Callable[[PyTree[Any]], PyTree[Array]],
+    Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+]
+
+# Exterior-facet flux kernel `(plus_values, points, weights, normal, context) -> flux`.
+_ExteriorFluxKernel: TypeAlias = Callable[
+    [tuple[Array, ...], Array, Array, Array, FiniteElementExecutionContext], Array
+]
 
 
 class NodalDGConservationMethodPlan(StrictModule):
@@ -305,7 +326,9 @@ def _same_block_interior_domain(
     )
 
 
-def _trace_nodes(element, local_facet: int, /) -> tuple[np.ndarray, np.ndarray]:
+def _trace_nodes(
+    element: FiniteElementSpec, local_facet: int, /
+) -> tuple[np.ndarray, np.ndarray]:
     topology = reference_cell_topology(element.cell_kind)
     vertex_ids = topology.entities[1][int(local_facet)]
     start = np.asarray(topology.vertices[vertex_ids[0]], dtype=np.float64)
@@ -972,7 +995,16 @@ def _rule_count(degree: int, /) -> int:
     return max(1, (int(degree) + 2) // 2)
 
 
-def _rules(cell_kind: str, volume_degree: int, facet_degree: int, /):
+def _runtime_coordinates(context: FiniteElementExecutionContext, /) -> Array:
+    runtime = context.runtime
+    if not isinstance(runtime, FiniteElementRuntimeData):
+        raise TypeError("runtime must be FiniteElementRuntimeData.")
+    return runtime.coordinates
+
+
+def _rules(
+    cell_kind: str, volume_degree: int, facet_degree: int, /
+) -> tuple[ReferenceRule, ReferenceRule | None]:
     from ...integration._rules import (
         GaussLegendreRule,
         ReferenceHexahedronRule,
@@ -1011,7 +1043,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
     method: NodalDGConservationMethodPlan
     boundaries: FiniteElementBoundarySet
     entropy_pair: ConvexEntropyPair | None
-    source: Callable | None = eqx.field(static=True)
+    source: SourceFunction | None = eqx.field(static=True)
     compiled_finite_element_problem: CompiledFiniteElementProblem
     mass_inverse: PreparedDiscontinuousMassInverse = fixed_field()
     mortar_routes: tuple[PreparedDGTraceRoute, ...]
@@ -1033,7 +1065,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         boundaries: FiniteElementBoundarySet,
         /,
         *,
-        source: Callable | None = None,
+        source: SourceFunction | None = None,
         entropy_pair: ConvexEntropyPair | None = None,
     ) -> None:
         if not isinstance(discretization, FiniteElementDiscretization):
@@ -1217,14 +1249,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         )
 
         def volume_kernel(
-            values,
-            gradients,
-            points,
-            physical_weights,
-            test_basis,
-            test_gradients,
-            context,
-        ):
+            values: tuple[Array, ...],
+            gradients: tuple[Array, ...],
+            points: Array,
+            physical_weights: Array,
+            test_basis: Array,
+            test_gradients: Array,
+            context: FiniteElementExecutionContext,
+        ) -> Array:
             del gradients, points
             state = values[0]
             if method.entropy_stability is not None:
@@ -1248,7 +1280,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 backend="jax",
             )
 
-        def interface_kernel(plus_values, minus_values, points, weights, normal, context):
+        def interface_kernel(
+            plus_values: tuple[Array, ...],
+            minus_values: tuple[Array, ...],
+            points: Array,
+            weights: Array,
+            normal: Array,
+            context: FiniteElementExecutionContext,
+        ) -> tuple[Array, Array]:
             del points, weights
             plus = plus_values[0]
             minus = minus_values[0]
@@ -1291,8 +1330,16 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         custom_boundaries = bool(hybrid_boundary_routes)
         for patch in () if custom_boundaries else boundaries.patches:
 
-            def boundary_kernel(boundary):
-                def kernel(plus_values, points, weights, normal, context):
+            def boundary_kernel(
+                boundary: AbstractConservationBoundary,
+            ) -> _ExteriorFluxKernel:
+                def kernel(
+                    plus_values: tuple[Array, ...],
+                    points: Array,
+                    weights: Array,
+                    normal: Array,
+                    context: FiniteElementExecutionContext,
+                ) -> Array:
                     del weights
                     plus = plus_values[0]
                     trace = evaluate_conservation_boundary(
@@ -1342,14 +1389,14 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         if source is not None:
 
             def source_kernel(
-                values,
-                gradients,
-                points,
-                physical_weights,
-                test_basis,
-                test_gradients,
-                context,
-            ):
+                values: tuple[Array, ...],
+                gradients: tuple[Array, ...],
+                points: Array,
+                physical_weights: Array,
+                test_basis: Array,
+                test_gradients: Array,
+                context: FiniteElementExecutionContext,
+            ) -> Array:
                 del gradients, test_gradients
                 source_values = jnp.asarray(
                     source(context.time, values[0], points, context.user_args)
@@ -1462,8 +1509,11 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         )
 
     @property
-    def state_space(self):
-        return self.compiled_finite_element_problem.state_space
+    def state_space(self) -> la.ArraySpace:
+        space = self.compiled_finite_element_problem.state_space
+        # The single unconstrained nodal DG field keeps its FE ArraySpace.
+        assert isinstance(space, la.ArraySpace)
+        return space
 
     def _state(self, state: ArrayLike, /) -> Array:
         return self.state_space.validate(jnp.asarray(state))
@@ -1564,7 +1614,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             metric = FiniteElementMetricData(
                 coordinate_basis,
                 coordinate_gradients,
-                context.runtime.coordinates[coordinate_routes],
+                _runtime_coordinates(context)[coordinate_routes],
                 jnp.ones((element.local_dof_count,), dtype=state.real.dtype),
             )
             local_residual = operator.flux_differencing_dual(
@@ -1580,7 +1630,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
     def _viscous_weak_residual(
         self, state: Array, context: FiniteElementExecutionContext, /
     ) -> Array:
-        if self.method.viscous is None:
+        viscous = self.method.viscous
+        if viscous is None:
             return jnp.zeros_like(state)
         dimension = self.system.dimension
         gradient = jnp.zeros(state.shape + (dimension,), dtype=state.dtype)
@@ -1595,7 +1646,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             metric = FiniteElementMetricData(
                 coordinate_basis,
                 coordinate_gradients,
-                context.runtime.coordinates[coordinate_routes],
+                _runtime_coordinates(context)[coordinate_routes],
                 jnp.ones((element.local_dof_count,), dtype=state.dtype),
             )
             raw = ein.contract(
@@ -1606,10 +1657,13 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             )
             gradient = gradient.at[routes].set(raw)
 
-        beta = self.method.viscous.beta
+        beta = viscous.beta
         for route in self.mortar_routes:
-            plus = route.mortar.interpolate_left(state[route.owner_dofs])
-            minus = route.mortar.interpolate_right(state[route.neighbor_dofs])
+            mortar = route.mortar
+            # Mortar routes carry a mortar plan by construction.
+            assert mortar is not None
+            plus = mortar.interpolate_left(state[route.owner_dofs])
+            minus = mortar.interpolate_right(state[route.neighbor_dofs])
             common = 0.5 * (plus + minus) + beta * (plus - minus)
             owner_vector = (common - plus)[..., :, None] * route.normal[..., None, :]
             neighbor_vector = (common - minus)[..., :, None] * (
@@ -1617,15 +1671,15 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             )
             owner = ein.contract(
                 "iq,q,qvd->ivd",
-                route.mortar.left_raw_dual_pullback,
-                route.mortar.physical_weights,
+                mortar.left_raw_dual_pullback,
+                mortar.physical_weights,
                 owner_vector,
                 backend="jax",
             )
             neighbor = ein.contract(
                 "iq,q,qvd->ivd",
-                route.mortar.right_raw_dual_pullback,
-                route.mortar.physical_weights,
+                mortar.right_raw_dual_pullback,
+                mortar.physical_weights,
                 neighbor_vector,
                 backend="jax",
             )
@@ -1715,7 +1769,10 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             correction_dual = correction_dual.at[route.owner_dofs].add(owner)
             correction_dual = correction_dual.at[route.neighbor_dofs].add(neighbor)
         for route in self.hybrid_boundary_routes:
-            if isinstance(route.boundary, PrescribedNormalFluxBoundary):
+            boundary = route.boundary
+            # Boundary routes carry a conservation boundary by construction.
+            assert boundary is not None
+            if isinstance(boundary, PrescribedNormalFluxBoundary):
                 raise ValueError(
                     "Viscous DG requires boundary state and gradient traces."
                 )
@@ -1726,7 +1783,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 backend="jax",
             )
             trace = evaluate_conservation_boundary(
-                route.boundary,
+                boundary,
                 self.system,
                 context.time,
                 plus,
@@ -1771,7 +1828,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             geometry = self.discretization.evaluate_block_geometry(
                 self.discretization.field_spaces[0].name,
                 block_index,
-                context.runtime.coordinates,
+                _runtime_coordinates(context),
                 data.points,
                 data.weights,
             )
@@ -1815,12 +1872,12 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             residual = residual.at[routes].set(local)
 
         def viscous_common(
-            plus,
-            minus,
-            plus_gradient,
-            minus_gradient,
-            normal,
-        ):
+            plus: Array,
+            minus: Array,
+            plus_gradient: Array,
+            minus_gradient: Array,
+            normal: Array,
+        ) -> Array:
             plus_flux = self.system.viscous_normal_flux(
                 plus, plus_gradient, normal, context.user_args
             )
@@ -1830,28 +1887,31 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             return (
                 0.5 * (plus_flux + minus_flux)
                 + beta * (plus_flux - minus_flux)
-                + self.method.viscous.penalty * (minus - plus)
+                + viscous.penalty * (minus - plus)
             )
 
         for route in self.mortar_routes:
-            plus = route.mortar.interpolate_left(state[route.owner_dofs])
-            minus = route.mortar.interpolate_right(state[route.neighbor_dofs])
-            plus_gradient = route.mortar.interpolate_left(gradient[route.owner_dofs])
-            minus_gradient = route.mortar.interpolate_right(gradient[route.neighbor_dofs])
+            mortar = route.mortar
+            # Mortar routes carry a mortar plan by construction.
+            assert mortar is not None
+            plus = mortar.interpolate_left(state[route.owner_dofs])
+            minus = mortar.interpolate_right(state[route.neighbor_dofs])
+            plus_gradient = mortar.interpolate_left(gradient[route.owner_dofs])
+            minus_gradient = mortar.interpolate_right(gradient[route.neighbor_dofs])
             common = viscous_common(
                 plus, minus, plus_gradient, minus_gradient, route.normal
             )
             owner = ein.contract(
                 "iq,q,qv->iv",
-                route.mortar.left_raw_dual_pullback,
-                route.mortar.physical_weights,
+                mortar.left_raw_dual_pullback,
+                mortar.physical_weights,
                 -common,
                 backend="jax",
             )
             neighbor = ein.contract(
                 "iq,q,qv->iv",
-                route.mortar.right_raw_dual_pullback,
-                route.mortar.physical_weights,
+                mortar.right_raw_dual_pullback,
+                mortar.physical_weights,
                 common,
                 backend="jax",
             )
@@ -1902,6 +1962,9 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             residual = residual.at[route.owner_dofs].add(owner)
             residual = residual.at[route.neighbor_dofs].add(neighbor)
         for route in self.hybrid_boundary_routes:
+            boundary = route.boundary
+            # Boundary routes carry a conservation boundary by construction.
+            assert boundary is not None
             plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
@@ -1915,7 +1978,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 backend="jax",
             )
             trace = evaluate_conservation_boundary(
-                route.boundary,
+                boundary,
                 self.system,
                 context.time,
                 plus,
@@ -1926,7 +1989,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             )
             if trace.viscous_state_trace is None:
                 raise ValueError("Boundary supplied no viscous state trace.")
-            closure = self.method.viscous.boundary_closure(route.boundary.boundary_id)
+            closure = viscous.boundary_closure(boundary.boundary_id)
             minus_gradient = closure.gradient_trace(
                 context.time,
                 plus,
@@ -2196,7 +2259,9 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         kinds = []
         identifiers = []
 
-        def interface_entropy(left, right, normal_flux, normal):
+        def interface_entropy(
+            left: Array, right: Array, normal_flux: Array, normal: Array
+        ) -> Array:
             if self.entropy_pair is None:
                 return jnp.zeros(normal_flux.shape[:-1], dtype=normal_flux.dtype)
             return entropy_mortar_evidence(
@@ -2213,12 +2278,15 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             ).entropy_production
 
         for route in self.mortar_routes:
-            plus = route.mortar.interpolate_left(value[route.owner_dofs])
-            minus = route.mortar.interpolate_right(value[route.neighbor_dofs])
+            mortar = route.mortar
+            # Mortar routes carry a mortar plan by construction.
+            assert mortar is not None
+            plus = mortar.interpolate_left(value[route.owner_dofs])
+            minus = mortar.interpolate_right(value[route.neighbor_dofs])
             result = self.method.interface_flux.normal_face_flux(
                 self.system, plus, minus, route.normal, context.user_args
             )
-            physical_weights = route.mortar.physical_weights
+            physical_weights = mortar.physical_weights
             fluxes.append(result.normal_flux)
             speeds.append(result.max_speed)
             weights.append(physical_weights)
@@ -2306,6 +2374,9 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             kinds.append("conforming")
             identifiers.append(route.route_id)
         for route in self.hybrid_boundary_routes:
+            boundary = route.boundary
+            # Boundary routes carry a conservation boundary by construction.
+            assert boundary is not None
             plus = ein.contract(
                 "qi,iv->qv",
                 route.owner_basis,
@@ -2313,7 +2384,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 backend="jax",
             )
             trace = evaluate_conservation_boundary(
-                route.boundary,
+                boundary,
                 self.system,
                 context.time,
                 plus,
@@ -2368,7 +2439,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                     - potential
                 )
                 contract = self.method.entropy_stability.boundary_contract(
-                    route.boundary.boundary_id
+                    boundary.boundary_id
                 )
                 allowed = contract.allowed_supply(
                     context.time,
@@ -2563,13 +2634,15 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         )
         return rate, diagnostics
 
-    def viscous_linearize(self, time: Array, state: ArrayLike, args: Any = None, /):
+    def viscous_linearize(
+        self, time: Array, state: ArrayLike, args: Any = None, /
+    ) -> _NodalDGLinearization:
         if self.method.viscous is None:
             raise ValueError("Nodal DG has no viscous operator to linearize.")
         value = self._state(state)
         context = self._context(jnp.asarray(time), args)
 
-        def viscous_rate(candidate):
+        def viscous_rate(candidate: Array) -> Array:
             weak = self._viscous_weak_residual(candidate, context)
             return -self.mass_inverse.apply(weak)
 
@@ -2580,7 +2653,9 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             lambda cotangent: (linearization.pullback(cotangent),),
         )
 
-    def linearize(self, time: Array, state: ArrayLike, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: ArrayLike, args: Any = None, /
+    ) -> _NodalDGLinearization:
         value = self._state(state)
         linearization = la.prepare_linearization(
             lambda candidate: self(time, candidate, args), value

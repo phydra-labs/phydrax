@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Any, NoReturn
 
 import numpy as np
@@ -148,7 +148,7 @@ def _fail(
     raise AdapterError(status, message)
 
 
-def _require(module: str):
+def _require(module: str) -> ModuleType:
     if importlib.util.find_spec(module) is None:
         _fail(
             f"Geophysical interchange requires optional dependency '{module}'.",
@@ -630,7 +630,7 @@ def _decode_cf_variables(
     bindings: Mapping[str, Any],
     selected: set[str],
     /,
-):
+) -> tuple[dict[str, dict[str, Any]], dict[str, np.ndarray], list[AdapterLoss]]:
     variables, arrays, losses = {}, {}, []
     for name in sorted(selected):
         var = dataset[name]

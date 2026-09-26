@@ -13,7 +13,10 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PreparedTensorGrid
-from ..discretization.finite_volume import ConservativeDiffusionPlan
+from ..discretization.finite_volume import (
+    ConservativeDiffusionPlan,
+    PreparedConservativeDiffusion,
+)
 
 
 class RadiationMatterState(StrictModule):
@@ -34,7 +37,7 @@ class GrayLinearRadiationDiffusionPlan(StrictModule, NonTrainableState):
     """Gray linear diffusion with frozen-equilibrium local matter exchange."""
 
     grid: PreparedTensorGrid
-    diffusion: object
+    diffusion: PreparedConservativeDiffusion
     transport_extinction: float = eqx.field(static=True)
     absorption_coefficient: float = eqx.field(static=True)
     reduced_light_speed: float = eqx.field(static=True)

@@ -13,7 +13,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...backends.clarabel import ClarabelPlan
-from ...backends.mpax import MPAXPlan
+from ...backends.mpax import MPAXPlan, MPAXRepresentation
 from ...linalg import (
     FailurePolicy,
     MaterializationPolicy,
@@ -207,7 +207,7 @@ class MPAXraPDHG(AbstractConvexProgramMethod):
     def __init__(
         self,
         *,
-        representation: str = "dense",
+        representation: MPAXRepresentation = "dense",
         warm_start: bool = False,
         feasibility_polishing: bool = False,
         unroll: bool = False,
@@ -259,7 +259,7 @@ class MPAXr2HPDHG(AbstractConvexProgramMethod):
     def __init__(
         self,
         *,
-        representation: str = "dense",
+        representation: MPAXRepresentation = "dense",
         warm_start: bool = False,
         feasibility_polishing: bool = False,
         unroll: bool = False,

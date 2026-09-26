@@ -425,9 +425,7 @@ def test_functional_checkpoint_binding_tracks_parameters_and_fails_closed(tmp_pa
             keep_best=False,
             log_every=0,
             training=phx.solver.FunctionalTrainingPlan(
-                checkpoint=phx.solver.FunctionalCheckpointPolicy(
-                    tmp_path / name, every=1
-                )
+                checkpoint=phx.solver.FunctionalCheckpointPolicy(tmp_path / name, every=1)
             ),
             resume=resume,
         )
@@ -470,7 +468,6 @@ def test_functional_checkpoint_binding_tracks_parameters_and_fails_closed(tmp_pa
     first_path.write_text(json.dumps(first), encoding="utf-8")
     with pytest.raises(ValueError, match="metadata fields are not canonical"):
         solve("first", 1, resume=True)
-
 
 
 def test_functional_session_cursor_resumes_in_memory(tmp_path):

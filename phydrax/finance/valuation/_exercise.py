@@ -128,7 +128,9 @@ def _polynomial_basis(spots: Array, strike: Array, degree: int) -> Array:
     return scaled[:, None] ** powers[None, :]
 
 
-def _masked_regression(features: Array, targets: Array, mask: Array, ridge: float):
+def _masked_regression(
+    features: Array, targets: Array, mask: Array, ridge: float
+) -> tuple[Array, Array]:
     weights = mask.astype(features.dtype)
     gram = features.T @ (weights[:, None] * features) + ridge * jnp.eye(
         features.shape[1], dtype=features.dtype
@@ -308,7 +310,9 @@ def prepare_reflected_bsde(
     )
 
 
-def _feature_regression(features: Array, targets: Array, valid: Array, ridge: float):
+def _feature_regression(
+    features: Array, targets: Array, valid: Array, ridge: float
+) -> tuple[Array, Array]:
     design = jnp.concatenate(
         (jnp.ones((features.shape[0], 1), dtype=features.dtype), features), axis=1
     )
@@ -340,6 +344,7 @@ def evaluate_reflected_bsde(prepared: PreparedReflectedBSDE, /) -> ValuationResu
     upper_history = jnp.zeros_like(value_history)
     maximum_residual = jnp.asarray(0.0, dtype=y.dtype)
     regression_successful = jnp.asarray(True)
+    lower_obstacle, upper_obstacle = problem.lower_obstacle, problem.upper_obstacle
     for time_index in range(paths.num_steps - 1, -1, -1):
         time = times[time_index]
         dt = times[time_index + 1] - time
@@ -366,19 +371,19 @@ def evaluate_reflected_bsde(prepared: PreparedReflectedBSDE, /) -> ValuationResu
         unreflected = conditional_y + dt * generators
         lower = (
             jnp.full_like(unreflected, -jnp.inf)
-            if problem.lower_obstacle is None
+            if lower_obstacle is None
             else jax.vmap(
                 lambda prefix, feature: jnp.asarray(
-                    problem.lower_obstacle(time, prefix, feature, problem.args)
+                    lower_obstacle(time, prefix, feature, problem.args)
                 ).reshape(())
             )(prefixes, features)
         )
         upper = (
             jnp.full_like(unreflected, jnp.inf)
-            if problem.upper_obstacle is None
+            if upper_obstacle is None
             else jax.vmap(
                 lambda prefix, feature: jnp.asarray(
-                    problem.upper_obstacle(time, prefix, feature, problem.args)
+                    upper_obstacle(time, prefix, feature, problem.args)
                 ).reshape(())
             )(prefixes, features)
         )

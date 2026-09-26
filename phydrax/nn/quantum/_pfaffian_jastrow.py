@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from numbers import Integral
+from typing import TypeVar
 
 import equinox as eqx
 import jax
@@ -27,6 +28,7 @@ from ...linalg import (
     evaluate_pfaffian,
     factorization_policy_from_linear_solve,
     factorize,
+    LowRankPfaffianResult,
     LowRankSolvePolicy,
     PfaffianPolicy,
     prepare_factorized_low_rank_sequence,
@@ -416,7 +418,7 @@ def _compact_cache(
     pairing_matrix: Array,
     correlation: Array,
     locality_residual: Array,
-    proposal,
+    proposal: LowRankPfaffianResult,
     /,
 ) -> PfaffianJastrowCache:
     sequence = accept_low_rank_update(
@@ -620,7 +622,12 @@ def _propose_target(
     return log_ratio, proposed_cache, valid
 
 
-def _select_target(current, proposed, accepted: Array, /):
+_Selected = TypeVar("_Selected")
+
+
+def _select_target(
+    current: _Selected, proposed: _Selected, accepted: Array, /
+) -> _Selected:
     return jax.tree_util.tree_map(
         lambda current_leaf, proposed_leaf: jnp.where(
             accepted,

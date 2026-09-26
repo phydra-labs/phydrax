@@ -116,7 +116,7 @@ def _advance_interval(
         source = coordinates[step_index]
         target = coordinates[step_index + 1]
 
-        def propagate(vector):
+        def propagate(vector: Array) -> tuple[Array, Array, Array]:
             tangent_step = evolution.tangent_action(
                 state,
                 vector.reshape(state_shape),

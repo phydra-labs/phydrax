@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from operator import index
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -322,7 +322,7 @@ def prepare_product(
     left_layout: CliffordBladeLayout,
     right_layout: CliffordBladeLayout,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> CliffordProductPlan:
     """Prepare one exact fixed-layout Clifford product."""
     return CliffordProductPlan(algebra, left_layout, right_layout, **kwargs)

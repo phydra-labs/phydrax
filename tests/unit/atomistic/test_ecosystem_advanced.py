@@ -1169,6 +1169,19 @@ def test_implicit_polarization_and_multipole_pme():
     assert not bool(jnp.isclose(gb, gk))
 
 
+def test_lennard_jones_pme_term_without_cutoff_is_rejected_at_preparation():
+    cell = phx.discretization.PeriodicCell(jnp.eye(3) * 6.0)
+    _, system, _, _, _, _, _ = _runtime(cell=cell)
+    reference = phx.atomistic.LennardJonesPMEPotential([[0.1]], 0.4, 2.5, (8, 8, 8))
+    term = phx.atomistic.GeneralForceFieldTerm(
+        phx.atomistic.ForceFieldTermKind.LENNARD_JONES_PME,
+        reference.arrays,
+        cutoff=None,
+    )
+    with pytest.raises(ValueError, match="requires a cutoff"):
+        phx.atomistic.AtomisticPotentialProgram([term]).prepare(system)
+
+
 def _ipi_roundtrip(plan, system, positions):
     listener = plan.listen()
 

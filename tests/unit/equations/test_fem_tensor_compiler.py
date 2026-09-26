@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
+import pytest
 
 import phydrax as phx
 from phydrax.discretization.fem._high_order import (
@@ -506,3 +507,113 @@ def test_tensor_interior_facet_resolves_neighbor_across_mesh_blocks():
     )
     assert jnp.linalg.norm(residual) > 0.0
     assert jnp.allclose(jnp.sum(residual), 0.0, atol=2.0e-12)
+
+
+def test_cross_block_facets_without_prepared_references_use_legacy_validation():
+    coordinates = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    mesh = phx.discretization.CellMesh(
+        coordinates,
+        (
+            phx.discretization.CellBlock(
+                "lower",
+                "triangle",
+                jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
+                global_ids=jnp.asarray((0,), dtype=jnp.int64),
+            ),
+            phx.discretization.CellBlock(
+                "upper",
+                "triangle",
+                jnp.asarray(((0, 2, 3),), dtype=jnp.int32),
+                global_ids=jnp.asarray((1,), dtype=jnp.int64),
+            ),
+        ),
+    )
+    element = phx.discretization.discontinuous_element("triangle", 1)
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        (
+            phx.discretization.FiniteElementFieldSpec("u", element),
+            phx.discretization.FiniteElementFieldSpec("g", element, component_shape=(2,)),
+        ),
+    ).prepare()
+
+    def flux(plus, minus, points, weights, normal, context):
+        del points, weights, normal, context
+        value = (plus[0] - minus[0]) + jnp.sum(plus[1] - minus[1], axis=-1)
+        return value, -value
+
+    action = InteriorFacetAction(
+        "u",
+        ("u", "g"),
+        flux,
+        domain=discretization.interior_facet_domain,
+        action_id="cross-block-triangle-cross-field-facet",
+    )
+    compiled = phx.equations.compile_finite_element_problem(
+        FiniteElementForm("cross-block-triangle-cross-field", ("u", "g"), (action,)),
+        discretization,
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(
+            realization="matrix_free",
+            local_kernel="auto",
+        ),
+    )
+    with pytest.raises(ValueError, match="Cross-field legacy facets"):
+        compiled.residual(compiled.state_space.zeros())
+
+
+def _matrix_free_residual(discretization, action, local_kernel, state):
+    compiled = phx.equations.compile_finite_element_problem(
+        FiniteElementForm(action.action_id, "u", (action,)),
+        discretization,
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(
+            realization="matrix_free",
+            local_kernel=local_kernel,
+        ),
+    )
+    return compiled.full_residual(state, None)
+
+
+def test_collocated_pairwise_central_flux_executes_strong_divergence():
+    discretization = _single_quad_discretization()
+    rule = ReferenceQuadrilateralRule(GaussLobattoLegendreRule(3))
+
+    def central_flux(left, right, left_points, right_points, context):
+        value = 0.5 * (left + right)
+        return jnp.broadcast_to(value[..., None], value.shape + (2,))
+
+    action = PairwiseVolumeFluxAction(
+        "u",
+        central_flux,
+        rules={"quads": rule},
+        action_id="pairwise-central-divergence",
+    )
+    points = jnp.asarray(discretization.dof_maps[0].dof_coordinates)
+    state = points[:, 0] + 2.0 * points[:, 1]
+    residual = _matrix_free_residual(discretization, action, "collocated", state)
+
+    # Central two-point flux of F(u) = (u, u) collocates div F = 3 on the unit square.
+    assert jnp.allclose(jnp.sum(residual), 3.0, atol=2.0e-12)
+
+
+def test_sum_factorized_tensor_diffusion_matches_dense_kernel():
+    discretization = _single_tensor_discretization("quadrilateral", 3)
+    tensor = jnp.asarray(((2.0, 0.3), (0.3, 1.0)))
+    rule = ReferenceQuadrilateralRule(GaussLobattoLegendreRule(5))
+    state = jnp.linspace(-0.4, 1.1, discretization.dof_maps[0].global_dof_count)
+    residuals = tuple(
+        _matrix_free_residual(
+            discretization,
+            phx.equations.TensorDiffusionAction(
+                "u",
+                tensor,
+                action_id=f"tensor-diffusion-{local_kernel}",
+                rules={"quads": rule},
+            ),
+            local_kernel,
+            state,
+        )
+        for local_kernel in ("dense", "sum_factorized")
+    )
+
+    assert jnp.linalg.norm(residuals[0]) > 0.0
+    assert jnp.allclose(residuals[1], residuals[0], atol=2.0e-11)

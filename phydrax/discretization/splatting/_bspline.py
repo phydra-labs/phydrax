@@ -10,6 +10,7 @@ from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from .._tensor_entities import StructuredAxis, TensorEntityLayout
+from .._tensor_index import TensorIndexLayout
 from ._assignment import (
     _tensor_product_state,
     _uniform_axis_stencil,
@@ -61,7 +62,7 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
 
     def validate(
         self,
-        layout: TensorEntityLayout,
+        layout: TensorEntityLayout | TensorIndexLayout,
         axes: tuple[StructuredAxis, ...],
         /,
     ) -> None:
@@ -78,18 +79,26 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
             )
             _uniform_spacing(coordinates, bounds, axis.periodic)
 
-    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
+    def validate_input(
+        self, assignment_input: object, source_count: int, dimension: int, /
+    ) -> None:
         del source_count, dimension
         if assignment_input is not None:
             raise ValueError("Tensor B-spline assignment accepts no domain input.")
 
-    def update_input(self, position, deformation_gradient, committed_input, /) -> object:
+    def update_input(
+        self,
+        position: Array,
+        deformation_gradient: Array,
+        committed_input: object,
+        /,
+    ) -> object:
         del position, deformation_gradient, committed_input
         return None
 
     def build(
         self,
-        layout: TensorEntityLayout,
+        layout: TensorEntityLayout | TensorIndexLayout,
         axes: tuple[StructuredAxis, ...],
         axis_bounds: tuple[tuple[float, float], ...],
         position: Array,

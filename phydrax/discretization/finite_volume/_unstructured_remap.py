@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypedDict, Unpack
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -46,6 +48,12 @@ def _volume_array(
     if array.shape != (count,):
         raise ValueError(f"{name} must contain one volume per cell.")
     return array
+
+
+class _RemapContentOptions(TypedDict, total=False):
+    source_volumes: ArrayLike | None
+    source_active_mask: ArrayLike | None
+    target_active_mask: ArrayLike | None
 
 
 def _mask_values(values: Array, mask: Array, name: str, /) -> Array:
@@ -365,7 +373,9 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=target.dtype),
         )
 
-    def apply_extensive(self, source_content: ArrayLike, /, **kwargs) -> Array:
+    def apply_extensive(
+        self, source_content: ArrayLike, /, **kwargs: Unpack[_RemapContentOptions]
+    ) -> Array:
         """Explicit extensive-transfer entry point used by AMR callers."""
         return self.apply_content(source_content, **kwargs)
 

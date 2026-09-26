@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
-from typing import Protocol
+from typing import Any, Protocol
 
 from ..._fingerprint import canonical_fingerprint, canonical_json
 from ...artifacts import ArtifactManifest
@@ -26,6 +26,7 @@ from ...qualification import (
     ReleaseGateEvidence,
     ReleaseSigner,
     ReleaseTrustPolicy,
+    SupportDependency,
     SupportTuple,
 )
 from ._case import CardiovascularCaseManifest
@@ -616,7 +617,7 @@ class CardiovascularSignedNonClaim:
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> CardiovascularSignedNonClaim:
+    def from_record(cls, record: Mapping[str, Any], /) -> CardiovascularSignedNonClaim:
         if not isinstance(record, Mapping):
             raise TypeError("Signed non-claim record must be a mapping.")
         if (
@@ -1365,7 +1366,8 @@ def _dependency_profile_blockers(
                 reasons.append(f"dependency-missing-evidence:{profile_id}:{gate}")
             elif not trust_policy.accepts_evidence(evidence_by_gate[gate], at_time):
                 reasons.append(f"dependency-stale-or-rejected:{profile_id}:{gate}")
-        for child_id in profile.dependencies:
+        for child in profile.dependencies:
+            child_id = child.profile_id if isinstance(child, SupportDependency) else child
             if child_id in ancestry:
                 reasons.append(f"dependency-cycle:{child_id}")
             else:

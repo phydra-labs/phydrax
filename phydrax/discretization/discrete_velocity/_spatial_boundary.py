@@ -724,7 +724,10 @@ class EquilibriumReservoirD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryP
             incoming_total_energy_populations is None
         ):
             raise ValueError("A default reservoir requires both incoming f and g values.")
-        if incoming_particle_populations is None:
+        if (
+            incoming_particle_populations is None
+            or incoming_total_energy_populations is None
+        ):
             if (
                 corner_particle_populations is not None
                 or corner_total_energy_populations is not None
@@ -1097,7 +1100,12 @@ class MaxwellThermalD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan):
         self.diffuse_particle_populations = jnp.asarray(diffuse_particles)
         self.diffuse_total_energy_populations = jnp.asarray(diffuse_energy)
         self.wall_velocity = jnp.asarray(velocity)
-        self.accommodation = tuple(float(value) for value in accommodation_values)
+        self.accommodation = (
+            float(accommodation_values[0]),
+            float(accommodation_values[1]),
+            float(accommodation_values[2]),
+            float(accommodation_values[3]),
+        )
         self.retain_history = history
         self.plan_id = canonical_fingerprint(
             {

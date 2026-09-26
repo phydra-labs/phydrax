@@ -24,6 +24,7 @@ from ..stochastic._bsde import _pointwise_values, BSDEPathBatch, BSDEProblem
 
 DeepBSDESamplingMode: TypeAlias = Literal["resample", "fixed"]
 DeepBSDEPredictor: TypeAlias = Callable | DomainFunction
+_DeepBSDEStepInputs: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 def _validate_paths(paths: BSDEPathBatch, problem: BSDEProblem, /) -> None:
@@ -169,10 +170,12 @@ def deep_bsde_rollout(
     )
     increments_flat = safe_increments.reshape((sample_count, paths.num_steps, noise_size))
 
-    def step(value_flat, inputs):
+    def step(
+        value_flat: Array, inputs: _DeepBSDEStepInputs
+    ) -> tuple[Array, tuple[Array, Array, Array]]:
         time, state_flat, control_flat, increment_flat, dt = inputs
 
-        def generator_at(state, value, control):
+        def generator_at(state: Array, value: Array, control: Array) -> Array:
             output = jnp.asarray(
                 problem.generator(
                     time,

@@ -87,7 +87,7 @@ def solve_neural_jump_projection(
     target = problem.jump_operator(source)
     target = target / jnp.linalg.norm(target)
 
-    def loss(parameters):
+    def loss(parameters: Array) -> Array:
         state = jnp.asarray(problem.state_function(parameters))
         state = state / jnp.linalg.norm(state)
         overlap = jnp.vdot(target, state)

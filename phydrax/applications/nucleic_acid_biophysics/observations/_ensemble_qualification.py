@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from numbers import Real
-from typing import Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax
@@ -124,9 +124,10 @@ class EnsemblePredictiveScoreCriterion(StrictModule, NonTrainableState):
         """Reconstruct and content-verify a predictive-score threshold."""
         if not isinstance(record, Mapping):
             raise TypeError("Predictive-score criterion record must be a mapping.")
+        # The constructor re-validates the serialized stage and threshold domains.
         value = cls(
-            str(record["stage_id"]),
-            record["minimum_independent_unit_macro"],
+            cast(PredictiveStageId, str(record["stage_id"])),
+            cast(float, record["minimum_independent_unit_macro"]),
         )
         expected = value._content_record()
         if any(record.get(name) != item for name, item in expected.items()):
@@ -182,7 +183,8 @@ class EnsembleMixtureAdvantageCriterion(StrictModule, NonTrainableState):
         """Reconstruct and content-verify a mixture-advantage threshold."""
         if not isinstance(record, Mapping):
             raise TypeError("Mixture-advantage criterion record must be a mapping.")
-        value = cls(record["minimum_independent_unit_macro"])
+        # The constructor re-validates the serialized threshold domain.
+        value = cls(cast(float, record["minimum_independent_unit_macro"]))
         expected = value._content_record()
         if any(record.get(name) != item for name, item in expected.items()):
             raise ValueError("Serialized mixture-advantage criterion is inconsistent.")
@@ -194,7 +196,12 @@ class EnsembleMixtureAdvantageCriterion(StrictModule, NonTrainableState):
         return value
 
 
-def _fit_identity(model, fit, campaign: ScientificCampaign, /):
+def _fit_identity(
+    model: ConditionalMutationLaw | FiniteStructuralEnsembleModel,
+    fit: ConditionalMappingFit | FiniteEnsembleFit,
+    campaign: ScientificCampaign,
+    /,
+) -> tuple[tuple[str, ...], Array, Callable[[Array], Any], str]:
     if (
         isinstance(model, ConditionalMutationLaw)
         and isinstance(fit, ConditionalMappingFit)

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -13,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import PrecisionEvidenceEnvelope
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -34,6 +36,10 @@ from ._operators import prepare_linear_stencil, PreparedStencilOperator
 from ._precision import FDExecutionPrecisionPolicy
 from ._request import DerivativeRequest
 from ._stencil import BoundaryStencilSet, StencilFootprint
+
+
+if TYPE_CHECKING:
+    from ...linalg import TransformDiagonalRepresentation
 
 
 def _spatial_axes(
@@ -295,7 +301,7 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
         self.preparation = preparation
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.precision.evidence()
 
     @property
@@ -475,7 +481,7 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
         selected_modes = selected_modes / norms[None, :]
         return jnp.asarray(values[selected]), jnp.asarray(selected_modes)
 
-    def transform_diagonalization(self, name: str, /):
+    def transform_diagonalization(self, name: str, /) -> TransformDiagonalRepresentation:
         """Return a certified FFT representation of a periodic 1D stencil."""
         from ...linalg import FFTLinearTransform, TransformDiagonalRepresentation
 

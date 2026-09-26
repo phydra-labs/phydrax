@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 import equinox as eqx
@@ -22,7 +23,9 @@ def _identifier(value: str, owner: str, /) -> str:
     return value
 
 
-def _identifiers(values, owner: str, /, *, nonempty: bool = True) -> tuple[str, ...]:
+def _identifiers(
+    values: tuple[str, ...], owner: str, /, *, nonempty: bool = True
+) -> tuple[str, ...]:
     if not isinstance(values, tuple):
         raise TypeError(f"{owner} must be a tuple.")
     result = tuple(_identifier(value, owner) for value in values)
@@ -327,7 +330,14 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
         replicate_coordinates: dict[int, tuple[int, int, int, int, int, int]] = {}
         for row in range(profiles):
             replicate = int(indices[2][row])
-            coordinates = tuple(int(indices[index][row]) for index in (0, 1, 3, 4, 5, 6))
+            coordinates = (
+                int(indices[0][row]),
+                int(indices[1][row]),
+                int(indices[3][row]),
+                int(indices[4][row]),
+                int(indices[5][row]),
+                int(indices[6][row]),
+            )
             previous = replicate_coordinates.setdefault(replicate, coordinates)
             if previous != coordinates:
                 raise ValueError(
@@ -393,7 +403,7 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
     def excluded_profile_count(self) -> Array:
         return jnp.sum((~self.analysis_mask).astype(jnp.int32))
 
-    def profile_mask_for_cases(self, case_ids, /) -> Array:
+    def profile_mask_for_cases(self, case_ids: Iterable[str], /) -> Array:
         """Select complete source rows for exact admitted case identities."""
         identifiers = tuple(case_ids)
         if (
@@ -427,7 +437,7 @@ class MutationProfileBatch(StrictModule, NonTrainableState):
 
     def require_rights(
         self,
-        requested_use=None,
+        requested_use: Mapping[str, bool] | None = None,
         *,
         profile_mask: ArrayLike | None = None,
     ) -> tuple[str, ...]:

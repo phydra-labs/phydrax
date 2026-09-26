@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 from dataclasses import dataclass
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -34,7 +35,9 @@ class SystemRuntimeState:
     time_s: Array
 
     @classmethod
-    def create(cls, continuous: ArrayLike, discrete: ArrayLike, time_s: ArrayLike):
+    def create(
+        cls, continuous: ArrayLike, discrete: ArrayLike, time_s: ArrayLike
+    ) -> Self:
         continuous_ = jnp.asarray(continuous)
         discrete_ = jnp.asarray(discrete)
         time_ = jnp.asarray(time_s)
@@ -52,7 +55,7 @@ class SystemRuntimeState:
         return cls(continuous_, discrete_, time_)
 
 
-def detect_zero_crossings(previous: ArrayLike, current: ArrayLike, /):
+def detect_zero_crossings(previous: ArrayLike, current: ArrayLike, /) -> Array:
     a = jnp.asarray(previous)
     b = jnp.asarray(current)
     if a.shape != b.shape:

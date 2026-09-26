@@ -157,12 +157,16 @@ class AffineEnforcementTransform(StrictModule):
         for coefficient, jet in self.equation.lhs.terms:
             if jet.field == pivot:
                 continue
-            if jet.order != 0 or jet.normal:
+            if not isinstance(jet, FieldJet) or jet.order != 0 or jet.normal:
                 raise ValueError(
                     "Cross-field derivative traces require a certified lifting provider."
                 )
             target = target - coefficient * get_field(jet.field)
         target = target / pivot_coefficient
+        # Every non-"reverse" mode string selects forward-mode AD downstream.
+        ad_mode: Literal["reverse", "forward"] = (
+            "reverse" if self.lifting.mode == "reverse" else "forward"
+        )
         if self.lifting.kind == "dirichlet":
             return enforce_dirichlet(
                 value, component, var=self.lifting.variable, target=target
@@ -173,7 +177,7 @@ class AffineEnforcementTransform(StrictModule):
                 component,
                 var=self.lifting.variable,
                 target=target,
-                mode=self.lifting.mode,
+                mode=ad_mode,
             )
         if self.lifting.kind == "robin":
             return enforce_robin(
@@ -183,7 +187,7 @@ class AffineEnforcementTransform(StrictModule):
                 dirichlet_coeff=self.lifting.dirichlet_coefficient,
                 neumann_coeff=self.lifting.neumann_coefficient,
                 target=target,
-                mode=self.lifting.mode,
+                mode=ad_mode,
             )
         if self.lifting.kind == "absorbing":
             return enforce_sommerfeld(
@@ -193,7 +197,7 @@ class AffineEnforcementTransform(StrictModule):
                 time_var=self.lifting.time_variable,
                 wavespeed=self.lifting.wavespeed,
                 target=target,
-                mode=self.lifting.mode,
+                mode=ad_mode,
             )
         if self.lifting.kind == "graph":
             from ._graph import enforce_graph_values
@@ -278,6 +282,7 @@ def _default_requirements(
 def _built_in_transform(
     condition: AbstractCondition,
     field: str,
+    component: DomainComponent,
     requirements: tuple[DerivativeRequirement, ...],
     options: Mapping[str, Any],
     /,
@@ -333,7 +338,7 @@ def _built_in_transform(
     proof = EnforcementProofObligations(
         derivative_requirements=requirements,
         pivot_identity=f"{field}:{variable}:{jet.order}",
-        support_identity=repr(condition.on.spec),
+        support_identity=repr(component.spec),
         provider_certified=True,
     )
     return AffineEnforcementTransform(equal(jet, target), lifting, proof)
@@ -489,6 +494,7 @@ class EnforcementSpec(StrictModule):
             _built_in_transform(
                 condition,
                 target_field,
+                condition.on,
                 requirements,
                 resolved_options,
             )

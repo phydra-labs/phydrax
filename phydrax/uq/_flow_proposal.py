@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -32,6 +32,10 @@ class _FlowProposalBlockInfo(NamedTuple):
     nonfinite: Array
     proposed_log_target: Array
     proposed_log_density: Array
+
+
+_ReplayCarry: TypeAlias = tuple[Array, Array, Array]
+_FlowProposalItem: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 def _initialize_replay(
@@ -69,8 +73,16 @@ def _update_replay(
 
     capacity = replay.values.shape[1]
 
-    def update_chain(chain_values, chain_size, chain_seen, chain_samples, chain_keys):
-        def update_one(carry, item):
+    def update_chain(
+        chain_values: Array,
+        chain_size: Array,
+        chain_seen: Array,
+        chain_samples: Array,
+        chain_keys: Array,
+    ) -> _ReplayCarry:
+        def update_one(
+            carry: _ReplayCarry, item: tuple[Array, Array]
+        ) -> tuple[_ReplayCarry, None]:
             current_values, current_size, current_seen = carry
             sample, key = item
             next_seen = current_seen + jnp.asarray(1, dtype=jnp.int32)
@@ -168,7 +180,9 @@ def _independence_mh_scan(
 ) -> tuple[_FlowProposalState, _FlowProposalBlockInfo]:
     """Apply exact sequential independence-MH decisions to prepared proposals."""
 
-    def transition(state, proposal):
+    def transition(
+        state: _FlowProposalState, proposal: _FlowProposalItem
+    ) -> tuple[_FlowProposalState, tuple[Array, Array, Array]]:
         position, log_target, log_proposal, log_uniform = proposal
         finite = (
             jnp.all(jnp.isfinite(position))
@@ -253,7 +267,7 @@ def _proposal_effective_sample_size(
     log_weights = jnp.ravel(proposed_log_target - proposed_log_density)
     finite = jnp.isfinite(log_weights)
 
-    def finite_ess(values):
+    def finite_ess(values: Array) -> Array:
         masked = jnp.where(finite, values, -jnp.inf)
         weights = jax.nn.softmax(masked)
         return jnp.reciprocal(jnp.sum(weights**2))

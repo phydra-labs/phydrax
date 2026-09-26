@@ -134,7 +134,7 @@ def _ista_codes(
     lipschitz = jnp.sum(jnp.real(dictionary * jnp.conj(dictionary)), axis=(-2, -1))
     step = 1.0 / jnp.maximum(lipschitz, jnp.finfo(values.real.dtype).tiny)
 
-    def body(_, current):
+    def body(_: int | Array, current: Array) -> Array:
         residual = current @ dictionary - values
         if mask is not None:
             residual = jnp.where(mask, residual, 0)
@@ -254,7 +254,9 @@ class NMFModel(AbstractFittedModel):
 
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, components, *, transform_iterations: int, epsilon: float) -> None:
+    def __init__(
+        self, components: ArrayLike, *, transform_iterations: int, epsilon: float
+    ) -> None:
         components_ = jnp.asarray(components)
         if not jnp.issubdtype(components_.dtype, jnp.floating):
             raise TypeError("NMF components must use a real floating dtype.")
@@ -285,7 +287,7 @@ class NMFModel(AbstractFittedModel):
         )
         gram = self.components @ jnp.swapaxes(self.components, -1, -2)
 
-        def body(_, current):
+        def body(_: int | Array, current: Array) -> Array:
             numerator = working @ jnp.swapaxes(self.components, -1, -2)
             denominator = current @ gram
             return current * numerator / jnp.maximum(denominator, self.epsilon)
@@ -361,7 +363,7 @@ class NMF(AbstractRecipe):
             maxval=1.0,
         )
 
-        def body(_, state):
+        def body(_: int | Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             current_codes, current_components = state
             prediction = current_codes @ current_components
             numerator_codes = values @ jnp.swapaxes(current_components, -1, -2)
@@ -678,7 +680,7 @@ class DictionaryLearning(AbstractRecipe):
         )
         dictionary = _normalize_atoms(dictionary)
 
-        def body(_, current):
+        def body(_: int | Array, current: Array) -> Array:
             codes = _ista_codes(
                 values,
                 current,

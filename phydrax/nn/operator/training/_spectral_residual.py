@@ -18,8 +18,15 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 from ...._frozendict import frozendict
+from ....equations._ir import PDEExpression
 from ....equations._spectral_residual import CompiledSpectralResidual
-from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
+from ..data import (
+    FunctionSamples,
+    OperatorAxis,
+    OperatorBatch,
+    OperatorPrediction,
+    OperatorTargetBatch,
+)
 from ._losses import (
     _weighted_case_reduction,
     AbstractOperatorLossTerm,
@@ -28,7 +35,7 @@ from ._losses import (
 )
 
 
-def _parameter_names(expression) -> frozenset[str]:
+def _parameter_names(expression: PDEExpression) -> frozenset[str]:
     names = (
         frozenset((expression.symbol,))
         if expression.op == "parameter" and expression.symbol is not None
@@ -123,7 +130,9 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
         object.__setattr__(self, "weight", float(self.weight))
         object.__setattr__(self, "query_name", query)
 
-    def _query(self, prediction: OperatorPrediction, batch: OperatorBatch):
+    def _query(
+        self, prediction: OperatorPrediction, batch: OperatorBatch
+    ) -> FunctionSamples:
         predicted_queries = {
             prediction.field(field).query_name
             for field in self.prediction_fields.values()
@@ -162,7 +171,7 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
             )
         return query
 
-    def _node_mismatch(self, axes) -> Array:
+    def _node_mismatch(self, axes: tuple[OperatorAxis, ...]) -> Array:
         mismatch = jnp.asarray(False)
         for source, target in zip(
             axes,

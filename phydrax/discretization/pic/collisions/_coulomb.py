@@ -8,7 +8,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import DTypeLike
+from jaxtyping import Array, ArrayLike, PRNGKeyArray
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -16,7 +17,7 @@ from ...._trainable import NonTrainableState
 from ._types import PICCollisionResult
 
 
-def _isotropic_directions(key, count, dtype):
+def _isotropic_directions(key: PRNGKeyArray, count: int, dtype: DTypeLike) -> Array:
     samples = jr.normal(key, (count, 3), dtype=dtype)
     norm = jnp.sqrt(jnp.sum(samples * samples, axis=-1))
     fallback = jnp.asarray([1.0, 0.0, 0.0], dtype=dtype)
@@ -59,7 +60,7 @@ class CoulombCollisionPlan(StrictModule, NonTrainableState):
         mass: ArrayLike,
         active_mask: ArrayLike,
         incarnation: ArrayLike,
-        key,
+        key: PRNGKeyArray,
         step_size: ArrayLike,
         /,
         cell_ids: ArrayLike | None = None,

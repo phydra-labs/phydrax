@@ -226,7 +226,7 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
         self.owner_reference_map = owner_reference_map
         self.neighbor_reference_map = neighbor_reference_map
         self.surface_map = surface_map
-        self.parameter_bounds = bounds
+        self.parameter_bounds = tuple((lower, upper) for lower, upper in bounds)
         self.quadrature_order = order
         self.orientation = orientation_
         self.tolerance = tolerance_
@@ -267,7 +267,7 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
             [prod(values) for values in product(*axis_weights)], dtype=np.float64
         )
 
-        def surface(parameter):
+        def surface(parameter: Array) -> Array:
             return jnp.asarray(self.surface_map(parameter, time_, args))
 
         parameter_array = jnp.asarray(parameters)
@@ -478,7 +478,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         ) * prod(spacing)
         references = jnp.asarray(lower + cell_parameters * spacing)
 
-        def mapped(reference, stage_time):
+        def mapped(reference: Array, stage_time: Array) -> Array:
             return self.maps.evaluate(patch_id, reference, stage_time, args)
 
         points = jax.vmap(lambda reference: mapped(reference, time))(references)
@@ -560,7 +560,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
                     jnp.sum(velocities * weighted_area, axis=-1)
                 )
 
-        def volume_at(stage_time):
+        def volume_at(stage_time: Array) -> Array:
             stage_jacobians = jax.vmap(
                 lambda reference: jax.jacfwd(lambda point: mapped(point, stage_time))(
                     reference

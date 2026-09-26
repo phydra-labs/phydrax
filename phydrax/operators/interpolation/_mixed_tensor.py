@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 import equinox as eqx
@@ -78,7 +78,7 @@ class MixedTensorInterpolant(StrictModule):
         lower = jnp.asarray(axis.domain.lower, dtype=coordinate.dtype)
         upper = jnp.asarray(axis.domain.upper, dtype=coordinate.dtype)
 
-        def base(value):
+        def base(value: Array) -> Array:
             if axis.family == "fourier":
                 phase = 2.0 * jnp.pi * (value - lower) / (upper - lower)
                 normalization = jnp.sqrt(jnp.asarray(axis.length, dtype=coordinate.dtype))
@@ -99,7 +99,7 @@ class MixedTensorInterpolant(StrictModule):
                 values.append(next_value)
             return jnp.stack(values)
 
-        result = base
+        result: Callable[[Array], Array] = base
         for _ in range(int(order)):
             result = jax.jacfwd(result)
         return result(coordinate)
@@ -129,16 +129,19 @@ class MixedTensorInterpolant(StrictModule):
             for axis_index, axis in enumerate(self.plan.axes):
                 if axis.periodic:
                     continue
+                lower, upper = axis.domain.lower, axis.domain.upper
+                # Spectral bases require bounded axis domains, which carry both endpoints.
+                assert lower is not None and upper is not None
                 valid &= jnp.all(
-                    (points[..., axis_index] >= axis.domain.lower)
-                    & (points[..., axis_index] <= axis.domain.upper)
+                    (points[..., axis_index] >= lower)
+                    & (points[..., axis_index] <= upper)
                 )
             points = eqx.error_if(
                 points, ~valid, "Polynomial query lies outside support."
             )
         flat = points.reshape((-1, dimension))
 
-        def evaluate(point):
+        def evaluate(point: Array) -> Array:
             result = self.coefficients
             for axis, coordinate, order in zip(
                 self.plan.axes, point, orders, strict=True

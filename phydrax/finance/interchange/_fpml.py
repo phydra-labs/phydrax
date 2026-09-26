@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 
@@ -345,11 +345,12 @@ class FpMLImportResult(StrictModule, NonTrainableState):
         if contract_type is not None and not isinstance(contract_type, str):
             raise TypeError("Serialized contract_type must be a string or null.")
         value = cls(
-            accepted=record["accepted"],
+            # __init__ validates accepted as bool and source_id as a SHA-256 digest.
+            accepted=cast(bool, record["accepted"]),
             contract_type=contract_type,
             contract_record=contract,
             unsupported_terms=tuple(terms),
-            source_id=record["source_id"],
+            source_id=cast(str, record["source_id"]),
         )
         if record["result_id"] != value.result_id:
             raise ValueError("Serialized FpML result identity is invalid.")

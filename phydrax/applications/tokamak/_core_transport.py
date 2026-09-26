@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -170,7 +171,7 @@ class TokamakEdgeFlux(StrictModule):
             raise ValueError("Tokamak edge fluxes must be scalars.")
         self.particle_rate_s, self.electron_power_w, self.ion_power_w = values
 
-    def stacked(self, dtype) -> Array:
+    def stacked(self, dtype: DTypeLike) -> Array:
         return jnp.asarray(
             (self.particle_rate_s, self.electron_power_w, self.ion_power_w),
             dtype=dtype,

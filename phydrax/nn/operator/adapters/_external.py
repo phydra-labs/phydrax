@@ -8,7 +8,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 from jaxtyping import Array
@@ -32,6 +32,10 @@ from ...._trainable import NonTrainableState
 from ..._keys import EvalKey
 from ..data import OperatorBatch
 from ..engine import AbstractOperatorModel
+
+
+if TYPE_CHECKING:
+    from ..catalog import ConfiguredOperatorContract
 
 
 class OperatorCheckpointManifest(NonTrainableState):
@@ -236,7 +240,9 @@ def verify_operator_checkpoint(
     return checkpoint_sha256(path) == manifest.checkpoint_sha256
 
 
-def _external_operator_contract(model):
+def _external_operator_contract(
+    model: ExternalOperatorAdapter,
+) -> ConfiguredOperatorContract:
     from ..catalog import operator_architecture_contract
 
     return operator_architecture_contract(

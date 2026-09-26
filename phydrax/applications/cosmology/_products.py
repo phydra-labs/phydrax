@@ -308,9 +308,15 @@ class LagrangianGrowthHistory(StrictModule):
         query = _validated_query(
             scale_factor, self.scale_factors, "LagrangianGrowthHistory"
         )
-        values = self.reconstruction.evaluate(query).values
-        return tuple(
-            _evaluated(value, self.provenance.differentiation) for value in values
+        first_growth, first_rate, second_growth, second_rate = (
+            self.reconstruction.evaluate(query).values
+        )
+        contract_ = self.provenance.differentiation
+        return (
+            _evaluated(first_growth, contract_),
+            _evaluated(first_rate, contract_),
+            _evaluated(second_growth, contract_),
+            _evaluated(second_rate, contract_),
         )
 
 
@@ -749,7 +755,7 @@ def reconstruct_total_matter_power(
     )
 
 
-def cosmology_product_content_id(product, /) -> str:
+def cosmology_product_content_id(product: object, /) -> str:
     """Return a host-side content identity for an immutable cosmology product."""
     if isinstance(product, ExpansionHistory):
         descriptor = "expansion-history"

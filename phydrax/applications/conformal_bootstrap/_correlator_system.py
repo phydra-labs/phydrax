@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import cast, Literal
+from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -137,7 +137,7 @@ class CorrelatorSpecification(StrictModule):
         self.label = label_
         self.external_labels = external
         self.tensor_structure_labels = structures
-        self.structure_parities = cast(tuple[Literal[-1, 1], ...], parities)
+        self.structure_parities = parities
         self.correlator_id = canonical_fingerprint(content)
 
 

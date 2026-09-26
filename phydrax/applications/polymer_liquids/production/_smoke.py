@@ -56,33 +56,35 @@ def run_polymer_production_smoke() -> PolymerProductionSmokeResult:
             minimum_frames=8,
             maximum_relative_standard_error=1.0e-10,
         ),
-        [20, 20],
+        np.asarray([20, 20], dtype=np.int64),
         jnp.full((8, 2), 40.0),
         jnp.full((8, 2), 20.0),
     )
     tube = doi_edwards_linear_rheology(
         DoiEdwardsTubePlan(100.0, 1.0, odd_mode_count=16),
-        [0.0, 1.0, 10.0],
-        [0.01, 0.1, 1.0],
+        np.asarray([0.0, 1.0, 10.0], dtype=np.float64),
+        np.asarray([0.01, 0.1, 1.0], dtype=np.float64),
     )
     scaling = fit_chain_length_scaling(
         ChainLengthScalingPlan(exponent_interval=(2.9, 3.1)),
-        [10.0, 20.0, 40.0],
-        [1.0e3, 8.0e3, 64.0e3],
+        np.asarray([10.0, 20.0, 40.0], dtype=np.float64),
+        np.asarray([1.0e3, 8.0e3, 64.0e3], dtype=np.float64),
     )
     glamm = GLAMMPlan(3, 1.0e-3, 1.0, 10.0, 1.0, contour_diffusivity=0.0)
     glamm_result = glamm_step(glamm, glamm.initialize(), jnp.zeros((3, 3)))
 
     system = AtomisticSystemPlan(
-        [0, 1],
-        [0, 0],
-        [1.0, 1.0],
+        np.asarray([0, 1], dtype=np.int64),
+        np.asarray([0, 0], dtype=np.int64),
+        np.asarray([1.0, 1.0], dtype=np.float64),
         AtomisticUnitSystem.reduced(),
-        atom_type_ids=[0, 0],
-        element_mask=[False, False],
+        atom_type_ids=np.asarray([0, 0], dtype=np.int64),
+        element_mask=np.asarray([False, False], dtype=np.bool_),
     ).prepare()
     positions = jnp.asarray([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
-    rpy = FreeSpaceRPYMobilityPlan(1.0, 1.0, maximum_particles=2).prepare(system, [0, 1])
+    rpy = FreeSpaceRPYMobilityPlan(1.0, 1.0, maximum_particles=2).prepare(
+        system, np.asarray([0, 1], dtype=np.int64)
+    )
     mobility = materialize_mobility(rpy, positions, maximum_dofs=6)
     mobility_symmetry = jnp.max(jnp.abs(mobility - mobility.T))
     mobility_minimum = jnp.min(jnp.linalg.eigvalsh(mobility))

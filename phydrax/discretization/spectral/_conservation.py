@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from operator import index
 from typing import Any, TYPE_CHECKING
 
@@ -455,7 +456,12 @@ class PreparedSpectralConservationDynamics(StrictModule):
     ) -> Array:
         if self.source is None:
             return jnp.zeros_like(physical_state)
-        evaluation = self.method.pseudospectral.dealiasing.evaluation
+        # Sources imply the projected-flux method over a tensor discretization, whose
+        # dealiasing evaluation space is therefore tensor as well.
+        pseudospectral = self.method.pseudospectral
+        assert pseudospectral is not None
+        evaluation = pseudospectral.dealiasing.evaluation
+        assert isinstance(evaluation, TensorSpectralDiscretization)
         points = evaluation.points.reshape(
             evaluation.physical_shape + (len(evaluation.axes),)
         )
@@ -614,7 +620,9 @@ class PreparedSpectralConservationDynamics(StrictModule):
         )
         return residual, diagnostics
 
-    def linearize(self, time: Array, state: Array, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> tuple[Array, Callable[[Array], Array]]:
         value = self._validate_state(state)
         return jax.linearize(lambda candidate: self(time, candidate, args), value)
 

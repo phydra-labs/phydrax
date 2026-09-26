@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -13,6 +15,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._polynomial import ScaledMonomialBasis
 from ..._strict import StrictModule
+from ...discretization import PolygonalConnectivity
 from ...discretization.vem import (
     VirtualElementDiscretization,
     VirtualElementRuntimeData,
@@ -28,6 +31,13 @@ class VirtualElementReconstruction(StrictModule):
     runtime_id: str = eqx.field(static=True)
     field_space_id: str = eqx.field(static=True)
     reconstruction_id: str = eqx.field(static=True)
+
+
+def _polygonal_connectivity(
+    discretization: VirtualElementDiscretization, /
+) -> PolygonalConnectivity:
+    # VirtualElementPlan admits only meshes with polygonal connectivity.
+    return cast(PolygonalConnectivity, discretization.mesh.connectivity)
 
 
 def _runtime_matches_discretization(
@@ -201,9 +211,9 @@ def evaluate_virtual_element_trace(
     if parameters_.ndim != 1:
         raise ValueError("Trace parameters must be one rank-1 array on [-1, 1].")
     degree = discretization.field.element.degree
-    connectivity = jnp.asarray(discretization.mesh.connectivity.edges, dtype=jnp.int32)[
-        edges
-    ]
+    connectivity = jnp.asarray(
+        _polygonal_connectivity(discretization).edges, dtype=jnp.int32
+    )[edges]
     offset = discretization.dof_map.vertex_dof_count
     if trace_kind == "value":
         from ...integration import GaussLobattoLegendreRule, interval_rule_data

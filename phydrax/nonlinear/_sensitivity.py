@@ -27,6 +27,7 @@ from ..linalg import (
     JacobianLinearOperator,
     LeastSquaresProblem,
     LinearSolvePolicy,
+    LinearSolveResult,
     prepare as prepare_linear,
     prepare_linearization,
     PreparedLinearization,
@@ -170,7 +171,7 @@ class SensitivityEvidence(StrictModule):
         self.linear_status = jnp.asarray(linear_status, dtype=jnp.int32)
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return self.status == int(SensitivityStatus.SUCCESS)
 
 
@@ -193,7 +194,12 @@ class _RootSystem(NamedTuple):
     primal_valid: Array
 
 
-def _root_system(problem, state, args, policy):
+def _root_system(
+    problem: NonlinearSystemProblem,
+    state: PyTree[Any],
+    args: Any,
+    policy: SensitivityPolicy,
+) -> _RootSystem:
     source = PyTreeSpace(state) if problem.state_space is None else problem.state_space
     _, auxiliary = problem.evaluate(state, args)
     linearization = prepare_linearization(
@@ -240,7 +246,13 @@ def _root_system(problem, state, args, policy):
     )
 
 
-def _implicit_status(system, linear_result, finite, condition, policy):
+def _implicit_status(
+    system: _RootSystem,
+    linear_result: LinearSolveResult,
+    finite: Array,
+    condition: Array,
+    policy: SensitivityPolicy,
+) -> Array:
     linear_ok = (
         jnp.all(linear_result.successful)
         & jnp.all(linear_result.diagnostics.finite)
@@ -432,7 +444,7 @@ def differentiate_iterations_jvp(
         raise ValueError("Iteration JVP requires unrolled or truncated mode.")
     cutoff = policy.iterations - policy.truncation
 
-    def solve(current_args):
+    def solve(current_args: Any) -> PyTree[Any]:
         state = initial_state
         for index in range(policy.iterations):
             if policy.mode == "truncated" and index == cutoff:
@@ -529,7 +541,7 @@ def root_solution_second_jvp(
         else second_tangent_args
     )
 
-    def path_residual(time):
+    def path_residual(time: Array) -> PyTree[Array]:
         state_at_time = jax.tree.map(
             lambda value, tangent: value + time * tangent,
             state,
@@ -545,7 +557,7 @@ def root_solution_second_jvp(
         )
         return problem.residual(state_at_time, args_at_time)
 
-    def first_path_derivative(time):
+    def first_path_derivative(time: Array) -> PyTree[Array]:
         return jax.jvp(
             path_residual,
             (time,),
@@ -626,7 +638,7 @@ def minimizer_solution_jvp(
     if policy_.mode not in ("implicit-forward", "implicit-reverse"):
         raise ValueError("minimizer_solution_jvp requires an implicit mode.")
 
-    def gradient_function(point, current_args):
+    def gradient_function(point: PyTree[Any], current_args: Any) -> PyTree[Array]:
         return jax.grad(lambda item: objective(item, current_args))(point)
 
     source = PyTreeSpace(solution)

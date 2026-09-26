@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,10 @@ from ...discretization import PreparedFiniteVolumeDynamics
 from ...solver import ParticleMeshGravityPlan
 from ._background import FLRWBackground
 from ._particles import CosmologicalKDKPlan, CosmologicalParticleState
+
+
+_EulerSubstepCarry: TypeAlias = tuple[Array, Array, Array]
+_GasParticleStepRecord: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class ComovingEulerState(StrictModule):
@@ -180,7 +184,7 @@ class ComovingEulerPlan(StrictModule):
         )
         step = interval / self.substeps
 
-        def substep(index, carry):
+        def substep(index: Array, carry: _EulerSubstepCarry) -> _EulerSubstepCarry:
             values, successful, stable_min = carry
             fraction_0 = index / self.substeps
             fraction_mid = (index + 0.5) / self.substeps
@@ -252,6 +256,9 @@ class SharedGasParticleGravityResult(StrictModule):
 class CosmologicalGasParticleState(StrictModule):
     gas: ComovingEulerState
     particles: CosmologicalParticleState
+
+
+_GasParticleCarry: TypeAlias = tuple[CosmologicalGasParticleState, Array, Array]
 
 
 class CosmologicalGasParticleDiagnostics(StrictModule):
@@ -396,10 +403,14 @@ class CosmologicalGasParticleGravityPlan(StrictModule):
             ),
         )
 
-        def step(carry, end):
+        def step(
+            carry: _GasParticleCarry, end: Array
+        ) -> tuple[_GasParticleCarry, _GasParticleStepRecord]:
             current, active, count = carry
 
-            def attempt(_):
+            def attempt(
+                _: None,
+            ) -> tuple[_GasParticleCarry, _GasParticleStepRecord]:
                 force_0 = self.shared_gravity(current, args)
                 proposal = self.particles.propose(
                     background,
@@ -498,7 +509,9 @@ class CosmologicalGasParticleGravityPlan(StrictModule):
                     count + successful.astype(jnp.int32),
                 ), diagnostics
 
-            def stopped(_):
+            def stopped(
+                _: None,
+            ) -> tuple[_GasParticleCarry, _GasParticleStepRecord]:
                 zero = jnp.asarray(0.0, dtype=current.gas.cell_average.dtype)
                 diagnostics = (
                     jnp.asarray(False),

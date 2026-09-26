@@ -384,7 +384,14 @@ class FiniteElementMeshMotionPlan(StrictModule):
             cells = np.asarray(block.vertices, dtype=np.int32)
             for cell in cells:
                 for first, second in _cell_edges(block.cell_kind):
-                    edge_set.add(tuple(sorted((int(cell[first]), int(cell[second])))))
+                    first_vertex = int(cell[first])
+                    second_vertex = int(cell[second])
+                    edge_set.add(
+                        (
+                            min(first_vertex, second_vertex),
+                            max(first_vertex, second_vertex),
+                        )
+                    )
         edges = np.asarray(sorted(edge_set), dtype=np.int32)
         edge_vectors = reference[edges[:, 1]] - reference[edges[:, 0]]
         edge_lengths = np.linalg.norm(edge_vectors, axis=-1)
@@ -454,7 +461,7 @@ class FiniteElementMeshMotionPlan(StrictModule):
             ii_second_array = jnp.asarray(ii_second, dtype=jnp.int32)
             ii_weight_array = jnp.asarray(ii_weight, dtype=jnp.float64)
 
-            def action(value):
+            def action(value: Array) -> Array:
                 result = diagonal_array * value
                 result = result.at[ii_first_array].add(
                     -ii_weight_array * value[ii_second_array]
@@ -583,7 +590,10 @@ class FiniteElementMeshMotionPlan(StrictModule):
                 self.interior_boundary_weights[:, None]
                 * boundary_displacement[self.interior_boundary_boundary]
             )
-            extension = solve(self.prepared_extension, right_hand_side)
+            prepared_extension = self.prepared_extension
+            # The extension solve is prepared exactly when interior vertices exist.
+            assert prepared_extension is not None
+            extension = solve(prepared_extension, right_hand_side)
             interior_displacement = extension.value
             extension_success = jnp.all(extension.successful)
             extension_status = extension.status

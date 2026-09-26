@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from ..._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
 from ..._strict import StrictModule
@@ -19,6 +20,10 @@ from ...metrix.clifford import (
     prepare_product,
 )
 from ._domain_ops import _factor_and_dim, partial
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 class _CliffordDiracCallable(StrictModule):
@@ -37,7 +42,7 @@ class _CliffordDiracCallable(StrictModule):
         self.products = products
         self.reciprocal_vectors = reciprocal_vectors
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         total = None
         for derivative, product, reciprocal in zip(
             self.derivatives,

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -115,7 +115,7 @@ class GreekResult(StrictModule):
         return self.second_order_diagonal[self.request.parameter_names.index(name)]
 
 
-def _scalar_value(value) -> Array:
+def _scalar_value(value: Any) -> Array:
     resolved = value.value if isinstance(value, ValuationResult) else jnp.asarray(value)
     if resolved.shape != ():
         raise ValueError("Greek evaluation requires a scalar valuation output.")

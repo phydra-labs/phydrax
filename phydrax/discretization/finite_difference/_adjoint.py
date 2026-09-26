@@ -205,7 +205,7 @@ class CheckpointedFDAdjointPlan(StrictModule):
         dt = jnp.asarray(step_size)
         indices = jnp.arange(self.steps)
 
-        def body(state: Array, index: Array):
+        def body(state: Array, index: Array) -> tuple[Array, None]:
             next_state = self.precision.field(
                 self.step(time_ + index * dt, state, dt, parameters)
             )
@@ -229,7 +229,7 @@ class CheckpointedFDAdjointPlan(StrictModule):
         if not callable(loss):
             raise TypeError("FD adjoint loss must be callable.")
 
-        def objective(initial, parameter_values):
+        def objective(initial: Array, parameter_values: PyTree) -> tuple[Array, Array]:
             final = self.evolve(
                 initial,
                 parameter_values,

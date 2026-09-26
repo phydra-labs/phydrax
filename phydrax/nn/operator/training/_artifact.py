@@ -689,15 +689,17 @@ def load_trained_operator(
     model and must match exactly.
     """
     manifest, members = _read_operator_artifact(path)
+    portable_recipe = None
     if manifest.execution_model_portable:
         if manifest.execution_model_recipe is None:
             raise ValueError("Portable operator artifact has no execution-model recipe.")
+        portable_recipe = manifest.execution_model_recipe
         architecture_codec = operator_architecture_codec(
             manifest.execution_model_architecture_id
         )
         try:
             model_template = _recipe_template(
-                manifest.execution_model_recipe,
+                portable_recipe,
                 limits=_OPERATOR_RECIPE_LIMITS,
             )
             pipeline_template = (
@@ -743,9 +745,9 @@ def load_trained_operator(
         _preflight_serialization(stream, (model_template, pipeline_template))
     except (OSError, TypeError, ValueError) as error:
         raise ValueError("Operator artifact model leaf inventory is invalid.") from error
-    if manifest.execution_model_portable:
+    if portable_recipe is not None:
         model_template = _materialized_recipe(
-            manifest.execution_model_recipe,
+            portable_recipe,
             limits=_OPERATOR_RECIPE_LIMITS,
         )
         pipeline_template = (
@@ -767,9 +769,9 @@ def load_trained_operator(
         raise ValueError("Operator artifact model payload is invalid.") from error
     if stream.read(1):
         raise ValueError("Operator artifact model payload has trailing leaves.")
-    if manifest.execution_model_portable:
+    if portable_recipe is not None:
         if _structure_recipe(execution_model, path="execution_model") != dict(
-            manifest.execution_model_recipe
+            portable_recipe
         ):
             raise ValueError("Operator artifact execution-model structure changed.")
         if (

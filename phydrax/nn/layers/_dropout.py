@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Sequence
-from typing import cast, Literal
+from typing import cast, Literal, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -33,6 +33,9 @@ def _dropout_probabilities(
             raise ValueError("Dropout requires at least one hidden layer.")
         probabilities = (probability,) * count
     return probabilities
+
+
+_TreeT = TypeVar("_TreeT")
 
 
 class Dropout(_AbstractBaseModel):
@@ -94,7 +97,7 @@ class Dropout(_AbstractBaseModel):
         return AFFINE
 
 
-def inference_mode(tree, value: bool = True):
+def inference_mode(tree: _TreeT, value: bool = True) -> _TreeT:
     """Switch every inference-aware Equinox or Phydrax leaf in a PyTree."""
 
     return eqx.nn.inference_mode(tree, value)

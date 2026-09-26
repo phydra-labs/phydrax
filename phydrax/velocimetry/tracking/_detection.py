@@ -10,7 +10,8 @@ from numbers import Integral
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import DTypeLike
+from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
@@ -98,14 +99,14 @@ class ParticleDetectionPlan(StrictModule, NonTrainableState):
         )
 
 
-def _gaussian_kernel(sigma: float, dtype, /):
+def _gaussian_kernel(sigma: float, dtype: DTypeLike, /) -> Array:
     radius = max(1, int(3.0 * sigma + 0.5))
     coordinates = jnp.arange(-radius, radius + 1, dtype=dtype)
     kernel = jnp.exp(-0.5 * (coordinates / sigma) ** 2)
     return kernel / jnp.sum(kernel)
 
 
-def _separable_blur(image, sigma: float, /):
+def _separable_blur(image: Array, sigma: float, /) -> Array:
     kernel = _gaussian_kernel(sigma, image.dtype)
     values = image[None, None, :, :]
     vertical = kernel[:, None][None, None, :, :]

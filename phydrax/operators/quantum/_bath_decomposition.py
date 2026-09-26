@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ._pseudomode import BathCorrelationExpansion
 
@@ -51,9 +53,9 @@ def drude_lorentz_matsubara(
 
 
 def fit_bath_exponentials(
-    target,
-    times,
-    exponents,
+    target: Callable[[Array], ArrayLike],
+    times: ArrayLike,
+    exponents: ArrayLike,
     /,
     *,
     expansion_id: str,
@@ -105,8 +107,8 @@ def drude_lorentz_pade_from_poles(
     reorganization_energy: float,
     cutoff_frequency: float,
     temperature: float,
-    pade_poles,
-    reference_times,
+    pade_poles: ArrayLike,
+    reference_times: ArrayLike,
     /,
     *,
     reference_matsubara_terms: int = 128,

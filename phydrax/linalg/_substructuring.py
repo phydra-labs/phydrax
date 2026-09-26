@@ -10,6 +10,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -37,7 +38,7 @@ def _require_spd(value: np.ndarray, name: str, /) -> np.ndarray:
     return hermitian
 
 
-def _independent_rows(rows: np.ndarray, tolerance: float, /) -> np.ndarray:
+def _independent_rows(rows: np.ndarray, tolerance: float | np.floating, /) -> np.ndarray:
     if rows.shape[0] == 0:
         return rows
     retained: list[np.ndarray] = []
@@ -185,7 +186,7 @@ class PrimalConstraintPlan(StrictModule, NonTrainableState):
     global_dof_ids: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, global_dof_ids: ArrayLike = (), /) -> None:
+    def __init__(self, global_dof_ids: npt.ArrayLike = (), /) -> None:
         identifiers = np.asarray(global_dof_ids, dtype=np.int64)
         if identifiers.ndim != 1 or np.any(identifiers < 0):
             raise ValueError("Primal global DOF IDs must be one nonnegative vector.")

@@ -72,7 +72,9 @@ def solve_tridiagonal_lines(
     first_c = c[0] / first_safe
     first_d = d[0] / first_safe
 
-    def forward(carry, row):
+    def forward(
+        carry: tuple[Array, Array, Array], row: tuple[Array, Array, Array, Array]
+    ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array]]:
         previous_c, previous_d, minimum = carry
         a_row, b_row, c_row, d_row = row
         pivot = b_row - a_row * previous_c
@@ -91,7 +93,7 @@ def solve_tridiagonal_lines(
     modified_c = jnp.concatenate((first_c[None], tail_c), axis=0)
     modified_d = jnp.concatenate((first_d[None], tail_d), axis=0)
 
-    def backward(next_value, row):
+    def backward(next_value: Array, row: tuple[Array, Array]) -> tuple[Array, Array]:
         c_row, d_row = row
         value = d_row - c_row * next_value
         return value, value
@@ -109,8 +111,8 @@ def solve_tridiagonal_lines(
     rolled_upper = jnp.roll(value, -1, axis=axis_)
     lower_term = lower_ * rolled_lower
     upper_term = upper_ * rolled_upper
-    lower_location = [slice(None)] * value.ndim
-    upper_location = [slice(None)] * value.ndim
+    lower_location: list[slice | int] = [slice(None)] * value.ndim
+    upper_location: list[slice | int] = [slice(None)] * value.ndim
     lower_location[axis_] = 0
     upper_location[axis_] = value.shape[axis_] - 1
     lower_term = lower_term.at[tuple(lower_location)].set(0.0)

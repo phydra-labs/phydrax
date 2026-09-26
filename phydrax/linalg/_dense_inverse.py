@@ -35,7 +35,7 @@ def dense_inverse(
     flat_factor = factor.reshape((batch_count, dimension, dimension))
     flat_identity = identity.reshape((batch_count, dimension, dimension))
 
-    def solve_one(cholesky, right_hand_side):
+    def solve_one(cholesky: Array, right_hand_side: Array) -> Array:
         intermediate = jsp.linalg.solve_triangular(
             cholesky,
             right_hand_side,

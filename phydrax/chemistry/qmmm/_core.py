@@ -27,7 +27,7 @@ from .._surface import (
     PotentialEnergySurfaceCapabilities,
     PotentialEnergySurfaceEvaluation,
 )
-from ..electronic_structure._hartree_fock import NativeRHFPlan
+from ..electronic_structure._hartree_fock import NativeRHFPlan, SCFState
 
 
 class QuantumRegionPlan(StrictModule, NonTrainableState):
@@ -148,7 +148,7 @@ class PreparedQuantumRegion(StrictModule, NonTrainableState):
         )
         region_ids = (*plan.particle_ids, *link_ids)
         region_system = AtomisticSystemPlan(
-            region_ids,
+            np.asarray(region_ids, dtype=np.int64),
             numbers,
             masses,
             system.units,
@@ -576,7 +576,7 @@ class NativeRHFEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
             )
         )
 
-        def solve(nuclei, points):
+        def solve(nuclei: Array, points: Array) -> SCFState:
             return self.plan.solve_atomic_units(
                 nuclei * length_to_bohr,
                 embedding_positions_bohr=points * length_to_bohr,

@@ -9,6 +9,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -21,8 +22,8 @@ def spatial_integral(
     /,
     *,
     quad: dict,
-    kernel: Callable | None = None,
-    nonlinearity: Callable | None = None,
+    kernel: Callable[[jax.Array], jax.Array] | None = None,
+    nonlinearity: Callable[[Any], Any] | None = None,
     importance_weight: Callable[[jax.Array, jax.Array], jax.Array] | None = None,
     var: str = "x",
     time_var: str | None = None,
@@ -97,7 +98,9 @@ def spatial_integral(
     def _eval_g(val: Any) -> Any:
         return nonlinearity(val) if callable(nonlinearity) else val
 
-    def _op(*args, key=None, **kwargs):
+    def _op(
+        *args: Any, key: Key[jax.Array, ""] | None = None, **kwargs: Any
+    ) -> jax.Array:
         x = args[x_pos]
         if isinstance(x, tuple):
             raise ValueError("spatial_integral does not support coord-separable inputs.")
@@ -108,7 +111,7 @@ def spatial_integral(
 
         u_args = [args[i] for i in u_pos]
 
-        def per_y(y_sp):
+        def per_y(y_sp: jax.Array) -> Any:
             call_args = list(u_args)
             if u_var_idx is not None:
                 call_args[u_var_idx] = y_sp
@@ -137,7 +140,7 @@ def nonlocal_integral(
     u: DomainFunction,
     /,
     *,
-    integrand: Callable,
+    integrand: Callable[..., Any],
     quad: dict,
     importance_weight: Callable[[jax.Array, jax.Array], jax.Array] | None = None,
     var: str = "x",
@@ -217,7 +220,9 @@ def nonlocal_integral(
 
     u_var_idx = u.deps.index(var) if var in u.deps else None
 
-    def _op(*args, key=None, **kwargs):
+    def _op(
+        *args: Any, key: Key[jax.Array, ""] | None = None, **kwargs: Any
+    ) -> jax.Array:
         x_sp = args[x_pos]
         if isinstance(x_sp, tuple):
             raise ValueError("nonlocal_integral does not support coord-separable inputs.")
@@ -230,7 +235,7 @@ def nonlocal_integral(
         u_args = [args[i] for i in u_pos]
         ux = u.func(*u_args, key=key, **kwargs)
 
-        def per_y(y_sp):
+        def per_y(y_sp: jax.Array) -> Any:
             call_args = list(u_args)
             if u_var_idx is not None:
                 call_args[u_var_idx] = y_sp
@@ -243,7 +248,7 @@ def nonlocal_integral(
         else:
             Mw = jax.vmap(lambda yj: importance_weight(x_sp, yj))(y_space)
 
-        def per_ctx(y_sp_i, uy_i):
+        def per_ctx(y_sp_i: jax.Array, uy_i: jax.Array) -> Any:
             if t is None:
                 x_full = x_sp
                 y_full = y_sp_i

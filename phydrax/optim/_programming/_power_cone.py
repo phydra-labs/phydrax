@@ -193,7 +193,7 @@ def _projection_value(value: Array, exponent: float, /) -> Array:
     in_polar = _in_dual(-value, exponent)
     zero_tail = value[2] == 0.0
 
-    def general(_):
+    def general(_operand: None) -> Array:
         projected, _ = _power_root_projection(value, exponent)
         return projected
 
@@ -290,7 +290,7 @@ def _projection_jvp(
     in_polar = _in_dual(-value, exponent)
     zero_tail = value[2] == 0.0
 
-    def general(_):
+    def general(_: None) -> Array:
         matrix = _boundary_kkt_matrix(value, projected, exponent)
         right = jnp.concatenate((tangent, jnp.zeros(1, dtype=value.dtype)))
         return _kkt_solve(matrix, right)[:3]
@@ -326,7 +326,9 @@ def _homogeneous_scale(value: Array, /) -> Array:
 
 
 def _working_value(value: Array, /) -> Array:
-    working_dtype = jnp.float64 if jax.config.x64_enabled else jnp.float32
+    working_dtype = (
+        jnp.float64 if bool(jax.config.read("jax_enable_x64")) else jnp.float32
+    )
     return value.astype(jnp.result_type(value.dtype, working_dtype))
 
 
@@ -353,7 +355,9 @@ def _project_power_single(value: Array, exponent: float, /) -> Array:
 
 
 @_project_power_single.defjvp
-def _project_power_single_jvp(primals, tangents):
+def _project_power_single_jvp(
+    primals: tuple[Array, float], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     value, exponent = primals
     tangent, _ = tangents
     working = _working_value(value)

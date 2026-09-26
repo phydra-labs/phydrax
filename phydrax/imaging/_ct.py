@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 import numpy as np
+import numpy.typing as npt
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..measurement import (
@@ -20,10 +23,10 @@ from ..measurement import (
 from ..qualification import ReferenceArtifactManifest
 from ..units import conversion_factor, KILOGRAM_PER_CUBIC_METER, ONE
 from ._asset import ImageFieldSpec
-from ._core import MedicalImageAsset
+from ._core import MedicalImageAsset, MedicalImageSupport
 
 
-def _readonly(value, name: str, /) -> np.ndarray:
+def _readonly(value: npt.ArrayLike, name: str, /) -> np.ndarray:
     array = np.array(value, dtype=np.float64, copy=True)
     if array.dtype.hasobject:
         raise TypeError(f"{name} must not use object dtype.")
@@ -156,7 +159,9 @@ class HUToMaterialResult:
             raise ValueError("Calibrated density and fractions must share one support.")
         calibration_id = _identifier(self.calibration_id, "calibration_id")
         for asset in (self.density, self.material_fractions):
-            if asset.metadata.get("hu_calibration_id") != calibration_id:
+            # MedicalImageAsset normalizes metadata to a read-only mapping.
+            metadata = cast(Mapping[str, Any], asset.metadata)
+            if metadata.get("hu_calibration_id") != calibration_id:
                 raise ValueError(
                     "calibration_id must match both calibrated asset metadata records."
                 )
@@ -167,7 +172,7 @@ class HUToMaterialResult:
         object.__setattr__(self, "calibration_id", calibration_id)
 
     @property
-    def support(self):
+    def support(self) -> MedicalImageSupport:
         return self.density.support
 
 
@@ -254,7 +259,8 @@ def apply_hu_calibration(
         transformation_id=f"hu-to-material:{calibration.calibration_id}",
         calibration_ids=(calibration.calibration_id,),
     )
-    metadata = dict(asset.metadata)
+    # MedicalImageAsset normalizes metadata to a read-only mapping.
+    metadata = dict(cast(Mapping[str, Any], asset.metadata))
     metadata["hu_calibration_id"] = calibration.calibration_id
     metadata["hu_calibration_reference_id"] = calibration.reference.manifest_id
     metadata["material_fraction_uncertainty"] = (

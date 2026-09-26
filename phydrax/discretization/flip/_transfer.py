@@ -13,6 +13,7 @@ from ..._interpolation import GatherStencil
 from ..._sharp_measures import QualifiedSharpGeometry
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._tensor_entities import TensorEntityLayout
 from ..finite_volume import FaceVelocity, PreparedMACOperators
 from ..particle import ParticleDiscretization, ParticlePrecisionPolicy
 from ..splatting import (
@@ -102,7 +103,7 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             raise ValueError("FLIP particles and MAC grid dimensions must match.")
         grid = operators.discretization.grid
 
-        def prepared_for(layout):
+        def prepared_for(layout: TensorEntityLayout) -> PreparedParticleGridSplat:
             return ParticleGridSplatPlan(
                 grid,
                 location=grid.location(layout.offsets),
@@ -168,7 +169,7 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
     def _solid_aware_state(
         self,
         state: ParticleGridSplatState,
-        target_open_fraction,
+        target_open_fraction: ArrayLike,
         /,
     ) -> ParticleGridSplatState:
         fraction = jnp.asarray(target_open_fraction)

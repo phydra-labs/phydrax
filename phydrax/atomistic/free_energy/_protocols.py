@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypeVar
+from typing import TypeAlias, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -106,11 +106,17 @@ class MappedRelativeBindingResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
 
-_Result = TypeVar("_Result", bound=StrictModule)
-_Component = Any
+_Result = TypeVar(
+    "_Result",
+    SeparatedTopologyResult,
+    NeutralAbsoluteSolvationResult,
+    AbsoluteBindingResult,
+    MappedRelativeSolvationResult,
+    MappedRelativeBindingResult,
+)
 
 
-def _component_lineage(value, /) -> tuple | None:
+def _component_lineage(value: _Component, /) -> tuple[object, ...] | None:
     # Reduced free energies add only on one unit system and inverse-temperature
     # normalization, one sampling-bias contract, one mapping, and one orientation.
     # Legs of a thermodynamic cycle come from separate analyses of distinct
@@ -466,6 +472,14 @@ class MappedRelativeTransformationResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
 
+_Component: TypeAlias = (
+    FreeEnergyStateResult
+    | FreeEnergyProtocolLegResult
+    | MappedRelativeTransformationResult
+    | FreeEnergyCorrectionResult
+)
+
+
 class MappedRelativeTransformationPlan(StrictModule, NonTrainableState):
     """One mapped neutral source-to-destination transformation leg."""
 
@@ -504,8 +518,8 @@ class MappedRelativeTransformationPlan(StrictModule, NonTrainableState):
 
     def project(
         self,
-        result,
-        dataset,
+        result: object,
+        dataset: object,
         /,
     ) -> MappedRelativeTransformationResult:
         leg_result = self.leg.project(result, dataset)

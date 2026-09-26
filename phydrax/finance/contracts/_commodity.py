@@ -22,7 +22,7 @@ from ._rates import DeterministicCashflowReplay, PayReceive
 
 
 if TYPE_CHECKING:
-    from ..curves._core import CurveSet
+    from ..curves._core import CurveSet, PreparedCurve
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -94,7 +94,7 @@ def _curve(
     currency: Currency,
     role: str,
     /,
-):
+) -> PreparedCurve:
     curve = curves.curve(curve_id)
     definition = curve.definition
     if definition.valuation_date.ordinal != valuation_date.ordinal:
@@ -358,7 +358,7 @@ class ResolvedFXForward(AbstractResolvedContract):
             },
         )
 
-    def _curves(self, curves: CurveSet, /):
+    def _curves(self, curves: CurveSet, /) -> tuple[PreparedCurve, PreparedCurve]:
         quote = _curve(
             curves,
             self.quote_discount_curve_id,

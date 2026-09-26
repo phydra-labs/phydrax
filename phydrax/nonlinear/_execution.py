@@ -9,7 +9,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
@@ -78,13 +78,13 @@ class ShardedNonlinearPolicy(StrictModule):
         self.norm_reduction = norm_reduction
         self.replicated_status = bool(replicated_status)
 
-    def place_state(self, state: PyTree[Any], /):
+    def place_state(self, state: PyTree[Any], /) -> PyTree[Array]:
         return jax.tree.map(
             lambda value: jax.device_put(value, self.state_sharding),
             state,
         )
 
-    def place_residual(self, residual: PyTree[Any], /):
+    def place_residual(self, residual: PyTree[Any], /) -> PyTree[Array]:
         return jax.tree.map(
             lambda value: jax.device_put(value, self.residual_sharding),
             residual,
@@ -154,13 +154,20 @@ class MixedPrecisionRootExecution(StrictModule):
         )
         model_initial = self.precision.state(initial_state)
 
-        def model_residual(state, current_args):
+        def model_residual(
+            state: PyTree[Any], current_args: Any
+        ) -> tuple[PyTree[Array], Any]:
             residual, auxiliary = problem.residual_function(state, current_args), None
             if problem.has_aux:
                 residual, auxiliary = residual
             return self.precision.residual(residual), auxiliary
 
-        def model_validity(state, residual, auxiliary, current_args):
+        def model_validity(
+            state: PyTree[Any],
+            residual: PyTree[Any],
+            auxiliary: Any,
+            current_args: Any,
+        ) -> ArrayLike:
             assert problem.validity_function is not None
             return problem.validity_function(
                 state,

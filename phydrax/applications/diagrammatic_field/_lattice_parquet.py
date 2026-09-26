@@ -184,7 +184,15 @@ class PreparedLatticeParquet(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
-        self, plan, vertex, bubbles, gathers, inverses, routing_residual, prepared_id, /
+        self,
+        plan: LatticeParquetPlan,
+        vertex: MatsubaraTwoParticleGreenFunction,
+        bubbles: Array,
+        gathers: Array,
+        inverses: Array,
+        routing_residual: Array,
+        prepared_id: str,
+        /,
     ) -> None:
         self.plan = plan
         self.fully_irreducible_vertex = vertex

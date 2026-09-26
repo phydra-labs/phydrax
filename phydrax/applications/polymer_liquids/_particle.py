@@ -172,7 +172,8 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
         for indices, mask in zip(layout_indices, layout_mask, strict=True):
             chain = indices[mask]
             expected_bonds.extend(
-                tuple(sorted((int(left), int(right)))) for left, right in pairwise(chain)
+                (min(int(left), int(right)), max(int(left), int(right)))
+                for left, right in pairwise(chain)
             )
             expected_angles.extend(
                 (int(left), int(center), int(right))
@@ -271,6 +272,8 @@ def kremer_grest_evidence(
     maximum_fraction = jnp.max(fraction)
     margin = 1.0 - maximum_fraction
     integrator = dynamics.integrator
+    # PreparedKremerGrestProfile admits only BAOAB dynamics at construction.
+    assert isinstance(integrator, BAOABLangevinPlan)
     dtype = state.kinematics.positions.dtype
     decay = jnp.exp(-jnp.asarray(integrator.friction * integrator.step_size, dtype=dtype))
     stationary = (

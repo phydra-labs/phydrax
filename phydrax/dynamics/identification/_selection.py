@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import normalize_least_squares_design
@@ -19,7 +19,12 @@ from ..._strict import StrictModule
 from ...data_utils import train_test_split_indices
 from .._evolution import DiscreteEvolution
 from .._layout import InputLayout
-from .._system import AbstractInputPolicy, DiscreteStepContext
+from .._system import (
+    AbstractInputPolicy,
+    ContinuousSystem,
+    DiscreteStepContext,
+    DiscreteSystem,
+)
 from ._sindy import _result_from_regression, SINDyResult
 from ._sindy_design import SINDyDesign, SINDyDesignDiagnostics, SINDyProblem
 from ._sparse_regression import AbstractSparseRegression, SparseRegressionResult
@@ -152,7 +157,9 @@ class _ObservedInputPolicy(AbstractInputPolicy):
     alignment: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def evaluate(self, coordinate, state, args=None, /) -> Array:
+    def evaluate(
+        self, coordinate: ArrayLike, state: ArrayLike, args: object = None, /
+    ) -> Array:
         del state, args
         query = jnp.asarray(coordinate)
         index = jnp.clip(
@@ -172,14 +179,16 @@ class _ObservedInputPolicy(AbstractInputPolicy):
     def evaluate_step(
         self,
         context: DiscreteStepContext,
-        state,
-        args=None,
+        state: ArrayLike,
+        args: object = None,
         /,
     ) -> Array:
         return self.evaluate(context.source, state, args)
 
 
-def _case_input_policy(problem: SINDyProblem, case: int, /):
+def _case_input_policy(
+    problem: SINDyProblem, case: int, /
+) -> _ObservedInputPolicy | None:
     data = problem.data
     if data.inputs is None:
         return None
@@ -250,7 +259,10 @@ def _rollout_error(
         policy = _case_input_policy(problem, case)
         current = flat_states[case, start].reshape(data.state_layout.shape)
         if result.formulation == "discrete":
-            evolution = DiscreteEvolution(system, input_policy=policy)
+            # SINDyResult.to_system builds a DiscreteSystem for discrete formulations.
+            evolution = DiscreteEvolution(
+                cast(DiscreteSystem, system), input_policy=policy
+            )
             valid = jnp.asarray(True)
             for step in range(start, end):
                 advanced = evolution.advance(
@@ -264,7 +276,10 @@ def _rollout_error(
         else:
             from ...solver import DiffraxEvolution
 
-            evolution = DiffraxEvolution(system, input_policy=policy)
+            # Non-discrete SINDy formulations build a ContinuousSystem.
+            evolution = DiffraxEvolution(
+                cast(ContinuousSystem, system), input_policy=policy
+            )
             advanced = evolution.advance(
                 current,
                 flat_coordinates[case, start],

@@ -34,16 +34,16 @@ class CoupledClusterCheckpoint(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        singles_amplitudes,
-        doubles_amplitudes,
+        singles_amplitudes: ArrayLike,
+        doubles_amplitudes: ArrayLike,
         completed_iterations: int,
         provider_id: str,
         plan_id: str,
         store_id: str,
         /,
         *,
-        lambda_singles=None,
-        lambda_doubles=None,
+        lambda_singles: ArrayLike | None = None,
+        lambda_doubles: ArrayLike | None = None,
     ) -> None:
         singles = jnp.asarray(singles_amplitudes)
         doubles = jnp.asarray(doubles_amplitudes, dtype=singles.dtype)
@@ -126,22 +126,22 @@ class CoupledClusterResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        correlation_energy,
-        triples_correction,
-        total_energy,
-        singles_amplitudes,
-        doubles_amplitudes,
-        amplitude_residual,
-        lambda_residual,
+        correlation_energy: ArrayLike,
+        triples_correction: ArrayLike,
+        total_energy: ArrayLike,
+        singles_amplitudes: ArrayLike,
+        doubles_amplitudes: ArrayLike,
+        amplitude_residual: ArrayLike,
+        lambda_residual: ArrayLike,
         iterations: int,
-        successful,
+        successful: ArrayLike,
         provider_id: str,
         plan_id: str,
         store_id: str,
         /,
         *,
-        lambda_singles=None,
-        lambda_doubles=None,
+        lambda_singles: ArrayLike | None = None,
+        lambda_doubles: ArrayLike | None = None,
     ) -> None:
         singles = jnp.asarray(singles_amplitudes)
         doubles = jnp.asarray(doubles_amplitudes, dtype=singles.dtype)
@@ -350,14 +350,14 @@ class MolecularCoupledClusterGradientResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        reference_energy,
-        correlation_energy,
-        triples_correction,
-        gradient,
-        iterations,
-        scf_converged,
-        amplitudes_converged,
-        lambda_converged,
+        reference_energy: ArrayLike,
+        correlation_energy: ArrayLike,
+        triples_correction: ArrayLike,
+        gradient: ArrayLike,
+        iterations: ArrayLike,
+        scf_converged: ArrayLike,
+        amplitudes_converged: ArrayLike,
+        lambda_converged: ArrayLike,
         reference: str,
         provider_id: str,
         plan_id: str,

@@ -233,7 +233,7 @@ def round_to_minor_atoms(
         raise TypeError("monetary must be a MonetaryArray.")
     if not isinstance(rounding, MonetaryRounding):
         raise TypeError("rounding must be a MonetaryRounding.")
-    if not jax.config.jax_enable_x64:
+    if not jax.config.read("jax_enable_x64"):
         raise RuntimeError("Exact monetary atoms require JAX 64-bit mode.")
     scales = jnp.asarray(
         tuple(currency.atoms_per_unit for currency in monetary.currencies),

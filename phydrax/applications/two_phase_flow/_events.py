@@ -90,8 +90,8 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
         ):
             if grid_axis.periodic:
                 continue
-            lower = [slice(None)] * len(shape)
-            upper = [slice(None)] * len(shape)
+            lower: list[slice | int] = [slice(None)] * len(shape)
+            upper: list[slice | int] = [slice(None)] * len(shape)
             lower[axis] = 0
             upper[axis] = -1
             mask = mask.at[tuple(lower)].set(True)
@@ -166,7 +166,7 @@ class TwoPhaseCapabilityEventPlan(StrictModule, NonTrainableState):
                 continue
             on_axis_boundary = jnp.zeros_like(boundary)
             for index in (0, -1):
-                location = [slice(None)] * alpha.ndim
+                location: list[slice | int] = [slice(None)] * alpha.ndim
                 location[axis] = index
                 on_axis_boundary = on_axis_boundary.at[tuple(location)].set(True)
             local = jnp.where(

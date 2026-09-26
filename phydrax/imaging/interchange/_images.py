@@ -38,12 +38,13 @@ from ...units import (
     UnitDefinition,
 )
 from .._asset import ImageFieldSpec
-from .._core import DeidentificationEvidence, MedicalImageAsset
+from .._core import DeidentificationEvidence, ImageIndexAffine, MedicalImageAsset
 from ._common import (
     _decode_stored_pixels,
     _float,
     _floats,
     _load_verified_dicom,
+    _LoadedDICOM,
     _optional,
     _orientation,
     _reference_graph,
@@ -55,7 +56,13 @@ from ._common import (
     _sequence_item,
     _text,
 )
-from ._contracts import DICOMImportReport, DICOMProfileError, DICOMResourcePolicy
+from ._contracts import (
+    DICOMImportReport,
+    DICOMProfile,
+    DICOMProfileError,
+    DICOMReferenceGraph,
+    DICOMResourcePolicy,
+)
 
 
 _CT_IMAGE_STORAGE = "1.2.840.10008.5.1.4.1.1.2"
@@ -189,13 +196,13 @@ def _pet_spec() -> ImageFieldSpec:
 
 def _make_image_result(
     *,
-    profile: str,
-    loaded: Sequence[Any],
-    graph: Any,
+    profile: DICOMProfile,
+    loaded: Sequence[_LoadedDICOM],
+    graph: DICOMReferenceGraph,
     asset_id: str,
     modality: str,
     values: np.ndarray,
-    affine: Any,
+    affine: ImageIndexAffine,
     spec: ImageFieldSpec,
     deidentification: DeidentificationEvidence,
     metadata: dict[str, str | int | float | bool],

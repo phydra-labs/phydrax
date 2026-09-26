@@ -8,14 +8,14 @@ from collections.abc import Sequence
 from enum import IntEnum
 from math import isfinite, prod
 from numbers import Integral
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import inexact_result_type
@@ -38,6 +38,11 @@ from ..operators.quantum import (
 
 ProductFormulaOrder = Literal[1, 2]
 LocalHamiltonianDifferentiationMode = Literal["autodiff", "reversible-product-formula"]
+# (state, state cotangent, generator gradients, coefficient gradients, time
+#  gradients, hbar gradient, maximum reconstruction residual)
+_ReverseCarry: TypeAlias = tuple[
+    Array, Array, tuple[Array, ...], Array, Array, Array, Array
+]
 
 
 class LocalHamiltonianTerm(StrictModule):
@@ -720,7 +725,9 @@ def _reversible_primal(
     generators, coefficients, time_grid, hbar, initial_state = inputs
     intervals = jnp.diff(time_grid)
 
-    def step(state, values):
+    def step(
+        state: Array, values: tuple[Array, Array]
+    ) -> tuple[Array, tuple[Array, Array]]:
         interval, coefficient_row = values
         evolved, residuals = _product_formula_arrays(
             state,
@@ -761,14 +768,14 @@ def _reversible_evolution(
 
 @_reversible_evolution.def_fwd
 def _reversible_evolution_forward(
-    perturbed,
+    perturbed: PyTree[bool],
     inputs: tuple[tuple[Array, ...], Array, Array, Array, Array],
     layout: HilbertRegisterLayout,
     targets: tuple[tuple[str, ...], ...],
     order: ProductFormulaOrder,
     reconstruction_tolerance: float,
     /,
-):
+) -> tuple[tuple[Array, Array, Array], Array]:
     del perturbed, reconstruction_tolerance
     output = _reversible_primal(inputs, layout, targets, order)
     return output, output[0]
@@ -777,15 +784,15 @@ def _reversible_evolution_forward(
 @_reversible_evolution.def_bwd
 def _reversible_evolution_backward(
     final_state: Array,
-    grad_output,
-    perturbed,
+    grad_output: tuple[Array | None, Array | None, Array | None],
+    perturbed: PyTree[bool],
     inputs: tuple[tuple[Array, ...], Array, Array, Array, Array],
     layout: HilbertRegisterLayout,
     targets: tuple[tuple[str, ...], ...],
     order: ProductFormulaOrder,
     reconstruction_tolerance: float,
     /,
-):
+) -> tuple[tuple[Array, ...], Array, Array, Array, Array]:
     del perturbed
     generators, coefficients, time_grid, hbar, initial_state = inputs
     final_bar = grad_output[0]
@@ -797,7 +804,7 @@ def _reversible_evolution_backward(
     hbar_gradient = jnp.zeros_like(hbar)
     reverse_indices = jnp.arange(coefficients.shape[0] - 1, -1, -1)
 
-    def reverse_step(carry, index):
+    def reverse_step(carry: _ReverseCarry, index: Array) -> tuple[_ReverseCarry, None]:
         (
             current_state,
             current_bar,
@@ -821,12 +828,12 @@ def _reversible_evolution_backward(
         )
 
         def interval_evolution(
-            generator_values,
-            coefficient_values,
-            duration,
-            hbar_value,
-            state_value,
-        ):
+            generator_values: tuple[Array, ...],
+            coefficient_values: Array,
+            duration: Array,
+            hbar_value: Array,
+            state_value: Array,
+        ) -> Array:
             return _product_formula_arrays(
                 state_value,
                 generator_values,
@@ -959,7 +966,9 @@ def _solve_autodiff(
             saved,
         )
 
-    def step(carry, inputs):
+    def step(
+        carry: tuple[Array, Array], inputs: tuple[Array, Array, Array]
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         state, saved_states = carry
         index, interval, coefficients = inputs
         evolved, residuals = _product_formula_step(

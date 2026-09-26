@@ -142,7 +142,10 @@ class PseudoTransient(AbstractNonlinearMethod):
         *,
         termination: NonlinearTermination,
         args: Any = None,
-        _initial_evaluation=None,
+        _initial_evaluation: tuple[
+            NonlinearSystemProblem, PyTree[Array], PyTree[Array], Any
+        ]
+        | None = None,
     ) -> NonlinearResult:
         self.precision.validate_tolerance(termination.absolute_residual)
         if _initial_evaluation is None:
@@ -157,6 +160,7 @@ class PseudoTransient(AbstractNonlinearMethod):
             initial_evaluations = 0
         if problem_.state_space is None or problem_.residual_space is None:
             raise ValueError("Pseudo-transient solve requires bound spaces.")
+        state_space = problem_.state_space
         if not problem_.state_space.compatible(problem_.residual_space):
             raise ValueError(
                 "Pseudo-transient mass identity requires compatible state/residual spaces."
@@ -204,7 +208,7 @@ class PseudoTransient(AbstractNonlinearMethod):
             ).astype(jnp.int32),
         )
 
-        def condition(current):
+        def condition(current: _PseudoRun) -> Array:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -222,9 +226,9 @@ class PseudoTransient(AbstractNonlinearMethod):
                 & within_linear
             )
 
-        def body(current):
+        def body(current: _PseudoRun) -> _PseudoRun:
             jacobian = prepare_jacobian(problem_, current.state, self.jacobian, args)
-            identity = IdentityLinearOperator(problem_.state_space)
+            identity = IdentityLinearOperator(state_space)
             operator = SumLinearOperator(
                 jacobian.operator,
                 ScaledLinearOperator(identity, 1.0 / current.pseudo_step),

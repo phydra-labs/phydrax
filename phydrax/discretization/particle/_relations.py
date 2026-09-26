@@ -13,6 +13,7 @@ partially modified graph.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import IntEnum
 from math import isfinite
 
@@ -136,14 +137,14 @@ def make_pair_relation_events(
     parameter_width: int,
     /,
     *,
-    event_ids: ArrayLike = (),
-    event_kind: ArrayLike = (),
+    event_ids: ArrayLike | Sequence[int] = (),
+    event_kind: ArrayLike | Sequence[int] = (),
     valid: ArrayLike | None = None,
-    relation_ids: ArrayLike = (),
-    relation_incarnations: ArrayLike = (),
-    left: ArrayLike = (),
-    right: ArrayLike = (),
-    relation_kind: ArrayLike = (),
+    relation_ids: ArrayLike | Sequence[int] = (),
+    relation_incarnations: ArrayLike | Sequence[int] = (),
+    left: ArrayLike | Sequence[int] = (),
+    right: ArrayLike | Sequence[int] = (),
+    relation_kind: ArrayLike | Sequence[int] = (),
     parameters: ArrayLike | None = None,
     dtype: np.dtype | type = jnp.float64,
 ) -> PairRelationEventBatch:
@@ -165,7 +166,7 @@ def make_pair_relation_events(
     if event_values.ndim != 1 or count > capacity:
         raise ValueError("event_kind must be rank one and fit event_capacity.")
 
-    def padded(values: ArrayLike, fill: int, name: str) -> np.ndarray:
+    def padded(values: ArrayLike | Sequence[int], fill: int, name: str) -> np.ndarray:
         array = np.asarray(values, dtype=np.int32)
         if array.size == 0 and count:
             array = np.full((count,), fill, dtype=np.int32)

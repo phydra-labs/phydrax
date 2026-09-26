@@ -28,6 +28,7 @@ from ._structure import _validate_label, NumPoints, PointBatch, SampleLayout
 
 
 if TYPE_CHECKING:
+    from ._components import DomainComponent
     from ._function import DomainFunction
     from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 
@@ -483,7 +484,7 @@ class TrajectoryDatasetDomain(JointFactor):
 
         data_samples = self.input_rows(case_idx)
 
-        def _to_field(v: ArrayLike):
+        def _to_field(v: ArrayLike) -> cx.AxisArray:
             arr = jnp.asarray(v)
             if arr.ndim == 0:
                 raise ValueError(
@@ -529,7 +530,7 @@ def _sample_valid_cases(
 
 def _component_times(
     domain: TrajectoryDatasetDomain,
-    component,
+    component: DomainComponent,
     case_indices: Array,
     n: int,
     key: Key[Array, ""],
@@ -584,7 +585,7 @@ def _component_times(
 
 
 def sample_trajectory_component(
-    component,
+    component: DomainComponent,
     num_points: NumPoints,
     *,
     structure: SampleLayout,
@@ -650,7 +651,7 @@ def sample_trajectory_component(
 
 
 def trajectory_default_quadrature_total_weight(
-    component, batch: PointBatch, /
+    component: DomainComponent, batch: PointBatch, /
 ) -> cx.AxisArray | None:
     domain = component.domain
     if not isinstance(domain, TrajectoryDatasetDomain):
@@ -711,7 +712,7 @@ def trajectory_default_quadrature_total_weight(
 
 
 def trajectory_quadrature_weights_by_axis(
-    component, batch: PointBatch, /
+    component: DomainComponent, batch: PointBatch, /
 ) -> Mapping[str, cx.AxisArray] | None:
     domain = component.domain
     if not isinstance(domain, TrajectoryDatasetDomain):

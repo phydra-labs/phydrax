@@ -22,6 +22,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from ...._fingerprint import canonical_fingerprint
@@ -373,7 +374,7 @@ class ZhangSinoatrialModel(StrictModule, NonTrainableState):
         )
 
     def initialize(
-        self, batch_shape: Sequence[int] = (), *, dtype: jnp.dtype | None = None
+        self, batch_shape: Sequence[int] = (), *, dtype: DTypeLike | None = None
     ) -> SinoatrialState:
         shape = _shape(batch_shape)
         resolved_dtype = jnp.asarray(0.0).dtype if dtype is None else jnp.dtype(dtype)
@@ -720,7 +721,7 @@ class InadaAtrioventricularModel(StrictModule, NonTrainableState):
         )
 
     def initialize(
-        self, batch_shape: Sequence[int] = (), *, dtype: jnp.dtype | None = None
+        self, batch_shape: Sequence[int] = (), *, dtype: DTypeLike | None = None
     ) -> AtrioventricularState:
         shape = _shape(batch_shape)
         resolved_dtype = jnp.asarray(0.0).dtype if dtype is None else jnp.dtype(dtype)
@@ -1018,7 +1019,7 @@ class ZhangSinoatrialReactionAdapter:
     def membrane_surface_to_volume_per_mm(self) -> float:
         return self.scaling.membrane_surface_to_volume_per_mm
 
-    def _parameters(self, parameters: Array | None, dtype: object) -> Array:
+    def _parameters(self, parameters: Array | None, dtype: DTypeLike) -> Array:
         if parameters is None:
             return jnp.asarray(self.default_parameters, dtype=dtype)
         return self.parameter_layout.require_shape(parameters).astype(dtype)
@@ -1031,7 +1032,7 @@ class ZhangSinoatrialReactionAdapter:
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array:
         return _san_reaction_state(self.cell_model.initialize(batch_shape, dtype=dtype))
 
@@ -1339,7 +1340,7 @@ class InadaAtrioventricularReactionAdapter:
     def membrane_surface_to_volume_per_mm(self) -> float:
         return self.scaling.membrane_surface_to_volume_per_mm
 
-    def _parameters(self, parameters: Array | None, dtype: object) -> Array:
+    def _parameters(self, parameters: Array | None, dtype: DTypeLike) -> Array:
         if parameters is None:
             return jnp.asarray(self.default_parameters, dtype=dtype)
         return self.parameter_layout.require_shape(parameters).astype(dtype)
@@ -1352,7 +1353,7 @@ class InadaAtrioventricularReactionAdapter:
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array:
         return _av_reaction_state(self.cell_model.initialize(batch_shape, dtype=dtype))
 

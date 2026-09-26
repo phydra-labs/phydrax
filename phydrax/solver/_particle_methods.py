@@ -13,7 +13,9 @@ from jaxtyping import Array
 from .._fingerprint import canonical_fingerprint
 from .._numerics._ssp_runge_kutta import ssprk33_step
 from .._trainable import NonTrainableState
+from ..discretization.flip import FLIPRuntimeState
 from ..discretization.particle import (
+    DEMRuntimeState,
     PreparedDFSPH,
     PreparedIISPH,
     PreparedSoftSphereDEMDynamics,
@@ -156,7 +158,7 @@ class DEMFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
         self,
         step_index: Array,
         time: Array,
-        state,
+        state: DEMRuntimeState,
         step_size: Array,
         args: Any,
         /,
@@ -190,7 +192,7 @@ class FLIPFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
         self,
         step_index: Array,
         time: Array,
-        state,
+        state: FLIPRuntimeState,
         step_size: Array,
         args: Any,
         /,

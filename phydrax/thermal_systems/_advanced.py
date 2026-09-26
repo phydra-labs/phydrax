@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
 def rohsenow_boiling_heat_flux(
@@ -16,7 +16,7 @@ def rohsenow_boiling_heat_flux(
     prandtl: float,
     surface_coefficient: float = 0.013,
     /,
-):
+) -> Array:
     gravity = 9.80665
     factor = (
         float(viscosity_pa_s)
@@ -44,7 +44,7 @@ def ablation_recession_rate(
     effective_heat_of_ablation_j_kg: float,
     density_kg_m3: float,
     /,
-):
+) -> Array:
     return jnp.asarray(surface_heat_flux_w_m2) / (
         float(effective_heat_of_ablation_j_kg) * float(density_kg_m3)
     )

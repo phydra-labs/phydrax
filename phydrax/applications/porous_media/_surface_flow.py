@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -12,6 +14,9 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+
+
+_EdgeStates: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
 
 
 class SurfaceFlowState(StrictModule):
@@ -160,7 +165,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
         momentum = volume[:, None] * velocity
         return SurfaceFlowState(volume, momentum, jnp.asarray(0.0), self.plan_id)
 
-    def _edge_states(self, state: SurfaceFlowState):
+    def _edge_states(self, state: SurfaceFlowState) -> _EdgeStates:
         depth = state.water_volume_m3 / self.cell_areas_m2
         velocity = state.momentum_m4_s / jnp.where(
             state.water_volume_m3[:, None] > 0,
@@ -203,7 +208,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
             neighbor,
         )
 
-    def _fluxes(self, state: SurfaceFlowState):
+    def _fluxes(self, state: SurfaceFlowState) -> tuple[Array, Array, Array, Array]:
         (
             left_depth,
             right_depth,

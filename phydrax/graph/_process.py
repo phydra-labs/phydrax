@@ -43,7 +43,7 @@ def _tree_axpy(
             return out
         return jtu.tree_map(lambda y: _expand_mask(mask, y).astype(y.dtype) * y, out)
 
-    def _leaf(x, d):
+    def _leaf(x: jnp.ndarray, d: jnp.ndarray) -> jnp.ndarray:
         y = x + scale * d
         if mask is None:
             return y

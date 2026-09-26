@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -451,7 +451,8 @@ def link_wrong_way_risk(
             sample_axes=0,
             independent=weighting.iid,
         )
-        likelihood = jnp.exp(target.log_weights)
+        # A native measure change carries a plain Array log-likelihood ratio.
+        likelihood = jnp.exp(cast(Array, target.log_weights))
         support_valid = weighting.valid & jnp.asarray(target.mask, dtype=jnp.bool_)
     if likelihood.shape != weighting.weights.shape:
         raise ValueError("WWR likelihood must have one value per path.")
@@ -539,11 +540,9 @@ def simulate_exposure(
         raise ValueError("Default event paths must match the trade-value path axis.")
     if weighting.weights.shape != (path_count,):
         raise ValueError("Path weighting must match the trade-value path axis.")
-    if plan.default_dependence == "wrong_way":
-        if (
-            wrong_way_result is None
-            or wrong_way_result.link_id != plan.wrong_way_risk.link_id
-        ):
+    plan_link = plan.wrong_way_risk
+    if plan_link is not None:
+        if wrong_way_result is None or wrong_way_result.link_id != plan_link.link_id:
             raise ValueError(
                 "Wrong-way exposure requires weighting from the plan's WWR link."
             )
@@ -561,11 +560,10 @@ def simulate_exposure(
         if wrong_way_result is not None:
             raise ValueError("Independent exposure does not accept WWR weighting.")
         active_weighting = weighting
-    if plan.default_dependence == "wrong_way":
-        link = plan.wrong_way_risk
+    if plan_link is not None:
         if (
-            trade_values.coupling_id != link.coupling_id
-            or counterparty_default.coupling_id != link.coupling_id
+            trade_values.coupling_id != plan_link.coupling_id
+            or counterparty_default.coupling_id != plan_link.coupling_id
         ):
             raise ValueError("Shared WWR coupling identities do not match the plan link.")
     elif (

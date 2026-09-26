@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -34,6 +34,8 @@ from ..linalg import (
 
 
 MomentumPredictor = Callable[[Array, Array, Any], Array]
+# velocity, face velocity, pressure, residual history, statuses, converged
+_CorrectorCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class _WeightedGaugedPressureAction(StrictModule, NonTrainableState):
@@ -364,7 +366,7 @@ class UnstructuredPressureCorrectionPlan(StrictModule, NonTrainableState):
             predicted
         ).astype(dtype)
 
-        def body(index, carry):
+        def body(index: Array, carry: _CorrectorCarry) -> _CorrectorCarry:
             velocity_, face_, pressure_, history_, statuses_, converged_ = carry
             result = self.projection.project(
                 velocity_,

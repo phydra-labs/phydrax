@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Literal
+from typing import cast, Literal, SupportsInt
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -45,7 +45,8 @@ class BundledPretrainedOperator(StrictModule):
                 spectral_weight[..., :modes],
             )
             source_size = source.shape[-2]
-            target_size = source_size if query is None else int(query)
+            # FNO queries are scalar target resolutions; int() rejects all others.
+            target_size = source_size if query is None else int(cast(SupportsInt, query))
             if target_size != source_size:
                 mixed = mixed * (target_size / source_size)
             physical = jnp.fft.irfft(mixed, n=target_size, axis=-2)

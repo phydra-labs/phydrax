@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -68,7 +70,7 @@ class GaussianIntegralDerivativePlan(StrictModule, NonTrainableState):
         coordinate = jnp.asarray(positions)
         charges = jnp.asarray(nuclear_charges, dtype=coordinate.dtype)
 
-        def differentiate(function):
+        def differentiate(function: Callable[[Array], Array]) -> Array:
             derivative = jax.jacfwd(function)
             return (
                 derivative(coordinate)

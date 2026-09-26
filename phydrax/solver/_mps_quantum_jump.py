@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -18,6 +19,10 @@ from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..nonlinear import scalar_root, ScalarRootProblem, TOMS748
 from ..tensor_network import MatrixProductState, NearestNeighborHamiltonian, tebd_step
+
+
+if TYPE_CHECKING:
+    from ..tensor_network._tebd import TEBDEvidence
 
 
 class LocalMPSJump(StrictModule):
@@ -145,13 +150,13 @@ def _nonhermitian_mps_step(
     state: MatrixProductState,
     duration: Array,
     maximum_bond_dimension: int,
-):
+) -> tuple[MatrixProductState, TEBDEvidence]:
     normals: dict[int, Array] = {}
     for jump in problem.jumps:
         normal = jnp.conj(jump.operator.T) @ jump.operator
         normals[jump.site] = normals.get(jump.site, jnp.zeros_like(normal)) + normal
 
-    def damp(current, scale):
+    def damp(current: MatrixProductState, scale: Array) -> MatrixProductState:
         result = current
         for site, normal in sorted(normals.items()):
             gate = jsp.linalg.expm(-scale * normal)
@@ -245,7 +250,7 @@ def solve_mps_quantum_jump(
                 remaining = 0.0
                 break
 
-            def survival_residual(event_duration, args):
+            def survival_residual(event_duration: Array, args: object) -> Array:
                 del args
                 probe, _ = _nonhermitian_mps_step(
                     problem,

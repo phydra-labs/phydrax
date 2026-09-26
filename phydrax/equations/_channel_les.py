@@ -17,11 +17,17 @@ from .._fingerprint import canonical_fingerprint
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization.spectral import TensorSpectralDiscretization
+from ..discretization.spectral import (
+    ChannelStokesPlan,
+    PreparedChannelStokesSolver,
+    PreparedPseudospectralMethod,
+    TensorSpectralDiscretization,
+)
 from ._channel_flow import (
     ChannelVelocityDiagnostics,
     CompiledChannelFlowDynamics,
 )
+from ._incompressible import IncompressibleFlowProblem
 from ._les_closures import (
     AlgebraicLESInputs,
     LESFilterScale,
@@ -278,11 +284,11 @@ class CompiledChannelLESDynamics(StrictModule):
             raise ValueError(
                 "Prepared LES model provenance does not match the retained channel grid."
             )
-        geometry = ChannelLESFilterGeometry(
-            discretization,
-            base.spatial_method.dealiasing.evaluation,
-        )
-        evaluation_axis = base.spatial_method.dealiasing.evaluation.axes[1]
+        evaluation = base.spatial_method.dealiasing.evaluation
+        # Dealiasing keeps the tensor family of the channel discretization.
+        assert isinstance(evaluation, TensorSpectralDiscretization)
+        geometry = ChannelLESFilterGeometry(discretization, evaluation)
+        evaluation_axis = evaluation.axes[1]
         if (
             evaluation_axis.modal_transform is None
             or evaluation_axis.derivative_matrix is None
@@ -346,19 +352,19 @@ class CompiledChannelLESDynamics(StrictModule):
         self.source_hash = base.source_hash
 
     @property
-    def problem(self):
+    def problem(self) -> IncompressibleFlowProblem:
         return self.base.problem
 
     @property
-    def stokes_plan(self):
+    def stokes_plan(self) -> ChannelStokesPlan:
         return self.base.stokes_plan
 
     @property
-    def spatial_method(self):
+    def spatial_method(self) -> PreparedPseudospectralMethod:
         return self.base.spatial_method
 
     @property
-    def discretization(self):
+    def discretization(self) -> TensorSpectralDiscretization:
         return self.base.discretization
 
     @property
@@ -383,7 +389,7 @@ class CompiledChannelLESDynamics(StrictModule):
     def reconstruct_state(self, state: ArrayLike, /) -> Array:
         return self.base.reconstruct_state(state)
 
-    def prepare_stokes(self, shift: ArrayLike, /):
+    def prepare_stokes(self, shift: ArrayLike, /) -> PreparedChannelStokesSolver:
         return self.base.prepare_stokes(shift)
 
     def evaluate_subgrid(self, state: ArrayLike, /) -> ChannelLESEvaluation:
@@ -391,6 +397,8 @@ class CompiledChannelLESDynamics(StrictModule):
         value = self.admissible_modes(state)
         dealiasing = self.spatial_method.dealiasing
         evaluation = dealiasing.evaluation
+        # Dealiasing keeps the tensor family of the channel discretization.
+        assert isinstance(evaluation, TensorSpectralDiscretization)
         padded = dealiasing.embed(value)
         velocity = evaluation.reconstruct(padded)
         derivative_modes = tuple(
@@ -444,6 +452,8 @@ class CompiledChannelLESDynamics(StrictModule):
         self, evaluation: ChannelLESEvaluation, /
     ) -> ChannelLESEnergyLedger:
         grid = self.spatial_method.dealiasing.evaluation
+        # Dealiasing keeps the tensor family of the channel discretization.
+        assert isinstance(grid, TensorSpectralDiscretization)
         weights = grid.quadrature_weights
         gradient_squared = ein.contract(
             "...ij,...ij->...",
@@ -599,10 +609,11 @@ def channel_les_filter(
         "fourier",
     ):
         raise ValueError("Channel LES requires a Fourier x Chebyshev x Fourier grid.")
+    x_name, y_name, z_name = discretization.plan.axis_names
     return ResolvedLESFilter(
         "fourier-chebyshev-fourier-implicit-grid",
         family="implicit-grid-volume",
-        axis_names=tuple(discretization.plan.axis_names),
+        axis_names=(x_name, y_name, z_name),
         topology="tensor-product",
         boundary_class="wall-bounded",
         scale_rule="volume-equivalent",

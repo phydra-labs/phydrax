@@ -51,7 +51,12 @@ def _guard_derivative_leaf(
 
 
 @_guard_derivative_leaf.defjvp
-def _guard_derivative_leaf_jvp(failure, message, primals, tangents):
+def _guard_derivative_leaf_jvp(
+    failure: DerivativeFailureMode,
+    message: str,
+    primals: tuple[Array, Array, Array],
+    tangents: tuple[Array, Array, Array],
+) -> tuple[Array, Array]:
     value, _, valid = primals
     value_tangent, dependency_tangent, _ = tangents
     valid_ = jnp.asarray(valid, dtype=jnp.bool_)

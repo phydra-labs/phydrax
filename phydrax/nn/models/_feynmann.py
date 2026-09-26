@@ -449,7 +449,7 @@ class FeynmaNN(_AbstractBaseModel):
     def _value_regularity(self) -> DerivativeRegularity | None:
         if self.blocks is None or self.activs is None:
             return None
-        stages = [AFFINE]
+        stages: list[DerivativeRegularity | None] = [AFFINE]
         for block, activation in zip(self.blocks, self.activs, strict=True):
             stages += (block._value_regularity(), activation_regularity(activation))
         # The real readout is affine in the concatenated real and imaginary parts.

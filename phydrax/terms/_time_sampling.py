@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, Key
 
 from .._fingerprint import canonical_fingerprint
@@ -31,7 +32,7 @@ class AbstractTimeSamplingPolicy(StrictModule):
         shape: Sequence[int],
         /,
         *,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         raise NotImplementedError
 
@@ -76,7 +77,7 @@ class UniformTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         shape: Sequence[int],
         /,
         *,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         sample_shape = tuple(shape)
         if any(size <= 0 for size in sample_shape):
@@ -137,7 +138,7 @@ class LogitNormalTimeSamplingPolicy(AbstractTimeSamplingPolicy):
         shape: Sequence[int],
         /,
         *,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         sample_shape = tuple(shape)
         if any(size <= 0 for size in sample_shape):

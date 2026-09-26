@@ -227,7 +227,7 @@ class LinearGaussianDynamics(StrictModule):
         self.approximation_id = _name(approximation_id, owner="approximation_id")
         self.resolved_method = "matrix-exponential/augmented-exponential/van-loan"
 
-    def __call__(self, time: ArrayLike, state: ArrayLike, args, /) -> Array:
+    def __call__(self, time: ArrayLike, state: ArrayLike, args: object, /) -> Array:
         del time, args
         values = jnp.asarray(state)
         if (

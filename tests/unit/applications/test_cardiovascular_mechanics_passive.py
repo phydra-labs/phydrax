@@ -33,6 +33,7 @@ from phydrax.applications.cardiovascular.mechanics._materials import (
 )
 from phydrax.applications.cardiovascular.mechanics._supports import (
     BasalSupport,
+    cardiac_support_functional,
     EpicardialSupport,
     PericardialSupport,
     VascularSupport,
@@ -50,6 +51,7 @@ from phydrax.discretization import (
     MixedFiniteElementConstraintPlan,
     PressureGaugePolicy,
 )
+from phydrax.variational import FunctionalContext, LocalFieldJet, LocalGeometry
 
 
 def _anatomy_frame() -> CardiacMaterialFrame:
@@ -283,6 +285,21 @@ def test_support_zero_stiffness_is_exact_traction_free_limit() -> None:
     assert jnp.allclose(response.energy_density, 0.0)
     assert jnp.allclose(response.restoring_traction, jnp.zeros((3,)))
     assert jnp.allclose(response.traction_tangent, jnp.zeros((3, 3)))
+
+
+def test_support_functional_requests_and_integrates_displacement_value() -> None:
+    support = BasalSupport((0.0, 0.0, 1.0), 3.0, 2.0, support_id="base")
+    functional = cardiac_support_functional("u", support, region="base-surface")
+    term = functional.terms[0]
+    assert term.fields[0].value
+    assert not term.fields[0].gradient
+    displacement = jnp.asarray(((0.12, -0.07, 0.03),))
+    density = term.density(
+        {"u": LocalFieldJet(value=displacement)},
+        LocalGeometry(jnp.zeros((1, 3))),
+        FunctionalContext(),
+    )
+    assert jnp.allclose(density, support.energy_density(displacement))
 
 
 def test_oriented_volume_derivative_follower_work_and_volume_rate() -> None:

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -429,18 +429,18 @@ def sample_tempered_smc(
 
 
 def _write_smc_checkpoint(
-    destination,
+    destination: Path,
     *,
-    compatibility,
-    completed,
-    state,
-    lineage,
-    temperatures,
-    effective_sample_sizes,
-    acceptance_rates,
-    divergence_rates,
-    log_evidence_terms,
-    duration_seconds,
+    compatibility: Mapping[str, Any],
+    completed: int,
+    state: Any,
+    lineage: Array,
+    temperatures: Array,
+    effective_sample_sizes: Array,
+    acceptance_rates: Array,
+    divergence_rates: Array,
+    log_evidence_terms: Array,
+    duration_seconds: float,
 ) -> None:
     arrays = {
         "lineage": lineage,
@@ -465,12 +465,12 @@ def _write_smc_checkpoint(
 
 
 def _read_smc_checkpoint(
-    source,
+    source: Path,
     *,
-    compatibility,
-    problem,
-    particles_count,
-):
+    compatibility: Mapping[str, Any],
+    problem: PosteriorProblem,
+    particles_count: int,
+) -> tuple[int, Any, Array, Array, Array, Array, Array, Array, float]:
     checkpoint_state, arrays = read_checkpoint_archive(
         source,
         kind="tempered_smc",
@@ -521,7 +521,9 @@ def _read_smc_checkpoint(
     )
 
 
-def _smc_checkpoint_array(arrays, name, *, shape):
+def _smc_checkpoint_array(
+    arrays: Mapping[str, Array], name: str, *, shape: tuple[int, ...]
+) -> Array:
     if name not in arrays:
         raise CheckpointCorruptionError(f"Checkpoint array {name!r} is missing.")
     value = jnp.asarray(arrays[name])

@@ -306,7 +306,7 @@ class PreparedMappedMACMarkerTransfer(StrictModule, NonTrainableState):
         else:
             order = self.markers.stable_active_order
 
-            def add_marker(index, values):
+            def add_marker(index: Array, values: Array) -> Array:
                 marker = order[index]
                 return values.at[relation.face_indices[marker]].add(contributions[marker])
 

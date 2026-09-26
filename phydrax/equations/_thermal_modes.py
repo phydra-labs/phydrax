@@ -35,7 +35,10 @@ def _implicit_mode_temperature(
 
 
 @_implicit_mode_temperature.defjvp
-def _implicit_mode_temperature_jvp(primals, tangents):
+def _implicit_mode_temperature_jvp(
+    primals: tuple[Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array],
+) -> tuple[Array, Array]:
     temperature, _, _, heat_capacity = primals
     _, target_tangent, evaluated_tangent, _ = tangents
     tangent = (target_tangent - evaluated_tangent) / heat_capacity
@@ -352,7 +355,7 @@ class ThermalModeSchema(StrictModule, NonTrainableState):
         upper_energy = self.evaluate(density, upper).energy_densities
         bracketed = jnp.all((target >= lower_energy) & (target <= upper_energy), axis=-1)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             midpoint = 0.5 * (low + high)
             energy = self.evaluate(density, midpoint).energy_densities

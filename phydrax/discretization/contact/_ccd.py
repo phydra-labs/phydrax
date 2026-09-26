@@ -165,7 +165,9 @@ class ContactSafetyEvidence(StrictModule):
         return (self.status == int(CCDStatus.SUCCESS)) & self.guarantee.successful
 
 
-def _point_segment_distance(point, first, second, /) -> float:
+def _point_segment_distance(
+    point: np.ndarray, first: np.ndarray, second: np.ndarray, /
+) -> float:
     edge = second - first
     denominator = float(np.dot(edge, edge))
     if denominator <= 0.0:
@@ -174,7 +176,9 @@ def _point_segment_distance(point, first, second, /) -> float:
     return float(np.linalg.norm(point - (first + coordinate * edge)))
 
 
-def _point_triangle_distance(point, first, second, third, /) -> float:
+def _point_triangle_distance(
+    point: np.ndarray, first: np.ndarray, second: np.ndarray, third: np.ndarray, /
+) -> float:
     edge_first = second - first
     edge_second = third - first
     normal = np.cross(edge_first, edge_second)
@@ -201,7 +205,9 @@ def _point_triangle_distance(point, first, second, third, /) -> float:
     return min(candidates)
 
 
-def _segment_segment_distance(a0, a1, b0, b1, /) -> float:
+def _segment_segment_distance(
+    a0: np.ndarray, a1: np.ndarray, b0: np.ndarray, b1: np.ndarray, /
+) -> float:
     ua = a1 - a0
     ub = b1 - b0
     aa = float(np.dot(ua, ua))
@@ -419,18 +425,15 @@ def _batch_step_limit(
         )
         vertices_start = start[indices[:arity]]
         vertices_end = end[indices[:arity]]
-        candidate_query = (
-            _candidate_toi_certified
-            if isinstance(plan, CertifiedAABBCCDPlan)
-            else _candidate_toi
-        )
-        toi, intervals, initial, work_exhausted = candidate_query(
-            plan,
-            batch.kind,
-            vertices_start,
-            vertices_end,
-            float(batch.minimum_separation[slot]),
-        )
+        separation = float(batch.minimum_separation[slot])
+        if isinstance(plan, CertifiedAABBCCDPlan):
+            toi, intervals, initial, work_exhausted = _candidate_toi_certified(
+                plan, batch.kind, vertices_start, vertices_end, separation
+            )
+        else:
+            toi, intervals, initial, work_exhausted = _candidate_toi(
+                plan, batch.kind, vertices_start, vertices_end, separation
+            )
         query_count += 1
         interval_count += intervals
         initial_violations += int(initial)

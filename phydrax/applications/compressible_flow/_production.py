@@ -521,6 +521,9 @@ class SmoothCompressibleProductionPlan(StrictModule):
             raise TypeError("Smooth production requires prepared tensor DGSEM dynamics.")
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
+        compatibility = self.method.compatibility
+        # The constructor requires sampled compatibility evidence.
+        assert compatibility is not None
         if (
             not isinstance(
                 dynamics.system,
@@ -529,7 +532,7 @@ class SmoothCompressibleProductionPlan(StrictModule):
                     HomogeneousMixtureCompressibleNavierStokesSystem,
                 ),
             )
-            or dynamics.system.system_id != self.method.compatibility.system_id
+            or dynamics.system.system_id != compatibility.system_id
         ):
             raise ValueError(
                 "Prepared DGSEM dynamics lack exact canonical entropy-system evidence."
@@ -554,6 +557,9 @@ class SmoothCompressibleProductionPlan(StrictModule):
             raise TypeError("Smooth production requires prepared tensor DGSEM dynamics.")
         if dynamics.method.method_id != self.method.method_id:
             raise ValueError("Prepared DGSEM dynamics do not belong to this plan.")
+        compatibility = self.method.compatibility
+        # The constructor requires sampled compatibility evidence.
+        assert compatibility is not None
         if (
             not isinstance(
                 dynamics.system,
@@ -562,7 +568,7 @@ class SmoothCompressibleProductionPlan(StrictModule):
                     HomogeneousMixtureCompressibleNavierStokesSystem,
                 ),
             )
-            or dynamics.system.system_id != self.method.compatibility.system_id
+            or dynamics.system.system_id != compatibility.system_id
         ):
             raise ValueError(
                 "Prepared DGSEM dynamics lack exact canonical entropy-system evidence."
@@ -819,6 +825,9 @@ class StructuredFVCompressibleProductionPlan(StrictModule):
             raise ValueError(
                 "FV qualification requires exact system/viscous-plan agreement."
             )
+        reconstruction = self.method.reconstruction
+        # The constructor always installs a HighResolutionReconstructionPlan.
+        assert isinstance(reconstruction, HighResolutionReconstructionPlan)
         return CompressibleQualificationEvidence(
             case.case_id,
             self.route_label,
@@ -827,7 +836,7 @@ class StructuredFVCompressibleProductionPlan(StrictModule):
                 ("geometry-route-exact", True),
                 (
                     "high-resolution-reconstruction",
-                    self.method.reconstruction.method in ("weno_z", "teno", "mp5"),
+                    reconstruction.method in ("weno_z", "teno", "mp5"),
                 ),
                 ("face-state-positivity", self.method.positivity is not None),
                 (

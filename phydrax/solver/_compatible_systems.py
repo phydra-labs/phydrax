@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -68,7 +69,9 @@ class CompatibleElasticityDynamics(StrictModule, NonTrainableState):
             }
         )
 
-    def _apply_components(self, function, values: Array, /) -> Array:
+    def _apply_components(
+        self, function: Callable[[Array], Array], values: Array, /
+    ) -> Array:
         return (
             function(values)
             if self.components == 1
@@ -199,11 +202,14 @@ class CompatibleIdealMHDInductionDynamics(StrictModule):
     """Constrained magnetic induction B'=-dE with caller-supplied ideal Ohm field."""
 
     bridge: StructuredCochainBridge
-    electromotive_circulation: Any
+    electromotive_circulation: Callable[[Array, Array, Any], ArrayLike]
     dynamics_id: str = eqx.field(static=True)
 
     def __init__(
-        self, bridge: StructuredCochainBridge, electromotive_circulation, /
+        self,
+        bridge: StructuredCochainBridge,
+        electromotive_circulation: Callable[[Array, Array, Any], ArrayLike],
+        /,
     ) -> None:
         if (
             not isinstance(bridge, StructuredCochainBridge)
@@ -318,7 +324,7 @@ class CompatibleVariableDensityProjection(StrictModule, NonTrainableState):
         )
         inverse_density = self._edge_inverse_density(density_)
 
-        def poisson_action(pressure):
+        def poisson_action(pressure: Array) -> Array:
             return self.bridge.codifferential(
                 1,
                 inverse_density * self.bridge.exterior_derivative(0, pressure),

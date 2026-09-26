@@ -24,7 +24,13 @@ MAPPING = tuple(
 )
 
 
-def _assessment(candidate=0.10, *, reference_values=(0.0, 0.001), uncertainty=0.002):
+def _assessment(
+    candidate=0.10,
+    *,
+    reference_values=(0.0, 0.001),
+    uncertainty=0.002,
+    manifest_uncertainty=(("voltage_v", 0.001),),
+):
     policy = DfnEntryPolicy(
         MARQUIS_2019_SPME_SUPPORT.support_tuple_id,
         "test:distribution",
@@ -51,7 +57,9 @@ def _assessment(candidate=0.10, *, reference_values=(0.0, 0.001), uncertainty=0.
             export_permitted=True,
             export_classification="test-only",
             nondimensionalization={"voltage": 1.0},
-            uncertainty={"voltage_v": 0.001},
+            uncertainty=(
+                None if manifest_uncertainty is None else dict(manifest_uncertainty)
+            ),
             lineage_ids=(f"test:engine-{index}",),
         )
         rights = ReferenceRightsAttestation(
@@ -170,6 +178,12 @@ def test_convergence_and_matched_geometry_are_independent_required_audits():
     assert not evaluate_reference_consensus(
         replace(assessment, references=(underestimated, assessment.references[1]))
     ).conclusive
+
+
+def test_unquantified_reference_uncertainty_is_incomplete_coverage():
+    decision = evaluate_reference_consensus(_assessment(manifest_uncertainty=None))
+    assert decision.reason == "reference-uncertainty-coverage-incomplete"
+    assert not decision.eligible and not decision.conclusive
 
 
 def test_numeric_eligibility_without_authority_never_admits_implementation():

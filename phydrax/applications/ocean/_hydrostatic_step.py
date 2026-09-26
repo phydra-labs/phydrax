@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._array_archive import (
@@ -21,6 +22,10 @@ from ..._array_archive import (
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization.finite_volume._hydrostatic_grid import (
+    _BoundaryValues,
+    HydrostaticMetricEpoch,
+)
 from ...solver import AbstractFixedStepMethod, FixedStepResult
 from ._external_mode import ExternalModeSubcycleSchedule
 from ._hydrostatic import (
@@ -31,6 +36,11 @@ from ._hydrostatic import (
     HydrostaticOceanState,
     PreparedHydrostaticOcean,
 )
+
+
+_SubcycleCarry: TypeAlias = tuple[
+    Array, tuple[Array, Array], tuple[Array, Array], Array, Array, Array
+]
 
 
 class HydrostaticOceanLedger(StrictModule):
@@ -49,7 +59,9 @@ class HydrostaticOceanLedger(StrictModule):
     residual: Array
 
     @classmethod
-    def zeros(cls, tracer_names: tuple[str, ...], dtype, /) -> "HydrostaticOceanLedger":
+    def zeros(
+        cls, tracer_names: tuple[str, ...], dtype: DTypeLike, /
+    ) -> "HydrostaticOceanLedger":
         zero = jnp.zeros((), dtype=dtype)
         return cls(
             zero,
@@ -296,7 +308,7 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod, NonTrainableState):
             index = 0 if boundary.side == "lower" else -1
             sign = -1.0 if boundary.side == "lower" else 1.0
             if boundary.kind == "prescribed-elevation":
-                location = [slice(None)] * 2
+                location: list[slice | int] = [slice(None)] * 2
                 location[axis] = index
                 eta_ = eta_.at[tuple(location)].set(boundary.target_eta)
                 continue
@@ -306,7 +318,7 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod, NonTrainableState):
             if boundary.kind == "closed":
                 target = jnp.asarray(0.0, dtype=eta.dtype)
             elif boundary.kind in ("flather", "radiation"):
-                cell_location = [slice(None)] * 2
+                cell_location: list[slice | int] = [slice(None)] * 2
                 cell_location[axis] = 0 if boundary.side == "lower" else -1
                 local_eta = eta_[tuple(cell_location)]
                 local_depth = (
@@ -353,7 +365,7 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod, NonTrainableState):
         self,
         transports: tuple[Array, Array],
         target_barotropic: tuple[Array, Array],
-        epoch,
+        epoch: HydrostaticMetricEpoch,
         /,
     ) -> tuple[Array, Array]:
         current = self.ocean.geometry.depth_integrate(transports)
@@ -378,13 +390,13 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod, NonTrainableState):
         self,
         eta: Array,
         predictor: tuple[Array, Array],
-        epoch,
+        epoch: HydrostaticMetricEpoch,
         dt: Array,
         freshwater: Array,
         time: Array,
         /,
         *,
-        surface_boundary=None,
+        surface_boundary: _BoundaryValues | None = None,
     ) -> tuple[
         Array,
         tuple[Array, Array],
@@ -410,7 +422,7 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod, NonTrainableState):
             jnp.asarray(0.0, dtype=eta.dtype),
         )
 
-        def subcycle(carry, index):
+        def subcycle(carry: _SubcycleCarry, index: Array) -> tuple[_SubcycleCarry, None]:
             (
                 eta_fast,
                 transport_fast,
@@ -623,25 +635,32 @@ class HydrostaticIMEXMidpointMethod(AbstractFixedStepMethod, NonTrainableState):
             tke_concentration = _safe_divide(evaluation.tke_inventory, epoch.cell_volume)
             evaluation_view = self.ocean.view(evaluation)
             layer_scale = jnp.maximum(epoch.layer_thickness, 1.0e-12)
+            # jnp.gradient returns a single Array for a scalar axis.
             du_dz = (
-                jnp.gradient(
-                    _cell_from_faces(
-                        evaluation_view.velocity[0],
-                        0,
-                        self.ocean.geometry.periodic[0],
+                cast(
+                    Array,
+                    jnp.gradient(
+                        _cell_from_faces(
+                            evaluation_view.velocity[0],
+                            0,
+                            self.ocean.geometry.periodic[0],
+                        ),
+                        axis=-1,
                     ),
-                    axis=-1,
                 )
                 / layer_scale
             )
             dv_dz = (
-                jnp.gradient(
-                    _cell_from_faces(
-                        evaluation_view.velocity[1],
-                        1,
-                        self.ocean.geometry.periodic[1],
+                cast(
+                    Array,
+                    jnp.gradient(
+                        _cell_from_faces(
+                            evaluation_view.velocity[1],
+                            1,
+                            self.ocean.geometry.periodic[1],
+                        ),
+                        axis=-1,
                     ),
-                    axis=-1,
                 )
                 / layer_scale
             )

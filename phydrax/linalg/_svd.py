@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax
@@ -403,19 +403,19 @@ class _SVDNumerics(tuple):
 
     def __new__(
         cls,
-        values,
-        left,
-        right,
-        left_residuals,
-        right_residuals,
-        relative_residuals,
-        left_orthogonality,
-        right_orthogonality,
-        isolation_gaps,
-        converged,
-        numerical_rank,
-        rank_cutoff,
-    ):
+        values: Array,
+        left: Array,
+        right: Array,
+        left_residuals: Array,
+        right_residuals: Array,
+        relative_residuals: Array,
+        left_orthogonality: Array,
+        right_orthogonality: Array,
+        isolation_gaps: Array,
+        converged: Array,
+        numerical_rank: Array,
+        rank_cutoff: Array,
+    ) -> Self:
         return tuple.__new__(
             cls,
             (
@@ -885,12 +885,15 @@ def _mathematical_singular_values(
 
 
 @_mathematical_singular_values.def_jvp
-def _mathematical_singular_values_jvp(primals, tangents):
+def _mathematical_singular_values_jvp(
+    primals: tuple[SVDProblem, Array, Array, Array],
+    tangents: tuple[SVDProblem, object, object, object],
+) -> tuple[Array, Array]:
     problem, values, left, right = primals
     problem_tangent, _, _, _ = tangents
     target = problem.operator.target
 
-    def perturbation(current_problem):
+    def perturbation(current_problem: SVDProblem) -> Array:
         contributions = []
         for index in range(values.shape[0]):
             left_vector = target.unflatten(left[:, index])

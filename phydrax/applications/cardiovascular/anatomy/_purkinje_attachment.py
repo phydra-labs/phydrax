@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -437,7 +439,7 @@ def _host_mask(values: ArrayLike | None, size: int, name: str, /) -> np.ndarray:
     return mask.copy()
 
 
-def _resolved_id(name: str, value: str | None, payload: dict[str, object], /) -> str:
+def _resolved_id(name: str, value: str | None, payload: Mapping[str, object], /) -> str:
     if value is None:
         return canonical_fingerprint(payload)
     identifier = str(value)

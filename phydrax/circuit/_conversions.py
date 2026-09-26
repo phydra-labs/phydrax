@@ -23,7 +23,7 @@ from ..linalg import (
 from ._components import AdmittanceComponent, ImpedanceComponent
 from ._mna import AbstractMNAComponent, MNAStamp
 from ._models import AbstractScatteringComponent, ScatteringResponse
-from ._ports import ElectricalWaveReference
+from ._ports import ElectricalWaveReference, WaveReference
 
 
 class ConversionEvidence(StrictModule):
@@ -51,15 +51,14 @@ def _matrix(value: ArrayLike, name: str, /) -> Array:
 
 
 def _reference_arrays(
-    references: Sequence[ElectricalWaveReference],
+    references: Sequence[WaveReference],
     count: int,
     batch: tuple[int, ...],
     /,
 ) -> tuple[tuple[ElectricalWaveReference, ...], Array, Array]:
-    refs = tuple(references)
-    if len(refs) != count or any(
-        not isinstance(value, ElectricalWaveReference) for value in refs
-    ):
+    given = tuple(references)
+    refs = tuple(value for value in given if isinstance(value, ElectricalWaveReference))
+    if len(given) != count or len(refs) != len(given):
         raise ValueError("One ElectricalWaveReference is required per matrix port.")
     values = []
     for reference in refs:
@@ -138,7 +137,7 @@ def impedance_to_scattering(
 
 def _scattering_voltage_current_maps(
     scattering: Array,
-    references: Sequence[ElectricalWaveReference],
+    references: Sequence[WaveReference],
 ) -> tuple[tuple[ElectricalWaveReference, ...], Array, Array]:
     refs, z0, root = _reference_arrays(
         references, scattering.shape[-1], scattering.shape[:-2]

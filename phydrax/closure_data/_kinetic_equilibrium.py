@@ -380,10 +380,10 @@ class EnergyEquilibriumSupportEnvelope(StrictModule, NonTrainableState):
         )
         if any(not value for value in identifiers):
             raise ValueError("Energy-equilibrium support identities must be non-empty.")
-        self.rho_bounds = bounds[0]
-        self.u_x_bounds = bounds[1]
-        self.u_y_bounds = bounds[2]
-        self.temperature_bounds = bounds[3]
+        self.rho_bounds = (bounds[0][0], bounds[0][1])
+        self.u_x_bounds = (bounds[1][0], bounds[1][1])
+        self.u_y_bounds = (bounds[2][0], bounds[2][1])
+        self.temperature_bounds = (bounds[3][0], bounds[3][1])
         self.maximum_mach = mach
         self.minimum_hull_margin = hull
         self.minimum_particle_equilibrium_margin = particle

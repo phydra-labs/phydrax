@@ -296,7 +296,9 @@ def test_model_manifest_binding_identity_round_trips(tmp_path: Path):
     )
     assert manifest.manifest_id != unbound.manifest_id
 
-    archive = create(tmp_path / "model.zip", manifest=manifest, arrays={"weights": values})
+    archive = create(
+        tmp_path / "model.zip", manifest=manifest, arrays={"weights": values}
+    )
     reopened = open_lifecycle_archive(archive.path)
     assert reopened.manifest.binding == binding
     assert reopened.manifest.manifest_id == manifest.manifest_id

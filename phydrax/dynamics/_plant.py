@@ -19,7 +19,7 @@ from .._array_tree import ArrayPyTreeSchema
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import ExecutableSignature, NumericRevision, SemanticProvenance
 from .._strict import StrictModule
-from ._system import DiscreteStepContext, DiscreteSystem
+from ._system import DiscreteStepContext, DiscreteSystem, DiscreteTransitionResult
 
 
 _NONFINITE_STATE_STATUS = -1
@@ -1185,7 +1185,13 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
 
             if self.control_schema is None:
 
-                def evaluate_one(source_time, target_time, index, state, args_):
+                def evaluate_one(
+                    source_time: Array,
+                    target_time: Array,
+                    index: Array,
+                    state: Array,
+                    args_: PyTree[Any],
+                ) -> DiscreteTransitionResult:
                     return self.system.evaluate_result(
                         DiscreteStepContext(source_time, target_time, index),
                         state,
@@ -1215,7 +1221,14 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
                     else commands
                 )
 
-                def evaluate_one(source_time, target_time, index, state, command, args_):
+                def evaluate_one(
+                    source_time: Array,
+                    target_time: Array,
+                    index: Array,
+                    state: Array,
+                    command: Array,
+                    args_: PyTree[Any],
+                ) -> DiscreteTransitionResult:
                     return self.system.evaluate_result(
                         DiscreteStepContext(source_time, target_time, index),
                         state,

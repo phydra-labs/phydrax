@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, Key
 
 import phydrax.axes as cx
 
@@ -65,7 +66,7 @@ def sample_joint(
     /,
     *,
     num_samples: int,
-    key,
+    key: Key[Array, ""] | None,
     sampler: str = "sobol_scrambled",
     sample_dim: str = "__phydra_uq_input",
 ) -> RandomSampleBatch:
@@ -99,7 +100,7 @@ def sample_joint(
 
 
 def propagate(
-    function,
+    function: Callable[..., object],
     samples: RandomSampleBatch,
     /,
     *,
@@ -124,7 +125,7 @@ def propagate(
     names = tuple(samples.values)
     data_parts = []
 
-    def evaluate(*values):
+    def evaluate(*values: Array) -> object:
         arguments = {name: value for name, value in zip(names, values, strict=True)}
         if call_style == "keywords":
             return function(**arguments, **kwargs)
@@ -146,7 +147,7 @@ def propagate(
         template_dims = (None,) * template_data.ndim
         returns_field = False
 
-    def evaluate_data(*values):
+    def evaluate_data(*values: Array) -> Array:
         result = evaluate(*values)
         if returns_field:
             if not isinstance(result, cx.AxisArray):

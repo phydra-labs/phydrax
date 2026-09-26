@@ -34,6 +34,8 @@ from ._orientation import SingleCrystalOrientation
 
 
 ParticleKind: TypeAlias = Literal["nucleus", "electron", "positive-muon"]
+_Vector3: TypeAlias = tuple[float, float, float]
+_Tensor3: TypeAlias = tuple[_Vector3, _Vector3, _Vector3]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -43,14 +45,14 @@ def _identifier(value: str, name: str, /) -> str:
     return result
 
 
-def _finite_vector(value: ArrayLike, name: str, /) -> Array:
+def _finite_vector(value: ArrayLike | _Vector3, name: str, /) -> Array:
     host = np.asarray(value, dtype=np.float64)
     if host.shape != (3,) or np.any(~np.isfinite(host)):
         raise ValueError(f"{name} must be finite with shape (3,).")
     return jnp.asarray(host)
 
 
-def _finite_tensor(value: ArrayLike, name: str, /) -> Array:
+def _finite_tensor(value: ArrayLike | _Tensor3, name: str, /) -> Array:
     host = np.asarray(value, dtype=np.float64)
     if host.shape != (3, 3) or np.any(~np.isfinite(host)):
         raise ValueError(f"{name} must be finite with shape (3, 3).")
@@ -146,13 +148,13 @@ class SpinSite(StrictModule):
         isotope: ResonanceIsotope,
         /,
         *,
-        position_m: ArrayLike = (0.0, 0.0, 0.0),
-        zeeman_tensor: ArrayLike = (
+        position_m: ArrayLike | _Vector3 = (0.0, 0.0, 0.0),
+        zeeman_tensor: ArrayLike | _Tensor3 = (
             (1.0, 0.0, 0.0),
             (0.0, 1.0, 0.0),
             (0.0, 0.0, 1.0),
         ),
-        chemical_shift_ppm: ArrayLike = (
+        chemical_shift_ppm: ArrayLike | _Tensor3 = (
             (0.0, 0.0, 0.0),
             (0.0, 0.0, 0.0),
             (0.0, 0.0, 0.0),

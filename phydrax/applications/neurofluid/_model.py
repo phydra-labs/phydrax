@@ -23,6 +23,7 @@ from ...discretization import (
 from ...equations import (
     BulkDGTransportPlan,
     MixedDimensionalTransportPlan,
+    MixedDimensionalTransportState,
     NetworkTransportPlan,
     PreparedMixedDimensionalTransport,
 )
@@ -456,7 +457,7 @@ class NeurofluidDiagnosticReport(StrictModule):
 
 def neurofluid_diagnostics(
     runtime: PreparedMixedDimensionalTransport,
-    state,
+    state: MixedDimensionalTransportState,
     cell_compartment_indices: Array,
     compartment_ids: tuple[str, ...],
     /,

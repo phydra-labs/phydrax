@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from operator import index
-from typing import Literal
+from typing import Literal, SupportsFloat, SupportsIndex, TYPE_CHECKING
 
 import numpy as np
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike, DTypeLike, NDArray
 
 from ._report import AdapterReport
 
@@ -27,7 +28,7 @@ def _identifier(value: str, owner: str, /) -> str:
     return identifier
 
 
-def _readonly_array(value: ArrayLike, /, *, dtype=None) -> NDArray:
+def _readonly_array(value: ArrayLike, /, *, dtype: DTypeLike = None) -> NDArray:
     array = np.asarray(value, dtype=dtype)
     if array.dtype.hasobject:
         raise TypeError("Host inspection arrays cannot use object dtype.")
@@ -51,6 +52,22 @@ class HostInspectionField:
     unit_id: str | None = None
     component_labels: tuple[str, ...] = ()
     provenance_id: str = ""
+
+    if TYPE_CHECKING:
+        # __post_init__ normalizes these inputs into the declared field types.
+        def __init__(
+            self,
+            name: str,
+            values: ArrayLike,
+            valid: ArrayLike,
+            location: InspectionLocation,
+            support_id: str,
+            layout_id: str,
+            representation: str,
+            unit_id: str | None = None,
+            component_labels: Iterable[str] = (),
+            provenance_id: str = "",
+        ) -> None: ...
 
     def __post_init__(self) -> None:
         name = _identifier(self.name, "Host inspection field name")
@@ -117,6 +134,20 @@ class HostInspectionFrame:
     fields: tuple[HostInspectionField, ...]
     producer_id: str
     result_id: str
+
+    if TYPE_CHECKING:
+        # __post_init__ normalizes these inputs into the declared field types.
+        def __init__(
+            self,
+            time: SupportsFloat,
+            step: SupportsIndex,
+            state_kind: InspectionStateKind,
+            successful: ArrayLike,
+            status: SupportsIndex,
+            fields: Iterable[HostInspectionField],
+            producer_id: str,
+            result_id: str,
+        ) -> None: ...
 
     def __post_init__(self) -> None:
         time = float(self.time)

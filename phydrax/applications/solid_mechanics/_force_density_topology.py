@@ -305,7 +305,7 @@ class ForceDensityStructure(StrictModule, NonTrainableState):
             node_valid,
             member_valid,
         )
-        if affine:
+        if prescribed_map is not None:
             translation_modes = np.zeros(
                 (node_count * resolved_dimension, component_count * resolved_dimension)
             )

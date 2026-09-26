@@ -14,7 +14,12 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 from ..architectures import ChemicalConditionalAffineOperator
-from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
+from ..data import (
+    FunctionSamples,
+    OperatorBatch,
+    OperatorPrediction,
+    OperatorTargetBatch,
+)
 from ..metrics import operator_l2_loss
 from ._losses import (
     _weighted_case_reduction,
@@ -40,7 +45,7 @@ def _scaled_case_loss(
     prediction: Array,
     target: Array,
     scale: Array,
-    query,
+    query: FunctionSamples,
     context: OperatorLossContext,
     reduction: Reduction,
     /,

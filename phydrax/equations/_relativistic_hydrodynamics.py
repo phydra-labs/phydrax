@@ -12,7 +12,7 @@ Cartesian specialization. Momentum is covariant in both formulations.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -29,6 +29,9 @@ from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ..metrix._spacetime_conventions import RelativityConvention
 from ._hyperbolic_systems import AbstractConservationSystem
 from ._relativistic_eos import AbstractRelativisticEOS, RelativisticEOSState
+
+
+_PressureBracket: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class RelativisticHydrodynamicsLayout(StrictModule, NonTrainableState):
@@ -409,7 +412,7 @@ def _fixed_pressure_recovery(
         momentum_norm - total_energy + tiny,
     )
 
-    def residual(pressure):
+    def residual(pressure: Array) -> Array:
         return _primitive_at_pressure(
             eos, undensitized, inverse_spatial_metric, pressure
         )[1]
@@ -417,7 +420,7 @@ def _fixed_pressure_recovery(
     lower_value = residual(lower)
     upper = jnp.maximum(2.0 * lower, jnp.abs(total_energy) + momentum_norm + mass + 1.0)
 
-    def expand(_, current):
+    def expand(_: Array, current: tuple[Array, Array]) -> tuple[Array, Array]:
         bound, value = current
         candidate = 2.0 * bound
         candidate_value = residual(candidate)
@@ -428,7 +431,7 @@ def _fixed_pressure_recovery(
 
     upper, upper_value = jax.lax.fori_loop(0, 12, expand, (upper, residual(upper)))
 
-    def bisect(_, bracket):
+    def bisect(_: Array, bracket: _PressureBracket) -> _PressureBracket:
         left, right, left_value, right_value = bracket
         middle = 0.5 * (left + right)
         middle_value = residual(middle)

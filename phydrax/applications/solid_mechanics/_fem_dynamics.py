@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -21,6 +22,7 @@ from ...dynamics import SecondOrderDifferentialSystem
 from ...equations import (
     CompiledFiniteElementProblem,
     FiniteElementExecutionContext,
+    MaterialSiteId,
     MaterialTransaction,
 )
 from ...equations.fem import FiniteElementMassPolicy
@@ -307,7 +309,9 @@ class _NewmarkResidual(StrictModule, NonTrainableState):
     system: SecondOrderDifferentialSystem
     method: ImplicitNewmarkMethod
 
-    def __call__(self, displacement: Array, arguments: _FiniteElementStepArguments):
+    def __call__(
+        self, displacement: Array, arguments: _FiniteElementStepArguments
+    ) -> Array:
         velocity, acceleration = self.method.rates(
             displacement, arguments.accepted, arguments.step_size
         )
@@ -718,7 +722,7 @@ def _selected_materials(
         return None
     if candidate is None:
         return previous
-    trials = {
+    trials: dict[MaterialSiteId | str, ArrayLike] = {
         old.site_id.key: jnp.where(accepted, new.trial, old.committed)
         for old, new in zip(previous.states, candidate.states, strict=True)
     }
@@ -789,7 +793,7 @@ def _admissibility(
     )
 
 
-def _scalar_hook(value: object, owner: str, dtype, /) -> Array:
+def _scalar_hook(value: object, owner: str, dtype: DTypeLike, /) -> Array:
     result = jnp.asarray(value, dtype=dtype)
     if result.shape != ():
         raise ValueError(f"{owner} must return one scalar.")

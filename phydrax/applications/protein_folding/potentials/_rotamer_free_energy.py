@@ -70,7 +70,13 @@ def _finite_array(value: ArrayLike, name: str) -> Array:
     return jnp.asarray(host, dtype=jnp.float64)
 
 
-def _admit(source, commercial_use, redistribution, training_use, export):
+def _admit(
+    source: object,
+    commercial_use: bool,
+    redistribution: bool,
+    training_use: bool,
+    export: bool,
+) -> str:
     if not isinstance(source, ReferenceArtifactManifest):
         raise TypeError("source must be ReferenceArtifactManifest.")
     return source.require_rights(

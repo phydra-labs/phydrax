@@ -24,6 +24,7 @@ from ...tensor_network import (
     uniform_transfer_fixed_points,
     UniformAbelianMatrixProductOperator,
     UniformAbelianMatrixProductState,
+    UniformMatrixProductState,
     UniformTransferPolicy,
 )
 
@@ -134,8 +135,8 @@ class InfiniteHallCylinderResult(StrictModule):
 
 
 def _product_cell_charge_evidence(
-    state,
-    physical_charges,
+    state: UniformMatrixProductState,
+    physical_charges: tuple[tuple[tuple[int, ...], ...], ...],
     particle_axis: int,
     /,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:

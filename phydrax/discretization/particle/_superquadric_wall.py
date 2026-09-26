@@ -100,7 +100,7 @@ class SuperquadricWallContactResult(StrictModule):
     wall_id: str = eqx.field(static=True)
 
 
-def _segment_closest(point, start, end):
+def _segment_closest(point: Array, start: Array, end: Array) -> tuple[Array, Array]:
     direction = end - start
     denominator = jnp.sum(direction * direction, axis=-1)
     parameter = jnp.sum((point - start) * direction, axis=-1) / jnp.maximum(
@@ -110,13 +110,15 @@ def _segment_closest(point, start, end):
     return start + parameter[:, None] * direction, parameter
 
 
-def _support(rotation, axes, first, second, direction):
+def _support(
+    rotation: Array, axes: Array, first: Array, second: Array, direction: Array
+) -> Array:
     local_direction = contract("...ji,...j->...i", rotation, direction)
     local = jax.vmap(_support_local)(local_direction, axes, first, second)
     return contract("...ij,...j->...i", rotation, local)
 
 
-def _barycentric(point, a, b, c):
+def _barycentric(point: Array, a: Array, b: Array, c: Array) -> Array:
     v0 = b - a
     v1 = c - a
     v2 = point - a
@@ -133,22 +135,22 @@ def _barycentric(point, a, b, c):
 
 
 def _feature_candidate(
-    plan,
-    center,
-    rotation,
-    axes,
-    first,
-    second,
-    start,
-    end,
-    initial_direction,
-    is_vertex,
-):
+    plan: SuperquadricTriangleContactPlan,
+    center: Array,
+    rotation: Array,
+    axes: Array,
+    first: Array,
+    second: Array,
+    start: Array,
+    end: Array,
+    initial_direction: Array,
+    is_vertex: Array,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     axis = initial_direction / jnp.maximum(
         jnp.linalg.norm(initial_direction, axis=-1, keepdims=True), 1.0e-30
     )
 
-    def iteration(_, current):
+    def iteration(_: Array, current: Array) -> Array:
         body_witness = center + _support(rotation, axes, first, second, -current)
         wall_witness, _ = _segment_closest(body_witness, start, end)
         wall_witness = jnp.where(is_vertex[:, None], start, wall_witness)

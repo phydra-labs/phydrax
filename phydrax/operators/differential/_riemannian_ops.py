@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 from string import ascii_lowercase
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
+from jaxtyping import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, DomainFunction
@@ -15,6 +16,10 @@ from phydrax.domain import AbstractGeometry, DomainFunction
 from ..._strict import StrictModule
 from ...metrix import LeviCivitaConnection, RiemannianMetric, TensorType
 from ._domain_ops import _factor_and_dim, _resolve_var, grad, hessian
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def _geometry_contract(
@@ -72,7 +77,7 @@ class _RiemannianGradCallable(StrictModule):
         self.differential_positions = differential_positions
         self.coordinate_position = int(coordinate_position)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         differential = jnp.asarray(
             self.differential.func(
                 *[args[position] for position in self.differential_positions],
@@ -112,7 +117,7 @@ class _CovariantHessianCallable(StrictModule):
         self.second_positions = second_positions
         self.coordinate_position = int(coordinate_position)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         differential = jnp.asarray(
             self.differential.func(
                 *[args[position] for position in self.differential_positions],
@@ -165,7 +170,7 @@ class _RiemannianDivCallable(StrictModule):
         self.coordinate_position = int(coordinate_position)
         self.dimension = int(dimension)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         values = jnp.asarray(
             self.field.func(
                 *[args[position] for position in self.field_positions],
@@ -225,7 +230,7 @@ class _CovariantDerivativeCallable(StrictModule):
         self.coordinate_position = int(coordinate_position)
         self.dimension = int(dimension)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         values = jnp.asarray(
             self.field.func(
                 *[args[position] for position in self.field_positions],
@@ -288,7 +293,7 @@ class _RiemannianDivTensorCallable(StrictModule):
         self.derivative_positions = derivative_positions
         self.dimension = int(dimension)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         derivative = jnp.asarray(
             self.derivative.func(
                 *[args[position] for position in self.derivative_positions],
@@ -323,7 +328,7 @@ class _LaplaceBeltramiCallable(StrictModule):
         self.hessian_positions = hessian_positions
         self.coordinate_position = int(coordinate_position)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         hessian = jnp.asarray(
             self.hessian.func(
                 *[args[position] for position in self.hessian_positions],

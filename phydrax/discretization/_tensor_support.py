@@ -19,7 +19,12 @@ from .._trainable import NonTrainableState
 from ..linalg import ArraySpace, DiagonalPairing
 from ._axis import AxisDiscretization, broadcasted_grid, TensorGridPlan
 from ._measure import DiscreteMeasure
-from ._spaces import DiscreteFieldSpace, TensorDofLayout
+from ._spaces import (
+    DiscreteFieldSpace,
+    FieldConformity,
+    FieldRepresentation,
+    TensorDofLayout,
+)
 from ._support import DiscreteSupport
 from ._tensor_entities import (
     all_tensor_entity_layouts,
@@ -330,8 +335,8 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
         entity_layout: TensorEntityLayout | None = None,
         component_shape: Sequence[int] = (),
         dtype: DTypeLike = jnp.float64,
-        representation: str = "point_value",
-        conformity: str = "unrestricted",
+        representation: FieldRepresentation = "point_value",
+        conformity: FieldConformity = "unrestricted",
     ) -> DiscreteFieldSpace:
         if location is not None and entity_layout is not None:
             resolved = self.layout_at(location)

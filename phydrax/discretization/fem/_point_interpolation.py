@@ -106,6 +106,8 @@ def finite_element_point_weights(
     if derivative_axis is None:
         weights = basis
     else:
+        if inverse_jacobian is None:
+            raise TypeError("derivative_axis requires inverse_jacobian.")
         weights = contract(
             "plr,pr->pl", gradients, inverse_jacobian[:, :, derivative_axis]
         )

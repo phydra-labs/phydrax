@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.axes as cx
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, Domain, DomainFunction
@@ -313,7 +313,12 @@ class _CardinalBasisEvaluator(StrictModule):
         return jnp.take_along_axis(by_source, source, axis=-1)
 
     def _query_multiplier(
-        self, args: tuple[Any, ...], /, *, key=None, **kwargs: Any
+        self,
+        args: tuple[Any, ...],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
     ) -> Array:
         if self.preservation_weight is None:
             return jnp.asarray(1.0, dtype=jnp.float64)
@@ -323,7 +328,9 @@ class _CardinalBasisEvaluator(StrictModule):
             dtype=jnp.float64,
         )
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         distance = self._distance_squared(args)
         weights = self._weights(distance) * self._envelope(distance)
         multiplier = self._query_multiplier(args, key=key, **kwargs)
@@ -341,7 +348,9 @@ class _CardinalLinearCombination(StrictModule):
     components: tuple[int, ...] | None = eqx.field(static=True)
     output_width: int | None = eqx.field(static=True)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         basis_values = jnp.asarray(
             self.basis.func(*args, key=key, **kwargs), dtype=jnp.float64
         )

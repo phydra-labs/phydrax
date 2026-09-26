@@ -4,6 +4,7 @@
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -75,6 +76,27 @@ def test_residual_penalty_noise_mapping_matches_real_and_complex_quadratics():
     assert jnp.allclose(real.variance, 1.0 / (6.0 * jnp.asarray([0.25, 2.0])))
     assert jnp.allclose(complex_model.variance, 1.0 / (3.0 * jnp.asarray([0.25, 2.0])))
     assert jnp.array_equal(real.active_indices, jnp.asarray([0, 2]))
+
+
+def test_residual_penalty_noise_from_penalty_freezes_fixed_quadrature_weights():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    component = domain.component()
+    condition = phx.conditions.Residual("u", component, lambda field: field)
+    target = phx.integration.over(component)
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(5))
+    realization = phx.integration.materialize(target, plan)
+    penalty = phx.terms.ResidualPenalty(
+        condition, phx.integration.fixed(realization), scale=2.0
+    )
+
+    model = phx.uq.ResidualPenaltyNoiseModel.from_penalty(
+        penalty, realization, field="real", interpretation_id="gauss-legendre-5"
+    )
+
+    _, reference_weights = np.polynomial.legendre.leggauss(5)
+    expected = np.sort(0.5 * reference_weights)
+    assert np.allclose(np.sort(np.asarray(model.coefficients)), expected, atol=1e-14)
+    assert jnp.allclose(model.variance, 1.0 / (4.0 * model.coefficients))
 
 
 def test_mc_dropout_calibration_matches_closed_form_scale_and_conformal_rank():

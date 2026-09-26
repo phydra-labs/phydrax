@@ -263,7 +263,7 @@ def _product_basis_hamiltonian(
     quartic: np.ndarray,
     maximum_quanta: int,
     maximum_basis_states: int,
-):
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mode_count = frequencies.size
     states = np.asarray(
         tuple(product(range(maximum_quanta + 1), repeat=mode_count)), dtype=np.int64
@@ -278,7 +278,7 @@ def _product_basis_hamiltonian(
     identity = np.eye(local_dimension)
     powers = tuple(np.linalg.matrix_power(coordinate, power) for power in range(5))
 
-    def product_operator(counts):
+    def product_operator(counts: np.ndarray) -> np.ndarray:
         result = np.asarray([[1.0]])
         for count in counts:
             result = np.kron(result, powers[count] if count else identity)

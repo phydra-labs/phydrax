@@ -51,9 +51,9 @@ class VortexTrajectoryControlPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        transition,
-        running_cost,
-        terminal_cost,
+        transition: Callable[[Array, Array, Array, Any], tuple[Array, Array, Array]],
+        running_cost: Callable[[Array, Array, Array, Any], Array],
+        terminal_cost: Callable[[Array, Any], Array],
         method: AbstractMinimizationMethod,
         /,
         *,
@@ -140,7 +140,7 @@ class VortexTrajectoryControlPlan(StrictModule, NonTrainableState):
             None if fixed_event_signature is None else jnp.asarray(fixed_event_signature)
         )
 
-        def objective(controls, objective_args):
+        def objective(controls: Array, objective_args: object) -> Array:
             del objective_args
             rollout = self._rollout(state0, controls, time_, args)
             value = jnp.asarray(0.0, dtype=state0.dtype)
@@ -195,7 +195,7 @@ class VortexMPCPlan(StrictModule, NonTrainableState):
 
     def solve_window(
         self, state: ArrayLike, controls: ArrayLike, time: ArrayLike, args: Any = None, /
-    ):
+    ) -> tuple[Array, VortexControlResult]:
         result = self.trajectory.solve(state, controls, time, args)
         return result.controls[: self.apply_steps], result
 

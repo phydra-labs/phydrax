@@ -775,6 +775,8 @@ def plan_force_density(
         NonlinearPrecisionPolicy() if nonlinear_precision is None else nonlinear_precision
     )
     if derivative_policy is None and uses_setup:
+        # uses_setup is only set for NewtonKrylov/NewtonTrustRegion methods.
+        assert isinstance(method, (NewtonKrylov, NewtonTrustRegion))
         derivative_linear_policy = eqx.tree_at(
             lambda selected: selected.preconditioning,
             method.linear_policy,
@@ -968,14 +970,19 @@ def _nonlinear_problem(
     structure = problem.structure
     space = ArraySpace((structure.free_dof_count,), dtype=dtype)
 
-    def residual(reduced, inputs):
+    def residual(reduced: Array, inputs: ForceDensityInputs) -> Array:
         force_densities = _validated_force_densities(problem, inputs)
         positions = structure.expand(reduced, inputs.prescribed_values)
         loads = _nodal_loads(problem, inputs, positions, force_densities.dtype)
         internal = _internal_nodal_forces(structure, force_densities, positions)
         return structure.reduce(internal - loads)
 
-    def validity(reduced, residual_value, auxiliary, inputs):
+    def validity(
+        reduced: Array,
+        residual_value: Array,
+        auxiliary: object,
+        inputs: ForceDensityInputs,
+    ) -> Array:
         del residual_value, auxiliary
         positions = structure.expand(reduced, inputs.prescribed_values)
         vectors = _member_vectors(structure, positions)
@@ -989,7 +996,9 @@ def _nonlinear_problem(
             & problem.load_model.valid(structure, positions, inputs.load_parameters)
         )
 
-    def linear_setup(reduced, inputs):
+    def linear_setup(
+        reduced: Array, inputs: ForceDensityInputs
+    ) -> AbstractLinearOperator:
         del reduced
         force_densities = _validated_force_densities(problem, inputs)
         return _operator(problem, force_densities)
@@ -1279,7 +1288,9 @@ def solve_force_density_batch(
 
     if initial_positions is None:
 
-        def one_case(q, prescribed_case, load_case):
+        def one_case(
+            q: Array, prescribed_case: Array, load_case: Any
+        ) -> ForceDensityResult:
             inputs = ForceDensityInputs(q, prescribed_case, load_case)
             return solve_force_density(prepare_force_density(plan, inputs))
 
@@ -1289,7 +1300,9 @@ def solve_force_density_batch(
         if initial.shape[0] != batch_size:
             raise ValueError("initial_positions must share the case axis.")
 
-        def one_case(q, prescribed_case, load_case, initial_case):
+        def one_case(
+            q: Array, prescribed_case: Array, load_case: Any, initial_case: Array
+        ) -> ForceDensityResult:
             inputs = ForceDensityInputs(q, prescribed_case, load_case)
             return solve_force_density(
                 prepare_force_density(

@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from phydrax.ein import contract
@@ -21,6 +22,7 @@ from .._precision import (
 from .._strict import StrictModule
 from ._factorizations import PreparedFactorization
 from ._materialization import MaterializationPolicy, materialize
+from ._operators import AbstractLinearOperator
 from ._prepared import PreparedLinearSolve
 
 
@@ -107,7 +109,7 @@ class InertiaEvidence(StrictModule):
     non_claim: str = eqx.field(static=True)
 
 
-def _owner(prepared: Any, /):
+def _owner(prepared: object, /) -> tuple[AbstractLinearOperator, str, Any]:
     if isinstance(prepared, PreparedFactorization):
         return prepared.operator, prepared.factorization_id, prepared.prepared_solve.state
     if isinstance(prepared, PreparedLinearSolve):
@@ -119,7 +121,9 @@ def _owner(prepared: Any, /):
     raise TypeError("prepared must be a PreparedFactorization or PreparedLinearSolve.")
 
 
-def _precision_evidence(policy: InertiaPolicy, dtype: Any, provider: str, /):
+def _precision_evidence(
+    policy: InertiaPolicy, dtype: DTypeLike, provider: str, /
+) -> PrecisionEvidenceEnvelope:
     name = jnp.dtype(dtype).name
     resolution = PrecisionResolution(
         policy.precision,

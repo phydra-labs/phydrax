@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from enum import IntEnum
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import StructuredCochainBridge
 from ..linalg import ArraySpace, DenseLinearOperator, eigen as eigen_linalg, FailurePolicy
 from ._maxwell_observers import ModeAmplitudeObserverPlan
 from ._maxwell_sources import (
@@ -23,6 +25,10 @@ from ._maxwell_sources import (
     MaxwellPairedCurrentSourcePlan,
     PreparedMaxwellSource,
 )
+
+
+if TYPE_CHECKING:
+    from ._maxwell import MaxwellCochainLayout
 
 
 class GuidedModeStatus(IntEnum):
@@ -284,7 +290,11 @@ class FixedFrequencyGuidedModePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "polynomial_policy must retain at least mode_count eigenpairs."
             )
-        self.coefficients = tuple(jnp.asarray(value) for value in coefficient_values)
+        self.coefficients = (
+            jnp.asarray(coefficient_values[0]),
+            jnp.asarray(coefficient_values[1]),
+            jnp.asarray(coefficient_values[2]),
+        )
         self.right_electric_trace_coefficients = tuple(
             jnp.asarray(value) for value in right_e
         )
@@ -612,14 +622,14 @@ def _safe_inverse_sqrt(value: Array, valid: Array, /) -> Array:
 
 
 def _guided_mode_derivative_evidence(
-    beta,
-    pairing,
-    finite,
-    full_beta,
-    full_finite,
-    spectrum_indices,
-    plan,
-):
+    beta: Array,
+    pairing: Array,
+    finite: Array,
+    full_beta: Array,
+    full_finite: Array,
+    spectrum_indices: Array,
+    plan: FixedFrequencyGuidedModePlan,
+) -> GuidedModeDerivativeEvidence:
     count = plan.mode_count
     distances = jnp.abs(beta[:, None] - full_beta[None, :])
     same_mode = (
@@ -679,7 +689,9 @@ def _guided_mode_derivative_evidence(
     )
 
 
-def _classify_guided_modes(beta, finite, plan):
+def _classify_guided_modes(
+    beta: Array, finite: Array, plan: FixedFrequencyGuidedModePlan
+) -> Array:
     real = jnp.abs(jnp.real(beta))
     imaginary = jnp.abs(jnp.imag(beta))
     scale = jnp.maximum(1.0, jnp.abs(beta))
@@ -762,7 +774,9 @@ class MaxwellHuygensSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
             identifier,
         )
 
-    def prepare(self, bridge, layout, /) -> PreparedMaxwellSource:
+    def prepare(
+        self, bridge: StructuredCochainBridge, layout: MaxwellCochainLayout, /
+    ) -> PreparedMaxwellSource:
         return self.paired.prepare(bridge, layout)
 
 

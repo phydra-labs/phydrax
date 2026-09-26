@@ -318,7 +318,7 @@ class PreparedPeriodicWaveFiniteDifference(StrictModule, NonTrainableState):
         )
         space = field.vector_space
 
-        def kinetic_action(psi):
+        def kinetic_action(psi: Array) -> Array:
             output = jnp.zeros_like(psi)
             for axis, spacing in enumerate(spacings):
                 output = (

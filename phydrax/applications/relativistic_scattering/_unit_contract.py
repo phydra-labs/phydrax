@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -79,14 +79,18 @@ _IDENTICAL_PARTICLE_NORMALIZATIONS = frozenset(
     ("factorial-symmetry", "ordered-labeled-final-state")
 )
 
+_IdentifierT = TypeVar("_IdentifierT", bound=str)
 
-def _identifier(value: str, name: str, /) -> str:
+
+def _identifier(value: _IdentifierT, name: str, /) -> _IdentifierT:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be a non-empty canonical identifier.")
     return value
 
 
-def _normalization(value: str, allowed: frozenset[str], name: str, /) -> str:
+def _normalization(
+    value: _IdentifierT, allowed: frozenset[str], name: str, /
+) -> _IdentifierT:
     normalized = _identifier(value, name)
     if normalized not in allowed:
         raise ValueError(f"Unknown {name}: {normalized!r}.")

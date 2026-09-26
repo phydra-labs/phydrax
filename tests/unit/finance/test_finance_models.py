@@ -80,3 +80,10 @@ def test_multiasset_and_commodity_covariances_are_financially_admissible():
     assert commodity.log_spot_variance(2.0) > 0.0
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="correlation"):
         CorrelationMatrix(jnp.array([[1.0, 1.1], [1.1, 1.0]]))
+
+
+def test_multiasset_diffusion_factor_reproduces_covariance():
+    dependence = CorrelationMatrix(jnp.array([[1.0, 0.25], [0.25, 1.0]]))
+    model = MultiAssetLognormalModel(jnp.array([0.2, 0.3]), dependence)
+    factor = model.diffusion_factor()
+    assert jnp.allclose(factor @ factor.T, model.covariance())

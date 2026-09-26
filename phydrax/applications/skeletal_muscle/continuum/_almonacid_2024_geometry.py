@@ -15,6 +15,7 @@ from math import asin, cos, isfinite, pi, sin
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
 from ...._strict import StrictModule
@@ -29,7 +30,7 @@ from ....discretization.fem import (
 )
 
 
-def _monomials(points):
+def _monomials(points: Array) -> tuple[Array, Array]:
     """Total degree one on [0,1]^3: exactly four cell-local coefficients."""
     values = jnp.concatenate((jnp.ones_like(points[:, :1]), points), axis=1)
     gradients = jnp.broadcast_to(
@@ -41,7 +42,7 @@ def _monomials(points):
     return values, gradients
 
 
-def _dgpm1():
+def _dgpm1() -> FiniteElementSpec:
     return FiniteElementSpec(
         "DiscontinuousTotalDegreeMonomial",
         "hexahedron",
@@ -66,12 +67,12 @@ class Almonacid2024Geometry(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        muscle_length_m=0.27,
-        aponeurosis_length_m=0.208,
-        aponeurosis_height_m=0.003,
-        muscle_width_m=0.055,
-        pennation_angle_rad=15.3 * pi / 180,
-        refinement=2,
+        muscle_length_m: float = 0.27,
+        aponeurosis_length_m: float = 0.208,
+        aponeurosis_height_m: float = 0.003,
+        muscle_width_m: float = 0.055,
+        pennation_angle_rad: float = 15.3 * pi / 180,
+        refinement: int = 2,
     ) -> None:
         lengths = tuple(
             float(x)
@@ -106,7 +107,14 @@ class Almonacid2024Geometry(StrictModule, NonTrainableState):
         self.pennation_angle_rad = angle
         self.refinement = int(refinement)
 
-    def edges(self):
+    def edges(
+        self,
+    ) -> tuple[
+        npt.NDArray[np.float64],
+        npt.NDArray[np.float64],
+        npt.NDArray[np.float64],
+        npt.NDArray[np.float64],
+    ]:
         angle = self.pennation_angle_rad
         gamma = pi - asin(sin(angle) * self.muscle_length_m / self.aponeurosis_length_m)
         length = self.aponeurosis_length_m * sin(angle + gamma) / sin(angle)
@@ -161,7 +169,9 @@ class PreparedAlmonacid2024Geometry(StrictModule, NonTrainableState):
     free_dof_count: int = eqx.field(static=True)
 
 
-def prepare_geometry(spec: Almonacid2024Geometry, pulling_face_id: int):
+def prepare_geometry(
+    spec: Almonacid2024Geometry, pulling_face_id: int
+) -> PreparedAlmonacid2024Geometry:
     fiber, apo, width, height = spec.edges()
     n = 1 << spec.refinement
     regions = ((np.zeros(3), fiber, n, 1), (-height, height, 1, 2), (fiber, height, 1, 2))
@@ -217,7 +227,12 @@ def prepare_geometry(spec: Almonacid2024Geometry, pulling_face_id: int):
                             boundary = 5
                     faces.setdefault(key, []).append((cell, axis, side, boundary))
     mesh = CellMesh(
-        np.asarray(vertices), (CellBlock("muscle-aponeurosis", "hexahedron", cells),)
+        np.asarray(vertices),
+        (
+            CellBlock(
+                "muscle-aponeurosis", "hexahedron", np.asarray(cells, dtype=np.int32)
+            ),
+        ),
     )
     q2, dgpm = lagrange_element("hexahedron", 2), _dgpm1()
     fe = FiniteElementPlan(

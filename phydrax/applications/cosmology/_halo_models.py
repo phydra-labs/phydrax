@@ -88,7 +88,7 @@ class SmoothComponentSphericalCollapsePlan(StrictModule, NonTrainableState):
         step = (log_end - log_start) / self.steps
         initial = jnp.stack((1.0 - overdensity / 3.0, -overdensity / 3.0))
 
-        def rate(log_scale, state):
+        def rate(log_scale: Array, state: Array) -> Array:
             scale = jnp.exp(log_scale)
             radius = jnp.maximum(state[0], self.collapse_radius * 0.1)
             velocity = state[1]
@@ -100,7 +100,7 @@ class SmoothComponentSphericalCollapsePlan(StrictModule, NonTrainableState):
                 )
             )
 
-        def advance(index, state):
+        def advance(index: Array, state: Array) -> Array:
             time = log_start + index * step
             k1 = rate(time, state)
             k2 = rate(time + 0.5 * step, state + 0.5 * step * k1)
@@ -128,7 +128,7 @@ class SmoothComponentSphericalCollapsePlan(StrictModule, NonTrainableState):
             "Spherical-collapse target must lie after the initial epoch and at or before a=1.",
         )
 
-        def bisect(_, bounds):
+        def bisect(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             terminal = self._terminal_radius(background, target, midpoint)
@@ -263,7 +263,7 @@ class TinkerDuffy200mPlan(StrictModule, NonTrainableState):
         )
         log_mass = jnp.log(mass)
 
-        def log_sigma(log_value):
+        def log_sigma(log_value: Array) -> Array:
             value = jnp.exp(log_value)
             sigma = self.variance.sigma(background, linear_power, value, scale)
             return jnp.log(sigma)

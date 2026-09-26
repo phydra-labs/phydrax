@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import numpy as np
+from jaxtyping import Array
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -82,7 +83,7 @@ class AffineLinearROMFidelityEvaluator(StrictModule, NonTrainableState):
     def __call__(
         self,
         case: FidelityCaseSpec,
-        key=None,
+        key: Array | None = None,
         /,
     ) -> FidelityEvaluation:
         del key

@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jaxtyping import Array, Key
 
 from ..._strict import StrictModule
 from .._function import DomainFunction
@@ -159,13 +160,15 @@ class _PartitionOfUnityEvaluator(StrictModule):
         positions: tuple[int, ...],
         args: tuple[Any, ...],
         *,
-        key,
+        key: Key[Array, ""] | None,
         kwargs: dict[str, Any],
-    ):
+    ) -> Any:
         selected = tuple(args[position] for position in positions)
         return field.func(*selected, key=key, **kwargs)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         arguments = tuple(args)
         effective_key = jr.key(0) if key is None else key
         call_kwargs = dict(kwargs)
@@ -239,7 +242,7 @@ class _PartitionOfUnityEvaluator(StrictModule):
             index = active_indices[slot]
             valid = slot < active_count
 
-            def contribution(_, index=index):
+            def contribution(_: None, index: Array = index) -> tuple[Array, Array]:
                 value = jax.lax.switch(
                     index,
                     branches,
@@ -247,7 +250,7 @@ class _PartitionOfUnityEvaluator(StrictModule):
                 )
                 return weights[index] * value, weights[index]
 
-            def empty(_):
+            def empty(_: None) -> tuple[Array, Array]:
                 return jnp.zeros_like(first_value), jnp.zeros_like(first_weight)
 
             value_part, weight_part = jax.lax.cond(
@@ -281,7 +284,9 @@ class _BrokenFieldEvaluator(StrictModule):
         self.field_positions = tuple(_positions(field, deps) for field in lifted)
         self.support_positions = tuple(_positions(field, deps) for field in supports)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         arguments = tuple(args)
         effective_key = jr.key(0) if key is None else key
         supports = jnp.stack(

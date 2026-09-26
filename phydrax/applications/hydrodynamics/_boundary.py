@@ -85,13 +85,13 @@ class FreeSurfaceBoundaryPlan(StrictModule, NonTrainableState):
         for axis, grid_axis in enumerate(axes):
             if grid_axis.periodic:
                 continue
-            lower = [slice(None)] * masks[axis].ndim
-            upper = [slice(None)] * masks[axis].ndim
+            lower: list[slice | int] = [slice(None)] * masks[axis].ndim
+            upper: list[slice | int] = [slice(None)] * masks[axis].ndim
             lower[axis] = 0
             upper[axis] = masks[axis].shape[axis] - 1
             masks[axis] = masks[axis].at[tuple(lower)].set(0.0)
             masks[axis] = masks[axis].at[tuple(upper)].set(0.0)
-        top = [slice(None)] * masks[2].ndim
+        top: list[slice | int] = [slice(None)] * masks[2].ndim
         top[2] = masks[2].shape[2] - 1
         masks[2] = masks[2].at[tuple(top)].set(1.0)
         velocities = (

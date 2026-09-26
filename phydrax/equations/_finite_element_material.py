@@ -336,7 +336,10 @@ def _bind_learned_law(
         route=DerivativeRoute.IMPLICIT,
         policy=RegularityPolicy(),
     )
-    reasons = sorted({*contract.derivative_admission.reasons, *implicit.reasons})
+    admission = contract.derivative_admission
+    # A contract bound with a differentiation request always carries its admission.
+    assert admission is not None
+    reasons = sorted({*admission.reasons, *implicit.reasons})
     if reasons:
         raise ValueError(
             f"{site} needs a learned law with first input and parameter derivatives "
@@ -565,7 +568,7 @@ class LearnedConstitutiveModel(AbstractConstitutiveModel):
         response_size = prod(self.response_shape)
         stateful = self.state_shape != (0,)
 
-        def response_of(value: Array):
+        def response_of(value: Array) -> tuple[Array, tuple[Array, Array, Array]]:
             features = jnp.concatenate((value, state)) if stateful else value
             raw = model(features[0] if model.in_size == "scalar" else features)
             outputs = jnp.reshape(jnp.asarray(raw), (-1,))
@@ -949,7 +952,7 @@ class MaterialIntegrationPlan(StrictModule):
                 raise ValueError("Material responses must match integration sites.")
         if not all(isinstance(response, ConstitutiveResponse) for response in responses_):
             raise TypeError("responses must contain ConstitutiveResponse values.")
-        trials: dict[str, Array] = {}
+        trials: dict[MaterialSiteId | str, Array] = {}
         for site, model, response in zip(
             self.site_ids, self.models, responses_, strict=True
         ):

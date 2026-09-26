@@ -12,7 +12,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from ._models import AbstractScatteringComponent
+from ._models import AbstractScatteringComponent, ScatteringResponse
 from ._ports import WavePort
 
 
@@ -252,13 +252,11 @@ class ScatteringNetwork(AbstractScatteringComponent):
             )
         )
 
-    def evaluate(self, angular_frequency, /):
+    def evaluate(self, angular_frequency: ArrayLike, /) -> ScatteringResponse:
         from ._network import full_scattering_matrix, prepare_scattering_network
 
         prepared = prepare_scattering_network(self, angular_frequency)
         matrix = full_scattering_matrix(prepared)
-        from ._models import ScatteringResponse
-
         return ScatteringResponse(
             matrix,
             tuple(reference for port in self.ports for reference in port.references),

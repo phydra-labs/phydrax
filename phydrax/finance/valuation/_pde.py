@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,7 +18,10 @@ from phydrax._interpolation import linear_interpolate
 
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._strict import StrictModule
-from ...linalg._tridiagonal_lines import solve_tridiagonal_lines
+from ...linalg._tridiagonal_lines import (
+    solve_tridiagonal_lines,
+    TridiagonalLineSolveResult,
+)
 from ..contracts._options import OptionType, VanillaPayoff
 from ..core._currency import Currency
 from ..core._evidence import FinanceEvidenceBinding
@@ -29,6 +32,7 @@ from ._types import ValuationEvidence, ValuationResult
 
 
 ExerciseRoute = Literal["european", "american"]
+_ThetaCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class FiniteDifferencePlan(StrictModule):
@@ -275,7 +279,15 @@ def _local_variance(problem: PDEProblem, tau: Array, interior_spots: Array) -> A
     )
 
 
-def _theta_step(problem, plan, grid, current, tau, drift, explicit_source):
+def _theta_step(
+    problem: PDEProblem,
+    plan: FiniteDifferencePlan,
+    grid: Array,
+    current: Array,
+    tau: Array,
+    drift: Array,
+    explicit_source: Array,
+) -> tuple[Array, TridiagonalLineSolveResult]:
     dt = problem.maturity / plan.time_steps
     ds = grid[1] - grid[0]
     spots = grid[1:-1]
@@ -328,7 +340,7 @@ def evaluate_pde(
         jnp.asarray(True),
     )
 
-    def body(iteration, carry):
+    def body(iteration: Array, carry: _ThetaCarry) -> _ThetaCarry:
         current, maximum_residual, minimum_pivot, successful = carry
         tau = (iteration + 1) * problem.maturity / plan_.time_steps
         updated, solve = _theta_step(
@@ -464,7 +476,7 @@ def evaluate_pide(
         jnp.asarray(True),
     )
 
-    def body(iteration, carry):
+    def body(iteration: Array, carry: _ThetaCarry) -> _ThetaCarry:
         current, maximum_residual, minimum_pivot, successful = carry
         tau = (iteration + 1) * problem.maturity / fd.time_steps
         shifted_spots = grid[1:-1, None] * jnp.exp(prepared.jump_nodes[None, :])

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -118,11 +118,11 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
         self.report = report
 
     @classmethod
-    def cells(cls, dimensions: int, refinement_ratio: int = 2, /):
+    def cells(cls, dimensions: int, refinement_ratio: int = 2, /) -> Self:
         return cls(("interval",) * int(dimensions), refinement_ratio)
 
     @classmethod
-    def nodes(cls, dimensions: int, refinement_ratio: int = 2, /):
+    def nodes(cls, dimensions: int, refinement_ratio: int = 2, /) -> Self:
         return cls(("point",) * int(dimensions), refinement_ratio)
 
     @classmethod
@@ -132,7 +132,7 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
         normal_axis: int,
         refinement_ratio: int = 2,
         /,
-    ):
+    ) -> Self:
         entities: list[AMRAxisEntity] = ["interval"] * int(dimensions)
         entities[int(normal_axis)] = "point"
         return cls(entities, refinement_ratio)
@@ -144,7 +144,7 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
         tangent_axis: int,
         refinement_ratio: int = 2,
         /,
-    ):
+    ) -> Self:
         entities: list[AMRAxisEntity] = ["point"] * int(dimensions)
         entities[int(tangent_axis)] = "interval"
         return cls(entities, refinement_ratio)

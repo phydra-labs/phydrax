@@ -13,7 +13,11 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..discretization.splatting import PreparedParticleGridSplat, SplatDepositResult
+from ..discretization.splatting import (
+    ParticleGridSplatState,
+    PreparedParticleGridSplat,
+    SplatDepositResult,
+)
 from ._self_gravity import PreparedNewtonianSelfGravity
 
 
@@ -118,7 +122,9 @@ class ParticleMeshGravityPlan(StrictModule):
             momentum=jnp.where(active, momentum_, 0.0),
         )
 
-    def density(self, position: ArrayLike, /):
+    def density(
+        self, position: ArrayLike, /
+    ) -> tuple[SplatDepositResult, ParticleGridSplatState]:
         routes = self.transfer.build(position)
         deposited = self.transfer.deposit_content(routes, self.transfer.particles.masses)
         return deposited, routes

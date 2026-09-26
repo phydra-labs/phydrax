@@ -135,7 +135,7 @@ def batch_belief_propagation(
     if state.evidence.shape[1:] != (prepared.state_variable_indices.shape[0],):
         raise ValueError("Batched evidence width does not match the prepared graph.")
 
-    def one(messages, evidence, step):
+    def one(messages: Array, evidence: Array, step: Array) -> BeliefPropagationResult:
         return run_belief_propagation(
             prepared,
             BeliefPropagationState(

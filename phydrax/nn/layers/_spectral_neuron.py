@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from numbers import Integral
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax
@@ -208,7 +208,8 @@ class SpectralNeuron(_AbstractBaseModel):
             raise ValueError(
                 "SpectralNeuron monotonicity entries must be 'free', 'increasing', or 'decreasing'."
             )
-        canonical_modes = tuple(modes)
+        # Every entry was validated against _MONOTONICITY_MODES above.
+        canonical_modes = cast(tuple[_Monotonicity, ...], tuple(modes))
         free_indices = tuple(
             i for i, mode in enumerate(canonical_modes) if mode == "free"
         )

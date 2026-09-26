@@ -29,7 +29,8 @@ def _pair(value: Sequence[str], description: str, /) -> tuple[str, str]:
     pair = tuple(str(item) for item in value)
     if len(pair) != 2 or not pair[0] or not pair[1] or pair[0] == pair[1]:
         raise ValueError(f"{description} entries must name two distinct roles.")
-    return tuple(sorted(pair))
+    first, second = sorted(pair)
+    return first, second
 
 
 def _components(faces: np.ndarray, /) -> int:
@@ -38,7 +39,8 @@ def _components(faces: np.ndarray, /) -> int:
     edge_owners: dict[tuple[int, int], list[int]] = {}
     for face_index, face in enumerate(faces):
         for first, second in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
-            edge = tuple(sorted((int(first), int(second))))
+            low, high = sorted((int(first), int(second)))
+            edge = (low, high)
             edge_owners.setdefault(edge, []).append(face_index)
     neighbors = [set() for _ in range(faces.shape[0])]
     for owners in edge_owners.values():

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -36,6 +37,33 @@ from ...linalg import (
 )
 from .._lqr import AffineFeedbackPolicy, QuadraticValueFunction
 from ._layout import PlayerControlPartition
+
+
+_StageCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_StageInputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_StageOutputs: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class LQFeedbackNashStatus(IntEnum):
@@ -167,14 +195,14 @@ def _normalized_combined_residual(
     return jnp.sqrt(residual_square) / (1.0 + jnp.sqrt(reference_square))
 
 
-def _nanmax(value: Array, axis, /) -> Array:
+def _nanmax(value: Array, axis: int | tuple[int, ...], /) -> Array:
     available = ~jnp.isnan(value)
     maximum = jnp.max(jnp.where(available, value, -jnp.inf), axis=axis)
     any_available = jnp.any(available, axis=axis)
     return jnp.where(any_available, maximum, jnp.nan)
 
 
-def _nanmin(value: Array, axis, /) -> Array:
+def _nanmin(value: Array, axis: int | tuple[int, ...], /) -> Array:
     available = ~jnp.isnan(value)
     minimum = jnp.min(jnp.where(available, value, jnp.inf), axis=axis)
     any_available = jnp.any(available, axis=axis)
@@ -196,7 +224,7 @@ def _game_inputs(
     terminal_linear: ArrayLike | None,
     terminal_constants: ArrayLike,
     /,
-):
+) -> tuple[tuple[Array, ...], tuple[int, ...], int, int, int, int]:
     if not isinstance(partition, PlayerControlPartition):
         raise TypeError("partition must be a PlayerControlPartition.")
     a = _real_array(dynamics_matrices, "dynamics_matrices")
@@ -529,7 +557,9 @@ def finite_horizon_lq_feedback_nash(
         to_time_major(r_symmetry, 0),
     )
 
-    def step(carry, stage):
+    def step(
+        carry: _StageCarry, stage: _StageInputs
+    ) -> tuple[_StageCarry, _StageOutputs]:
         (
             z_next,
             linear_next,

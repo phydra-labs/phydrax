@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TypedDict, Unpack
 
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
-from ....units import conversion_factor
+from ....units import conversion_factor, UnitDefinition
 from ....uq import (
     bennett_acceptance_ratio,
     free_energy_perturbation,
@@ -21,8 +24,21 @@ from ....uq import (
     thermodynamic_integration,
     ThermodynamicDerivativeDataset,
 )
+from ....uq._free_energy import WorkKind
 from .._construct import _identifier
 from ..experiments._models import ThermodynamicConvention
+
+
+class _BARSolverOptions(TypedDict, total=False):
+    maximum_iterations: int
+    tolerance: float
+
+
+class _MBARSolverOptions(TypedDict, total=False):
+    reference_state: int
+    maximum_iterations: int
+    tolerance: float
+    rank_tolerance: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,19 +50,19 @@ class ProteinFreeEnergyEstimate:
     bias_ids: tuple[str | None, ...]
 
     @property
-    def free_energies(self):
+    def free_energies(self) -> Array:
         return self.native_result.free_energies * self.thermal_energy
 
     @property
-    def covariance(self):
+    def covariance(self) -> Array:
         return self.native_result.covariance * self.thermal_energy**2
 
     @property
-    def differences(self):
+    def differences(self) -> Array:
         return self.native_result.differences * self.thermal_energy
 
     @property
-    def standard_errors(self):
+    def standard_errors(self) -> Array:
         return self.native_result.standard_errors * self.thermal_energy
 
 
@@ -103,7 +119,7 @@ class ProteinFreeEnergyWorkflow:
         object.__setattr__(self, "temperature_kelvin", float(self.temperature_kelvin))
 
     @property
-    def thermal_energy(self):
+    def thermal_energy(self) -> float:
         return self.convention.thermal_constant * self.temperature_kelvin
 
     @property
@@ -121,7 +137,7 @@ class ProteinFreeEnergyWorkflow:
             }
         )
 
-    def fingerprint(self):
+    def fingerprint(self) -> str:
         return canonical_fingerprint(
             {
                 "kind": "protein-free-energy-protocol",
@@ -147,7 +163,7 @@ class ProteinFreeEnergyWorkflow:
             self.bias_ids,
         )
 
-    def _reduced(self, values, unit):
+    def _reduced(self, values: ArrayLike, unit: UnitDefinition) -> Array:
         return (
             jnp.asarray(values)
             * float(conversion_factor(unit, self.convention.energy_unit))
@@ -156,15 +172,15 @@ class ProteinFreeEnergyWorkflow:
 
     def reduced_work_dataset(
         self,
-        values,
-        coverage,
-        sample_active,
-        source_state,
-        destination_state,
-        chain_index,
-        draw_index,
-        repeat_index,
-        dependence_group_index,
+        values: ArrayLike,
+        coverage: ArrayLike,
+        sample_active: ArrayLike,
+        source_state: ArrayLike,
+        destination_state: ArrayLike,
+        chain_index: ArrayLike,
+        draw_index: ArrayLike,
+        repeat_index: ArrayLike,
+        dependence_group_index: ArrayLike,
         /,
         *,
         potential_ids: Sequence[str],
@@ -172,7 +188,7 @@ class ProteinFreeEnergyWorkflow:
         qualification_id: str,
         sampling_exact: bool,
         sampling_bias_bound: float,
-        work_kind="equilibrium-difference",
+        work_kind: WorkKind = "equilibrium-difference",
         mapping_id: str | None = None,
     ) -> ReducedWorkDataset:
         if len(self.state_ids) != 2:
@@ -205,24 +221,24 @@ class ProteinFreeEnergyWorkflow:
 
     def work_dataset(
         self,
-        values,
-        coverage,
-        sample_active,
-        source_state,
-        destination_state,
-        chain_index,
-        draw_index,
-        repeat_index,
-        dependence_group_index,
+        values: ArrayLike,
+        coverage: ArrayLike,
+        sample_active: ArrayLike,
+        source_state: ArrayLike,
+        destination_state: ArrayLike,
+        chain_index: ArrayLike,
+        draw_index: ArrayLike,
+        repeat_index: ArrayLike,
+        dependence_group_index: ArrayLike,
         /,
         *,
-        energy_unit,
+        energy_unit: UnitDefinition,
         potential_ids: Sequence[str],
         work_id: str,
         qualification_id: str,
         sampling_exact: bool,
         sampling_bias_bound: float,
-        work_kind="equilibrium-difference",
+        work_kind: WorkKind = "equilibrium-difference",
         mapping_id: str | None = None,
     ) -> ReducedWorkDataset:
         """Convert physical directed work to an authenticated reduced dataset."""
@@ -248,19 +264,19 @@ class ProteinFreeEnergyWorkflow:
 
     def potential_dataset(
         self,
-        values,
-        coverage,
-        sample_active,
-        origin_state,
-        chain_index,
-        draw_index,
-        repeat_index,
-        dependence_group_index,
+        values: ArrayLike,
+        coverage: ArrayLike,
+        sample_active: ArrayLike,
+        origin_state: ArrayLike,
+        chain_index: ArrayLike,
+        draw_index: ArrayLike,
+        repeat_index: ArrayLike,
+        dependence_group_index: ArrayLike,
         /,
         *,
-        energy_unit,
+        energy_unit: UnitDefinition,
         potential_ids: Sequence[str],
-        inverse_temperatures,
+        inverse_temperatures: npt.ArrayLike,
         reduced_convention_id: str,
         qualification_id: str,
         sampling_exact: bool,
@@ -307,17 +323,17 @@ class ProteinFreeEnergyWorkflow:
 
     def derivative_dataset(
         self,
-        values,
-        coverage,
-        sample_active,
-        chain_index,
-        draw_index,
-        repeat_index,
-        dependence_group_index,
-        path_parameter,
+        values: ArrayLike,
+        coverage: ArrayLike,
+        sample_active: ArrayLike,
+        chain_index: ArrayLike,
+        draw_index: ArrayLike,
+        repeat_index: ArrayLike,
+        dependence_group_index: ArrayLike,
+        path_parameter: ArrayLike,
         /,
         *,
-        energy_unit,
+        energy_unit: UnitDefinition,
         potential_ids: Sequence[str],
         derivative_id: str,
         control_path_id: str,
@@ -350,7 +366,13 @@ class ProteinFreeEnergyWorkflow:
             unit_id="1",
         )
 
-    def _verify(self, dataset, /) -> None:
+    def _verify(
+        self,
+        dataset: ReducedWorkDataset
+        | ReducedPotentialDataset
+        | ThermodynamicDerivativeDataset,
+        /,
+    ) -> None:
         if dataset.state_ids != self.state_ids:
             raise ValueError(
                 "Dataset state identities do not match this protein workflow."
@@ -399,7 +421,11 @@ class ProteinFreeEnergyWorkflow:
                     "Reduced-potential beta/convention does not match this workflow."
                 )
 
-    def _selection(self, selection, /):
+    def _selection(
+        self,
+        selection: FreeEnergySelectionPlan | FreeEnergySelectionEvidence | None,
+        /,
+    ) -> FreeEnergySelectionPlan | FreeEnergySelectionEvidence:
         return self.selection_plan if selection is None else selection
 
     def fep(
@@ -408,7 +434,7 @@ class ProteinFreeEnergyWorkflow:
         selection: FreeEnergySelectionPlan | FreeEnergySelectionEvidence | None = None,
         /,
         *,
-        key=None,
+        key: ArrayLike | None = None,
     ) -> ProteinFreeEnergyEstimate:
         if not isinstance(dataset, ReducedWorkDataset):
             raise TypeError("dataset must be ReducedWorkDataset.")
@@ -423,8 +449,8 @@ class ProteinFreeEnergyWorkflow:
         selection: FreeEnergySelectionPlan | FreeEnergySelectionEvidence | None = None,
         /,
         *,
-        key=None,
-        **solver_options,
+        key: ArrayLike | None = None,
+        **solver_options: Unpack[_BARSolverOptions],
     ) -> ProteinFreeEnergyEstimate:
         if not isinstance(dataset, ReducedWorkDataset):
             raise TypeError("dataset must be ReducedWorkDataset.")
@@ -444,7 +470,7 @@ class ProteinFreeEnergyWorkflow:
         selection: FreeEnergySelectionPlan | FreeEnergySelectionEvidence | None = None,
         /,
         *,
-        key=None,
+        key: ArrayLike | None = None,
     ) -> ProteinFreeEnergyEstimate:
         if not isinstance(dataset, ThermodynamicDerivativeDataset):
             raise TypeError("dataset must be ThermodynamicDerivativeDataset.")
@@ -459,8 +485,8 @@ class ProteinFreeEnergyWorkflow:
         selection: FreeEnergySelectionPlan | FreeEnergySelectionEvidence | None = None,
         /,
         *,
-        key=None,
-        **solver_options,
+        key: ArrayLike | None = None,
+        **solver_options: Unpack[_MBARSolverOptions],
     ) -> ProteinFreeEnergyEstimate:
         if not isinstance(dataset, ReducedPotentialDataset):
             raise TypeError("dataset must be ReducedPotentialDataset.")
@@ -480,8 +506,8 @@ class ProteinFreeEnergyWorkflow:
         selection: FreeEnergySelectionPlan | FreeEnergySelectionEvidence | None = None,
         /,
         *,
-        key=None,
-        **solver_options,
+        key: ArrayLike | None = None,
+        **solver_options: Unpack[_BARSolverOptions],
     ) -> ProteinFreeEnergyEstimate:
         """Analyze authenticated targeted-map work without reinterpreting raw arrays."""
 

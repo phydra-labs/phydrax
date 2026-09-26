@@ -179,3 +179,27 @@ def test_planar_wall_and_implicit_curve_cover_higher_and_lower_dimensions():
     assert curve.vertices.shape[1] == 2
     assert curve.topology.edges.shape[1] == 2
     assert jnp.isfinite(derivative)
+
+
+def test_implicit_curve_evidence_reports_projection_diagnostics():
+    grid = phx.discretization.TensorGridPlan(
+        tuple(phx.discretization.UniformAxisSpec(19) for _ in range(2)),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray(((-1.2, -1.2), (1.2, 1.2))))
+    geometry = phx.geometry.Circle(
+        (0.0, 0.0),
+        0.73,
+        feature_id="curve-evidence",
+    ).compile()
+    plan = phx.geometry.discover_implicit_curve(
+        geometry,
+        grid,
+        source_id="circle-curve-evidence",
+    )
+
+    projection = plan.realize(geometry.state).evidence.projection
+
+    assert isinstance(projection, phx.geometry.ImplicitPointProjectionEvidence)
+    assert projection.plan_id == plan.projection.plan_id
+    assert bool(jnp.all(jnp.isfinite(projection.root_residual)))
+    assert bool(jnp.all(projection.minimum_gradient_norm > 0.0))

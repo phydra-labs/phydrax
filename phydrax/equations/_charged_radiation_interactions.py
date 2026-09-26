@@ -134,7 +134,7 @@ class ChargedRadiationMaterialLibrary(StrictModule, NonTrainableState):
             self.energy_ev[upper] - self.energy_ev[lower]
         )
 
-        def interpolate(table):
+        def interpolate(table: Array) -> Array:
             left = table[safe_material, lower]
             right = table[safe_material, upper]
             return left + fraction * (right - left)

@@ -101,7 +101,7 @@ class ForecastLaw(StrictModule):
             )
         scenarios = None
         probabilities = None
-        if supplied_scenarios:
+        if scenario_returns is not None and scenario_probabilities is not None:
             scenarios = jnp.asarray(scenario_returns, dtype=expected.dtype)
             if scenarios.ndim not in (2, 3) or scenarios.shape[-1] != count:
                 raise ValueError(
@@ -286,14 +286,13 @@ class PortfolioProblem(StrictModule):
             SpectralRiskObjective,
             DrawdownRiskObjective,
         )
-        if (
-            isinstance(objective, scenario_objectives)
-            and forecast.scenario_returns is None
-        ):
+        scenario_returns = forecast.scenario_returns
+        if isinstance(objective, scenario_objectives) and scenario_returns is None:
             raise ValueError("The selected objective requires finite scenarios.")
         if (
             isinstance(objective, DrawdownRiskObjective)
-            and forecast.scenario_returns.ndim != 3
+            and scenario_returns is not None
+            and scenario_returns.ndim != 3
         ):
             raise ValueError("Drawdown risk requires scenario paths with a stage axis.")
         if isinstance(

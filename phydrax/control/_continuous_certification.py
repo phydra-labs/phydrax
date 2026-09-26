@@ -107,14 +107,14 @@ class ControlSegmentInterpolant(StrictModule, NonTrainableState):
         )
         flat_theta = theta.reshape((-1,))
 
-        def state_at(value):
+        def state_at(value: Array) -> Array:
             powers = jnp.power(value, jnp.arange(self.state_degree + 1))
             weights = powers.reshape(
                 (1,) * case_rank + (self.state_degree + 1,) + (1,) * len(self.state_shape)
             )
             return jnp.sum(state_coefficients * weights, axis=case_rank)
 
-        def control_at(value):
+        def control_at(value: Array) -> Array:
             powers = jnp.power(value, jnp.arange(self.control_degree + 1))
             weights = powers.reshape(
                 (1,) * case_rank
@@ -203,7 +203,14 @@ class AffineBernsteinPathEnvelope(AbstractPathConstraintEnvelope, NonTrainableSt
         self.envelope_id = envelope_id
         self.conservative = True
 
-    def bounds(self, interpolant, residual, interval, args, /):
+    def bounds(
+        self,
+        interpolant: ControlSegmentInterpolant,
+        residual: Callable[[Array, Array, Array, Any], Array],
+        interval: int,
+        args: Any,
+        /,
+    ) -> tuple[Array, Array, Array]:
         del residual, args
         case_rank = len(interpolant.case_shape)
         state = jnp.take(interpolant.state_coefficients, interval, axis=case_rank)
@@ -262,12 +269,20 @@ class LipschitzPathEnvelope(AbstractPathConstraintEnvelope, NonTrainableState):
             or sample_count < 2
         ):
             raise ValueError("sample_count must be an integer of at least two.")
-        self.derivative_bound = derivative_bound
+        # callable() narrowing cannot recover the declared callback signature.
+        self.derivative_bound = derivative_bound  # ty: ignore[invalid-assignment]
         self.sample_count = sample_count
         self.envelope_id = envelope_id
         self.conservative = True
 
-    def bounds(self, interpolant, residual, interval, args, /):
+    def bounds(
+        self,
+        interpolant: ControlSegmentInterpolant,
+        residual: Callable[[Array, Array, Array, Any], Array],
+        interval: int,
+        args: Any,
+        /,
+    ) -> tuple[Array, Array, Array]:
         theta = jnp.linspace(0.0, 1.0, self.sample_count)
         time, state, control = interpolant.evaluate(interval, theta)
         case_count = int(np.prod(interpolant.case_shape)) if interpolant.case_shape else 1
@@ -278,26 +293,27 @@ class LipschitzPathEnvelope(AbstractPathConstraintEnvelope, NonTrainableState):
             (case_count, self.sample_count) + interpolant.control_shape
         )
 
-        def evaluate_case(states, controls):
+        def evaluate_case(states: Array, controls: Array) -> Array:
             return jax.vmap(
                 lambda t, x, u: jnp.asarray(residual(t, x, u, args)).reshape(())
             )(time, states, controls)
 
         values = jax.vmap(evaluate_case)(state_cases, control_cases)
-        if callable(self.derivative_bound):
+        derivative_bound = self.derivative_bound
+        if callable(derivative_bound):
 
-            def derivative_case(states, controls):
+            def derivative_case(states: Array, controls: Array) -> Array:
                 return jax.vmap(
-                    lambda t, x, u: jnp.asarray(
-                        self.derivative_bound(t, x, u, args)
-                    ).reshape(())
+                    lambda t, x, u: jnp.asarray(derivative_bound(t, x, u, args)).reshape(
+                        ()
+                    )
                 )(time, states, controls)
 
             derivative = jax.vmap(derivative_case)(state_cases, control_cases)
             bound = jnp.max(derivative, axis=-1)
         else:
             bound = jnp.broadcast_to(
-                jnp.asarray(self.derivative_bound).reshape(()), (case_count,)
+                jnp.asarray(derivative_bound).reshape(()), (case_count,)
             )
         spacing = jnp.diff(time)
         variation = bound[:, None] * spacing[None, :]
@@ -326,7 +342,14 @@ class CertifiedPathConstraint(StrictModule, NonTrainableState):
     envelope: AbstractPathConstraintEnvelope
     constraint_id: str = eqx.field(static=True)
 
-    def __init__(self, residual, envelope, /, *, constraint_id: str) -> None:
+    def __init__(
+        self,
+        residual: Callable[[Array, Array, Array, Any], Array],
+        envelope: AbstractPathConstraintEnvelope,
+        /,
+        *,
+        constraint_id: str,
+    ) -> None:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if not isinstance(envelope, AbstractPathConstraintEnvelope):
@@ -341,7 +364,7 @@ class CertifiedPathConstraint(StrictModule, NonTrainableState):
             }
         )
 
-    def __call__(self, time, state, control, args, /):
+    def __call__(self, time: Array, state: Array, control: Array, args: Any, /) -> Array:
         return self.residual(time, state, control, args)
 
 

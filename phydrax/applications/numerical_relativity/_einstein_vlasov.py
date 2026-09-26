@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntFlag
 from math import isfinite
-from typing import TypeAlias
+from typing import TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
@@ -259,7 +259,10 @@ class _EinsteinVlasovStage(StrictModule):
     evidence: EinsteinVlasovStageEvidence
 
 
-def _select_tree(condition: Array, proposed, current):
+_TreeT = TypeVar("_TreeT")
+
+
+def _select_tree(condition: Array, proposed: _TreeT, current: _TreeT) -> _TreeT:
     if jax.tree.structure(proposed) != jax.tree.structure(current):
         raise ValueError(
             "Atomic Einstein-Vlasov alternatives must have one tree structure."
@@ -945,7 +948,9 @@ class EinsteinVlasovMatterPlan(StrictModule, NonTrainableState):
         )
         status = jnp.asarray(int(EinsteinVlasovStatus.SUCCESS), dtype=jnp.int32)
 
-        def add_status(current, predicate, flag):
+        def add_status(
+            current: Array, predicate: Array, flag: EinsteinVlasovStatus
+        ) -> Array:
             return jnp.where(
                 predicate,
                 current,

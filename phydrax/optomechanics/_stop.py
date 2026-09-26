@@ -1,9 +1,11 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from __future__ import annotations
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
 def optical_path_difference(
@@ -11,7 +13,7 @@ def optical_path_difference(
     surface_normal: ArrayLike,
     refractive_index: ArrayLike = 1.0,
     /,
-):
+) -> Array:
     displacement = jnp.asarray(displacement_m)
     normal = jnp.asarray(surface_normal)
     index = jnp.asarray(refractive_index)
@@ -34,7 +36,9 @@ def optical_path_difference(
     return 2 * index * jnp.sum(displacement * normal, axis=-1)
 
 
-def rms_wavefront_error(optical_path_difference_m: ArrayLike, weights: ArrayLike, /):
+def rms_wavefront_error(
+    optical_path_difference_m: ArrayLike, weights: ArrayLike, /
+) -> Array:
     opd = jnp.asarray(optical_path_difference_m)
     weights_ = jnp.asarray(weights)
     if opd.shape != weights_.shape or opd.size == 0:

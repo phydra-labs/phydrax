@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from math import isfinite
-from typing import Any
+from typing import Any, Self, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
@@ -46,7 +46,11 @@ from ._iterative._types import (
 from ._least_squares import LevenbergMarquardt
 
 
-def _defect_ratio(norm, threshold):
+_Evidence = TypeVar("_Evidence")
+_StateDesignFunction: TypeAlias = Callable[[PyTree[Any], PyTree[Any], Any], Any]
+
+
+def _defect_ratio(norm: Array, threshold: Array) -> Array:
     denominator = jnp.where(threshold > 0, threshold, jnp.ones_like(threshold))
     return jnp.where(
         threshold > 0,
@@ -55,7 +59,11 @@ def _defect_ratio(norm, threshold):
     )
 
 
-def _validate_acceptance_blocks(block_ids, blocks, evidence_type):
+def _validate_acceptance_blocks(
+    block_ids: Iterable[str],
+    blocks: Iterable[_Evidence],
+    evidence_type: type[_Evidence],
+) -> tuple[tuple[str, ...], tuple[_Evidence, ...]]:
     identifiers = tuple(block_ids)
     values = tuple(blocks)
     if len(identifiers) != len(values):
@@ -137,7 +145,7 @@ class StateAcceptanceEvidence(StrictModule):
         )
 
     @classmethod
-    def from_blocks(cls, block_ids, blocks):
+    def from_blocks(cls, block_ids: Sequence[str], blocks: Sequence[Self]) -> Self:
         """Combine named physical checks using the maximum dimensionless defect."""
         identifiers, values = _validate_acceptance_blocks(block_ids, blocks, cls)
         if not values:
@@ -227,7 +235,7 @@ class AdjointAcceptanceEvidence(StrictModule):
         )
 
     @classmethod
-    def from_blocks(cls, block_ids, blocks):
+    def from_blocks(cls, block_ids: Sequence[str], blocks: Sequence[Self]) -> Self:
         """Combine named transpose checks without mixing their physical scales."""
         identifiers, values = _validate_acceptance_blocks(block_ids, blocks, cls)
         if not values:
@@ -631,15 +639,15 @@ class StateDesignProblem(StrictModule):
 
     def __init__(
         self,
-        state_residual,
-        objective,
+        state_residual: _StateDesignFunction,
+        objective: _StateDesignFunction,
         /,
         *,
         state_solver: AbstractStateSolver | None = None,
         acceptance_policy: StateAcceptancePolicy | None = None,
-        state_admissibility: Callable | None = None,
-        state_realization: Callable | None = None,
-        state_certification: Callable | None = None,
+        state_admissibility: _StateDesignFunction | None = None,
+        state_realization: _StateDesignFunction | None = None,
+        state_certification: Callable[..., StateAcceptanceEvidence] | None = None,
         design_bounds: Bounds | None = None,
         constraints: Sequence[StateDesignConstraint] = (),
         has_aux: bool = False,
@@ -940,6 +948,71 @@ class AbstractStateDesignMethod(StrictModule):
         raise NotImplementedError
 
 
+# (trials, rate, accepted, state result, design, value, then ten work counters)
+_LineSearchCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    StateEquationResult,
+    PyTree[Any],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+# (state result, design, value, accepted, rate, trials, then ten work counters)
+_LineSearchResult: TypeAlias = tuple[
+    StateEquationResult,
+    PyTree[Any],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+# (state result, design, nineteen status/work/step scalars, adjoint)
+_ReducedAdjointCarry: TypeAlias = tuple[
+    StateEquationResult,
+    PyTree[Any],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    PyTree[Any],
+]
+
+
 def _default_adjoint_policy() -> LinearSolvePolicy:
     return LinearSolvePolicy(
         GMRES(),
@@ -957,7 +1030,7 @@ def _state_design_line_search(
     directional_derivative: Array,
     args: Any,
     /,
-):
+) -> _LineSearchResult:
     """Backtrack over fully solved states without exposing rejected trials."""
 
     scalar_dtype = inexact_result_type(value, directional_derivative)
@@ -969,7 +1042,7 @@ def _state_design_line_search(
         dtype=scalar_dtype,
     )
 
-    def condition(carry):
+    def condition(carry: _LineSearchCarry) -> Array:
         trials, rate, accepted, *_ = carry
         return (
             (trials < policy.maximum_steps)
@@ -978,7 +1051,7 @@ def _state_design_line_search(
             & jnp.isfinite(rate)
         )
 
-    def body(carry):
+    def body(carry: _LineSearchCarry) -> _LineSearchCarry:
         (
             trials,
             rate,
@@ -1019,10 +1092,10 @@ def _state_design_line_search(
             & sufficient
         )
 
-        def accept_trial(_):
+        def accept_trial(_: None) -> tuple[StateEquationResult, PyTree[Any], Array]:
             return trial_state_result, trial_design, trial_value
 
-        def keep_accepted(_):
+        def keep_accepted(_: None) -> tuple[StateEquationResult, PyTree[Any], Array]:
             return candidate_state_result, candidate_design, candidate_value
 
         (
@@ -1253,7 +1326,7 @@ def _solve_reduced_adjoint(
         initial_adjoint,
     )
 
-    def condition(carry):
+    def condition(carry: _ReducedAdjointCarry) -> Array:
         (
             _,
             _,
@@ -1274,7 +1347,7 @@ def _solve_reduced_adjoint(
             & within_evaluations
         )
 
-    def body(carry):
+    def body(carry: _ReducedAdjointCarry) -> _ReducedAdjointCarry:
         (
             current_state_result,
             current_design,
@@ -1358,7 +1431,7 @@ def _solve_reduced_adjoint(
             adjoint,
         )
 
-        def fail_model(status_code):
+        def fail_model(status_code: OptimizationStatus) -> _ReducedAdjointCarry:
             return (
                 current_state_result,
                 current_design,
@@ -1384,7 +1457,7 @@ def _solve_reduced_adjoint(
                 adjoint,
             )
 
-        def evaluate_direction(_):
+        def evaluate_direction(_: None) -> _ReducedAdjointCarry:
             direction = _tree_negative(reduced_gradient)
             if problem.design_bounds is not None:
                 direction = _projected_displacement(
@@ -1399,7 +1472,7 @@ def _solve_reduced_adjoint(
                 & (directional < 0.0)
             )
 
-            def search(_):
+            def search(_operand: None) -> _ReducedAdjointCarry:
                 (
                     candidate_state_result,
                     candidate_design,
@@ -1479,7 +1552,7 @@ def _solve_reduced_adjoint(
                 None,
             )
 
-        def evaluate_finite_model(_):
+        def evaluate_finite_model(_: None) -> _ReducedAdjointCarry:
             converged = optimality <= termination.optimality_threshold(
                 next_initial_optimality
             )
@@ -1674,7 +1747,9 @@ def _solve_simultaneous_kkt(
     initial_residual = problem.residual(state, design, args)
     adjoint = jax.tree.map(jnp.zeros_like, initial_residual)
 
-    def kkt_residual(variables, dynamic_args):
+    def kkt_residual(
+        variables: tuple[PyTree[Any], PyTree[Any], PyTree[Any]], dynamic_args: Any
+    ) -> tuple[PyTree[Array], PyTree[Array], PyTree[Array]]:
         current_state, current_design, current_adjoint = variables
         residual = problem.residual(current_state, current_design, dynamic_args)
         state_objective_gradient = jax.grad(

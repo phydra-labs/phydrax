@@ -212,7 +212,7 @@ class SpectralProfilePlan(StrictModule, NonTrainableState):
         else:
             gamma = 0.5 * self.lorentzian_fwhm
             profiles = voigt_profile(offsets, gaussian_sigma, gamma)
-            captured = np.trapezoid(profiles, grid, axis=0)
+            captured = np.asarray(np.trapezoid(profiles, grid, axis=0), dtype=np.float64)
         raw_areas = np.trapezoid(profiles, grid, axis=0)
         valid_areas = raw_areas > np.finfo(np.float64).tiny
         profiles = profiles / np.where(valid_areas, raw_areas, 1.0)[None, :]

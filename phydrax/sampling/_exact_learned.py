@@ -9,7 +9,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -55,6 +55,34 @@ _FLOW_ACCEPT = SampleAddress(
     "markov", "gauge-equivariant-flow", target="acceptance", role="transition"
 )
 
+# (position, momentum, gradient, active, nonfinite)
+_SurrogateTrajectoryCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_DelayedAcceptanceOutputs: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+# (position, exact log target, surrogate log target, surrogate gradient, valid, step)
+_DelayedAcceptanceCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_DelayedAcceptanceDrawOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_GaugeFlowOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+# (position, log target, log proposal, valid, step)
+_GaugeFlowCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+
 
 LearnedSupportStatus = Literal[
     "qualified",
@@ -99,8 +127,8 @@ class LearnedSupportTuple(StrictModule, NonTrainableState):
         configuration_shape: Sequence[int],
         coordinate_dtype: str,
         parameter_names: Sequence[str] = (),
-        parameter_lower: ArrayLike = (),
-        parameter_upper: ArrayLike = (),
+        parameter_lower: ArrayLike | Sequence[float] = (),
+        parameter_upper: ArrayLike | Sequence[float] = (),
     ) -> None:
         target = _identifier(target_id, "target_id")
         geometry = _identifier(geometry_id, "geometry_id")
@@ -168,7 +196,7 @@ def assess_learned_support(
     geometry_id: str,
     configuration_shape: Sequence[int],
     coordinate_dtype: str,
-    parameter_values: ArrayLike = (),
+    parameter_values: ArrayLike | Sequence[float] = (),
 ) -> LearnedSupportQualification:
     """Assess an exact tuple and parameter point without weakening a mismatch."""
     if not isinstance(support, LearnedSupportTuple):
@@ -239,7 +267,7 @@ def require_learned_support(
     geometry_id: str,
     configuration_shape: Sequence[int],
     coordinate_dtype: str,
-    parameter_values: ArrayLike = (),
+    parameter_values: ArrayLike | Sequence[float] = (),
 ) -> LearnedSupportQualification:
     """Return qualification evidence or refuse an unqualified artifact domain."""
     qualification = assess_learned_support(
@@ -569,7 +597,7 @@ def prepare_delayed_acceptance_hmc(
     target_id: str,
     surrogate_id: str,
     geometry_id: str,
-    parameter_values: ArrayLike = (),
+    parameter_values: ArrayLike | Sequence[float] = (),
 ) -> PreparedDelayedAcceptanceHMC:
     """Bind immutable learned artifacts to an exact production correction."""
     if not isinstance(plan, DelayedAcceptanceHMCPlan):
@@ -706,7 +734,9 @@ def _surrogate_trajectory(
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     shape = kernel.plan.support.configuration_shape
 
-    def step(carry, _):
+    def step(
+        carry: _SurrogateTrajectoryCarry, _: None
+    ) -> tuple[_SurrogateTrajectoryCarry, None]:
         q, p, g, active, nonfinite = carry
         half = p + 0.5 * kernel.plan.step_size * g
         velocity = _metric_solve(kernel, half.reshape((-1,))).reshape(shape)
@@ -755,7 +785,7 @@ def _delayed_acceptance_transition(
     chain_index: Array,
     step_index: Array,
     /,
-):
+) -> _DelayedAcceptanceOutputs:
     momentum_key = derive_key(root_key, _DA_MOMENTUM, chain_index, step_index)
     stage_one_key = derive_key(root_key, _DA_SURROGATE_ACCEPT, chain_index, step_index)
     stage_two_key = derive_key(root_key, _DA_EXACT_ACCEPT, chain_index, step_index)
@@ -829,7 +859,9 @@ def sample_delayed_acceptance_hmc(
         raise ValueError("num_draws must be positive.")
     chain_indices = jnp.arange(state.position.shape[0], dtype=jnp.uint32)
 
-    def draw(carry, _):
+    def draw(
+        carry: _DelayedAcceptanceCarry, _: None
+    ) -> tuple[_DelayedAcceptanceCarry, _DelayedAcceptanceDrawOutputs]:
         positions, exact, surrogate, gradients, valid, index = carry
         transition = jax.lax.map(
             lambda inputs: _delayed_acceptance_transition(
@@ -1122,7 +1154,7 @@ def prepare_gauge_flow_proposal(
     target_id: str,
     geometry_id: str,
     base_id: str,
-    parameter_values: ArrayLike = (),
+    parameter_values: ArrayLike | Sequence[float] = (),
 ) -> PreparedGaugeFlowProposal:
     """Bind an invertible flow to exact independence-MH correction."""
     if not isinstance(plan, GaugeFlowProposalPlan):
@@ -1243,7 +1275,7 @@ def _gauge_flow_transition(
     chain_index: Array,
     step_index: Array,
     /,
-):
+) -> _GaugeFlowOutputs:
     base_key = derive_key(root_key, _FLOW_BASE, chain_index, step_index)
     accept_key = derive_key(root_key, _FLOW_ACCEPT, chain_index, step_index)
     base = jnp.asarray(proposal.base_sample(base_key))
@@ -1332,7 +1364,9 @@ def sample_gauge_flow_proposal(
         raise ValueError("num_draws must be positive.")
     chain_indices = jnp.arange(state.position.shape[0], dtype=jnp.uint32)
 
-    def draw(carry, _):
+    def draw(
+        carry: _GaugeFlowCarry, _: None
+    ) -> tuple[_GaugeFlowCarry, _GaugeFlowOutputs]:
         positions, targets, proposals, valid, index = carry
         transition = jax.vmap(
             lambda q, target, proposal_log, state_valid, chain: _gauge_flow_transition(

@@ -20,6 +20,7 @@ from ...pgm import (
     contrastive_divergence_loss,
     DiscreteFactorGraph,
     factor_graph_log_score,
+    FactorGraphTrainingDiagnostics,
     GibbsSchedule,
     GibbsState,
     PreparedChromaticGibbs,
@@ -52,14 +53,14 @@ class CategoricalNoisingKernel(AbstractDiscreteNoisingKernel):
         self.retention = value
         self.kernel_id = f"categorical-noise:{value}"
 
-    def sample(self, key, state, cardinalities, /):
+    def sample(self, key: Key[Array, ""], state: Array, cardinalities: Array, /) -> Array:
         retain_key, noise_key = jr.split(key)
         retain = jr.bernoulli(retain_key, self.retention, state.shape)
         uniform = jr.uniform(noise_key, state.shape)
         noise = jnp.floor(uniform * cardinalities).astype(jnp.int32)
         return jnp.where(retain, state, noise)
 
-    def log_prob(self, next_state, state, cardinalities, /):
+    def log_prob(self, next_state: Array, state: Array, cardinalities: Array, /) -> Array:
         same = next_state == state
         probability = (1.0 - self.retention) / cardinalities
         probability = probability + same * self.retention
@@ -257,7 +258,7 @@ class RecoveryLikelihoodObjective(StrictModule):
         positive_assignments: Array,
         negative_assignments: Array,
         /,
-    ):
+    ) -> tuple[Array, FactorGraphTrainingDiagnostics]:
         return contrastive_divergence_loss(
             kernel.graph,
             positive_assignments,

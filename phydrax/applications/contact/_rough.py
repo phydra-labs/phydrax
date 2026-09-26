@@ -125,7 +125,8 @@ class PeriodicRoughContactPlan(StrictModule, NonTrainableState):
 
     @property
     def shape(self) -> tuple[int, int]:
-        return tuple(self.compliance_spectrum.shape)
+        rows, columns = self.compliance_spectrum.shape
+        return rows, columns
 
     def displacement(self, pressure: ArrayLike, /) -> Array:
         pressure_ = jnp.asarray(pressure, dtype=self.compliance_spectrum.dtype)
@@ -183,7 +184,9 @@ def solve_periodic_rough_contact(
     scale = jnp.maximum(1.0, jnp.sqrt(jnp.sum(gap0 * gap0)))
     tolerance = plan.tolerance * scale
 
-    def body(index, state):
+    def body(
+        index: Array, state: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         value, converged, first_converged, residual_norm = state
         displacement = plan.displacement(value)
         gap = gap0 + displacement

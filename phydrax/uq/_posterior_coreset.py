@@ -277,7 +277,9 @@ def _thin_chain(
     indices = jnp.zeros((method.num_points,), dtype=jnp.int32)
     penalty = jnp.zeros((num_draws,), dtype=points.dtype)
 
-    def body(iteration, state):
+    def body(
+        iteration: int | Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         chosen, used, accumulated = state
         objective = diagonal + 2.0 * accumulated
         minimum = jnp.min(jnp.where(~used, objective, jnp.inf))

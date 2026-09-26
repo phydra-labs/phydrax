@@ -52,7 +52,7 @@ class PreparedDisplacementDiscontinuity3D(StrictModule, NonTrainableState):
         return self.traction_operator.mv(value).reshape((self.space.vertex_count, 3))
 
 
-def _space(vertices, faces):
+def _space(vertices: ArrayLike, faces: ArrayLike) -> DisplacementDiscontinuitySpace3D:
     points = np.asarray(vertices, dtype=np.float64)
     triangles = np.asarray(faces, dtype=np.int32)
     if (

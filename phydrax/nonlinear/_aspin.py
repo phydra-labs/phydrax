@@ -8,7 +8,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import PyTree
+from jaxtyping import Array, PyTree
 
 from .._trainable import fixed_field
 from ..linalg import (
@@ -20,7 +20,7 @@ from ..linalg import (
     prepare as prepare_linear_solve,
     solve as solve_linear_system,
 )
-from ._decomposition import NonlinearAdditiveSchwarz
+from ._decomposition import NonlinearAdditiveSchwarz, NonlinearSubdomain
 from ._linearization import JacobianPolicy
 from ._newton import NewtonKrylov
 from ._preconditioning import (
@@ -123,7 +123,9 @@ class ASPIN(AbstractNonlinearMethod):
             args=args,
         )
 
-        def preconditioned_residual(state, residual, current_args):
+        def preconditioned_residual(
+            state: PyTree[Any], residual: PyTree[Any], current_args: Any
+        ) -> PyTree[Array]:
             del residual
             result, _ = apply_prepared_nonlinear_update(
                 prepared,
@@ -145,7 +147,7 @@ class ASPIN(AbstractNonlinearMethod):
         )
         transformed = LeftPreconditionedSystem(problem_, preconditioner)
 
-        def operator(state, current_args):
+        def operator(state: PyTree[Any], current_args: Any) -> FunctionLinearOperator:
             return _aspin_operator(
                 problem_,
                 self.schwarz,
@@ -254,7 +256,8 @@ def _aspin_operator(
 ) -> FunctionLinearOperator:
     if problem.state_space is None or problem.residual_space is None:
         raise ValueError("ASPIN operator requires bound physical spaces.")
-    state_ = problem.state_space.validate(state)
+    state_space = problem.state_space
+    state_ = state_space.validate(state)
     local_data = []
     for child, subdomain in zip(
         prepared.internal_state,
@@ -278,8 +281,11 @@ def _aspin_operator(
         coordinates = subdomain.state_space.flatten(point)
 
         def local_coordinates_residual(
-            value, *, subdomain=subdomain, local_problem=local_problem
-        ):
+            value: Array,
+            *,
+            subdomain: NonlinearSubdomain = subdomain,
+            local_problem: NonlinearSystemProblem = local_problem,
+        ) -> Array:
             local_value = subdomain.state_space.unflatten(value)
             residual = local_problem.residual(local_value, (state_, args))
             return subdomain.residual_space.flatten(residual)
@@ -298,14 +304,14 @@ def _aspin_operator(
         )
         local_data.append((subdomain, local_linear, local_result.applied))
 
-    def action(direction):
-        direction_ = problem.state_space.validate(direction)
+    def action(direction: PyTree[Any]) -> PyTree[Array]:
+        direction_ = state_space.validate(direction)
         _, global_action = jax.jvp(
             lambda value: problem.residual(value, args),
             (state_,),
             (direction_,),
         )
-        result = problem.state_space.zeros()
+        result = state_space.zeros()
         for subdomain, local_linear, local_applied in local_data:
             restricted = subdomain.residual_space.validate(
                 subdomain.restrict_residual(global_action)
@@ -320,7 +326,7 @@ def _aspin_operator(
                 jnp.full_like(linear_result.value, jnp.nan),
             )
             local_correction = subdomain.state_space.unflatten(local_coordinates)
-            prolonged = problem.state_space.validate(
+            prolonged = state_space.validate(
                 subdomain.prolong_correction(local_correction)
             )
             result = jax.tree.map(

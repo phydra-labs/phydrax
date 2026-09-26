@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -73,12 +76,12 @@ class AdditiveIMEXTableau(StrictModule, NonTrainableState):
         state: Array,
         time: Array,
         step_size: Array,
-        explicit_rhs,
-        implicit_solve,
-        args=None,
+        explicit_rhs: Callable[[Array, Array, Any], ArrayLike],
+        implicit_solve: Callable[[Array, Array, Array, Any], ArrayLike],
+        args: Any = None,
         /,
         *,
-        implicit_rhs,
+        implicit_rhs: Callable[[Array, Array, Any], ArrayLike],
     ) -> Array:
         """Apply the tableau; RHS callbacks take ``(state, time, args)``.
 

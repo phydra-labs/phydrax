@@ -350,7 +350,9 @@ class PreparedClassicalYangMillsEvolution(StrictModule, NonTrainableState):
             jnp.abs(jnp.sum(self.initial_state.links**2, axis=-1) - 1.0)
         )
 
-        def body(state, _):
+        def body(
+            state: ClassicalYangMillsState, _: None
+        ) -> tuple[ClassicalYangMillsState, tuple[Array, Array, Array]]:
             advanced = self.step(state)
             energy = self.energy(advanced)
             gauss = jnp.max(jnp.abs(yang_mills_gauss(advanced)))

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -27,7 +29,7 @@ class ContactPatchBuildResult(StrictModule):
     evidence: ContactPatchBuildEvidence
 
 
-def _signed_area(polygon):
+def _signed_area(polygon: Sequence[np.ndarray]) -> float:
     if len(polygon) < 3:
         return 0.0
     value = 0.0
@@ -37,14 +39,25 @@ def _signed_area(polygon):
     return 0.5 * value
 
 
-def _inside(point, first, second, orientation, tolerance):
+def _inside(
+    point: np.ndarray,
+    first: np.ndarray,
+    second: np.ndarray,
+    orientation: float,
+    tolerance: float,
+) -> np.bool_:
     cross = (second[0] - first[0]) * (point[1] - first[1]) - (second[1] - first[1]) * (
         point[0] - first[0]
     )
     return orientation * cross >= -tolerance
 
 
-def _line_intersection(subject_first, subject_second, clip_first, clip_second):
+def _line_intersection(
+    subject_first: np.ndarray,
+    subject_second: np.ndarray,
+    clip_first: np.ndarray,
+    clip_second: np.ndarray,
+) -> np.ndarray:
     subject_direction = subject_second - subject_first
     clip_direction = clip_second - clip_first
     denominator = (
@@ -60,7 +73,9 @@ def _line_intersection(subject_first, subject_second, clip_first, clip_second):
     return subject_first + parameter * subject_direction
 
 
-def _clip_polygon(subject, clip, tolerance):
+def _clip_polygon(
+    subject: Sequence[np.ndarray], clip: Sequence[np.ndarray], tolerance: float
+) -> list[np.ndarray]:
     output = [np.asarray(point, dtype=np.float64) for point in subject]
     orientation = 1.0 if _signed_area(clip) >= 0.0 else -1.0
     for index, clip_first in enumerate(clip):
@@ -92,7 +107,9 @@ def _clip_polygon(subject, clip, tolerance):
     return output
 
 
-def _barycentric(point, triangle, tolerance):
+def _barycentric(
+    point: np.ndarray, triangle: np.ndarray, tolerance: float
+) -> np.ndarray | None:
     first = triangle[1] - triangle[0]
     second = triangle[2] - triangle[0]
     relative = point - triangle[0]

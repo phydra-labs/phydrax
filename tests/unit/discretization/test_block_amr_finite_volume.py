@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.discretization.finite_volume._amr import BlockAMRConservationPlan
@@ -213,3 +214,20 @@ def test_covered_cell_restriction_is_volume_weighted_and_leaves_uncovered_cells(
     )
     np.testing.assert_allclose(np.asarray(restricted)[active_uncovered], 1.0)
     np.testing.assert_array_equal(restricted[2], np.zeros((4, 1)))
+
+
+def test_weno_reconstruction_halo_requirement_uses_stencil_radius():
+    method = phx.discretization.FiniteVolumeMethodPlan(
+        phx.discretization.WENOReconstructionPlan(5),
+        phx.discretization.RusanovFluxPlan(),
+    )
+    boundaries = phx.discretization.FiniteVolumeBoundarySet.periodic(("x",))
+
+    with pytest.raises(ValueError, match="reconstruction ghost width"):
+        BlockAMRFiniteVolumePlan(
+            _prepared(periodic=True, halo=2), _system(), method, boundaries
+        )
+    plan = BlockAMRFiniteVolumePlan(
+        _prepared(periodic=True, halo=3), _system(), method, boundaries
+    )
+    assert plan.method.reconstruction.order == 5

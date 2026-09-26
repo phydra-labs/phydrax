@@ -288,7 +288,9 @@ class LaplaceTemporalOperator(AbstractOperatorModel):
             dtype=self.residue.dtype,
         )
 
-        def step(current_state, inputs):
+        def step(
+            current_state: Array, inputs: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array]:
             width, left, right, valid = inputs
             transition = jnp.exp(width[:, None] * poles[None, :])
             increment = (

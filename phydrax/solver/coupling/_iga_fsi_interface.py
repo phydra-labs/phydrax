@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import FieldTransfer
+from ...linalg import AbstractVectorSpace
 
 
 def _identifier(value: str, role: str, /) -> str:
@@ -29,7 +30,7 @@ def _tree_subtract(left: Any, right: Any, /) -> Any:
     return jax.tree.map(lambda x, y: x - y, left, right)
 
 
-def _norm(space, value: Any, /) -> Array:
+def _norm(space: AbstractVectorSpace, value: Any, /) -> Array:
     squared = jnp.real(space.inner(value, value))
     return jnp.sqrt(jnp.maximum(squared, 0.0))
 

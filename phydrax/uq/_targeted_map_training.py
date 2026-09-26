@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
@@ -23,6 +24,7 @@ from .._training_kernel import (
     prepare_training_kernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
@@ -167,7 +169,14 @@ class _TargetedMapObjective(StrictModule):
 
     policy: TargetedMapTrainingPolicy
 
-    def __call__(self, parameters, model_state, fixed, payload, keys):
+    def __call__(
+        self,
+        parameters: PyTree[Any],
+        model_state: PyTree[Any],
+        fixed: PyTree[Any],
+        payload: tuple[TargetedFreeEnergyProblem, Array, Array | None],
+        keys: TrainingKeys,
+    ) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[Array, Array]]:
         del keys
         problem, source, target = payload
         loss, valid, _, _ = _objective(
@@ -238,7 +247,7 @@ def fit_targeted_free_energy_map(
         rule_id = canonical_fingerprint(
             {
                 "kind": "targeted-map-training-adam",
-                "learning_rate": policy_.learning_rate.hex(),
+                "learning_rate": float(policy_.learning_rate).hex(),
             }
         )
     else:

@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from math import prod
 from operator import index
-from typing import Any, Literal, TypeAlias
+from typing import Any, cast, Literal, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
 import jax
@@ -25,6 +25,20 @@ from ..._trainable import NonTrainableState
 
 SpectralSchedule: TypeAlias = Literal["slab", "pencil", "channel"]
 SpectralRepresentation: TypeAlias = Literal["physical", "modal"]
+
+
+class _ForwardedPlanOptions(TypedDict, total=False):
+    padded_shape: Sequence[int] | None
+    state_shape: Sequence[int]
+    stage_count: int
+    checkpoint_count: int
+    closure_workspace_bytes: int
+    maximum_bytes: int
+    horizontal_axes: Sequence[int]
+
+
+class _FromDiscretizationOptions(_ForwardedPlanOptions, total=False):
+    schedule: SpectralSchedule
 
 
 def _positive_shape(shape: Sequence[int], owner: str, /) -> tuple[int, ...]:
@@ -848,7 +862,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         topology: SpectralMeshTopology,
         discretization: Any,
         /,
-        **kwargs,
+        **kwargs: Unpack[_FromDiscretizationOptions],
     ) -> "DistributedSpectralExecutionPlan":
         axes = tuple(discretization.axes)
         families = tuple(axis.family for axis in axes)
@@ -870,6 +884,8 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
                 float(jnp.sqrt(axis.length / count))
                 for axis, count in zip(axes, padded, strict=True)
             )
+        # ``schedule`` was popped above; only constructor pass-through options remain.
+        forwarded = cast(_ForwardedPlanOptions, kwargs)
         return cls(
             topology,
             discretization.modal_shape,
@@ -879,7 +895,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             accumulation_dtype=jnp.dtype(discretization.plan.precision.reduction_dtype),
             transform_scale=scale,
             padded_transform_scale=padded_scale,
-            **kwargs,
+            **forwarded,
         )
 
     def prepare(self, /) -> "DistributedSpectralExecutionPlan":
@@ -1223,8 +1239,8 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         stepper: Callable[..., ArrayLike],
         coefficients: ArrayLike,
         /,
-        *args,
-        **kwargs,
+        *args: object,
+        **kwargs: object,
     ) -> Array:
         value = self._validate(coefficients, self.modal_layout, "ETDRK modal state")
         result = stepper(value, *args, **kwargs)
@@ -1274,7 +1290,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             )
         axes = layout.used_mesh_axes
 
-        def reduce_local(local):
+        def reduce_local(local: Array) -> tuple[Array, Array, Array, Array]:
             total = jnp.sum(local.astype(sum_dtype))
             squared = jnp.sum(jnp.square(jnp.abs(local)).astype(reduction_dtype))
             maximum = jax.lax.stop_gradient(
@@ -1366,7 +1382,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
             )
         axes = layout.used_mesh_axes
 
-        def inner_local(left_local, right_local):
+        def inner_local(left_local: Array, right_local: Array) -> Array:
             total = jnp.vdot(left_local.astype(sum_dtype), right_local.astype(sum_dtype))
             return jax.lax.psum(total, axes) if axes else total
 
@@ -1394,7 +1410,7 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         placed = jax.device_put(value, layout.sharding(self.topology))
         axes = layout.used_mesh_axes
 
-        def all_local(local):
+        def all_local(local: Array) -> Array:
             result = jnp.all(local).astype(jnp.int32)
             if axes:
                 result = jax.lax.pmin(result, axes)
@@ -1410,7 +1426,12 @@ class DistributedSpectralExecutionPlan(StrictModule, NonTrainableState):
         return mapped(placed)
 
     def execute_channel(
-        self, action: Callable[..., ArrayLike], state: ArrayLike, /, *args, **kwargs
+        self,
+        action: Callable[..., ArrayLike],
+        state: ArrayLike,
+        /,
+        *args: object,
+        **kwargs: object,
     ) -> Array:
         if self.schedule != "channel":
             raise ValueError("execute_channel requires a channel execution plan.")

@@ -17,7 +17,10 @@ from jaxtyping import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization._conservation_ledger import AcceptedConservationIntegralLedger
-from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
+from ..discretization.finite_volume import (
+    FiniteVolumePrecisionPolicy,
+    PreparedFiniteVolumeDynamics,
+)
 from ._constrained_mhd import (
     ConstrainedMHDAcceptedIntegralLedger,
     ConstrainedMHDRunStatus,
@@ -156,7 +159,7 @@ class AbstractPreparedBalanceLawTransport(StrictModule):
     transport_id: str = eqx.field(static=True)
 
     @property
-    def precision(self):
+    def precision(self) -> FiniteVolumePrecisionPolicy:
         return self.dynamics.precision
 
     @abc.abstractmethod

@@ -11,6 +11,7 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -108,7 +109,13 @@ def _outgoing_dyadic(displacement: np.ndarray, wavenumber: float, /) -> np.ndarr
     )
 
 
-def _smooth_image_matrix(space, translations, phases, wavenumber, /):
+def _smooth_image_matrix(
+    space: RWGSurfaceCurrentSpace3D,
+    translations: np.ndarray,
+    phases: np.ndarray,
+    wavenumber: float,
+    /,
+) -> tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128]]:
     surface = space.surface
     centroids = np.asarray(surface.face_centroids, dtype=np.float64)
     areas = np.asarray(surface.face_areas, dtype=np.float64)

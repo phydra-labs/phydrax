@@ -186,7 +186,9 @@ def references_compatible(
     """Return exact-static and tolerance-qualified dynamic link compatibility."""
     if type(first) is not type(second):
         return jnp.asarray(False)
-    if isinstance(first, ElectricalWaveReference):
+    if isinstance(first, ElectricalWaveReference) and isinstance(
+        second, ElectricalWaveReference
+    ):
         return jnp.asarray(first.convention == second.convention) & jnp.allclose(
             first.z0, second.z0, rtol=rtol, atol=atol
         )
@@ -216,7 +218,9 @@ def transformed_references_compatible(
     """Check physical chart compatibility when an explicit lossless map is supplied."""
     if type(first) is not type(second):
         return jnp.asarray(False)
-    if isinstance(first, ElectricalWaveReference):
+    if isinstance(first, ElectricalWaveReference) and isinstance(
+        second, ElectricalWaveReference
+    ):
         return jnp.asarray(first.convention == second.convention) & jnp.allclose(
             first.z0, second.z0, rtol=rtol, atol=atol
         )

@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...solver import DifferentialProblem
+from ...solver import DifferentialProblem, DifferentialSolution
 from ._experiment import BatteryRuntimeInputs
 from ._properties import (
     ConcentrationTemperaturePropertyLaw,
@@ -24,7 +24,13 @@ from ._properties import (
     TabulatedPropertyLaw,
 )
 from ._results import BatteryModelOutput
-from ._spm import _stable_asinh_ratio, _transport, BatteryPropertyLaw, SpmState
+from ._spm import (
+    _SpmTransportEvaluation,
+    _stable_asinh_ratio,
+    _transport,
+    BatteryPropertyLaw,
+    SpmState,
+)
 from ._spme_marquis2019 import (
     _finite_large_ratio,
     _region_mean,
@@ -36,6 +42,7 @@ from ._spme_marquis2019 import (
     Marquis2019SpmeState,
     PreparedMarquis2019Spme,
 )
+from ._through_cell import _ThroughCellEvaluation
 
 
 _FARADAY_C_MOL = 96485.33212
@@ -705,8 +712,8 @@ class _BrosaPlanellaTspmeEvaluation(StrictModule):
     domain_valid: Array
     total_solid_lithium_mol: Array
     total_electrolyte_lithium_mol: Array
-    particle_transport: object
-    electrolyte_transport: object
+    particle_transport: _SpmTransportEvaluation
+    electrolyte_transport: _ThroughCellEvaluation
 
 
 def _check_prepared(
@@ -1746,7 +1753,7 @@ class BrosaPlanellaTspmeAdapter(StrictModule, NonTrainableState):
     def ledger(
         self,
         prepared_model: PreparedBrosaPlanellaTspme,
-        native_solution,
+        native_solution: DifferentialSolution,
         runtime_inputs: BatteryRuntimeInputs,
         /,
     ) -> BrosaPlanellaTspmeLedger:
@@ -1842,7 +1849,7 @@ class BrosaPlanellaTspmeAdapter(StrictModule, NonTrainableState):
             final_energy - initial_energy - generated_energy + boundary_energy
         )
 
-        def valid_max(values):
+        def valid_max(values: Array) -> Array:
             return jnp.max(jnp.where(valid, jnp.abs(values), 0.0))
 
         maximum_heat_residual = valid_max(evaluation.heat_sum_residual_w_m3)

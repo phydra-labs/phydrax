@@ -29,7 +29,12 @@ from phydrax.nn.layers._measure_convolution import (
     _AbstractMeasureNormalizedConvND,
     _measure_dependency_support,
 )
-from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
+from phydrax.nn.operator.data import (
+    FunctionSamples,
+    OperatorAxis,
+    OperatorBasis,
+    OperatorBatch,
+)
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
@@ -43,6 +48,12 @@ ConvolutionAxisPolicy = Literal[
     "neumann_cosine",
     "polynomial",
 ]
+_POLICY_BASIS: dict[ConvolutionAxisPolicy, OperatorBasis] = {
+    "periodic_fourier": "fourier",
+    "dirichlet_sine": "sine",
+    "neumann_cosine": "cosine",
+    "polynomial": "legendre",
+}
 
 
 class ConvolutionSupportPlan(StrictModule):
@@ -284,7 +295,7 @@ def _dependency_on_periodic_fourier_axes(
     return support.on_axes(axes_value)
 
 
-def _operator_source(batch: OperatorBatch, source_key: str | None, /):
+def _operator_source(batch: OperatorBatch, source_key: str | None, /) -> FunctionSamples:
     if source_key is not None:
         return batch.input(source_key)
     if len(batch.inputs) != 1:
@@ -375,7 +386,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         original_shape = tuple(jnp.asarray(values).shape[-self.spatial_ndim - 1 : -1])
         halos = tuple(size // 2 for size in self.kernel_size)
 
-        def extend(array, *, channels: bool):
+        def extend(array: ArrayLike, *, channels: bool) -> Array:
             result = jnp.asarray(array)
             start = result.ndim - self.spatial_ndim - (1 if channels else 0)
             for local_axis, (width, mode) in enumerate(
@@ -773,12 +784,7 @@ class CNO(AbstractOperatorModel):
             OperatorAxis(
                 f"axis_{index}",
                 nodes,
-                basis={
-                    "periodic_fourier": "fourier",
-                    "dirichlet_sine": "sine",
-                    "neumann_cosine": "cosine",
-                    "polynomial": "legendre",
-                }[policy],
+                basis=_POLICY_BASIS[policy],
                 periodic=policy == "periodic_fourier",
             )
             for index, (nodes, policy) in enumerate(
@@ -967,7 +973,9 @@ class UNO(AbstractOperatorModel):
         hidden = self.lift(array)
         hidden = jnp.where(mask[..., None], hidden, jnp.zeros_like(hidden))
 
-        def resize_masked(payload: Array, observed_mass: Array, shape: tuple[int, ...]):
+        def resize_masked(
+            payload: Array, observed_mass: Array, shape: tuple[int, ...]
+        ) -> tuple[Array, Array, Array]:
             target = payload.shape[: -self.spatial_ndim - 1] + shape
             resized_mass = jax.image.resize(
                 observed_mass.astype(payload.real.dtype),
@@ -1087,12 +1095,7 @@ class UNO(AbstractOperatorModel):
             OperatorAxis(
                 f"axis_{index}",
                 nodes,
-                basis={
-                    "periodic_fourier": "fourier",
-                    "dirichlet_sine": "sine",
-                    "neumann_cosine": "cosine",
-                    "polynomial": "legendre",
-                }[policy],
+                basis=_POLICY_BASIS[policy],
                 periodic=policy == "periodic_fourier",
             )
             for index, (nodes, policy) in enumerate(

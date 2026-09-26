@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,7 +16,11 @@ from phydrax.ein import contract
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
-from ....discretization.spatial import MortonAddressPlan, SparseLevelOctreePlan
+from ....discretization.spatial import (
+    MortonAddressPlan,
+    MortonPointHierarchyState,
+    SparseLevelOctreePlan,
+)
 from ....discretization.spatial._plane_interactions import (
     MortonPlaneInteractionPlan,
     MortonPlaneInteractionState,
@@ -47,6 +51,8 @@ from ._gaussian3d import GaussianErfVortexKernel3D
 
 
 VortexFMMExecution = Literal["level_octree", "plane_dual"]
+_NearRouteState: TypeAlias = tuple[Array, Array, Array]
+_NearSourceState: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class VortexFMMEvidence(StrictModule):
@@ -440,7 +446,13 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             correction = correction + jacobian @ first_moment[component]
         return value - correction
 
-    def _moments(self, source, hierarchy, point_leaf, sorted_logical):
+    def _moments(
+        self,
+        source: VortexSourceState,
+        hierarchy: MortonPointHierarchyState,
+        point_leaf: Array,
+        sorted_logical: Array,
+    ) -> tuple[Array, Array]:
         node_capacity = hierarchy.node_active.size
         combined_capacity = sorted_logical.shape[0]
         is_source = hierarchy.sorted_active & (sorted_logical < self.source_capacity)
@@ -741,7 +753,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             source_first[far_source],
         )
 
-        def far_gradient(displacement, monopole, first):
+        def far_gradient(displacement: Array, monopole: Array, first: Array) -> Array:
             return jax.jacfwd(
                 lambda value: self._multipole_velocity(value, monopole, first)
             )(displacement)
@@ -1104,7 +1116,9 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             route_displacement, route_monopole, route_first
         )
 
-        def route_gradient(displacement, source_monopole, source_first):
+        def route_gradient(
+            displacement: Array, source_monopole: Array, source_first: Array
+        ) -> Array:
             return jax.jacfwd(
                 lambda value: self._multipole_velocity(
                     value, source_monopole, source_first
@@ -1162,7 +1176,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         source_offsets = jnp.arange(self.plan.leaf_capacity, dtype=jnp.int32)
         target_identity = target.source_indices
 
-        def near_route_body(route, state):
+        def near_route_body(route: Array, state: _NearRouteState) -> _NearRouteState:
             velocity, gradient, count = state
             target_node = jnp.maximum(level_tree.near_targets[route], 0)
             source_node = jnp.maximum(level_tree.near_sources[route], 0)
@@ -1173,7 +1187,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
             )
             target_mask = target_leaf == target_node
 
-            def source_body(source_state):
+            def source_body(source_state: _NearSourceState) -> _NearSourceState:
                 offset, current_velocity, current_gradient, current_count = source_state
                 source_storage = source_start + offset + source_offsets
                 source_in_leaf = (source_storage < source_start + source_count) & (
@@ -1248,7 +1262,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
                 jnp.asarray(0, dtype=jnp.int32),
             )
 
-            def evaluate_route(initial):
+            def evaluate_route(initial: _NearSourceState) -> _NearSourceState:
                 return jax.lax.fori_loop(
                     0,
                     (combined_capacity + self.plan.leaf_capacity - 1)

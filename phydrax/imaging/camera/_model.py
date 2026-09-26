@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -61,11 +61,11 @@ class CameraIntrinsics(StrictModule):
 
     def __init__(
         self,
-        focal_length: ArrayLike,
-        principal_point: ArrayLike,
+        focal_length: npt.ArrayLike,
+        principal_point: npt.ArrayLike,
         *,
         image_shape: tuple[int, int] | None = None,
-        skew: Any = 0.0,
+        skew: npt.ArrayLike = 0.0,
     ) -> None:
         focal_host = np.asarray(focal_length, dtype=np.float64)
         principal_host = np.asarray(principal_point, dtype=np.float64)
@@ -315,8 +315,8 @@ def _project_through_refractive_stack(
         refinement_iterations=1,
     )
 
-    def solve_one(point, initial):
-        def path(candidate):
+    def solve_one(point: Array, initial: Array) -> tuple[Array, Array, Array]:
+        def path(candidate: Array) -> tuple[Array, Array]:
             direction_camera = jnp.stack(
                 (candidate[0], candidate[1], jnp.ones((), dtype=candidate.dtype))
             )

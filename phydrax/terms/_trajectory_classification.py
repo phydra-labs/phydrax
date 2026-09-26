@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, cast, Literal, SupportsFloat
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,7 +24,7 @@ from phydrax.domain import (
     TrajectoryDatasetDomain,
 )
 
-from .._classification import pointwise_classification_loss
+from .._classification import ClassificationKind, pointwise_classification_loss
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
@@ -231,7 +231,7 @@ def _normalize_reduction_measure(
     return reduction_, measure_
 
 
-def _validate_term_weight(weight: ArrayLike, /) -> float:
+def _validate_term_weight(weight: SupportsFloat, /) -> float:
     result = float(weight)
     if not math.isfinite(result):
         raise ValueError("weight must be a finite scalar.")
@@ -771,7 +771,8 @@ def _classification_loss(
     scores = pointwise_classification_loss(
         logits,
         batch.target,
-        kind=target_schema.kind,
+        # _classification_size admitted only classification schema kinds at construction.
+        kind=cast(ClassificationKind, target_schema.kind),
         objective=objective.kind,
         class_count=class_count,
         target_mask=loss_mask,
@@ -824,7 +825,7 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
         target_mask: ArrayLike | None = None,
         sample_weight: ArrayLike | None = None,
         case_time: TrajectoryCaseTime = "start",
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
         measure: TrajectoryClassificationMeasure = "statistical",
         case_indices: ArrayLike | None = None,
@@ -999,7 +1000,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         sample_weight: ArrayLike | None = None,
         selection: RaggedTimeSeriesSampling = "observation_uniform",
         interpolation: RaggedTimeSeriesInterpolation = "nearest",
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
         measure: TrajectoryClassificationMeasure = "statistical",
         case_indices: ArrayLike | None = None,

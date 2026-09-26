@@ -7,9 +7,9 @@ from __future__ import annotations
 from typing import Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -21,6 +21,7 @@ from .._trainable import NonTrainableState
 from ._les_closures import (
     AlgebraicLESInputs,
     LESFilterScale,
+    LESParameterProvenance,
     PreparedAlgebraicLESModel,
 )
 
@@ -359,7 +360,7 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
             raise TypeError("filter_scale must be a LESFilterScale.")
         if not isinstance(fields, FavreLESFieldContract):
             raise TypeError("fields must be a FavreLESFieldContract.")
-        if isinstance(filter_scale.directional_widths, jax.core.Tracer):
+        if isinstance(filter_scale.directional_widths, jax_core.Tracer):
             raise TypeError("Prepared Favre LES filter widths must be concrete.")
         widths = np.asarray(filter_scale.directional_widths)
         if np.any(~np.isfinite(widths)) or np.any(widths <= 0.0):
@@ -447,7 +448,7 @@ class PreparedFavreLESModel(StrictModule, NonTrainableState):
         )
 
     @property
-    def provenance(self):
+    def provenance(self) -> LESParameterProvenance:
         """Return the complete resolved-filter and coefficient provenance."""
         return self.algebraic_model.provenance
 

@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,7 +20,11 @@ from ._dem import DEMEvaluation, PreparedSoftSphereDEMDynamics
 from ._pairwise import scatter_pair_exchange, scatter_pair_sum
 from ._particle_internal_mesh import PreparedParticleInternalBatch
 from ._particle_internal_state import ParticleConversionState
-from ._particle_internal_unstructured import PreparedUnstructuredParticleInternalMesh
+from ._particle_internal_unstructured import ParticleInternalMeshMetrics
+
+
+if TYPE_CHECKING:
+    from ...equations import ParticleThermodynamicMaterialPlan
 
 
 class ContactAreaMode(StrEnum):
@@ -148,11 +154,11 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
         evaluation: DEMEvaluation,
         conversion_batches: tuple[PreparedParticleInternalBatch, ...],
         conversion_state: ParticleConversionState,
-        thermodynamic_materials,
+        thermodynamic_materials: tuple[ParticleThermodynamicMaterialPlan, ...],
         step_size: Array,
         /,
         *,
-        boundary_temperatures: ArrayLike = (),
+        boundary_temperatures: ArrayLike | Sequence[float] = (),
     ) -> ParticleContactExchangeEvaluation:
         if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
             raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
@@ -168,7 +174,7 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
             (dynamics.bodies.capacity,), dtype=dynamics.bodies.radii.dtype
         )
         owner_coverage = jnp.zeros((dynamics.bodies.capacity,), dtype=jnp.int32)
-        surface_routes = []
+        surface_routes: list[ParticleInternalMeshMetrics | None] = []
         for prepared, state, material in zip(
             batches, conversion_state.batches, materials, strict=True
         ):
@@ -179,7 +185,7 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
                 metrics.cell_measures,
                 state.porosity,
             )
-            if isinstance(prepared.mesh, PreparedUnstructuredParticleInternalMesh):
+            if isinstance(metrics, ParticleInternalMeshMetrics):
                 boundary_mask = metrics.boundary_faces[None, :] & metrics.active_faces
                 weights = jnp.where(
                     boundary_mask,

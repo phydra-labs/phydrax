@@ -1,4 +1,5 @@
 from importlib import import_module
+from typing import Any
 
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
@@ -76,7 +77,7 @@ _FACADE_EXPORT_MODULES = (
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

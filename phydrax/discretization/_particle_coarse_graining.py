@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import pi
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,9 +17,18 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._measure import DiscreteMeasure
 from .particle._core import ParticleDiscretization, ParticleSetPlan
 from .particle._pairwise import particle_pair_geometry, ParticlePairRelation
 from .splatting import ParticleGridSplatPlan, PreparedParticleGridSplat
+
+
+if TYPE_CHECKING:
+    from .particle._dem import (
+        DEMEvaluation,
+        DEMRuntimeState,
+        PreparedSoftSphereDEMDynamics,
+    )
 
 
 class ParticleContinuumFields(StrictModule):
@@ -275,7 +285,10 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             "...i,...j->...ij", momentum_result.density, mean_velocity
         )
         kinetic_stress = -(raw_flux_result.density - advective_flux)
-        target_measure = self.particle_splat.target_measure.weights.reshape(
+        particle_measure = self.particle_splat.target_measure
+        # deposit_content above already rejected non-materialized target measures.
+        assert isinstance(particle_measure, DiscreteMeasure)
+        target_measure = particle_measure.weights.reshape(
             self.particle_splat.target_shape
         ).astype(position.dtype)
         total_measure = jnp.sum(target_measure)
@@ -340,7 +353,13 @@ class PreparedParticleCoarseGraining(StrictModule, NonTrainableState):
             successful,
         )
 
-    def evaluate_dem(self, dynamics, state, evaluation, /) -> ParticleContinuumFields:
+    def evaluate_dem(
+        self,
+        dynamics: PreparedSoftSphereDEMDynamics,
+        state: DEMRuntimeState,
+        evaluation: DEMEvaluation,
+        /,
+    ) -> ParticleContinuumFields:
         from .particle._dem import (
             DEMEvaluation,
             DEMRuntimeState,

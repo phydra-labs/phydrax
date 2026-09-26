@@ -1060,9 +1060,10 @@ def _linear_symbol(
         return None
     if expression.op == "derivative":
         child = children[0]
-        if child is None or expression.coordinate not in coordinate_axes:
+        coordinate = expression.coordinate
+        if child is None or coordinate is None or coordinate not in coordinate_axes:
             return None
-        axes = coordinate_axes[expression.coordinate]
+        axes = coordinate_axes[coordinate]
         if expression.axis is None:
             if len(axes) != 1:
                 return None
@@ -1087,17 +1088,18 @@ def _linear_symbol(
         )
     if expression.op == "laplacian":
         child = children[0]
-        if child is None or expression.coordinate not in coordinate_axes:
+        coordinate = expression.coordinate
+        if child is None or coordinate is None or coordinate not in coordinate_axes:
             return None
         if isinstance(discretization, SphericalSpectralDiscretization):
-            if coordinate_axes[expression.coordinate] != (0, 1):
+            if coordinate_axes[coordinate] != (0, 1):
                 return None
             return (
                 jnp.asarray(0.0, dtype=dtype),
                 child[1] * discretization.laplacian_multiplier().astype(dtype),
             )
         symbol = zero
-        for axis in coordinate_axes[expression.coordinate]:
+        for axis in coordinate_axes[coordinate]:
             prepared = discretization.axes[axis]
             if prepared.derivative_matrix is not None or prepared.family not in (
                 "fourier",
@@ -1226,7 +1228,11 @@ def compile_spectral_pde(
     rhs = _evolution_rhs(problem, time_coordinate)
     degrees = tuple(_field_degree(expression) for expression in rhs)
     nonlinear = any(value is None or value > 1 for value in degrees)
-    required_degree = None if any(value is None for value in degrees) else max(degrees)
+    required_degree = (
+        None
+        if any(value is None for value in degrees)
+        else max(value for value in degrees if value is not None)
+    )
     prepared_method = method.prepare(
         discretization,
         required_polynomial_degree=required_degree,

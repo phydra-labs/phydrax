@@ -801,8 +801,7 @@ def _create_shell_matrix(PETSc: Any, operator: AbstractLinearOperator) -> tuple[
 
 
 def _create_csr_matrix(PETSc: Any, operator: AbstractLinearOperator) -> tuple[Any, int]:
-    _require_sparse(operator, "operator")
-    storage = operator.sparse_storage()
+    storage = _require_sparse(operator, "operator").sparse_storage()
     if not storage.canonical or not storage.sorted_indices:
         raise ValueError("SLEPc CSR mode requires canonical sorted CSR storage.")
     values = np.asarray(storage.values, dtype=PETSc.ScalarType)
@@ -1066,11 +1065,14 @@ def _validate_two_sided_operator(operator: AbstractLinearOperator, name: str, /)
         )
 
 
-def _require_sparse(operator: AbstractLinearOperator, name: str, /) -> None:
+def _require_sparse(
+    operator: AbstractLinearOperator, name: str, /
+) -> AbstractSparseLinearOperator:
     if not isinstance(operator, AbstractSparseLinearOperator):
         raise TypeError(
             f"SLEPc operator_mode='csr' requires {name} to be an AbstractSparseLinearOperator."
         )
+    return operator
 
 
 def _validate_plan_problem(plan: SLEPcEigenPlan, problem: GeneralEigenproblem, /) -> None:

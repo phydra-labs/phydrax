@@ -166,7 +166,7 @@ class ProgressiveLinearRefinementPolicy(StrictModule, NonTrainableState):
             prior = history[-self.grace_validations - 1]
             scale = max(abs(prior), np.finfo(np.float64).tiny)
             relative_improvement = (prior - smoothed) / scale
-            plateau = relative_improvement <= self.plateau_relative_improvement
+            plateau = bool(relative_improvement <= self.plateau_relative_improvement)
         if plateau and not stopped and current < self.maximum_steps:
             if checkpoint is not None:
                 scale = max(abs(checkpoint), np.finfo(np.float64).tiny)

@@ -102,7 +102,14 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
             time_indices=indices,
         )
 
-    def _apply(self, values: Mapping[str, Any], /, *, key=None, **kwargs: Any) -> Array:
+    def _apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         if self.field not in values:
             raise KeyError(f"Missing trajectory field {self.field!r}.")
         value = values[self.field]
@@ -268,6 +275,7 @@ def _trajectory_field_dims(
 class _RaggedCardinalCorrectionDerivativeRule(DerivativeRule):
     # Built on demand from the live evaluator of `function`.
     function: DomainFunction
+    evaluator: _RaggedCardinalCorrectionEvaluator
 
     def derive(
         self,
@@ -281,7 +289,7 @@ class _RaggedCardinalCorrectionDerivativeRule(DerivativeRule):
         periodic: bool,
     ) -> DomainFunction | None:
         del mode, basis, periodic
-        evaluator = self.function.func
+        evaluator = self.evaluator
         table = evaluator.table
         if backend not in ("ad", "jet"):
             return None
@@ -317,7 +325,7 @@ class _RaggedCardinalCorrectionEvaluator(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -351,7 +359,7 @@ class _RaggedCardinalCorrectionEvaluator(
         )
 
     def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
-        return _RaggedCardinalCorrectionDerivativeRule(function)
+        return _RaggedCardinalCorrectionDerivativeRule(function, self)
 
 
 class RaggedTimeSeriesCorrectionAction(StrictModule):
@@ -647,7 +655,9 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator, DerivativeRulePr
         self.table = table
         self.components = components
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del args, key, kwargs
         raise TypeError(
             "Ragged time-series hard enforcement requires PointBatch evaluation."
@@ -658,7 +668,7 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator, DerivativeRulePr
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, PointBatch):
@@ -703,7 +713,9 @@ class _RaggedTimeSeriesHardAnsatzDerivative(
         self.table = table
         self.components = components
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del args, key, kwargs
         raise TypeError(
             "Ragged time-series hard derivative requires PointBatch evaluation."
@@ -714,7 +726,7 @@ class _RaggedTimeSeriesHardAnsatzDerivative(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, PointBatch):

@@ -12,6 +12,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -46,7 +47,7 @@ class DAEInitializationStatus(IntEnum):
     DOMAIN_FAILURE = 4
 
 
-def _mask_tuple(value: ArrayLike, owner: str, /) -> tuple[bool, ...]:
+def _mask_tuple(value: npt.ArrayLike, owner: str, /) -> tuple[bool, ...]:
     array = np.asarray(value)
     if array.dtype.kind != "b":
         raise TypeError(f"{owner} must have Boolean dtype.")
@@ -79,8 +80,8 @@ class DAEInitializationSpec(StrictModule):
         mode: DAEInitializationMode = "index-one",
         /,
         *,
-        fixed_state: ArrayLike | None = None,
-        fixed_rate: ArrayLike | None = None,
+        fixed_state: npt.ArrayLike | None = None,
+        fixed_rate: npt.ArrayLike | None = None,
     ) -> None:
         if mode not in ("index-one", "fixed-rate", "check", "custom"):
             raise ValueError("Unknown DAE initialization mode.")
@@ -118,8 +119,8 @@ class DAEInitializationSpec(StrictModule):
     @classmethod
     def from_masks(
         cls,
-        fixed_state: ArrayLike,
-        fixed_rate: ArrayLike,
+        fixed_state: npt.ArrayLike,
+        fixed_rate: npt.ArrayLike,
         /,
     ) -> "DAEInitializationSpec":
         return cls("custom", fixed_state=fixed_state, fixed_rate=fixed_rate)
@@ -220,7 +221,9 @@ class _DAEInitializationResidual(StrictModule):
     rate_indices: Array
     state_unknown_count: int = eqx.field(static=True)
 
-    def _state_rate_inputs(self, unknown, arguments, /):
+    def _state_rate_inputs(
+        self, unknown: Array, arguments: _DAEInitializationArguments, /
+    ) -> tuple[Array, Array, Array | None]:
         flat_state = (
             arguments.state_guess.reshape((-1,))
             .at[self.state_indices]
@@ -240,13 +243,17 @@ class _DAEInitializationResidual(StrictModule):
         )
         return state, state_rate, inputs
 
-    def trial_valid(self, unknown, arguments, /):
+    def trial_valid(
+        self, unknown: Array, arguments: _DAEInitializationArguments, /
+    ) -> Array:
         state, state_rate, inputs = self._state_rate_inputs(unknown, arguments)
         return self.system.trial_valid(
             arguments.time, state, state_rate, arguments.model_args, inputs=inputs
         )
 
-    def __call__(self, unknown, arguments, /):
+    def __call__(
+        self, unknown: Array, arguments: _DAEInitializationArguments, /
+    ) -> Array:
         state, state_rate, inputs = self._state_rate_inputs(unknown, arguments)
         return self.system.scaled_residual(
             arguments.time,

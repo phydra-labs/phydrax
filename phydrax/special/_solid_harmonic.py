@@ -131,8 +131,8 @@ def _synthesis_dtype(coefficients: Array, displacements: Array, /) -> jnp.dtype:
 
 
 def _solid_harmonic_synthesis(
-    coefficients: Array,
-    displacements: Array,
+    coefficients: ArrayLike,
+    displacements: ArrayLike,
     /,
     *,
     bandlimit: int,

@@ -31,6 +31,7 @@ from ..linalg import (
     DenseLinearOperator,
     FactorizationPolicy,
     factorize,
+    PreparedFactorization,
     RankPolicy,
 )
 
@@ -375,7 +376,9 @@ def plan_dlr_basis(
     return DLRBasisPlan(beta_, cutoff_, statistics_, policy_, cost, plan_id)
 
 
-def _greedy_columns(matrix: np.ndarray, capacity: int, tolerance: float) -> list[int]:
+def _greedy_columns(
+    matrix: np.ndarray, capacity: int, tolerance: float | np.floating
+) -> list[int]:
     residual = np.array(matrix, copy=True)
     selected: list[int] = []
     initial = 0.0
@@ -398,8 +401,10 @@ def _greedy_columns(matrix: np.ndarray, capacity: int, tolerance: float) -> list
     return selected
 
 
-def _native_factor(matrix: Array, tolerance: float, /):
-    cutoff = max(64.0 * np.finfo(np.dtype(matrix.real.dtype)).eps, tolerance * 1e-4)
+def _native_factor(matrix: Array, tolerance: float, /) -> PreparedFactorization:
+    cutoff = float(
+        max(64.0 * np.finfo(np.dtype(matrix.real.dtype)).eps, tolerance * 1e-4)
+    )
     return factorize(
         DenseLinearOperator(matrix),
         FactorizationPolicy("svd", rank=RankPolicy(relative_cutoff=cutoff)),

@@ -130,7 +130,7 @@ def _delayed_coupling(
     state in its transpose. The native history is the only history owner.
     """
 
-    def add_edge(index, accumulated):
+    def add_edge(index: Array, accumulated: Array) -> Array:
         target = connectivity.delayed_targets[index]
         source = connectivity.delayed_sources[index]
         past = history.value(connectivity.positive_delays_s[index])

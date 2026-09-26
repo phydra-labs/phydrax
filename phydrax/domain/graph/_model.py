@@ -280,7 +280,7 @@ def _install_graph_input(
     key: str | None,
     /,
     *,
-    eval_key: Key[Array, ""] = DOC_KEY0,
+    eval_key: Key[Array, ""] | None = DOC_KEY0,
     owner: str = "GraphModel",
     **kwargs: Any,
 ) -> GraphIR:
@@ -380,7 +380,7 @@ class GraphModel(StrictModule, BatchEvaluator):
         key: str | None,
         /,
         *,
-        eval_key: Key[Array, ""] = DOC_KEY0,
+        eval_key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> GraphIR:
         return _install_graph_input(
@@ -399,7 +399,7 @@ class GraphModel(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
@@ -522,7 +522,7 @@ class GraphRolloutModel(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):

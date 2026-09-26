@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -43,13 +44,13 @@ def _maximum(values: Array, /) -> Array:
     return jnp.max(values, initial=jnp.asarray(0.0, dtype=values.dtype))
 
 
-def _numeric_fingerprint(values: Any, /) -> str:
+def _numeric_fingerprint(values: Any, /) -> str | dict[str, Any]:
     leaves = tuple(
         leaf
         for leaf in jax.tree_util.tree_leaves(values)
-        if isinstance(leaf, (jax.Array, np.ndarray, jax.core.Tracer))
+        if isinstance(leaf, (jax.Array, np.ndarray, jax_core.Tracer))
     )
-    if any(isinstance(leaf, jax.core.Tracer) for leaf in leaves):
+    if any(isinstance(leaf, jax_core.Tracer) for leaf in leaves):
         return "traced-structured-numerics"
     return array_tree_fingerprint(leaves)
 
@@ -247,7 +248,7 @@ class StructuredNonlinearWarmStart(StrictModule):
                     "structure": structure,
                     "numeric_version": (
                         "traced"
-                        if isinstance(version, jax.core.Tracer)
+                        if isinstance(version, jax_core.Tracer)
                         else int(np.asarray(version))
                     ),
                     "source_result": self.source_result_id,
@@ -365,10 +366,12 @@ class StructuredNonlinearProgram(StrictModule):
     def validate_coordinates(self, coordinates: ArrayLike, /) -> Array:
         return _real_vector(coordinates, self.num_variables, "coordinates")
 
-    def evaluate(self, coordinates: ArrayLike, args: Any = None, /):
+    def evaluate(
+        self, coordinates: ArrayLike, args: Any = None, /
+    ) -> StructuredNonlinearEvaluation:
         point = self.validate_coordinates(coordinates)
 
-        def scalar(value):
+        def scalar(value: Array) -> Array:
             output = jnp.asarray(self.objective(value, args))
             if output.shape != () or not jnp.issubdtype(output.dtype, jnp.floating):
                 raise TypeError(
@@ -615,7 +618,7 @@ def _argument_signature(args: Any, /) -> str:
     leaves, structure = jax.tree_util.tree_flatten(args)
     records = []
     for leaf in leaves:
-        if isinstance(leaf, (jax.Array, np.ndarray, jax.core.Tracer)):
+        if isinstance(leaf, (jax.Array, np.ndarray, jax_core.Tracer)):
             records.append(
                 {
                     "kind": "array",
@@ -855,7 +858,7 @@ class PreparedStructuredNonlinearProgram(StrictModule):
                 "template": template.template_id,
                 "numeric_version": (
                     "traced"
-                    if isinstance(version, jax.core.Tracer)
+                    if isinstance(version, jax_core.Tracer)
                     else int(np.asarray(version))
                 ),
                 "numerics": _numeric_fingerprint(

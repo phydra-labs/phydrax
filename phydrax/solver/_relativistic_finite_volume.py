@@ -970,7 +970,9 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
         )
         return lower, upper
 
-    def _active_face_sides(self, active: Array, axis: int, periodic: bool, /):
+    def _active_face_sides(
+        self, active: Array, axis: int, periodic: bool, /
+    ) -> tuple[Array, Array]:
         if periodic:
             return jnp.roll(active, 1, axis=axis), active
         lower = jnp.zeros_like(jnp.take(active, 0, axis=axis))
@@ -1406,7 +1408,7 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
             first: ValenciaFiniteVolumeStageGeometry,
             second: ValenciaFiniteVolumeStageGeometry,
             /,
-        ):
+        ) -> Array:
             first_cell, second_cell = first.cell, second.cell
             return (
                 jnp.all(first_cell.alpha == second_cell.alpha)
@@ -1596,7 +1598,19 @@ class FixedGridGRHDSSPRK3Plan(AbstractFixedStepMethod):
             self.runtime_id,
         )
 
-    def step(self, step_index, time, state, step_size, args, /) -> FixedStepResult:
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: GRHDFiniteVolumeState,
+        step_size: Array,
+        args: tuple[
+            ValenciaFiniteVolumeStageGeometry,
+            ValenciaFiniteVolumeStageGeometry,
+            ValenciaFiniteVolumeStageGeometry,
+        ],
+        /,
+    ) -> FixedStepResult:
         if (
             not isinstance(args, tuple)
             or len(args) != 3

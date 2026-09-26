@@ -26,7 +26,7 @@ from ._rates import (
 
 
 if TYPE_CHECKING:
-    from ..curves._core import CurveSet
+    from ..curves._core import CurveSet, PreparedCurve
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -60,7 +60,7 @@ def _discount_curve(
     valuation_date: FinanceDate,
     currency: Currency,
     /,
-):
+) -> PreparedCurve:
     curve = curves.curve(curve_id)
     definition = curve.definition
     if definition.valuation_date.ordinal != valuation_date.ordinal:

@@ -47,7 +47,9 @@ class ThirdBodyGravity(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args=None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del args
         packed = jnp.asarray(state)
         if packed.shape != (6,):
@@ -138,7 +140,9 @@ class ZonalHarmonicGravity(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args: Any = None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):

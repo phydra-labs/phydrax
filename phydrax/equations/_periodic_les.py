@@ -347,6 +347,8 @@ class PreparedPeriodicAlgebraicLES(StrictModule, NonTrainableState):
         live = self.grid_filter.apply(retained)
         dealiasing = self.closure_method.dealiasing
         evaluation = dealiasing.evaluation
+        # Dealiasing keeps the tensor family of the periodic discretization.
+        assert isinstance(evaluation, TensorSpectralDiscretization)
         embedded = dealiasing.embed(live)
         gradient_modal = jnp.stack(
             tuple(evaluation.modal_derivative(embedded, axis=axis) for axis in range(3)),

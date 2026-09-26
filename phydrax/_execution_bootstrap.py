@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import cast, Final, Literal
 
 import jax
 
@@ -103,7 +103,11 @@ class RuntimeBootstrap:
         process_id = os.environ.get(_PHYDRAX_PROCESS_ID)
         local_device_ids = os.environ.get(_PHYDRAX_LOCAL_DEVICE_IDS)
         bind_address = os.environ.get(_PHYDRAX_COORDINATOR_BIND_ADDRESS)
-        cpu_collectives = os.environ.get(_PHYDRAX_CPU_COLLECTIVES)
+        # RuntimeBootstrap.__post_init__ rejects values other than "gloo"/"mpi".
+        cpu_collectives = cast(
+            'Literal["gloo", "mpi"] | None',
+            os.environ.get(_PHYDRAX_CPU_COLLECTIVES),
+        )
 
         explicit_values = (coordinator, num_processes, process_id)
         if any(value is not None for value in explicit_values):

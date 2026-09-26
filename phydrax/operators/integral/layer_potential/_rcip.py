@@ -23,7 +23,7 @@ from ....linalg import (
 )
 
 
-def _dense_solve(matrix: Array, right: Array, problem_id: str, /) -> Array:
+def _dense_solve(matrix: ArrayLike, right: ArrayLike, problem_id: str, /) -> Array:
     return solve(
         LinearSystem(
             DenseLinearOperator(matrix),

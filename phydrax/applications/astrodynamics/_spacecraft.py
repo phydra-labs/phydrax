@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -27,6 +27,9 @@ from ...discretization.particle import (
 )
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
+
+
+_RolloutCarry: TypeAlias = tuple[RigidBodyKinematics, RigidBodyLoad, Array]
 
 
 class SpacecraftDynamicsResult(StrictModule):
@@ -139,11 +142,13 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(initial_load.torque))
         )
 
-        def step(carry, interval):
+        def step(
+            carry: _RolloutCarry, interval: Array
+        ) -> tuple[_RolloutCarry, _RolloutCarry]:
             kinematics, load, active = carry
             start, end = interval
 
-            def advance(_):
+            def advance(_: None) -> _RolloutCarry:
                 result = rigid_body_kick_drift_kick(
                     self.bodies,
                     kinematics,

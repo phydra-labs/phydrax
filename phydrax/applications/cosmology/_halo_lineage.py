@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -45,7 +46,7 @@ class HaloLineageEventKind(IntEnum):
     MATCH_FAILURE = 7
 
 
-def _array(value: ArrayLike, *, dtype=None) -> Array:
+def _array(value: ArrayLike, *, dtype: DTypeLike | None = None) -> Array:
     return jax.lax.stop_gradient(jnp.asarray(value, dtype=dtype))
 
 

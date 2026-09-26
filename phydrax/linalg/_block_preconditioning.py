@@ -33,7 +33,7 @@ from ._preconditioning import (
     PreconditionerSource,
 )
 from ._properties import OperatorCapabilities, OperatorProperties
-from ._spaces import _coordinate_dtype, BlockSpace
+from ._spaces import _coordinate_dtype, AbstractVectorSpace, BlockSpace
 from ._structured_operators import SchurComplementLinearOperator
 
 
@@ -71,7 +71,7 @@ def _source_properties(
 
 def _validate_fixed_action(
     action: AbstractPreconditioner,
-    space,
+    space: AbstractVectorSpace,
     component: str,
     /,
 ) -> None:
@@ -140,7 +140,7 @@ def _is_adjoint_pair(
     )
 
 
-def _zero_operator(space, /) -> AbstractLinearOperator:
+def _zero_operator(space: AbstractVectorSpace, /) -> AbstractLinearOperator:
     return ScaledLinearOperator(IdentityLinearOperator(space), 0.0)
 
 
@@ -179,7 +179,7 @@ def _block_components(
 
 def _validate_schur_setup(
     operator: AbstractLinearOperator,
-    dual_space,
+    dual_space: AbstractVectorSpace,
     /,
 ) -> None:
     if not isinstance(operator, AbstractLinearOperator):

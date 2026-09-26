@@ -130,13 +130,15 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
         self.reference_temperature = jnp.asarray(reference_temperature)
         self.lateral = bool(lateral)
 
-    def _vector(self, values, name):
+    def _vector(self, values: ArrayLike, name: str) -> Array:
         values = jnp.broadcast_to(jnp.asarray(values), self.bed.shape)
         return eqx.error_if(
             values, jnp.any(~jnp.isfinite(values)), name + " must be finite."
         )
 
-    def initial_state(self, depth: ArrayLike, temperature: ArrayLike = 293.15):
+    def initial_state(
+        self, depth: ArrayLike, temperature: ArrayLike = 293.15
+    ) -> SurfaceWaterState:
         depth = self._vector(depth, "Surface depth")
         temperature = self._vector(temperature, "Surface temperature")
         depth = eqx.error_if(
@@ -153,7 +155,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
             * (temperature - self.reference_temperature),
         )
 
-    def temperature(self, state: SurfaceWaterState):
+    def temperature(self, state: SurfaceWaterState) -> Array:
         wet = state.volume > 0
         denominator = (
             self.density * self.heat_capacity * jnp.where(wet, state.volume, 1.0)
@@ -162,7 +164,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
             wet, state.energy / denominator, 0.0
         )
 
-    def lateral_rates(self, volume: ArrayLike):
+    def lateral_rates(self, volume: ArrayLike) -> Array:
         volume = jnp.asarray(volume)
         if not self.lateral:
             return jnp.zeros_like(self.edge_width)
@@ -187,7 +189,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
             0.0,
         )
 
-    def divergence(self, rates: ArrayLike):
+    def divergence(self, rates: ArrayLike) -> Array:
         rates = jnp.asarray(rates)
         return (
             jnp.zeros_like(self.bed)

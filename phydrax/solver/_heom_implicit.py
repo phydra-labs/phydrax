@@ -14,6 +14,7 @@ from ..linalg import (
     DiagonalPreconditioner,
     FunctionLinearOperator,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     PreconditioningPolicy,
     solve,
@@ -323,7 +324,7 @@ def _backward_euler_step(
     step: Array,
     space: ArraySpace,
     /,
-):
+) -> tuple[Array, LinearSolveResult]:
     shift = jnp.reciprocal(step)
     operator = FunctionLinearOperator(
         lambda value: shift * value - problem.rhs(value),

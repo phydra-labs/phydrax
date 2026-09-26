@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from typing import Literal
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from ...discretization import AxisDiscretization, AxisDomain, PreparedTensorGrid
 from ...dynamics import StateLayout, TrajectoryData
@@ -61,7 +62,7 @@ def piv_to_tensor_grid(
 
 def piv_to_observation_sequence(
     fields: PhysicalPIVResult2D | Sequence[PhysicalPIVResult2D],
-    times,
+    times: ArrayLike,
     /,
     *,
     value: PhysicalPIVValue = "velocity",

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import jax.numpy as jnp
@@ -73,7 +74,7 @@ def riemannian_boundary_target(
     parameterization: Immersion,
     /,
     *,
-    mask=None,
+    mask: Callable[[Array], ArrayLike] | Array | None = None,
     target_mass: ArrayLike | None = None,
 ) -> MappedTarget:
     """Build a mapped boundary target with induced Riemannian measure."""

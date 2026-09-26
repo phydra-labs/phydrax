@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jaxtyping import Array, Key
 
 import phydrax.axes as cx
 
@@ -79,7 +80,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         /,
         *,
         num_members: int,
-        key,
+        key: Key[Array, ""],
         source_dim: str = "__phydra_uq_epistemic",
     ) -> "HomogeneousFunctionEnsemble":
         count = int(num_members)
@@ -110,7 +111,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key,
+        key: Key[Array, ""],
         variable: str | None = None,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
@@ -121,7 +122,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
             template_member, points, variable=variable, key=member_keys[0], **kwargs
         )
 
-        def evaluate(member, member_key):
+        def evaluate(member: Any, member_key: Key[Array, ""]) -> Array:
             return _evaluate_field(
                 member,
                 points,
@@ -147,7 +148,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         batch: OperatorBatch,
         /,
         *,
-        key,
+        key: Key[Array, ""],
         field_name: str,
         query_name: str,
         input_sample_axes: Sequence[str] = (),
@@ -169,7 +170,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
                 f"Output field {field_name!r} is bound to query {template_field.query_name!r}, not {query_name!r}."
             )
 
-        def evaluate(member, member_key):
+        def evaluate(member: Any, member_key: Key[Array, ""]) -> Array:
             return member.evaluate(batch, key=member_key).field(field_name).values
 
         data = eqx.filter_vmap(
@@ -193,7 +194,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key,
+        key: Key[Array, ""],
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
     ) -> frozendict[str, PredictiveField]:
@@ -244,7 +245,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key,
+        key: Key[Array, ""],
         variable: str | None = None,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
@@ -281,7 +282,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         batch: OperatorBatch,
         /,
         *,
-        key,
+        key: Key[Array, ""],
         field_name: str,
         query_name: str,
         input_sample_axes: Sequence[str] = (),
@@ -349,7 +350,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key,
+        key: Key[Array, ""],
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
     ) -> frozendict[str, PredictiveField]:
@@ -400,7 +401,7 @@ class RandomizedPriorModel(_AbstractBaseModel):
         self.in_size = learned.in_size
         self.out_size = learned.out_size
 
-    def __call__(self, x, /, *, key: EvalKey = None):
+    def __call__(self, x: Any, /, *, key: EvalKey = None) -> Array:
         learned_key, prior_key = split_eval_key(key, 2)
         return self.learned(x, key=learned_key) + self.beta * self.prior(x, key=prior_key)
 
@@ -410,7 +411,7 @@ def randomized_prior_ensemble(
     /,
     *,
     num_members: int,
-    key,
+    key: Key[Array, ""],
     beta: float = 1.0,
     homogeneous: bool = True,
     source_dim: str = "__phydra_uq_epistemic",
@@ -500,7 +501,7 @@ def fit_ensemble(
     /,
     *,
     num_members: int,
-    key,
+    key: Key[Array, ""],
     solve_kwargs: Mapping[str, Any] | None = None,
     homogeneous: bool = True,
     source_dim: str = "__phydra_uq_epistemic",
@@ -569,7 +570,7 @@ def _evaluate_field(
     /,
     *,
     variable: str | None,
-    key,
+    key: Key[Array, ""],
     **kwargs: Any,
 ) -> cx.AxisArray:
     ansatz = getattr(member, "ansatz_functions", None)
@@ -639,10 +640,11 @@ def _stack_homogeneous_members(members: tuple[Any, ...]) -> Any:
         if not bool(equal):
             raise ValueError("Homogeneous ensemble members have different static leaves.")
 
-    def stack(*leaves):
+    def stack(*leaves: Array | None) -> Array | None:
         if leaves[0] is None:
             return None
-        return jnp.stack(leaves, axis=0)
+        # Matching tree structures place None at the same positions in every member.
+        return jnp.stack(cast(tuple[Array, ...], leaves), axis=0)
 
     stacked = jax.tree_util.tree_map(
         stack,

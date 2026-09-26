@@ -99,7 +99,8 @@ def _prepared_term_factors(
 def _factor_shape(factors: tuple[AxisFactor, ...], /) -> tuple[int, int]:
     if not factors:
         raise ValueError("A factorized product term requires factors.")
-    shape = tuple(factors[0].tensor.shape[-2:])
+    first_shape = factors[0].tensor.shape
+    shape = (first_shape[-2], first_shape[-1])
     if any(tuple(factor.tensor.shape[-2:]) != shape for factor in factors):
         raise ValueError(
             "Every factor in one product term must share latent and output sizes."

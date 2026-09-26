@@ -45,7 +45,7 @@ _OPEN_KINDS = ("pressure-outlet", "traction-open")
 
 
 def _axis_boundary(value: Array, axis: int, index: int, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value[tuple(location)]
 
@@ -53,7 +53,7 @@ def _axis_boundary(value: Array, axis: int, index: int, /) -> Array:
 def _set_axis_boundary(
     value: Array, axis: int, index: int, target: ArrayLike, /
 ) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value.at[tuple(location)].set(target)
 
@@ -599,13 +599,15 @@ class PreparedMACBoundaryPlan(StrictModule, NonTrainableState):
             structured_axis = grid.structured_axes[axis]
             if homogeneous:
                 datum = jnp.zeros(self.side_shapes[position], dtype=value.dtype)
-            elif boundary.kind == "pressure-outlet":
-                datum = stage_.values[position]
             else:
-                traction = stage_.values[position]
-                outward_sign = -1.0 if side_index == 0 else 1.0
-                datum = -outward_sign * traction[axis]
-            if not homogeneous:
+                # Inhomogeneous gradients validated their stage data above.
+                assert stage_ is not None
+                if boundary.kind == "pressure-outlet":
+                    datum = stage_.values[position]
+                else:
+                    traction = stage_.values[position]
+                    outward_sign = -1.0 if side_index == 0 else 1.0
+                    datum = -outward_sign * traction[axis]
                 datum = jnp.where(stage_.successful, datum, 0.0)
             if side_index == 0:
                 derivative = (moved[0] - datum) / (

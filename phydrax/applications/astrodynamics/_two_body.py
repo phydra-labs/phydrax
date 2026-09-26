@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,6 +18,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
+
+
+_AnomalyCarry: TypeAlias = tuple[Array, Array, Array]
+_ImplicitArgs: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 def _norm(value: Array, /) -> Array:
@@ -102,7 +108,9 @@ class UniversalKeplerResult(StrictModule):
     policy_id: str = eqx.field(static=True)
 
 
-def _parameters(position: Array, velocity: Array, mu: Array, /):
+def _parameters(
+    position: Array, velocity: Array, mu: Array, /
+) -> tuple[Array, Array, Array]:
     radius = _norm(position)
     speed_squared = jnp.sum(velocity * velocity)
     radial_dot = jnp.sum(position * velocity)
@@ -171,7 +179,7 @@ def _solve_universal_anomaly(
     initial = jnp.where(delta_time == 0.0, 0.0, initial)
     scale = 1.0 + jnp.abs(root_mu * delta_time)
 
-    def iteration(index, carry):
+    def iteration(index: Array, carry: _AnomalyCarry) -> _AnomalyCarry:
         anomaly, converged, first_iteration = carry
         residual = _kepler_residual(anomaly, position, velocity, delta_time, mu)
         derivative = _kepler_residual_derivative(anomaly, position, velocity, mu)
@@ -234,7 +242,9 @@ def _reconstruct_state_implicit(
 
 
 @_reconstruct_state_implicit.defjvp
-def _reconstruct_state_implicit_jvp(primals, tangents):
+def _reconstruct_state_implicit_jvp(
+    primals: _ImplicitArgs, tangents: _ImplicitArgs
+) -> tuple[Array, Array]:
     anomaly, position, velocity, delta_time, mu = primals
     _, position_dot, velocity_dot, delta_time_dot, mu_dot = tangents
     residual_input_dot = jax.jvp(

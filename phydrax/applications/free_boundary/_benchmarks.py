@@ -92,7 +92,11 @@ class ExactStefanBenchmark(StrictModule, NonTrainableState):
         self.fields = fields
         self.interface_width = _positive_float(interface_width, "interface_width")
 
-    def models(self):
+    def models(
+        self,
+    ) -> tuple[
+        ExplicitFrontStefanPINN, ImplicitLevelSetStefanPINN, ReferenceMapStefanPINN
+    ]:
         return (
             ExplicitFrontStefanPINN(self.fields.temperature, self.fields.front),
             ImplicitLevelSetStefanPINN(

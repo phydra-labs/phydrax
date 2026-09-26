@@ -5,6 +5,7 @@
 """Canonical precision formats, evidence, bounded rewriting, and selection."""
 
 from importlib import import_module
+from typing import Any
 
 from ._precision import __all__ as _format_all
 from ._precision_rewrite import __all__ as _rewrite_all
@@ -13,7 +14,7 @@ from ._precision_rewrite import __all__ as _rewrite_all
 _FACADE_EXPORT_MODULES = ("._precision", "._precision_rewrite")
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

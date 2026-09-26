@@ -8,6 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from .._precision import (
     complex_precision_dtype,
@@ -128,27 +129,27 @@ class HermitianPrecisionPolicy(StrictModule, NonTrainableState):
             },
         )
 
-    def _cast(self, value: Any, requested: str | None, /):
+    def _cast(self, value: ArrayLike, requested: str | None, /) -> Array:
         array = jnp.asarray(value)
         if requested is None or not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
         observed = precision_dtype_name(array.dtype)
         return array.astype(_effective_dtype(requested, observed))
 
-    def compute(self, value: Any, /):
+    def compute(self, value: ArrayLike, /) -> Array:
         return self._cast(value, self.compute_dtype)
 
-    def factorization(self, value: Any, /):
+    def factorization(self, value: ArrayLike, /) -> Array:
         return self._cast(value, self.factorization_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         return self._cast(value, self.accumulation_dtype)
 
-    def decision(self, value: Any, /):
+    def decision(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array if self.decision_dtype is None else array.astype(self.decision_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         return self._cast(value, self.output_dtype)
 
     def evidence_for(self, value: Any, /) -> PrecisionEvidenceEnvelope:

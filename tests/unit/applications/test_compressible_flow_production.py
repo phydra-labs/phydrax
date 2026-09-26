@@ -343,6 +343,17 @@ def test_case_identity_binds_exact_transport_system():
     assert first_case.case_id != second_case.case_id
 
 
+def test_navier_stokes_case_reports_its_thermal_iteration_budget():
+    system = HomogeneousMixtureCompressibleNavierStokesSystem(
+        _ideal_model(2),
+        ConstantTransport(0.02, 0.03),
+        1,
+        maximum_thermal_iterations=37,
+    )
+    case = CompressibleFlowCaseSpec("thermal-budget", system, "structured-fv")
+    assert case.maximum_thermal_iterations == 37
+
+
 def test_canonical_mixture_wall_and_fv_diffusion_preserve_species_contracts():
     system = HomogeneousMixtureCompressibleNavierStokesSystem(
         _ideal_model(2),

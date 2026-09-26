@@ -19,6 +19,7 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -470,7 +471,7 @@ def _optional_array(
     name: str,
     /,
     *,
-    default_dtype,
+    default_dtype: DTypeLike,
 ) -> Array:
     if value is None:
         return jnp.zeros(shape, dtype=default_dtype)

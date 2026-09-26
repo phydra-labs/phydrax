@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from ...artifacts import ScientificArtifactEnvelope
 from ...atomistic.interchange._structure_records import PDBAtomRecord
+from ...qualification import ReferenceArtifactManifest
 from ...units import ANGSTROM
 from ._binding import NucleotideAtomMapping
+from ._construct import NucleicAcidConstruct, NucleotideKey
 from ._hypotheses import NucleicStructureHypothesis
 
 
@@ -19,16 +23,16 @@ class NucleicRecordHypothesis:
 
 
 def nucleic_hypothesis_from_pdb_records(
-    source_records,
-    selected_records,
+    source_records: Iterable[PDBAtomRecord],
+    selected_records: Iterable[PDBAtomRecord],
     *,
-    construct,
-    record_assignments,
-    source,
-    rights,
-    requested_use,
-    image_policy,
-):
+    construct: NucleicAcidConstruct,
+    record_assignments: Mapping[str, tuple[NucleotideKey, int]],
+    source: ScientificArtifactEnvelope,
+    rights: ReferenceArtifactManifest | Iterable[ReferenceArtifactManifest],
+    requested_use: Mapping[str, bool] | None,
+    image_policy: str,
+) -> NucleicRecordHypothesis:
     """Bind native reader output with exact record-ID→(nucleotide key,atom ID).
 
     The caller uses native read_pdb_atom_records/select_pdb_model. Source author

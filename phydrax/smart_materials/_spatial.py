@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
 def piezoelectric_block_matrix(
@@ -10,7 +10,7 @@ def piezoelectric_block_matrix(
     piezoelectric_coupling: ArrayLike,
     dielectric_stiffness: ArrayLike,
     /,
-):
+) -> Array:
     k = jnp.asarray(mechanical_stiffness)
     e = jnp.asarray(piezoelectric_coupling)
     d = jnp.asarray(dielectric_stiffness)

@@ -47,6 +47,7 @@ from phydrax.qualification import (
     HMACSHA256ReleaseSigner,
     HMACSHA256TrustPolicy,
     ReleaseGateEvidence,
+    SupportDependency,
     SupportTuple,
 )
 from tools.cardiovascular_release_qualification import (
@@ -898,6 +899,56 @@ def test_dependency_profiles_must_be_complete_released_and_fresh() -> None:
         verifiers,
         at_time=20,
         dependency_profiles=(dependency,),
+    )
+    assert complete.qualified
+
+
+def test_dependency_profiles_resolve_nested_support_dependencies() -> None:
+    def released(
+        profile_id: str, support: SupportTuple, *dependencies: SupportDependency
+    ) -> CapabilityProfile:
+        evidence = ReleaseGateEvidence(
+            f"{profile_id}-qualified",
+            passed=True,
+            evidence_ids=(f"{profile_id}-artifact",),
+            reviewer_id="dependency-reviewer",
+            issued_at=10,
+            expires_at=100,
+        )
+        return CapabilityProfile(
+            profile_id,
+            "phydrax",
+            "1",
+            (support,),
+            dependencies=dependencies,
+            required_gates=(evidence.gate,),
+            release_evidence=(evidence,),
+            released=True,
+        )
+
+    base_support = SupportTuple("cardiovascular.mesh", {"route": "native"})
+    base = released("cardiovascular.mesh-native", base_support)
+    solver = released(
+        "cardiovascular.solver-native",
+        SupportTuple("cardiovascular.solver", {"route": "native"}),
+        SupportDependency(base.profile_id, base_support.support_tuple_id),
+    )
+    profile, bundle, trust, _, verifiers = _complete_case(
+        dependency_profile_ids=(solver.profile_id,)
+    )
+
+    missing_base = evaluate_cardiovascular_release_candidate(
+        profile, bundle, trust, verifiers, at_time=20, dependency_profiles=(solver,)
+    )
+    assert f"missing-dependency-profile:{base.profile_id}" in missing_base.blockers
+
+    complete = evaluate_cardiovascular_release_candidate(
+        profile,
+        bundle,
+        trust,
+        verifiers,
+        at_time=20,
+        dependency_profiles=(solver, base),
     )
     assert complete.qualified
 

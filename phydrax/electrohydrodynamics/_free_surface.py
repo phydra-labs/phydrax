@@ -1,8 +1,10 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from __future__ import annotations
+
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
 def total_interface_traction(
@@ -15,7 +17,7 @@ def total_interface_traction(
     curvature: ArrayLike,
     surface_tension_gradient: ArrayLike,
     /,
-):
+) -> Array:
     n = jnp.asarray(normal)
     jump = (
         jnp.asarray(hydrodynamic_stress_plus)

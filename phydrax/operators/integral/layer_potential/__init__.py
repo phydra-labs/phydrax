@@ -1,6 +1,7 @@
 """Prepared boundary layer representations, discretizations, and evaluators."""
 
 from importlib import import_module
+from typing import Any
 
 from ._acceleration import (
     AbstractLayerBackend,
@@ -130,7 +131,7 @@ _FACADE_EXPORT_MODULES = (
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

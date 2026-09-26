@@ -16,6 +16,8 @@ from ....._strict import StrictModule
 from ....._trainable import NonTrainableState
 from .....discretization.spectral import (
     prepare_spectral_modal_transfer,
+    PreparedSpectralModalTransfer,
+    PreparedSphericalRotation,
     SphericalRotationPlan,
     SphericalSpectralDiscretization,
 )
@@ -39,8 +41,8 @@ class DirectionalSphericalWaveletPlan(StrictModule, NonTrainableState):
     path_mask: Array
     analysis_frame_lower_bound: Array
     analysis_frame_upper_bound: Array
-    rotation: object
-    transfer: object
+    rotation: PreparedSphericalRotation
+    transfer: PreparedSpectralModalTransfer
     scales: tuple[int, ...] = eqx.field(static=True)
     azimuthal_bandlimit: int = eqx.field(static=True)
     scattering_order: int = eqx.field(static=True)

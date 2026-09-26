@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -542,7 +542,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         velocity_operator = lift_velocity_operator(self.reduction, point)
         effort_pullback = lift_effort_pullback_operator(self.reduction, point)
 
-        def action(tangent):
+        def action(tangent: Array) -> Array:
             velocity = velocity_operator.mv(tangent)
             native_effort = self._native_inertia_action(velocity)
             return effort_pullback.mv(native_effort)
@@ -604,7 +604,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
                 ),
             )
 
-        def action(tangent):
+        def action(tangent: Array) -> Array:
             return self._mass_endomorphism_action(operator, tangent)
 
         return FunctionLinearOperator(
@@ -631,7 +631,9 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         alpha = jnp.zeros((steps,), dtype=dtype)
         beta = jnp.zeros((steps,), dtype=dtype)
 
-        def body(index, carry):
+        def body(
+            index: Array, carry: tuple[Array, Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array, Array]:
             prior, current, prior_beta, diagonal, off_diagonal = carry
             image = operator.mv(current) - prior_beta * prior
             coefficient = jnp.real(self.reduction.coefficient_space.inner(current, image))
@@ -799,7 +801,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
             self.dynamics_id,
         )
 
-        def inverse_action(value):
+        def inverse_action(value: Array) -> Array:
             tangent_rhs = self.reduction.coefficient_space.inverse_riesz(value)
             return solve(problem, tangent_rhs, policy=self.solve_policy).value
 
@@ -830,7 +832,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         )
         native_velocity = lift_reduced_rod_velocity(self.reduction, point, velocity)
 
-        def lifted_at(values):
+        def lifted_at(values: Array) -> tuple[Array, Array]:
             return lift_reduced_rod_velocity(self.reduction, values, velocity)
 
         _, lift_acceleration = jax.jvp(lifted_at, (point,), (velocity,))
@@ -948,7 +950,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         bend_elastic = bend_result.elastic_resultants
         bend_viscous = bend_result.viscous_resultants
 
-        def pull_resultants(stretch_values, bend_values):
+        def pull_resultants(stretch_values: Array, bend_values: Array) -> Array:
             return -ein.contract(
                 "sdk,sd,s->k",
                 self.reduction.stretch_shear_basis,
@@ -1187,7 +1189,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         )
 
     def forward_dynamics(
-        self, state: ReducedRodState, /, **kwargs
+        self, state: ReducedRodState, /, **kwargs: Any
     ) -> ReducedRodForwardDynamicsResult:
         evaluation = self.evaluate(state, **kwargs)
         rhs = self.reduction.reduced_effort_space.validate(
@@ -1211,7 +1213,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         state: ReducedRodState,
         acceleration: ArrayLike,
         /,
-        **kwargs,
+        **kwargs: Any,
     ) -> ReducedRodInverseDynamicsResult:
         evaluation = self.evaluate(state, **kwargs)
         acceleration_ = self.reduction.coefficient_space.validate(
@@ -1254,7 +1256,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
         q = state.coefficients
         v = state.coefficient_velocities
 
-        def kinetic(configuration, velocity):
+        def kinetic(configuration: Array, velocity: Array) -> Array:
             native = lift_reduced_rod_velocity(self.reduction, configuration, velocity)
             momentum = self._native_inertia_action(native)
             return 0.5 * self.reduction.native_effort_space.pair(momentum, native)
@@ -1269,7 +1271,7 @@ class PreparedReducedRodDynamics(StrictModule, NonTrainableState):
             lambda configuration: kinetic(configuration, v)
         )(q)
 
-        def stored(configuration):
+        def stored(configuration: Array) -> Array:
             candidate = ReducedRodState(configuration, v)
             stretch, bend = self._material_results(
                 candidate,
@@ -1313,7 +1315,7 @@ def prepare_reduced_rod_dynamics(
     reduction: PreparedReducedRod,
     plan: ReducedRodDynamicsPlan | None = None,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> PreparedReducedRodDynamics:
     return PreparedReducedRodDynamics(reduction, plan, **kwargs)
 
@@ -1346,7 +1348,7 @@ def reduced_rod_energy(
     prepared: PreparedReducedRodDynamics,
     state: ReducedRodState,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> ReducedRodEnergyResult:
     return prepared.energy(state, **kwargs)
 
@@ -1355,19 +1357,19 @@ def reduced_rod_dense_reference(
     prepared: PreparedReducedRodDynamics,
     state: ReducedRodState,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> ReducedRodDenseReferenceResult:
     return prepared.dense_reference(state, **kwargs)
 
 
 def evaluate_reduced_rod_dynamics(
-    prepared: PreparedReducedRodDynamics, state: ReducedRodState, /, **kwargs
+    prepared: PreparedReducedRodDynamics, state: ReducedRodState, /, **kwargs: Any
 ) -> ReducedRodDynamicsEvaluation:
     return prepared.evaluate(state, **kwargs)
 
 
 def reduced_rod_forward_dynamics(
-    prepared: PreparedReducedRodDynamics, state: ReducedRodState, /, **kwargs
+    prepared: PreparedReducedRodDynamics, state: ReducedRodState, /, **kwargs: Any
 ) -> ReducedRodForwardDynamicsResult:
     return prepared.forward_dynamics(state, **kwargs)
 
@@ -1377,7 +1379,7 @@ def reduced_rod_inverse_dynamics(
     state: ReducedRodState,
     acceleration: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> ReducedRodInverseDynamicsResult:
     return prepared.inverse_dynamics(state, acceleration, **kwargs)
 

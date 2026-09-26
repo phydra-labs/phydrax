@@ -18,7 +18,11 @@ from ....atomistic._checkpoint import (
     read_atomistic_checkpoint,
     write_atomistic_checkpoint,
 )
-from ....atomistic._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
+from ....atomistic._dynamics import (
+    AtomisticDynamicsState,
+    AtomisticStepEvaluation,
+    PreparedAtomisticDynamics,
+)
 from ....atomistic._thermodynamic import PreparedThermodynamicStateTable
 from ....atomistic._topology_epoch import (
     activate_topology_epoch,
@@ -125,7 +129,7 @@ def _step(
     runtime: PreparedAtomisticDynamics,
     state: AtomisticDynamicsState,
     thermodynamic_states: PreparedThermodynamicStateTable,
-):
+) -> AtomisticStepEvaluation:
     return runtime.step_detailed(state, thermodynamic_states)
 
 

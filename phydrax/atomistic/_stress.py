@@ -81,7 +81,7 @@ def atomistic_cell_energy_and_stress(
     identity = jnp.eye(3, dtype=fractional.dtype)
     extra = {} if context_kwargs is None else dict(context_kwargs)
 
-    def geometry(strain):
+    def geometry(strain: Array) -> tuple[Array, Array, Array]:
         deformation = identity + strain
         vectors = contract("ij,kj->ki", deformation, reference_vectors)
         positions = cell.origin.astype(fractional.dtype) + contract(
@@ -101,7 +101,7 @@ def atomistic_cell_energy_and_stress(
             state_index, control_values, fractional.dtype
         )
 
-        def strained_energy(strain, control):
+        def strained_energy(strain: Array, control: Array) -> tuple[Array, Array]:
             vectors, positions, unwrapped = geometry(strain)
             energy, auxiliary = potential.energy(
                 positions,
@@ -129,7 +129,7 @@ def atomistic_cell_energy_and_stress(
                 "state_index and control_values require a PreparedControlledHamiltonian."
             )
 
-        def strained_energy(strain):
+        def strained_energy(strain: Array) -> tuple[Array, Array]:
             vectors, positions, unwrapped = geometry(strain)
             energy, auxiliary = potential.energy(
                 positions,

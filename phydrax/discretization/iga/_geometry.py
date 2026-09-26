@@ -8,6 +8,7 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -307,7 +308,7 @@ class IsogeometricH1QualificationPolicy(StrictModule, NonTrainableState):
             }
         )
 
-    def geometry_tolerances(self, dtype, /) -> tuple[Array, Array, Array]:
+    def geometry_tolerances(self, dtype: DTypeLike, /) -> tuple[Array, Array, Array]:
         default = jnp.sqrt(jnp.asarray(jnp.finfo(dtype).eps, dtype=dtype))
         return (
             default

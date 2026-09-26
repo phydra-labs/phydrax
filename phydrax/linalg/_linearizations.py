@@ -110,7 +110,7 @@ def prepare_linearization(
     primal_ = target_.validate(primal)
     transposed = jax.linear_transpose(pushforward, source_.zeros())
 
-    def apply_transpose(cotangent):
+    def apply_transpose(cotangent: PyTree[Any]) -> PyTree[Array]:
         return transposed(cotangent)[0]
 
     pullback = eqx.filter_closure_convert(apply_transpose, target_.structure())

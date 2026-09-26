@@ -46,7 +46,7 @@ def node_smoothing_layout(mesh: CellMesh, /) -> SmoothingPatchLayout:
         edge_counter = Counter()
         directed_edges = defaultdict(list)
 
-        def register(coefficients):
+        def register(coefficients: np.ndarray) -> tuple[float, ...]:
             key = _key(coefficients)
             coefficient_by_key[key] = coefficients
             shape = np.zeros((len(stencil),))

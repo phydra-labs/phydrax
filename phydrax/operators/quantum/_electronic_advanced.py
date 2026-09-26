@@ -127,7 +127,7 @@ class StochasticElectronicKineticPolicy(StrictModule):
         shape = coordinates.shape
         flat = coordinates.reshape(-1)
 
-        def components(value):
+        def components(value: Array) -> Array:
             amplitude = model(value.reshape(shape))
             if not isinstance(amplitude, LogAmplitude):
                 raise TypeError("Electronic amplitude model must return LogAmplitude.")

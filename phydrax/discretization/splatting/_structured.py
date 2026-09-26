@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint
@@ -159,7 +160,7 @@ class ParticleGridSplatState(StrictModule):
     def require_success(self, value: ArrayLike, /) -> Array:
         """Return ``value`` or fail unless geometry and boundary checks passed."""
         failed = ~self.successful
-        if not isinstance(failed, jax.core.Tracer):
+        if not isinstance(failed, jax_core.Tracer):
             failed = bool(failed)
         return eqx.error_if(
             jnp.asarray(value),
@@ -276,10 +277,21 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             raise TypeError("particles must be ParticleDiscretization.")
         if particles.ambient_dimension != len(plan.target.axis_names):
             raise ValueError("Particle and target-grid dimensions must match.")
-        layout = plan.target.layout_at(plan.location)
-        axes = plan.target.structured_axes
-        plan.assignment.validate(layout, axes)
-        target_measure = plan.target.measure_for(layout)
+        target = plan.target
+        layout: TensorEntityLayout | TensorIndexLayout
+        target_measure: DiscreteMeasure | TensorIndexMeasure
+        if isinstance(target, PreparedTensorGrid):
+            entity_layout = target.layout_at(plan.location)
+            axes = target.structured_axes
+            plan.assignment.validate(entity_layout, axes)
+            target_measure = target.measure_for(entity_layout)
+            layout = entity_layout
+        else:
+            index_layout = target.layout_at(plan.location)
+            axes = target.structured_axes
+            plan.assignment.validate(index_layout, axes)
+            target_measure = target.measure_for(index_layout)
+            layout = index_layout
         if isinstance(target_measure, DiscreteMeasure):
             target_weights = np.asarray(target_measure.weights)
             finite_positive_measure = bool(

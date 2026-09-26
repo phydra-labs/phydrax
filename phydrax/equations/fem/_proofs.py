@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ...discretization._cell_complex import PolygonalConnectivity
 from ...discretization.fem import (
     FiniteElementDiscretization,
     HDGCondensationPlan,
@@ -35,6 +36,7 @@ from .._finite_element_variational import (
     coefficient,
     DiffusionAction,
     ExteriorFacetAction,
+    FiniteElementExecutionContext,
     FiniteElementForm,
     InteriorFacetAction,
     PreparedOperatorAction,
@@ -58,7 +60,15 @@ def linear_elasticity_form(
     lambda_ = jnp.asarray(lame_lambda)
     mu = jnp.asarray(shear_modulus)
 
-    def kernel(values, gradients, points, weights, test_basis, test_gradients, context):
+    def kernel(
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         gradient = gradients[0]
         strain = symmetric_gradient(gradient)
         trace = jnp.trace(strain, axis1=-2, axis2=-1)
@@ -118,7 +128,15 @@ def upwind_advection_form(
         else coefficient(inflow, coefficient_id=inflow_coefficient_id)
     )
 
-    def volume(values, gradients, points, weights, test_basis, test_gradients, context):
+    def volume(
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         value = values[0]
         directional_test_gradient = ein.contract(
             "cqid,d->cqi",
@@ -132,7 +150,14 @@ def upwind_advection_form(
             value,
         )
 
-    def flux(plus_values, minus_values, points, weights, normal, context):
+    def flux(
+        plus_values: tuple[Array, ...],
+        minus_values: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        normal: Array,
+        context: FiniteElementExecutionContext,
+    ) -> tuple[Array, Array]:
         plus = plus_values[0]
         minus = minus_values[0]
         speed = jnp.sum(velocity_ * normal, axis=-1)
@@ -141,7 +166,13 @@ def upwind_advection_form(
         numerical = factor * selected
         return numerical, -numerical
 
-    def boundary_flux(plus_values, points, weights, normal, context):
+    def boundary_flux(
+        plus_values: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        normal: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         plus = plus_values[0]
         speed = jnp.sum(velocity_ * normal, axis=-1)
         factor = speed.reshape(speed.shape + (1,) * (plus.ndim - speed.ndim))
@@ -197,8 +228,14 @@ def darcy_form(
     inverse = jnp.asarray(inverse_permeability)
 
     def flux_residual(
-        values, gradients, points, weights, test_basis, test_gradients, context
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         flux_value, pressure_value = values
         div_test = jnp.trace(test_gradients, axis1=-2, axis2=-1)
         return ein.contract(
@@ -209,8 +246,14 @@ def darcy_form(
         ) - ein.contract("cq,cqi,cq->ci", weights, div_test, pressure_value)
 
     def pressure_residual(
-        values, gradients, points, weights, test_basis, test_gradients, context
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         flux_gradient = gradients[0]
         div_flux = jnp.trace(flux_gradient, axis1=-2, axis2=-1)
         return ein.contract("cq,qi,cq->ci", weights, test_basis, div_flux)
@@ -250,7 +293,15 @@ def maxwell_form(
     mass = jnp.asarray(mass_coefficient)
     curl_weight = jnp.asarray(curl_coefficient)
 
-    def residual(values, gradients, points, weights, test_basis, test_gradients, context):
+    def residual(
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         value = values[0]
         field_curl = curl(gradients[0])
         test_curl = curl(test_gradients)
@@ -286,7 +337,15 @@ def stokes_form(
 ) -> FiniteElementForm:
     viscosity_ = jnp.asarray(viscosity)
 
-    def momentum(values, gradients, points, weights, test_basis, test_gradients, context):
+    def momentum(
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         velocity_gradient, _ = gradients
         _, pressure = values
         strain = symmetric_gradient(velocity_gradient)
@@ -309,8 +368,14 @@ def stokes_form(
         return viscous - pressure_term
 
     def incompressibility(
-        values, gradients, points, weights, test_basis, test_gradients, context
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         velocity_gradient = gradients[0]
         divergence = jnp.trace(velocity_gradient, axis1=-2, axis2=-1)
         return ein.contract("cq,qi,cq->ci", weights, test_basis, divergence)
@@ -679,6 +744,8 @@ def solve_hdg_poisson(
             tau * jnp.sum(side_weights, axis=1)
         )
     connectivity = discretization.mesh.connectivity
+    # CellMesh builds polygonal connectivity for every two-dimensional mesh.
+    assert isinstance(connectivity, PolygonalConnectivity)
     boundary_mask = connectivity.boundary_edges
     edge_vertices = jnp.asarray(connectivity.edges, dtype=jnp.int32)
     edge_midpoints = jnp.mean(

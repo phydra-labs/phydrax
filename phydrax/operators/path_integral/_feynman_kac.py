@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -21,6 +21,10 @@ from ._action import _paths_array, potential_action
 from ._diffusion import DiffusionLike, DriftLike, sample_diffusion_paths
 from ._estimate import _estimate_positive_log_weights, PathIntegralEstimate
 from ._potential import _as_point_time_callable, PotentialLike
+
+
+if TYPE_CHECKING:
+    from ...stochastic._path_ensemble import StochasticPathEnsembleResult
 
 
 class SourceFeynmanKacEstimate(StrictModule):
@@ -368,7 +372,7 @@ def _common_stochastic_time_axis(times: ArrayLike, path_count: int, /) -> np.nda
 
 
 def source_feynman_kac_from_stochastic_paths(
-    result,
+    result: StochasticPathEnsembleResult,
     terminal: PotentialLike,
     source: PotentialLike,
     /,

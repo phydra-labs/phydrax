@@ -12,6 +12,7 @@ import jax.random as jr
 from jaxtyping import Array
 
 from ..._physical import SpatialCoordinateContract
+from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
     DistanceSemantics,
@@ -21,7 +22,12 @@ from .._certificate import (
     ZeroSetAccuracy,
 )
 from .._closest_point import represented_mesh_closest_point
-from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._contracts import (
+    ClosestPointResult,
+    GeometryKernel,
+    GeometryKind,
+    GeometrySource,
+)
 from .._sampling import (
     bounded_rejection_sample,
     RejectionSamplingPlan,
@@ -29,7 +35,7 @@ from .._sampling import (
     SamplingResult,
 )
 from ..design._schema import _ParameterCollector, DesignState
-from ..simplicial import TriangleMesh, TriangleMeshQueryIndex
+from ..simplicial import MeshQueryResult, TriangleMesh, TriangleMeshQueryIndex
 from ._model import BRepImportReport, BRepModel
 from ._occt import import_brep
 
@@ -56,7 +62,10 @@ def _oriented_boundary_field(
 
 
 @_oriented_boundary_field.defjvp
-def _oriented_boundary_field_jvp(primals, tangents):
+def _oriented_boundary_field_jvp(
+    primals: tuple[Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array],
+) -> tuple[Array, Array]:
     points, closest_points, outward_normals, inside = primals
     points_tangent, _, _, _ = tangents
     value = _oriented_boundary_field(
@@ -159,7 +168,7 @@ class _BRepKernel(GeometryKernel):
     def _triangles(self) -> Array:
         return self.mesh.vertices[self.mesh.faces]
 
-    def _query(self, points: Array):
+    def _query(self, points: Array) -> MeshQueryResult:
         return self.query_index.query(points)
 
     def contains(self, state: DesignState, points: Array, /) -> Array:
@@ -205,7 +214,7 @@ class _BRepKernel(GeometryKernel):
         del state
         return jax.lax.stop_gradient(self._query(points).normal)
 
-    def closest_point(self, state: DesignState, points: Array, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         points_ = jnp.asarray(points, dtype=self.mesh.vertices.dtype)
         query = self._query(points_)
         leading = points_.shape[:-1]
@@ -296,7 +305,7 @@ class _BRepKernel(GeometryKernel):
         del state
         return sample_boundary_atlas(self.model.boundary_atlas, num_points, key=key)
 
-    def boundary_atlas(self, state: DesignState, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         del state
         return self.model.boundary_atlas
 

@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from ..operators.quantum._operations import (
     LocalKrausChannelOperation,
     LocalUnitaryOperation,
+    QuantumOperation,
     QuantumProgram,
 )
 from ..operators.quantum._propagation import (
@@ -171,7 +172,9 @@ class LPDOQuantumProgramResult(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
-def _route(program, operation):
+def _route(
+    program: QuantumProgram, operation: QuantumOperation
+) -> LPDOQuantumProgramRoute:
     indices = program.layout.target_indices(operation.target_wire_ids)
     start = min(indices)
     stop = max(indices)
@@ -288,7 +291,7 @@ def plan_lpdo_quantum_program(
     )
 
 
-def _validate_schema(program, plan) -> None:
+def _validate_schema(program: QuantumProgram, plan: LPDOQuantumProgramPlan) -> None:
     if program.program_id != plan.program_id:
         raise ValueError("Quantum-program structure changed; replan is required.")
     routes = tuple(
@@ -298,7 +301,9 @@ def _validate_schema(program, plan) -> None:
         raise ValueError("Quantum-program routes changed; replan is required.")
 
 
-def _operation_evidence(program, policy):
+def _operation_evidence(
+    program: QuantumProgram, policy: LPDOQuantumProgramPolicy
+) -> tuple[LPDOQuantumOperationEvidence, ...]:
     records = []
     for operation in program.operations:
         if isinstance(operation, LocalUnitaryOperation):
@@ -322,7 +327,9 @@ def _operation_evidence(program, policy):
     return tuple(records)
 
 
-def prepare_lpdo_quantum_program(program, plan, /):
+def prepare_lpdo_quantum_program(
+    program: QuantumProgram, plan: LPDOQuantumProgramPlan, /
+) -> PreparedLPDOQuantumProgram:
     if not isinstance(plan, LPDOQuantumProgramPlan):
         raise TypeError("plan must be LPDOQuantumProgramPlan.")
     _validate_schema(program, plan)
@@ -345,7 +352,9 @@ def prepare_lpdo_quantum_program(program, plan, /):
     )
 
 
-def refresh_lpdo_quantum_program(prepared, program, /):
+def refresh_lpdo_quantum_program(
+    prepared: PreparedLPDOQuantumProgram, program: QuantumProgram, /
+) -> PreparedLPDOQuantumProgram:
     if not isinstance(prepared, PreparedLPDOQuantumProgram):
         raise TypeError("prepared must be PreparedLPDOQuantumProgram.")
     _validate_schema(program, prepared.plan)
@@ -365,7 +374,9 @@ def refresh_lpdo_quantum_program(prepared, program, /):
     )
 
 
-def _contract_window(state, route):
+def _contract_window(
+    state: LocallyPurifiedDensity, route: LPDOQuantumProgramRoute
+) -> Array:
     tensors = state.precision.contraction(
         state.tensors[route.window_start : route.window_stop + 1]
     )
@@ -375,7 +386,7 @@ def _contract_window(state, route):
     return window
 
 
-def _window_labels(span):
+def _window_labels(span: int) -> list[int]:
     labels = [0]
     for position in range(span):
         labels.extend((1 + 2 * position, 2 + 2 * position))
@@ -383,7 +394,12 @@ def _window_labels(span):
     return labels
 
 
-def _apply_unitary(window, route, physical_dimensions, unitary):
+def _apply_unitary(
+    window: Array,
+    route: LPDOQuantumProgramRoute,
+    physical_dimensions: tuple[int, ...],
+    unitary: Array,
+) -> Array:
     span = route.window_stop - route.window_start + 1
     labels = _window_labels(span)
     physical_labels = [1 + 2 * position for position in range(span)]
@@ -408,7 +424,12 @@ def _apply_unitary(window, route, physical_dimensions, unitary):
     )
 
 
-def _apply_kraus(window, route, physical_dimensions, kraus):
+def _apply_kraus(
+    window: Array,
+    route: LPDOQuantumProgramRoute,
+    physical_dimensions: tuple[int, ...],
+    kraus: Array,
+) -> Array:
     span = route.window_stop - route.window_start + 1
     labels = _window_labels(span)
     physical_labels = [1 + 2 * position for position in range(span)]
@@ -444,7 +465,12 @@ def _apply_kraus(window, route, physical_dimensions, kraus):
     return result.reshape(tuple(shape))
 
 
-def _split_window(state, route, window, policy):
+def _split_window(
+    state: LocallyPurifiedDensity,
+    route: LPDOQuantumProgramRoute,
+    window: Array,
+    policy: LPDOQuantumProgramPolicy,
+) -> tuple[tuple[Array, ...], tuple[TensorTruncationEvidence, ...]]:
     precision = state.precision
     dimensions = state.physical_dimensions[route.window_start : route.window_stop + 1]
     current = window
@@ -477,7 +503,9 @@ def _split_window(state, route, window, policy):
     return tuple(tensors), tuple(records)
 
 
-def _compress_purification(state, site, maximum_dimension):
+def _compress_purification(
+    state: LocallyPurifiedDensity, site: int, maximum_dimension: int
+) -> tuple[LocallyPurifiedDensity, TensorTruncationEvidence]:
     precision = state.precision
     tensor = precision.contraction(state.tensors[site])
     matrix = jnp.transpose(tensor, (0, 1, 3, 2)).reshape((-1, tensor.shape[2]))
@@ -498,7 +526,9 @@ def _compress_purification(state, site, maximum_dimension):
     return LocallyPurifiedDensity(tuple(tensors), precision=precision), evidence
 
 
-def execute_lpdo_quantum_program(prepared, state, /):
+def execute_lpdo_quantum_program(
+    prepared: PreparedLPDOQuantumProgram, state: LocallyPurifiedDensity, /
+) -> LPDOQuantumProgramResult:
     if not isinstance(prepared, PreparedLPDOQuantumProgram):
         raise TypeError("prepared must be PreparedLPDOQuantumProgram.")
     if not isinstance(state, LocallyPurifiedDensity):

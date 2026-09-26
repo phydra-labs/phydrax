@@ -15,6 +15,7 @@ from .._strict import StrictModule
 from ..linalg import DenseLinearOperator, OperatorProperties
 from ..linalg.eigen import (
     Eigenproblem,
+    PreparedSelfAdjointSpectrum,
     self_adjoint_spectrum,
     SelfAdjointSpectrumStatus,
 )
@@ -287,7 +288,7 @@ def _weighted_covariance(
         moments = operator.mv(weights)
         identity = jnp.eye(problem.moment_count, dtype=weights.dtype)
 
-        def column(finite, basis):
+        def column(finite: Array, basis: Array) -> tuple[Array, Array]:
             row = operator.transpose_mv(basis)
             row_finite = jnp.all(jnp.isfinite(row))
             safe_row = jnp.where(jnp.isfinite(row), row, 0.0)
@@ -306,7 +307,7 @@ def _spectrum(
     /,
     *,
     suffix: str,
-):
+) -> PreparedSelfAdjointSpectrum:
     operator = DenseLinearOperator(
         matrix,
         properties=OperatorProperties(

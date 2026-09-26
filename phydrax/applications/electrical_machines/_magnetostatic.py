@@ -116,7 +116,9 @@ def _design_vector(machine: PlanarMachine, design: ArrayLike | None) -> Array:
     )
 
 
-def _material_arrays(machine, parameters, angle_delta):
+def _material_arrays(
+    machine: PlanarMachine, parameters: Array, angle_delta: ArrayLike
+) -> tuple[Array, Array, Array]:
     ids = machine.cell_regions
     reluctivity = 1.0 / (
         VACUUM_PERMEABILITY
@@ -141,7 +143,9 @@ def _material_arrays(machine, parameters, angle_delta):
     return reluctivity[ids], remanence[ids], windings[ids]
 
 
-def _geometry(machine, parameters, angle_delta):
+def _geometry(
+    machine: PlanarMachine, parameters: Array, angle_delta: ArrayLike
+) -> tuple[Array, Array, Array, Array]:
     points = machine.coordinates(parameters[0], angle_delta)
     # P1 affine triangles: one centroid integrates all assembly and field terms
     # exactly, avoiding general high-order quadrature storage for this profile.
@@ -158,15 +162,15 @@ def _geometry(machine, parameters, angle_delta):
 
 
 def _field_quantities(
-    machine,
-    potential,
-    areas,
-    curls,
-    reluctivity,
-    remanence,
-    windings,
-    currents,
-):
+    machine: PlanarMachine,
+    potential: Array,
+    areas: Array,
+    curls: Array,
+    reluctivity: Array,
+    remanence: Array,
+    windings: Array,
+    currents: Array,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     local = potential[machine.discretization.mesh.blocks[0].vertices]
     magnetic_field = contract("cid,ci->cd", curls, local)
     field_strength = reluctivity[:, None] * (magnetic_field - remanence)

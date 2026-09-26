@@ -213,13 +213,17 @@ def import_velocity_field(
             "No physical time, lineage, or energy claim is inferred from an embedded field.",
         ),
     )
+    estimator, preprocessing, representation, uncertainty = labels
     return ImportedVelocityField(
         jnp.asarray(raw),
         jnp.asarray(mask),
         None if errors is None else jnp.asarray(errors),
         observations,
         source,
-        *labels,
+        estimator,
+        preprocessing,
+        representation,
+        uncertainty,
         identity,
         report,
     )

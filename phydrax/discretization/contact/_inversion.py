@@ -140,11 +140,11 @@ class InversionStepEvidence(StrictModule):
         return self.status == int(InversionStatus.SUCCESS)
 
 
-def _det2(first, second, /):
+def _det2(first: np.ndarray, second: np.ndarray, /) -> np.floating:
     return first[0] * second[1] - first[1] * second[0]
 
 
-def _det3(first, second, third, /):
+def _det3(first: np.ndarray, second: np.ndarray, third: np.ndarray, /) -> float:
     return float(np.dot(first, np.cross(second, third)))
 
 

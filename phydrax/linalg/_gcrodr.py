@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -35,7 +36,7 @@ from ._results import (
     LinearSolveStatus,
     RecycledLinearSolveResult,
 )
-from ._spaces import _coordinate_dtype
+from ._spaces import _coordinate_dtype, AbstractVectorSpace
 from .krylov._decompositions import arnoldi
 from .krylov._results import KrylovBreakdownStatus
 
@@ -289,7 +290,7 @@ def _build_result(
     prepared: PreparedLinearSolve,
     rhs: Array,
     initial: Array,
-    auxiliary,
+    auxiliary: tuple[Array, ...],
     max_steps: int,
     restart: int,
     /,
@@ -636,7 +637,7 @@ def _refresh_source_images(
 def _extract_state(
     state: RecyclingState,
     prepared: PreparedLinearSolve,
-    projected_action,
+    projected_action: Callable[[Array], Array],
     initial: Array,
     restart: int,
     extraction: RecyclingExtraction,
@@ -711,7 +712,7 @@ def _extract_state(
 
 
 def _augmented_harmonic_ritz_sources(
-    space,
+    space: AbstractVectorSpace,
     search_sources: Array,
     search_images: Array,
     search_active: Array,
@@ -768,7 +769,9 @@ def _augmented_harmonic_ritz_sources(
     component_norms = jnp.linalg.norm(coefficients_pool, axis=0)
     tolerance = jnp.sqrt(jnp.finfo(search_sources.dtype).eps)
 
-    def select_real_block(index, carry):
+    def select_real_block(
+        index: Array, carry: tuple[Array, Array]
+    ) -> tuple[Array, Array]:
         used, active_pool_ = carry
         selected_value = selected_values[index]
         imaginary_part = jnp.imag(selected_value)
@@ -819,7 +822,7 @@ def _augmented_harmonic_ritz_sources(
 
 
 def _compress_candidates(
-    space,
+    space: AbstractVectorSpace,
     source_candidates: Array,
     image_candidates: Array,
     candidate_active: Array,
@@ -837,14 +840,16 @@ def _compress_candidates(
     real_dtype = image_candidates.real.dtype
     tolerance = jnp.sqrt(jnp.finfo(real_dtype).eps)
 
-    def step(index, carry):
+    def step(
+        index: Array, carry: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         sources_, images_, rank_ = carry
         source = source_candidates[:, index]
         image = image_candidates[:, index]
         original_norm = _algorithmic_norm(space, image)
         slots = jnp.arange(capacity) < rank_
 
-        def orthogonalize(values):
+        def orthogonalize(values: tuple[Array, Array]) -> tuple[Array, Array]:
             source_, image_ = values
             coefficients = jax.vmap(
                 lambda column: _algorithmic_inner(space, column, image_), in_axes=1
@@ -918,7 +923,9 @@ def _carry_update_status(previous: Array, current: Array, /) -> Array:
     ).astype(jnp.int32)
 
 
-def _coordinate_cross_gram(space, left: Array, right: Array, /) -> Array:
+def _coordinate_cross_gram(
+    space: AbstractVectorSpace, left: Array, right: Array, /
+) -> Array:
     return jax.vmap(
         lambda left_column: jax.vmap(
             lambda right_column: _algorithmic_inner(
@@ -933,7 +940,7 @@ def _coordinate_cross_gram(space, left: Array, right: Array, /) -> Array:
 
 
 def _apply_basis(
-    action,
+    action: Callable[[Array], Array],
     basis: Array,
     effective_dimension: Array,
     output_size: int,
@@ -947,7 +954,7 @@ def _apply_basis(
         dtype=output.dtype,
     )
 
-    def step(index, value):
+    def step(index: Array, value: Array) -> Array:
         return jax.lax.cond(
             index < effective_dimension,
             lambda output: output.at[:, index].set(action(basis[:, index])),
@@ -959,7 +966,7 @@ def _apply_basis(
 
 
 def _basis_coefficients(
-    space,
+    space: AbstractVectorSpace,
     basis: Array,
     vector: Array,
     effective_dimension: Array,
@@ -972,7 +979,7 @@ def _basis_coefficients(
 
 
 def _project_coordinates(
-    space,
+    space: AbstractVectorSpace,
     basis: Array,
     effective_dimension: Array,
     vector: Array,
@@ -986,19 +993,19 @@ def _operator_coordinates(prepared: PreparedLinearSolve, vector: Array, /) -> Ar
     return operator.target.flatten(operator.mv(operator.source.unflatten(vector)))
 
 
-def _coordinate_inner(space, left: Array, right: Array, /) -> Array:
+def _coordinate_inner(space: AbstractVectorSpace, left: Array, right: Array, /) -> Array:
     return space.inner(space.unflatten(left), space.unflatten(right))
 
 
-def _coordinate_norm(space, vector: Array, /) -> Array:
+def _coordinate_norm(space: AbstractVectorSpace, vector: Array, /) -> Array:
     return jnp.sqrt(jnp.maximum(jnp.real(_coordinate_inner(space, vector, vector)), 0.0))
 
 
-def _algorithmic_inner(space, left: Array, right: Array, /) -> Array:
+def _algorithmic_inner(space: AbstractVectorSpace, left: Array, right: Array, /) -> Array:
     return jax.lax.stop_gradient(_coordinate_inner(space, left, right))
 
 
-def _algorithmic_norm(space, vector: Array, /) -> Array:
+def _algorithmic_norm(space: AbstractVectorSpace, vector: Array, /) -> Array:
     return jnp.sqrt(jnp.maximum(jnp.real(_algorithmic_inner(space, vector, vector)), 0.0))
 
 

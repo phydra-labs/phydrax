@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._precision import inexact_result_type
@@ -164,7 +165,7 @@ class BalloonWindkessel(StrictModule):
         )
 
 
-def balloon_equilibrium(region_count: int, /, *, dtype=None) -> Array:
+def balloon_equilibrium(region_count: int, /, *, dtype: DTypeLike | None = None) -> Array:
     """Resting state s=0, f=v=q=1, exact zero fractional BOLD."""
     if (
         isinstance(region_count, bool)

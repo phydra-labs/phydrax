@@ -12,6 +12,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 
 from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -40,7 +41,7 @@ class VariablePatchCheckpointPlan(StrictModule, NonTrainableState):
         component_names: Sequence[str],
         /,
         *,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
         partition: PreparedVariablePatchPartition | None = None,
     ) -> None:
         names = tuple(str(value) for value in component_names)
@@ -82,7 +83,9 @@ class VariablePatchCheckpoint(StrictModule, NonTrainableState):
     payload_id: str
 
 
-def _arrays(state: VariablePatchHierarchyState, dtype, /) -> dict[str, np.ndarray]:
+def _arrays(
+    state: VariablePatchHierarchyState, dtype: DTypeLike, /
+) -> dict[str, np.ndarray]:
     arrays: dict[str, np.ndarray] = {}
     for level, (metadata, field) in enumerate(
         zip(state.topology.levels, state.levels, strict=True)

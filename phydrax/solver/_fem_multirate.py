@@ -9,6 +9,7 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -97,7 +98,7 @@ class DGTraceHistory(StrictModule):
         cls,
         depth: int,
         trace_shape: tuple[int, ...],
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> DGTraceHistory:
         return cls(
@@ -124,7 +125,7 @@ class DGTraceHistory(StrictModule):
         ):
             raise ValueError("DG trace update value/time/acceptance are incompatible.")
 
-        def perform(history):
+        def perform(history: DGTraceHistory) -> DGTraceHistory:
             values = jnp.concatenate((value_[None], history.values[:-1]), axis=0)
             times = jnp.concatenate((time_[None], history.times[:-1]), axis=0)
             return DGTraceHistory(
@@ -225,7 +226,7 @@ class TimeSlabFluxLedger(StrictModule):
         /,
         *,
         ledger_id: str,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> "TimeSlabFluxLedger":
         return cls(
             jnp.zeros((int(route_count),) + tuple(component_shape), dtype=dtype),

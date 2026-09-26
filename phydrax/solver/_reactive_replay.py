@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,13 @@ from ._reactive_cfd_dem import (
     ReactiveCFDDEMCouplingState,
     ReactiveCFDDEMMacroStepResult,
 )
+
+
+_ReactiveStepFunction: TypeAlias = Callable[
+    [ReactiveCFDDEMCouplingState, Array], ReactiveCFDDEMMacroStepResult
+]
+_ReplayCarry: TypeAlias = tuple[ReactiveCFDDEMCouplingState, Array]
+_ReplayPayload: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class ReactiveCheckpointPolicy(StrictModule, NonTrainableState):
@@ -65,9 +72,7 @@ class ReactiveParameterEnsembleResult(StrictModule):
 
 
 def checkpointed_reactive_rollout(
-    step_function: Callable[
-        [ReactiveCFDDEMCouplingState, Array], ReactiveCFDDEMMacroStepResult
-    ],
+    step_function: _ReactiveStepFunction,
     initial_state: ReactiveCFDDEMCouplingState,
     step_count: int,
     checkpoint: ReactiveCheckpointPolicy,
@@ -87,10 +92,14 @@ def checkpointed_reactive_rollout(
     ) * checkpoint.interval
     indices = jnp.arange(padded, dtype=jnp.int32).reshape((-1, checkpoint.interval))
 
-    def one_step(carry, index):
+    def one_step(
+        carry: _ReplayCarry, index: Array
+    ) -> tuple[_ReplayCarry, _ReplayPayload]:
         state, cumulative_success = carry
 
-        def execute(_):
+        def execute(
+            _: None,
+        ) -> tuple[ReactiveCFDDEMCouplingState, Array, _ReplayPayload]:
             result = step_function(state, index)
             if not isinstance(result, ReactiveCFDDEMMacroStepResult):
                 raise TypeError(
@@ -107,7 +116,7 @@ def checkpointed_reactive_rollout(
             )
             return result.accepted_state, cumulative_success & result.successful, payload
 
-        def skip(_):
+        def skip(_: None) -> tuple[ReactiveCFDDEMCouplingState, Array, _ReplayPayload]:
             dtype = state.dem_state.kinematics.position.dtype
             payload = (
                 jnp.asarray(True),
@@ -124,7 +133,9 @@ def checkpointed_reactive_rollout(
         )
         return (next_state, success), payload
 
-    def block(carry, block_indices):
+    def block(
+        carry: _ReplayCarry, block_indices: Array
+    ) -> tuple[_ReplayCarry, _ReplayPayload]:
         return jax.lax.scan(one_step, carry, block_indices)
 
     checkpointed_block = jax.checkpoint(block)
@@ -133,7 +144,9 @@ def checkpointed_reactive_rollout(
         (initial_state, jnp.asarray(True)),
         indices,
     )
-    flattened = jax.tree.map(lambda value: value.reshape((padded,))[:count], payload)
+    flattened: _ReplayPayload = jax.tree.map(
+        lambda value: value.reshape((padded,))[:count], payload
+    )
     replay = ReactiveReplayRecord(
         *flattened,
         canonical_fingerprint(
@@ -149,8 +162,8 @@ def checkpointed_reactive_rollout(
 
 def checkpointed_reactive_vjp(
     loss: Callable[[ReactiveCFDDEMCouplingState], Array],
-    step_function,
-    initial_state,
+    step_function: _ReactiveStepFunction,
+    initial_state: ReactiveCFDDEMCouplingState,
     cotangent: Array,
     /,
     *,
@@ -167,7 +180,7 @@ def checkpointed_reactive_vjp(
     )
     replay_matched = reactive_replay_matches(forward.replay, replayed.replay)
 
-    def terminal(state):
+    def terminal(state: ReactiveCFDDEMCouplingState) -> Array:
         result = checkpointed_reactive_rollout(
             step_function, state, step_count, checkpoint
         )
@@ -189,7 +202,9 @@ def checkpointed_reactive_vjp(
     )
 
 
-def reactive_replay_matches(left: ReactiveReplayRecord, right: ReactiveReplayRecord, /):
+def reactive_replay_matches(
+    left: ReactiveReplayRecord, right: ReactiveReplayRecord, /
+) -> Array:
     if not isinstance(left, ReactiveReplayRecord) or not isinstance(
         right, ReactiveReplayRecord
     ):
@@ -237,7 +252,7 @@ def evaluate_reactive_parameter_ensemble(
     return ReactiveParameterEnsembleResult(outputs, successful)
 
 
-def _route_digest(state):
+def _route_digest(state: ReactiveCFDDEMCouplingState) -> Array:
     history = state.dem_state.particle_history
     slots = jnp.arange(history.pair_keys.shape[0], dtype=jnp.int64)
     identity = jnp.where(history.valid[:, None], history.pair_keys + 1, 0)

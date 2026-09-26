@@ -19,6 +19,7 @@ from ..linalg import (
     LinearSystem,
     OperatorProperties,
     prepare,
+    PreparedLinearSolve,
     solve,
     TolerancePolicy,
 )
@@ -46,7 +47,7 @@ class ElectrostaticConductorCoupling(StrictModule, NonTrainableState):
 
     stiffness: Array
     constraint: Array
-    prepared_linear: object
+    prepared_linear: PreparedLinearSolve
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 

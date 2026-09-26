@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -35,7 +37,14 @@ class TrackingStationCatalog(StrictModule, NonTrainableState):
     catalog_id: str = eqx.field(static=True)
 
     def __init__(
-        self, station_ids, position, velocity, horizon_elevation, context, provenance, /
+        self,
+        station_ids: Iterable[str],
+        position: npt.ArrayLike,
+        velocity: npt.ArrayLike,
+        horizon_elevation: npt.ArrayLike,
+        context: AstrodynamicsContext,
+        provenance: AstrodynamicsDataProvenance,
+        /,
     ) -> None:
         ids = tuple(str(value).strip() for value in station_ids)
         position_ = np.asarray(position, dtype=np.float64)
@@ -86,13 +95,13 @@ class ObservationSchedule(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        times,
-        station_index,
-        observable_index,
-        observed,
-        covariance_root,
-        mask,
-        observable_kinds,
+        times: npt.ArrayLike,
+        station_index: npt.ArrayLike,
+        observable_index: npt.ArrayLike,
+        observed: npt.ArrayLike,
+        covariance_root: npt.ArrayLike,
+        mask: npt.ArrayLike,
+        observable_kinds: Iterable[TrackingObservable],
         /,
     ) -> None:
         times_ = np.asarray(times, dtype=np.float64)
@@ -171,7 +180,9 @@ class TrackingObservationPlan(StrictModule, NonTrainableState):
     schedule: ObservationSchedule
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, stations, schedule, /) -> None:
+    def __init__(
+        self, stations: TrackingStationCatalog, schedule: ObservationSchedule, /
+    ) -> None:
         if not isinstance(stations, TrackingStationCatalog):
             raise TypeError("stations must be a TrackingStationCatalog.")
         if not isinstance(schedule, ObservationSchedule):
@@ -201,7 +212,7 @@ class TrackingObservationPlan(StrictModule, NonTrainableState):
         kind: Array,
         horizon: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         relative = state[:3] - station
         relative_velocity = state[3:] - station_velocity
         distance = jnp.sqrt(jnp.sum(relative * relative))

@@ -109,9 +109,10 @@ def _statistics(
         & (intersection_ <= prediction_ + tolerance)
         & (intersection_ <= target_ + tolerance)
     )
-    return tuple(
-        jnp.where(valid, jnp.maximum(value, 0.0), jnp.nan)
-        for value in (intersection_, prediction_, target_)
+    return (
+        jnp.where(valid, jnp.maximum(intersection_, 0.0), jnp.nan),
+        jnp.where(valid, jnp.maximum(prediction_, 0.0), jnp.nan),
+        jnp.where(valid, jnp.maximum(target_, 0.0), jnp.nan),
     )
 
 

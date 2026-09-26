@@ -205,7 +205,7 @@ class LoweredJAXBackend(StrictModule, NonTrainableState):
             values.update(updates)
         return {name: jnp.asarray(value) for name, value in values.items()}
 
-    def compile(self, /):
+    def compile(self, /) -> Callable[[Mapping[str, Any]], dict[str, Array]]:
         return jax.jit(self)
 
 

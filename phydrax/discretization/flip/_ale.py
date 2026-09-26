@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -239,7 +241,10 @@ def advance_ale_flip(
     )
 
 
-def jax_tree_select(predicate: Array, candidate, old):
+_T = TypeVar("_T")
+
+
+def jax_tree_select(predicate: Array, candidate: _T, old: _T) -> _T:
     import jax
 
     return jax.tree.map(

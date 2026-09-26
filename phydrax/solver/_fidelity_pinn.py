@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._frozendict import frozendict
 from .._model import AbstractArrayModel
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -25,7 +26,7 @@ from ..discretization import (
 from ..domain import DomainFunction
 from ..enforcement import EnforcementProgram
 from ..fidelity import FidelityPath, FidelityRelation
-from ..nn._keys import split_eval_key
+from ..nn._keys import EvalKey, split_eval_key
 from ..terms import PreparedFidelityObservation, ResidualPenalty
 from ._functional_correction import (
     freeze_domain_function,
@@ -95,7 +96,7 @@ class _ConditionedCorrectionEvaluator(StrictModule):
         self.model = model
         self.correction_id = correction_id
 
-    def __call__(self, *coordinates: Any, key=None, **kwargs: Any):
+    def __call__(self, *coordinates: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         parent_key, model_key = split_eval_key(key, 2)
         parent = self.parent.func(*coordinates, key=parent_key, **kwargs)
         packed = jnp.concatenate(
@@ -222,7 +223,7 @@ class FidelityPINNResult(StrictModule, NonTrainableState):
         )
 
     @property
-    def functions(self):
+    def functions(self) -> frozendict[str, DomainFunction]:
         return self.solver.ansatz_functions()
 
 

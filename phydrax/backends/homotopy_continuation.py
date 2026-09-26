@@ -8,10 +8,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Iterable
 from enum import Enum
 from numbers import Integral
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import equinox as eqx
 
@@ -58,8 +59,8 @@ def _digest(value: str, name: str, /) -> str:
 
 
 def _decode_json_object(data: bytes, owner: str, /) -> dict:
-    def pairs(values):
-        record = {}
+    def pairs(values: list[tuple[str, Any]]) -> dict[str, Any]:
+        record: dict[str, Any] = {}
         for key, value in values:
             if key in record:
                 raise ValueError(f"{owner} contains duplicate field {key!r}.")
@@ -322,9 +323,9 @@ class HomotopyContinuationRequest(StrictModule):
         system_id: str,
         equation_count: int,
         variable_count: int,
-        equation_indices,
-        exponents,
-        coefficients,
+        equation_indices: Iterable[int],
+        exponents: Iterable[Iterable[int]],
+        coefficients: Iterable[complex],
     ) -> None:
         request = str(request_id).strip()
         support = str(support_id).strip()
@@ -578,7 +579,7 @@ def _request_resource_error(
     return ""
 
 
-def _finite_optional(value, name: str, /) -> float | None:
+def _finite_optional(value: object, name: str, /) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -589,7 +590,9 @@ def _finite_optional(value, name: str, /) -> float | None:
     return parsed
 
 
-def _path_record(record, variable_count: int, /) -> HomotopyContinuationPathRecord:
+def _path_record(
+    record: object, variable_count: int, /
+) -> HomotopyContinuationPathRecord:
     required = {
         "path_index",
         "return_code",

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -126,7 +127,9 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
         if velocity is None:
             velocities = jnp.zeros_like(positions)
         elif callable(velocity):
-            velocities = velocity(jnp.asarray(time), positions)
+            # ArrayLike values are not callable, so callable() selects the provider.
+            provider = cast(MarkerVelocityProvider, velocity)
+            velocities = provider(jnp.asarray(time), positions)
         else:
             velocities = jnp.asarray(velocity, dtype=positions.dtype)
         if velocities.shape != positions.shape:

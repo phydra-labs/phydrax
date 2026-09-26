@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.ein import contract
 
@@ -16,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._ensemble_advanced import GeneralizedLangevinPlan, ThermostatResult
 from ._ring_polymer import RingPolymerState
+from ._units import AtomisticUnitSystem
 
 
 class RingPolymerNormalModePlan(StrictModule, NonTrainableState):
@@ -53,13 +56,13 @@ class RingPolymerNormalModePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def forward(self, value: ArrayLike, /):
+    def forward(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if array.shape[0] != self.bead_count:
             raise ValueError("Normal-mode input bead count does not match the plan.")
         return contract("kb,b...->k...", self.transform.astype(array.dtype), array)
 
-    def inverse(self, value: ArrayLike, /):
+    def inverse(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if array.shape[0] != self.bead_count:
             raise ValueError("Normal-mode input bead count does not match the plan.")
@@ -72,7 +75,7 @@ class RingPolymerNormalModePlan(StrictModule, NonTrainableState):
         masses: ArrayLike,
         step_size: ArrayLike,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         q, p = self.forward(positions), self.forward(momenta)
         mass = jnp.asarray(masses)[None, :, None]
         dt = jnp.asarray(step_size)
@@ -99,7 +102,7 @@ class StagingCoordinatePlan(StrictModule, NonTrainableState):
             {"kind": "ring-polymer-staging", "beads": self.bead_count}
         )
 
-    def forward(self, positions: ArrayLike, /):
+    def forward(self, positions: ArrayLike, /) -> Array:
         q = jnp.asarray(positions)
         if q.ndim == 0 or q.shape[0] != self.bead_count:
             raise ValueError("Staging coordinates must match the plan bead count.")
@@ -111,7 +114,7 @@ class StagingCoordinatePlan(StrictModule, NonTrainableState):
             staging = staging.at[bead].set(q[bead] - reference)
         return staging
 
-    def inverse(self, staging: ArrayLike, /):
+    def inverse(self, staging: ArrayLike, /) -> Array:
         u = jnp.asarray(staging)
         if u.ndim == 0 or u.shape[0] != self.bead_count:
             raise ValueError("Staging coordinates must match the plan bead count.")
@@ -142,7 +145,7 @@ def quantum_estimators(
     /,
     *,
     isotope_masses: ArrayLike | None = None,
-):
+) -> QuantumEstimatorResult:
     q = state.positions
     mass = jnp.asarray(masses)[None, :, None]
     centroid = jnp.mean(q, axis=0)
@@ -175,7 +178,7 @@ def quantum_estimators(
     )
 
 
-def ring_polymer_contract(positions: ArrayLike, contracted_beads: int, /):
+def ring_polymer_contract(positions: ArrayLike, contracted_beads: int, /) -> Array:
     q = jnp.asarray(positions)
     target = int(contracted_beads)
     source = q.shape[0]
@@ -217,7 +220,16 @@ class ThermostattedRPMDPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def apply(self, momenta, masses, temperature, dt, key, units, /):
+    def apply(
+        self,
+        momenta: ArrayLike,
+        masses: ArrayLike,
+        temperature: float,
+        dt: float | Array,
+        key: Key[Array, ""],
+        units: AtomisticUnitSystem,
+        /,
+    ) -> ThermostatResult:
         mode_momenta = self.normal_modes.forward(momenta)
         mass = jnp.asarray(masses)[None, :, None]
         decay = jnp.exp(-self.friction[:, None, None] * dt)
@@ -240,14 +252,18 @@ class ThermostattedRPMDPlan(StrictModule, NonTrainableState):
         )
 
 
-def open_path_momentum_distribution(open_positions: ArrayLike, momenta: ArrayLike, /):
+def open_path_momentum_distribution(
+    open_positions: ArrayLike, momenta: ArrayLike, /
+) -> Array:
     q, p = jnp.asarray(open_positions), jnp.asarray(momenta)
     end_to_end = q[-1] - q[0]
     phase = jnp.sum(p * end_to_end[None, ...], axis=(-2, -1))
     return jnp.real(jnp.fft.fft(jnp.exp(1.0j * phase)))
 
 
-def constant_pressure_ring_polymer(state: RingPolymerState, scale: ArrayLike, /):
+def constant_pressure_ring_polymer(
+    state: RingPolymerState, scale: ArrayLike, /
+) -> RingPolymerState:
     factor = jnp.asarray(scale)
     centroid_position = jnp.mean(state.positions, axis=0)
     centroid_momentum = jnp.mean(state.momenta, axis=0)
@@ -264,7 +280,9 @@ def constant_pressure_ring_polymer(state: RingPolymerState, scale: ArrayLike, /)
     )
 
 
-def suzuki_chin_correction(force_function, positions: ArrayLike, epsilon: float, /):
+def suzuki_chin_correction(
+    force_function: Callable[[Array], Array], positions: ArrayLike, epsilon: float, /
+) -> tuple[Array, Array]:
     q = jnp.asarray(positions)
     force = force_function(q)
     directional = jax.jvp(force_function, (q,), (force,))[1]
@@ -298,7 +316,9 @@ class ConstantPressureRingPolymerPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, polymer: RingPolymerState, cell_vectors: ArrayLike, /):
+    def initialize(
+        self, polymer: RingPolymerState, cell_vectors: ArrayLike, /
+    ) -> ConstantPressureRingPolymerState:
         cell = jnp.asarray(cell_vectors, dtype=polymer.positions.dtype)
         if cell.shape != (3, 3):
             raise ValueError("Ring-polymer barostat cell must have shape (3,3).")
@@ -311,7 +331,13 @@ class ConstantPressureRingPolymerPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def step(self, state: ConstantPressureRingPolymerState, internal_pressure, dt, /):
+    def step(
+        self,
+        state: ConstantPressureRingPolymerState,
+        internal_pressure: ArrayLike,
+        dt: float | Array,
+        /,
+    ) -> ConstantPressureRingPolymerState:
         if state.plan_id != self.plan_id:
             raise ValueError("Ring-polymer barostat state belongs to another plan.")
         volume = jnp.abs(
@@ -374,17 +400,17 @@ class PIGLETPlan(StrictModule, NonTrainableState):
 
     def apply(
         self,
-        momenta,
-        masses,
-        mobile_mask,
-        key,
-        step,
-        dt,
-        units,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: Key[Array, ""],
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
         /,
         *,
-        auxiliary=None,
-    ):
+        auxiliary: ArrayLike | None = None,
+    ) -> ThermostatResult:
         mode_momenta = self.normal_modes.forward(momenta)
         auxiliary_values = (
             (None,) * self.normal_modes.bead_count

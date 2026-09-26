@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -270,7 +271,7 @@ def _store(store: AstrodynamicsDataStore | None, /) -> AstrodynamicsDataStore:
 
 def _payload(
     name: str, store: AstrodynamicsDataStore | None, /
-) -> tuple[dict[str, object], ArtifactManifest]:
+) -> tuple[dict[str, Any], ArtifactManifest]:
     manifest = ASTRONOMY_ASSET_MANIFESTS[name]
     pinned = _store(store).resolve(name, manifest)
     resource = bounded_resource_from_bytes(

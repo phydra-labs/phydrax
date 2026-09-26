@@ -7,17 +7,22 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from math import isfinite, prod
-from typing import Literal, TypeAlias
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, Key
 
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ._trajectory import StochasticTrajectory
 
 
 FractionalGaussianInterpolation: TypeAlias = Literal["grid", "linear"]
@@ -33,7 +38,7 @@ def _digest_array(digest: hashlib._Hash, value: ArrayLike, /) -> None:
     digest.update(array.tobytes())
 
 
-def _digest(prefix: bytes, *parts) -> str:
+def _digest(prefix: bytes, *parts: object) -> str:
     digest = hashlib.sha256(prefix)
     for part in parts:
         if isinstance(part, (jax.Array, np.ndarray)):
@@ -71,7 +76,7 @@ class _DenseFractionalGaussianSampler(StrictModule):
         /,
         *,
         dimension: int,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         return jax.vmap(
             lambda key: (
@@ -103,7 +108,7 @@ class _DaviesHarteFractionalGaussianSampler(StrictModule):
         /,
         *,
         dimension: int,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         normals = jax.vmap(
             lambda key: jr.normal(
@@ -589,7 +594,7 @@ class FractionalGaussianRealization(StrictModule):
         *,
         realization_axes: Sequence[str] | None = None,
         state_axis: str = "component",
-    ):
+    ) -> StochasticTrajectory:
         from ._trajectory import _TrajectoryRecord
 
         axes = (

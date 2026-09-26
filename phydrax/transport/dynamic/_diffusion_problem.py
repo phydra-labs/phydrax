@@ -154,7 +154,9 @@ class DiffusionBridgePlan(StrictModule):
         self.maximum_tail_error = tail
 
 
-def _proposal_arrays(realization: IntegrationRealization, /):
+def _proposal_arrays(
+    realization: IntegrationRealization, /
+) -> tuple[Array, Array, Array]:
     target = realization.target
     samples = (
         target.samples.data

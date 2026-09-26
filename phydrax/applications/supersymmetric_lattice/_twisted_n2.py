@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod, sqrt
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -207,7 +208,7 @@ class TwistedSYMCoordinateEvidence(StrictModule):
     roundtrip_residual: Array
     finite: Array
     layout_id: str = eqx.field(static=True)
-    coordinate_fingerprint: str = eqx.field(static=True)
+    coordinate_fingerprint: dict[str, Any] = eqx.field(static=True)
     claim: str = eqx.field(static=True)
 
 

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,6 +17,15 @@ from ..._strict import StrictModule
 from ..spatial import MortonPrimitiveBoundsState
 from ._footprint import SurfelFootprintPlan
 from ._geometry import SurfelGeometryState
+
+
+_RayInputs: TypeAlias = tuple[Array, Array, Array]
+_RaySelection: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_TraversalCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_LeafCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_ItemCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class SurfelRayQueryEvidence(StrictModule):
@@ -157,7 +168,9 @@ class SurfelRayQueryPlan(StrictModule):
         sorted_logical = hierarchy.storage_to_logical
         maximum_hits = self.maximum_hits_per_ray
 
-        def aabb_hit(ray_origin, ray_direction, lower, upper):
+        def aabb_hit(
+            ray_origin: Array, ray_direction: Array, lower: Array, upper: Array
+        ) -> Array:
             nonparallel = jnp.abs(ray_direction) > self.parallel_tolerance
             inverse = 1.0 / jnp.where(nonparallel, ray_direction, 1.0)
             first = (lower - ray_origin) * inverse
@@ -172,7 +185,7 @@ class SurfelRayQueryPlan(StrictModule):
             exit_value = jnp.minimum(jnp.min(axis_exit), self.far_distance)
             return hit & (exit_value >= enter)
 
-        def select_routes(inputs):
+        def select_routes(inputs: _RayInputs) -> _RaySelection:
             ray_origin, ray_direction, ray_finite = inputs
             stack = jnp.zeros((self.stack_capacity,), dtype=jnp.int32)
             has_root = ray_finite & (hierarchy.root_slot >= 0)
@@ -193,10 +206,10 @@ class SurfelRayQueryPlan(StrictModule):
                 jnp.asarray(False),
             )
 
-            def traversal_condition(state):
+            def traversal_condition(state: _TraversalCarry) -> Array:
                 return (state[1] > 0) & ~state[8]
 
-            def traversal_body(state):
+            def traversal_body(state: _TraversalCarry) -> _TraversalCarry:
                 (
                     current_stack,
                     top,
@@ -217,15 +230,15 @@ class SurfelRayQueryPlan(StrictModule):
                     self.bounds.node_upper[node],
                 )
 
-                def process_leaf(leaf_state):
+                def process_leaf(leaf_state: _LeafCarry) -> _LeafCarry:
                     slots, distances, ids, hit_count, primitive_count = leaf_state
                     start = hierarchy.node_item_starts[node]
                     count = hierarchy.node_item_counts[node]
 
-                    def item_condition(item_state):
+                    def item_condition(item_state: _ItemCarry) -> Array:
                         return item_state[0] < count
 
-                    def item_body(item_state):
+                    def item_body(item_state: _ItemCarry) -> _ItemCarry:
                         offset, current_slots, current_distances, current_ids, found = (
                             item_state
                         )
@@ -400,7 +413,7 @@ class SurfelRayQueryPlan(StrictModule):
                 remaining == 0,
             )
 
-        def select_branchless(inputs):
+        def select_branchless(inputs: _RayInputs) -> _RaySelection:
             ray_origin, ray_direction, ray_finite = inputs
             surfel_slots = jnp.arange(self.geometry.capacity, dtype=jnp.int32)
             normal = self.geometry.normal

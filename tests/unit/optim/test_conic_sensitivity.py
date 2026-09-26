@@ -151,6 +151,40 @@ def test_cone_dual_projection_smoothness_margins_locate_kinks():
     assert jnp.isinf(empty.dual_projection_smoothness_margin(jnp.empty((0,))))
 
 
+def test_dense_sensitivity_rejects_sparse_tangent_operator():
+    problem = phx.optim.ConicProgram(
+        jnp.ones((1, 1)),
+        jnp.asarray([-2.0]),
+        jnp.ones((1, 1)),
+        jnp.asarray([1.0]),
+        phx.optim.NonnegativeCone(1),
+        problem_id="dense-sensitivity-sparse-tangent",
+    )
+    _, _, sensitivity = _prepare(
+        problem,
+        solution=(
+            jnp.ones(1),
+            jnp.zeros(1),
+            jnp.ones(1),
+            jnp.zeros(1),
+            jnp.zeros(1),
+        ),
+    )
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0], dtype=jnp.int32),
+        jnp.asarray([0], dtype=jnp.int32),
+        source_size=1,
+        target_size=1,
+    )
+    sparse_matrix = phx.sparse.SparseLinearMap(
+        relation, jnp.zeros(1, dtype=problem.linear.dtype)
+    )
+    tangent = _tangent(problem, matrix=sparse_matrix)
+
+    with pytest.raises(TypeError, match="dense tangent data"):
+        phx.optim.conic_primal_jvp(sensitivity, tangent)
+
+
 def test_active_orthant_primal_jvp_is_linear_at_small_scale():
     problem = phx.optim.ConicProgram(
         jnp.ones((1, 1)),

@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from numbers import Integral
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -662,7 +664,7 @@ def _schwarzschild_potential_over_f(
 
 def _schwarzschild_infinity_potential_series(
     plan: SchwarzschildRadialPlan,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> tuple[Array, ...]:
     count = plan.infinity_asymptotic_order
@@ -1066,7 +1068,7 @@ def evaluate_kerr_teukolsky_radial(
     asymptotic = kerr_teukolsky_radial_asymptotics(plan, omega)
     coordinates = plan.coordinate_nodes
 
-    def state_derivative(coordinate, state):
+    def state_derivative(coordinate: Array, state: Array) -> Array:
         radius = plan.outer_horizon_radius + plan.mass * jnp.exp(coordinate)
         radial_jacobian = radius - plan.outer_horizon_radius
         values = kerr_teukolsky_radial_coefficients(plan, radius, omega, angular)
@@ -1197,7 +1199,7 @@ def _integrate_schwarzschild_riccati(
     initial_state: Array,
     /,
 ) -> Array:
-    def derivative(coordinate, state):
+    def derivative(coordinate: Array, state: Array) -> Array:
         radius = plan.horizon_radius + plan.mass * jnp.exp(coordinate)
         radial_jacobian = radius - plan.horizon_radius
         f = 1.0 - 2.0 * plan.mass / radius
@@ -1217,11 +1219,11 @@ def _integrate_schwarzschild_riccati(
             )
         )
 
-    def interval_step(state, interval):
+    def interval_step(state: Array, interval: Array) -> tuple[Array, Array]:
         start, end = interval
         width = (end - start) / plan.integration_substeps
 
-        def substep(_, carry):
+        def substep(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             coordinate, current = carry
             k1 = derivative(coordinate, current)
             k2 = derivative(
@@ -1303,12 +1305,12 @@ def _matched_riccati_profile(
 
 
 def _integrate_radial_state(
-    coordinates,
-    initial_state,
-    state_derivative,
-    mass,
+    coordinates: ArrayLike,
+    initial_state: ArrayLike,
+    state_derivative: Callable[[Array, Array], Array],
+    mass: Array,
     /,
-):
+) -> tuple[Array, Array]:
     coordinates_ = jnp.asarray(coordinates)
     state_ = jnp.asarray(initial_state)
     state_scale = jnp.maximum(
@@ -1317,7 +1319,9 @@ def _integrate_radial_state(
     )
     initial = (state_ / state_scale, jnp.log(state_scale))
 
-    def step(carry, interval):
+    def step(
+        carry: tuple[Array, Array], interval: Array
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         state, logarithmic_scale = carry
         start, end = interval
         width = end - start
@@ -1346,14 +1350,14 @@ def _integrate_radial_state(
 
 
 def _matched_profile(
-    left_states,
-    left_scales,
-    right_states,
-    right_scales,
-    match_index,
-    mass,
+    left_states: Array,
+    left_scales: Array,
+    right_states: Array,
+    right_scales: Array,
+    match_index: int,
+    mass: Array,
     /,
-):
+) -> tuple[Array, Array, Array]:
     left_match = left_states[match_index]
     right_match = right_states[match_index]
     left_scaled = jnp.stack((left_match[0], mass * left_match[1]))
@@ -1406,7 +1410,9 @@ def _matched_profile(
     return solution, logarithmic_derivative, matching_residual
 
 
-def _selected_boundary_amplitudes(boundary, solution, /):
+def _selected_boundary_amplitudes(
+    boundary: RadialBoundaryCondition, solution: Array, /
+) -> RadialBoundaryAmplitudes:
     zero = jnp.asarray(0.0, dtype=solution.dtype)
     horizon_ingoing = solution[0] if boundary.horizon == "ingoing" else zero
     horizon_outgoing = solution[0] if boundary.horizon == "outgoing" else zero
@@ -1420,7 +1426,7 @@ def _selected_boundary_amplitudes(boundary, solution, /):
     )
 
 
-def _profile_finite(solution, logarithmic_derivative, /):
+def _profile_finite(solution: Array, logarithmic_derivative: Array, /) -> Array:
     return (
         jnp.all(jnp.isfinite(jnp.real(solution)))
         & jnp.all(jnp.isfinite(jnp.imag(solution)))
@@ -1430,17 +1436,17 @@ def _profile_finite(solution, logarithmic_derivative, /):
 
 
 def _radial_residual_evidence(
-    matching_residual,
-    differential_residual,
-    scale_terms,
-    asymptotic,
-    profile_finite,
-    domain_valid,
-    match_index,
-    matching_tolerance,
-    residual_tolerance,
+    matching_residual: Array,
+    differential_residual: Array,
+    scale_terms: Array,
+    asymptotic: RadialAsymptoticEvidence,
+    profile_finite: ArrayLike,
+    domain_valid: ArrayLike,
+    match_index: int,
+    matching_tolerance: float,
+    residual_tolerance: float,
     /,
-):
+) -> RadialResidualEvidence:
     size = differential_residual.size
     indices = jnp.arange(size)
     interior = (indices > 0) & (indices < size - 1)

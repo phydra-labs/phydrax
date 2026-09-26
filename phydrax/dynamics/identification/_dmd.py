@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,8 +17,8 @@ from ..._numerics import solve_weighted_least_squares
 from ..._strict import StrictModule
 from ...metrix import EuclideanStateGeometry
 from .._layout import InputLayout, StateLayout
-from .._system import DiscreteSystem
-from .._trajectory import TrajectoryData
+from .._system import DiscreteStepContext, DiscreteSystem
+from .._trajectory import TrajectoryData, TrajectoryTransitions
 from ._features import AbstractFeatureLibrary
 from ._status import (
     IDENTIFICATION_INSUFFICIENT_SAMPLES,
@@ -91,7 +91,9 @@ def _rank_mask(
     return retained, jnp.asarray(resolved_rcond, dtype=dtype), policy
 
 
-def _weighted_snapshots(data: TrajectoryData, /):
+def _weighted_snapshots(
+    data: TrajectoryData, /
+) -> tuple[TrajectoryTransitions, Array, Array, Array, Array, Array]:
     transitions = data.transitions()
     source, _ = _flatten_event(transitions.source_states, data.state_layout.shape)
     target, _ = _flatten_event(transitions.target_states, data.state_layout.shape)
@@ -125,10 +127,10 @@ class _LinearIdentifiedTransition(StrictModule):
 
     def __call__(
         self,
-        coordinate: Array,
+        coordinate: DiscreteStepContext,
         state: Array,
-        inputs_or_args,
-        args=None,
+        inputs_or_args: Any,
+        args: object = None,
     ) -> Array:
         del coordinate, args
         flat_state = jnp.asarray(state).reshape((-1,))
@@ -394,10 +396,10 @@ class _EDMDIdentifiedTransition(StrictModule):
 
     def __call__(
         self,
-        coordinate: Array,
+        coordinate: DiscreteStepContext,
         state: Array,
-        inputs_or_args,
-        args=None,
+        inputs_or_args: Any,
+        args: object = None,
     ) -> Array:
         del coordinate, args
         features = self.library.evaluate(state).values

@@ -507,7 +507,9 @@ class TwoMaterialEOSClosure(StrictModule, NonTrainableState):
         return coefficient, offset, jnp.asarray(1.0, dtype=dtype) / coefficient
 
     @staticmethod
-    def _unpack_primitive(value: Array | TwoMaterialPrimitiveState):
+    def _unpack_primitive(
+        value: Array | TwoMaterialPrimitiveState,
+    ) -> tuple[Array, Array, Array, Array, Array, bool]:
         if isinstance(value, TwoMaterialPrimitiveState):
             density_0 = jnp.asarray(value.density_0)
             dtype = TwoMaterialEOSClosure._array_dtype(density_0)
@@ -536,7 +538,9 @@ class TwoMaterialEOSClosure(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _unpack_conserved(value: Array):
+    def _unpack_conserved(
+        value: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, jnp.dtype]:
         array = jnp.asarray(value)
         if array.ndim == 0 or array.shape[-1] < 5:
             raise ValueError(

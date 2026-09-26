@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from typing import TypedDict, Unpack
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,7 +16,11 @@ from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ..splatting import ParticleGridSplatState, PreparedParticleGridSplat
+from ..splatting import (
+    ParticleGridSplatState,
+    PreparedParticleGridSplat,
+    SplatRouteScatterResult,
+)
 from ._contact_kway import KWayMPMContactPlan, MPMContactGraph, MPMKWayContactResult
 
 
@@ -29,6 +34,19 @@ class MPMKernelRealization(IntEnum):
     REFERENCE = 0
     FUSED_JAX = 1
     CUSTOM_ACCELERATOR = 2
+
+
+class _MPMCapacityMetrics(TypedDict):
+    source_commit: str
+    toolchain: str
+    hardware: str
+    cold_compile_seconds: float
+    peak_memory_bytes: int
+    routes_per_second: float
+    step_seconds_p95: float
+    gradient_seconds_p95: float
+    checkpoint_bytes_per_second: float
+    numerical_defect_p99: float
 
 
 class MPMExecutionPlan(StrictModule, NonTrainableState):
@@ -107,7 +125,7 @@ class MPMExecutionPlan(StrictModule, NonTrainableState):
         fields: int,
         blocks: int,
         contact_pairs: int,
-    ):
+    ) -> str:
         requested = (particles, grid_nodes, routes, fields, blocks, contact_pairs)
         admitted = (
             self.particle_capacity,
@@ -138,7 +156,9 @@ class MPMCapacityCertificate(StrictModule, NonTrainableState):
     numerical_defect_p99: float = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
-    def __init__(self, execution: MPMExecutionPlan, /, **metrics) -> None:
+    def __init__(
+        self, execution: MPMExecutionPlan, /, **metrics: Unpack[_MPMCapacityMetrics]
+    ) -> None:
         if not isinstance(execution, MPMExecutionPlan):
             raise TypeError("execution must be MPMExecutionPlan.")
         required = (
@@ -192,7 +212,7 @@ def fused_route_reduction(
     mass_payload: ArrayLike,
     vector_payload: ArrayLike,
     /,
-):
+) -> tuple[SplatRouteScatterResult, SplatRouteScatterResult]:
     mass = prepared.scatter_route_payload(routes, mass_payload)
     vector = prepared.scatter_route_payload(routes, vector_payload)
     return mass, vector

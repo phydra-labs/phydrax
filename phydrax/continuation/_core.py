@@ -13,7 +13,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._iteration import (
     bind_iteration_scope,
@@ -156,11 +156,11 @@ class ContinuationIterationMetrics(StrictModule):
 def _continuation_iteration_record(
     step: ContinuationStepResult,
     ordinal: int,
-    phase,
+    phase: IterationPhase,
     /,
     *,
-    terminal=False,
-    status=None,
+    terminal: bool = False,
+    status: ArrayLike | None = None,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(
@@ -919,7 +919,7 @@ class DenseSchurStabilityAnalyzer(AbstractStabilityAnalyzer):
                 "use SelfAdjointKrylovStabilityAnalyzer for a self-adjoint Jacobian."
             )
 
-        def flat_residual(flat_parameters):
+        def flat_residual(flat_parameters: Array) -> Array:
             residual = _execution_residual(
                 problem,
                 geometry_,
@@ -1039,7 +1039,7 @@ class SelfAdjointKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
             target=geometry_.execution_residual_space,
             properties=OperatorProperties(
                 self_adjoint=True,
-                evidence={"self_adjoint": "user-declared-stability-policy"},
+                evidence={"self_adjoint": "asserted"},
             ),
             operator_id=f"{problem.problem_id}/self-adjoint-stability-jacobian",
         )
@@ -1690,7 +1690,15 @@ class CallableBranchSwitchHook(AbstractBranchSwitchHook):
     function: Callable[[ContinuationBranch, ContinuationEvent, Any], Sequence[BranchSeed]]
     hook_id: str = eqx.field(static=True)
 
-    def __init__(self, function, /, *, hook_id: str = "callable-branch-switch") -> None:
+    def __init__(
+        self,
+        function: Callable[
+            [ContinuationBranch, ContinuationEvent, Any], Sequence[BranchSeed]
+        ],
+        /,
+        *,
+        hook_id: str = "callable-branch-switch",
+    ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
         identifier = str(hook_id)
@@ -1739,7 +1747,14 @@ class CallableBranchMonitor(AbstractBranchMonitor):
     monitor_id: str = eqx.field(static=True)
 
     def __init__(
-        self, function, /, *, monitor_id: str = "callable-branch-monitor"
+        self,
+        function: Callable[
+            [ContinuationCurveProblem, BranchPoint | None, BranchPoint, Any],
+            Sequence[ContinuationEvent],
+        ],
+        /,
+        *,
+        monitor_id: str = "callable-branch-monitor",
     ) -> None:
         if not callable(function):
             raise TypeError("function must be callable.")
@@ -1800,7 +1815,7 @@ def _validated_controls(
     target_corrector_steps: int,
     maximum_retries: int,
     direction: int,
-):
+) -> tuple[tuple[float, ...], float, int, int, int]:
     scalar_values = tuple(
         float(value)
         for value in (
@@ -2173,7 +2188,7 @@ def _correct_state(
     prepared_corrector: PreparedNonlinearSolve | None,
     args: Any,
     /,
-):
+) -> tuple[NonlinearResult, PreparedNonlinearSolve | None]:
     return _run_corrector(
         lambda candidate: _execution_residual(
             problem,
@@ -2201,7 +2216,7 @@ def _state_derivative_operator(
 ) -> tuple[FunctionLinearOperator, PyTree[Array]]:
     public_state = geometry.state_from_execution(state)
 
-    def state_action(tangent):
+    def state_action(tangent: PyTree[Array]) -> PyTree[Array]:
         public_tangent = geometry.state_tangent_from_execution(state, tangent)
         public_action = problem.state_jacobian_action(
             public_state,
@@ -2354,7 +2369,9 @@ def _bordered_tangent(
         names=("residual", "normalization"),
     )
 
-    def tangent_action(tangent):
+    def tangent_action(
+        tangent: tuple[PyTree[Array], Array],
+    ) -> tuple[PyTree[Array], Array]:
         state_value, coordinate_value = tangent
         equation = jax.tree.map(
             lambda state_action, coordinate_action_: (
@@ -2447,7 +2464,7 @@ def _correct_initial_point(
     prepared_corrector: PreparedNonlinearSolve | None,
     args: Any,
     /,
-):
+) -> tuple[NonlinearResult, PreparedNonlinearSolve | None]:
     return _correct_state(
         problem,
         geometry,
@@ -2467,7 +2484,7 @@ def _initial_tangent(
     method: PseudoArclengthContinuation,
     args: Any,
     /,
-):
+) -> tuple[PyTree[Array], Array, Array, bool, Array, Array]:
     (
         state_parameter_tangent,
         tangent_status,
@@ -2510,7 +2527,7 @@ def _normalized_secant(
     old_coordinate_tangent: Array,
     geometry: ContinuationGeometry,
     /,
-):
+) -> tuple[PyTree[Array], Array]:
     state_difference = jax.tree.map(
         lambda current, previous: current - previous,
         state,
@@ -2916,9 +2933,14 @@ class ContinuationResult(StrictModule):
             )
         if (accepted_state is None) != (checkpoint is None):
             raise ValueError("A final accepted state and checkpoint must exist together.")
-        if accepted_state is not None and (
-            checkpoint.application_state_id != accepted_state.application_state_id
-            or checkpoint.candidate.candidate_id != accepted_state.candidate.candidate_id
+        if (
+            accepted_state is not None
+            and checkpoint is not None
+            and (
+                checkpoint.application_state_id != accepted_state.application_state_id
+                or checkpoint.candidate.candidate_id
+                != accepted_state.candidate.candidate_id
+            )
         ):
             raise ValueError(
                 "Continuation checkpoint does not represent the accepted state."
@@ -3348,11 +3370,11 @@ def _correct_arclength(
     predicted_coordinate: Array,
     state_tangent: PyTree[Any],
     coordinate_tangent: Array,
-    method: PseudoArclengthContinuation,
+    method: AbstractContinuationMethod,
     prepared_corrector: PreparedNonlinearSolve | None,
     args: Any,
     /,
-):
+) -> tuple[NonlinearResult, PreparedNonlinearSolve | None]:
     payload = (
         problem,
         geometry,

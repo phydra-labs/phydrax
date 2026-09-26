@@ -1164,7 +1164,7 @@ def evaluate_nullspace(
     right = geometry.state_tangent_to_execution(state, right_nullvector)
     left = geometry.residual_to_execution(left_nullvector)
 
-    def residual_function(value):
+    def residual_function(value: PyTree[Array]) -> PyTree[Array]:
         return _execution_residual(
             problem,
             geometry,
@@ -1458,7 +1458,7 @@ def _second_state_derivative(
     args: Any,
     /,
 ) -> PyTree[Array]:
-    def first(value):
+    def first(value: PyTree[Array]) -> PyTree[Array]:
         return jax.jvp(
             lambda inner: problem.residual(inner, parameter, args),
             (value,),
@@ -1476,7 +1476,7 @@ def _mixed_derivative(
     args: Any,
     /,
 ) -> PyTree[Array]:
-    def state_action(parameter_value):
+    def state_action(parameter_value: Array) -> PyTree[Array]:
         return jax.jvp(
             lambda value: problem.residual(value, parameter_value, args),
             (state,),
@@ -2198,7 +2198,9 @@ def correct_branch_seed(
         certificate.parameter + offset,
     )
 
-    def augmented_residual(candidate, solve_args):
+    def augmented_residual(
+        candidate: BranchCorrectionState, solve_args: Any
+    ) -> BranchCorrectionState:
         state_coordinates = geometry.state_to_execution(candidate.state)
         increment = tree_add_scaled(
             state_coordinates,

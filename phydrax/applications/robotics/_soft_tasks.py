@@ -1318,7 +1318,7 @@ def _advance_key(key: Array, step_count: Array, /) -> Array:
     typed = jax.dtypes.issubdtype(key.dtype, jax.dtypes.prng_key)
     current = key if typed else jax.random.wrap_key_data(key)
 
-    def advance(_index, value):
+    def advance(_index: Array, value: Array) -> Array:
         return jax.random.split(value, 2)[0]
 
     advanced = jax.lax.fori_loop(0, step_count, advance, current)

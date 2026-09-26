@@ -140,7 +140,9 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
             incoming = self._incoming(angular, group, angle)
             coefficient = jnp.abs(mu) / width
 
-            def step(boundary_flux, values):
+            def step(
+                boundary_flux: Array, values: tuple[Array, Array, Array]
+            ) -> tuple[Array, Array]:
                 source, attenuation, total_value = values
                 flux = (source + attenuation * boundary_flux) / (
                     total_value + attenuation
@@ -226,7 +228,7 @@ class DiscreteOrdinatesTransportPlan(StrictModule, NonTrainableState):
         initial_nonnegative = jnp.all(scalar >= 0.0)
         scalar = jnp.where(initial_finite & initial_nonnegative, scalar, 0.0)
 
-        def body(_, carry):
+        def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             previous_angular, previous_scalar = carry
             return self._iterate(previous_angular, previous_scalar)
 

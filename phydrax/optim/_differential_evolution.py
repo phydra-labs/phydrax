@@ -33,6 +33,12 @@ from ._pareto import dominance_matrix
 SearchStrategy = Literal["best1bin", "rand1bin"]
 DifferentialEvolutionSelection = Literal["scalar", "pareto"]
 DifferentialEvolutionValidityMode = Literal["guarded", "vectorized"]
+_Objective: TypeAlias = Callable[[PyTree[Array]], Array]
+_Validity: TypeAlias = Callable[[PyTree[Array]], Array]
+# (generation, population, objectives, valid, key, invalid count, best history)
+_EvolutionState: TypeAlias = tuple[
+    Array, Array, Array, Array, Key[Array, ""], Array, Array
+]
 
 
 class DifferentialEvolutionStatus(IntEnum):
@@ -289,7 +295,7 @@ def _ranks_and_crowding(objectives: Array, valid: Array, /) -> tuple[Array, Arra
     ranks = jnp.full((count,), count, dtype=jnp.int32)
     remaining = valid
 
-    def assign(rank, state):
+    def assign(rank: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         ranks_, remaining_ = state
         dominated = jnp.any(dominance & remaining_[:, None], axis=0)
         front = remaining_ & ~dominated
@@ -299,7 +305,7 @@ def _ranks_and_crowding(objectives: Array, valid: Array, /) -> tuple[Array, Arra
     ranks, _ = jax.lax.fori_loop(0, count, assign, (ranks, remaining))
     indices = jnp.arange(count, dtype=jnp.int32)
 
-    def objective_crowding(values):
+    def objective_crowding(values: Array) -> Array:
         safe_values = jnp.where(valid, values, jnp.inf)
         order = jnp.lexsort((indices, safe_values, ranks))
         ordered_ranks = ranks[order]
@@ -339,7 +345,9 @@ def _ranks_and_crowding(objectives: Array, valid: Array, /) -> tuple[Array, Arra
     return ranks, crowding
 
 
-def _select_union(vectors, objectives, valid, capacity):
+def _select_union(
+    vectors: Array, objectives: Array, valid: Array, capacity: int
+) -> tuple[Array, Array, Array, Array, Array]:
     ranks, crowding = _ranks_and_crowding(objectives, valid)
     indices = jnp.arange(vectors.shape[0], dtype=jnp.int32)
     order = jnp.argsort(indices, stable=True)
@@ -355,7 +363,13 @@ def _select_union(vectors, objectives, valid, capacity):
     )
 
 
-def _evaluate_population(objective, validity, space, vectors, search):
+def _evaluate_population(
+    objective: _Objective,
+    validity: _Validity | None,
+    space: DifferentialEvolutionSpace,
+    vectors: Array,
+    search: DifferentialEvolutionSearch,
+) -> tuple[PyTree[Array], Array, Array]:
     decoded = space.decode(vectors)
     if validity is None:
         valid = jnp.ones((vectors.shape[0],), dtype=jnp.bool_)
@@ -363,7 +377,7 @@ def _evaluate_population(objective, validity, space, vectors, search):
         valid = jax.vmap(validity)(decoded)
     if search.validity_mode == "guarded":
 
-        def one(arguments):
+        def one(arguments: tuple[PyTree[Array], Array]) -> Array:
             candidate, accepted = arguments
             return jax.lax.cond(
                 accepted,
@@ -385,7 +399,9 @@ def _evaluate_population(objective, validity, space, vectors, search):
     return decoded, jnp.where(valid[:, None], objectives, jnp.inf), valid
 
 
-def _round_integer_columns(space, vectors, key):
+def _round_integer_columns(
+    space: DifferentialEvolutionSpace, vectors: Array, key: Key[Array, ""]
+) -> Array:
     if not space.integer_columns:
         return vectors
     columns = jnp.asarray(space.integer_columns, dtype=jnp.int32)
@@ -404,7 +420,14 @@ def _round_integer_columns(space, vectors, key):
     return vectors.at[:, columns].set(unit)
 
 
-def _categorical_mutant(space, population, a, b, c, key):
+def _categorical_mutant(
+    space: DifferentialEvolutionSpace,
+    population: Array,
+    a: Array,
+    b: Array,
+    c: Array,
+    key: Key[Array, ""],
+) -> Array:
     if not space.categorical_columns:
         return population[a]
     columns = jnp.asarray(space.categorical_columns, dtype=jnp.int32)
@@ -453,8 +476,13 @@ def _sample_distinct_donors(key: Array, population_size: int, /) -> Array:
 
 @eqx.filter_jit
 def _run_differential_evolution(
-    objective, validity, space, search, initial_population, key
-):
+    objective: _Objective,
+    validity: _Validity | None,
+    space: DifferentialEvolutionSpace,
+    search: DifferentialEvolutionSearch,
+    initial_population: Array,
+    key: Key[Array, ""],
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     population = initial_population
     _, objectives, valid = _evaluate_population(
         objective, validity, space, population, search
@@ -472,7 +500,7 @@ def _run_differential_evolution(
         history,
     )
 
-    def condition(state_):
+    def condition(state_: _EvolutionState) -> Array:
         generation, _, objectives_, valid_, _, _, _ = state_
         finite = jnp.where(valid_, objectives_[:, 0], jnp.nan)
         mean = jnp.nanmean(finite)
@@ -488,7 +516,7 @@ def _run_differential_evolution(
         )
         return (generation < search.max_generations) & jnp.any(valid_) & ~converged
 
-    def step(state_):
+    def step(state_: _EvolutionState) -> _EvolutionState:
         (
             generation,
             population_,

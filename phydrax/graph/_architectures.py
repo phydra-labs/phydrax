@@ -96,7 +96,7 @@ class RowMLP(StrictModule):
     def __call__(self, x: Any) -> jnp.ndarray:
         x = _as_2d("x", x)
 
-        def apply_one(row):
+        def apply_one(row: jnp.ndarray) -> jnp.ndarray:
             y = row
             for layer in self.layers[:-1]:
                 y = self.activation(layer(y))

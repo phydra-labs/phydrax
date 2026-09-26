@@ -8,6 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from .._precision import (
     precision_dtype_name,
@@ -106,16 +107,16 @@ class FDExecutionPrecisionPolicy(StrictModule, NonTrainableState):
         self.certification_dtype = certification
         self.policy_id = resolution.resolution_id
 
-    def coefficient(self, value: Any, /):
+    def coefficient(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.coefficient_dtype))
 
-    def field(self, value: Any, /):
+    def field(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.field_dtype))
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.accumulation_dtype))
 
-    def certification(self, value: Any, /):
+    def certification(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.certification_dtype))
 
     @property

@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, Key
 
 from ..._polynomial._cubature import CubatureReference
@@ -26,12 +27,18 @@ from .._capabilities import GeometryCapability
 from .._certificate import exact_signed_distance_certificate, FieldCertificate
 from .._closest_point import box_closest_point, radial_closest_point
 from .._contracts import (
+    ClosestPointResult,
     ContactCurvatureResult,
     GeometryKernel,
     GeometryKind,
     GeometrySource,
 )
-from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureComponent
+from .._cubature import (
+    AbstractCubatureMap,
+    CubatureAtlas,
+    CubatureComponent,
+    CubatureMapEvaluation,
+)
 from .._sampling import (
     complete_sampling_result,
     RejectionSamplingPlan,
@@ -114,7 +121,7 @@ def _check_points(points: Array, dimension: int) -> Array:
 class _RadialCubatureMap(AbstractCubatureMap):
     center: Array
     radius: Array
-    reference: str = eqx.field(static=True)
+    reference: CubatureReference = eqx.field(static=True)
 
     def __init__(
         self,
@@ -164,7 +171,7 @@ class _RadialCubatureMap(AbstractCubatureMap):
         chart_indices: Array,
         reference: Array,
         /,
-    ):
+    ) -> CubatureMapEvaluation:
         return super().evaluate(chart_indices, reference)
 
 
@@ -175,7 +182,9 @@ def _finite_norm(value: Array) -> Array:
 
 
 @_finite_norm.defjvp
-def _finite_norm_jvp(primals, tangents):
+def _finite_norm_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (value,) = primals
     (tangent,) = tangents
     norm = _finite_norm(value)
@@ -361,7 +370,7 @@ class _BallKernel(GeometryKernel):
         norm = jnp.linalg.norm(direction, axis=-1, keepdims=True)
         return direction / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
 
-    def closest_point(self, state: DesignState, points: Array, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         points_ = _check_points(points, self.dimension)
         center, radius = self._parameters(state)
         return radial_closest_point(
@@ -398,7 +407,7 @@ class _BallKernel(GeometryKernel):
         center, radius = self._parameters(state)
         return jnp.stack((center - radius, center + radius))
 
-    def _unit_measure(self, dtype) -> Array:
+    def _unit_measure(self, dtype: DTypeLike) -> Array:
         half_dimension = jnp.asarray(0.5 * self.dimension, dtype=dtype)
         return jnp.exp(
             half_dimension * jnp.log(jnp.asarray(jnp.pi, dtype=dtype))
@@ -663,7 +672,7 @@ class _OrthotopeKernel(GeometryKernel):
         norm = jnp.linalg.norm(normal, axis=-1, keepdims=True)
         return normal / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
 
-    def closest_point(self, state: DesignState, points: Array, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         points_ = _check_points(points, self.dimension)
         center, size = self._parameters(state)
         return box_closest_point(

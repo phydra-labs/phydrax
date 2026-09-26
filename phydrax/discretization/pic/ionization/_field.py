@@ -8,7 +8,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import ArrayLike
+from jaxtyping import ArrayLike, PRNGKeyArray
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -87,7 +87,7 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
         electron_population: ParticlePopulationState,
         electron_charge: PICChargeState,
         electron_particles: PICParticleState,
-        key,
+        key: PRNGKeyArray,
         step_size: ArrayLike,
         step_index: ArrayLike,
         /,

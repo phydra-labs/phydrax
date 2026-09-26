@@ -29,6 +29,10 @@ from ._mac_adaptive import (
 
 MACDerivativeMode: TypeAlias = Literal["smooth", "branchwise", "unsupported"]
 MACNeutralMode: TypeAlias = Literal["none", "flow"]
+_SegmentCarry: TypeAlias = tuple[Array, Array, Array, Array]
+_SegmentInputs: TypeAlias = tuple[Array, Array, Array, Array]
+_SegmentOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_StepCarry: TypeAlias = tuple[Array, Array, Array]
 
 
 class MACShadowingStatus(IntEnum):
@@ -543,10 +547,12 @@ class MACSegmentedShadowingPlan(StrictModule):
         neutral_tolerance = jnp.asarray(self.neutral_tolerance, dtype=dtype)
         qr_tolerance = jnp.asarray(self.qr_tolerance, dtype=dtype)
 
-        def flow_direction(time, state):
+        def flow_direction(time: Array, state: Array) -> Array:
             return dynamics(time, state, args)
 
-        def project_neutral(basis, tangent, time, state):
+        def project_neutral(
+            basis: Array, tangent: Array, time: Array, state: Array
+        ) -> tuple[Array, Array, Array, Array]:
             if self.neutral_mode == "none":
                 return (
                     basis,
@@ -574,20 +580,30 @@ class MACSegmentedShadowingPlan(StrictModule):
         basis0 = basis0 * initial_sign[None, :]
         initial_rank_valid = jnp.all(jnp.abs(initial_diagonal) > qr_tolerance)
 
-        def transition(index, time, state, step_size, parameters):
+        def transition(
+            index: Array,
+            time: Array,
+            state: Array,
+            step_size: Array,
+            parameters: object,
+        ) -> Array:
             result = method.step(index, time, state, step_size, parameters)
             _validate_transition(result, state)
             return result.accepted_state
 
-        def run_segment(carry, segment_inputs):
+        def run_segment(
+            carry: _SegmentCarry, segment_inputs: _SegmentInputs
+        ) -> tuple[_SegmentCarry, _SegmentOutput]:
             basis, inhomogeneous, previous_ok, minimum_neutral = carry
             segment_states, segment_times, segment_steps, segment_indices = segment_inputs
 
-            def run_step(local_carry, local_inputs):
+            def run_step(
+                local_carry: _StepCarry, local_inputs: _SegmentInputs
+            ) -> tuple[_StepCarry, tuple[Array, Array]]:
                 current_basis, current_inhomogeneous, local_ok = local_carry
                 state, time, step_size, index = local_inputs
 
-                def homogeneous_tangent(column):
+                def homogeneous_tangent(column: Array) -> Array:
                     _, tangent = eqx.filter_jvp(
                         lambda current: transition(index, time, current, step_size, args),
                         (state,),
@@ -820,7 +836,9 @@ class MACSegmentedShadowingPlan(StrictModule):
             time_dilation = jnp.zeros((segment_count, self.segment_length), dtype=dtype)
             shadow_tangent = raw_tangent
 
-        def observable_response(time, state, tangent):
+        def observable_response(
+            time: Array, state: Array, tangent: Array
+        ) -> tuple[Array, Array]:
             primal, response = eqx.filter_jvp(
                 lambda current, parameters: jnp.asarray(
                     observable(time, current, parameters)

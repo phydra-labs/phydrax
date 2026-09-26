@@ -13,7 +13,7 @@ class GCodeProgram:
 
 
 def parse_linear_gcode(
-    text: str, /, *, frame_id="machine", default_feed_m_s=0.01
+    text: str, /, *, frame_id: str = "machine", default_feed_m_s: float = 0.01
 ) -> GCodeProgram:
     if not isinstance(text, str):
         raise TypeError("G-code source must be text.")

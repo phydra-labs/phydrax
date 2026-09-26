@@ -407,8 +407,11 @@ def _camera_rays(
         directions.append(result.directions)
         valid.append(ray_valid)
         weights.append(jnp.where(ray_valid, precision, 0.0))
-    return tuple(
-        jnp.stack(values, axis=0) for values in (origins, directions, valid, weights)
+    return (
+        jnp.stack(origins, axis=0),
+        jnp.stack(directions, axis=0),
+        jnp.stack(valid, axis=0),
+        jnp.stack(weights, axis=0),
     )
 
 

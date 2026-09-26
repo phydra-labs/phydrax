@@ -520,14 +520,14 @@ class PreparedOpenSimCylinderRouteWrap(StrictModule):
             state, points
         ).evidence.fixed_branch_gradient_supported
 
-        def length(value):
+        def length(value: Array) -> Array:
             return self._fixed_length(state, value)
 
-        def action(velocity):
+        def action(velocity: Array) -> Array:
             rate = jax.jvp(length, (points,), (velocity,))[1]
             return jnp.where(supported, rate, jnp.zeros_like(rate))
 
-        def transpose_action(cotangent):
+        def transpose_action(cotangent: Array) -> Array:
             load = jax.vjp(length, points)[1](cotangent)[0]
             return jnp.where(supported, load, jnp.zeros_like(load))
 

@@ -241,7 +241,10 @@ class FixedTopologyCohortBatch:
 
     @property
     def conditional_probability(self) -> Array:
-        return jnp.exp(self.dataset.case_log_weights)
+        log_weights = self.dataset.case_log_weights
+        # ``OperatorDataset.__post_init__`` always materializes case log weights.
+        assert log_weights is not None
+        return jnp.exp(log_weights)
 
 
 def _case_layout(case: CardiovascularTruthCase, /) -> tuple[object, ...]:
@@ -287,10 +290,14 @@ def batch_fixed_topology_cohort(
     first_layout = _case_layout(complete[0])
     if any(_case_layout(case) != first_layout for case in complete[1:]):
         raise ValueError("Fixed-topology cohort cases must have one exact tensor layout.")
-    batches = tuple(case.operator_batch for case in complete)
-    targets = tuple(case.operator_targets for case in complete)
-    assert all(batch is not None for batch in batches)
-    assert all(target is not None for target in targets)
+    batches: list[OperatorBatch] = []
+    targets: list[OperatorTargetBatch] = []
+    for case in complete:
+        # Complete cases are validated to carry operator inputs and targets.
+        assert case.operator_batch is not None
+        assert case.operator_targets is not None
+        batches.append(case.operator_batch)
+        targets.append(case.operator_targets)
     dataset = operator_dataset_from_cases(
         batches,
         targets,
@@ -596,8 +603,12 @@ def split_cardiovascular_cohort(
         )
     else:
         raise TypeError("policy must be a subject, site, or OOD split policy.")
-    partitions = (train, calibration, test, ood)
-    partition_ids = tuple(tuple(case.case_id for case in part) for part in partitions)
+    partition_ids = (
+        tuple(case.case_id for case in train),
+        tuple(case.case_id for case in calibration),
+        tuple(case.case_id for case in test),
+        tuple(case.case_id for case in ood),
+    )
     split_id = canonical_fingerprint(
         {
             "kind": "cardiovascular-subject-site-ood-split",

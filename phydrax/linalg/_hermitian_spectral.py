@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
@@ -38,7 +41,7 @@ class HermitianSpectrum(StrictModule):
         matrix: ArrayLike,
         /,
         *,
-        tolerance: float = 1e-10,
+        tolerance: float | np.floating = 1e-10,
         precision: HermitianPrecisionPolicy | None = None,
     ) -> None:
         original = jnp.asarray(matrix)
@@ -117,7 +120,7 @@ class HermitianFunctionResult(StrictModule):
 
 def _spectral_result(
     matrix: ArrayLike,
-    function,
+    function: Callable[[Array], Array],
     /,
     *,
     function_id: str,

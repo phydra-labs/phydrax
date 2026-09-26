@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -12,7 +14,10 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..nonlinear import implicit_root_result, NonlinearResult, NonlinearSystemProblem
-from ._polar_complete import MultiAxisAirfoilPolar
+from ._polar_complete import MultiAxisAirfoilPolar, PolarEvaluation
+
+
+_RotorFields: TypeAlias = tuple[Array, Array, Array, Array, Array, PolarEvaluation]
 
 
 class RotorResult(StrictModule):
@@ -113,7 +118,7 @@ class BladeElementRotorPlan(StrictModule, NonTrainableState):
             jnp.asarray(mach, dtype=self.radius.dtype), self.radius.shape
         )
 
-        def fields(induction):
+        def fields(induction: Array) -> _RotorFields:
             axial_induction, tangential_induction = (
                 induction[: self.radius.size],
                 induction[self.radius.size :],
@@ -165,7 +170,7 @@ class BladeElementRotorPlan(StrictModule, NonTrainableState):
                 polar,
             )
 
-        def residual(induction, args):
+        def residual(induction: Array, args: object) -> Array:
             del args
             normal, tangential, momentum_normal, momentum_tangential, _, _ = fields(
                 induction

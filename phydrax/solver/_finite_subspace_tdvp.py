@@ -141,11 +141,13 @@ def prepare_finite_subspace_tdvp(
     )
 
 
-def _metric_norm(problem, coefficients):
+def _metric_norm(
+    problem: FiniteVariationalSubspaceTDVPProblem, coefficients: Array
+) -> Array:
     return jnp.real(jnp.vdot(coefficients, problem.overlap @ coefficients))
 
 
-def _energy(problem, coefficients):
+def _energy(problem: FiniteVariationalSubspaceTDVPProblem, coefficients: Array) -> Array:
     return jnp.real(jnp.vdot(coefficients, problem.hamiltonian @ coefficients))
 
 

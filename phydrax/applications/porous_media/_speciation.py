@@ -23,7 +23,9 @@ from ...nonlinear import (
 )
 
 
-def _chemical_method(method):
+def _chemical_method(
+    method: AbstractNonlinearMethod | None,
+) -> AbstractNonlinearMethod:
     return (
         NewtonKrylov(linear_policy=LinearSolvePolicy(DenseLU()))
         if method is None
@@ -31,7 +33,9 @@ def _chemical_method(method):
     )
 
 
-def _chemical_termination(termination):
+def _chemical_termination(
+    termination: NonlinearTermination | None,
+) -> NonlinearTermination:
     return (
         NonlinearTermination(
             absolute_residual=1e-10,

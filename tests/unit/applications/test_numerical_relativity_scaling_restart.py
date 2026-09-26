@@ -2,12 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phydrax.applications.numerical_relativity._amr import (
+    AMRTransferBinding,
     NumericalRelativityAMRHaloPlan,
     NumericalRelativityAMRState,
     NumericalRelativityAMRTopologyEpoch,
@@ -220,6 +222,28 @@ def test_z4c_and_material_transfers_report_constraints_and_conservation():
     )
     assert bool(reflux.qualified)
     np.testing.assert_allclose(reflux.conservation_residual, 0.0, atol=1.0e-7)
+
+
+def test_amr_transfer_binding_content_ids_are_hashable_static_identities():
+    def bind(source, target):
+        return AMRTransferBinding(
+            source,
+            target,
+            source_topology_id="coarse",
+            target_topology_id="fine",
+            source_epoch_id="epoch-0",
+            target_epoch_id="epoch-1",
+            field_name="material",
+            formulation="grhd",
+            transfer_plan_id="transfer",
+            transition_plan_id="transition",
+        )
+
+    source = jnp.arange(4.0)
+    binding = bind(source, 2.0 * source)
+    assert hash(binding) == hash(bind(source, 2.0 * source))
+    assert binding.source_content_id != bind(source + 1.0, 2.0 * source).source_content_id
+    assert eqx.filter_jit(lambda value, _: value + 1.0)(source, binding)[0] == 1.0
 
 
 def test_magnetic_transfer_and_emf_curl_reflux_preserve_divergence():

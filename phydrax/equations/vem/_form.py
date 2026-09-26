@@ -4,11 +4,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,6 +19,7 @@ from ...discretization.vem import (
     VirtualElementStabilizationPolicy,
 )
 from ...linalg import OperatorProperties
+from ...sparse import RelationAccumulation
 from .._variational import (
     BoundaryLoadAction,
     coefficient,
@@ -39,8 +40,10 @@ class VirtualElementRobinAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        coefficient_value,
-        value,
+        coefficient_value: VariationalCoefficient
+        | ArrayLike
+        | Callable[[Array, object], ArrayLike],
+        value: VariationalCoefficient | ArrayLike | Callable[[Array, object], ArrayLike],
         domain: IntegrationDomain,
         /,
         *,
@@ -140,7 +143,7 @@ class VirtualElementForm(StrictModule, NonTrainableState):
 
 class VirtualElementExecutionPolicy(StrictModule, NonTrainableState):
     realization: str = eqx.field(static=True)
-    accumulation: str = eqx.field(static=True)
+    accumulation: RelationAccumulation = eqx.field(static=True)
     quadrature_degree_offset: int = eqx.field(static=True)
     stiffness_stabilization: VirtualElementStabilizationPolicy
     mass_stabilization: VirtualElementStabilizationPolicy

@@ -14,6 +14,10 @@ from phydrax._doc import DOC_KEY0
 from phydrax.nn._contracts import model_regularity
 from phydrax.nn._keys import EvalKey
 from phydrax.nn.layers import RecurrentBatch
+from phydrax.nn.layers._weight_space_recurrence import (
+    WeightSpaceExecution,
+    WeightSpaceInputMode,
+)
 from phydrax.nn.models import WeightSpaceRecurrentModel
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
@@ -56,8 +60,8 @@ class WeightSpaceOperator(AbstractOperatorModel):
         query_size: int,
         out_channels: WeightSpaceOutputSize = "scalar",
         source_key: str | None = None,
-        execution: str = "associative",
-        input_mode: str = "difference",
+        execution: WeightSpaceExecution = "associative",
+        input_mode: WeightSpaceInputMode = "difference",
         maximum_retention: float = 0.999,
         input_scale: float = 1e-2,
         key: Key[Array, ""] = DOC_KEY0,

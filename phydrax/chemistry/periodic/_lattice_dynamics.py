@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -122,20 +123,20 @@ class PhononDispersionResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        qpoints,
-        cartesian,
-        frequencies,
-        eigenvectors,
-        matrices,
-        imaginary,
-        acoustic,
-        eigen_residuals,
-        orthogonality,
-        hermiticity,
-        acoustic_residual,
-        successful,
-        ifc_id,
-        unit_system_id,
+        qpoints: ArrayLike,
+        cartesian: ArrayLike,
+        frequencies: ArrayLike,
+        eigenvectors: ArrayLike,
+        matrices: ArrayLike,
+        imaginary: ArrayLike,
+        acoustic: ArrayLike,
+        eigen_residuals: ArrayLike,
+        orthogonality: ArrayLike,
+        hermiticity: ArrayLike,
+        acoustic_residual: ArrayLike,
+        successful: ArrayLike,
+        ifc_id: str,
+        unit_system_id: str,
         /,
     ) -> None:
         self.fractional_qpoints = jnp.asarray(qpoints)
@@ -189,7 +190,13 @@ class PhononGroupVelocityResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
     def __init__(
-        self, velocities, projected, cluster_ids, successful, dispersion_id, /
+        self,
+        velocities: ArrayLike,
+        projected: ArrayLike,
+        cluster_ids: ArrayLike,
+        successful: ArrayLike,
+        dispersion_id: str,
+        /,
     ) -> None:
         self.velocities = jnp.asarray(velocities)
         self.projected_velocity_matrices = jnp.asarray(projected)
@@ -291,7 +298,9 @@ class PreparedHarmonicPhonons(StrictModule, NonTrainableState):
     family: PreparedPeriodicTranslationFamily
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, family, /) -> None:
+    def __init__(
+        self, plan: HarmonicPhononPlan, family: PreparedPeriodicTranslationFamily, /
+    ) -> None:
         self.plan = plan
         self.family = family
         self.prepared_id = canonical_fingerprint(
@@ -522,7 +531,7 @@ def prepare_harmonic_phonons(plan: HarmonicPhononPlan, /) -> PreparedHarmonicPho
 
 
 def evaluate_phonon_dispersion(
-    prepared: PreparedHarmonicPhonons, qpoints: ArrayLike, /, **kwargs
+    prepared: PreparedHarmonicPhonons, qpoints: ArrayLike, /, **kwargs: Any
 ) -> PhononDispersionResult:
     if not isinstance(prepared, PreparedHarmonicPhonons):
         raise TypeError("prepared must be PreparedHarmonicPhonons.")
@@ -530,7 +539,10 @@ def evaluate_phonon_dispersion(
 
 
 def evaluate_phonon_group_velocity(
-    prepared: PreparedHarmonicPhonons, dispersion: PhononDispersionResult, /, **kwargs
+    prepared: PreparedHarmonicPhonons,
+    dispersion: PhononDispersionResult,
+    /,
+    **kwargs: float,
 ) -> PhononGroupVelocityResult:
     if not isinstance(prepared, PreparedHarmonicPhonons):
         raise TypeError("prepared must be PreparedHarmonicPhonons.")

@@ -238,15 +238,19 @@
   Concrete modules that inherit an abstract owner's custom constructor declare a
   checker-only `__init__` alias, matching Equinox's runtime constructor choice.
 - Typing is gated by the pinned ty `0.0.84` through `tools/check_typing.py`
-  (`report`, `check`, `update-quarantine`, `touched`, `waves`). ty analyzes
-  Python 3.11 semantics, ignores the dataclass field-order rule that does not
-  apply to Equinox constructors, types optional providers as `Any` at their
-  import boundary, and honors only `ty: ignore[rule]` suppressions. The gate also
-  requires every function, method, and nested helper to annotate all parameters
-  and its return type, as reported by the pinned Ruff `0.16.9` `ANN` rules.
-  Remaining diagnostics are recorded in a shrink-only quarantine
-  (`tools/typing_quarantine.json`); changed files must be clean. Non-ty checker
+  (`report`, `check`). ty analyzes Python 3.11 semantics, ignores the dataclass
+  field-order rule that does not apply to Equinox constructors, types optional
+  providers as `Any` at their import boundary, and honors only `ty: ignore[rule]`
+  suppressions. The package is ty-clean, and every function, method, and nested
+  helper annotates all parameters and its return type, as enforced by the pinned
+  Ruff `0.16.9` `ANN` rules; `check` fails on any diagnostic. Non-ty checker
   comments (`type: ignore` and similar) were removed and are rejected.
+- Package annotations were corrected throughout: constructor inputs that are
+  converted with `jnp.asarray` or `numpy.asarray` accept array-like values, fields
+  and parameters formerly typed `object` carry their real types, bare `Callable`
+  and untruthful `Any` were replaced by parameterized callables, protocols, and
+  type variables, closed selectors use their `Literal` aliases, and loop carries
+  are typed. Runtime behavior is unchanged except for the fixes listed below.
 - The dense control linearizations `linearize_discrete_dynamics`,
   `linearize_differential_dynamics`, and `linearize_control_dynamics` are built
   from `PreparedLinearization` and `JacobianLinearOperator` and require a
@@ -414,6 +418,52 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- Defects exposed by the complete static typing pass are fixed, each with a
+  regression test:
+  - Calls to attributes or keywords that do not exist now use the owning API:
+    semiconductor confinement mode counting and multi-block tetrahedral face
+    scopes; IGA solid, rod, and shell certificate gates (`accepted`); vector
+    convolution-quadrature transpose and adjoint actions; unstructured shallow-water snapshots; distributed periodic
+    LES production results; dark-sector packet-radiation frames; particle-physics
+    provider records; ROM execution requirements; PSE and vortex-diffusion
+    periodic boxes; panel doublet fields; Sinkhorn ordering; dyadic finite-volume
+    runtimes and positivity limiting; fixed-design and non-Gaussian Bayesian
+    quadrature refusals; finite-feature kernel means; spectral dealiasing and
+    eigen-resolution refusals; collective-variable cell checks; and the KAN,
+    DEM-batch, SPH multiphase, and particle-morphology refusals.
+  - Operator-property evidence is declared with its recognized kinds in the
+    neural-Galerkin certified backsolve, self-adjoint Krylov stability
+    analysis, defect scattering, and multi-asset correlation factors.
+  - Implicit interface and phase penalties integrate the squared residual
+    function; residual-penalty quadratic reduction and variational boundary
+    normals honor their contracts; point-jet and linear-reduction actions and
+    narrow-band interface collocation use their default keys.
+  - Finite-element tensor paths build shape tuples correctly (collocated
+    pairwise flux, sum-factorized tensor diffusion), cross-block facets without
+    prepared references validate, and constrained `value_and_residual` uses the
+    constraint map of the compiled problem.
+  - Restored Kalman and particle-filter checkpoints hold `int32` step indices;
+    lidar waveform plans, ensemble reweighting, and two-puncture tuning report
+    array-valued evidence; linear-refinement plateaus and thermal dark-rate
+    qualification record Python booleans; numerical-relativity AMR transfer
+    identities are hashable strings.
+  - Least-squares dogleg and POUNDERS steps accept `termination=None`;
+    Lennard-Jones PME terms and directed-graph terms without a cutoff are refused
+    at preparation; rational spectral axes refuse arbitrary-point synthesis;
+    finite-density domains require a temperature pair; dense conic sensitivity
+    refuses sparse tangents; GPR refuses envelope-free current sources; affine
+    enforcement refuses cross-field point jets without a certified lifting;
+    Pennes thermal and cardiovascular high-order geometry refuse unsupported
+    meshes and elements with their contract errors; NPZ archive export refuses a
+    payload named `allow_pickle`; adaptive boundary targets refuse combined
+    fields without self-correction; cardiovascular supports request the
+    displacement value; implicit-curve evidence stores the projection evidence;
+    Gmsh surface and non-semantic volume runs bind their zones before auditing;
+    projected semismooth VI steps use the prepared Jacobian coordinates;
+    Fresnel axes without quadrature weights use the grid-point measure;
+    two-site tensor-network gates refuse scalars with the shape error;
+    battery reference consensus reports missing uncertainty coverage; and
+    strand-displacement workbooks skip rows without sample cells.
 - Canonical identifier validation raises `TypeError` for a value that is not a
   string and keeps `ValueError` for empty or whitespace-padded strings. This
   applies to every constructor that validates identifiers through the shared

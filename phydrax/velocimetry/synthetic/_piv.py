@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Literal, overload
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,6 +26,18 @@ from ...rendering import (
 )
 from ..imaging import DenseDisplacementField2D, ImagePair2D
 from ._common import PIVScenarioKind, SyntheticEvidence
+
+
+@overload
+def _finite_tuple(
+    value: Sequence[float], length: Literal[2], /, *, name: str
+) -> tuple[float, float]: ...
+
+
+@overload
+def _finite_tuple(
+    value: Sequence[float], length: Literal[4], /, *, name: str
+) -> tuple[float, float, float, float]: ...
 
 
 def _finite_tuple(

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from itertools import product
+from typing import cast
 
 import equinox as eqx
 import jax
@@ -17,6 +18,8 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from .._tensor_entities import StructuredAxis, TensorEntityLayout
+from .._tensor_index import TensorIndexLayout
 from ._assignment import (
     _tensor_product_state,
     _uniform_axis_stencil,
@@ -63,11 +66,17 @@ class CPDI2AssignmentInput(StrictModule):
         self.deformation_gradient = deformation
 
 
-def _corner_signs(dimension: int):
+def _corner_signs(dimension: int) -> Array:
     return jnp.asarray(tuple(product((-1.0, 1.0), repeat=dimension)))
 
 
-def _corner_point_state(layout, axes, axis_bounds, corners, active):
+def _corner_point_state(
+    layout: TensorEntityLayout | TensorIndexLayout,
+    axes: tuple[StructuredAxis, ...],
+    axis_bounds: tuple[tuple[float, float], ...],
+    corners: Array,
+    active: Array,
+) -> tuple[SplatAssignmentState, int]:
     particle_count, corner_count, dimension = corners.shape
     flat = corners.reshape((particle_count * corner_count, dimension))
     flat_active = jnp.repeat(active, corner_count)
@@ -90,14 +99,14 @@ def _corner_point_state(layout, axes, axis_bounds, corners, active):
 
 
 def _combine_corner_routes(
-    point_state,
-    route_width,
-    corners,
-    center,
-    parent_gradients,
-    domain_valid,
-    target_size,
-):
+    point_state: SplatAssignmentState,
+    route_width: int,
+    corners: Array,
+    center: Array,
+    parent_gradients: Array,
+    domain_valid: Array,
+    target_size: int,
+) -> SplatAssignmentState:
     particle_count, corner_count, dimension = corners.shape
     route_count = corner_count * route_width
     indices = point_state.indices.reshape((particle_count, corner_count, route_width))
@@ -120,8 +129,12 @@ def _combine_corner_routes(
     flat_valid = valid.reshape((particle_count, route_count))
 
     def combine(
-        source_indices, source_weights, source_gradients, source_offsets, source_valid
-    ):
+        source_indices: Array,
+        source_weights: Array,
+        source_gradients: Array,
+        source_offsets: Array,
+        source_valid: Array,
+    ) -> tuple[Array, Array, Array, Array, Array]:
         sentinel = jnp.asarray(target_size, dtype=jnp.int32)
         safe_indices = jnp.where(source_valid, source_indices, sentinel)
         order = jnp.argsort(safe_indices, stable=True)
@@ -203,22 +216,37 @@ class _AbstractBaseCPDIAssignment(AbstractStructuredSplatAssignment):
     def route_width(self, dimension: int, /) -> int:
         return 4 ** int(dimension)
 
-    def validate(self, layout, axes, /) -> None:
+    def validate(
+        self,
+        layout: TensorEntityLayout | TensorIndexLayout,
+        axes: tuple[StructuredAxis, ...],
+        /,
+    ) -> None:
         if tuple(layout.axis_entities) != ("point",) * len(axes):
             raise ValueError("CPDI requires a nodal tensor-grid target.")
         for coordinates, axis in zip(layout.coordinates_by_axis, axes, strict=True):
             _uniform_spacing(
                 coordinates,
-                tuple(float(value) for value in np.asarray(axis.bounds)),
+                (
+                    float(np.asarray(axis.bounds)[0]),
+                    float(np.asarray(axis.bounds)[1]),
+                ),
                 axis.periodic,
             )
 
-    def _spacing(self, layout, axes):
+    def _spacing(
+        self,
+        layout: TensorEntityLayout | TensorIndexLayout,
+        axes: tuple[StructuredAxis, ...],
+    ) -> Array:
         return jnp.asarray(
             tuple(
                 _uniform_spacing(
                     coordinates,
-                    tuple(float(value) for value in np.asarray(axis.bounds)),
+                    (
+                        float(np.asarray(axis.bounds)[0]),
+                        float(np.asarray(axis.bounds)[1]),
+                    ),
                     axis.periodic,
                 )
                 for coordinates, axis in zip(
@@ -267,7 +295,9 @@ class AffineCPDISplatAssignment(_AbstractBaseCPDIAssignment):
             }
         )
 
-    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
+    def validate_input(
+        self, assignment_input: object, source_count: int, dimension: int, /
+    ) -> None:
         if self.reference_edges.shape != (source_count, dimension, dimension):
             raise ValueError("CPDI reference edges differ from prepared particles.")
         if not isinstance(assignment_input, CPDIAssignmentInput):
@@ -275,16 +305,30 @@ class AffineCPDISplatAssignment(_AbstractBaseCPDIAssignment):
         if assignment_input.current_edges.shape != self.reference_edges.shape:
             raise ValueError("CPDI current edges changed shape.")
 
-    def update_input(self, position, deformation_gradient, committed_input, /):
+    def update_input(
+        self,
+        position: Array,
+        deformation_gradient: Array,
+        committed_input: object,
+        /,
+    ) -> CPDIAssignmentInput:
         del position, committed_input
         edges = ein.contract("pij,pjk->pik", deformation_gradient, self.reference_edges)
         return CPDIAssignmentInput(edges)
 
     def build(
-        self, layout, axes, axis_bounds, position, active, *, assignment_input=None
-    ):
+        self,
+        layout: TensorEntityLayout | TensorIndexLayout,
+        axes: tuple[StructuredAxis, ...],
+        axis_bounds: tuple[tuple[float, float], ...],
+        position: Array,
+        active: Array,
+        *,
+        assignment_input: object = None,
+    ) -> SplatAssignmentState:
         self.validate_input(assignment_input, position.shape[0], position.shape[1])
-        edges = assignment_input.current_edges
+        # validate_input established the CPDIAssignmentInput type.
+        edges = cast(CPDIAssignmentInput, assignment_input).current_edges
         dimension = position.shape[1]
         signs = _corner_signs(dimension).astype(position.dtype)
         corner_offsets = ein.contract("pij,cj->pci", edges, signs)
@@ -358,7 +402,9 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
             }
         )
 
-    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
+    def validate_input(
+        self, assignment_input: object, source_count: int, dimension: int, /
+    ) -> None:
         expected = (source_count, 2**dimension, dimension)
         if self.reference_corner_offsets.shape != expected:
             raise ValueError("CPDI2 reference corners differ from prepared particles.")
@@ -367,12 +413,20 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
         if assignment_input.corners.shape != expected:
             raise ValueError("CPDI2 current corners changed shape.")
 
-    def update_input(self, position, deformation_gradient, committed_input, /):
+    def update_input(
+        self,
+        position: Array,
+        deformation_gradient: Array,
+        committed_input: object,
+        /,
+    ) -> CPDI2AssignmentInput:
         if committed_input is None:
             corners = position[:, None, :] + ein.contract(
                 "pij,pcj->pci", deformation_gradient, self.reference_corner_offsets
             )
         else:
+            # Committed CPDI2 inputs were validated by validate_input before commit.
+            committed_input = cast(CPDI2AssignmentInput, committed_input)
             inverse_old = solve_small_linear(
                 SmallLinearSolvePlan(position.shape[1]),
                 committed_input.deformation_gradient,
@@ -391,10 +445,18 @@ class CPDI2SplatAssignment(_AbstractBaseCPDIAssignment):
         return CPDI2AssignmentInput(corners, position, deformation_gradient)
 
     def build(
-        self, layout, axes, axis_bounds, position, active, *, assignment_input=None
-    ):
+        self,
+        layout: TensorEntityLayout | TensorIndexLayout,
+        axes: tuple[StructuredAxis, ...],
+        axis_bounds: tuple[tuple[float, float], ...],
+        position: Array,
+        active: Array,
+        *,
+        assignment_input: object = None,
+    ) -> SplatAssignmentState:
         self.validate_input(assignment_input, position.shape[0], position.shape[1])
-        corners = assignment_input.corners
+        # validate_input established the CPDI2AssignmentInput type.
+        corners = cast(CPDI2AssignmentInput, assignment_input).corners
         dimension = position.shape[1]
         signs = _corner_signs(dimension).astype(position.dtype)
         parent = signs / signs.shape[0]

@@ -3,8 +3,13 @@
 #
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from ._domain import Domain, JointFactor
+
+
+if TYPE_CHECKING:
+    from ._components import ComponentSum
 
 
 class ProductDomain(Domain):
@@ -101,7 +106,7 @@ class ProductDomain(Domain):
             return factors[0]
         return ProductDomain(*factors)
 
-    def boundary(self):
+    def boundary(self) -> "ComponentSum":
         """Return the additive product-boundary decomposition."""
         from ._base import AbstractGeometry
         from ._components import Boundary, ComponentSum, FixedEnd, FixedStart

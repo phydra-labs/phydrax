@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,7 +21,7 @@ from ..._trainable import NonTrainableState
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from .._cell_complex import PolygonalConnectivity
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
-from ._geometry_protocol import FiniteVolumeStageMetrics
+from ._geometry_protocol import FiniteVolumeStageFaceBlock, FiniteVolumeStageMetrics
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 from ._unstructured_embedded_boundary import (
     _clip_positive_polygon,
@@ -224,6 +225,10 @@ class JAXPLICStageReconstruction(StrictModule, NonTrainableState):
 _JAX_CLIPPED_VERTEX_CAPACITY = 8
 _JAX_INTERSECTION_CAPACITY = 4
 
+_ArrayPair: TypeAlias = tuple[Array, Array]
+# Clipped vertices, clipped vertex count, crossing points, and crossing count.
+_ClipCarry: TypeAlias = tuple[Array, Array, Array, Array]
+
 
 def _jax_polygon_measure_centroid(points: Array, count: Array, /) -> tuple[Array, Array]:
     """Signed-shoelace measure and centroid of one compact padded polygon."""
@@ -231,7 +236,7 @@ def _jax_polygon_measure_centroid(points: Array, count: Array, /) -> tuple[Array
     dtype = points.dtype
     safe_count = jnp.maximum(count, jnp.asarray(1, dtype=jnp.int32))
 
-    def accumulate(index, values):
+    def accumulate(index: Array, values: _ArrayPair) -> _ArrayPair:
         twice_measure, numerator = values
         active = index < count
         following = jnp.where(index + 1 < count, index + 1, 0)
@@ -285,10 +290,10 @@ def _jax_clip_convex_polygon(
     clipped = jnp.zeros((_JAX_CLIPPED_VERTEX_CAPACITY, 2), dtype=dtype)
     intersections = jnp.zeros((_JAX_INTERSECTION_CAPACITY, 2), dtype=dtype)
 
-    def edge(index, state):
+    def edge(index: Array, state: _ClipCarry) -> _ClipCarry:
         output, output_count, crossings, crossing_count = state
 
-        def process(active_state):
+        def process(active_state: _ClipCarry) -> _ClipCarry:
             output_, output_count_, crossings_, crossing_count_ = active_state
             following = jnp.mod(index + 1, jnp.maximum(arity, 1))
             first = vertices[index]
@@ -307,7 +312,7 @@ def _jax_clip_convex_polygon(
             fraction = jnp.clip(first_signed / safe_denominator, 0.0, 1.0)
             intersection = first + fraction * (second - first)
 
-            def append_crossing(carry):
+            def append_crossing(carry: _ClipCarry) -> _ClipCarry:
                 output__, output_count__, crossings__, crossing_count__ = carry
                 output__ = output__.at[output_count__].set(intersection)
                 crossings__ = crossings__.at[crossing_count__].set(intersection)
@@ -318,7 +323,7 @@ def _jax_clip_convex_polygon(
                     crossing_count__ + 1,
                 )
 
-            def append_second(carry):
+            def append_second(carry: _ClipCarry) -> _ClipCarry:
                 output__, output_count__, crossings__, crossing_count__ = carry
                 output__ = output__.at[output_count__].set(second)
                 return (
@@ -389,7 +394,7 @@ def _jax_convex_polygon_evidence(
     edge_lengths = jnp.zeros((vertices.shape[0],), dtype=dtype)
     turns = jnp.zeros((vertices.shape[0],), dtype=dtype)
 
-    def inspect(index, values):
+    def inspect(index: Array, values: _ArrayPair) -> _ArrayPair:
         lengths, local_turns = values
         first = vertices[index]
         second_index = jnp.mod(index + 1, jnp.maximum(arity, 1))
@@ -545,7 +550,9 @@ def _segment_phase_geometry(
     )
 
 
-def _stage_segment(block, route: int, /) -> tuple[np.ndarray, np.ndarray]:
+def _stage_segment(
+    block: FiniteVolumeStageFaceBlock, route: int, /
+) -> tuple[np.ndarray, np.ndarray]:
     """Recover exact straight-face endpoints from stage quadrature geometry."""
 
     points = np.asarray(block.quadrature_points)[route]
@@ -979,7 +986,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         upper = jnp.where(cell_active, upper, 0.0)
         target_measure = jnp.where(cell_active, alpha * cell_volumes, 0.0)
 
-        def bisect(_, bounds):
+        def bisect(_: Array, bounds: _ArrayPair) -> _ArrayPair:
             lower_, upper_ = bounds
             midpoint = 0.5 * (lower_ + upper_)
             clipped_measure = jax.vmap(_jax_clipped_measure)(

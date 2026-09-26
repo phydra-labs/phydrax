@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -63,10 +66,10 @@ class DopingDependentMobility(StrictModule):
 
     def __init__(
         self,
-        minimum,
-        maximum,
-        reference_density,
-        exponent,
+        minimum: ArrayLike,
+        maximum: ArrayLike,
+        reference_density: ArrayLike,
+        exponent: ArrayLike,
         /,
         *,
         mobility_unit: UnitDefinition = MOBILITY_UNIT,
@@ -131,23 +134,23 @@ class SemiconductorMaterial(StrictModule):
         name: str,
         /,
         *,
-        permittivity,
-        intrinsic_density=None,
-        electron_mobility,
-        hole_mobility,
-        electron_lifetime=1e-6,
-        hole_lifetime=1e-6,
-        band_gap=None,
-        electron_affinity=None,
-        reference_temperature=300.0,
-        temperature_range=(300.0, 300.0),
+        permittivity: ArrayLike,
+        intrinsic_density: ArrayLike | None = None,
+        electron_mobility: ConstantMobility | DopingDependentMobility | ArrayLike,
+        hole_mobility: ConstantMobility | DopingDependentMobility | ArrayLike,
+        electron_lifetime: ArrayLike = 1e-6,
+        hole_lifetime: ArrayLike = 1e-6,
+        band_gap: ArrayLike | None = None,
+        electron_affinity: ArrayLike | None = None,
+        reference_temperature: ArrayLike = 300.0,
+        temperature_range: ArrayLike | Sequence[float] = (300.0, 300.0),
         provenance: str,
         thermodynamics: BandThermodynamics | None = None,
         incomplete_ionization: IncompleteIonization | None = None,
         electron_saturation: LocalVelocitySaturation | None = None,
         hole_saturation: LocalVelocitySaturation | None = None,
         lattice_heat_capacity: ConstantLatticeHeatCapacity | None = None,
-        lattice_thermal_conductivity=0.0,
+        lattice_thermal_conductivity: ArrayLike = 0.0,
         electron_energy_transport: CarrierEnergyTransport | None = None,
         hole_energy_transport: CarrierEnergyTransport | None = None,
         electron_energy_relaxation: CarrierEnergyRelaxation | None = None,
@@ -242,7 +245,11 @@ class SemiconductorMaterial(StrictModule):
         self.hole_energy_relaxation = hole_energy_relaxation
         if thermodynamics is None:
             self.intrinsic_density = _positive_scalar(
-                intrinsic_density, density_unit, PER_CUBIC_METER, "intrinsic density"
+                # Exactly one of intrinsic_density/thermodynamics is validated above.
+                cast("ArrayLike", intrinsic_density),
+                density_unit,
+                PER_CUBIC_METER,
+                "intrinsic density",
             )
             self.band_gap = _positive_scalar(
                 1.12 if band_gap is None else band_gap,
@@ -309,8 +316,11 @@ class SemiconductorMaterial(StrictModule):
             ef = self.thermodynamics.equilibrium_fermi_energy(0.0, temperature)
             return self.thermodynamics.electron_density(0.0, ef, temperature)
         temperature_ = jnp.asarray(temperature)
+        band_gap = self.band_gap
+        # Intrinsic-density materials always resolve their band gap.
+        assert band_gap is not None
         exponent = (
-            -self.band_gap
+            -band_gap
             / (2 * BOLTZMANN_CONSTANT_SI)
             * (1 / temperature_ - 1 / self.reference_temperature)
         )
@@ -355,10 +365,10 @@ class DielectricMaterial(StrictModule):
         name: str,
         /,
         *,
-        permittivity,
+        permittivity: ArrayLike,
         provenance: str,
         lattice_heat_capacity: ConstantLatticeHeatCapacity | None = None,
-        lattice_thermal_conductivity=0.0,
+        lattice_thermal_conductivity: ArrayLike = 0.0,
         permittivity_unit: UnitDefinition = PERMITTIVITY_UNIT,
         thermal_conductivity_unit: UnitDefinition = THERMAL_CONDUCTIVITY_UNIT,
     ) -> None:
@@ -388,14 +398,14 @@ class DielectricMaterial(StrictModule):
 
 
 def srh_recombination(
-    electron_density,
-    hole_density,
-    intrinsic_density,
-    electron_lifetime,
-    hole_lifetime,
+    electron_density: ArrayLike,
+    hole_density: ArrayLike,
+    intrinsic_density: ArrayLike,
+    electron_lifetime: ArrayLike,
+    hole_lifetime: ArrayLike,
     *,
-    log_mass_action=None,
-):
+    log_mass_action: ArrayLike | None = None,
+) -> Array:
     """Midgap SRH pair rate in m^-3 s^-1, positive for recombination.
 
     Insert this *same* rate in both number continuity equations. Multiplication

@@ -5,12 +5,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.tree_util import DictKey, FlattenedIndexKey, GetAttrKey, SequenceKey
+from jax.tree_util import (
+    DictKey,
+    FlattenedIndexKey,
+    GetAttrKey,
+    KeyPath,
+    SequenceKey,
+)
 
 from .._array_archive import (
     array_collection_digest,
@@ -27,7 +34,7 @@ from ..discretization.mpm import MPMRuntimeState
 from ..equations import CompiledMaterialPointProblem
 
 
-def _leaf_name(path, index):
+def _leaf_name(path: KeyPath, index: int) -> str:
     tokens = []
     for item in path:
         if isinstance(item, GetAttrKey):
@@ -91,7 +98,7 @@ class MPMCheckpointPlan(StrictModule):
             }
         )
 
-    def _arrays(self, state: MPMRuntimeState):
+    def _arrays(self, state: MPMRuntimeState) -> dict[str, np.ndarray]:
         paths, _ = jax.tree_util.tree_flatten_with_path(state)
         names = tuple(_leaf_name(path, index) for index, (path, _) in enumerate(paths))
         if names != self.leaf_names:
@@ -103,7 +110,9 @@ class MPMCheckpointPlan(StrictModule):
             raise ValueError("MPM checkpoint runtime leaf shape or dtype changed.")
         return dict(zip(names, arrays, strict=True))
 
-    def write(self, path: str | Path, state: MPMRuntimeState, /, *, generation: int = 0):
+    def write(
+        self, path: str | Path, state: MPMRuntimeState, /, *, generation: int = 0
+    ) -> MPMCheckpointManifest:
         if not isinstance(state, MPMRuntimeState):
             raise TypeError("state must be MPMRuntimeState.")
         arrays = self._arrays(state)
@@ -139,7 +148,7 @@ class MPMCheckpointPlan(StrictModule):
 
     def write_generation(
         self, directory: str | Path, state: MPMRuntimeState, /, *, generation: int
-    ):
+    ) -> MPMCheckpointManifest:
         directory_ = Path(directory)
         path = directory_ / f"generation-{int(generation):08d}.mpmckpt"
         manifest = self.write(path, state, generation=generation)
@@ -151,7 +160,7 @@ class MPMCheckpointPlan(StrictModule):
         )
         return manifest
 
-    def read(self, path: str | Path, /):
+    def read(self, path: str | Path, /) -> tuple[MPMRuntimeState, dict[str, Any]]:
         template_paths, template_tree = jax.tree_util.tree_flatten_with_path(
             self.template_state
         )
@@ -202,7 +211,9 @@ class MPMCheckpointPlan(StrictModule):
             raise TypeError("Restored checkpoint is not MPMRuntimeState.")
         return restored, manifest
 
-    def read_current(self, directory: str | Path, /):
+    def read_current(
+        self, directory: str | Path, /
+    ) -> tuple[MPMRuntimeState, dict[str, Any]]:
         directory_ = Path(directory)
         resource = read_bounded_resource(
             "CURRENT",

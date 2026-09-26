@@ -4,16 +4,19 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree
 from ..linalg import (
+    AbstractLinearOperator,
     AbstractVectorSpace,
     FGMRES,
     FunctionLinearOperator,
@@ -45,6 +48,8 @@ _DEFAULT_ARGS = object()
 _FAILED_ROOT_MESSAGE = (
     "Implicit nonlinear root solve failed; inspect an explicit root result first."
 )
+# Status, integer-cast diagnostics, and provenance carried as custom_root aux.
+_RootEvidence: TypeAlias = tuple[Array, NonlinearDiagnostics, Any]
 
 
 class ImplicitRootDerivativePolicy(StrictModule):
@@ -139,7 +144,7 @@ def _diagnostic_counts(
 
 def _cast_diagnostic_counts(
     diagnostics: NonlinearDiagnostics,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> NonlinearDiagnostics:
     return eqx.tree_at(
@@ -184,9 +189,9 @@ def _stop_gradient(tree: Any, /) -> Any:
 
 def _root_evidence(
     result: NonlinearResult,
-    dtype,
+    dtype: DTypeLike,
     /,
-) -> tuple[Array, NonlinearDiagnostics, Any]:
+) -> _RootEvidence:
     return (
         result.status.astype(dtype),
         _cast_diagnostic_counts(result.diagnostics, dtype),
@@ -195,13 +200,13 @@ def _root_evidence(
 
 
 def _checked_tangent_solve(
-    action,
+    action: Callable[[Array], Array],
     right_hand_side: Array,
     policy: LinearSolvePolicy,
     state_space: AbstractVectorSpace,
     /,
     *,
-    setup_operator=None,
+    setup_operator: AbstractLinearOperator | None = None,
 ) -> Array:
     zero_right_hand_side = jnp.all(right_hand_side == 0)
     if setup_operator is not None:
@@ -249,7 +254,7 @@ def _checked_tangent_solve(
                 "Implicit derivative preconditioner dimension must match the root."
             )
 
-        def structured_action(vector):
+        def structured_action(vector: PyTree[Any]) -> PyTree[Array]:
             return space.unflatten(action(space.flatten(vector)))
 
         operator = FunctionLinearOperator(
@@ -358,11 +363,13 @@ def implicit_root_result(
         primal_result = solve_prepared_nonlinear(_stop_gradient(prepared))
     primal_result = _stop_gradient(primal_result)
 
-    def coordinate_residual(coordinates):
+    def coordinate_residual(coordinates: Array) -> Array:
         state = source.unflatten(coordinates)
         return target.flatten(problem.residual(state, runtime_args))
 
-    def primal_solve(_, coordinates):
+    def primal_solve(
+        _: Callable[[Array], Array], coordinates: Array
+    ) -> tuple[Array, _RootEvidence]:
         result = primal_result
         if result.transformation_evidence is not None:
             raise ValueError(
@@ -370,14 +377,16 @@ def implicit_root_result(
             )
         return source.flatten(result.state), _root_evidence(result, coordinates.dtype)
 
-    def tangent_solve(linearized, right_hand_side):
+    def tangent_solve(
+        linearized: Callable[[Array], Array], right_hand_side: Array
+    ) -> Array:
         root_state = _checked_root_state(primal_result, source)
         tangent_setup = problem.derivative_linear_setup(root_state, runtime_args)
         adjoint_setup = problem.derivative_linear_setup(
             root_state, runtime_args, transpose=True
         )
-        if problem.linear_setup_function is not None:
-            fallback_setup = problem.linear_setup(root_state, runtime_args)
+        fallback_setup = problem.linear_setup(root_state, runtime_args)
+        if fallback_setup is not None:
             tangent_preconditioning = tangent_policy.preconditioning
             adjoint_preconditioning = adjoint_policy.preconditioning
             if (
@@ -520,20 +529,24 @@ def implicit_fixed_point_result(
         )
     )
 
-    def coordinate_residual(coordinates):
+    def coordinate_residual(coordinates: Array) -> Array:
         mapped = problem.mapping(space.unflatten(coordinates), args)
         return space.flatten(mapped) - coordinates
 
-    def primal_solve(_, coordinates):
+    def primal_solve(
+        _: Callable[[Array], Array], coordinates: Array
+    ) -> tuple[Array, _RootEvidence]:
         return (
             space.flatten(primal_result.state),
             _root_evidence(primal_result, coordinates.dtype),
         )
 
-    def derivative_solve(policy):
+    def derivative_solve(
+        policy: LinearSolvePolicy,
+    ) -> Callable[[Callable[[Array], Array], Array], Array]:
         # The linearized residual is dg/dx - I. The failed-primal check sits on
         # the solve input so that no derivative is formed for a failed iteration.
-        def solve(action, right_hand_side):
+        def solve(action: Callable[[Array], Array], right_hand_side: Array) -> Array:
             checked = eqx.error_if(
                 right_hand_side,
                 primal_result.status != int(NonlinearStatus.SUCCESS),
@@ -543,7 +556,9 @@ def implicit_fixed_point_result(
 
         return solve
 
-    def tangent_solve(linearized, right_hand_side):
+    def tangent_solve(
+        linearized: Callable[[Array], Array], right_hand_side: Array
+    ) -> Array:
         return jax.lax.custom_linear_solve(
             linearized,
             right_hand_side,

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,10 @@ from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
 from ._dem import DEMRuntimeState, PreparedSoftSphereDEMDynamics
 from ._dem_cohesion import DEMCohesionComponentHistory
+
+
+_ReplayCarry: TypeAlias = tuple[DEMRuntimeState, Array]
+_ReplayPayload: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
 
 
 class DEMCheckpointPolicy(StrictModule, NonTrainableState):
@@ -122,7 +126,9 @@ def checkpointed_dem_rollout(
         count // checkpoint.interval, checkpoint.interval
     )
 
-    def one_step(carry, index):
+    def one_step(
+        carry: _ReplayCarry, index: Array
+    ) -> tuple[_ReplayCarry, _ReplayPayload]:
         state, prior_success = carry
         time = jnp.asarray(start, dtype=dtype) + index * dt
         detail = dynamics.step_detailed(index, time, state, dt, args)
@@ -145,7 +151,9 @@ def checkpointed_dem_rollout(
         )
         return (accepted, successful), payload
 
-    def block(carry, block_indices):
+    def block(
+        carry: _ReplayCarry, block_indices: Array
+    ) -> tuple[_ReplayCarry, _ReplayPayload]:
         return jax.lax.scan(one_step, carry, block_indices)
 
     checkpointed_block = jax.checkpoint(block)
@@ -154,7 +162,9 @@ def checkpointed_dem_rollout(
         (initial_state, jnp.asarray(True)),
         indices,
     )
-    flattened = jax.tree.map(lambda value: value.reshape((count,)), payload)
+    flattened: _ReplayPayload = jax.tree.map(
+        lambda value: value.reshape((count,)), payload
+    )
     replay = DEMReplayRecord(
         *flattened,
         canonical_fingerprint(
@@ -206,7 +216,7 @@ def checkpointed_dem_vjp(
     )
     replay_matched = dem_replay_matches(forward.replay, replayed.replay)
 
-    def terminal(state):
+    def terminal(state: DEMRuntimeState) -> Array:
         result = checkpointed_dem_rollout(
             dynamics,
             state,

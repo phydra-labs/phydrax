@@ -106,3 +106,44 @@ def test_prepared_feasible_vi_supports_filtered_jit_solve():
         return nl.solve_prepared_variational_inequality(current).state
 
     assert jnp.allclose(solve(prepared), jnp.asarray([1.0]))
+
+
+def test_preserve_box_accepts_explicit_jacobian_without_adjoint_action():
+    def jacobian(state, args):
+        del args
+        space = phx.linalg.PyTreeSpace(state)
+
+        def block(scale):
+            return phx.linalg.FunctionLinearOperator(
+                lambda vector: scale * vector, source=space, target=space
+            )
+
+        # D - C M B = 2I - I = I, but the Schur complement declares no adjoint.
+        return phx.linalg.SchurComplementLinearOperator(
+            block(2.0),
+            block(1.0),
+            phx.linalg.IdentityPreconditioner(space),
+            block(1.0),
+        )
+
+    problem = nl.VariationalInequalityProblem(
+        lambda state, target: state - target,
+        nl.Bounds(0.0, 1.0),
+        problem_id="adjoint-free-jacobian-vi",
+    )
+    method = nl.SemismoothNewton(
+        newton=nl.NewtonKrylov(
+            jacobian_policy=nl.JacobianPolicy("explicit", operator=jacobian)
+        ),
+        formulation="natural",
+        feasibility="preserve-box",
+    )
+    result = method.solve(
+        problem,
+        jnp.asarray([0.9, 0.1]),
+        termination=_termination(),
+        args=jnp.asarray([0.5, 0.25]),
+    )
+
+    assert bool(result.successful)
+    assert jnp.allclose(result.state, jnp.asarray([0.5, 0.25]), atol=1e-9)

@@ -7,35 +7,45 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from types import ModuleType
+from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 from scipy.spatial import Delaunay, QhullError
 
+from ..._mass import Mass
 from ...measurement.lidar import LidarPointProduct
 from .._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
+    GeometryCapability,
     SeamDiagnosticsProvider,
     SupportMapProvider,
 )
+from .._certificate import FieldCertificate
 from .._contracts import (
     ClosestPointResult,
     ContactCurvatureResult,
     GeometryKernel,
+    GeometryKind,
     GeometrySource,
 )
-from .._cubature import CubatureComponent
-from .._validity import representation_validity
-from ..design._schema import _ParameterCollector
+from .._cubature import CubatureAtlas, CubatureComponent
+from .._validity import GeometryValidityEvidence, representation_validity
+from ..design._schema import _ParameterCollector, DesignState
 from ..simplicial._io import (
     _canonical_triangle_arrays,
     planar_region_from_triangles,
 )
 from ..simplicial._regions import MeshRegion, PlanarMeshRegion
 from ..simplicial._topology import TriangleTopology
+
+
+if TYPE_CHECKING:
+    from .._atlas import BoundaryAtlas
+    from .._sampling import RejectionSamplingPlan, SamplingResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,38 +108,38 @@ class _ReconstructedGeometryKernel(GeometryKernel):
         self.report = report
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return self.child.ambient_dimension
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return self.child.intrinsic_dimension
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return self.child.kind
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         return self.child.capabilities
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         return self.child.field_certificate
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         return representation_validity(self.child, state)
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         return self.child.boundary_field(state, points)
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.child.contains(state, points)
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         return self.child.boundary_normal(state, points)
 
-    def closest_point(self, state, points, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         if not isinstance(self.child, ClosestPointProvider):
             raise TypeError("Reconstructed child lacks a closest-point provider.")
         result = self.child.closest_point(state, points)
@@ -137,7 +147,9 @@ class _ReconstructedGeometryKernel(GeometryKernel):
             raise TypeError("Child closest-point query returned an invalid result.")
         return result
 
-    def contact_curvature(self, state, points, /):
+    def contact_curvature(
+        self, state: DesignState, points: Array, /
+    ) -> ContactCurvatureResult:
         if not isinstance(self.child, ContactCurvatureProvider):
             raise TypeError("Reconstructed child lacks a contact-curvature provider.")
         result = self.child.contact_curvature(state, points)
@@ -145,27 +157,35 @@ class _ReconstructedGeometryKernel(GeometryKernel):
             raise TypeError("Child contact-curvature query returned an invalid result.")
         return result
 
-    def support_map(self, state, directions, /):
+    def support_map(self, state: DesignState, directions: Array, /) -> Array:
         if not isinstance(self.child, SupportMapProvider):
             raise TypeError("Reconstructed child lacks a support-map provider.")
         return self.child.support_map(state, directions)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         return self.child.bounds(state)
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         return self.child.measure(state)
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> Array:
         return self.child.boundary_measure(state)
 
-    def interior_mass(self, state, /):
+    def interior_mass(self, state: DesignState, /) -> Mass:
         return self.child.interior_mass(state)
 
-    def boundary_mass(self, state, /):
+    def boundary_mass(self, state: DesignState, /) -> Mass:
         return self.child.boundary_mass(state)
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         return self.child.sample_interior(
             state,
             num_points,
@@ -173,16 +193,20 @@ class _ReconstructedGeometryKernel(GeometryKernel):
             plan=plan,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> SamplingResult:
         return self.child.sample_boundary(state, num_points, key=key)
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         return self.child.boundary_atlas(state)
 
-    def cubature_atlas(self, state, component: CubatureComponent, /):
+    def cubature_atlas(
+        self, state: DesignState, component: CubatureComponent, /
+    ) -> CubatureAtlas:
         return self.child.cubature_atlas(state, component)
 
-    def seam_residual(self, state, /):
+    def seam_residual(self, state: DesignState, /) -> Array:
         if not isinstance(self.child, SeamDiagnosticsProvider):
             raise TypeError("Reconstructed child lacks a seam-diagnostics provider.")
         return self.child.seam_residual(state)
@@ -214,7 +238,7 @@ def _recenter(points: np.ndarray, enabled: bool) -> tuple[np.ndarray, np.ndarray
     return points - offset, offset
 
 
-def _require_pyvista():
+def _require_pyvista() -> ModuleType:
     try:
         import pyvista
     except ImportError as error:
@@ -287,7 +311,7 @@ def _clean_surface_mesh(
     return vertices_, faces_, topology
 
 
-def _parameter_records(**parameters) -> tuple[tuple[str, str], ...]:
+def _parameter_records(**parameters: object) -> tuple[tuple[str, str], ...]:
     return tuple(sorted((name, repr(value)) for name, value in parameters.items()))
 
 

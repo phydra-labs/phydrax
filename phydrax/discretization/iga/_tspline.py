@@ -15,11 +15,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import isfinite
-from typing import Literal
+from typing import cast, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 from scipy.interpolate import BSpline
 
@@ -52,23 +53,27 @@ def _coordinate(value: Sequence[float], /) -> tuple[float, float]:
 def _bounds(
     value: Sequence[float] | Sequence[Sequence[float]], /
 ) -> tuple[float, float, float, float]:
-    if len(value) == 2 and all(
-        isinstance(axis, Sequence) and not isinstance(axis, (str, bytes))
+    nested = tuple(
+        axis
         for axis in value
-    ):
-        axes = tuple(value)
-        if len(axes[0]) != 2 or len(axes[1]) != 2:
+        if isinstance(axis, Sequence) and not isinstance(axis, (str, bytes))
+    )
+    if len(value) == 2 and len(nested) == 2:
+        first, second = nested
+        if len(first) != 2 or len(second) != 2:
             raise ValueError("Nested cell bounds must contain two two-value intervals.")
         result = (
-            float(axes[0][0]),
-            float(axes[0][1]),
-            float(axes[1][0]),
-            float(axes[1][1]),
+            float(first[0]),
+            float(first[1]),
+            float(second[0]),
+            float(second[1]),
         )
     else:
         if len(value) != 4:
             raise ValueError("Cell bounds must be (u0, u1, canonical, canonical).")
-        result = tuple(float(component) for component in value)
+        # Non-nested bounds are flat scalars; float() rejects anything else.
+        flat = cast(Sequence[float], value)
+        result = (float(flat[0]), float(flat[1]), float(flat[2]), float(flat[3]))
     if not all(isfinite(component) for component in result):
         raise ValueError("Cell bounds must be finite.")
     if not result[0] < result[1] or not result[2] < result[3]:
@@ -297,6 +302,7 @@ class TMesh2D(StrictModule, NonTrainableState):
         degrees = tuple(degree)
         if degrees != (_BICUBIC_DEGREE, _BICUBIC_DEGREE):
             raise NotImplementedError("F7 supports bicubic ASTS2D bases only.")
+        degree_u, degree_v = degrees
         if proprietary_format is not None:
             raise NotImplementedError(
                 "Proprietary T-spline encodings require an independently qualified adapter."
@@ -343,7 +349,7 @@ class TMesh2D(StrictModule, NonTrainableState):
         self.cells = cells_
         self.anchors = tuple(sorted(anchors_, key=lambda anchor: anchor.anchor_id))
         self.t_junction_extensions = extensions
-        self.degree = degrees
+        self.degree = (degree_u, degree_v)
         self.parameter_domain = domain
         payload = {
             "kind": "asts2d-bicubic-tmesh",
@@ -537,7 +543,8 @@ def _build_topology(
             for first, second in zip(on_side[:-1], on_side[1:], strict=True):
                 p0 = (first, fixed) if axis == "u" else (fixed, first)
                 p1 = (second, fixed) if axis == "u" else (fixed, second)
-                key = tuple(sorted((vertex_by_coordinate[p0], vertex_by_coordinate[p1])))
+                low, high = sorted((vertex_by_coordinate[p0], vertex_by_coordinate[p1]))
+                key = (low, high)
                 edge_cells.setdefault(key, set()).add(cell_id)
                 cell_edge_keys[cell_id].append(key)
     sorted_keys = sorted(edge_cells)
@@ -875,8 +882,8 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
         self,
         cell_id: int,
         parameter_bounds: Sequence[float],
-        anchor_ids: ArrayLike,
-        extraction_operator: ArrayLike,
+        anchor_ids: npt.ArrayLike,
+        extraction_operator: npt.ArrayLike,
         /,
     ) -> None:
         bounds_ = _bounds(parameter_bounds)
@@ -1304,9 +1311,9 @@ class ASTSTransferPlan(StrictModule, NonTrainableState):
         target_mesh_id: str,
         source_count: int,
         target_count: int,
-        target_indices: ArrayLike,
-        source_indices: ArrayLike,
-        coefficients: ArrayLike,
+        target_indices: npt.ArrayLike,
+        source_indices: npt.ArrayLike,
+        coefficients: npt.ArrayLike,
         /,
         *,
         maximum_reproduction_residual: float,

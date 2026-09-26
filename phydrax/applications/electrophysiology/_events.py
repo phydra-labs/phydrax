@@ -6,12 +6,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax.typing import DTypeLike
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 
@@ -38,7 +39,9 @@ class NeuralEventQueue(StrictModule):
     next_sequence: Array
 
 
-def initialize_event_queue(capacity: int, dtype=None) -> NeuralEventQueue:
+def initialize_event_queue(
+    capacity: int, dtype: DTypeLike | None = None
+) -> NeuralEventQueue:
     """Allocate an empty heap; zero capacity is valid and always rejects input."""
     if isinstance(capacity, bool) or not isinstance(capacity, int):
         raise TypeError("capacity must be an integer.")
@@ -47,7 +50,7 @@ def initialize_event_queue(capacity: int, dtype=None) -> NeuralEventQueue:
     resolved_dtype = jnp.asarray(0.0, dtype=dtype).dtype
     if not jnp.issubdtype(resolved_dtype, jnp.floating):
         raise TypeError("Event times and amplitudes require a floating dtype.")
-    sequence_dtype = jnp.int64 if jax.config.jax_enable_x64 else jnp.int32
+    sequence_dtype = jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
     return NeuralEventQueue(
         jnp.full((capacity,), jnp.inf, dtype=resolved_dtype),
         jnp.full((capacity,), -1, dtype=jnp.int32),
@@ -60,14 +63,33 @@ def initialize_event_queue(capacity: int, dtype=None) -> NeuralEventQueue:
     )
 
 
-def _key_less(time, slot, sequence, other_time, other_slot, other_sequence):
+_HeapCarry: TypeAlias = tuple[NeuralEventQueue, Array, Array]
+
+
+def _key_less(
+    time: Array,
+    slot: Array,
+    sequence: Array,
+    other_time: Array,
+    other_slot: Array,
+    other_sequence: Array,
+) -> Array:
     return (time < other_time) | (
         (time == other_time)
         & ((slot < other_slot) | ((slot == other_slot) & (sequence < other_sequence)))
     )
 
 
-def _set_entry(queue, index, time, slot, generation, amplitude, count, sequence):
+def _set_entry(
+    queue: NeuralEventQueue,
+    index: ArrayLike,
+    time: ArrayLike,
+    slot: ArrayLike,
+    generation: ArrayLike,
+    amplitude: ArrayLike,
+    count: ArrayLike,
+    sequence: ArrayLike,
+) -> NeuralEventQueue:
     return NeuralEventQueue(
         queue.times.at[index].set(time),
         queue.slots.at[index].set(slot),
@@ -80,7 +102,9 @@ def _set_entry(queue, index, time, slot, generation, amplitude, count, sequence)
     )
 
 
-def _copy_entry(queue, destination, source):
+def _copy_entry(
+    queue: NeuralEventQueue, destination: ArrayLike, source: ArrayLike
+) -> NeuralEventQueue:
     return _set_entry(
         queue,
         destination,
@@ -103,7 +127,7 @@ def _sift_down(queue: NeuralEventQueue, root: Array) -> NeuralEventQueue:
     sequence = queue.sequence[root]
     capacity = queue.times.shape[0]
 
-    def move(_, carry):
+    def move(_: Array, carry: _HeapCarry) -> _HeapCarry:
         current, index, moving = carry
         left = 2 * index + 1
         right = left + 1
@@ -142,7 +166,12 @@ def _sift_down(queue: NeuralEventQueue, root: Array) -> NeuralEventQueue:
 
 
 def enqueue_neural_event(
-    queue: NeuralEventQueue, time_ms, slot, generation, amplitude, count=1
+    queue: NeuralEventQueue,
+    time_ms: ArrayLike,
+    slot: ArrayLike,
+    generation: ArrayLike,
+    amplitude: ArrayLike,
+    count: ArrayLike = 1,
 ) -> tuple[NeuralEventQueue, Array]:
     """Insert in bounded O(log Q) work, or return the entire original queue.
 
@@ -198,10 +227,10 @@ def enqueue_neural_event(
     lifetime = converted_generation
     event_count = converted_count
 
-    def insert(current):
+    def insert(current: NeuralEventQueue) -> NeuralEventQueue:
         sequence = current.next_sequence
 
-        def move(_, carry):
+        def move(_: Array, carry: _HeapCarry) -> _HeapCarry:
             heap, index, moving = carry
             parent = jnp.maximum((index - 1) // 2, 0)
             ascend = (
@@ -270,7 +299,9 @@ def pop_neural_event(
     if queue.times.shape[0] == 0:
         return empty
 
-    def remove(current):
+    def remove(
+        current: NeuralEventQueue,
+    ) -> tuple[NeuralEventQueue, Array, Array, Array, Array, Array, Array]:
         time, slot, generation, amplitude, count = (
             current.times[0],
             current.slots[0],
@@ -343,7 +374,7 @@ def cancel_neural_events(
         queue.next_sequence,
     )
 
-    def heapify(index, current):
+    def heapify(index: Array, current: NeuralEventQueue) -> NeuralEventQueue:
         root = capacity // 2 - 1 - index
         return jax.lax.cond(
             root < current.size // 2,
@@ -393,9 +424,9 @@ def build_source_fanout(
     offsets = jnp.concatenate((jnp.zeros((1,), dtype=jnp.int32), jnp.cumsum(counts)))
     slots = jnp.full(active.shape, -1, dtype=jnp.int32)
 
-    def place(slot, carry):
+    def place(slot: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
 
-        def insert(values):
+        def insert(values: tuple[Array, Array]) -> tuple[Array, Array]:
             cursor, result = values
             endpoint = safe_source[slot]
             result = result.at[cursor[endpoint]].set(slot)

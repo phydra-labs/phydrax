@@ -34,6 +34,7 @@ from ...linalg import (
     FactorizationPolicy,
     factorize,
     HermitianSpectrum,
+    PreparedFactorization,
     RankPolicy,
 )
 
@@ -1850,7 +1851,7 @@ def _aligned_green_self_energy(
         raise ValueError("Dyson Green and self-energy values must have matching shapes.")
 
 
-def _native_factor(matrix: Array, tolerance: float, /):
+def _native_factor(matrix: Array, tolerance: float, /) -> PreparedFactorization:
     return factorize(
         DenseLinearOperator(matrix),
         FactorizationPolicy("svd", rank=RankPolicy(relative_cutoff=float(tolerance))),

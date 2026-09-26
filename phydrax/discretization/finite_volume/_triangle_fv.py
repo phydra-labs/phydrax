@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import ArraySpace, DiagonalPairing
-from .._cell_complex import PolygonalConnectivity
+from .._cell_complex import CellComplexTopology, PolygonalConnectivity
 from .._cell_mesh import CellMesh
 from .._core import (
     DiscretizationCapability,
@@ -54,7 +55,9 @@ def _normalized_triangles(vertices: np.ndarray, triangles: np.ndarray) -> np.nda
     return normalized
 
 
-def _owner_neighbor(connectivity: PolygonalConnectivity, cell_count: int):
+def _owner_neighbor(
+    connectivity: TriangleConnectivity | PolygonalConnectivity, cell_count: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
     cell_signs = np.asarray(connectivity.cell_edge_signs, dtype=np.float64)
     edge_count = np.asarray(connectivity.edges).shape[0]
@@ -81,11 +84,11 @@ def _owner_neighbor(connectivity: PolygonalConnectivity, cell_count: int):
 def evaluate_triangle_fv_geometry(
     vertices: ArrayLike,
     triangles: ArrayLike,
-    connectivity: PolygonalConnectivity,
+    connectivity: TriangleConnectivity | PolygonalConnectivity,
     owner: ArrayLike,
     owner_sign: ArrayLike,
     /,
-):
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     points = jnp.asarray(vertices)
     cells = jnp.asarray(triangles, dtype=jnp.int32)
     cell_points = points[cells]
@@ -169,7 +172,8 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
             raise ValueError("Triangle FV connectivity indexes invalid vertices.")
         cells = _normalized_triangles(points, cells)
         mesh = CellMesh.from_triangles(points, cells)
-        connectivity = mesh.connectivity
+        # A two-dimensional triangle mesh always builds polygonal connectivity.
+        connectivity = cast(PolygonalConnectivity, mesh.connectivity)
         edges = np.asarray(connectivity.edges, dtype=np.int32)
         boundary_mask = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
         patches = {} if boundary_patches is None else dict(boundary_patches)
@@ -237,7 +241,9 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
     def triangles(self) -> Array:
         return self.mesh.blocks[0].vertices
 
-    def prepare(self, /, *, numeric_version: str = "0"):
+    def prepare(
+        self, /, *, numeric_version: str = "0"
+    ) -> TriangleFiniteVolumeDiscretization:
         return TriangleFiniteVolumeDiscretization(self, numeric_version=numeric_version)
 
 
@@ -455,7 +461,7 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         return self.mesh.blocks[0].vertices
 
     @property
-    def topology(self):
+    def topology(self) -> CellComplexTopology:
         return self.mesh.topology
 
     @property
@@ -476,15 +482,15 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
 
 
 def _triangle_quality(
-    vertices,
-    triangles,
-    centers,
-    area_vectors,
-    face_measures,
-    closure,
-    owner,
-    neighbor,
-):
+    vertices: ArrayLike,
+    triangles: ArrayLike,
+    centers: Array,
+    area_vectors: Array,
+    face_measures: Array,
+    closure: Array,
+    owner: ArrayLike,
+    neighbor: ArrayLike,
+) -> TriangleFiniteVolumeQualityReport:
     points = jnp.asarray(vertices)[jnp.asarray(triangles, dtype=jnp.int32)]
     lengths = jnp.linalg.norm(jnp.roll(points, -1, axis=1) - points, axis=-1)
     area = 0.5 * jnp.abs(

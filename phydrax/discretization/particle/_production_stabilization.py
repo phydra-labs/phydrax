@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -17,6 +19,10 @@ from ._free_surface import FreeSurfaceState
 from ._pairwise import ParticlePairGeometry, ParticlePairRelation, scatter_pair_sum
 from ._precision import ParticleExecutionPolicy
 from ._smoothing import AbstractSPHSmoothingKernel
+
+
+if TYPE_CHECKING:
+    from ...equations import AbstractBarotropicMaterial
 
 
 class ShockViscositySensorPlan(StrictModule, NonTrainableState):
@@ -168,7 +174,7 @@ class RenormalizationAudit(StrictModule):
 
 
 def audit_density_renormalization(
-    material,
+    material: AbstractBarotropicMaterial,
     mass: ArrayLike,
     before: ArrayLike,
     after: ArrayLike,

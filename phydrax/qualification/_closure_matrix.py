@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Self
 
 from .._fingerprint import canonical_fingerprint
 from ._closure_requirement import CapabilityClosureRequirement, CapabilityGapResolution
@@ -21,7 +23,13 @@ class CapabilityClosureMatrix:
     resolutions: tuple[CapabilityGapResolution, ...]
 
     @classmethod
-    def create(cls, family, requirements, resolutions, /):
+    def create(
+        cls,
+        family: str,
+        requirements: Iterable[CapabilityClosureRequirement],
+        resolutions: Iterable[CapabilityGapResolution],
+        /,
+    ) -> Self:
         return cls(
             _capability_name(family, "family"),
             tuple(sorted(requirements, key=lambda value: value.requirement_id)),
@@ -98,7 +106,7 @@ class CapabilityClosureMatrix:
     def matrix_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "capability-closure-matrix",
             "family": self.family,

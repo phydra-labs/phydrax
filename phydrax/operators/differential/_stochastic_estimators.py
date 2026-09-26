@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.linalg as la
@@ -227,7 +228,7 @@ class StochasticOperatorSamples(StrictModule):
 def _probes(
     key: Key[Array, ""],
     shape: tuple[int, ...],
-    dtype,
+    dtype: DTypeLike,
     policy: StochasticTracePolicy,
     /,
 ) -> Array:

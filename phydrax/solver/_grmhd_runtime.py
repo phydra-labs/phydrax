@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax import ein
@@ -493,7 +494,9 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         right = jnp.where(right_valid[..., None], right, piece_right)
         return left, right, jnp.any(fallback), boundary_valid
 
-    def _face_measure(self, axis: int, face_shape: tuple[int, ...], dtype, /) -> Array:
+    def _face_measure(
+        self, axis: int, face_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         measure = jnp.ones(face_shape, dtype=dtype)
         for transverse in range(self.constrained_transport.layout.dimension):
             if transverse == axis:
@@ -1073,7 +1076,7 @@ class GRMHDSSPRK3Plan(StrictModule, NonTrainableState):
         accepted: Array,
         /,
     ) -> GRMHDDefectLedger:
-        def selected(value):
+        def selected(value: Array) -> Array:
             return jnp.where(accepted, value, jnp.zeros_like(value))
 
         return GRMHDDefectLedger(

@@ -8,6 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -62,7 +63,7 @@ class CosmologicalPopulationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def empty(self, *, dtype=jnp.float64) -> CosmologicalPopulationState:
+    def empty(self, *, dtype: DTypeLike = jnp.float64) -> CosmologicalPopulationState:
         return CosmologicalPopulationState(
             jnp.arange(self.capacity, dtype=jnp.int64),
             jnp.zeros((self.capacity,), dtype=jnp.int32),

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,6 +20,20 @@ from phydrax.backends.distributed import JaxCollectiveProvider
 
 from ._morton import MortonAddressPlan
 from ._neighbor_query import _minimum_image, MortonNeighborQueryPlan
+
+
+# (indices, ids, distances, valid, counts, successful, finite, ids unique, max local)
+_ShardQueryOutputs: TypeAlias = tuple[
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+]
 
 
 class DistributedMortonNeighborEvidence(NonTrainableState, StrictModule):
@@ -214,13 +229,13 @@ class DistributedMortonNeighborQueryPlan(StrictModule):
         target_ids = jax.device_put(target_ids, NamedSharding(mesh, vector_spec))
 
         def execute_local(
-            local_sources,
-            local_targets,
-            local_source_valid,
-            local_target_valid,
-            local_source_ids,
-            local_target_ids,
-        ):
+            local_sources: jax.Array,
+            local_targets: jax.Array,
+            local_source_valid: jax.Array,
+            local_target_valid: jax.Array,
+            local_source_ids: jax.Array,
+            local_target_ids: jax.Array,
+        ) -> _ShardQueryOutputs:
             rank = jax.lax.axis_index(self.axis_name).astype(jnp.int64)
             global_targets = provider.all_gather(local_targets, axis=0, tiled=True)
             global_target_valid = provider.all_gather(

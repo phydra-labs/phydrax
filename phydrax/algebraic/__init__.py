@@ -5,6 +5,7 @@
 """Sparse polynomial systems, exact grading evidence, and root lowering."""
 
 from importlib import import_module
+from typing import Any
 
 from ._certification import (
     ExactRealRootInterval,
@@ -66,7 +67,7 @@ from ._system import PolynomialScaling, SparsePolynomialSupport, SparsePolynomia
 _FACADE_EXPORT_MODULES = ("._isolated", "._positive_dimensional", "._quotient")
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

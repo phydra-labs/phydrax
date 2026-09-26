@@ -108,7 +108,9 @@ def _point_cloud(value: ArrayLike, name: str, /) -> Array:
     return points
 
 
-def _point_mask_shape(mask: ArrayLike | None, count: int, name: str, /):
+def _point_mask_shape(
+    mask: ArrayLike | None, count: int, name: str, /
+) -> tuple[tuple[int, ...], Array | None]:
     if mask is None:
         return (), None
     values = jnp.asarray(mask, dtype=jnp.bool_)

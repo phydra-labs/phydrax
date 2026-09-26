@@ -183,13 +183,13 @@ class MineralKinetics(StrictModule):
 
     def residual(
         self,
-        state,
+        state: tuple[Array, Array],
         previous_component_inventory: ArrayLike,
         previous_mineral_inventory: ArrayLike,
         water_volume: ArrayLike,
         dt: ArrayLike,
         reactive_area: ArrayLike,
-    ):
+    ) -> tuple[Array, Array]:
         """Native-root-ready (aqueous equations, bounded kinetic equations).
 
         ``state=(log(c/reference_concentration), dissolution_extents)``. This

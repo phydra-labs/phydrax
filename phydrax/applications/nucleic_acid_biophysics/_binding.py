@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
@@ -81,7 +82,10 @@ class PreparedNucleotideBinding(StrictModule, NonTrainableState):
 
 
 def prepare_nucleotide_binding(
-    mapping, support_atom_ids, *, coordinate_mask=None
+    mapping: NucleotideAtomMapping,
+    support_atom_ids: PreparedAtomisticSystem | npt.ArrayLike,
+    *,
+    coordinate_mask: npt.ArrayLike | None = None,
 ) -> PreparedNucleotideBinding:
     """Prepare without relabeling IDs; missing coordinates are not inactive padding.
 

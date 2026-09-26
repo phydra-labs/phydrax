@@ -86,7 +86,9 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _segments(self, start: Array, end: Array, /):
+    def _segments(
+        self, start: Array, end: Array, /
+    ) -> tuple[Array, Array, Array, Array, Array]:
         axes = self.transfer.bridge.grid.structured_axes
         lower = jnp.asarray([axis.bounds[0] for axis in axes], dtype=start.dtype)
         spacing = jnp.asarray(
@@ -217,7 +219,8 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
                                 )
                             )
                     flat = offsets[axis] + _flat_index(
-                        tuple(index_components), shapes[axis]
+                        (index_components[0], index_components[1], index_components[2]),
+                        shapes[axis],
                     )
                     contribution_indices.append(flat)
                     contribution_values.append(charges[:, None] * integral / dt)
@@ -227,7 +230,7 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         valid = jnp.stack(tuple(contribution_valid), axis=-1).reshape((-1,))
         flux_content = jnp.zeros((bridge.cochain.cell_counts[1],), dtype=start.dtype)
 
-        def scatter(index, carry):
+        def scatter(index: Array, carry: Array) -> Array:
             return carry.at[indices[index]].add(
                 jnp.where(valid[index], values[index], 0.0)
             )

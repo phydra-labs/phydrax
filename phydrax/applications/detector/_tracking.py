@@ -150,7 +150,9 @@ def fit_associated_tracks(
     _, _, measurement_count, _ = measurements.positions.shape
     identity = jnp.eye(3, dtype=measurements.positions.dtype)
 
-    def one(positions, times, variances, active, valid):
+    def one(
+        positions: Array, times: Array, variances: Array, active: Array, valid: Array
+    ) -> tuple[Array, Array, Array, Array, Array]:
         admitted = active & valid
         h = jnp.concatenate(
             (

@@ -391,7 +391,9 @@ class _PowerResidual(StrictModule):
                 result.append((target - mechanical) / machine.governor.time_constant)
         return jnp.stack(result)
 
-    def __call__(self, time: Array, state: Array, state_rate: Array, args, /) -> Array:
+    def __call__(
+        self, time: Array, state: Array, state_rate: Array, args: object, /
+    ) -> Array:
         del time, args
         model = self.model
         voltage = model.voltage(state)
@@ -796,7 +798,9 @@ class PowerDynamicsResult(StrictModule):
 
 
 class _ContinuousReset(StrictModule):
-    def __call__(self, time, state, rate, args, /):
+    def __call__(
+        self, time: Array, state: Array, rate: Array, args: object, /
+    ) -> tuple[Array, Array]:
         del time, args
         return state, rate
 
@@ -804,12 +808,12 @@ class _ContinuousReset(StrictModule):
 class _TimeGuard(StrictModule):
     time: float
 
-    def __call__(self, time, state, args, /):
+    def __call__(self, time: Array, state: Array, args: object, /) -> Array:
         del state, args
         return time - self.time
 
 
-def _identity_reset(time, state, args, /):
+def _identity_reset(time: Array, state: Array, args: object, /) -> Array:
     del time, args
     return state
 
@@ -817,7 +821,7 @@ def _identity_reset(time, state, args, /):
 class _BoundaryState(StrictModule):
     state: Array
 
-    def __call__(self, time, args, /):
+    def __call__(self, time: Array, args: object, /) -> Array:
         del time, args
         return self.state
 
@@ -826,7 +830,7 @@ class _DifferentialFlow(StrictModule):
     residual: _PowerResidual
     algebraic: Array
 
-    def __call__(self, time, differential, args, /):
+    def __call__(self, time: Array, differential: Array, args: object, /) -> Array:
         del time, args
         return self.residual.rhs(jnp.concatenate((differential, self.algebraic)))
 
@@ -953,7 +957,7 @@ def _apply_power_event(
             _identity_reset,
             _DifferentialFlow(before_residual, state[size:]),
             _DifferentialFlow(post_residual, after[size:]),
-            event_tolerance=time_tolerance,
+            event_tolerance=float(time_tolerance),
             plan_id=f"power:{event.target}:{event.time}:{candidate_topology.epoch}",
         )
         schedule = HybridSchedulePlan(

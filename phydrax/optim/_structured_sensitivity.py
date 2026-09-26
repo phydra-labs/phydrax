@@ -32,7 +32,9 @@ from ._structured_nonlinear import (
 StructuredSensitivityMode: TypeAlias = Literal["fixed-active", "barrier"]
 
 
-def _generic_problem(prepared: PreparedStructuredNonlinearProgram, /):
+def _generic_problem(
+    prepared: PreparedStructuredNonlinearProgram, /
+) -> MinimizationProblem:
     program = prepared.program
     constraints = (
         (
@@ -192,7 +194,7 @@ def structured_parameter_continuation(
     n = prepared.program.num_variables
     me = equality.size
 
-    def residual(state, coordinate, _):
+    def residual(state: Array, coordinate: Array, _: Any) -> Array:
         current_args = args_path(coordinate)
         x = state[:n]
         equality_multipliers = state[n : n + me]

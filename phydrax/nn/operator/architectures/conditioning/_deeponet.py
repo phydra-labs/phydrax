@@ -29,6 +29,7 @@ from phydrax.nn._contracts import (
 )
 from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn._utils import _get_size
+from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
@@ -486,7 +487,7 @@ def _fused_branch_regularity(
     return compose_regularity(sum_regularity(encoded), model_regularity(branch_mixer))
 
 
-def _deeponet_contract(model):
+def _deeponet_contract(model: DeepONet) -> ConfiguredOperatorContract:
     from phydrax.nn.operator.catalog import operator_architecture_contract
 
     contract = operator_architecture_contract(model.operator_architecture)

@@ -10,9 +10,9 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -184,7 +184,7 @@ class VariablePatchEmbeddedBoundaryPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Embedded-boundary plan is bound to another patch geometry plan."
             )
-        if isinstance(geometry.valid, jax.core.Tracer) or not bool(geometry.valid):
+        if isinstance(geometry.valid, jax_core.Tracer) or not bool(geometry.valid):
             raise ValueError(
                 "Embedded boundaries require an accepted host geometry state."
             )

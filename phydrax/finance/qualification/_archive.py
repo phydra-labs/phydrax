@@ -92,6 +92,12 @@ def _manifest_record(manifest: ResultManifest, /) -> dict[str, object]:
     }
 
 
+def _archived_sequence(value: object, /) -> Sequence[object]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        raise TypeError("Archived result manifest collections must be sequences.")
+    return value
+
+
 def _manifest_from_record(record: Mapping[str, object], /) -> ResultManifest:
     expected = {
         "kind",
@@ -106,22 +112,11 @@ def _manifest_from_record(record: Mapping[str, object], /) -> ResultManifest:
     }
     if set(record) != expected or record["kind"] != "result-manifest":
         raise ValueError("Archived finance result manifest fields are not canonical.")
-    fields_record = record["fields"]
-    payloads_record = record["payloads"]
-    evidence_record = record["evidence_ids"]
-    diagnostics_record = record["diagnostic_ids"]
-    semantics_record = record["sampled_semantics"]
-    sequences = (
-        fields_record,
-        payloads_record,
-        evidence_record,
-        diagnostics_record,
-        semantics_record,
-    )
-    if any(
-        not isinstance(value, Sequence) or isinstance(value, str) for value in sequences
-    ):
-        raise TypeError("Archived result manifest collections must be sequences.")
+    fields_record = _archived_sequence(record["fields"])
+    payloads_record = _archived_sequence(record["payloads"])
+    evidence_record = _archived_sequence(record["evidence_ids"])
+    diagnostics_record = _archived_sequence(record["diagnostic_ids"])
+    semantics_record = _archived_sequence(record["sampled_semantics"])
     fields: list[tuple[str, str, str]] = []
     for item in fields_record:
         if not isinstance(item, Sequence) or isinstance(item, str) or len(item) != 3:

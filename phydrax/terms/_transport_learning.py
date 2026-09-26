@@ -24,7 +24,7 @@ class _MongeCostEvaluator(StrictModule):
     map_evaluator: Any
     cost: AbstractGroundCost
 
-    def __call__(self, *args, key=None):
+    def __call__(self, *args: Any, key: Key[Array, ""] | None = None) -> Array:
         source = (
             jnp.asarray(args[0])
             if len(args) == 1
@@ -88,8 +88,8 @@ class MongeMapTerm(AbstractScalarTerm):
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-        iter_=None,
-        **kwargs,
+        iter_: int | Array | None = None,
+        **kwargs: Any,
     ) -> Array:
         del iter_, kwargs
         field = functions[self.map_field]
@@ -157,8 +157,8 @@ class NeuralDualTransportTerm(AbstractScalarTerm):
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-        iter_=None,
-        **kwargs,
+        iter_: int | Array | None = None,
+        **kwargs: Any,
     ) -> Array:
         del iter_, kwargs
         source_field = functions[self.source_potential]

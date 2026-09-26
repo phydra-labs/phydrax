@@ -189,7 +189,9 @@ class ReferencePowerLawGasTransportPlan(AbstractGasTransportPropertyPlan):
             }
         )
 
-    def evaluate(self, temperature, pressure, /):
+    def evaluate(
+        self, temperature: ArrayLike, pressure: ArrayLike, /
+    ) -> GasTransportPropertyEvaluation:
         temperature_, pressure_ = jnp.broadcast_arrays(
             jnp.asarray(temperature), jnp.asarray(pressure)
         )
@@ -317,7 +319,9 @@ class LogPolynomialGasTransportPlan(AbstractGasTransportPropertyPlan):
             }
         )
 
-    def evaluate(self, temperature, pressure, /):
+    def evaluate(
+        self, temperature: ArrayLike, pressure: ArrayLike, /
+    ) -> GasTransportPropertyEvaluation:
         temperature_, pressure_ = jnp.broadcast_arrays(
             jnp.asarray(temperature), jnp.asarray(pressure)
         )
@@ -409,7 +413,7 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
         )
 
     @staticmethod
-    def _omega_viscosity(reduced_temperature):
+    def _omega_viscosity(reduced_temperature: Array) -> Array:
         return (
             1.16145 * reduced_temperature**-0.14874
             + 0.52487 * jnp.exp(-0.7732 * reduced_temperature)
@@ -417,7 +421,7 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
         )
 
     @staticmethod
-    def _omega_diffusion(reduced_temperature):
+    def _omega_diffusion(reduced_temperature: Array) -> Array:
         return (
             1.06036 * reduced_temperature**-0.15610
             + 0.19300 * jnp.exp(-0.47635 * reduced_temperature)
@@ -425,7 +429,9 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
             + 1.76474 * jnp.exp(-3.89411 * reduced_temperature)
         )
 
-    def evaluate(self, temperature, pressure, /):
+    def evaluate(
+        self, temperature: ArrayLike, pressure: ArrayLike, /
+    ) -> GasTransportPropertyEvaluation:
         temperature_, pressure_ = jnp.broadcast_arrays(
             jnp.asarray(temperature), jnp.asarray(pressure)
         )

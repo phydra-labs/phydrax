@@ -7,15 +7,21 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jaxtyping import Array, ArrayLike, Key
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
-from ....solver._jump import finite_state_generator, FiniteStateGenerator
+from ....solver._jump import (
+    finite_state_generator,
+    FiniteStateGenerator,
+    GeneratorBoundaryPolicy,
+)
 from ....stochastic import AbstractJumpProcess
 from .._construct import NucleicAcidConstruct, NucleotideKey
 from ._model import AssociationConvention, SecondaryEnergyModel, SecondaryRateLaw
@@ -39,7 +45,14 @@ class SecondaryJumpProcess(AbstractJumpProcess):
     num_channels: int = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
 
-    def __init__(self, destinations, legal, rates, *, process_id) -> None:
+    def __init__(
+        self,
+        destinations: npt.ArrayLike,
+        legal: npt.ArrayLike,
+        rates: npt.ArrayLike,
+        *,
+        process_id: str,
+    ) -> None:
         raw_destinations = jnp.asarray(destinations)
         if raw_destinations.ndim != 2 or min(raw_destinations.shape) <= 0:
             raise ValueError(
@@ -76,7 +89,7 @@ class SecondaryJumpProcess(AbstractJumpProcess):
         self.state_shape = (1,)
         self.mark_shape = ()
 
-    def _index(self, state):
+    def _index(self, state: ArrayLike) -> tuple[Array, Array]:
         value = jnp.asarray(state)[0]
         valid = (
             jnp.isfinite(value)
@@ -86,13 +99,18 @@ class SecondaryJumpProcess(AbstractJumpProcess):
         )
         return jnp.clip(value, 0, self.rates.shape[0] - 1).astype(jnp.int32), valid
 
-    def intensities(self, t: ArrayLike, state: ArrayLike, args=None, /) -> Array:
+    def intensities(self, t: ArrayLike, state: ArrayLike, args: Any = None, /) -> Array:
         del t, args
         index, valid = self._index(state)
         return jnp.where(valid, self.rates[index], jnp.nan)
 
     def jump(
-        self, state: ArrayLike, channel: ArrayLike, mark: ArrayLike, args=None, /
+        self,
+        state: ArrayLike,
+        channel: ArrayLike,
+        mark: ArrayLike,
+        args: Any = None,
+        /,
     ) -> Array:
         del mark, args
         index, valid = self._index(state)
@@ -111,7 +129,15 @@ class SecondaryJumpProcess(AbstractJumpProcess):
             jnp.asarray(state),
         )
 
-    def sample_mark(self, key, t, state, channel, args=None, /) -> Array:
+    def sample_mark(
+        self,
+        key: Key[Array, ""],
+        t: ArrayLike,
+        state: ArrayLike,
+        channel: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
         del key, t, channel, args
         return jnp.asarray(0, dtype=jnp.asarray(state).dtype)
 
@@ -238,7 +264,7 @@ class PreparedSecondaryKinetics:
         self,
         states: Sequence[SecondaryStructureState] | None = None,
         *,
-        boundary_policy="error",
+        boundary_policy: GeneratorBoundaryPolicy = "error",
     ) -> FiniteStateGenerator:
         selected = self.states if states is None else tuple(states)
         if not selected:
@@ -393,9 +419,13 @@ def prepare_secondary_kinetics(
         value + count * association.log_standard_volume
         for value, count in zip(standard, counts, strict=True)
     )
-    destinations, legal, rates = [], [], []
+    destinations: list[list[int]] = []
+    legal: list[list[bool]] = []
+    rates: list[list[float]] = []
     for source, support in enumerate(supports):
-        row_destination, row_legal, row_rates = [], [], []
+        row_destination: list[int] = []
+        row_legal: list[bool] = []
+        row_rates: list[float] = []
         for pair in allowed:
             next_support = (
                 tuple(value for value in support if value != pair)

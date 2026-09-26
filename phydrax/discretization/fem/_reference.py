@@ -5,16 +5,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._spaces import FieldRepresentation
+
+
+_Tabulator: TypeAlias = Callable[[Array], tuple[ArrayLike, ArrayLike]]
 
 
 class FiniteElementSpec(StrictModule, NonTrainableState):
@@ -29,7 +34,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
     value_shape: tuple[int, ...] = eqx.field(static=True)
     reference_nodes: Array
     entity_dofs: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
-    tabulator: Callable | None
+    tabulator: _Tabulator | None
     tabulator_id: str | None = eqx.field(static=True)
     element_id: str = eqx.field(static=True)
 
@@ -38,7 +43,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         family: str,
         cell_kind: str,
         degree: int,
-        reference_nodes: ArrayLike,
+        reference_nodes: npt.ArrayLike,
         entity_dofs: tuple[tuple[tuple[int, ...], ...], ...],
         /,
         *,
@@ -46,7 +51,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         representation: FieldRepresentation = "point_value",
         mapping: str = "identity",
         value_shape: tuple[int, ...] = (),
-        tabulator: Callable | None = None,
+        tabulator: _Tabulator | None = None,
         tabulator_id: str | None = None,
     ) -> None:
         family_ = str(family)

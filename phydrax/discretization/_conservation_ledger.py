@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._differentiation import BranchDifferentiationPolicy
@@ -28,7 +29,7 @@ def _flux_identity(value: str, name: str, /) -> str:
     return value
 
 
-def _route_array(value: ArrayLike, name: str, /) -> tuple[Array, np.ndarray]:
+def _route_array(value: npt.ArrayLike, name: str, /) -> tuple[Array, np.ndarray]:
     host = np.asarray(value)
     if host.ndim != 1:
         raise ValueError(f"{name} must be one-dimensional.")
@@ -41,7 +42,7 @@ def _route_array(value: ArrayLike, name: str, /) -> tuple[Array, np.ndarray]:
     return jnp.asarray(normalized), normalized
 
 
-def _active_array(value: ArrayLike, face_count: int, /) -> tuple[Array, np.ndarray]:
+def _active_array(value: npt.ArrayLike, face_count: int, /) -> tuple[Array, np.ndarray]:
     host = np.asarray(value)
     if host.dtype != np.dtype(np.bool_):
         raise TypeError("active_mask must have boolean dtype.")
@@ -266,9 +267,9 @@ class ConservationStageFluxRateBlock(StrictModule):
     def __init__(
         self,
         flux_rate: ArrayLike,
-        owner_cells: ArrayLike,
-        neighbor_cells: ArrayLike,
-        active_mask: ArrayLike,
+        owner_cells: npt.ArrayLike,
+        neighbor_cells: npt.ArrayLike,
+        active_mask: npt.ArrayLike,
         block_id: str,
         block_kind: str,
         /,
@@ -961,11 +962,19 @@ class AcceptedConservationIntegralLedger(StrictModule):
             stage1.active_cell_mask,
             geometry_family_id=stage1.geometry_family_id,
             geometry_layout_id=stage1.geometry_layout_id,
-            stage_geometry_versions=tuple(stage.geometry_version for stage in stages),
+            stage_geometry_versions=(
+                stage1.geometry_version,
+                stage2.geometry_version,
+                stage3.geometry_version,
+            ),
             start_geometry_version=start_version,
             end_geometry_version=end_version,
             evidence_policy_id=stage1.evidence_policy_id,
-            stage_evidence_versions=tuple(stage.evidence_version for stage in stages),
+            stage_evidence_versions=(
+                stage1.evidence_version,
+                stage2.evidence_version,
+                stage3.evidence_version,
+            ),
             start_evidence_version=start_evidence,
             end_evidence_version=end_evidence,
             start_topology_epoch_id=start_topology,

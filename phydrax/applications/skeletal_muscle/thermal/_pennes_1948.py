@@ -32,13 +32,20 @@ from ....discretization import (
     FiniteElementPlan,
     IntegrationDomain,
     lagrange_element,
+    TetrahedralConnectivity,
 )
-from ....discretization.fem import dirichlet_constraint
+from ....discretization.fem import (
+    dirichlet_constraint,
+    FiniteElementDirichletConstraint,
+)
 from ....equations import (
     BoundaryLoadAction,
     coefficient,
     compile_finite_element_problem,
+    CompiledFiniteElementProblem,
     ExteriorFacetAction,
+    FiniteElementAction,
+    FiniteElementExecutionContext,
     FiniteElementExecutionPolicy,
     FiniteElementForm,
     MassAction,
@@ -353,7 +360,9 @@ class Pennes1948Boundary(StrictModule):
         return valid
 
 
-def _compiled(discretization, action):
+def _compiled(
+    discretization: FiniteElementDiscretization, action: FiniteElementAction
+) -> CompiledFiniteElementProblem:
     return compile_finite_element_problem(
         FiniteElementForm(action.action_id, "temperature", (action,)),
         discretization,
@@ -361,12 +370,18 @@ def _compiled(discretization, action):
     )
 
 
-def _facet_mass(values, points, weights, normal, context):
+def _facet_mass(
+    values: tuple[Array, ...],
+    points: Array,
+    weights: Array,
+    normal: Array,
+    context: FiniteElementExecutionContext,
+) -> Array:
     del points, weights, normal, context
     return values[0]
 
 
-def _subdomain(base, ids):
+def _subdomain(base: IntegrationDomain, ids: tuple[int, ...]) -> IntegrationDomain:
     positions = np.asarray([list(np.asarray(base.entity_indices)).index(x) for x in ids])
     return IntegrationDomain(
         base.kind,
@@ -516,6 +531,11 @@ class Pennes1948Plan(StrictModule):
             )
         ):
             raise ValueError("Initial absolute temperatures must be finite and positive.")
+        connectivity = self.mesh.connectivity
+        if not isinstance(connectivity, TetrahedralConnectivity):
+            raise ValueError(
+                "Thermal P1 preparation requires one tetrahedral block with tetrahedral connectivity."
+            )
         disc = FiniteElementPlan(
             self.mesh,
             FiniteElementFieldSpec(
@@ -595,7 +615,7 @@ class Pennes1948Plan(StrictModule):
         )
         boundary_loads, boundary_mass = [], []
         prescribed_masks, assigned_values = [], np.full(zero.shape, np.nan)
-        faces = np.asarray(self.mesh.connectivity.faces)
+        faces = np.asarray(connectivity.faces)
         for index, boundary in enumerate(self.boundaries):
             domain = _subdomain(disc.exterior_facet_domain, boundary.facet_ids)
             boundary_loads.append(
@@ -772,7 +792,7 @@ class _Pennes1948Geometry(StrictModule, NonTrainableState):
     boundary_loads: tuple[Array, ...]
     boundary_mass: tuple[AbstractLinearOperator | None, ...]
     prescribed_masks: tuple[Array, ...]
-    constraint: object
+    constraint: FiniteElementDirichletConstraint | None
     free_dofs: tuple[int, ...] = eqx.field(static=True)
 
 
@@ -803,7 +823,7 @@ class PreparedPennes1948(StrictModule):
             self.prepared_id,
         )
 
-    def _mass(self, temperature):
+    def _mass(self, temperature: Array) -> Array:
         return sum(
             (
                 c * op.mv(temperature)
@@ -816,7 +836,7 @@ class PreparedPennes1948(StrictModule):
             jnp.zeros_like(temperature),
         )
 
-    def _transport(self, temperature):
+    def _transport(self, temperature: Array) -> Array:
         p = self.plan.parameters
         image = jnp.zeros_like(temperature)
         for i, (mass, diffusion) in enumerate(
@@ -896,19 +916,19 @@ class PreparedPennes1948(StrictModule):
             heat_load + perfusion_load + boundary_supply
         )
 
-        def full_action(value):
+        def full_action(value: Array) -> Array:
             return self._mass(value) + safe_dt * self._transport(value)
 
         free = jnp.asarray(self.geometry.free_dofs, dtype=jnp.int32)
 
-        def expand(value):
+        def expand(value: Array) -> Array:
             if self.geometry.constraint is not None:
                 return self.geometry.constraint.constraint_map.prolongation.mv(value)
             return jnp.zeros_like(state.temperature_K).at[free].set(value)
 
         if self.geometry.free_dofs:
 
-            def action(value):
+            def action(value: Array) -> Array:
                 return full_action(expand(value))[free]
 
             space = ArraySpace((len(self.geometry.free_dofs),), dtype=rhs.dtype)

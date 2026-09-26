@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Hashable, Iterable
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
 from ..._strict import StrictModule
@@ -21,8 +25,8 @@ from ...optim import (
     solve_mixed_integer_program,
     solve_prepared_convex_program,
 )
-from ._compile import CompiledEnergySystem, information_keys
-from ._spec import EnergySystem, profile
+from ._compile import _ProgramData, CompiledEnergySystem, information_keys
+from ._spec import Converter, EnergySystem, Inventory, profile, ScenarioTree, Source
 
 
 class EnergyDispatch(StrictModule):
@@ -119,7 +123,7 @@ def replay_energy_system(
     dynamics = []
     cost, emissions = 0.0, 0.0
 
-    def get(name, size=n):
+    def get(name: str, size: int = n) -> npt.NDArray[np.float64]:
         if name not in values or values[name].shape != (size,):
             raise ValueError(
                 f"Missing or malformed decoded field {name!r}; expected ({size},)."
@@ -131,7 +135,7 @@ def replay_energy_system(
             violations.append(np.inf)
         return value
 
-    def equal(name, left, right=0.0) -> None:
+    def equal(name: str, left: npt.ArrayLike, right: npt.ArrayLike = 0.0) -> None:
         left, right = np.asarray(left), np.asarray(right)
         residual = np.abs(left - right)
         maximum = float(np.max(residual, initial=0))
@@ -139,7 +143,7 @@ def replay_energy_system(
         if not np.all(residual <= atol + rtol * np.maximum(np.abs(left), np.abs(right))):
             failures.append(name)
 
-    def below(name, left, right) -> None:
+    def below(name: str, left: npt.ArrayLike, right: npt.ArrayLike) -> None:
         left, right = np.asarray(left), np.asarray(right)
         violation = np.maximum(left - right, 0)
         violations.append(float(np.max(violation, initial=0)))
@@ -172,7 +176,10 @@ def replay_energy_system(
             probability = (
                 1
                 if investment.scenario_node is None
-                else chronology.scenario_tree.probability(investment.scenario_node)
+                # EnergySystem validation requires a tree for scenario investments.
+                else cast(ScenarioTree, chronology.scenario_tree).probability(
+                    investment.scenario_node
+                )
             )
             cost += (
                 build
@@ -184,7 +191,13 @@ def replay_energy_system(
     if spec.policy.investment_budget is not None:
         below("policy/investment-budget", budget, spec.policy.investment_budget)
 
-    def capacities(asset, dimension, base, *, state=False):
+    def capacities(
+        asset: Source | Converter | Inventory,
+        dimension: str,
+        base: float,
+        *,
+        state: bool = False,
+    ) -> dict[str, np.ndarray]:
         return {
             h.name: np.asarray(
                 [
@@ -206,8 +219,10 @@ def replay_energy_system(
 
     keys = information_keys(spec)
 
-    def nonanticipative(name, data, group_keys=keys) -> None:
-        groups = {}
+    def nonanticipative(
+        name: str, data: Iterable[npt.ArrayLike], group_keys: Iterable[Hashable] = keys
+    ) -> None:
+        groups: dict[Hashable, npt.ArrayLike] = {}
         for key, value in zip(group_keys, data, strict=True):
             if key in groups:
                 equal(f"nonanticipativity/{name}/{key}", value, groups[key])
@@ -238,6 +253,7 @@ def replay_energy_system(
         )
         nonanticipative(f"unserved/{demand.name}", unserved)
     slices = chronology.slices()
+    # ``kind`` is "source" exactly for records drawn from ``spec.sources``.
     for asset, kind in [
         *((a, "source") for a in spec.sources),
         *((a, "converter") for a in spec.converters),
@@ -246,7 +262,7 @@ def replay_energy_system(
         below(f"flow-lower/{asset.name}", 0, flow)
         nonanticipative(asset.name, flow)
         availability = (
-            profile(asset.availability, n, "availability")
+            profile(cast(Source, asset).availability, n, "availability")
             if kind == "source"
             else np.ones(n)
         )
@@ -263,7 +279,7 @@ def replay_energy_system(
             region = slices[h.name]
             available = capacity[h.name] * availability[region]
             below(f"capacity/{asset.name}/{h.name}", flow[region], available)
-            if on is not None:
+            if on is not None and startup is not None:
                 below(
                     f"commit-upper/{asset.name}/{h.name}",
                     flow[region],
@@ -300,9 +316,9 @@ def replay_energy_system(
             )
         )
         if kind == "source":
-            balances[asset.point] += flow
+            balances[cast(Source, asset).point] += flow
         else:
-            for port in asset.ports:
+            for port in cast(Converter, asset).ports:
                 balances[port.point] += (
                     profile(port.coefficient, n, "port coefficient") * flow
                 )
@@ -375,7 +391,8 @@ def replay_energy_system(
                 equal(
                     f"terminal/{store.name}/{boundary.horizon}",
                     state[-1],
-                    boundary.target,
+                    # InventoryBoundary validation requires a target for fixed terminals.
+                    cast(float, boundary.target),
                 )
             elif boundary.terminal == "periodic":
                 equal(f"terminal/{store.name}/{boundary.horizon}", state[-1], state[0])
@@ -483,6 +500,7 @@ def solve_energy_system(
     replay_atol: float = 1e-6,
     replay_rtol: float = 1e-6,
 ) -> EnergySolution:
+    convex_result: ConvexProgramResult | None = None
     if compiled.binary_indices:
         policy = (
             MixedIntegerSolvePolicy(
@@ -497,14 +515,15 @@ def solve_energy_system(
     else:
         if mixed_integer_policy is not None:
             raise ValueError("A mixed-integer policy requires discrete decisions.")
-        result = solve_prepared_convex_program(compiled.prepared).result
+        convex_result = solve_prepared_convex_program(compiled.prepared).result
+        result = convex_result
     plan = decode_energy_plan(compiled, result.primal, result.objective)
     replay = replay_energy_system(compiled.spec, plan, atol=replay_atol, rtol=replay_rtol)
     # An incumbent relaxation's dual is not a mixed-integer price. Nor do
     # numerically optimal but physically invalid continuous plans get prices.
     prices = (
-        _prices(compiled, result)
-        if not compiled.binary_indices
+        _prices(compiled, convex_result)
+        if convex_result is not None
         and replay.successful
         and bool(np.asarray(result.successful))
         else None
@@ -550,14 +569,14 @@ def fixed_integer_prices(
         if isinstance(program, LinearProgram)
         else program.num_user_inequalities
     )
-    kwargs = dict(
-        equality_matrix=program.equality_matrix[:neq],
-        equality_rhs=program.equality_rhs[:neq],
-        inequality_matrix=program.inequality_matrix[:nineq],
-        inequality_rhs=program.inequality_rhs[:nineq],
-        bounds=Bounds(jnp.asarray(lower), jnp.asarray(upper)),
-        problem_id="energy-system-fixed-integer-pricing",
-    )
+    kwargs: _ProgramData = {
+        "equality_matrix": program.equality_matrix[:neq],
+        "equality_rhs": program.equality_rhs[:neq],
+        "inequality_matrix": program.inequality_matrix[:nineq],
+        "inequality_rhs": program.inequality_rhs[:nineq],
+        "bounds": Bounds(jnp.asarray(lower), jnp.asarray(upper)),
+        "problem_id": "energy-system-fixed-integer-pricing",
+    }
     priced = (
         LinearProgram(program.linear, **kwargs)
         if isinstance(program, LinearProgram)

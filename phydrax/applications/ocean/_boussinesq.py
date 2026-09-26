@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -405,7 +405,11 @@ class PreparedCartesianBoussinesqOcean(StrictModule):
 
     @property
     def prepared_algebraic_les(self) -> "PreparedMACAlgebraicLES | None":
-        return self.dynamics.base_dynamics.algebraic_les
+        # Scalar-buoyancy compilation prepares only a MACAlgebraicLESPlan here.
+        return cast(
+            "PreparedMACAlgebraicLES | None",
+            self.dynamics.base_dynamics.algebraic_les,
+        )
 
     @property
     def prepared_scalar_sgs(self) -> "PreparedMACScalarSGS | None":
@@ -435,7 +439,8 @@ class PreparedCartesianBoussinesqOcean(StrictModule):
             self.plan.reference.salinity_name: salinity,
         }
         if self.plan.ksgs_field_name is not None:
-            if self.plan.ksgs is None:
+            # sgs_kinetic_energy is None exactly when ksgs is None (checked above).
+            if self.plan.ksgs is None or sgs_kinetic_energy is None:
                 raise ValueError("Ocean KSGS field has no closure plan.")
             ksgs_state = self.plan.ksgs.initialize_state(sgs_kinetic_energy)
             scalars[self.plan.ksgs_field_name] = ksgs_state.kinetic_energy

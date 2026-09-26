@@ -8,6 +8,7 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -101,7 +102,7 @@ class GLAMMPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, *, dtype=jnp.float64) -> GLAMMState:
+    def initialize(self, *, dtype: DTypeLike = jnp.float64) -> GLAMMState:
         identity = jnp.eye(3, dtype=dtype)
         conformation = jnp.broadcast_to(identity, (self.contour_nodes, 3, 3))
         return GLAMMState(

@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -15,7 +16,7 @@ import phydrax.linalg as la
 from ..._strict import StrictModule
 
 
-def _mandel_basis(dimension: int, dtype) -> Array:
+def _mandel_basis(dimension: int, dtype: DTypeLike) -> Array:
     values = []
     for row in range(dimension):
         basis = np.zeros((dimension, dimension), dtype=np.float64)

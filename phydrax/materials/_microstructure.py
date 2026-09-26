@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 from dataclasses import dataclass
+from typing import Self
 
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -16,7 +17,7 @@ class GrainStructure:
     @classmethod
     def create(
         cls, grain_id: ArrayLike, orientation_quaternion: ArrayLike, phase_id: ArrayLike
-    ):
+    ) -> Self:
         value = cls(
             jnp.asarray(grain_id, dtype=jnp.int32),
             jnp.asarray(orientation_quaternion),

@@ -57,7 +57,9 @@ def replay_trigger_buffer(
     if arrivals_.ndim != 1:
         raise ValueError("arrivals must be a one-dimensional tick series.")
 
-    def step(occupancy, arrival):
+    def step(
+        occupancy: Array, arrival: Array
+    ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
         after_service = jnp.maximum(occupancy - plan.service_per_tick, 0)
         available = plan.capacity - after_service
         accepted = jnp.minimum(jnp.maximum(arrival, 0), available)

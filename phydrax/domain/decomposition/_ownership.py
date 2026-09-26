@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array, Key
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -43,7 +44,9 @@ class _NormalizedWeight(StrictModule, NonTrainableState):
         )
         self.index = int(index)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         values = jnp.stack(
             tuple(
                 jnp.asarray(

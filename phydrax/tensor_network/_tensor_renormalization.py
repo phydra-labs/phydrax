@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import IntEnum
 from math import isfinite, prod
 from typing import Literal, TypeAlias
@@ -309,7 +310,9 @@ class TensorRenormalizationResult(StrictModule):
         return self.diagnostics.successful
 
 
-def _operand(identifier: str, labels: tuple[str, ...], dimensions, /):
+def _operand(
+    identifier: str, labels: tuple[str, ...], dimensions: Sequence[int], /
+) -> ContractionOperand:
     return ContractionOperand(
         identifier,
         tuple(
@@ -537,7 +540,9 @@ def plan_tensor_renormalization(
     precision = tensor.precision
     dtype = str(tensor.value.dtype)
     cache = ContractionPlanCache(max(4, 2 * policy.steps))
-    shape = tuple(tensor.value.shape)
+    # UniformSquareTensor construction guarantees a rank-four value.
+    up, right, down, left = tensor.value.shape
+    shape = (up, right, down, left)
     stages: list[TensorRenormalizationStagePlan] = []
     for index in range(policy.steps):
         if isinstance(policy.method, TRGMethod):

@@ -30,14 +30,14 @@ class QnmModeTable(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        frequency,
-        damping_time,
-        mode_indices,
-        provenance,
+        frequency: ArrayLike,
+        damping_time: ArrayLike,
+        mode_indices: ArrayLike,
+        provenance: ObservationDataProvenance,
         /,
         *,
-        time_unit="geometric-time",
-        frequency_convention="cycles-per-time",
+        time_unit: str = "geometric-time",
+        frequency_convention: str = "cycles-per-time",
     ) -> None:
         if not isinstance(provenance, ObservationDataProvenance):
             raise TypeError("provenance must be ObservationDataProvenance.")

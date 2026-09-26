@@ -442,7 +442,7 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
         return self.term_evaluation(functions, key=key, **kwargs).value
 
 
-def _resolve(value: Provider | None, functions: Mapping[str, DomainFunction], /):
+def _resolve(value: Provider | None, functions: Mapping[str, DomainFunction], /) -> Any:
     return value(functions) if callable(value) else value
 
 

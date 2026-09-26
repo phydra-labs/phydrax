@@ -7,6 +7,8 @@ from __future__ import annotations
 from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
+import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -60,7 +62,7 @@ def _normalize_axis(axis: int, ndim: int, /) -> int:
     return normalized
 
 
-def _real_dtype(*arrays: Array):
+def _real_dtype(*arrays: Array) -> np.dtype:
     dtype = jnp.result_type(*(array.dtype for array in arrays), jnp.float32)
     return jnp.empty((), dtype=dtype).real.dtype
 
@@ -96,7 +98,7 @@ def _broadcast_prefix(
     prefix_shape: tuple[int, ...],
     /,
     *,
-    dtype,
+    dtype: DTypeLike,
     fill: float,
     name: str,
 ) -> Array:
@@ -117,7 +119,7 @@ def _broadcast_full(
     shape: tuple[int, ...],
     /,
     *,
-    dtype,
+    dtype: DTypeLike,
     fill: bool,
     name: str,
 ) -> Array:

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -27,7 +27,7 @@ def negative_log_likelihood(
     reduction: Reduction = "mean",
     mask: ArrayLike | None = None,
     weights: ArrayLike | None = None,
-    **parameters,
+    **parameters: Any,
 ) -> Array:
     values = -likelihood.log_prob(location, target, **parameters)
     return _reduce(values, reduction=reduction, mask=mask, weights=weights)

@@ -245,13 +245,16 @@ class HelicsValueSession:
 
     def complete_time(self) -> HelicsTimeGrant:
         self._require_mode("advancing")
+        requested_time = self._requested_time
+        # The advancing mode is entered only after a time request is recorded.
+        assert requested_time is not None
         result = self._worker.call("time_complete")
         self.time = result["time"]
         self.mode = "terminated" if result["terminated"] else "executing"
         return HelicsTimeGrant(
-            self._requested_time,
+            requested_time,
             self.time,
-            not result["terminated"] and self.time < self._requested_time,
+            not result["terminated"] and self.time < requested_time,
             result["terminated"],
             self.artifact,
         )

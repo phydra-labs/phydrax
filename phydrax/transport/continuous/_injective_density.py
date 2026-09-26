@@ -134,12 +134,14 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
         latent_size = prod(self.latent_law.event_shape)
         target_size = prod(self.event_shape)
 
-        def one(target):
+        def one(
+            target: Array,
+        ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
             latent = jnp.asarray(self.left_inverse(target))
             reconstructed = jnp.asarray(self.map(latent))
             residual = jnp.sqrt(jnp.sum((reconstructed - target) ** 2))
 
-            def flattened_map(flat_latent):
+            def flattened_map(flat_latent: Array) -> Array:
                 return jnp.asarray(
                     self.map(flat_latent.reshape(self.latent_law.event_shape))
                 ).reshape((target_size,))

@@ -710,7 +710,9 @@ class NearestCentroidModel(AbstractFittedModel):
         return jnp.where(valid, jnp.argmax(probability, axis=-1), -1).astype(jnp.int32)
 
 
-def _prepare_support(batch: MLBatch, capacity: int | None, policy: WeightPolicy):
+def _prepare_support(
+    batch: MLBatch, capacity: int | None, policy: WeightPolicy
+) -> tuple[Array, Array, Array, int]:
     cap = batch.sample_count if capacity is None else int(capacity)
     if cap <= 0:
         raise ValueError("capacity must be positive.")
@@ -727,7 +729,9 @@ def _prepare_support(batch: MLBatch, capacity: int | None, policy: WeightPolicy)
     return x, mask & feature_valid & (weight > 0), weight, cap
 
 
-def _fit_status(batch: MLBatch, support_mask: Array, capacity: int, minimum_support: int):
+def _fit_status(
+    batch: MLBatch, support_mask: Array, capacity: int, minimum_support: int
+) -> tuple[Array, Array, Array]:
     effective = jnp.sum(support_mask, axis=-1)
     exhausted = capacity < batch.sample_count
     sufficient = effective >= minimum_support

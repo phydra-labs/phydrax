@@ -16,7 +16,12 @@ from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..linalg import ArraySpace, DenseLinearOperator, OperatorProperties
+from ..linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    OperatorProperties,
+    PropertyEvidence,
+)
 from ._hydrodynamic_mobility import (
     _active_slots,
     AbstractHydrodynamicMobilityPlan,
@@ -75,7 +80,7 @@ def _dense_matrix(blocks: Array) -> Array:
 
 
 def _positive_properties(*, definite: bool) -> OperatorProperties:
-    evidence = {
+    evidence: dict[str, PropertyEvidence] = {
         "self_adjoint": "construction",
         "positive_semidefinite": "construction",
     }

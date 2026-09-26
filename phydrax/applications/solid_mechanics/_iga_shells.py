@@ -14,7 +14,7 @@ from ._iga_solids import _identifier, _prepared
 def _surface(value: SurfaceEmbeddingCertificate, /) -> SurfaceEmbeddingCertificate:
     if not isinstance(value, SurfaceEmbeddingCertificate):
         raise TypeError("surface_certificate must be a SurfaceEmbeddingCertificate.")
-    if not bool(value.passed):
+    if not bool(value.accepted):
         raise ValueError("surface_certificate did not pass; shell lowering fails closed.")
     return value
 

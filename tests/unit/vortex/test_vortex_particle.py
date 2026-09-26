@@ -146,6 +146,36 @@ def test_pse_is_exactly_conservative_for_unequal_particle_volumes():
     assert bool(evaluation.successful)
 
 
+def test_pse_particle_box_exchanges_only_through_periodic_axes():
+    source = phx.discretization.VortexSourceState(
+        jnp.asarray(((0.02, 0.5), (0.98, 0.5))),
+        jnp.asarray((1.0, -1.0)),
+        volume=jnp.asarray((0.1, 0.1)),
+    )
+    periodic = phx.operators.GaussianParticleStrengthExchangePlan(
+        2, 0.05, box=phx.discretization.ParticleBox([0.0, 0.0], [1.0, 1.0])
+    )
+    walled = phx.operators.GaussianParticleStrengthExchangePlan(
+        2,
+        0.05,
+        box=phx.discretization.ParticleBox(
+            [0.0, 0.0], [1.0, 1.0], periodic_axes=(False, False)
+        ),
+    )
+    periodic_rate = periodic.prepare(capacity=2, dimension=2).evaluate(source, 0.01).rate
+    walled_rate = walled.prepare(capacity=2, dimension=2).evaluate(source, 0.01).rate
+
+    assert periodic.capabilities.domain == "periodic"
+    assert walled.capabilities.domain == "free-space"
+    assert float(periodic_rate[0]) < 0.0 < float(periodic_rate[1])
+    np.testing.assert_allclose(jnp.sum(periodic_rate), 0.0, atol=1e-14)
+    np.testing.assert_allclose(walled_rate, 0.0, atol=0.0)
+    with pytest.raises(ValueError, match="less than half each period"):
+        phx.operators.GaussianParticleStrengthExchangePlan(
+            2, 0.2, box=phx.discretization.ParticleBox([0.0, 0.0], [1.0, 1.0])
+        )
+
+
 def test_compiled_2d_pair_is_differentiable_and_keeps_mass_distinct_from_circulation():
     particles = _particles(2, 2)
     properties = phx.discretization.VortexParticleProperties(

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable, Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -177,7 +178,7 @@ class FourierModalLayer(StrictModule):
         factorization: AbstractFourierFactorizationPlan,
         /,
         *,
-        translation: ArrayLike = (0.0, 0.0),
+        translation: ArrayLike | Sequence[float] = (0.0, 0.0),
         layer_id: str,
     ) -> None:
         if not isinstance(material, FrequencyMaxwellMaterial):
@@ -250,7 +251,7 @@ class ContinuousZIntegrationPolicy(StrictModule, NonTrainableState):
 class ContinuousFourierModalLayer(StrictModule):
     """Finite continuously varying z-profile with a prepared segment epoch."""
 
-    material_profile: object
+    material_profile: Callable[[Array], FrequencyMaxwellMaterial]
     thickness: Array
     factorization: AbstractFourierFactorizationPlan
     integration_policy: ContinuousZIntegrationPolicy
@@ -258,7 +259,7 @@ class ContinuousFourierModalLayer(StrictModule):
 
     def __init__(
         self,
-        material_profile,
+        material_profile: Callable[[Array], FrequencyMaxwellMaterial],
         thickness: ArrayLike,
         factorization: AbstractFourierFactorizationPlan,
         integration_policy: ContinuousZIntegrationPolicy,

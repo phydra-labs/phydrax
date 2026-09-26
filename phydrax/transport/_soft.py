@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any, overload
 
 import equinox as eqx
@@ -133,7 +134,7 @@ def soft_sort(
     weight_data = _weight_data(weights, data, position, dims=dims)
     configured = _soft_solver(epsilon, solver)
 
-    def one(vector, vector_weights):
+    def one(vector: Array, vector_weights: Array) -> Array:
         result = soft_order_transport(
             vector,
             weights=vector_weights,
@@ -185,7 +186,7 @@ def soft_rank(
     count = data.shape[position]
     target_ranks = jnp.arange(count, dtype=data.dtype)
 
-    def one(vector, vector_weights):
+    def one(vector: Array, vector_weights: Array) -> Array:
         result = soft_order_transport(
             vector,
             weights=vector_weights,
@@ -253,7 +254,7 @@ def soft_sort_by(
     payloads = moved_payload.reshape((-1, count))
     weight_rows = moved_weights.reshape((-1, count))
 
-    def one(vector, values_, vector_weights):
+    def one(vector: Array, values_: Array, vector_weights: Array) -> Array:
         result = soft_order_transport(
             vector,
             weights=vector_weights,
@@ -327,7 +328,7 @@ def soft_topk_mask(
         ]
     )
 
-    def one(vector, vector_weights):
+    def one(vector: Array, vector_weights: Array) -> Array:
         result = soft_order_transport(
             vector,
             weights=vector_weights,
@@ -472,7 +473,7 @@ def soft_quantile(
     positions = quantiles.reshape((-1,)) * float(max(count - 1, 0))
     grid = jnp.arange(count, dtype=data.dtype)
 
-    def interpolate(row, original, vector_weights):
+    def interpolate(row: Array, original: Array, vector_weights: Array) -> Array:
         values_ = linear_interpolate(grid, row, positions).values
         lower = jnp.min(jnp.where(vector_weights > 0.0, original, jnp.inf))
         upper = jnp.max(jnp.where(vector_weights > 0.0, original, -jnp.inf))
@@ -552,7 +553,7 @@ def soft_quantile_normalize(
     reference_bins = reference_result.barycentric_source_to_target(reference_values)
     weight_data = _weight_data(weights, data, position, dims=dims)
 
-    def one(vector, vector_weights):
+    def one(vector: Array, vector_weights: Array) -> Array:
         result = soft_order_transport(
             vector,
             weights=vector_weights,
@@ -608,7 +609,7 @@ def soft_quantize(
     weight_data = _weight_data(weights, data, position, dims=dims)
     configured = _soft_solver(epsilon, solver)
 
-    def one(vector, vector_weights):
+    def one(vector: Array, vector_weights: Array) -> Array:
         result = soft_order_transport(
             vector,
             weights=vector_weights,
@@ -717,7 +718,12 @@ def _weight_data(
     return jnp.broadcast_to(raw, data.shape)
 
 
-def _map_same_axis(data, weights, position, operation):
+def _map_same_axis(
+    data: Array,
+    weights: Array,
+    position: int,
+    operation: Callable[[Array, Array], Array],
+) -> Array:
     moved = jnp.moveaxis(data, position, -1)
     moved_weights = jnp.moveaxis(weights, position, -1)
     leading_shape = moved.shape[:-1]
@@ -770,7 +776,9 @@ def inverse_sigmoid_order_reconstruction(
     if not isinstance(plan, AbstractBalancedTransportPlan):
         raise TypeError("plan must be an AbstractBalancedTransportPlan.")
     source = _vector(source_values, name="source_values")
-    if source.shape[0] != plan.problem.shape[0]:
+    # The source atom count is read from the marginal's abstract shape, which every
+    # balanced plan exposes; `problem` is not part of the abstract plan contract.
+    if source.shape[0] != jax.eval_shape(plan.source_marginal).shape[0]:
         raise ValueError("source_values must match the plan source atom count.")
     margin_ = float(margin)
     if not math.isfinite(margin_) or not 0.0 < margin_ < 0.5:

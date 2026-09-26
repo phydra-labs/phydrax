@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import abc
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +21,10 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .fem._cell_map import PreparedFiniteElementCellMap
+
+
+# (reference points, converged, first converged iteration, ever-valid geometry)
+_NewtonCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class CellLocationStatus(IntEnum):
@@ -250,7 +255,7 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
         reference_flat = reference.reshape((-1, reference_dimension))
         ever_valid_geometry = jnp.zeros_like(converged)
 
-        def newton_step(iteration, carry):
+        def newton_step(iteration: Array, carry: _NewtonCarry) -> _NewtonCarry:
             current_reference, current_converged, first, ever_valid = carry
             evaluation = self.cell_map.evaluate(
                 self.coordinates,

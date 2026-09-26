@@ -13,8 +13,10 @@ from phydrax.transport._fast_order import (
 )
 from phydrax.transport._ordering import (
     HardOrdering,
+    ordered_ranks,
     ordered_values,
     PAVOrdering,
+    SinkhornOrdering,
     straight_through_sort,
 )
 
@@ -43,6 +45,20 @@ def test_straight_through_sort_separates_hard_forward_and_soft_gradient():
         lambda value: jnp.sum(straight_through_sort(value, PAVOrdering(0.5)) ** 2)
     )(values)
     assert jnp.all(jnp.isfinite(gradient))
+
+
+def test_sinkhorn_ordering_dispatch_orders_both_directions():
+    values = jnp.asarray([3.0, -1.0, 2.0, 0.5])
+    method = SinkhornOrdering(0.1)
+    ascending = ordered_values(values, method)
+    descending = ordered_values(values, method, descending=True)
+    assert jnp.allclose(descending, jnp.flip(ascending))
+    assert jnp.all(jnp.diff(ascending) > 0.0)
+    ranks = ordered_ranks(values, method)
+    descending_ranks = ordered_ranks(values, method, descending=True)
+    assert jnp.allclose(descending_ranks, values.shape[0] - 1 - ranks)
+    hard_ranks = ordered_ranks(values, HardOrdering())
+    assert jnp.array_equal(jnp.argsort(ranks), jnp.argsort(hard_ranks))
 
 
 def test_relaxed_discrete_samples_are_replayable_and_hard_top_k_is_exact():

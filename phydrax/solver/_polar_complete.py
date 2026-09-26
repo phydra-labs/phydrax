@@ -139,7 +139,7 @@ class MultiAxisAirfoilPolar(StrictModule, NonTrainableState):
                 for query in queries
             )
 
-        def interpolate(table):
+        def interpolate(table: Array) -> Array:
             value = jnp.zeros(shape, dtype=table.dtype)
             for corner in itertools.product((0, 1), repeat=4):
                 weight = jnp.ones(shape, dtype=table.dtype)

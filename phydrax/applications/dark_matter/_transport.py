@@ -131,7 +131,7 @@ class RadialSignedDistanceGuard(StrictModule, NonTrainableState):
         self.geometry = geometry
         self.frame_id = frame
 
-    def __call__(self, time: Array, state: Array, args=None, /) -> Array:
+    def __call__(self, time: Array, state: Array, args: object = None, /) -> Array:
         del time, args
         return self.geometry.signed_distance(jnp.asarray(state[:3])[None, :])[0]
 
@@ -150,7 +150,7 @@ class RadialGravityDrift(StrictModule):
             )
         self.profile = profile
 
-    def __call__(self, time: Array, state: Array, args=None, /) -> Array:
+    def __call__(self, time: Array, state: Array, args: object = None, /) -> Array:
         del time, args
         position = state[:3]
         velocity = state[3:]
@@ -214,7 +214,9 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
             }
         )
 
-    def intensities(self, t: ArrayLike, state: ArrayLike, args=None, /) -> Array:
+    def intensities(
+        self, t: ArrayLike, state: ArrayLike, args: object = None, /
+    ) -> Array:
         del t, args
         packed = jnp.asarray(state)
         evaluation = self.profile.evaluate(packed[:3])
@@ -231,7 +233,7 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
         t: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,
-        args=None,
+        args: object = None,
         /,
     ) -> Array:
         del t, args
@@ -265,7 +267,7 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
         state: ArrayLike,
         channel: ArrayLike,
         mark: ArrayLike,
-        args=None,
+        args: object = None,
         /,
     ) -> Array:
         del args

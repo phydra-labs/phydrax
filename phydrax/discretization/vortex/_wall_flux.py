@@ -182,7 +182,13 @@ class WallCrossingPlan(StrictModule, NonTrainableState):
     policy_id: str = eqx.field(static=True)
 
     def __init__(
-        self, signed_distance, normal, /, *, policy: str, policy_id: str
+        self,
+        signed_distance: Callable[[Array], Array],
+        normal: Callable[[Array], Array],
+        /,
+        *,
+        policy: str,
+        policy_id: str,
     ) -> None:
         if (
             not callable(signed_distance)
@@ -247,7 +253,7 @@ class WallCrossingPlan(StrictModule, NonTrainableState):
         )
 
 
-def jax_vmap(function, values):
+def jax_vmap(function: Callable[[Array], Array], values: Array) -> Array:
     import jax
 
     return jax.vmap(function)(values)

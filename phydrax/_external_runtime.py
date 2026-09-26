@@ -23,12 +23,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, BinaryIO, Literal, TypeAlias
+from typing import Any, BinaryIO, Literal, TYPE_CHECKING, TypeAlias
 
 import jax
 import jax.core
 import jax.numpy as jnp
 import numpy as np
+from numpy.typing import DTypeLike
 
 from ._external_resource import read_bounded_resource, ResourceLimits
 from ._external_worker import (
@@ -1039,6 +1040,12 @@ class ExternalTensorSpec:
     name: str
     shape: tuple[int, ...]
     dtype: str
+
+    if TYPE_CHECKING:
+        # __post_init__ normalizes shape to a tuple and dtype to `numpy.dtype.str`.
+        def __init__(
+            self, name: str, shape: Sequence[int | np.integer], dtype: DTypeLike
+        ) -> None: ...
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():

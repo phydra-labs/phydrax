@@ -195,7 +195,7 @@ def solve_mpax(
     *,
     initial_primal_solution: Any = None,
     initial_dual_solution: Any = None,
-):
+) -> Any:
     """Execute MPAX on one already converted LP/QP model."""
 
     if not isinstance(prepared, PreparedMPAX):

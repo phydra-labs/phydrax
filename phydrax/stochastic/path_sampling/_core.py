@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax
@@ -45,8 +45,8 @@ class StateRegionPlan(StrictModule, NonTrainableState):
         self,
         *,
         kind: str,
-        lower: ArrayLike = (),
-        upper: ArrayLike = (),
+        lower: ArrayLike | Sequence[float] = (),
+        upper: ArrayLike | Sequence[float] = (),
         children: tuple[StateRegionPlan, ...] = (),
         predicate: Callable[[Array], Array] | None = None,
         region_id: str,
@@ -127,7 +127,10 @@ class StateRegionPlan(StrictModule, NonTrainableState):
             axes = tuple(range(value.ndim - self.lower.ndim, value.ndim))
             return jnp.all((value >= self.lower) & (value < self.upper), axis=axes)
         if self.kind == "predicate":
-            result = jnp.asarray(self.predicate(value))
+            predicate = self.predicate
+            # The constructor requires a callable predicate for predicate regions.
+            assert predicate is not None
+            result = jnp.asarray(predicate(value))
             if result.dtype != jnp.bool_:
                 raise TypeError("Region predicates must return Boolean masks.")
             if result.ndim >= value.ndim:

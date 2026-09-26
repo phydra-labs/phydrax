@@ -36,7 +36,10 @@ from phydrax.nn.layers._measure_attention import (
     AttentionKernel,
     MeasureAwareAttention,
 )
-from phydrax.nn.operator.architectures.attention._upt import _feature_norm_regularity
+from phydrax.nn.operator.architectures.attention._upt import (
+    _ChanneledAttentionOptions,
+    _feature_norm_regularity,
+)
 from phydrax.nn.operator.architectures.spectral._fno import Factorization, SpectralConvND
 from phydrax.nn.operator.data import (
     FunctionSamples,
@@ -401,17 +404,17 @@ class CoDANO(AbstractEncodedOperatorModel):
             )
             for name in self.source_names
         )
-        attention_kwargs = dict(
-            source_channels=self.width,
-            query_channels=self.width,
-            out_channels=self.width,
-            num_heads=int(num_heads),
-            head_dim=int(head_dim),
-            kernel=attention_kernel,
-            execution=attention_execution,
-            block_size=attention_block_size,
-            accumulation_dtype=accumulation_dtype,
-        )
+        attention_kwargs: _ChanneledAttentionOptions = {
+            "source_channels": self.width,
+            "query_channels": self.width,
+            "out_channels": self.width,
+            "num_heads": int(num_heads),
+            "head_dim": int(head_dim),
+            "kernel": attention_kernel,
+            "execution": attention_execution,
+            "block_size": attention_block_size,
+            "accumulation_dtype": accumulation_dtype,
+        }
         self.source_transfer = tuple(
             MeasureAwareAttention(
                 key=_named_key(key, f"source_transfer:{name}"),

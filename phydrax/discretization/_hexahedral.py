@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -82,7 +85,7 @@ class HexahedralConnectivity(StrictModule, NonTrainableState):
         return jnp.asarray(rows, dtype=jnp.int32)
 
 
-def _cycle_permutation(cycle, canonical):
+def _cycle_permutation(cycle: Sequence[int], canonical: Sequence[int]) -> tuple[int, ...]:
     permutation = tuple(canonical.index(vertex) for vertex in cycle)
     if tuple(sorted(permutation)) != (0, 1, 2, 3):
         raise ValueError("Hex face does not contain its canonical vertices.")
@@ -95,7 +98,7 @@ def _cycle_permutation(cycle, canonical):
     return permutation
 
 
-def _canonical_cycle(cycle):
+def _canonical_cycle(cycle: list[int]) -> tuple[int, ...]:
     rotations = tuple(tuple(cycle[shift:] + cycle[:shift]) for shift in range(len(cycle)))
     reversed_cycle = list(reversed(cycle))
     reflected = tuple(
@@ -105,17 +108,17 @@ def _canonical_cycle(cycle):
     return min(rotations + reflected)
 
 
-def _cycle_sign(cycle, canonical):
+def _cycle_sign(cycle: Sequence[int], canonical: Sequence[int]) -> float:
     permutation = _cycle_permutation(cycle, canonical)
     return 1.0 if (permutation[1] - permutation[0]) % 4 == 1 else -1.0
 
 
 def _quadrilateral_tensor_permutation(
-    vertex_permutation,
+    vertex_permutation: Iterable[int],
     width_u: int,
     width_v: int,
     /,
-):
+) -> npt.NDArray[np.int32]:
     """Map one local C-order tensor grid to canonical face positions."""
 
     permutation = tuple(vertex_permutation)
@@ -268,10 +271,10 @@ def hexahedral_cell_complex(
     vertex_count: int,
     /,
     *,
-    vertex_global_ids=None,
-    edge_global_ids=None,
-    face_global_ids=None,
-    cell_global_ids=None,
+    vertex_global_ids: ArrayLike | None = None,
+    edge_global_ids: ArrayLike | None = None,
+    face_global_ids: ArrayLike | None = None,
+    cell_global_ids: ArrayLike | None = None,
 ) -> CellComplexTopology:
     c = hexahedral_connectivity(hexahedra, vertex_count)
     edges = np.asarray(c.edges)

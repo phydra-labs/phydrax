@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import abc
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 import equinox as eqx
@@ -337,7 +337,7 @@ class VariableSectorProposal(AbstractProposal):
         space: VariableSectorSpace,
         /,
         *,
-        move_weights: Sequence[float] = (1.0, 1.0, 4.0, 1.0, 0.5, 0.5),
+        move_weights: Iterable[float] = (1.0, 1.0, 4.0, 1.0, 0.5, 0.5),
         birth_species_probabilities: ArrayLike | None = None,
         pair_species: ArrayLike | None = None,
         pair_probabilities: ArrayLike | None = None,
@@ -520,7 +520,7 @@ class VariableSectorProposal(AbstractProposal):
         kind = jr.categorical(kind_key, self._kind_log_probabilities(configuration))
         count = configuration.particle_count
 
-        def birth(_):
+        def birth(_: None) -> VariableParticleConfiguration:
             species = jr.categorical(
                 choice_key, jnp.log(self.birth_species_probabilities)
             )
@@ -529,11 +529,11 @@ class VariableSectorProposal(AbstractProposal):
             )
             return configuration.append(coordinate, species)
 
-        def death(_):
+        def death(_: None) -> VariableParticleConfiguration:
             index = jr.randint(choice_key, (), 0, jnp.maximum(count, 1))
             return configuration.remove(index)
 
-        def displacement(_):
+        def displacement(_: None) -> VariableParticleConfiguration:
             index = jr.randint(choice_key, (), 0, jnp.maximum(count, 1))
             delta = self.displacement_scale * jr.normal(
                 first_key, (self.space.dimension,), dtype=configuration.coordinates.dtype
@@ -544,7 +544,7 @@ class VariableSectorProposal(AbstractProposal):
                 configuration.species,
             )
 
-        def exchange(_):
+        def exchange(_: None) -> VariableParticleConfiguration:
             candidate = self._exchange_candidate_mask(configuration).reshape((-1,))
             flat = jr.categorical(choice_key, jnp.where(candidate, 0.0, -jnp.inf))
             first = flat // self.space.capacity
@@ -555,7 +555,7 @@ class VariableSectorProposal(AbstractProposal):
                 configuration.coordinates, configuration.active_mask, swapped
             )
 
-        def pair_birth(_):
+        def pair_birth(_: None) -> VariableParticleConfiguration:
             pair_index = jr.categorical(choice_key, jnp.log(self.pair_probabilities))
             labels = self.pair_species[pair_index]
             pair_center = 0.5 * (self.location[labels[0]] + self.location[labels[1]])
@@ -569,7 +569,7 @@ class VariableSectorProposal(AbstractProposal):
                 center + relative, labels[0], center - relative, labels[1]
             )
 
-        def pair_death(_):
+        def pair_death(_: None) -> VariableParticleConfiguration:
             candidate = self._pair_candidate_mask(configuration).reshape((-1,))
             flat = jr.categorical(choice_key, jnp.where(candidate, 0.0, -jnp.inf))
             first = flat // self.space.capacity
@@ -675,7 +675,7 @@ class VariableSectorProposal(AbstractProposal):
             jnp.meshgrid(slots, slots, indexing="ij"), axis=-1
         ).reshape((-1, 2))
 
-        def exchanged(pair):
+        def exchanged(pair: Array) -> VariableParticleConfiguration:
             first, second = pair[0], pair[1]
             labels = source.species
             swapped = labels.at[first].set(labels[second]).at[second].set(labels[first])
@@ -956,13 +956,18 @@ class ContinuumKineticOperator(AbstractVariableSectorLocalOperator):
         self.plan = plan_
         self.operator_id = identifier
 
-    def local_value(self, model, configuration, /) -> VariableSectorLocalEstimate:
+    def local_value(
+        self,
+        model: Callable[[VariableParticleConfiguration], LogAmplitude],
+        configuration: VariableParticleConfiguration,
+        /,
+    ) -> VariableSectorLocalEstimate:
         if not callable(model):
             raise TypeError("model must be callable.")
         shape = (self.space.capacity, self.space.dimension)
         flat = configuration.coordinates.reshape((-1,))
 
-        def components(coordinates):
+        def components(coordinates: Array) -> Array:
             candidate = VariableParticleConfiguration(
                 coordinates.reshape(shape),
                 configuration.active_mask,
@@ -974,7 +979,7 @@ class ContinuumKineticOperator(AbstractVariableSectorLocalOperator):
         jacobian = jax.jacrev(components)
         component_gradient = jacobian(flat)
 
-        def diagonal(direction):
+        def diagonal(direction: Array) -> Array:
             _, tangent = jax.jvp(jacobian, (flat,), (direction,))
             return contract("ad,d->a", tangent, direction)
 
@@ -1063,7 +1068,12 @@ class ExternalPotentialOperator(AbstractVariableSectorLocalOperator):
         self.potential_id = potential_identifier
         self.operator_id = identifier
 
-    def local_value(self, model, configuration, /):
+    def local_value(
+        self,
+        model: Callable[[VariableParticleConfiguration], LogAmplitude],
+        configuration: VariableParticleConfiguration,
+        /,
+    ) -> VariableSectorLocalEstimate:
         del model
         values = jax.vmap(self.potential)(
             configuration.coordinates, configuration.species
@@ -1149,7 +1159,12 @@ class QuadraticExternalPotential(AbstractVariableSectorLocalOperator):
         self.offsets = jnp.asarray(offset)
         self.operator_id = identifier
 
-    def local_value(self, model, configuration, /):
+    def local_value(
+        self,
+        model: Callable[[VariableParticleConfiguration], LogAmplitude],
+        configuration: VariableParticleConfiguration,
+        /,
+    ) -> VariableSectorLocalEstimate:
         del model
         labels = jnp.clip(configuration.species, 0, self.space.species_count - 1)
         delta = configuration.coordinates - self.centers[labels]
@@ -1223,7 +1238,12 @@ class PairPotentialOperator(AbstractVariableSectorLocalOperator):
         self.power = power_
         self.operator_id = identifier
 
-    def local_value(self, model, configuration, /):
+    def local_value(
+        self,
+        model: Callable[[VariableParticleConfiguration], LogAmplitude],
+        configuration: VariableParticleConfiguration,
+        /,
+    ) -> VariableSectorLocalEstimate:
         del model
         pair = (
             configuration.active_mask[:, None]
@@ -1304,7 +1324,12 @@ class ContactInteractionOperator(AbstractVariableSectorLocalOperator):
         self.width = width_
         self.operator_id = identifier
 
-    def local_value(self, model, configuration, /):
+    def local_value(
+        self,
+        model: Callable[[VariableParticleConfiguration], LogAmplitude],
+        configuration: VariableParticleConfiguration,
+        /,
+    ) -> VariableSectorLocalEstimate:
         del model
         pair = (
             configuration.active_mask[:, None]
@@ -1442,7 +1467,12 @@ class ParticleChangingLocalOperator(AbstractVariableSectorLocalOperator):
         self.quadrature_targets = targets
         self.operator_id = identifier
 
-    def local_value(self, model, configuration, /):
+    def local_value(
+        self,
+        model: Callable[[VariableParticleConfiguration], LogAmplitude],
+        configuration: VariableParticleConfiguration,
+        /,
+    ) -> VariableSectorLocalEstimate:
         current = model(configuration)
         if not isinstance(current, LogAmplitude):
             raise TypeError("model must return LogAmplitude.")
@@ -1469,8 +1499,8 @@ class ParticleChangingLocalOperator(AbstractVariableSectorLocalOperator):
                 )
             creation = jnp.sum(jnp.stack(deletion_terms))
 
-            def insertion_integrand(points):
-                def at_point(point):
+            def insertion_integrand(points: Array) -> Array:
+                def at_point(point: Array) -> Array:
                     inserted = model(configuration.append(point, jnp.asarray(species)))
                     ratio = amplitude_ratio(inserted, current)
                     return ratio.value * jnp.conj(self.mode(point, jnp.asarray(species)))
@@ -1551,7 +1581,12 @@ class VariableSectorHamiltonian(AbstractVariableSectorLocalOperator):
         self.terms = terms_
         self.operator_id = identifier
 
-    def local_value(self, model, configuration, /):
+    def local_value(
+        self,
+        model: Callable[[VariableParticleConfiguration], LogAmplitude],
+        configuration: VariableParticleConfiguration,
+        /,
+    ) -> VariableSectorLocalEstimate:
         estimates = tuple(term.local_value(model, configuration) for term in self.terms)
         valid = jnp.all(jnp.stack(tuple(value.valid for value in estimates)))
         status = jnp.max(jnp.stack(tuple(value.status for value in estimates)))

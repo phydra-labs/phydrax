@@ -299,6 +299,48 @@ def test_verlet_fused_hierarchical_and_batched_paths_preserve_authority():
         )
 
 
+@pytest.mark.parametrize(
+    "mode",
+    [
+        phx.discretization.DEMBatchExecutionMode.ALWAYS_BUILD,
+        phx.discretization.DEMBatchExecutionMode.UNIFORM_REBUILD,
+    ],
+)
+def test_batched_verlet_step_without_neighborhood_cache_is_rejected(mode):
+    box = phx.discretization.ParticleBox(
+        jnp.asarray([-1.0, -1.0]),
+        jnp.asarray([1.0, 1.0]),
+        periodic_axes=(False, False),
+    )
+    base = phx.discretization.CellListParticleNeighborhoodPlan(1.2, 2, 1, box)
+    compiled = _compile(
+        phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
+        neighborhood=phx.discretization.VerletParticleNeighborhoodPlan(base, 1.0, 0.2),
+    )
+    positions = jnp.asarray([[-0.45, 0.0], [0.45, 0.0]])
+    batch = phx.discretization.initialize_dem_batch(
+        compiled.dynamics,
+        jnp.asarray(0.0),
+        jnp.stack((positions, positions)),
+        jnp.zeros((2, 2, 2)),
+    )
+    uncached = eqx.tree_at(
+        lambda value: value.neighborhood_cache,
+        batch,
+        None,
+        is_leaf=lambda value: value is None,
+    )
+    with pytest.raises(ValueError, match="requires a neighborhood cache"):
+        phx.discretization.batch_step_detailed(
+            compiled.dynamics,
+            uncached,
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0.0),
+            jnp.asarray(1.0e-5),
+            phx.discretization.DEMBatchExecutionPlan(mode),
+        )
+
+
 def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational():
     compiled = _compile(
         phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),

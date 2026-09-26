@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
 
 import equinox as eqx
@@ -138,7 +139,7 @@ class ChemicalSpeciesSchema(StrictModule, NonTrainableState):
     def __init__(
         self,
         catalog: ChemicalComponentCatalog,
-        species_names,
+        species_names: Iterable[str],
         species_component_indices: ArrayLike,
         phase_specs: tuple[ChemicalPhaseSpec, ...],
         species_phase_indices: ArrayLike,
@@ -219,10 +220,10 @@ class ChemicalSpeciesSchema(StrictModule, NonTrainableState):
     @classmethod
     def from_unique_species(
         cls,
-        species_names,
-        phases,
+        species_names: Iterable[str],
+        phases: Iterable[ChemicalPhaseKind],
         molar_masses: ArrayLike,
-        element_names,
+        element_names: Sequence[str],
         element_composition: ArrayLike,
         charges: ArrayLike,
         /,

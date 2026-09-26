@@ -283,7 +283,7 @@ def _generator_batch(
     controls: Array,
     /,
 ) -> Array:
-    def evaluate(state, value, control):
+    def evaluate(state: Array, value: Array, control: Array) -> Array:
         result = jnp.asarray(problem.generator(time, state, value, control, problem.args))
         if result.shape != problem.output_shape:
             raise ValueError("BSDE generator returned an incompatible output shape.")
@@ -293,7 +293,7 @@ def _generator_batch(
 
 
 def _terminal_batch(problem: BSDEProblem, states: Array, /) -> Array:
-    def evaluate(state):
+    def evaluate(state: Array) -> Array:
         result = jnp.asarray(problem.terminal(state, problem.args))
         if result.shape != problem.output_shape:
             raise ValueError(

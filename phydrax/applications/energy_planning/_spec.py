@@ -8,7 +8,7 @@ carrier amount, never a state-of-charge fraction. Compilation is a host operatio
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import numpy as np
@@ -312,7 +312,8 @@ class Chronology(StrictModule):
                     )
                 known = {}
                 for h in members:
-                    path = tree.ancestors(h.scenario)
+                    # The horizon loop above rejected scenario-tree horizons without a scenario.
+                    path = tree.ancestors(cast(str, h.scenario))
                     for t, duration in enumerate(h.durations):
                         key = (path[min(h.stage_start + t, len(path) - 1)], t)
                         value = (float(duration), h.multiplicity)
@@ -430,8 +431,10 @@ class Investment(StrictModule):
             return False
         if self.scenario_node is None:
             return True
-        tree = chronology.scenario_tree
-        if self.scenario_node not in tree.ancestors(horizon.scenario):
+        # EnergySystem validation requires a tree (and horizon scenarios) for scenario
+        # investments.
+        tree = cast(ScenarioTree, chronology.scenario_tree)
+        if self.scenario_node not in tree.ancestors(cast(str, horizon.scenario)):
             return False
         decision_stage = next(
             node.stage for node in tree.nodes if node.name == self.scenario_node
@@ -451,7 +454,10 @@ class Investment(StrictModule):
         probability = (
             1.0
             if self.scenario_node is None
-            else chronology.scenario_tree.probability(self.scenario_node)
+            # EnergySystem validation requires a tree for scenario investments.
+            else cast(ScenarioTree, chronology.scenario_tree).probability(
+                self.scenario_node
+            )
         )
         return (
             self.capital_cost

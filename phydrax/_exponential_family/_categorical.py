@@ -8,7 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from .._classification import categorical_log_prob_from_logits
 from ._contracts import (
@@ -138,7 +138,7 @@ class CategoricalFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

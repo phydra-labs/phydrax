@@ -299,7 +299,7 @@ class DampedLocalRootSolver(StrictModule, NonTrainableState):
     ) -> LocalRootSolveResult:
         initial = jnp.asarray(initial_guess)
 
-        def iteration(_, value):
+        def iteration(_: int, value: Array) -> Array:
             defect = residual(value, args)
             return value - self.damping * defect
 

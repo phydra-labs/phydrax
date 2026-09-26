@@ -205,7 +205,9 @@ class AbelianLPDO(StrictModule):
         )
 
     def trace(self, /) -> Array:
-        return sum(jnp.real(jnp.vdot(value, value)) for value in self.factors)
+        return jnp.asarray(
+            sum(jnp.real(jnp.vdot(value, value)) for value in self.factors)
+        )
 
     def density_blocks(self, /) -> tuple[Array, ...]:
         return tuple(value @ jnp.conj(value.T) for value in self.factors)

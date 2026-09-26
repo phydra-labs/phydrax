@@ -4,8 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Literal, Protocol, runtime_checkable
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, cast, Literal, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
@@ -76,7 +76,7 @@ _ObjectiveTermMode = Literal["plain", "sampled", "adaptive_population"]
 
 
 def _terms_tuple(
-    value: AbstractScalarTerm | Sequence[AbstractScalarTerm],
+    value: AbstractScalarTerm | Iterable[object],
     /,
     *,
     name: str,
@@ -87,10 +87,11 @@ def _terms_tuple(
         raise TypeError(
             f"All {name} must be scalar terms; got {tuple(type(term).__name__ for term in invalid)!r}."
         )
-    return terms
+    # Every element was validated as an AbstractScalarTerm above.
+    return cast("tuple[AbstractScalarTerm, ...]", terms)
 
 
-def _adaptive_policy(term: AbstractScalarTerm, /):
+def _adaptive_policy(term: AbstractScalarTerm, /) -> Any:
     if not isinstance(term, (ResidualPenalty, IntegralFunctional)) or not isinstance(
         term.source, AdaptiveIntegration
     ):
@@ -295,7 +296,9 @@ def _prepare_slots(
                 payload = policy.loss_realization(slot.population)
             else:
                 batch, local_weight = policy.loss_batch_and_weight(slot.population)
-                payload = slot.term._adaptive_realization(
+                # _adaptive_policy admits only ResidualPenalty or IntegralFunctional.
+                penalty = cast("ResidualPenalty", slot.term)
+                payload = penalty._adaptive_realization(
                     batch,
                     local_weight,
                     key=term_key,

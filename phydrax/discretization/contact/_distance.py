@@ -411,7 +411,9 @@ def edge_edge_distance(
     )
     coefficients = jnp.sum(selector[..., :, None] * candidate_coefficients, axis=-2)
 
-    def endpoint_feature(raw, left_endpoint, right_first, right_second):
+    def endpoint_feature(
+        raw: Array, left_endpoint: int, right_first: int, right_second: int
+    ) -> Array:
         return jnp.where(
             raw <= 0.0,
             right_first,

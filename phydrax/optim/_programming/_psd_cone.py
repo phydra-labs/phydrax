@@ -37,7 +37,9 @@ def _positive_semidefinite_part(matrix: Array, /) -> Array:
 
 
 @_positive_semidefinite_part.defjvp
-def _positive_semidefinite_part_jvp(primals, tangents):
+def _positive_semidefinite_part_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (matrix,) = primals
     (tangent,) = tangents
     working_dtype = jnp.result_type(matrix.dtype, jnp.float32)

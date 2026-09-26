@@ -173,3 +173,67 @@ def test_provider_capability_mismatch_is_explicit_not_silently_accepted():
     )
     assert record.status is ProviderExecutionStatus.CAPABILITY_MISMATCH
     assert not record.successful
+
+
+def _packed_event(nominal_name):
+    catalog = phx.particle_physics.ParticleCatalogReference(
+        source_id="pdg-test",
+        provider_release="test",
+        checksum="catalog-checksum",
+        citation_url="https://pdg.lbl.gov/",
+    )
+    plan = phx.particle_physics.ParticleEventPlan(
+        catalog=catalog,
+        momentum_unit=phx.units.GIGAELECTRONVOLT,
+        length_unit=phx.units.MILLIMETER,
+        time_unit=phx.units.NANOSECOND,
+        event_capacity=1,
+        particle_capacity=1,
+        vertex_capacity=1,
+        provider_status_namespace="provider-x-status",
+    )
+    record = HostEventRecord(
+        7,
+        0,
+        (),
+        (),
+        (
+            HostEventWeight(nominal_name, -2.0, WeightVariationKind.NOMINAL, "nominal"),
+            HostEventWeight("scale-up", -1.8, WeightVariationKind.SHAPE, "scale"),
+        ),
+        "provider-x-status",
+        "hard-source",
+    )
+    packed = phx.particle_physics.pack_host_events(
+        (record,), plan, source_id="packed-source"
+    )
+    assert packed.successful
+    return packed.events
+
+
+def test_provider_record_identifies_device_event_batches_by_nominal_weight_name():
+    binding, normalization, revision = _provider_contracts()
+
+    def execution(input_event):
+        return record_provider_execution(
+            binding,
+            input_event,
+            _event("shower-source", -2.0, -1.9),
+            normalization,
+            revision,
+            stage=ProviderExecutionStage.SHOWER,
+            required_capability="hep.shower",
+            input_profile_id="hard-events",
+            output_profile_id="showered-events",
+            unit_contract_id="GeV",
+            frame_id="collision-cm",
+            frame_realization_id="f" * 64,
+            process_id="dark-pair",
+        )
+
+    nominal = execution(_packed_event("nominal"))
+    central = execution(_packed_event("central"))
+    assert nominal.successful
+    assert nominal.input_weights.names == ("nominal", "scale-up")
+    assert central.input_weights.names == ("central", "scale-up")
+    assert nominal.input_event_id != central.input_event_id

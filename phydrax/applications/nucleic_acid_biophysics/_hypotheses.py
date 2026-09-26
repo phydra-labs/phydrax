@@ -3,43 +3,50 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ...artifacts import ScientificArtifactEnvelope
 from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
 from ...qualification import ReferenceArtifactManifest
 from ...units import ANGSTROM, conversion_factor, UnitDefinition
-from ._binding import NucleotideAtomMapping, prepare_nucleotide_binding
+from ._binding import (
+    NucleotideAtomMapping,
+    prepare_nucleotide_binding,
+    PreparedNucleotideBinding,
+)
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class NucleicStructureHypothesis:
     mapping: NucleotideAtomMapping
-    positions: object
+    positions: Array
     length_unit: UnitDefinition
     source: ScientificArtifactEnvelope
     rights: tuple[ReferenceArtifactManifest, ...]
-    coordinate_mask: object
+    coordinate_mask: Array
     image_policy: str
     hypothesis_id: str
     parent: NucleicStructureHypothesis | None
 
     def __init__(
         self,
-        mapping,
-        positions,
-        length_unit,
-        source,
-        rights,
+        mapping: NucleotideAtomMapping,
+        positions: npt.ArrayLike,
+        length_unit: UnitDefinition,
+        source: ScientificArtifactEnvelope,
+        rights: ReferenceArtifactManifest | Iterable[ReferenceArtifactManifest],
         *,
-        coordinate_mask=None,
-        image_policy="nonperiodic",
-        requested_use=None,
-        parent=None,
+        coordinate_mask: npt.ArrayLike | None = None,
+        image_policy: str = "nonperiodic",
+        requested_use: Mapping[str, bool] | None = None,
+        parent: NucleicStructureHypothesis | None = None,
     ) -> None:
         conversion_factor(length_unit, ANGSTROM)
         rights = (
@@ -110,12 +117,14 @@ class NucleicStructureHypothesis:
         for name, value in fields.items():
             object.__setattr__(self, name, value)
 
-    def prepare_binding(self):
+    def prepare_binding(self) -> PreparedNucleotideBinding:
         return prepare_nucleotide_binding(
             self.mapping, self.mapping.atom_ids, coordinate_mask=self.coordinate_mask
         )
 
-    def require_rights(self, requested_use=None):
+    def require_rights(
+        self, requested_use: Mapping[str, bool] | None = None
+    ) -> tuple[str, ...]:
         return tuple(
             item.require_rights(**({} if requested_use is None else requested_use))
             for item in self.rights
@@ -130,7 +139,11 @@ class NormalizedNucleicHypothesis:
 
 
 def normalize_nucleic_hypothesis(
-    hypothesis, *, length_unit, atom_order=None, requested_use=None
+    hypothesis: NucleicStructureHypothesis,
+    *,
+    length_unit: UnitDefinition,
+    atom_order: Iterable[int] | None = None,
+    requested_use: Mapping[str, bool] | None = None,
 ) -> NormalizedNucleicHypothesis:
     """Only explicit unit conversion/order normalization; never imputation.
 

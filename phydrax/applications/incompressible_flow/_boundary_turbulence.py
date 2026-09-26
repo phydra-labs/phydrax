@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -53,7 +54,7 @@ def _velocity_plus(
 
 
 def _broadcast_scalar(
-    value: ArrayLike, shape: tuple[int, ...], dtype, name: str, /
+    value: ArrayLike, shape: tuple[int, ...], dtype: DTypeLike, name: str, /
 ) -> Array:
     array = jnp.asarray(value, dtype=dtype)
     if jnp.broadcast_shapes(array.shape, shape) != shape:
@@ -478,7 +479,9 @@ def _compact_mass_neutral_basis(
 def _relative_loading_defect(loading: np.ndarray, scale: float, /) -> float:
     if loading.size == 0:
         return 0.0
-    return float(np.max(np.abs(loading))) / max(float(scale), np.finfo(np.float64).tiny)
+    return float(np.max(np.abs(loading))) / max(
+        float(scale), float(np.finfo(np.float64).tiny)
+    )
 
 
 class StochasticTurbulentInflowPreparationEvidence(StrictModule):
@@ -839,7 +842,7 @@ class StochasticTurbulentInflowPlan(StrictModule, NonTrainableState):
             else np.zeros((0, synthesis.shape[-1]), dtype=np.float64)
         )
         divergence_available = bool(divergence_blocks)
-        divergence_scale = max(synthesis_scale, np.finfo(np.float64).tiny)
+        divergence_scale = max(synthesis_scale, float(np.finfo(np.float64).tiny))
         if self.mode == "spectral" and covariance_rank:
             divergence_scale *= max(float(np.max(np.abs(wavevectors))), 1.0)
         if operator.size:

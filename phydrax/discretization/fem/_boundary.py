@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
@@ -116,12 +117,12 @@ class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        coordinate_matrix,
-        coordinate_offset,
+        coordinate_matrix: ArrayLike,
+        coordinate_offset: ArrayLike,
         orientation: FacetOrientationAction,
         /,
         *,
-        component_matrix=None,
+        component_matrix: ArrayLike | None = None,
         tolerance: float = 1.0e-10,
     ) -> None:
         matrix = np.asarray(coordinate_matrix, dtype=np.float64)
@@ -174,14 +175,14 @@ class FiniteElementPeriodicTransform(StrictModule, NonTrainableState):
             }
         )
 
-    def map_coordinates(self, coordinates, /):
+    def map_coordinates(self, coordinates: ArrayLike, /) -> Array:
         values = jnp.asarray(coordinates)
         return (
             ein.contract("ij,...j->...i", self.coordinate_matrix, values, backend="jax")
             + self.coordinate_offset
         )
 
-    def map_components(self, values, /):
+    def map_components(self, values: ArrayLike, /) -> Array:
         data = jnp.asarray(values)
         if self.component_matrix.shape == (1, 1):
             return data

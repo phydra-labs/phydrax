@@ -63,7 +63,7 @@ class FunctionalPatchParticipant(StrictModule):
         self.solver = solver
 
     @property
-    def functions(self):
+    def functions(self) -> frozendict[str, DomainFunction]:
         return self.solver.functions
 
     def solve(

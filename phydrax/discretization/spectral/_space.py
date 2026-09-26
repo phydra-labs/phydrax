@@ -4,9 +4,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -37,6 +37,7 @@ from .._tensor import (
     _axis_eigenvalues,
     _axis_modes,
     _smallest_tensor_indices,
+    _TensorBasis,
     AbstractStrongFormDiscretization,
 )
 from .._tensor_support import PreparedTensorGrid
@@ -48,6 +49,11 @@ from ._basis import (
     SineBasisPlan,
 )
 from ._precision import SpectralPrecisionPolicy
+
+
+if TYPE_CHECKING:
+    from ..._precision import PrecisionEvidenceEnvelope
+    from ._coordinates import HermitianSpectralCoordinates
 
 
 def _names(values: Sequence[str], count: int, /) -> tuple[str, ...]:
@@ -64,7 +70,7 @@ def _names(values: Sequence[str], count: int, /) -> tuple[str, ...]:
 def _apply_axis_transform(
     value: Array,
     axis: int,
-    function,
+    function: Callable[[Array], Array],
     /,
 ) -> Array:
     moved = jnp.moveaxis(value, axis, -1)
@@ -116,8 +122,13 @@ def _point_support_mask(
     for index, axis in enumerate(axes):
         if axis.periodic and not include_periodic:
             continue
-        lower = axis.domain.lower.astype(points.dtype)
-        upper = axis.domain.upper.astype(points.dtype)
+        lower_bound, upper_bound = axis.domain.lower, axis.domain.upper
+        if lower_bound is None or upper_bound is None:
+            # Unbounded axes impose no box constraint; their bases refuse point
+            # synthesis.
+            continue
+        lower = lower_bound.astype(points.dtype)
+        upper = upper_bound.astype(points.dtype)
         tolerance = (
             32.0 * epsilon * jnp.maximum(1.0, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
         )
@@ -126,6 +137,13 @@ def _point_support_mask(
             inside & (coordinate >= lower - tolerance) & (coordinate <= upper + tolerance)
         )
     return inside
+
+
+def _wrap_periodic_coordinate(axis: PreparedSpectralAxis, coordinate: Array, /) -> Array:
+    lower = axis.domain.lower
+    # Periodic axis domains always carry both endpoints.
+    assert lower is not None
+    return lower + jnp.mod(coordinate - lower, axis.length)
 
 
 def _tensor_point_rows(
@@ -519,7 +537,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         return self._points
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.plan.precision.evidence()
 
     @property
@@ -533,7 +551,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         component_shape: Sequence[int] = (),
         reality_tolerance: float = 1e-10,
         maximum_coordinate_size: int = 10_000_000,
-    ):
+    ) -> HermitianSpectralCoordinates:
         """Return independent coordinates for a real field in complex modal storage."""
         if not self.plan.precision.coefficient_dtype.startswith("complex"):
             raise TypeError(
@@ -615,13 +633,14 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
             raise ValueError("Spectral derivative order must be non-negative.")
         if derivative_order == 0:
             return result
-        if prepared.derivative_matrix is not None:
+        derivative_matrix = prepared.derivative_matrix
+        if derivative_matrix is not None:
             output = result
             for _ in range(derivative_order):
                 output = _apply_axis_transform(
                     output,
                     axis_,
-                    lambda vector: prepared.derivative_matrix @ vector,
+                    lambda vector: derivative_matrix @ vector,
                 )
             return output
         multiplier = prepared.derivative_multiplier(derivative_order)
@@ -771,8 +790,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         inside = _point_support_mask(self.axes, points, include_periodic=False)
         wrapped = jnp.stack(
             tuple(
-                axis.domain.lower
-                + jnp.mod(points[:, index] - axis.domain.lower, axis.length)
+                _wrap_periodic_coordinate(axis, points[:, index])
                 if axis.periodic
                 else points[:, index]
                 for index, axis in enumerate(self.axes)
@@ -1014,14 +1032,18 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         retained = count if rank is None else int(rank)
         if retained <= 0 or retained > count:
             raise ValueError(f"rank must lie in [1, {count}].")
-        if any(axis.family not in ("fourier", "sine", "cosine") for axis in self.axes):
-            raise ValueError(
-                "Exact Laplacian eigenpairs require Fourier, sine, or cosine axes."
-            )
+        families: list[_TensorBasis] = []
+        for prepared in self.axes:
+            family = prepared.family
+            if family not in ("fourier", "sine", "cosine"):
+                raise ValueError(
+                    "Exact Laplacian eigenpairs require Fourier, sine, or cosine axes."
+                )
+            families.append(family)
         axis_discretizations = tuple(axis.axis_discretization() for axis in self.axes)
         axis_values = tuple(
-            _axis_eigenvalues(axis, prepared.family)
-            for axis, prepared in zip(axis_discretizations, self.axes, strict=True)
+            _axis_eigenvalues(axis, family)
+            for axis, family in zip(axis_discretizations, families, strict=True)
         )
         selected = _smallest_tensor_indices(axis_values, retained)
         values = jnp.asarray(
@@ -1035,14 +1057,14 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
             self.physical_shape + (retained,),
             dtype=jnp.dtype(self.plan.precision.physical_dtype),
         )
-        for axis_index, (axis, prepared) in enumerate(
-            zip(axis_discretizations, self.axes, strict=True)
+        for axis_index, (axis, family) in enumerate(
+            zip(axis_discretizations, families, strict=True)
         ):
             requested = np.asarray(
                 [index[axis_index] for index in selected], dtype=np.int64
             )
             axis_modes = jnp.asarray(
-                _axis_modes(axis, prepared.family, requested),
+                _axis_modes(axis, family, requested),
                 dtype=modes.dtype,
             )
             shape = [1] * (len(self.physical_shape) + 1)

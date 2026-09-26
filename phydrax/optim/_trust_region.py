@@ -17,7 +17,7 @@ from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
-from ..linalg import AbstractLinearOperator, AbstractPreconditioner
+from ..linalg import AbstractLinearOperator, AbstractPreconditioner, AbstractVectorSpace
 
 
 class TrustRegionSubproblemStatus(IntEnum):
@@ -148,31 +148,46 @@ class _TrustRegionRun(StrictModule):
     status: Array
 
 
-def _inner(space, left, right, precision: NonlinearPrecisionPolicy, /) -> Array:
+def _inner(
+    space: AbstractVectorSpace,
+    left: PyTree[Array],
+    right: PyTree[Array],
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
     return precision.decision(jnp.real(precision.inner(space, left, right)))
 
 
-def _norm(space, value, precision: NonlinearPrecisionPolicy, /) -> Array:
+def _norm(
+    space: AbstractVectorSpace,
+    value: PyTree[Array],
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
     return precision.norm(space, value)
 
 
-def _add_scaled(base, direction, scale, /):
+def _add_scaled(
+    base: PyTree[Array], direction: PyTree[Array], scale: Array, /
+) -> PyTree[Array]:
     return jax.tree.map(lambda x, d: x + scale * d, base, direction)
 
 
-def _negative(value, /):
+def _negative(value: PyTree[Array], /) -> PyTree[Array]:
     return jax.tree.map(jnp.negative, value)
 
 
-def _apply_preconditioner(preconditioner, residual, /):
+def _apply_preconditioner(
+    preconditioner: AbstractPreconditioner | None, residual: PyTree[Array], /
+) -> PyTree[Array]:
     return residual if preconditioner is None else preconditioner.apply(residual)
 
 
 def _boundary_rate(
-    space,
-    step,
-    direction,
-    radius,
+    space: AbstractVectorSpace,
+    step: PyTree[Array],
+    direction: PyTree[Array],
+    radius: Array,
     precision: NonlinearPrecisionPolicy,
     /,
 ) -> Array:
@@ -267,10 +282,10 @@ def solve_trust_region_subproblem(
         status=initial_status,
     )
 
-    def condition(current):
+    def condition(current: _TrustRegionRun) -> Array:
         return (current.status == -1) & (current.iteration < method_.maximum_steps)
 
-    def body(current):
+    def body(current: _TrustRegionRun) -> _TrustRegionRun:
         hessian_direction = space.validate(problem.hessian.mv(current.direction))
         curvature = _inner(
             space,

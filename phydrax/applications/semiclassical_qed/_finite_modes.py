@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import isfinite
 from typing import Any
 
@@ -57,8 +58,8 @@ class HomogeneousSpinorQED3DState(StrictModule):
 
     def __init__(
         self,
-        vector_potential: ArrayLike,
-        electric_field: ArrayLike,
+        vector_potential: ArrayLike | Sequence[float],
+        electric_field: ArrayLike | Sequence[float],
         mode_spinors: ArrayLike,
         /,
     ) -> None:
@@ -188,8 +189,8 @@ class HomogeneousSpinorQED3DPlan(StrictModule, NonTrainableState):
         *,
         t0: ArrayLike,
         t1: ArrayLike,
-        vector_potential: ArrayLike = (0.0, 0.0, 0.0),
-        electric_field: ArrayLike = (0.0, 0.0, 0.0),
+        vector_potential: ArrayLike | Sequence[float] = (0.0, 0.0, 0.0),
+        electric_field: ArrayLike | Sequence[float] = (0.0, 0.0, 0.0),
         mode_spinors: ArrayLike | None = None,
     ) -> PreparedHomogeneousSpinorQED3D:
         modes = (
@@ -279,7 +280,7 @@ def negative_energy_spinor_modes_3d(
     *,
     mass: ArrayLike,
     charge: ArrayLike = 0.0,
-    vector_potential: ArrayLike = (0.0, 0.0, 0.0),
+    vector_potential: ArrayLike | Sequence[float] = (0.0, 0.0, 0.0),
 ) -> Array:
     """Two orthonormal occupied eigenmodes for every finite 3-momentum."""
 

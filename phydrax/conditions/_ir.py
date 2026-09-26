@@ -484,7 +484,7 @@ class Condition(StrictModule):
         relation: ConditionRelation,
         /,
         *,
-        quantifier: ConditionQuantifier = ConditionQuantifier.deterministic,
+        quantifier: ConditionQuantifier | str = ConditionQuantifier.deterministic,
         probability_level: float | None = None,
         label: str | None = None,
         evidence: Any = None,

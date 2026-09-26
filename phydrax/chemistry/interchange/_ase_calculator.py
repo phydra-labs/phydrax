@@ -50,7 +50,7 @@ def is_ase_calculator_available() -> bool:
     return importlib.util.find_spec("ase") is not None
 
 
-def require_ase_calculator():
+def require_ase_calculator() -> Any:
     if not is_ase_calculator_available():
         raise ImportError("ASE calculator execution requires optional dependency 'ase'.")
     return importlib.import_module("ase")

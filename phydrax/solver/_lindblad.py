@@ -137,7 +137,7 @@ def solve_lindblad(
         raise ValueError("steps and step_size must be positive.")
     channel = jsp.linalg.expm(step * problem.generator_matrix())
 
-    def advance(state, _):
+    def advance(state: Array, _: None) -> tuple[Array, Array]:
         next_state = (channel @ state.reshape(-1)).reshape(state.shape)
         next_state = 0.5 * (next_state + _adjoint(next_state))
         return next_state, next_state

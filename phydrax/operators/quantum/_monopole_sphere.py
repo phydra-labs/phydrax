@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax.typing import DTypeLike
 from jaxtyping import Array, Key
 
 from ..._fingerprint import canonical_fingerprint
@@ -48,7 +49,7 @@ class MonopoleKineticPolicy(StrictModule, NonTrainableState):
         flat = jnp.asarray(configuration, dtype=self.compute_dtype).reshape((-1,))
         dimension = flat.shape[0]
 
-        def log_components(coordinates):
+        def log_components(coordinates: Array) -> Array:
             amplitude = model(coordinates.reshape(shape))
             if not isinstance(amplitude, LogAmplitude):
                 raise TypeError("The sphere amplitude model must return LogAmplitude.")
@@ -61,7 +62,7 @@ class MonopoleKineticPolicy(StrictModule, NonTrainableState):
         jacobian = jax.jacrev(log_components)
         gradient_components = jacobian(flat)
 
-        def diagonal_component(direction):
+        def diagonal_component(direction: Array) -> Array:
             _, directional = jax.jvp(jacobian, (flat,), (direction,))
             return jnp.sum(directional * direction[None, :], axis=1)
 
@@ -241,7 +242,7 @@ def uniform_sphere_electron_walkers(
     electron_count: int,
     /,
     *,
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
 ) -> Array:
     chains = int(chain_count)
     electrons = int(electron_count)

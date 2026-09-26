@@ -11,13 +11,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import validate_real_inexact_tree
 from ._external_backends import _certify_minimization, _module
 from ._iterative import (
+    MinimizationProblem,
     MinimizationResult,
     OptimizationCapabilities,
     OptimizationDiagnostics,
@@ -273,29 +274,31 @@ class _StructuredIpoptCallbacks:
             )
         return array
 
-    def objective(self, value):
+    def objective(self, value: np.ndarray) -> float:
         self.counts.objective += 1
         return float(self._numpy(self._objective(self._point(value)), "objective"))
 
-    def gradient(self, value):
+    def gradient(self, value: np.ndarray) -> np.ndarray:
         self.counts.gradient += 1
         return self._numpy(self._gradient(self._point(value)), "gradient")
 
-    def constraints(self, value):
+    def constraints(self, value: np.ndarray) -> np.ndarray:
         self.counts.constraints += 1
         return self._numpy(self._constraints(self._point(value)), "constraints")
 
-    def jacobian(self, value):
+    def jacobian(self, value: np.ndarray) -> np.ndarray:
         self.counts.jacobian += 1
         coefficients = self._numpy(self._jacobian(self._point(value)), "Jacobian")
         if coefficients.shape != (self.program.jacobian_plan.nnz,):
             raise ValueError("Structured Ipopt Jacobian returned the wrong value count.")
         return coefficients[self.jacobian_positions]
 
-    def jacobianstructure(self):
+    def jacobianstructure(self) -> tuple[np.ndarray, np.ndarray]:
         return self.jacobian_rows, self.jacobian_cols
 
-    def hessian(self, value, multipliers, objective_factor):
+    def hessian(
+        self, value: np.ndarray, multipliers: np.ndarray, objective_factor: float
+    ) -> np.ndarray:
         if self._hessian is None or self.hessian_positions is None:
             return np.empty((0,), dtype=np.float64)
         self.counts.hessian += 1
@@ -313,7 +316,7 @@ class _StructuredIpoptCallbacks:
             raise ValueError("Structured Ipopt Hessian returned the wrong value count.")
         return coefficients[self.hessian_positions]
 
-    def hessianstructure(self):
+    def hessianstructure(self) -> tuple[np.ndarray, np.ndarray]:
         if self.hessian_rows is None or self.hessian_cols is None:
             empty = np.empty((0,), dtype=np.int32)
             return empty, empty
@@ -321,18 +324,18 @@ class _StructuredIpoptCallbacks:
 
     def intermediate(
         self,
-        algorithm_mode,
-        iteration,
-        objective,
-        primal_infeasibility,
-        dual_infeasibility,
-        barrier_parameter,
-        step_norm,
-        regularization_size,
-        primal_step,
-        dual_step,
-        line_search_trials,
-    ):
+        algorithm_mode: int,
+        iteration: int,
+        objective: float,
+        primal_infeasibility: float,
+        dual_infeasibility: float,
+        barrier_parameter: float,
+        step_norm: float,
+        regularization_size: float,
+        primal_step: float,
+        dual_step: float,
+        line_search_trials: int,
+    ) -> bool:
         del (
             algorithm_mode,
             iteration,
@@ -359,11 +362,11 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
         self.options = {} if options is None else dict(options)
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "ipopt"
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> OptimizationCapabilities:
         return OptimizationCapabilities(
             scalar_objective=True,
             residual_objective=False,
@@ -373,7 +376,7 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
         )
 
     @property
-    def structured_capabilities(self):
+    def structured_capabilities(self) -> StructuredNonlinearCapabilities:
         return StructuredNonlinearCapabilities(
             exact_sparse_jacobian=True,
             exact_sparse_hessian=True,
@@ -387,7 +390,15 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
             device_execution=False,
         )
 
-    def solve(self, problem, initial_parameters, /, *, termination, args):
+    def solve(
+        self,
+        problem: MinimizationProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> MinimizationResult:
         cyipopt = _module("cyipopt")
         scipy_optimize = _module("scipy.optimize")
         parameters = validate_real_inexact_tree(initial_parameters, name="parameters")

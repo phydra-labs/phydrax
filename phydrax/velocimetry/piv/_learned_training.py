@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
@@ -34,6 +34,7 @@ from ..._training_kernel import (
     run_training_attempt,
     TrainingAttemptOutcome,
     TrainingKernelSpec,
+    TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
 from ...imaging import ImagePlaneSupport
@@ -392,7 +393,12 @@ def _dataset_loss(
     )
     target_valid = None if dataset.target_valid is None else dataset.target_valid[indices]
 
-    def case_without_targets(first_case, second_case, first_mask, second_mask):
+    def case_without_targets(
+        first_case: Array,
+        second_case: Array,
+        first_mask: Array,
+        second_mask: Array,
+    ) -> PIVLossResult:
         return _per_case_loss(
             model,
             loss,
@@ -479,7 +485,14 @@ def evaluate_learned_piv(
     return _dataset_loss(model, dataset, loss, jnp.arange(dataset.case_count))
 
 
-def _batch_objective(parameters, model_state, fixed, payload, keys, /):
+def _batch_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[LearnedPIVDataset, MultiScaleRobustPIVLoss, int],
+    keys: TrainingKeys,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree[Any], PIVLossResult]:
     """Kernel objective: masked PIV loss of one semantically sampled case batch.
 
     The batch is drawn from the accepted-update key, so a rejected attempt

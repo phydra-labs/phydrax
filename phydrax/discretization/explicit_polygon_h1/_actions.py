@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -22,6 +24,13 @@ from .._local_variational import (
     LocalVariationalOffer,
     PreparedLocalRegion,
 )
+
+
+if TYPE_CHECKING:
+    from ._space import (
+        ExplicitPolygonH1Discretization,
+        ExplicitPolygonH1RuntimeData,
+    )
 
 
 _REFERENCE_REALIZATION = "explicit-polygon-h1-dense"
@@ -91,7 +100,7 @@ class ExplicitPolygonH1ReferenceActions(LocalReferenceActions):
             }
         )
 
-    def _runtime(self, runtime: object, /):
+    def _runtime(self, runtime: object, /) -> ExplicitPolygonH1RuntimeData:
         from ._space import ExplicitPolygonH1RuntimeData
 
         if not isinstance(runtime, ExplicitPolygonH1RuntimeData):
@@ -289,9 +298,9 @@ class ExplicitPolygonH1GeometryActions(LocalGeometryActions):
 
 
 class ExplicitPolygonH1LocalProvider(StrictModule):
-    discretization: object
+    discretization: ExplicitPolygonH1Discretization
 
-    def __init__(self, discretization, /) -> None:
+    def __init__(self, discretization: ExplicitPolygonH1Discretization, /) -> None:
         from ._space import ExplicitPolygonH1Discretization
 
         if not isinstance(discretization, ExplicitPolygonH1Discretization):

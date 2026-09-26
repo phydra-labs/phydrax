@@ -10,6 +10,7 @@ import platform
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 
 from ._omniphysics_evidence import (
     ApplicationValidationEvidence,
@@ -20,13 +21,18 @@ from ._omniphysics_evidence import (
 )
 
 
-def _float(value) -> float:
+def _float(value: npt.ArrayLike) -> float:
     return float(np.asarray(value))
 
 
 def _control(
-    family, name, observed, reference=0.0, tolerance=1e-10, source="closed-form"
-):
+    family: str,
+    name: str,
+    observed: npt.ArrayLike,
+    reference: float = 0.0,
+    tolerance: float = 1e-10,
+    source: str = "closed-form",
+) -> NumericalControlEvidence:
     return NumericalControlEvidence(
         family,
         name,
@@ -126,7 +132,9 @@ def _constitutive_refinement() -> RefinementCampaignEvidence:
     )
 
 
-def _controls_and_applications():
+def _controls_and_applications() -> tuple[
+    tuple[NumericalControlEvidence, ...], tuple[ApplicationValidationEvidence, ...]
+]:
     from phydrax import (
         acoustics,
         chemo_mechanics,

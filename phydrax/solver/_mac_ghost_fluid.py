@@ -105,9 +105,11 @@ class MACGhostFluidProjectionPlan(StrictModule, NonTrainableState):
             dt,
             pressure=pressure,
         )
-        jump_work = sum(
-            jnp.sum(impulse * (before + 0.5 * impulse))
-            for impulse, before in zip(impulses, values, strict=True)
+        jump_work = jnp.asarray(
+            sum(
+                jnp.sum(impulse * (before + 0.5 * impulse))
+                for impulse, before in zip(impulses, values, strict=True)
+            )
         )
         finite = (
             geometry.finite

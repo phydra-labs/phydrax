@@ -88,7 +88,9 @@ def optimal_transport_ensemble_transform(
     weight_rows = probabilities.reshape((-1, count))
     uniform = jnp.full((count,), 1.0 / float(count), dtype=values.dtype)
 
-    def transform_case(points, source_weights):
+    def transform_case(
+        points: Array, source_weights: Array
+    ) -> tuple[Array, Array, Array, AbstractBalancedTransportPlan]:
         source = discrete(
             points,
             cx.AxisArray(source_weights, dims=("particle",)),

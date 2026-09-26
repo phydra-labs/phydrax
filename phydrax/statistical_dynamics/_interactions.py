@@ -26,15 +26,12 @@ BilinearAction: TypeAlias = Callable[[Array, Array], Array]
 def _conjugate_indices(discretization: TensorSpectralDiscretization, /) -> np.ndarray:
     shape = discretization.modal_shape
     multi = np.indices(shape, dtype=np.int64).reshape((len(shape), -1))
-    conjugate_multi = np.stack(
-        tuple(
-            np.asarray(
-                discretization.axes[axis_index].modes.conjugate_indices,
-                dtype=np.int64,
-            )[multi[axis_index]]
-            for axis_index in range(len(shape))
-        ),
-        axis=0,
+    conjugate_multi = tuple(
+        np.asarray(
+            discretization.axes[axis_index].modes.conjugate_indices,
+            dtype=np.int64,
+        )[multi[axis_index]]
+        for axis_index in range(len(shape))
     )
     return np.ravel_multi_index(conjugate_multi, shape)
 

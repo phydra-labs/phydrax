@@ -28,7 +28,12 @@ from ._certification import FDStabilityReport
 from ._coefficients import StencilCoefficientPlan
 from ._operators import PreparedStencilOperator
 from ._request import DerivativeRequest
-from ._stencil import BoundaryStencilSet, LinearStencil, StencilFootprint
+from ._stencil import (
+    BoundaryStencilSet,
+    LinearStencil,
+    StencilFootprint,
+    StencilRowKind,
+)
 
 
 SBPInteriorOrder: TypeAlias = Literal[2, 4, 6, 8]
@@ -416,7 +421,7 @@ class PreparedSBPOperator(StrictModule, NonTrainableState):
         matrix = normalized / delta
         axis_norm = jnp.asarray(delta * normalized_norm)
         row_plans = []
-        row_kinds = []
+        row_kinds: list[StencilRowKind] = []
         if periodic:
             half_order = plan.family.interior_order // 2
             relative = np.arange(-half_order, half_order + 1, dtype=np.int32)

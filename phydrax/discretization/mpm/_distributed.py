@@ -30,8 +30,8 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        logical_grid_shape,
-        block_shape,
+        logical_grid_shape: Sequence[int],
+        block_shape: Sequence[int],
         block_owner: ArrayLike,
         /,
         *,

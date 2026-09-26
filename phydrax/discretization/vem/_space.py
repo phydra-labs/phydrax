@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -34,7 +36,13 @@ from .._polygon_geometry import (
     PolygonTriangulation,
     prepare_polygon_triangulation,
 )
-from .._spaces import BlockDofLayout, DiscreteFieldSpace, EntityDofLayout
+from .._spaces import (
+    BlockDofLayout,
+    DiscreteFieldSpace,
+    EntityDofLayout,
+    FieldRepresentation,
+)
+from .._support import DiscreteSupport
 from ._dofs import VirtualElementDofMap
 from ._precision import VirtualElementPrecisionPolicy, VirtualElementResourceBudget
 from ._projection import (
@@ -56,7 +64,9 @@ _BASE_CAPABILITIES = (
 )
 
 
-def _capabilities(field: VirtualElementFieldSpec, /):
+def _capabilities(
+    field: VirtualElementFieldSpec, /
+) -> tuple[DiscretizationCapability, ...]:
     if field.element.trace_kind == "none":
         return _BASE_CAPABILITIES
     return (
@@ -195,7 +205,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
     exterior_facet_domain: IntegrationDomain
     interior_facet_domain: IntegrationDomain
     key: DiscretizationKey
-    support: object
+    support: DiscreteSupport
     field_spaces: tuple[DiscreteFieldSpace, ...]
     measures: tuple[DiscreteMeasure, ...]
     precision_policy: VirtualElementPrecisionPolicy
@@ -253,7 +263,8 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
                 )
             )
             names.append("vertices")
-        edge_count = mesh.connectivity.edges.shape[0]
+        # VirtualElementPlan rejects meshes without PolygonalConnectivity.
+        edge_count = cast(PolygonalConnectivity, mesh.connectivity).edges.shape[0]
         edge_width = element.edge_dofs_per_entity
         if edge_width:
             layouts.append(
@@ -279,7 +290,7 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
             names.append("cells")
         layout = BlockDofLayout(tuple(names), tuple(layouts))
         vector_space = ArraySpace((dof_map.global_dof_count,))
-        representations = {
+        representations: dict[str, FieldRepresentation] = {
             "ConformingH1": "functional",
             "ConformingHdiv": "flux_moment",
             "ConformingHcurl": "circulation_moment",

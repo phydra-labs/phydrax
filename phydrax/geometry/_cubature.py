@@ -186,7 +186,9 @@ class CubatureAtlas(StrictModule):
     def ambient_dimension(self) -> int:
         return self.mapping.ambient_dimension
 
-    def _validate_inputs(self, chart_indices: Array, reference: Array):
+    def _validate_inputs(
+        self, chart_indices: Array, reference: Array
+    ) -> tuple[Array, Array]:
         indices = jnp.asarray(chart_indices, dtype=jnp.int32)
         reference_ = jnp.asarray(reference, dtype=jnp.float64)
         if reference_.shape[:-1] != indices.shape:

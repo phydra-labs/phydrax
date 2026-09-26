@@ -393,7 +393,7 @@ class EuropeanOption(AbstractContract):
                 "expiry": expiry.ordinal,
                 "option_type": option_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -559,7 +559,7 @@ class BarrierOption(AbstractContract):
                 "direction": direction.value,
                 "activation": activation.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -646,7 +646,7 @@ class AsianOption(AbstractContract):
                 "option_type": option_type.value,
                 "average_type": average_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -721,7 +721,7 @@ class LookbackOption(AbstractContract):
                 "expiry": expiry.ordinal,
                 "option_type": option_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -795,7 +795,7 @@ class BasketOption(AbstractContract):
                 "expiry": expiry.ordinal,
                 "option_type": option_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 
@@ -863,7 +863,7 @@ class VarianceSwap(AbstractContract):
             "variance-swap",
             {
                 "underlying": underlying.canonical,
-                "variance_strike": float(variance_strike),
+                "variance_strike": float(self.variance_strike),
                 "notional_atoms": int(notional.atoms),
                 "currency": notional.currency.code,
                 "observations": [value.ordinal for value in dates],
@@ -928,7 +928,7 @@ class BermudanOption(AbstractContract):
                 "exercise_dates": [value.ordinal for value in dates],
                 "option_type": option_type.value,
                 "settlement": settlement.terms_id,
-                "quantity": float(quantity),
+                "quantity": float(self.quantity),
             },
         )
 

@@ -137,8 +137,8 @@ class FreeSpaceVortexFFTPlan(StrictModule, NonTrainableState):
         circulation = jnp.sum(omega, axis=tuple(range(self.dimension))) * cell_measure
         boundary_mask = jnp.zeros(self.shape, dtype=jnp.bool_)
         for axis in range(self.dimension):
-            lower_index = [slice(None)] * self.dimension
-            upper_index = [slice(None)] * self.dimension
+            lower_index: list[slice | int] = [slice(None)] * self.dimension
+            upper_index: list[slice | int] = [slice(None)] * self.dimension
             lower_index[axis], upper_index[axis] = 0, self.shape[axis] - 1
             boundary_mask = boundary_mask.at[tuple(lower_index)].set(True)
             boundary_mask = boundary_mask.at[tuple(upper_index)].set(True)

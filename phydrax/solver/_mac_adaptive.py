@@ -7,13 +7,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntEnum
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan, CheckpointedScanMode
@@ -31,6 +31,15 @@ class MACAdaptiveStatus(IntEnum):
     ATTEMPT_CAPACITY_REACHED = 4
     INVALID_RESTRICTION = 5
     STEP_FAILED = 6
+
+
+_AttemptCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_AttemptOutput: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_ReplayCarry: TypeAlias = tuple[Array, Array]
 
 
 def _stop_gradient_tree(value: Any, /) -> Any:
@@ -433,7 +442,7 @@ class MACAdaptiveRolloutPlan(StrictModule):
     def advance(
         self,
         runtime_state: MACAdaptiveRuntimeState,
-        final_time: Array,
+        final_time: ArrayLike,
         args: Any = None,
         /,
     ) -> MACAdaptiveAdvanceResult:
@@ -475,7 +484,9 @@ class MACAdaptiveRolloutPlan(StrictModule):
         segment_count = result.grid.accepted_step_count
         count = segment_count
 
-        def merge(index, buffers):
+        def merge(
+            index: int | Array, buffers: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             times, steps, valid = buffers
             destination = runtime_state.accepted_step_count + index
             active = index < count
@@ -593,7 +604,9 @@ class MACAdaptiveRolloutPlan(StrictModule):
         )
         stopped_args = _stop_gradient_tree(args)
 
-        def attempt(carry, attempt_index):
+        def attempt(
+            carry: _AttemptCarry, attempt_index: Array
+        ) -> tuple[_AttemptCarry, _AttemptOutput]:
             (
                 state,
                 time,
@@ -609,7 +622,7 @@ class MACAdaptiveRolloutPlan(StrictModule):
             ) = carry
             active = ~finished & ~failed
 
-            def execute(_):
+            def execute(_: None) -> tuple[_AttemptCarry, _AttemptOutput]:
                 remaining = target - time
                 requested = jnp.minimum(jnp.minimum(next_step, maximum), remaining)
                 decision = self.controller.restriction(
@@ -735,7 +748,7 @@ class MACAdaptiveRolloutPlan(StrictModule):
                 )
                 return next_carry, output
 
-            def inactive(_):
+            def inactive(_: None) -> tuple[_AttemptCarry, _AttemptOutput]:
                 nan = jnp.asarray(jnp.nan, dtype=state0.dtype)
                 output = (
                     jnp.asarray(False),
@@ -913,11 +926,13 @@ class MACFrozenGridReplayPlan(StrictModule):
         times = jax.lax.stop_gradient(grid.times[:-1])
         indices = jnp.arange(count, dtype=jnp.int32)
 
-        def advance(carry, inputs):
+        def advance(
+            carry: _ReplayCarry, inputs: tuple[Array, Array, Array, Array]
+        ) -> tuple[_ReplayCarry, tuple[Array, Array]]:
             state, prior_success = carry
             index, time, step_size, active = inputs
 
-            def execute(_):
+            def execute(_: None) -> tuple[_ReplayCarry, tuple[Array, Array]]:
                 result = self.method.step(index, time, state, step_size, args)
                 _validate_step_result(result, state)
                 successful = result.successful & _finite_state(result.accepted_state)
@@ -927,7 +942,7 @@ class MACFrozenGridReplayPlan(StrictModule):
                     successful,
                 )
 
-            def inactive(_):
+            def inactive(_: None) -> tuple[_ReplayCarry, tuple[Array, Array]]:
                 return (state, prior_success), (state, jnp.asarray(True))
 
             return jax.lax.cond(active & prior_success, execute, inactive, operand=None)

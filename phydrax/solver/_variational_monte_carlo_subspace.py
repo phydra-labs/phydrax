@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import isfinite
 from typing import Any, final, Literal, TYPE_CHECKING, TypeAlias
 
@@ -114,7 +114,7 @@ def _batched_amplitude(model: Any, configurations: Array, /) -> LogAmplitude:
     return value
 
 
-def _parameter_mode(value: ComplexParameterMode, /) -> ComplexParameterMode:
+def _parameter_mode(value: str, /) -> ComplexParameterMode:
     if value not in ("real", "holomorphic", "nonholomorphic"):
         raise ValueError(
             "complex parameter modes must be 'real', 'holomorphic', or 'nonholomorphic'."
@@ -211,8 +211,8 @@ def _mixture_components(
     return relative, log_norm, all_valid & any_nonzero
 
 
-def _mixture_log_target(models: tuple[Any, ...], /):
-    def log_target(configuration):
+def _mixture_log_target(models: tuple[Any, ...], /) -> Callable[[Array], Array]:
+    def log_target(configuration: Array) -> Array:
         amplitudes = tuple(_scalar_amplitude(model, configuration) for model in models)
         _relative, log_norm, valid = _mixture_components(amplitudes)
         return jnp.where(valid, 2.0 * log_norm, -jnp.inf)
@@ -789,7 +789,7 @@ def _score_geometry(
 ) -> EmpiricalGramLinearOperator:
     mode = problem.complex_parameter_modes[model_index]
 
-    def features(parameter_coordinates):
+    def features(parameter_coordinates: Array) -> Array:
         model = problem.model_from_coordinates(model_index, parameter_coordinates)
         amplitudes = _batched_amplitude(model, configurations)
         values = _surrogate(amplitudes)
@@ -861,7 +861,7 @@ def _score_corrected_objective(
     sample_count = configurations.shape[0]
     zero_logits = jnp.zeros((sample_count,), dtype=jnp.float64)
 
-    def objective_from_logits(logits):
+    def objective_from_logits(logits: Array) -> Array:
         return _weighted_block_objective(
             problem,
             coordinates,

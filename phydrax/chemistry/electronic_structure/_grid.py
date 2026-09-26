@@ -12,6 +12,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -58,7 +59,7 @@ class AtomicRadialGridPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def rule(self, dtype=np.float64, /) -> tuple[np.ndarray, np.ndarray]:
+    def rule(self, dtype: DTypeLike = np.float64, /) -> tuple[np.ndarray, np.ndarray]:
         x = (np.arange(self.point_count, dtype=dtype) + 0.5) / self.point_count
         if self.kind is AtomicRadialGridKind.MURA_KNOWLES:
             denominator = np.maximum(1.0 - x**3, np.finfo(dtype).tiny)

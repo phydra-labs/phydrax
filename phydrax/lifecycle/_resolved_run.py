@@ -268,6 +268,7 @@ class ResolvedRunSpec(StrictModule, NonTrainableState):
         scientific_records = record["scientific_dependencies"]
         deployment_records = record["deployment_dependencies"]
         profile_ids = record["profile_ids"]
+        sequences: list[Sequence[object]] = []
         for name, values in (
             ("scientific_dependencies", scientific_records),
             ("deployment_dependencies", deployment_records),
@@ -275,6 +276,8 @@ class ResolvedRunSpec(StrictModule, NonTrainableState):
         ):
             if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
                 raise TypeError(f"Serialized {name} must be a sequence.")
+            sequences.append(values)
+        scientific_records, deployment_records, profile_ids = sequences
         value = cls(
             tuple(_dependency_from_record(item) for item in scientific_records),
             tuple(_dependency_from_record(item) for item in deployment_records),

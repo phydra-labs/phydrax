@@ -95,7 +95,7 @@ class RiemannianContinuousFlowLaw(AbstractProbabilityLaw):
         coordinate = self.coordinate_law.log_prob_with_diagnostics(value)
         flat = coordinate.data_state.reshape((-1,) + self.event_shape)
 
-        def one(state):
+        def one(state: Array) -> tuple[Array, Array, Array, Array]:
             evidence = self.manifold.local_geometry(state)
             projected = evidence.tangent_projector @ state.reshape((-1,))
             tangent_residual = jnp.sqrt(jnp.sum((projected - state.reshape((-1,))) ** 2))

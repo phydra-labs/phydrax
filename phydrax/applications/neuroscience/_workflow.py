@@ -20,6 +20,7 @@ from ...series import SampledSeries, SeriesSupport
 from ...solver import (
     DelayDifferentialProblem,
     DelayHistoryWindow,
+    DelaySegmentContinuation,
     DelayValues,
     DifferentialProblem,
     DifferentialSolution,
@@ -108,19 +109,19 @@ def _ordinary_rhs(time: Array, state: Array, context: _RegionalDynamics, /) -> A
 
 
 def _problem(
-    connectivity,
-    model,
-    history,
+    connectivity: RegionalConnectivity,
+    model: WilsonCowan | Hopf,
+    history: Callable[[Array, Any], ArrayLike],
     *,
-    t0,
-    t1,
-    drive,
-    args,
-    balloon,
-    bold_drive,
-    initial_balloon,
-    problem_id,
-):
+    t0: ArrayLike,
+    t1: ArrayLike,
+    drive: Callable[[Array, Array, Any], ArrayLike] | None,
+    args: Any,
+    balloon: BalloonWindkessel | None,
+    bold_drive: NeuralBOLDDrive | None,
+    initial_balloon: Array | None,
+    problem_id: str,
+) -> DifferentialProblem | DelayDifferentialProblem:
     if not isinstance(connectivity, RegionalConnectivity):
         raise TypeError("connectivity must be RegionalConnectivity.")
     if not isinstance(model, (WilsonCowan, Hopf)):
@@ -273,7 +274,7 @@ class RegionalSolution(StrictModule):
     region_ids: tuple[str, ...] = eqx.field(static=True)
 
     @property
-    def continuation(self):
+    def continuation(self) -> DelaySegmentContinuation | None:
         """The native segmented continuation, or None for a nonsegmented solve."""
         return (
             self.native.continuation
@@ -307,15 +308,16 @@ def solve_regional(
         )
     if not isinstance(segmented, bool):
         raise TypeError("segmented must be a bool.")
+    native: DifferentialSolution | MemoryEquationSolution
     if isinstance(problem, DelayDifferentialProblem):
-        solve = solve_diffrax_delay_segmented if segmented else solve_diffrax_delay
+        solve_delay = solve_diffrax_delay_segmented if segmented else solve_diffrax_delay
+        native = solve_delay(problem, save_times=save_times, **solver_options)
     else:
         if segmented:
             raise ValueError(
                 "All-zero-delay regional dynamics use the native ordinary solver, not segmented delay execution."
             )
-        solve = solve_diffrax
-    native = solve(problem, save_times=save_times, **solver_options)
+        native = solve_diffrax(problem, save_times=save_times, **solver_options)
     context = problem.args
     support = SeriesSupport(
         native.times,

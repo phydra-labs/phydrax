@@ -106,7 +106,7 @@ class RigidDeformableKKTLinearization(StrictModule, NonTrainableState):
         )
         target = ArraySpace(self.body_levers.shape, dtype=dtype)
 
-        def transpose(multiplier):
+        def transpose(multiplier: ArrayLike) -> tuple[Array, Array, Array]:
             deformable, rigid = self.transpose_action(multiplier)
             return deformable, rigid.force, rigid.torque
 

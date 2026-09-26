@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import IntEnum
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Literal
 
 import equinox as eqx
@@ -681,7 +682,12 @@ class TrainingSignalGuard:
         self._installed = True
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         if not self._installed:
             return
         for signum, handler in self._previous_handlers.items():
@@ -719,7 +725,12 @@ class TensorBoardLogger:
     def __enter__(self) -> "TensorBoardLogger":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.flush()
         self._writer.close()
 

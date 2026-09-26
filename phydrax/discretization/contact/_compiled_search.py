@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,6 +18,11 @@ from ..._trainable import NonTrainableState
 from ..spatial import morton_encode_integer
 from ._stencils import ContactStencilKind
 from ._surface import PreparedCollisionScene
+
+
+_CandidateOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_TraversalState: TypeAlias = tuple[Array, Array, Array, Array, Array, _CandidateOutputs]
+_ActiveTraversalState: TypeAlias = tuple[Array, Array, Array, Array, _CandidateOutputs]
 
 
 def _scene_excluded_vertex_pairs(scene: PreparedCollisionScene, /) -> np.ndarray:
@@ -328,7 +335,9 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
 
         if primitive_count > 1:
 
-            def combine_bounds(index, bounds):
+            def combine_bounds(
+                index: Array, bounds: tuple[Array, Array]
+            ) -> tuple[Array, Array]:
                 lower, upper = bounds
                 left = self.tree_left[index]
                 right = self.tree_right[index]
@@ -404,7 +413,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
             outputs,
         )
 
-        def continue_traversal(state):
+        def continue_traversal(state: _TraversalState) -> Array:
             _, _, stack_size, visits, stack_overflow, _ = state
             return (
                 (stack_size > 0)
@@ -412,7 +421,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                 & ~stack_overflow
             )
 
-        def pair_policy_legal(first_feature, second_feature):
+        def pair_policy_legal(first_feature: Array, second_feature: Array) -> Array:
             nonstatic = ~(
                 self.feature_static_mask[first_feature]
                 & self.feature_static_mask[second_feature]
@@ -449,7 +458,9 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
             )
             return nonstatic & participant_allowed & ~excluded
 
-        def record_leaf_pair(first, second, current_outputs):
+        def record_leaf_pair(
+            first: Array, second: Array, current_outputs: _CandidateOutputs
+        ) -> _CandidateOutputs:
             (
                 edge_vertex_output,
                 edge_vertex_count,
@@ -550,7 +561,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                 face_vertex_count,
             )
 
-        def traverse_one(state):
+        def traverse_one(state: _TraversalState) -> _TraversalState:
             (
                 first_stack,
                 second_stack,
@@ -577,12 +588,16 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                 self.activation_distance,
             )
 
-            def push_pairs(active_state, new_first, new_second):
+            def push_pairs(
+                active_state: _ActiveTraversalState, new_first: Array, new_second: Array
+            ) -> _ActiveTraversalState:
                 active_size = active_state[2]
                 pair_count = new_first.shape[0]
                 has_capacity = active_size + pair_count <= stack_capacity
 
-                def store_pairs(store_state):
+                def store_pairs(
+                    store_state: _ActiveTraversalState,
+                ) -> _ActiveTraversalState:
                     (
                         store_first,
                         store_second,
@@ -601,7 +616,9 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                         store_outputs,
                     )
 
-                def report_overflow(overflow_state):
+                def report_overflow(
+                    overflow_state: _ActiveTraversalState,
+                ) -> _ActiveTraversalState:
                     (
                         overflow_first,
                         overflow_second,
@@ -621,11 +638,15 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                     has_capacity, store_pairs, report_overflow, active_state
                 )
 
-            def process_overlap(active_state):
+            def process_overlap(
+                active_state: _ActiveTraversalState,
+            ) -> _ActiveTraversalState:
                 first_is_leaf = first < primitive_count
                 second_is_leaf = second < primitive_count
 
-                def process_leaves(leaf_state):
+                def process_leaves(
+                    leaf_state: _ActiveTraversalState,
+                ) -> _ActiveTraversalState:
                     (
                         leaf_first,
                         leaf_second,
@@ -641,7 +662,9 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                         record_leaf_pair(first, second, leaf_outputs),
                     )
 
-                def expand_nodes(node_state):
+                def expand_nodes(
+                    node_state: _ActiveTraversalState,
+                ) -> _ActiveTraversalState:
                     first_internal = jnp.clip(
                         first - primitive_count, 0, primitive_count - 2
                     )
@@ -653,14 +676,18 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                     second_left = self.tree_left[second_internal]
                     second_right = self.tree_right[second_internal]
 
-                    def expand_self(self_state):
+                    def expand_self(
+                        self_state: _ActiveTraversalState,
+                    ) -> _ActiveTraversalState:
                         return push_pairs(
                             self_state,
                             jnp.stack((first_right, first_left, first_left)),
                             jnp.stack((first_right, first_right, first_left)),
                         )
 
-                    def expand_distinct(distinct_state):
+                    def expand_distinct(
+                        distinct_state: _ActiveTraversalState,
+                    ) -> _ActiveTraversalState:
                         split_first = (~first_is_leaf) & (
                             second_is_leaf
                             | (
@@ -669,14 +696,18 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                             )
                         )
 
-                        def split_first_node(split_state):
+                        def split_first_node(
+                            split_state: _ActiveTraversalState,
+                        ) -> _ActiveTraversalState:
                             return push_pairs(
                                 split_state,
                                 jnp.stack((first_right, first_left)),
                                 jnp.stack((second, second)),
                             )
 
-                        def split_second_node(split_state):
+                        def split_second_node(
+                            split_state: _ActiveTraversalState,
+                        ) -> _ActiveTraversalState:
                             return push_pairs(
                                 split_state,
                                 jnp.stack((first, first)),
@@ -993,7 +1024,13 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
         return CompiledContactSearchResult(edge_vertex, edge_edge, face_vertex, evidence)
 
 
-def _aabb_mask(first_min, first_max, second_min, second_max, radius):
+def _aabb_mask(
+    first_min: Array,
+    first_max: Array,
+    second_min: Array,
+    second_max: Array,
+    radius: float | Array,
+) -> Array:
     delta = jnp.maximum(
         0.0,
         jnp.maximum(first_min - second_max, second_min - first_max),
@@ -1001,7 +1038,9 @@ def _aabb_mask(first_min, first_max, second_min, second_max, radius):
     return jnp.sum(delta * delta, axis=-1) <= radius * radius
 
 
-def _balanced_morton_hierarchy(leaf_count: int, /):
+def _balanced_morton_hierarchy(
+    leaf_count: int, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
     count = int(leaf_count)
     if count <= 0:
         raise ValueError("LBVH construction requires at least one primitive.")
@@ -1009,7 +1048,7 @@ def _balanced_morton_hierarchy(leaf_count: int, /):
     right_children: list[int] = []
     node_leaf_count = [1] * count
 
-    def build(first: int, last: int):
+    def build(first: int, last: int) -> tuple[int, int]:
         if last - first == 1:
             return first, 1
         middle = first + (last - first) // 2
@@ -1031,7 +1070,9 @@ def _balanced_morton_hierarchy(leaf_count: int, /):
     )
 
 
-def _empty_candidate_batch(kind, capacity):
+def _empty_candidate_batch(
+    kind: ContactStencilKind, capacity: int
+) -> CompiledCandidateBatch:
     return CompiledCandidateBatch(
         jnp.full((capacity, 4), -1, dtype=jnp.int32),
         jnp.zeros((capacity,), dtype=jnp.bool_),
@@ -1042,7 +1083,14 @@ def _empty_candidate_batch(kind, capacity):
     )
 
 
-def _empty_lbvh_result(plan, finite_bounds, /, *, stack_overflow, visit_overflow):
+def _empty_lbvh_result(
+    plan: LBVHContactSearchPlan,
+    finite_bounds: ArrayLike,
+    /,
+    *,
+    stack_overflow: bool,
+    visit_overflow: bool,
+) -> LBVHContactSearchResult:
     edge_vertex = _empty_candidate_batch(
         ContactStencilKind.EDGE_VERTEX, plan.edge_vertex_capacity
     )
@@ -1068,12 +1116,14 @@ def _empty_lbvh_result(plan, finite_bounds, /, *, stack_overflow, visit_overflow
     return LBVHContactSearchResult(edge_vertex, edge_edge, face_vertex, evidence)
 
 
-def _append_traversal_candidate(indices, count, row, accepted, capacity):
+def _append_traversal_candidate(
+    indices: Array, count: Array, row: Array, accepted: ArrayLike, capacity: int
+) -> tuple[Array, Array]:
     accepted = jnp.asarray(accepted, dtype=jnp.bool_)
     if capacity == 0:
         return indices, count + accepted.astype(jnp.int32)
 
-    def store(values):
+    def store(values: tuple[Array, Array]) -> Array:
         output, slot = values
         return output.at[slot].set(row)
 
@@ -1086,13 +1136,15 @@ def _append_traversal_candidate(indices, count, row, accepted, capacity):
     return indices, count + accepted.astype(jnp.int32)
 
 
-def _traversal_candidate_batch(kind, indices, count, capacity):
+def _traversal_candidate_batch(
+    kind: ContactStencilKind, indices: Array, count: Array, capacity: int
+) -> CompiledCandidateBatch:
     valid = jnp.arange(capacity, dtype=jnp.int32) < jnp.minimum(count, capacity)
     overflow = jnp.maximum(count - capacity, 0)
     return CompiledCandidateBatch(indices, valid, count, overflow, kind, capacity)
 
 
-def _pack_indices(mask, capacity):
+def _pack_indices(mask: Array, capacity: int) -> tuple[Array, Array, Array, Array]:
     count = jnp.sum(mask, dtype=jnp.int32)
     selected = jnp.nonzero(mask, size=capacity, fill_value=0)[0]
     valid = jnp.arange(capacity) < jnp.minimum(count, capacity)
@@ -1101,18 +1153,18 @@ def _pack_indices(mask, capacity):
 
 
 def _pack_compiled_pairs(
-    kind,
-    pairs,
-    capacity,
-    point_min,
-    point_max,
-    primitive_min,
-    primitive_max,
-    primitive_topology,
-    radius,
+    kind: ContactStencilKind,
+    pairs: Array,
+    capacity: int,
+    point_min: Array,
+    point_max: Array,
+    primitive_min: Array,
+    primitive_max: Array,
+    primitive_topology: Array,
+    radius: Array,
     *,
-    legal=None,
-):
+    legal: ArrayLike | None = None,
+) -> CompiledCandidateBatch:
     if pairs.shape[0] == 0:
         return CompiledCandidateBatch(
             jnp.full((capacity, 4), -1, dtype=jnp.int32),
@@ -1149,16 +1201,16 @@ def _pack_compiled_pairs(
 
 
 def _pack_compiled_same_pairs(
-    kind,
-    pairs,
-    capacity,
-    lower,
-    upper,
-    topology,
-    radius,
+    kind: ContactStencilKind,
+    pairs: Array,
+    capacity: int,
+    lower: Array,
+    upper: Array,
+    topology: Array,
+    radius: Array,
     *,
-    legal=None,
-):
+    legal: ArrayLike | None = None,
+) -> CompiledCandidateBatch:
     if pairs.shape[0] == 0:
         return CompiledCandidateBatch(
             jnp.full((capacity, 4), -1, dtype=jnp.int32),

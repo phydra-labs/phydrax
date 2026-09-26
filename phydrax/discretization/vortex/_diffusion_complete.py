@@ -152,7 +152,7 @@ class GaussianPSENeighborhoodPlan(StrictModule, NonTrainableState):
             dimension_,
             required_source_fields=("positions", "strength", "active_mask", "volume"),
             domain="periodic"
-            if box is not None and bool(jnp.any(box.periodic))
+            if box is not None and bool(jnp.any(box.periodic_mask))
             else "free-space",
             derivatives=("source-position", "source-strength", "source-volume"),
             acceleration="direct",

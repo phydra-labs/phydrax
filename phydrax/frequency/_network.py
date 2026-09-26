@@ -50,15 +50,15 @@ class ScatteringMatrix(StrictModule, NonTrainableState):
         )
 
     @property
-    def reciprocal_error(self):
+    def reciprocal_error(self) -> Array:
         return jnp.max(jnp.abs(self.values - jnp.swapaxes(self.values, -1, -2)))
 
     @property
-    def maximum_power_gain(self):
+    def maximum_power_gain(self) -> Array:
         return jnp.max(jnp.linalg.svd(self.values, compute_uv=False) ** 2)
 
     @property
-    def passive(self):
+    def passive(self) -> Array:
         return self.maximum_power_gain <= 1 + 1e-10
 
 

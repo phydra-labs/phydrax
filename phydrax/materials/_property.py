@@ -31,7 +31,7 @@ class TabulatedProperty(StrictModule, NonTrainableState):
         self.values = jnp.asarray(y)
         self.unit = unit
 
-    def evaluate(self, argument: ArrayLike):
+    def evaluate(self, argument: ArrayLike) -> Array:
         q = jnp.asarray(argument)
         if self.values.ndim == 1:
             return linear_interpolate(

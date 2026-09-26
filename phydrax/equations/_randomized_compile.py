@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from phydrax.domain import (
         DomainComponent,
         DomainFunction,
+        GraphBatch,
         GridBatch,
         PointBatch,
         SamplingPlan,
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
         RandomizedResidualTerm,
     )
 from ._compile import compile_pde_expression
-from ._ir import PDEEquation, PDEExpression, PDEProblemIR
+from ._ir import PDECoordinate, PDEEquation, PDEExpression, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
 
 
@@ -184,7 +185,7 @@ class CompiledRandomizedPDETerm:
     source: PDEEquation
 
 
-def _coordinate(problem: PDEProblemIR, name: str, /):
+def _coordinate(problem: PDEProblemIR, name: str, /) -> PDECoordinate:
     return next(item for item in problem.coordinates if item.name == name)
 
 
@@ -359,7 +360,12 @@ def _coordinate_functions(
     for coordinate in problem.coordinates:
         name = coordinate.name
 
-        def identity(value, *, key=None, iter=None):
+        def identity(
+            value: object,
+            *,
+            key: Key[Array, ""] | None = None,
+            iter: object = None,
+        ) -> object:
             del key, iter
             return value
 
@@ -494,7 +500,7 @@ class _RandomizedPointCallable(StrictModule):
         local_position = operand.deps.index(node.coordinate)
         node_key = self._node_key(key, path)
 
-        def evaluate(local_state):
+        def evaluate(local_state: Array) -> Array:
             current = list(local_args)
             current[local_position] = local_state
             return operand.func(*current, key=key)
@@ -590,7 +596,13 @@ class _RandomizedPointCallable(StrictModule):
             f"Unsupported randomized expression node {node.op!r} at {path}."
         )
 
-    def __call__(self, *args: Any, key=None, iter=None, **kwargs: Any) -> Array:
+    def __call__(
+        self,
+        *args: Any,
+        key: Key[Array, ""] | None = None,
+        iter: object = None,
+        **kwargs: Any,
+    ) -> Array:
         del iter, kwargs
         resolved_key = jr.key(0) if key is None else key
         result, randomized = self._evaluate(
@@ -696,7 +708,7 @@ class _RandomizedCollocationSampler(StrictModule):
     component: DomainComponent
     sampling: SamplingPlan
 
-    def __call__(self, key: Key[Array, ""], /):
+    def __call__(self, key: Key[Array, ""], /) -> PointBatch | GridBatch | GraphBatch:
         return self.component.sample(self.sampling, key=key)
 
 

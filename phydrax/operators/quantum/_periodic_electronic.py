@@ -9,6 +9,7 @@ from __future__ import annotations
 import itertools
 import math
 from abc import abstractmethod
+from collections.abc import Callable
 from math import isfinite
 
 import equinox as eqx
@@ -612,10 +613,12 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
 
     def estimate(
         self,
-        model: AbstractPeriodicElectronicAmplitude,
+        model: Callable[[Array], LogAmplitude],
         configurations: Array,
         /,
     ) -> LocalOperatorEstimate:
+        if not isinstance(model, AbstractPeriodicElectronicAmplitude):
+            raise TypeError("model must implement AbstractPeriodicElectronicAmplitude.")
         local = self.local_energy(model, configurations)
         work = jnp.full(
             local.value.shape,

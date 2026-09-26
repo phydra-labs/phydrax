@@ -122,8 +122,26 @@ class LatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
             precision,
         )
 
-    def collide_detailed(self, *args, **kwargs) -> LatticeBoltzmannCollisionResult:
-        return self.collide(*args, **kwargs)
+    def collide_detailed(
+        self,
+        populations: Array,
+        density: Array,
+        velocity: Array,
+        force_density: Array,
+        even_rate: Array,
+        velocity_set: LatticeBoltzmannVelocitySet,
+        precision: LatticeBoltzmannPrecisionPolicy,
+        /,
+    ) -> LatticeBoltzmannCollisionResult:
+        return self.collide(
+            populations,
+            density,
+            velocity,
+            force_density,
+            even_rate,
+            velocity_set,
+            precision,
+        )
 
 
 class PreparedLatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
@@ -179,8 +197,26 @@ class PreparedLatticeBoltzmannMethodPlan(StrictModule, NonTrainableState):
             precision,
         )
 
-    def collide_detailed(self, *args, **kwargs) -> LatticeBoltzmannCollisionResult:
-        return self.collide(*args, **kwargs)
+    def collide_detailed(
+        self,
+        populations: Array,
+        density: Array,
+        velocity: Array,
+        force_density: Array,
+        even_rate: Array,
+        velocity_set: LatticeBoltzmannVelocitySet,
+        precision: LatticeBoltzmannPrecisionPolicy,
+        /,
+    ) -> LatticeBoltzmannCollisionResult:
+        return self.collide(
+            populations,
+            density,
+            velocity,
+            force_density,
+            even_rate,
+            velocity_set,
+            precision,
+        )
 
 
 __all__ = [

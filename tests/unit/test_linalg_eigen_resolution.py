@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -95,3 +96,22 @@ def test_spectral_eigenspace_evidence_compares_transferred_modes():
 
     assert report.trusted_count == coarse.num_modes
     assert jnp.max(report.subspace_errors) < 1e-10
+
+
+def test_spectral_eigenspace_evidence_rejects_non_tensor_transfer():
+    domain = phx.discretization.AxisDomain.periodic(0.0, 1.0)
+    space = phx.discretization.TensorSpectralPlan(
+        (phx.discretization.FourierBasisPlan(5),)
+    ).prepare((domain,))
+    operator = phx.discretization.spectral_derivative_operator(space, 0).operator
+    result = phx.linalg.eigen.general_eigensolve(
+        phx.linalg.eigen.GeneralEigenproblem(operator)
+    )
+    lattice = phx.discretization.spectral.LatticeHarmonicPlan.parallelogramic(
+        (3,), (9,)
+    ).prepare(jnp.asarray(((2.0, 0.0),)))
+    transfer = phx.discretization.prepare_spectral_modal_transfer(lattice, lattice)
+    with pytest.raises(ValueError, match="does not bind the supplied spaces"):
+        phx.discretization.compare_spectral_eigen_resolutions(
+            result, result, space, space, transfer
+        )

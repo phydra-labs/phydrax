@@ -9,7 +9,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...discretization.finite_volume._hybrid_diffusion import (
@@ -25,6 +25,7 @@ from ...nonlinear import (
     implicit_root_result,
     ImplicitRootDerivativePolicy,
     NewtonKrylov,
+    NonlinearResult,
     NonlinearStatus,
     NonlinearSystemProblem,
     NonlinearTermination,
@@ -35,7 +36,7 @@ from ._retention import VanGenuchtenMualem
 from ._state import _successful_root_value, PorousFluxes, PorousState, PorousStepResult
 
 
-def _cell_array(value, count, name):
+def _cell_array(value: ArrayLike, count: int, name: str) -> Array:
     value = jnp.asarray(value)
     value = value.astype(jnp.result_type(value, 1.0))
     if value.shape not in ((), (count,)):
@@ -43,7 +44,7 @@ def _cell_array(value, count, name):
     return jnp.broadcast_to(value, (count,))
 
 
-def _finish_root(root, successful):
+def _finish_root(root: NonlinearResult, successful: Array) -> NonlinearResult:
     status = jnp.where(
         root.successful & ~successful,
         int(NonlinearStatus.RECOVERABLE_DOMAIN_FAILURE),
@@ -90,20 +91,20 @@ class RichardsPlan(StrictModule):
 
     def __init__(
         self,
-        discretization,
-        material,
-        retention,
-        boundaries,
+        discretization: UnstructuredFiniteVolumeDiscretization,
+        material: PorousMaterial,
+        retention: VanGenuchtenMualem,
+        boundaries: PorousBoundaryConditions,
         /,
         *,
-        gravity_m_s2=(0.0, 0.0, -9.80665),
-        temperature_K=293.15,
-        stabilization=1.0,
-        method=None,
-        termination=None,
-        derivative_policy=None,
-        pressure_scale_Pa=1.0e4,
-        mass_rate_scale_kg_s=1.0,
+        gravity_m_s2: ArrayLike | tuple[float, float, float] = (0.0, 0.0, -9.80665),
+        temperature_K: ArrayLike = 293.15,
+        stabilization: float = 1.0,
+        method: AbstractNonlinearMethod | None = None,
+        termination: NonlinearTermination | None = None,
+        derivative_policy: ImplicitRootDerivativePolicy | None = None,
+        pressure_scale_Pa: float = 1.0e4,
+        mass_rate_scale_kg_s: float = 1.0,
     ) -> None:
         if not isinstance(material, PorousMaterial) or not isinstance(
             retention, VanGenuchtenMualem
@@ -162,14 +163,16 @@ class RichardsPlan(StrictModule):
         for value, name in (*material_fields, *retention_fields):
             _cell_array(value, diffusion.cell_count, name)
 
-    def _temperature(self, temperature_K=None):
+    def _temperature(self, temperature_K: ArrayLike | None = None) -> Array:
         return (
             self.temperature_K
             if temperature_K is None
             else _cell_array(temperature_K, self.diffusion.cell_count, "temperature_K")
         )
 
-    def _face_temperature(self, temperature, face_temperature_K=None):
+    def _face_temperature(
+        self, temperature: Array, face_temperature_K: ArrayLike | None = None
+    ) -> Array:
         if face_temperature_K is not None:
             return _cell_array(
                 face_temperature_K, self.diffusion.face_count, "face_temperature_K"
@@ -184,7 +187,7 @@ class RichardsPlan(StrictModule):
             temperature[owner],
         )
 
-    def _face_density(self, face_pressure, face_temperature):
+    def _face_density(self, face_pressure: Array, face_temperature: Array) -> Array:
         owner = self.discretization.owner_cells
         reference_density = _cell_array(
             self.material.density_kg_m3, self.diffusion.cell_count, "density_kg_m3"
@@ -214,21 +217,27 @@ class RichardsPlan(StrictModule):
             - thermal_expansion * (face_temperature - reference_temperature)
         )
 
-    def water_volume(self, pressure_Pa):
+    def water_volume(self, pressure_Pa: ArrayLike) -> Array:
         return (
             self.discretization.cell_volumes
             * self.material.pore_fraction(pressure_Pa)
             * self.retention.saturation(pressure_Pa)
         )
 
-    def water_mass(self, pressure_Pa, temperature_K=None):
+    def water_mass(
+        self, pressure_Pa: ArrayLike, temperature_K: ArrayLike | None = None
+    ) -> Array:
         return self.water_volume(pressure_Pa) * self.material.density(
             pressure_Pa, self._temperature(temperature_K)
         )
 
     def fluxes(
-        self, pressure_Pa, face_pressure_Pa, temperature_K=None, face_temperature_K=None
-    ):
+        self,
+        pressure_Pa: ArrayLike,
+        face_pressure_Pa: ArrayLike,
+        temperature_K: ArrayLike | None = None,
+        face_temperature_K: ArrayLike | None = None,
+    ) -> PorousFluxes:
         pressure = _cell_array(pressure_Pa, self.diffusion.cell_count, "pressure_Pa")
         face_pressure = _cell_array(
             face_pressure_Pa, self.diffusion.face_count, "face_pressure_Pa"
@@ -268,8 +277,12 @@ class RichardsPlan(StrictModule):
         )
 
     def well_posed(
-        self, pressure_Pa, temperature_K=None, *, additional_anchored_cells=None
-    ):
+        self,
+        pressure_Pa: ArrayLike,
+        temperature_K: ArrayLike | None = None,
+        *,
+        additional_anchored_cells: ArrayLike | None = None,
+    ) -> Array:
         """Every connected component needs pressure anchoring or positive storage.
 
         ``additional_anchored_cells`` lets a coupled surface supply its own pressure
@@ -290,9 +303,13 @@ class RichardsPlan(StrictModule):
             .max(storage.astype(jnp.int32))
             > 0
         )
-        return jnp.all(stored | self.diffusion.anchored_components(self.boundaries))
+        return jnp.all(
+            stored | self.diffusion.anchored_components(self.boundaries.diffusion)
+        )
 
-    def admissible(self, pressure_Pa, temperature_K=None):
+    def admissible(
+        self, pressure_Pa: ArrayLike, temperature_K: ArrayLike | None = None
+    ) -> Array:
         temperature = self._temperature(temperature_K)
         mobility = self.retention.relative_permeability(
             pressure_Pa
@@ -302,8 +319,13 @@ class RichardsPlan(StrictModule):
         )
 
     def state_from_unknown(
-        self, unknown, *, time_s=0.0, temperature_K=None, face_temperature_K=None
-    ):
+        self,
+        unknown: ArrayLike,
+        *,
+        time_s: ArrayLike = 0.0,
+        temperature_K: ArrayLike | None = None,
+        face_temperature_K: ArrayLike | None = None,
+    ) -> PorousState:
         """Construct inventories without altering any solved face pressure."""
         count = self.diffusion.cell_count
         unknown = jnp.asarray(unknown)
@@ -327,13 +349,13 @@ class RichardsPlan(StrictModule):
 
     def initialize(
         self,
-        pressure_Pa,
-        face_pressure_Pa=None,
+        pressure_Pa: ArrayLike,
+        face_pressure_Pa: ArrayLike | None = None,
         *,
-        time_s=0.0,
-        temperature_K=None,
-        face_temperature_K=None,
-    ):
+        time_s: ArrayLike = 0.0,
+        temperature_K: ArrayLike | None = None,
+        face_temperature_K: ArrayLike | None = None,
+    ) -> PorousState:
         pressure = _cell_array(pressure_Pa, self.diffusion.cell_count, "pressure_Pa")
         if face_pressure_Pa is None:
             owner, neighbor = (
@@ -363,14 +385,14 @@ class RichardsPlan(StrictModule):
 
     def residual(
         self,
-        unknown,
+        unknown: Array,
         previous: PorousState,
-        dt_s,
-        source_kg_s=0.0,
+        dt_s: ArrayLike,
+        source_kg_s: ArrayLike = 0.0,
         *,
-        temperature_K=None,
-        face_temperature_K=None,
-    ):
+        temperature_K: ArrayLike | None = None,
+        face_temperature_K: ArrayLike | None = None,
+    ) -> Array:
         count = self.diffusion.cell_count
         pressure, face_pressure = unknown[:count], unknown[count:]
         temperature = (
@@ -395,7 +417,7 @@ class RichardsPlan(StrictModule):
         )
         return jnp.concatenate((cells, faces))
 
-    def residual_scales(self):
+    def residual_scales(self) -> Array:
         faces = jnp.where(
             self.boundaries.kind == 1, self.pressure_scale_Pa, self.mass_rate_scale_kg_s
         )
@@ -403,7 +425,14 @@ class RichardsPlan(StrictModule):
             (jnp.full(self.diffusion.cell_count, self.mass_rate_scale_kg_s), faces)
         )
 
-    def step(self, previous: PorousState, dt_s, *, source_kg_s=0.0, initial_unknown=None):
+    def step(
+        self,
+        previous: PorousState,
+        dt_s: ArrayLike,
+        *,
+        source_kg_s: ArrayLike = 0.0,
+        initial_unknown: ArrayLike | None = None,
+    ) -> PorousStepResult:
         dt = _finite(dt_s, "time step", positive=True)
         if dt.shape != ():
             raise ValueError("dt_s must be scalar.")
@@ -415,13 +444,15 @@ class RichardsPlan(StrictModule):
         )
         scale = self.residual_scales()
 
-        def residual(scaled, args):
+        def residual(scaled: Array, args: object) -> Array:
             return (
                 self.residual(scaled * self.pressure_scale_Pa, previous, dt, source)
                 / scale
             )
 
-        def valid(scaled, residual_value, auxiliary, args):
+        def valid(
+            scaled: Array, residual_value: object, auxiliary: object, args: object
+        ) -> Array:
             pressure = scaled[: self.diffusion.cell_count] * self.pressure_scale_Pa
             return self.admissible(pressure, previous.temperature_K) & self.well_posed(
                 pressure, previous.temperature_K

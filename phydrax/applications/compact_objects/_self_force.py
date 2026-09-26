@@ -38,16 +38,16 @@ class ModeSumRegularizationParameters(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        A,
-        B,
-        C,
-        D,
+        A: ArrayLike,
+        B: ArrayLike,
+        C: ArrayLike,
+        D: ArrayLike,
         /,
         *,
-        side,
-        gauge,
-        worldline_id,
-        component_basis,
+        side: str,
+        gauge: str,
+        worldline_id: str,
+        component_basis: str,
     ) -> None:
         values = [np.asarray(value, dtype=np.float64) for value in (A, B, C, D)]
         if any(value.shape != values[0].shape for value in values[1:]) or any(
@@ -136,12 +136,12 @@ class FirstOrderSelfForceModeSum(StrictModule, NonTrainableState):
     def __init__(
         self,
         regularization: ModeSumRegularizationParameters,
-        ell_max,
+        ell_max: int,
         /,
         *,
-        tail_window=6,
-        tail_fit_tolerance=5.0e-3,
-        maximum_tail_fraction=0.25,
+        tail_window: int = 6,
+        tail_fit_tolerance: float = 5.0e-3,
+        maximum_tail_fraction: float = 0.25,
     ) -> None:
         if not isinstance(regularization, ModeSumRegularizationParameters):
             raise TypeError("regularization must be ModeSumRegularizationParameters.")
@@ -295,7 +295,7 @@ class FirstOrderSelfForceModeSum(StrictModule, NonTrainableState):
         )
 
 
-def _component_norm(value):
+def _component_norm(value: Array) -> Array:
     return jnp.sqrt(jnp.sum(jnp.abs(value) ** 2))
 
 

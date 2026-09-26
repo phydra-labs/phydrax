@@ -1841,13 +1841,13 @@ class ProductionIterationMetrics(StrictModule):
 
     def __init__(
         self,
-        time,
-        accepted_step_size,
-        retry_count,
-        method_successful,
-        accepted,
-        output_due,
-        checkpoint_due,
+        time: ArrayLike,
+        accepted_step_size: ArrayLike,
+        retry_count: ArrayLike,
+        method_successful: ArrayLike,
+        accepted: ArrayLike,
+        output_due: ArrayLike,
+        checkpoint_due: ArrayLike,
         /,
     ) -> None:
         self.time = jnp.asarray(time)
@@ -1860,15 +1860,15 @@ class ProductionIterationMetrics(StrictModule):
 
 
 def _production_iteration_record(
-    phase,
-    step_index,
+    phase: IterationPhase | ArrayLike,
+    step_index: ArrayLike,
     metrics: ProductionIterationMetrics,
     /,
     *,
-    active=True,
-    committed=False,
-    terminal=False,
-    status=0,
+    active: ArrayLike = True,
+    committed: ArrayLike = False,
+    terminal: ArrayLike = False,
+    status: ArrayLike = 0,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(
@@ -2259,7 +2259,9 @@ class PreparedProductionRun:
         self._compiled_segment = self._compile_segment(plan.segment_steps)
         self._compiled_one_step = self._compile_segment(1)
 
-    def _compile_segment(self, length: int, /):
+    def _compile_segment(
+        self, length: int, /
+    ) -> Callable[[_SegmentState], tuple[_SegmentState, _SegmentRecord]]:
         plan = self.plan
         args = self.args
         retry_decision_id = canonical_fingerprint(
@@ -2271,7 +2273,9 @@ class PreparedProductionRun:
         )
         attempt_count = plan.retry_policy.maximum_retries + 1
 
-        def scan_step(carry: _SegmentState, unused: None):
+        def scan_step(
+            carry: _SegmentState, unused: None
+        ) -> tuple[_SegmentState, _SegmentRecord]:
             del unused
             tolerance = jnp.asarray(
                 32.0 * jnp.finfo(carry.time.dtype).eps, dtype=carry.time.dtype
@@ -2415,7 +2419,7 @@ class PreparedProductionRun:
             return next_carry, record
 
         @jax.jit
-        def execute(initial: _SegmentState):
+        def execute(initial: _SegmentState) -> tuple[_SegmentState, _SegmentRecord]:
             return jax.lax.scan(scan_step, initial, xs=None, length=length)
 
         return execute
@@ -2508,7 +2512,7 @@ class PreparedProductionRun:
             "",
         )
 
-    def _iteration_session_checkpoint(self, /):
+    def _iteration_session_checkpoint(self, /) -> tuple[()] | tuple[Array, Array]:
         if self.iteration_session is None:
             return ()
         state = self.iteration_session.snapshot()

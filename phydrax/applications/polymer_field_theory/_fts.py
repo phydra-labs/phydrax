@@ -287,7 +287,7 @@ class PreparedComplexFTS(StrictModule, NonTrainableState):
         if not isinstance(scft, PreparedSCFT):
             raise TypeError("scft must be PreparedSCFT.")
 
-        def action(fields):
+        def action(fields: Array) -> Array:
             gauge_fixed = fields - jnp.mean(fields)
             value = scft.evaluate(gauge_fixed).free_energy
             return jnp.asarray(value, dtype=fields.dtype)

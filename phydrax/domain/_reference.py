@@ -10,7 +10,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 from .._sampling import UnitCubeTransport
 from ._components import Boundary, Interior, Selection
@@ -138,7 +138,7 @@ def _dataset_transport(
     if not isinstance(component, Interior):
         return None
 
-    def map_dataset(unit: Array):
+    def map_dataset(unit: Array) -> PyTree[Array]:
         indices = jnp.floor(unit[:, 0] * factor.size).astype(jnp.int32)
         indices = jnp.minimum(indices, factor.size - 1)
         return jax.tree_util.tree_map(lambda value: value[indices], factor.data)

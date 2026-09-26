@@ -9,7 +9,7 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -32,7 +32,7 @@ CompositeGaugeProjector = Callable[[Array], Array]
 
 
 class CompositeMACProjectionResult(StrictModule):
-    velocity: object
+    velocity: PyTree[Array]
     pressure: Array
     divergence_before: Array
     divergence_after: Array
@@ -93,7 +93,7 @@ class CompositeMACProjectionPlan(StrictModule, NonTrainableState):
             else linear_policy
         )
 
-        def pressure_action(pressure):
+        def pressure_action(pressure: Array) -> Array:
             gauged = gauge_project(pressure)
             gradient_value = gradient.mv(gauged)
             inverse_value = inverse_momentum.mv(gradient_value)
@@ -144,7 +144,7 @@ class CompositeMACProjectionPlan(StrictModule, NonTrainableState):
 
     def project(
         self,
-        velocity,
+        velocity: PyTree[Array],
         /,
         *,
         pressure: Array | None = None,

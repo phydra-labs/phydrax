@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -77,6 +79,7 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
                 raise ValueError(
                     "enclosure_geometry requires an exact-SDF enclosure certificate."
                 )
+            enclosure_record = None
         else:
             if not isinstance(enclosure, ExactSDFEnclosureCertificate):
                 raise TypeError("enclosure must be ExactSDFEnclosureCertificate or None.")
@@ -92,6 +95,31 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
                 raise ValueError(
                     "The enclosure geometry owner must have accepted validity evidence."
                 )
+            enclosure_record = {
+                "evaluation_error": enclosure.field.evaluation_error,
+                "lipschitz_upper_bound": enclosure.field.lipschitz_upper_bound,
+                "geometry_owner": canonical_fingerprint(
+                    {
+                        "kernel_type": (
+                            f"{type(enclosure_geometry.kernel).__module__}."
+                            f"{type(enclosure_geometry.kernel).__qualname__}"
+                        ),
+                        "schema": [
+                            {
+                                "parameter_id": str(spec.parameter_id),
+                                "shape": list(spec.shape),
+                                "dtype": spec.dtype,
+                                "role": spec.role,
+                                "physical_scale": spec.physical_scale,
+                                "bounds": list(spec.bounds),
+                                "trainable": spec.trainable,
+                            }
+                            for spec in enclosure_geometry.schema.specs
+                        ],
+                        "arrays": array_tree_fingerprint(enclosure_geometry),
+                    }
+                ),
+            }
         object.__setattr__(self, "grid", grid)
         object.__setattr__(self, "enclosure", enclosure)
         object.__setattr__(self, "enclosure_geometry", enclosure_geometry)
@@ -103,33 +131,7 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
                 {
                     "kind": "voxel-geometry-sampling-plan",
                     "grid_id": grid.grid_id,
-                    "enclosure": None
-                    if enclosure is None
-                    else {
-                        "evaluation_error": enclosure.field.evaluation_error,
-                        "lipschitz_upper_bound": enclosure.field.lipschitz_upper_bound,
-                        "geometry_owner": canonical_fingerprint(
-                            {
-                                "kernel_type": (
-                                    f"{type(enclosure_geometry.kernel).__module__}."
-                                    f"{type(enclosure_geometry.kernel).__qualname__}"
-                                ),
-                                "schema": [
-                                    {
-                                        "parameter_id": str(spec.parameter_id),
-                                        "shape": list(spec.shape),
-                                        "dtype": spec.dtype,
-                                        "role": spec.role,
-                                        "physical_scale": spec.physical_scale,
-                                        "bounds": list(spec.bounds),
-                                        "trainable": spec.trainable,
-                                    }
-                                    for spec in enclosure_geometry.schema.specs
-                                ],
-                                "arrays": array_tree_fingerprint(enclosure_geometry),
-                            }
-                        ),
-                    },
+                    "enclosure": enclosure_record,
                     "narrow_band_width": width,
                 }
             ),
@@ -171,9 +173,12 @@ class VoxelGeometrySamplingPlan(StrictModule, NonTrainableState):
                 - jnp.asarray(self.grid.address_plan.lower, dtype=sampled.dtype)
             ) / self.grid.address_plan.resolution
             radius = 0.5 * jnp.sqrt(jnp.sum(cell_width**2))
+            enclosure_field = self.enclosure.field
+            # ExactSDFEnclosureCertificate validates that both bounds are declared.
+            evaluation_error = cast(float, enclosure_field.evaluation_error)
+            lipschitz_upper_bound = cast(float, enclosure_field.lipschitz_upper_bound)
             error = jnp.asarray(
-                self.enclosure.field.evaluation_error
-                + self.enclosure.field.lipschitz_upper_bound * radius,
+                evaluation_error + lipschitz_upper_bound * radius,
                 dtype=sampled.dtype,
             )
             lower = jnp.where(active, sampled - error, 0.0)

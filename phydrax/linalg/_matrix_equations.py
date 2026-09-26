@@ -788,7 +788,7 @@ def _promoted_coordinate_action(
 ) -> Array:
     native_dtype = _coordinate_dtype(operator.source)
 
-    def native_action(value):
+    def native_action(value: Array) -> Array:
         native = value.astype(native_dtype)
         if transpose:
             return operator.source.flatten(

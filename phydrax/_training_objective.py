@@ -11,26 +11,31 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ._precision import complex_precision_dtype, real_precision_dtype_name
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class _ObjectiveContribution:
     """Scaled additive objective numerator and stop-gradient support."""
 
     numerator: Array
     support: Array
-    log_scale: Array = 0.0
+    log_scale: Array
 
-    def __post_init__(self) -> None:
-        numerator = jnp.asarray(self.numerator)
+    def __init__(
+        self,
+        numerator: ArrayLike,
+        support: ArrayLike,
+        log_scale: ArrayLike = 0.0,
+    ) -> None:
+        numerator = jnp.asarray(numerator)
         if not jnp.issubdtype(numerator.dtype, jnp.inexact):
             numerator = numerator.astype("float64")
         support_dtype = jnp.real(numerator).dtype
-        support = jnp.asarray(self.support, dtype=support_dtype)
-        log_scale = jnp.asarray(self.log_scale, dtype=support_dtype)
+        support = jnp.asarray(support, dtype=support_dtype)
+        log_scale = jnp.asarray(log_scale, dtype=support_dtype)
         if numerator.shape != () or support.shape != () or log_scale.shape != ():
             raise ValueError(
                 "Objective numerator, support, and log_scale must be scalar arrays."

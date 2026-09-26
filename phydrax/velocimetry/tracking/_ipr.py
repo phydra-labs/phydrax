@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -41,6 +42,13 @@ IPR_SUBSET_REJECTED = 2
 IPR_CAPACITY_EXHAUSTED = 3
 IPR_NO_RESIDUAL_REDUCTION = 4
 IPR_NONFINITE = 5
+
+# (positions, amplitudes, active, loss)
+_InsertCarry: TypeAlias = tuple[Array, Array, Array, Array]
+# (position, amplitude, eligible)
+_InsertCandidate: TypeAlias = tuple[Array, Array, Array]
+# (accept, duplicate, capacity, no-reduction, nonfinite) decision flags
+_InsertDecision: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class IPRPlan(StrictModule, NonTrainableState):
@@ -275,7 +283,9 @@ def iterative_particle_reconstruction(
             & (candidate_amplitudes >= plan.minimum_candidate_intensity)
         )
 
-        def insert_candidate(carry, candidate):
+        def insert_candidate(
+            carry: _InsertCarry, candidate: _InsertCandidate
+        ) -> tuple[_InsertCarry, _InsertDecision]:
             trial_positions, trial_amplitudes, trial_active, trial_loss = carry
             candidate_position, candidate_amplitude, eligible = candidate
             delta = trial_positions - candidate_position

@@ -96,7 +96,7 @@ def balanced_truncation(
     if not bool(np.asarray(valid)):
         raise ValueError("Balanced truncation requires stable converged PSD Gramians.")
 
-    def factor(value):
+    def factor(value: Array) -> Array:
         eigenvalues, eigenvectors = jnp.linalg.eigh(0.5 * (value + jnp.conj(value.T)))
         order = jnp.argsort(eigenvalues)[::-1]
         eigenvalues = jnp.maximum(eigenvalues[order], 0.0)

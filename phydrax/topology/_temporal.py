@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -147,7 +148,13 @@ class ZigzagTopologyResult(StrictModule, NonTrainableState):
     state_ids: tuple[str, ...] = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
-    def __init__(self, operations, betti_history, state_ids, /) -> None:
+    def __init__(
+        self,
+        operations: Iterable[ZigzagCellOperation],
+        betti_history: ArrayLike,
+        state_ids: Iterable[str],
+        /,
+    ) -> None:
         self.operations = tuple(operations)
         self.betti_history = jnp.asarray(betti_history, dtype=jnp.int32)
         self.state_ids = tuple(state_ids)
@@ -187,7 +194,7 @@ class MonotoneZigzagIntervals(StrictModule, NonTrainableState):
 
 def _initial_zigzag_masks(
     ambient: CellSubcomplex,
-    initial_masks,
+    initial_masks: Iterable[npt.ArrayLike],
     /,
 ) -> list[np.ndarray]:
     if not isinstance(ambient, CellSubcomplex):
@@ -220,7 +227,7 @@ def _validate_ambient_operation(
 
 def compute_monotone_zigzag_intervals(
     ambient: CellSubcomplex,
-    initial_masks,
+    initial_masks: Iterable[npt.ArrayLike],
     operations: Sequence[ZigzagCellOperation],
     /,
     *,
@@ -259,7 +266,7 @@ def compute_monotone_zigzag_intervals(
 
 def compute_zigzag_topology(
     ambient: CellSubcomplex,
-    initial_masks,
+    initial_masks: Iterable[npt.ArrayLike],
     operations: Sequence[ZigzagCellOperation],
     /,
     *,

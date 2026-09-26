@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,6 +19,10 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import AbstractSparseLinearOperator, ArraySpace
 from ._cones import AbstractConvexCone, NonnegativeCone, ProductCone, ZeroCone
+
+
+if TYPE_CHECKING:
+    from ._quadratic import QuadraticProgram
 
 
 def _matrix_and_rhs(
@@ -243,10 +248,11 @@ class ConicProgram(StrictModule):
             raise TypeError("Sparse quadratic dtype must match canonical program dtype.")
         linear_ = linear_.astype(dtype)
         rhs = rhs.astype(dtype)
-        if not matrix_sparse:
+        if not isinstance(matrix, AbstractSparseLinearOperator):
             matrix = matrix.astype(dtype)
-        if quadratic_ is not None and not quadratic_sparse:
-            quadratic_ = quadratic_.astype(dtype)
+        if quadratic_ is not None and not isinstance(
+            quadratic_, AbstractSparseLinearOperator
+        ):
             quadratic_ = 0.5 * quadratic_ + 0.5 * jnp.swapaxes(quadratic_, -1, -2)
         batch = _broadcast_shape(
             (
@@ -257,10 +263,12 @@ class ConicProgram(StrictModule):
             )
         )
         linear_ = jnp.broadcast_to(linear_, batch + (variables,))
-        if not matrix_sparse:
+        if not isinstance(matrix, AbstractSparseLinearOperator):
             matrix = jnp.broadcast_to(matrix, batch + (constraints, variables))
         rhs = jnp.broadcast_to(rhs, batch + (constraints,))
-        if quadratic_ is not None and not quadratic_sparse:
+        if quadratic_ is not None and not isinstance(
+            quadratic_, AbstractSparseLinearOperator
+        ):
             quadratic_ = jnp.broadcast_to(quadratic_, batch + (variables, variables))
         bounds_ = Bounds() if bounds is None else bounds
         if not isinstance(bounds_, Bounds):
@@ -417,7 +425,7 @@ class LinearProgram(StrictModule):
         self.problem_id = canonical.problem_id
         self.structure_id = canonical.structure_id
 
-    def as_quadratic_program(self):
+    def as_quadratic_program(self) -> QuadraticProgram:
         """Lower to the dense QP execution path only when that path is selected."""
 
         from ._quadratic import QuadraticProgram

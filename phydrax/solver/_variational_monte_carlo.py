@@ -132,8 +132,8 @@ def _amplitude(model: Any, configuration: Array, /) -> LogAmplitude:
     return value
 
 
-def _model_log_target(model: Any):
-    def log_target(configuration):
+def _model_log_target(model: Any) -> Callable[[Array], Array]:
+    def log_target(configuration: Array) -> Array:
         return sampling_log_weight(_amplitude(model, configuration))
 
     return log_target
@@ -333,7 +333,9 @@ class VariationalMonteCarloProblem(StrictModule):
         )
         return self.parameter_subspace.reconstruct_vector(vector)
 
-    def target_for_model(self, model: Any, /):
+    def target_for_model(
+        self, model: Any, /
+    ) -> FullMarkovTarget | IncrementalMarkovTarget:
         """Bind the problem's declared sampling target to one frozen model."""
         if self.target_factory is None:
             return FullMarkovTarget(
@@ -678,7 +680,7 @@ def _score_geometry(
     flat = jnp.asarray(configurations).reshape((-1,) + shape)
     mode = problem.complex_parameter_mode
 
-    def features(parameter_coordinates):
+    def features(parameter_coordinates: Array) -> Array:
         model = problem.model_from_coordinates(parameter_coordinates)
         amplitudes = jax.vmap(model)(flat)
         if not isinstance(amplitudes, LogAmplitude):

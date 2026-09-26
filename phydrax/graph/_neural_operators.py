@@ -18,7 +18,7 @@ from ..sparse import (
 )
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._typed import node_type_ids
+from ._typed import GraphFlow, node_type_ids
 
 
 ArrayTree = Any
@@ -610,7 +610,7 @@ class GraphAttentionOperator(StrictModule):
     input_key: str | None = eqx.field(static=True)
     output_key: str | None = eqx.field(static=True)
     edge_bias_key: str | None = eqx.field(static=True)
-    flow: str = eqx.field(static=True)
+    flow: GraphFlow = eqx.field(static=True)
     temperature: float = eqx.field(static=True)
     head_reduction: str = eqx.field(static=True)
     node_type_key: str = eqx.field(static=True)
@@ -633,7 +633,7 @@ class GraphAttentionOperator(StrictModule):
         source_measure_key: str | None = None,
         source_measure: Any | None = None,
         measure_eps: float = 1e-12,
-        flow: str = "source_to_target",
+        flow: GraphFlow = "source_to_target",
         temperature: float | None = None,
         head_reduction: str = "concat",
         node_type_key: str = "type",

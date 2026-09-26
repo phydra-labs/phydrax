@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -43,6 +43,7 @@ from ..linalg import (
 )
 from ._adaptation import (
     adapt_proposal_scale,
+    AdaptiveProposalState,
     initialize_proposal_adaptation,
     RobbinsMonroScalePolicy,
 )
@@ -60,6 +61,15 @@ _NUTS_ADDRESS = SampleAddress(
 _ACCEPT_ADDRESS = SampleAddress(
     "markov", "hamiltonian", target="acceptance", role="transition"
 )
+
+# (position, log target, gradient, accepted, acceptance probability, divergent,
+# maximum depth reached, nonfinite gradient, integration steps)
+_Transition: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_TrajectoryCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_DrawCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_DrawOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
 
 
 class HamiltonianAdaptationPlan(StrictModule):
@@ -302,7 +312,7 @@ def _trajectory(
     value_and_gradient = jax.value_and_grad(kernel.log_target)
     maximum = kernel.maximum_leapfrog_steps
 
-    def body(carry, index):
+    def body(carry: _TrajectoryCarry, index: Array) -> tuple[_TrajectoryCarry, Array]:
         q, p, g, active, used, nonfinite = carry
         do_step = active & (index < step_count)
         half = p + 0.5 * kernel.step_size * g
@@ -340,7 +350,15 @@ def _trajectory(
     return q, -p, g, kernel.log_target(q), jnp.stack((used, nonfinite.astype(jnp.int32)))
 
 
-def _one_hmc_transition(kernel, position, log_target, gradient, key, chain, step_index):
+def _one_hmc_transition(
+    kernel: PreparedHamiltonianKernel,
+    position: Array,
+    log_target: Array,
+    gradient: Array,
+    key: Key[Array, ""],
+    chain: Array,
+    step_index: Array,
+) -> _Transition:
     momentum_key = derive_key(key, _MOMENTUM_ADDRESS, chain, step_index)
     accept_key = derive_key(key, _ACCEPT_ADDRESS, chain, step_index)
     momentum = _sample_momentum(kernel, momentum_key)
@@ -372,25 +390,33 @@ def _one_hmc_transition(kernel, position, log_target, gradient, key, chain, step
     )
 
 
-def _one_nuts_transition(kernel, position, log_target, gradient, key, chain, step_index):
+def _one_nuts_transition(
+    kernel: PreparedHamiltonianKernel,
+    position: Array,
+    log_target: Array,
+    gradient: Array,
+    key: Key[Array, ""],
+    chain: Array,
+    step_index: Array,
+) -> _Transition:
     momentum_key = derive_key(key, _MOMENTUM_ADDRESS, chain, step_index)
     transition_key = derive_key(key, _NUTS_ADDRESS, chain, step_index)
 
-    def finite_log_target(candidate):
+    def finite_log_target(candidate: Array) -> Array:
         value = kernel.log_target(candidate)
         return jnp.where(jnp.isfinite(value), value, -jnp.inf)
 
-    def kinetic_energy(momentum, position=None):
+    def kinetic_energy(momentum: Array, position: Array | None = None) -> Array:
         del position
         return _kinetic(kernel, momentum)
 
     def check_turning(
-        momentum_left,
-        momentum_right,
-        momentum_sum,
-        position_left=None,
-        position_right=None,
-    ):
+        momentum_left: Array,
+        momentum_right: Array,
+        momentum_sum: Array,
+        position_left: Array | None = None,
+        position_right: Array | None = None,
+    ) -> Array:
         del position_left, position_right
         velocity_left = _mass_solve(kernel, momentum_left)
         velocity_right = _mass_solve(kernel, momentum_right)
@@ -402,14 +428,20 @@ def _one_nuts_transition(kernel, position, log_target, gradient, key, chain, ste
     integrator = blackjax_integrators.velocity_verlet(finite_log_target, kinetic_energy)
     transition = blackjax_nuts.iterative_nuts_proposal(
         integrator,
-        kinetic_energy,
-        check_turning,
+        # blackjax protocols take ArrayLikeTree; this kernel only passes flat Arrays.
+        kinetic_energy,  # ty: ignore[invalid-argument-type]
+        # blackjax protocols take ArrayLikeTree; this kernel only passes flat Arrays.
+        check_turning,  # ty: ignore[invalid-argument-type]
         kernel.maximum_tree_depth,
         kernel.divergence_threshold,
     )
     momentum = _sample_momentum(kernel, momentum_key)
     initial = blackjax_integrators.IntegratorState(
-        position, momentum, log_target, gradient
+        # blackjax types traced log densities as `float`; they are JAX Arrays here.
+        position,
+        momentum,
+        log_target,  # ty: ignore[invalid-argument-type]
+        gradient,
     )
     proposal, info = transition(transition_key, initial, kernel.step_size)
     proposal_finite = (
@@ -449,8 +481,15 @@ def _one_nuts_transition(kernel, position, log_target, gradient, key, chain, ste
 
 
 def _one_transition(
-    kernel, position, log_target, gradient, state_valid, key, chain, step_index
-):
+    kernel: PreparedHamiltonianKernel,
+    position: Array,
+    log_target: Array,
+    gradient: Array,
+    state_valid: Array,
+    key: Key[Array, ""],
+    chain: Array,
+    step_index: Array,
+) -> _Transition:
     result = (
         _one_nuts_transition(
             kernel, position, log_target, gradient, key, chain, step_index
@@ -501,7 +540,7 @@ def sample_hamiltonian(
         raise TypeError("iteration must be IterationPlan or None.")
     chain_indices = jnp.arange(state.position.shape[0], dtype=jnp.uint32)
 
-    def draw(carry, _):
+    def draw(carry: _DrawCarry, _: None) -> tuple[_DrawCarry, _DrawOutput]:
         positions, values, gradients, valid, index = carry
         result = jax.vmap(
             lambda q, value, gradient, state_valid, chain: _one_transition(
@@ -655,7 +694,7 @@ def _adapt_hamiltonian_warmup(
     scale_policy: RobbinsMonroScalePolicy,
     key: Key[Array, ""],
     /,
-):
+) -> tuple[HamiltonianChainState, AdaptiveProposalState, Array, Array]:
     adaptive = initialize_proposal_adaptation(scale_policy, kernel.step_size)
     current = state
     sizes = []

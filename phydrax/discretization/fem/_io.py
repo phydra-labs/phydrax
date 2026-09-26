@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 import jax.numpy as jnp
 import meshio
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._mesh_file_profiles import resolve_mesh_file_profile
@@ -44,7 +45,7 @@ def write_finite_element_field(
         raise ValueError("Point-data export currently requires an H1 nodal field.")
     values = discretization.field_spaces[field_index].vector_space.validate(coefficients)
     realized = discretization.default_runtime if runtime is None else runtime
-    cells = [
+    cells: list[tuple[str, npt.ArrayLike] | meshio.CellBlock] = [
         (_MESHIO_CELL_KINDS[block.cell_kind], np.asarray(block.vertices))
         for block in discretization.mesh.blocks
     ]

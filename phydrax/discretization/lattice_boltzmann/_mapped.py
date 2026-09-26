@@ -28,8 +28,8 @@ MappedKineticSource = Callable[[Array, Array, PreparedMappedTensorGrid, Any], Ar
 class MappedLatticeBoltzmannEvidence(StrictModule):
     minimum_jacobian: Array
     maximum_jacobian: Array
-    metric_identity_residual: Array
-    free_stream_residual: Array
+    metric_identity_residual: float
+    free_stream_residual: float
     source_mass_residual: Array
     source_momentum_residual: Array
     successful: Array

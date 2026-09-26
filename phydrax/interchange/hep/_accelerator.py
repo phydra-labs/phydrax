@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import numpy as np
+from jaxtyping import ArrayLike
 
 
 if TYPE_CHECKING:
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def accelerator_bunch_from_openpmd_columns(
-    columns: Mapping[str, object],
+    columns: Mapping[str, ArrayLike],
     /,
     *,
     reference_rest_energy: float,

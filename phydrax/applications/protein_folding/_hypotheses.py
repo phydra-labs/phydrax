@@ -1,10 +1,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -44,7 +46,9 @@ class ProteinSourceAtom:
         ):
             raise ValueError("element must be an explicit positive atomic number.")
 
-    def record(self):
+    def record(
+        self,
+    ) -> tuple[str, tuple[str, int, str], str, str, str, str, str, float, int, str, str]:
         return (
             self.record_id,
             self.atom_key.record(),
@@ -76,15 +80,15 @@ class ProteinStructureHypothesis:
 
     def __init__(
         self,
-        construct,
-        source_atoms,
-        positions,
-        length_unit,
-        source,
-        rights,
+        construct: ProteinConstruct,
+        source_atoms: Iterable[ProteinSourceAtom],
+        positions: npt.ArrayLike,
+        length_unit: UnitDefinition,
+        source: ScientificArtifactEnvelope,
+        rights: Iterable[ReferenceArtifactManifest],
         *,
-        provider="user-supplied",
-        confidence=(),
+        provider: str = "user-supplied",
+        confidence: Iterable[tuple[str, float]] = (),
     ) -> None:
         if not isinstance(construct, ProteinConstruct) or not isinstance(
             source, ScientificArtifactEnvelope
@@ -150,11 +154,11 @@ class ProteinStructureHypothesis:
     def require_rights(
         self,
         *,
-        commercial_use=False,
-        redistribution=False,
-        training_use=False,
-        export=False,
-    ):
+        commercial_use: bool = False,
+        redistribution: bool = False,
+        training_use: bool = False,
+        export: bool = False,
+    ) -> tuple[str, ...]:
         return tuple(
             manifest.require_rights(
                 commercial_use=commercial_use,

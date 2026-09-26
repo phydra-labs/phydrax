@@ -164,7 +164,7 @@ def _bootstrap_effects(
     draw_position = jnp.arange(capacity)
     safe_unit_count = jnp.maximum(unit_count, 1)
 
-    def one_resample(_, replicate):
+    def one_resample(_: None, replicate: Array) -> tuple[None, Array]:
         replicate_key = jr.fold_in(key, replicate)
         sampled = jr.randint(
             replicate_key,

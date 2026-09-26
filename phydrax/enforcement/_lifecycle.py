@@ -11,6 +11,7 @@ from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.random as jr
+from jaxtyping import Array, Key
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -184,11 +185,21 @@ class FixedRealizationSource(AbstractRealizationSource):
         self.value = value
         self.kind = RealizationSourceKind.FIXED
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         del context
         return self.name not in state.values
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         del state, context
         return _SourceResolution(True, self.value)
 
@@ -219,10 +230,20 @@ class CallerRealizationSource(AbstractRealizationSource):
         self.default = default
         self.kind = RealizationSourceKind.CALLER
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         return self.name in context.caller_sources or self.name not in state.values
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         if self.name in context.caller_sources:
             return _SourceResolution(True, context.caller_sources[self.name])
         if self.name in state.values:
@@ -249,10 +270,20 @@ class PerStepRealizationSource(AbstractRealizationSource):
         self.provider = provider
         self.kind = RealizationSourceKind.PER_STEP
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         return _step_changed(self.name, state, context)
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         del state
         return _SourceResolution(True, self.provider(context))
 
@@ -269,10 +300,20 @@ class AdaptiveRealizationSource(AbstractRealizationSource):
         self.provider = provider
         self.kind = RealizationSourceKind.ADAPTIVE
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         return self.name not in state.values or self.name in context.adaptive_sources
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         previous = state.values.get(self.name)
         return _SourceResolution(True, self.provider(previous, context))
 
@@ -291,16 +332,28 @@ class ParameterizedRealizationSource(AbstractRealizationSource):
         self.provider = provider
         self.kind = RealizationSourceKind.PARAMETERIZED
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         stamp = state.source_stamps.get(self.name)
         return stamp is None or stamp.parameter_revision != context.parameter_revision
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         del state
         return _SourceResolution(True, self.provider(context.parameters, context))
 
 
-def address_accepted_step_key(key: Any, accepted_step: int, stream: int = 0, /):
+def address_accepted_step_key(
+    key: Key[Array, ""], accepted_step: int, stream: int = 0, /
+) -> Key[Array, ""]:
     """Derive a stable PRNG address without consuming state or counting retries."""
 
     step = int(accepted_step)
@@ -333,10 +386,20 @@ class RandomizedRealizationSource(AbstractRealizationSource):
         self.stream = stream_
         self.kind = RealizationSourceKind.RANDOMIZED
 
-    def needs_refresh(self, state, context, /) -> bool:
+    def needs_refresh(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> bool:
         return _step_changed(self.name, state, context)
 
-    def resolve(self, state, context, /) -> _SourceResolution:
+    def resolve(
+        self,
+        state: RealizationLifecycleState,
+        context: ConditionEvaluationContext,
+        /,
+    ) -> _SourceResolution:
         del state
         if context.prng_key is None:
             return _SourceResolution(
@@ -517,7 +580,7 @@ class RefreshValidation(StrictModule):
 
 
 def propose_refresh(
-    declarations: Sequence[RealizationSource],
+    declarations: Sequence[AbstractRealizationSource],
     state: RealizationLifecycleState | None,
     /,
     *,

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TypeAlias
 
 import equinox as eqx
 
@@ -68,8 +69,13 @@ def _normalized_lines(text: str, /) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def _subcircuits(lines: tuple[str, ...], /):
-    definitions: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+_SubcircuitDefinitions: TypeAlias = dict[str, tuple[tuple[str, ...], tuple[str, ...]]]
+
+
+def _subcircuits(
+    lines: tuple[str, ...], /
+) -> tuple[_SubcircuitDefinitions, tuple[str, ...]]:
+    definitions: _SubcircuitDefinitions = {}
     top: list[str] = []
     active_name: str | None = None
     active_ports: tuple[str, ...] = ()
@@ -101,7 +107,7 @@ def _subcircuits(lines: tuple[str, ...], /):
 
 def _expand(
     lines: Sequence[str],
-    definitions,
+    definitions: _SubcircuitDefinitions,
     /,
     *,
     prefix: str = "",

@@ -14,6 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -64,7 +65,9 @@ class EinsteinVlasovAMRStressTransferResult(StrictModule):
     evidence: EinsteinVlasovAMRStressEvidence
 
 
-def _proper_volume(value: ArrayLike, shape: tuple[int, ...], dtype, role: str) -> Array:
+def _proper_volume(
+    value: ArrayLike, shape: tuple[int, ...], dtype: DTypeLike, role: str
+) -> Array:
     volume = jnp.asarray(value, dtype=dtype)
     if volume.shape == ():
         volume = jnp.broadcast_to(volume, shape)
@@ -671,7 +674,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
             axis=-1,
         )
 
-        def byte_rows(values):
+        def byte_rows(values: Array) -> Array:
             return jax.lax.bitcast_convert_type(values, jnp.uint8).reshape(
                 (particles.capacity, -1)
             )
@@ -918,7 +921,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
         per_owner_count = control[4:]
         template_particles = state_template.particles
 
-        def placed(value, template_value):
+        def placed(value: Array, template_value: Array) -> Array:
             return jax.device_put(value, template_value.sharding)
 
         particles = RelativisticParticleState(

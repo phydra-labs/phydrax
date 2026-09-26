@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
@@ -286,15 +286,15 @@ class BRepModel(StrictModule):
         self,
         *,
         patches: tuple[AbstractSurfacePatch, ...],
-        parameter_bounds: Array,
-        orientation: Array,
+        parameter_bounds: ArrayLike,
+        orientation: ArrayLike,
         trim_domains: tuple[TrimDomain | None, ...],
         topology: BRepTopology,
         coordinate_contract: SpatialCoordinateContract,
-        mesh_vertices: Array,
-        mesh_faces: Array,
-        triangle_face_ids: Array,
-        triangle_parameters: Array,
+        mesh_vertices: ArrayLike,
+        mesh_faces: ArrayLike,
+        triangle_face_ids: ArrayLike,
+        triangle_parameters: ArrayLike,
         physical_tags: tuple[str, ...],
         report: BRepImportReport,
     ) -> None:

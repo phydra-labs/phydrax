@@ -159,7 +159,9 @@ class WeightSpaceRecurrence(StrictModule, ParameterOwner):
         scan_valid = jnp.moveaxis(batch.valid, -1, 0)
         scan_reset = jnp.moveaxis(batch.reset, -1, 0)
 
-        def step(previous: Array, step_inputs: tuple[Array, Array, Array]):
+        def step(
+            previous: Array, step_inputs: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array]:
             inputs, valid, reset = step_inputs
             reference = jnp.where(
                 (valid & reset)[..., None],

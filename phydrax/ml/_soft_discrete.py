@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import StrictModule
 from ..transport._ordering import (
@@ -48,7 +48,7 @@ def relaxed_bernoulli(
     logits: ArrayLike,
     /,
     *,
-    key,
+    key: Key[Array, ""],
     temperature: ArrayLike = 1.0,
     hard: bool = False,
 ) -> RelaxedDiscreteSample:
@@ -83,7 +83,7 @@ def relaxed_top_k(
     k: int,
     /,
     *,
-    key,
+    key: Key[Array, ""],
     ordering: OrderingSurrogate | None = None,
     temperature: ArrayLike = 1.0,
     axis: int = -1,

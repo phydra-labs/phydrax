@@ -9,9 +9,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -210,7 +210,7 @@ class CochainMetricPlan(StrictModule, NonTrainableState):
             time=time,
             revision=revision,
         )
-        if isinstance(state.valid, jax.core.Tracer) or not bool(state.valid):
+        if isinstance(state.valid, jax_core.Tracer) or not bool(state.valid):
             raise ValueError("Cochain metric snapshot is inadmissible.")
         return state
 
@@ -312,6 +312,7 @@ class CochainMetricState(StrictModule):
             (expected is None) != (value is None)
             or (
                 expected is not None
+                and value is not None
                 and (
                     value.ndim != 2
                     or value.shape != expected
@@ -418,7 +419,7 @@ class CochainMetricState(StrictModule):
 
     def host_snapshot(self, /) -> CochainDiscretization:
         """Create a host-only metric-space snapshot from a valid accepted state."""
-        if isinstance(self.valid, jax.core.Tracer) or not bool(self.valid):
+        if isinstance(self.valid, jax_core.Tracer) or not bool(self.valid):
             raise ValueError(
                 "Only an accepted host cochain metric state may be snapshotted."
             )

@@ -12,6 +12,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -22,7 +24,7 @@ from ..measurement import (
     QuantityField,
     SpatialSamplingKind,
 )
-from ..units import derived_unit, METER, SECOND
+from ..units import derived_unit, METER, SECOND, UnitDefinition
 from ._energy import EnergyGroupStructure, PreparedEnergyGroupStructure
 from ._identity import NuclearSpeciesKey
 
@@ -37,7 +39,7 @@ def _validate_field(
     /,
     *,
     quantity_kind: str,
-    unit,
+    unit: UnitDefinition,
 ) -> None:
     if not isinstance(field, QuantityField):
         raise TypeError("field must be QuantityField.")
@@ -169,10 +171,10 @@ class MultigroupScalarFlux:
 
 
 def group_reaction_rate(
-    microscopic_cross_section_m2,
-    scalar_flux_m2_s,
+    microscopic_cross_section_m2: npt.ArrayLike,
+    scalar_flux_m2_s: npt.ArrayLike,
     /,
-):
+) -> Array:
     """Return per-target reaction rate from matched group-integrated quantities."""
 
     cross_section_host = np.asarray(microscopic_cross_section_m2)

@@ -44,10 +44,11 @@ def _certified_correlation_operator(matrix: Array, /) -> DenseLinearOperator:
     properties = OperatorProperties(
         self_adjoint=True,
         positive_definite=True,
+        # CorrelationMatrix construction checks symmetry and the spectrum.
         evidence={
-            "self_adjoint": "validated-correlation-symmetry",
-            "positive_semidefinite": "validated-correlation-spectrum",
-            "positive_definite": "validated-correlation-spectrum",
+            "self_adjoint": "verified",
+            "positive_semidefinite": "verified",
+            "positive_definite": "verified",
         },
     )
     return DenseLinearOperator(matrix, properties=properties)

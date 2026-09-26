@@ -436,6 +436,7 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
             )
         if dynamic_fractional is not None and (
             cell is None
+            or dynamic_vectors is None
             or dynamic_fractional.shape != expected
             or dynamic_vectors.shape != (3, 3)
         ):
@@ -455,7 +456,11 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
             )
             if rule.kind is VirtualSiteKind.WEIGHTED:
                 anchor = parents[0]
-                if dynamic_parents is not None:
+                if (
+                    dynamic_parents is not None
+                    and cell is not None
+                    and dynamic_vectors is not None
+                ):
                     relative_fractional = dynamic_parents - dynamic_parents[0]
                     central = jax.lax.stop_gradient(
                         jnp.round(relative_fractional).astype(jnp.int32)
@@ -479,7 +484,11 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
                 )
             else:
                 origin = parents[0]
-                if dynamic_parents is not None:
+                if (
+                    dynamic_parents is not None
+                    and cell is not None
+                    and dynamic_vectors is not None
+                ):
                     relative_fractional = dynamic_parents[1:3] - dynamic_parents[0]
                     central = jax.lax.stop_gradient(
                         jnp.round(relative_fractional).astype(jnp.int32)

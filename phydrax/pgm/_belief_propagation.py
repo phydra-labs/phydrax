@@ -134,7 +134,12 @@ class BeliefPropagationSchedulePolicy(StrictModule):
         self.schedule_id = f"belief-propagation-{kind}"
 
 
-def _method_parameters(maximum_steps, relaxation, absolute_tolerance, relative_tolerance):
+def _method_parameters(
+    maximum_steps: int,
+    relaxation: float,
+    absolute_tolerance: float,
+    relative_tolerance: float,
+) -> tuple[int, float, float, float]:
     steps = int(maximum_steps)
     relaxed = float(relaxation)
     absolute = float(absolute_tolerance)
@@ -163,7 +168,7 @@ class BeliefPropagationState(StrictModule):
         evidence: VariableStateValues,
         /,
         *,
-        step_index: int | Array = 0,
+        step_index: ArrayLike = 0,
     ) -> None:
         if not isinstance(evidence, VariableStateValues):
             raise TypeError("evidence must be VariableStateValues.")
@@ -261,9 +266,21 @@ class MaxProductBeliefPropagationResult(StrictModule):
 BeliefPropagationResult: TypeAlias = (
     SumProductBeliefPropagationResult | MaxProductBeliefPropagationResult
 )
+# Forest decode step: (factor group, local factor, parent variable, child variables).
+_DecodeStep: TypeAlias = tuple[int, int, int, tuple[int, ...]]
+# Loopy scan carry: messages, active, initial/last residual, support changes,
+# iterations, status.
+_LoopyCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+# Executed schedule: state, status, valid, converged, initial/final residual,
+# support-change count, iterations.
+_BeliefPropagationRun: TypeAlias = tuple[
+    BeliefPropagationState, Array, Array, Array, Array, Array, Array, Array
+]
 
 
-def _forest_metadata(graph: DiscreteFactorGraph, /):
+def _forest_metadata(
+    graph: DiscreteFactorGraph, /
+) -> tuple[bool, tuple[int, ...], tuple[_DecodeStep, ...], int]:
     variable_count = graph.num_variables
     factor_total = graph.num_factors
     node_count = variable_count + factor_total
@@ -282,7 +299,7 @@ def _forest_metadata(graph: DiscreteFactorGraph, /):
 
     parent = list(range(node_count))
 
-    def find(value):
+    def find(value: int) -> int:
         while parent[value] != value:
             parent[value] = parent[parent[value]]
             value = parent[value]
@@ -338,7 +355,7 @@ def _forest_metadata(graph: DiscreteFactorGraph, /):
                 group_index, local_factor = factor_lookup[factor_node - variable_count]
                 decode.append((group_index, local_factor, parent_variable, children))
 
-            def distances(start):
+            def distances(start: int) -> dict[int, int]:
                 result = {start: 0}
                 pending = deque([start])
                 while pending:
@@ -350,7 +367,8 @@ def _forest_metadata(graph: DiscreteFactorGraph, /):
                 return result
 
             if component:
-                first = max(distances(component[0]), key=distances(component[0]).get)
+                first_distances = distances(component[0])
+                first = max(first_distances, key=first_distances.__getitem__)
                 max_diameter = max(max_diameter, max(distances(first).values()))
         for factor_node in range(variable_count, node_count):
             if factor_node not in visited:
@@ -895,7 +913,7 @@ def _bp_step(
     /,
     *,
     force_full: bool = False,
-):
+) -> tuple[Array, Array, Array, Array, Array]:
     variable_to_factor = _variable_to_factor(prepared, messages, evidence)
     candidate, feasible = _factor_update(prepared, variable_to_factor)
     updated = _relax_messages(
@@ -1018,7 +1036,9 @@ def _set_forest_edge_message(
     )
 
 
-def _run_forest(prepared, state):
+def _run_forest(
+    prepared: PreparedBeliefPropagation, state: BeliefPropagationState
+) -> _BeliefPropagationRun:
     original = state.messages
     messages = original
     feasible = jnp.asarray(True)
@@ -1091,7 +1111,7 @@ def _asynchronous_bp_step(
     messages: Array,
     evidence: Array,
     /,
-):
+) -> tuple[Array, Array, Array, Array, Array]:
     original = messages
     feasible = jnp.asarray(True)
     finite = jnp.asarray(True)
@@ -1163,10 +1183,16 @@ def _asynchronous_bp_step(
     return messages, residual, support_changed, feasible, finite
 
 
-def _run_loopy(prepared, state, /, *, asynchronous: bool = False):
+def _run_loopy(
+    prepared: PreparedBeliefPropagation,
+    state: BeliefPropagationState,
+    /,
+    *,
+    asynchronous: bool = False,
+) -> _BeliefPropagationRun:
     maximum_steps = prepared.method.maximum_steps
 
-    def body(carry, _):
+    def body(carry: _LoopyCarry, _: None) -> tuple[_LoopyCarry, None]:
         messages, active, initial, residual, support_count, iterations, status = carry
         updated, trial_residual, support_changed, feasible, finite = (
             _asynchronous_bp_step(
@@ -1247,7 +1273,9 @@ def _run_loopy(prepared, state, /, *, asynchronous: bool = False):
     )
 
 
-def _variable_log_beliefs(prepared, state):
+def _variable_log_beliefs(
+    prepared: PreparedBeliefPropagation, state: BeliefPropagationState
+) -> Array:
     graph = prepared.graph
     messages = state.messages
     indices = prepared.message_variable_state_indices
@@ -1274,7 +1302,9 @@ def _variable_log_beliefs(prepared, state):
     )
 
 
-def _factor_joint_scores(prepared, state):
+def _factor_joint_scores(
+    prepared: PreparedBeliefPropagation, state: BeliefPropagationState
+) -> tuple[tuple[Array, ...], Array]:
     vtof = _variable_to_factor(prepared, state.messages, state.evidence.values)
     outputs: list[Array] = []
     for group_index, (table, layout) in enumerate(
@@ -1296,7 +1326,9 @@ def _factor_joint_scores(prepared, state):
     return tuple(outputs), vtof
 
 
-def _factor_probabilities(prepared, state):
+def _factor_probabilities(
+    prepared: PreparedBeliefPropagation, state: BeliefPropagationState
+) -> tuple[Array, ...]:
     joints, _ = _factor_joint_scores(prepared, state)
     outputs: list[Array] = []
     for joint in joints:
@@ -1309,8 +1341,11 @@ def _factor_probabilities(prepared, state):
 
 
 def _bethe_log_normalizer(
-    prepared, state, variable_log_probabilities, factor_probabilities
-):
+    prepared: PreparedBeliefPropagation,
+    state: BeliefPropagationState,
+    variable_log_probabilities: Array,
+    factor_probabilities: tuple[Array, ...],
+) -> Array:
     variable_log_probabilities = prepared.precision.accumulation(
         variable_log_probabilities
     )
@@ -1340,7 +1375,7 @@ def _bethe_log_normalizer(
     return factor_energy + expected_evidence + factor_entropy + variable_correction
 
 
-def _local_modes(graph, values):
+def _local_modes(graph: DiscreteFactorGraph, values: Array) -> Array:
     modes: list[Array] = []
     offsets = np.asarray(graph.variable_state_offsets)
     for variable in range(graph.num_variables):
@@ -1350,7 +1385,11 @@ def _local_modes(graph, values):
     )
 
 
-def _decode_forest_map(prepared, state, max_marginals):
+def _decode_forest_map(
+    prepared: PreparedBeliefPropagation,
+    state: BeliefPropagationState,
+    max_marginals: Array,
+) -> tuple[Array, Array]:
     graph = prepared.graph
     assignment = _local_modes(graph, max_marginals)
     joints, _ = _factor_joint_scores(prepared, state)

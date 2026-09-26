@@ -6,8 +6,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from jaxtyping import Array
+
 from ..._strict import StrictModule
 from ...discretization.finite_volume._diffusion_boundary import HybridDiffusionBoundary
+from ...discretization.finite_volume._unstructured import (
+    UnstructuredFiniteVolumeDiscretization,
+)
 
 
 class PorousBoundaryConditions(StrictModule):
@@ -23,12 +30,12 @@ class PorousBoundaryConditions(StrictModule):
 
     def __init__(
         self,
-        discretization,
+        discretization: UnstructuredFiniteVolumeDiscretization,
         /,
         *,
-        pressure_Pa=None,
-        mass_rate_kg_s=None,
-        leakage_kg_Pa_s=None,
+        pressure_Pa: Mapping[int, float] | None = None,
+        mass_rate_kg_s: Mapping[int, float] | None = None,
+        leakage_kg_Pa_s: Mapping[int, tuple[float, float]] | None = None,
     ) -> None:
         self.diffusion = HybridDiffusionBoundary(
             discretization,
@@ -38,25 +45,25 @@ class PorousBoundaryConditions(StrictModule):
         )
 
     @property
-    def kind(self):
+    def kind(self) -> Array:
         return self.diffusion.kind
 
     @property
-    def value(self):
+    def value(self) -> Array:
         return self.diffusion.value
 
     @property
-    def conductance(self):
+    def conductance(self) -> Array:
         return self.diffusion.conductance
 
     @property
-    def geometry_id(self):
+    def geometry_id(self) -> str:
         return self.diffusion.geometry_id
 
-    def face_residual(self, face_values, outward_sum):
+    def face_residual(self, face_values: Array, outward_sum: Array) -> Array:
         return self.diffusion.face_residual(face_values, outward_sum)
 
-    def impose_dirichlet(self, face_values):
+    def impose_dirichlet(self, face_values: Array) -> Array:
         return self.diffusion.impose_dirichlet(face_values)
 
 

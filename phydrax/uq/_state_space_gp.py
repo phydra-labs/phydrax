@@ -11,6 +11,7 @@ from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -529,15 +530,17 @@ def _spatial_factor(
         return jnp.ones((total, 1), dtype=design.train_times.dtype)
     if not isinstance(spatial_kernel, AbstractPositiveDefiniteKernel):
         raise TypeError("spatial_kernel must be a positive-definite kernel or None.")
-    if design.train_size and design.train_spatial is None:
-        raise ValueError("train_spatial is required when spatial_kernel is supplied.")
-    if design.query_size and design.query_spatial is None:
-        raise ValueError("query_spatial is required when spatial_kernel is supplied.")
-    designs = []
+    designs: list[FunctionalDesign] = []
     if design.train_size:
-        designs.append(design.train_spatial)
+        train_spatial = design.train_spatial
+        if train_spatial is None:
+            raise ValueError("train_spatial is required when spatial_kernel is supplied.")
+        designs.append(train_spatial)
     if design.query_size:
-        designs.append(design.query_spatial)
+        query_spatial = design.query_spatial
+        if query_spatial is None:
+            raise ValueError("query_spatial is required when spatial_kernel is supplied.")
+        designs.append(query_spatial)
     if len(designs) == 1:
         covariance = functional_kernel_matrix(spatial_kernel, designs[0], designs[0])
     else:
@@ -549,7 +552,7 @@ def _spatial_factor(
             spatial_kernel, designs[1], designs[1]
         )
         covariance = jnp.block(
-            ((train_covariance, train_query), (train_query.T, query_covariance))
+            [[train_covariance, train_query], [train_query.T, query_covariance]]
         )
     host = np.asarray(jax.device_get(0.5 * (covariance + covariance.T)))
     eigenvalues, eigenvectors = np.linalg.eigh(host)
@@ -948,7 +951,7 @@ def _kernel_content_id(kernel: AbstractPositiveDefiniteKernel, /) -> str:
 
 def _evaluated_kernel_content_id(kernel: AbstractPositiveDefiniteKernel, /) -> str | None:
     leaves = tuple(leaf for leaf in jax.tree.leaves(kernel) if eqx.is_array(leaf))
-    if any(isinstance(leaf, jax.core.Tracer) for leaf in leaves):
+    if any(isinstance(leaf, jax_core.Tracer) for leaf in leaves):
         return None
     return _kernel_content_id(kernel)
 

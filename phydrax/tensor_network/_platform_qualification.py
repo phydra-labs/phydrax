@@ -38,7 +38,7 @@ class TensorNetworkReleaseGate(StrEnum):
     INDEPENDENT_APPROVAL = "independent-approval"
 
 
-def _finite_nonnegative(value: object, name: str, /) -> float:
+def _finite_nonnegative(value: float, name: str, /) -> float:
     result = float(value)
     if not math.isfinite(result) or result < 0.0:
         raise ValueError(f"{name} must be finite and nonnegative.")

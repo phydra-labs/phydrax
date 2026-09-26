@@ -5,14 +5,16 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from enum import IntEnum
-from typing import Any, Literal, TypeAlias
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -23,6 +25,7 @@ from ._spaces import _coordinate_dtype
 from .backends._native_shifted_krylov import streaming_shifted_lanczos
 from .krylov import (
     KrylovBreakdownStatus,
+    KrylovDecomposition,
     KrylovProjectionPlan,
     KrylovProjectionPolicy,
     plan_krylov_projection,
@@ -30,9 +33,11 @@ from .krylov import (
     PreparedKrylovProjection,
     refresh_krylov_projection,
 )
+from .krylov._decompositions import Orthogonalization
 
 
 ShiftedKrylovMethod: TypeAlias = Literal["auto", "arnoldi", "lanczos"]
+_ShiftSolution: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 ShiftedExecutionMode: TypeAlias = Literal["retained", "streaming"]
 ShiftedDifferentiationMode: TypeAlias = Literal["runtime-shifts", "none"]
 
@@ -144,7 +149,9 @@ class ShiftedSolvePolicy(StrictModule):
     execution: ShiftedExecutionMode = eqx.field(static=True)
     differentiation: ShiftedDifferentiationMode = eqx.field(static=True)
     max_dimension: int = eqx.field(static=True)
-    orthogonalization: str = eqx.field(static=True)
+    orthogonalization: Literal[
+        "modified", "double", "selective", "full", "three-term"
+    ] = eqx.field(static=True)
     breakdown_tolerance: float | None = eqx.field(static=True)
     relative_tolerance: float = eqx.field(static=True)
     absolute_tolerance: float = eqx.field(static=True)
@@ -371,7 +378,8 @@ def plan_shifted_solve(
         projection_policy = KrylovProjectionPolicy(
             selected.method,
             max_dimension=selected.max_dimension,
-            orthogonalization=selected.orthogonalization,
+            # Retained policies reject three-term orthogonalization at construction.
+            orthogonalization=cast(Orthogonalization, selected.orthogonalization),
             breakdown_tolerance=selected.breakdown_tolerance,
         )
         projection_plan = plan_krylov_projection(family.operator, projection_policy)
@@ -651,7 +659,7 @@ def _execute_streaming_shifted(
     rhs_norm = _coordinate_norm(operator, rhs)
     zero_rhs = rhs_norm == 0.0
 
-    def verify(_):
+    def verify(_: None) -> Array:
         images = jax.vmap(lambda value: _action_coordinates(operator, value))(
             solution_coordinates
         )
@@ -765,13 +773,13 @@ def _execute_streaming_shifted(
 
 
 def _solve_one_shift(
-    decomposition,
+    decomposition: KrylovDecomposition,
     rhs_norm: Array,
     shift: Array,
     policy: ShiftedSolvePolicy,
-    dtype: Any,
+    dtype: DTypeLike,
     /,
-):
+) -> _ShiftSolution:
     capacity = decomposition.projected.shape[1]
     projected = decomposition.projected.astype(dtype)
     real_dtype = projected.real.dtype
@@ -780,7 +788,7 @@ def _solve_one_shift(
         decomposition.breakdown_status == int(KrylovBreakdownStatus.HAPPY)
     )
 
-    def empty(_):
+    def empty(_: None) -> _ShiftSolution:
         zero = jnp.zeros((capacity,), dtype=dtype)
         residual = rhs_norm.astype(real_dtype)
         zero_rhs = residual == 0
@@ -799,8 +807,8 @@ def _solve_one_shift(
             jnp.asarray(jnp.nan, dtype=real_dtype),
         )
 
-    def branch(size: int):
-        def solve(_):
+    def branch(size: int) -> Callable[[None], _ShiftSolution]:
+        def solve(_operand: None) -> _ShiftSolution:
             hessenberg = projected[: size + 1, :size]
             embedded_identity = jnp.zeros((size + 1, size), dtype=dtype)
             embedded_identity = embedded_identity.at[:size, :].set(

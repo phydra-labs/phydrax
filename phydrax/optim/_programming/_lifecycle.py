@@ -8,8 +8,8 @@ import uuid
 from typing import Any, TypeAlias
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
+from jax import core as jax_core
 from jaxtyping import Array
 
 import phydrax.ein as ein
@@ -98,9 +98,9 @@ def _program_arrays(program: CanonicalProgram, /) -> tuple[Array, ...]:
     )
 
 
-def _program_numeric_fingerprint(program: CanonicalProgram, /) -> str:
+def _program_numeric_fingerprint(program: CanonicalProgram, /) -> str | dict[str, Any]:
     arrays = _program_arrays(program)
-    if any(isinstance(value, jax.core.Tracer) for value in arrays):
+    if any(isinstance(value, jax_core.Tracer) for value in arrays):
         return "traced-numeric-program"
     return array_tree_fingerprint(arrays)
 

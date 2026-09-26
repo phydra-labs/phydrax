@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -25,8 +25,10 @@ from ._properties import (
 )
 from ._results import BatteryModelOutput
 from ._spm import (
+    _SpmTransportEvaluation,
     _stable_asinh_ratio,
     _transport,
+    BatteryPropertyLaw,
     PreparedPrescribedCurrentSpm,
     PrescribedCurrentSpmAdapter,
     PrescribedCurrentSpmPlan,
@@ -34,7 +36,15 @@ from ._spm import (
     SpmParameters,
     SpmState,
 )
-from ._through_cell import PreparedThroughCellMesh, ThroughCellRegionPlan
+from ._through_cell import (
+    _ThroughCellEvaluation,
+    PreparedThroughCellMesh,
+    ThroughCellRegionPlan,
+)
+
+
+if TYPE_CHECKING:
+    from ._protocol import BatteryProtocolPlan, BatteryProtocolValues
 
 
 _FARADAY_C_MOL = 96485.33212
@@ -490,8 +500,8 @@ class _Marquis2019SpmeEvaluation(StrictModule):
     eq49_applicable: Array
     asymptotic_conditions_satisfied: Array
     domain_valid: Array
-    particle_transport: object
-    electrolyte_transport: object
+    particle_transport: _SpmTransportEvaluation
+    electrolyte_transport: _ThroughCellEvaluation
 
 
 def _check_prepared(
@@ -513,7 +523,7 @@ def _region_mean(values: Array, weights: Array, mask: Array, /) -> Array:
 
 
 def _ocp_second_derivative_concentration(
-    law,
+    law: BatteryPropertyLaw,
     stoichiometry: Array,
     maximum_concentration_mol_m3: Array,
     neighborhood_concentration_mol_m3: Array,
@@ -555,7 +565,7 @@ def _ocp_second_derivative_concentration(
         )
         return jnp.zeros_like(stoichiometry), neighborhood_valid
 
-    def scalar_curvature(theta):
+    def scalar_curvature(theta: Array) -> Array:
         return jax.grad(lambda value: law.evaluate(value, derivative_order=1).values)(
             theta
         )
@@ -941,7 +951,7 @@ def _evaluate(
         & (ce * positive_reaction_number <= threshold)
     )
 
-    def separated_from_bounds(ratio):
+    def separated_from_bounds(ratio: Array) -> Array:
         return (ce <= threshold * ratio) & (ce * ratio <= threshold)
 
     asymptotic_conditions = (
@@ -1422,7 +1432,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
     def ledger(
         self,
         prepared_model: PreparedMarquis2019Spme,
-        native_solution,
+        native_solution: Any,
         runtime_inputs: BatteryRuntimeInputs,
         /,
     ) -> Marquis2019SpmeLedger:
@@ -1476,7 +1486,7 @@ class Marquis2019SpmeAdapter(StrictModule, NonTrainableState):
         )
         electrolyte = evaluation.electrolyte_transport
 
-        def valid_max(values):
+        def valid_max(values: Array) -> Array:
             return jnp.max(jnp.where(valid, jnp.abs(values), 0.0))
 
         maximum_collector_flux = valid_max(electrolyte.collector_flux_residual_mol_m2_s)
@@ -1619,8 +1629,8 @@ def validate_marquis2019_spme_execution(
     prepared_model: PreparedMarquis2019Spme,
     parameters: Marquis2019SpmeParameters,
     initial_condition: Marquis2019SpmeInitialCondition,
-    protocol,
-    protocol_values,
+    protocol: BatteryProtocolPlan,
+    protocol_values: BatteryProtocolValues,
     /,
 ) -> None:
     """Concrete model preflight, using Eq.49/Table6 and native property support.

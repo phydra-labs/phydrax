@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -15,6 +17,10 @@ from jaxtyping import Array, ArrayLike
 from phydrax.domain import ComponentSum, Domain, DomainComponent, DomainFunction
 
 from .._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ._ir import Condition, ConditionCodomain, FieldSpec, ProductFieldSpec
 
 
 ConditionSupport = DomainComponent | ComponentSum
@@ -71,10 +77,10 @@ class AbstractCondition(StrictModule):
     def as_condition(
         self,
         *,
-        fields: Any = None,
-        codomain: Any = None,
+        fields: ProductFieldSpec | Sequence[FieldSpec] | None = None,
+        codomain: ConditionCodomain | None = None,
         condition_id: str | None = None,
-    ):
+    ) -> Condition:
         """Lower this legacy declaration to the typed condition IR."""
         from ._lowering import lower_condition
 

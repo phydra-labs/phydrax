@@ -60,7 +60,8 @@ def installed_packages(
 ) -> tuple[InstalledPackage, ...]:
     """Snapshot installed metadata. No package indexes or network services are queried."""
 
-    source = (
+    # Python 3.11's PackageMetadata stub omits get(), which the runtime email Message provides.
+    source: Iterable[DistributionLike] = (  # ty: ignore[invalid-assignment]
         importlib.metadata.distributions() if distributions is None else distributions
     )
     by_identity: dict[tuple[str, str], InstalledPackage] = {}

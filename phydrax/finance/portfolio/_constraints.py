@@ -211,22 +211,17 @@ class PortfolioConstraints(StrictModule):
             raise ValueError(
                 "linear_matrix, linear_lower, and linear_upper must be supplied together."
             )
-        matrix = (
-            None
-            if linear_matrix is None
-            else _finite_array(linear_matrix, "linear_matrix", ndim=2)
-        )
-        linear_lo = (
-            None
-            if linear_lower is None
-            else jnp.asarray(linear_lower, dtype=matrix.dtype)
-        )
-        linear_hi = (
-            None
-            if linear_upper is None
-            else jnp.asarray(linear_upper, dtype=matrix.dtype)
-        )
-        if matrix is not None:
+        matrix: Array | None = None
+        linear_lo: Array | None = None
+        linear_hi: Array | None = None
+        if (
+            linear_matrix is not None
+            and linear_lower is not None
+            and linear_upper is not None
+        ):
+            matrix = _finite_array(linear_matrix, "linear_matrix", ndim=2)
+            linear_lo = jnp.asarray(linear_lower, dtype=matrix.dtype)
+            linear_hi = jnp.asarray(linear_upper, dtype=matrix.dtype)
             rows = matrix.shape[0]
             if linear_lo.shape != (rows,) or linear_hi.shape != (rows,):
                 raise ValueError(f"Linear bounds must both have shape ({rows},).")

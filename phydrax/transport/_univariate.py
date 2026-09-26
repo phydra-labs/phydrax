@@ -8,6 +8,7 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 
@@ -105,7 +106,7 @@ def _probabilities(
     /,
     *,
     name: str,
-    dtype,
+    dtype: DTypeLike,
 ) -> Array:
     if weights is None:
         return jnp.full((count,), 1.0 / float(count), dtype=dtype)

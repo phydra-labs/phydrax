@@ -769,7 +769,12 @@ def _binary_score_inputs(
     return true.astype(jnp.int32), score, weights, invalid, mass
 
 
-def _map_binary_cases(true: Array, score: Array, weights: Array, function):
+def _map_binary_cases(
+    true: Array,
+    score: Array,
+    weights: Array,
+    function: Callable[[Array, Array, Array], Array],
+) -> Array:
     case_shape = true.shape[:-1]
     sample_count = true.shape[-1]
     count = prod(case_shape)
@@ -800,7 +805,7 @@ def roc_auc_score(
         metric="roc_auc_score",
     )
 
-    def one_case(labels, scores, weight):
+    def one_case(labels: Array, scores: Array, weight: Array) -> Array:
         order = jnp.argsort(scores, stable=True)
         labels = labels[order]
         scores = scores[order]
@@ -851,7 +856,7 @@ def pr_auc_score(
         metric="pr_auc_score",
     )
 
-    def one_case(labels, scores, weight):
+    def one_case(labels: Array, scores: Array, weight: Array) -> Array:
         order = jnp.argsort(-scores, stable=True)
         labels = labels[order]
         scores = scores[order]

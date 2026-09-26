@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,6 +13,10 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ._estimators import CovarianceModel
 
 
 def _nonnegative_scalar(value: Any, name: str, /) -> Array:
@@ -162,7 +166,9 @@ class StreamingGaussianMoments(StrictModule):
             self.mean.shape[-1], dtype=covariance.dtype
         )
 
-    def model(self, /, *, correction: float = 0.0, regularization: float = 1e-6):
+    def model(
+        self, /, *, correction: float = 0.0, regularization: float = 1e-6
+    ) -> CovarianceModel:
         """Materialize the current moments as executable Gaussian covariance geometry."""
         regularization_ = _nonnegative_scalar(regularization, "regularization")
         from ._estimators import _regularize, CovarianceModel

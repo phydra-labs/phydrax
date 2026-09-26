@@ -1,20 +1,25 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from __future__ import annotations
+
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 from ..linalg import (
     ArraySpace,
     DenseLinearOperator,
     DenseLU,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     solve,
 )
 
 
-def solve_electric_potential(operator_matrix: ArrayLike, charge_source: ArrayLike, /):
+def solve_electric_potential(
+    operator_matrix: ArrayLike, charge_source: ArrayLike, /
+) -> LinearSolveResult:
     matrix = jnp.asarray(operator_matrix)
     source = jnp.asarray(charge_source)
     space = ArraySpace((source.size,), dtype=matrix.dtype)
@@ -33,7 +38,7 @@ def drift_diffusion_current(
     diffusivity: float,
     velocity: ArrayLike = 0.0,
     /,
-):
+) -> Array:
     return (
         float(mobility)
         * jnp.asarray(charge_density)[..., None]

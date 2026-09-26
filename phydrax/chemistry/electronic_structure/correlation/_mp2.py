@@ -11,7 +11,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -34,14 +34,14 @@ class MP2Result(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        correlation_energy,
-        opposite_spin_energy,
-        same_spin_energy,
-        total_energy,
-        amplitudes,
-        minimum_denominator,
-        residual_bound,
-        successful,
+        correlation_energy: ArrayLike,
+        opposite_spin_energy: ArrayLike,
+        same_spin_energy: ArrayLike,
+        total_energy: ArrayLike,
+        amplitudes: ArrayLike,
+        minimum_denominator: ArrayLike,
+        residual_bound: ArrayLike,
+        successful: ArrayLike,
         plan_id: str,
         store_id: str,
         /,

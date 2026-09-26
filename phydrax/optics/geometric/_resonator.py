@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from phydrax.ein import contract
@@ -389,7 +390,7 @@ def prepare_paraxial_resonator(
     )
 
 
-def _symplectic_form(dtype, /) -> Array:
+def _symplectic_form(dtype: DTypeLike, /) -> Array:
     return jnp.asarray(
         (
             (0.0, 0.0, 1.0, 0.0),

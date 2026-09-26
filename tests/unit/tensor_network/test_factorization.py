@@ -55,6 +55,12 @@ def test_two_site_gate_rejects_nonpositive_capacity():
         tn.apply_two_site_gate(state, 0, gate, maximum_bond_dimension=0)
 
 
+def test_two_site_gate_rejects_scalar_gate_with_shape_error():
+    state = tn.product_mps(jnp.asarray([[1.0, 0.0], [1.0, 0.0]]))
+    with pytest.raises(ValueError, match="Gate shape"):
+        tn.apply_two_site_gate(state, 0, 1.0, maximum_bond_dimension=1)
+
+
 def test_canonicalization_preserves_state_and_precision():
     tensors = (
         jnp.asarray([[[1.0, 0.0], [0.0, 1.0]]], dtype=jnp.complex128),

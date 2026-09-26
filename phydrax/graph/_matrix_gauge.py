@@ -212,7 +212,7 @@ def path_holonomy(
         (paths.num_paths,) + space.point_shape,
     )
 
-    def step(accumulator, index):
+    def step(accumulator: Array, index: Array) -> tuple[Array, None]:
         edges = paths.edge_indices[:, index]
         factor = values[edges]
         reverse = space.group.inverse(factor)

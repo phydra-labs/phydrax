@@ -11,6 +11,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -76,7 +77,7 @@ def _constant_or_field(
     return array, identifier
 
 
-def _scalar_parameter(state: MechanicalLoadState, dtype, /) -> Array:
+def _scalar_parameter(state: MechanicalLoadState, dtype: DTypeLike, /) -> Array:
     parameter = jnp.asarray(state.parameter, dtype=dtype)
     if parameter.shape != () or jnp.iscomplexobj(parameter):
         raise ValueError("This mechanical load requires one real scalar state parameter.")
@@ -412,13 +413,13 @@ class ReferenceDeadTraction(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference_normal, current_normal
@@ -467,13 +468,13 @@ class ReferenceDeadBodyForce(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference_normal, current_normal
@@ -520,13 +521,13 @@ class CurrentBodyForce(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference, reference_normal, current_normal
@@ -574,13 +575,13 @@ class CurrentSurfaceTraction(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference, reference_normal, current_normal
@@ -648,13 +649,13 @@ class ClosedSurfacePressure(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference, reference_normal, args
@@ -775,13 +776,13 @@ class PneumaticPressure(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference, reference_normal, args
@@ -850,13 +851,13 @@ class GeneralFollowerLoad(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         del reference_normal, current_normal
@@ -953,13 +954,13 @@ class CompositeMechanicalLoad(AbstractMechanicalLoad):
 
     def _evaluate(
         self,
-        reference,
-        current,
-        measure,
-        reference_normal,
-        current_normal,
-        state,
-        args,
+        reference: Array,
+        current: Array,
+        measure: DeformedMeasureState,
+        reference_normal: Array | None,
+        current_normal: Array | None,
+        state: MechanicalLoadState,
+        args: Any,
         /,
     ) -> MechanicalLoadEvaluation:
         children = tuple(

@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import PyTree
+from jaxtyping import Array, PyTree
 
 from .._iteration import IterationPlan
 from .._linear_refresh import prepare_refresh_state
@@ -49,6 +50,10 @@ from ._iterative._types import (
 from ._scalar import ScalarIterativeState, solve_scalar_iterative
 
 
+_ValueFunction: TypeAlias = Callable[[PyTree[Any]], Any]
+_StepOutput: TypeAlias = tuple[PyTree[Any], PyTree[Any], Array]
+
+
 def _default_newton_linear_policy() -> LinearSolvePolicy:
     return LinearSolvePolicy(
         MINRES(),
@@ -56,7 +61,7 @@ def _default_newton_linear_policy() -> LinearSolvePolicy:
     )
 
 
-def _usable_newton_linear_status(status: Any, /):
+def _usable_newton_linear_status(status: Any, /) -> Array:
     status_ = jnp.asarray(status, dtype=jnp.int32)
     return (
         (status_ == int(LinearSolveStatus.SUCCESS))
@@ -66,7 +71,9 @@ def _usable_newton_linear_status(status: Any, /):
     )
 
 
-def _hessian_system(parameters: PyTree[Any], action, /) -> LinearSystem:
+def _hessian_system(
+    parameters: PyTree[Any], action: Callable[[PyTree[Any]], PyTree[Any]], /
+) -> LinearSystem:
     space = PyTreeSpace(parameters)
     hessian = FunctionLinearOperator(
         action,
@@ -156,7 +163,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
 
     def prepare_state(
         self,
-        value_function,
+        value_function: _ValueFunction,
         parameters: PyTree[Any],
         /,
     ) -> ScalarIterativeState:
@@ -166,7 +173,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
 
     def step(
         self,
-        value_function,
+        value_function: _ValueFunction,
         parameters: PyTree[Any],
         state: ScalarIterativeState,
         /,
@@ -179,6 +186,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
             raise TypeError("state must be a ScalarIterativeState.")
         if state.linear_refresh_state is None:
             raise ValueError("NewtonKrylov state is missing linear refresh state.")
+        linear_refresh_state = state.linear_refresh_state
         _, static_state = eqx.partition(state, eqx.is_array)
 
         custom_action = (
@@ -216,7 +224,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
             else optimality <= termination.optimality_threshold(initial_optimality)
         )
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> _StepOutput:
             status = jnp.where(
                 finite,
                 int(OptimizationStatus.SUCCESS),
@@ -247,8 +255,8 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
             dynamic_updated, _ = eqx.partition(updated, eqx.is_array)
             return parameters, dynamic_updated, value
 
-        def newton_step(_):
-            def hessian_action(vector):
+        def newton_step(_: None) -> _StepOutput:
+            def hessian_action(vector: PyTree[Any]) -> PyTree[Any]:
                 if custom_action:
                     assert isinstance(value_function, _PreparedMinimizationValue)
                     return value_function.problem.apply_hessian(
@@ -261,7 +269,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
                 return hessian_vector
 
             system = _hessian_system(parameters, hessian_action)
-            prepared, refresh_state = state.linear_refresh_state.refresh(system)
+            prepared, refresh_state = linear_refresh_state.refresh(system)
             relative_optimality = optimality / jnp.maximum(initial_optimality, 1e-30)
             forcing = jnp.clip(
                 relative_optimality**self.forcing_power,

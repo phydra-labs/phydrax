@@ -43,7 +43,9 @@ def _tree_norm(tree: PyTree[Any], /) -> Array:
     return jnp.sqrt(sum(squares[1:], start=squares[0]))
 
 
-def _tree_select(predicate: Array, accepted: PyTree[Any], fallback: PyTree[Any], /):
+def _tree_select(
+    predicate: Array, accepted: PyTree[Any], fallback: PyTree[Any], /
+) -> PyTree[Array]:
     if jax.tree.structure(accepted) != jax.tree.structure(fallback):
         raise ValueError(
             "Proposed and warm mechanics states must share one PyTree structure."

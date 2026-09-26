@@ -16,6 +16,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_difference import (
     diagonalize_fd_laplacian,
+    FDBoundaryPair,
     FDLaplacianSolvePlan,
 )
 from ..discretization.finite_volume import FaceVelocity, PreparedMACOperators
@@ -491,7 +492,7 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             maximum_resource_bytes,
             "MAC pressure transform",
         )
-        boundary_kinds = {}
+        boundary_kinds: dict[str, FDBoundaryPair] = {}
         for axis_index, (name, axis) in enumerate(
             zip(grid.axis_names, grid.structured_axes, strict=True)
         ):
@@ -818,7 +819,10 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
                 "LinearSolveControl is only valid for iterative MAC pressure routes."
             )
         if route == "transform":
-            transform = self.transform_plan.solve(rhs / direct_scale)
+            # A transform route is selected only with a prepared transform plan.
+            transform_plan = self.transform_plan
+            assert transform_plan is not None
+            transform = transform_plan.solve(rhs / direct_scale)
             solution_candidate = (
                 self.operators.gauge_project(transform.value)
                 if self.closure_kind == "neumann"
@@ -828,6 +832,8 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
             linear = None
             hybrid = None
         elif route == "hybrid":
+            # A hybrid route is selected only with a prepared transform-line plan.
+            assert active_hybrid_plan is not None
             hybrid = active_hybrid_plan.solve(rhs / direct_scale)
             solution_candidate = self.operators.gauge_project(hybrid.candidate)
             solve_success = hybrid.converged

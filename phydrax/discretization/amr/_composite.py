@@ -14,6 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -24,7 +25,7 @@ from ._core import BlockHierarchyState, BlockHierarchyTopology
 
 
 def _checked(value: Array, invalid: Array, message: str, /) -> Array:
-    if isinstance(invalid, jax.core.Tracer):
+    if isinstance(invalid, jax_core.Tracer):
         return eqx.error_if(value, invalid, message)
     if bool(invalid):
         raise ValueError(message)

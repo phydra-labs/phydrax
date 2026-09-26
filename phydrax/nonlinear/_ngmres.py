@@ -218,7 +218,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             ).astype(jnp.int32),
         )
 
-        def condition(current):
+        def condition(current: _NGMRESRun) -> Array:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -230,7 +230,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
                 & within_evaluations
             )
 
-        def body(current):
+        def body(current: _NGMRESRun) -> _NGMRESRun:
             state_tree = source.unflatten(current.state)
             combined_prepared = eqx.combine(
                 current.prepared_update,

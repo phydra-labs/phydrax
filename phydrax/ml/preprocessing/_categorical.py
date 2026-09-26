@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._differentiation import (
@@ -171,7 +172,7 @@ class CategoricalDiagnostics(StrictModule):
         self.output_shape = tuple(output_shape)
 
 
-def _category_bank(schema: CategoricalSchema, dtype) -> tuple[Array, Array]:
+def _category_bank(schema: CategoricalSchema, dtype: DTypeLike) -> tuple[Array, Array]:
     capacity = max(schema.category_counts)
     values = []
     valid = []

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,14 @@ from .._trainable import NonTrainableState
 from ..discretization._temporal import RealizedTemporalMesh
 from ..stochastic._realization import StochasticRealization
 from ._balance_law import BalanceLawRuntimeState, PreparedBalanceLawRuntime
+
+
+_AdaptiveCarry: TypeAlias = tuple[
+    BalanceLawRuntimeState, Array, Array, Array, Array, Array, Array, Array
+]
+_AdaptiveOutput: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class BalanceLawAdaptiveStatus(IntEnum):
@@ -284,7 +292,9 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
             ),
         )
 
-        def step(carry, _):
+        def step(
+            carry: _AdaptiveCarry, _: Array
+        ) -> tuple[_AdaptiveCarry, _AdaptiveOutput]:
             (
                 state,
                 next_step,
@@ -297,7 +307,7 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
             ) = carry
             active = ~finished & ~failed
 
-            def execute(_):
+            def execute(_: None) -> tuple[_AdaptiveCarry, _AdaptiveOutput]:
                 start = state.time
                 remaining = target - start
                 requested = jnp.minimum(jnp.minimum(next_step, maximum_step), remaining)
@@ -386,7 +396,7 @@ class AdaptiveBalanceLawRolloutPlan(StrictModule, NonTrainableState):
                 )
                 return next_carry, output
 
-            def inactive(_):
+            def inactive(_: None) -> tuple[_AdaptiveCarry, _AdaptiveOutput]:
                 nan = jnp.asarray(jnp.nan, dtype=initial_time.dtype)
                 output = (
                     jnp.asarray(False),

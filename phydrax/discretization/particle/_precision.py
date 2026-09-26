@@ -8,6 +8,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import (
@@ -131,25 +132,25 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
             },
         )
 
-    def geometry(self, value: Any, /):
+    def geometry(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.geometry_dtype)
 
-    def evaluation(self, value: Any, /):
+    def evaluation(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.evaluation_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
         return array.astype(self.accumulation_dtype)
 
-    def certification(self, value: Any, /):
+    def certification(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
         return array.astype(self.certification_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.output_dtype)
 
     def evidence(self) -> PrecisionEvidenceEnvelope:

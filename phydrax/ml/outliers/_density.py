@@ -282,7 +282,9 @@ def _fit_robust_one(
     variance = weighted_mean(jnp.real(centered * jnp.conj(centered)), weights)
     scale = jnp.sqrt(jnp.maximum(variance, scale_floor * scale_floor))
 
-    def step(_iteration, state):
+    def step(
+        _iteration: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         current_location, current_scale, _delta = state
         standardized = (x - current_location) / current_scale
         influence = 1.0 / jnp.sqrt(

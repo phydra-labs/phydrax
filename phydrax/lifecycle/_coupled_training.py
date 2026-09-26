@@ -105,12 +105,15 @@ def _physical_acceptance(
         # Shared parameters learn from every contributing case, so every
         # attempted case must be physically accepted.
         return jnp.all(step.successful | ~step.attempted) & jnp.any(step.attempted)
+    layout = kernel.lane_layout
+    # Kernel preparation enables lane_parameters only for a non-None lane_layout.
+    assert layout is not None
     lanes = kernel_state.attempt_cursor.shape
-    if case_shape != lanes or kernel.lane_layout.kind == "item":
+    if case_shape != lanes or layout.kind == "item":
         raise ValueError(
             f"{kernel.context}: per-lane parameters need a case or member lane layout "
             f"aligned with the plant cases; plant case shape {case_shape}, "
-            f"{kernel.lane_layout.kind} lanes {lanes}."
+            f"{layout.kind} lanes {lanes}."
         )
     return step.successful
 

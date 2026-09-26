@@ -11,7 +11,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._strict import StrictModule
 
@@ -39,7 +39,7 @@ class IdentityLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return "identity"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         return RobustLossEvaluation(
             value,
@@ -62,7 +62,7 @@ class HuberLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"huber/{self.delta}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         threshold = self.delta * self.delta
         root = jnp.sqrt(jnp.maximum(value, 1e-30))
@@ -86,7 +86,7 @@ class SoftL1Loss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"soft-l1/{self.scale}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         scaled = value / (self.scale * self.scale)
         root = jnp.sqrt(1.0 + scaled)
@@ -109,7 +109,7 @@ class CauchyLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"cauchy/{self.scale}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         scale_squared = self.scale * self.scale
         denominator = 1.0 + value / scale_squared
@@ -132,7 +132,7 @@ class ArctanLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"arctan/{self.scale}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         scale_squared = self.scale * self.scale
         scaled = value / scale_squared
@@ -156,7 +156,7 @@ class TukeyLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"tukey/{self.scale}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         value = jnp.asarray(squared_norm)
         scale_squared = self.scale * self.scale
         scaled = value / scale_squared
@@ -189,7 +189,7 @@ class ScaledLoss(AbstractRobustLoss):
     def loss_id(self) -> str:
         return f"scaled/{self.scale}/{self.loss.loss_id}"
 
-    def evaluate(self, squared_norm, /):
+    def evaluate(self, squared_norm: ArrayLike, /) -> RobustLossEvaluation:
         result = self.loss.evaluate(squared_norm)
         return RobustLossEvaluation(
             self.scale * result.rho,
@@ -200,7 +200,9 @@ class ScaledLoss(AbstractRobustLoss):
 
 
 def squared_tree_norm(value: PyTree[Any], /) -> Array:
-    return sum(jnp.real(jnp.vdot(leaf, leaf)) for leaf in jax.tree.leaves(value))
+    return jnp.asarray(
+        sum(jnp.real(jnp.vdot(leaf, leaf)) for leaf in jax.tree.leaves(value))
+    )
 
 
 def robustify_residual(

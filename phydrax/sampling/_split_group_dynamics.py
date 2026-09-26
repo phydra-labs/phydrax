@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.ein as ein
@@ -39,6 +40,28 @@ _ACCEPT_ADDRESS = SampleAddress(
 _NUTS_ADDRESS = SampleAddress(
     "markov", "transported-group-nuts", target="finite-tree", role="transition"
 )
+
+# Positional fields of ``SplitGroupTransitionEvidence``.
+_RawTransitionEvidence: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+# (position, momentum, log target, force gradients, raw evidence)
+_RawTransition: TypeAlias = tuple[Array, Array, Array, Array, _RawTransitionEvidence]
 
 IntegratorKind = Literal["leapfrog", "omelyan"]
 DynamicsKind = Literal["ghmc", "nuts-reference"]
@@ -340,7 +363,7 @@ def _geometry_kind(target: SplitGroupTarget, /) -> str:
     raise TypeError("Split group dynamics supports flat tori and pointwise U(N)/SU(N).")
 
 
-def _composition(plan: SplitGroupDynamicsPlan, dtype) -> tuple[Array, Array]:
+def _composition(plan: SplitGroupDynamicsPlan, dtype: DTypeLike) -> tuple[Array, Array]:
     if plan.integrator == "leapfrog":
         return jnp.asarray((0.5, 0.5), dtype=dtype), jnp.asarray((1.0,), dtype=dtype)
     coefficient = plan.omelyan_lambda
@@ -417,7 +440,7 @@ def _value_and_forces(
         prepared.target.local_coordinate_shape, dtype=jnp.real(position).dtype
     )
 
-    def gradient(term):
+    def gradient(term: Callable[[Array], Array]) -> Array:
         return jax.grad(
             lambda local: term(prepared.target.geometry.retract(position, local))
         )(zero)
@@ -470,11 +493,11 @@ def initialize_split_group_dynamics_state(
     )
 
 
-def _velocity(prepared, momentum):
+def _velocity(prepared: PreparedSplitGroupDynamics, momentum: Array) -> Array:
     return prepared.inverse_mass * momentum
 
 
-def _kinetic(prepared, momentum):
+def _kinetic(prepared: PreparedSplitGroupDynamics, momentum: Array) -> Array:
     return (
         0.5
         * jnp.asarray(
@@ -483,18 +506,24 @@ def _kinetic(prepared, momentum):
     )
 
 
-def _sample_momentum(prepared, key):
+def _sample_momentum(prepared: PreparedSplitGroupDynamics, key: Key[Array, ""]) -> Array:
     normal = jr.normal(
         key, prepared.target.local_coordinate_shape, dtype=prepared.inverse_mass.dtype
     )
     return normal / jnp.sqrt(prepared.inverse_mass)
 
 
-def _kick(momentum, force_gradients, amount):
+def _kick(momentum: Array, force_gradients: Array, amount: Array) -> Array:
     return momentum + amount * jnp.sum(force_gradients, axis=0)
 
 
-def _integrator_step(prepared, position, momentum, force_gradients, direction=1.0):
+def _integrator_step(
+    prepared: PreparedSplitGroupDynamics,
+    position: Array,
+    momentum: Array,
+    force_gradients: Array,
+    direction: float = 1.0,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     epsilon = direction * prepared.step_size
     force_evaluations = jnp.asarray(0, dtype=jnp.int32)
     if prepared.integrator == "leapfrog":
@@ -553,7 +582,7 @@ def split_integrator_trajectory(
     *,
     steps: int | None = None,
     direction: int = 1,
-):
+) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
     """Apply an exposed reversible palindromic trajectory for audit and reuse."""
     count = prepared.trajectory_steps if steps is None else int(steps)
     if (
@@ -622,7 +651,11 @@ def transported_group_u_turn(
     )
 
 
-def _ghmc_transition(prepared, state, key):
+def _ghmc_transition(
+    prepared: PreparedSplitGroupDynamics,
+    state: SplitGroupDynamicsState,
+    key: Key[Array, ""],
+) -> _RawTransition:
     momentum_key = derive_key(key, _MOMENTUM_ADDRESS, state.step_index)
     accept_key = derive_key(key, _ACCEPT_ADDRESS, state.step_index)
     fresh = _sample_momentum(prepared, momentum_key)
@@ -692,7 +725,11 @@ def _ghmc_transition(prepared, state, key):
     )
 
 
-def _nuts_reference_transition(prepared, state, key):
+def _nuts_reference_transition(
+    prepared: PreparedSplitGroupDynamics,
+    state: SplitGroupDynamicsState,
+    key: Key[Array, ""],
+) -> _RawTransition:
     """Finite slice-weighted transported NUTS reference trajectory."""
     momentum_key = derive_key(key, _MOMENTUM_ADDRESS, state.step_index)
     tree_key = derive_key(key, _NUTS_ADDRESS, state.step_index)

@@ -4,7 +4,7 @@
 from ..qualification import CapabilityProfile, SupportTuple
 
 
-def manufacturing_candidate_profiles():
+def manufacturing_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     specs = (
         (
             "manufacturing.process-schedule",

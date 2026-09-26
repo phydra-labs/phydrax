@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jax import lax
 from jaxtyping import Array, ArrayLike
 
@@ -34,7 +35,7 @@ class CrossingConePlan(StrictModule):
         self,
         identity_vector: ArrayLike,
         block_vectors: ArrayLike,
-        scaling_dimensions: ArrayLike,
+        scaling_dimensions: npt.ArrayLike,
         /,
         *,
         maximum_iterations: int = 4096,
@@ -187,7 +188,7 @@ def solve_crossing_cone(prepared: PreparedCrossingCone, /) -> CrossingConicEvide
         (plan.block_vectors.shape[1],), dtype=plan.block_vectors.dtype
     )
 
-    def projected_step(_, current):
+    def projected_step(_: Array, current: Array) -> Array:
         residual = plan.identity_vector + prepared.operator.mv(current)
         gradient = prepared.operator.adjoint_mv(residual)
         return jnp.maximum(0.0, current - prepared.step_size * gradient)

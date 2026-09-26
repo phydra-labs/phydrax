@@ -42,8 +42,9 @@ from ._properties import (
     LinearCapabilityError,
     OperatorCapabilities,
     OperatorProperties,
+    PropertyEvidence,
 )
-from ._spaces import _coordinate_dtype, _has_diagonal_pairing
+from ._spaces import _coordinate_dtype, _has_diagonal_pairing, AbstractVectorSpace
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._spectral import estimate_spectral_bounds
 
@@ -52,7 +53,9 @@ ChebyshevScaling: TypeAlias = Literal["none", "symmetric-jacobi"]
 ChebyshevBoundsSource: TypeAlias = Literal["explicit", "estimated"]
 
 
-def _scale_vector(space, diagonal: Array, vector: PyTree[Any], /) -> PyTree[Array]:
+def _scale_vector(
+    space: AbstractVectorSpace, diagonal: Array, vector: PyTree[Any], /
+) -> PyTree[Array]:
     coordinates = space.flatten(vector)
     return space.unflatten(diagonal * coordinates)
 
@@ -257,7 +260,10 @@ class ChebyshevPreconditioner(AbstractPreconditioner, NonTrainableState):
             value = self.effective_operator.scale(value)
         zeros = jax.tree.map(jnp.zeros_like, value)
 
-        def step(index, state):
+        def step(
+            index: Array,
+            state: tuple[PyTree[Array], PyTree[Array], PyTree[Array]],
+        ) -> tuple[PyTree[Array], PyTree[Array], PyTree[Array]]:
             approximation, direction, current_residual = state
             alpha = self.alpha[index]
             beta = self.beta[index]
@@ -446,7 +452,10 @@ class ChebyshevPreconditionerBuilder(AbstractPreconditionerBuilder):
             "self_adjoint": self_adjoint,
             "positive_definite": positive_definite,
         }
-        evidence = {"linear": "construction", "stationary": "construction"}
+        evidence: dict[str, PropertyEvidence] = {
+            "linear": "construction",
+            "stationary": "construction",
+        }
         if self_adjoint:
             evidence["self_adjoint"] = (
                 self.properties.evidence_for("self_adjoint")
@@ -684,7 +693,7 @@ def _chebyshev_recurrence(
     sigma = center / safe_radius
     initial_rho = safe_radius / center
 
-    def step(rho, _):
+    def step(rho: Array, _: None) -> tuple[Array, tuple[Array, Array]]:
         next_rho = jnp.reciprocal(2.0 * sigma - rho)
         alpha = 2.0 * next_rho / safe_radius
         beta = next_rho * rho

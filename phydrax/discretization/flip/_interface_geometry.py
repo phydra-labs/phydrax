@@ -16,7 +16,7 @@ from .._tensor_support import PreparedTensorGrid
 from ..finite_volume._mac_interface_state import MACFreeSurfaceGeometryState
 
 
-def _central(value, axis, spacing, periodic):
+def _central(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
     if periodic:
         return (jnp.roll(value, -1, axis=axis) - jnp.roll(value, 1, axis=axis)) / (
             2.0 * spacing
@@ -24,8 +24,8 @@ def _central(value, axis, spacing, periodic):
     forward = jnp.roll(value, -1, axis=axis)
     backward = jnp.roll(value, 1, axis=axis)
     derivative = (forward - backward) / (2.0 * spacing)
-    lower = [slice(None)] * value.ndim
-    upper = [slice(None)] * value.ndim
+    lower: list[slice | int] = [slice(None)] * value.ndim
+    upper: list[slice | int] = [slice(None)] * value.ndim
     lower[axis], upper[axis] = 0, value.shape[axis] - 1
     derivative = derivative.at[tuple(lower)].set(
         (jnp.take(value, 1, axis=axis) - jnp.take(value, 0, axis=axis)) / spacing
@@ -36,11 +36,11 @@ def _central(value, axis, spacing, periodic):
     return derivative
 
 
-def _forward_neighbor(value, axis, periodic):
+def _forward_neighbor(value: Array, axis: int, periodic: bool) -> Array:
     neighbor = jnp.roll(value, -1, axis=axis)
     if periodic:
         return neighbor
-    upper = [slice(None)] * value.ndim
+    upper: list[slice | int] = [slice(None)] * value.ndim
     upper[axis] = value.shape[axis] - 1
     return neighbor.at[tuple(upper)].set(value[tuple(upper)])
 
@@ -143,10 +143,9 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
         distance = jnp.sqrt(jnp.sum(delta * delta, axis=-1)) - self.particle_radius
         route_valid = route_valid & (distance <= band_width)
         strides = tuple(int(np.prod(shape[axis + 1 :])) for axis in range(len(shape)))
-        flat_indices = sum(
-            indices * stride
-            for indices, stride in zip(candidate_indices, strides, strict=True)
-        )
+        flat_indices = candidate_indices[0] * strides[0]
+        for indices, stride in zip(candidate_indices[1:], strides[1:], strict=True):
+            flat_indices = flat_indices + indices * stride
         phi_flat = jnp.full((int(np.prod(shape)),), band_width, dtype=particles.dtype)
         phi_flat = phi_flat.at[flat_indices.reshape((-1,))].min(
             jnp.where(route_valid, distance, band_width).reshape((-1,))
@@ -165,8 +164,11 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
         norm = jnp.sqrt(jnp.sum(gradient * gradient, axis=-1))
         normal = gradient / jnp.maximum(norm[..., None], 1.0e-30)
         curvature = sum(
-            _central(normal[..., axis], axis, self.spacing[axis], grid_axis.periodic)
-            for axis, grid_axis in enumerate(self.grid.structured_axes)
+            (
+                _central(normal[..., axis], axis, self.spacing[axis], grid_axis.periodic)
+                for axis, grid_axis in enumerate(self.grid.structured_axes)
+            ),
+            jnp.zeros((), dtype=phi.dtype),
         )
         face_fraction = []
         ghost_fraction = []

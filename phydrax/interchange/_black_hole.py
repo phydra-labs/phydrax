@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal, TypeAlias
@@ -459,10 +460,10 @@ class NeutralBlackHoleArtifact(StrictModule, NonTrainableState):
 
 
 def map_black_hole_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -572,10 +573,10 @@ def map_black_hole_artifact(
 
 
 def map_field_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -611,10 +612,10 @@ def map_field_artifact(
 
 
 def map_image_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -646,10 +647,10 @@ def map_image_artifact(
 
 
 def map_visibility_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -683,10 +684,10 @@ def map_visibility_artifact(
 
 
 def map_waveform_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,
@@ -720,10 +721,10 @@ def map_waveform_artifact(
 
 
 def map_numeric_model_artifact(
-    path,
+    path: str | os.PathLike[str],
     /,
     *,
-    trusted_root,
+    trusted_root: str | os.PathLike[str],
     limits: ResourceLimits,
     rights: BlackHoleArtifactRights,
     use_policy: BlackHoleArtifactUsePolicy,

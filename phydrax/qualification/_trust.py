@@ -10,7 +10,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Protocol, TYPE_CHECKING
+from typing import Any, Protocol, TYPE_CHECKING
 
 from .._fingerprint import canonical_fingerprint, canonical_json
 from ._evidence import SupportDependency
@@ -34,6 +34,20 @@ QUALIFICATION_ROLES = frozenset(
 
 class CanonicalRecord(Protocol):
     def to_record(self) -> dict[str, object]: ...
+
+
+class ReleaseGateProof(Protocol):
+    """Typed retained release inputs that revalidate one gate under a policy."""
+
+    @property
+    def gate_id(self) -> str: ...
+
+    @property
+    def distribution_id(self) -> str: ...
+
+    def verify(
+        self, policy: AsymmetricReleaseTrustPolicy, /, *, at_time: int
+    ) -> None: ...
 
 
 def _record(value: Mapping[str, object] | CanonicalRecord) -> dict[str, object]:
@@ -85,7 +99,7 @@ class SignedQualificationRecord:
     @classmethod
     def sign(
         cls,
-        record: object,
+        record: Mapping[str, object] | CanonicalRecord,
         signer: AsymmetricSigner,
         /,
         *,
@@ -127,7 +141,7 @@ class SignedQualificationRecord:
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> SignedQualificationRecord:
+    def from_record(cls, record: Mapping[str, Any], /) -> SignedQualificationRecord:
         from ..service._security import SignatureEnvelope
 
         raw = dict(record["signature"])
@@ -167,8 +181,8 @@ class QualificationRoleTrust:
 
     def verify(
         self,
-        record: object,
-        attestation: SignedQualificationRecord,
+        record: Mapping[str, object] | CanonicalRecord,
+        attestation: object,
         /,
         *,
         role: str,
@@ -219,9 +233,7 @@ class QualificationRoleTrust:
         return min(attestation.expires_at, record.expires_at)
 
     @classmethod
-    def from_public_config(
-        cls, config: Mapping[str, object], /
-    ) -> QualificationRoleTrust:
+    def from_public_config(cls, config: Mapping[str, Any], /) -> QualificationRoleTrust:
         """Load only public Ed25519 roots; KMS verifiers are injected explicitly."""
         from ..service._security import (
             Ed25519Verifier,
@@ -300,7 +312,7 @@ class AsymmetricReleaseTrustPolicy:
         roles: QualificationRoleTrust,
         /,
         *,
-        proofs: Sequence[object] = (),
+        proofs: Sequence[ReleaseGateProof] = (),
         max_index_age: int,
     ) -> None:
         if type(max_index_age) is not int or max_index_age <= 0:
@@ -308,7 +320,9 @@ class AsymmetricReleaseTrustPolicy:
         self.roles = roles
         self.max_index_age = max_index_age
         self.proofs = tuple(proofs)
-        self._verification_chain = ContextVar("qualification-proof-chain", default=())
+        self._verification_chain: ContextVar[tuple[str, ...]] = ContextVar(
+            "qualification-proof-chain", default=()
+        )
 
     def verify_index(self, index: ReleaseIndex, at_time: int, /) -> bool:
         from ..service._security import SignatureEnvelope

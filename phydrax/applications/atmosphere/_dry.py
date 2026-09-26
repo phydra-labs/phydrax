@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import equinox as eqx
 import jax
@@ -357,10 +358,15 @@ class DryAtmospherePlan(StrictModule, NonTrainableState):
             )
         self.shape, self.bounds, self.boundaries = (
             shape_,
-            tuple(tuple(float(x) for x in row) for row in bounds_),
+            (
+                tuple(float(x) for x in bounds_[0]),
+                tuple(float(x) for x in bounds_[1]),
+            ),
             pairs,
         )
-        self.prescribed, self.order, self.cfl = data, order, float(cfl)
+        # Every prescribed entry was validated above as one lower/upper pair.
+        prescribed_ = cast(tuple[tuple[Array | None, Array | None], ...], data)
+        self.prescribed, self.order, self.cfl = prescribed_, order, float(cfl)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "dry-atmosphere",
@@ -658,7 +664,15 @@ class PreparedDryAtmosphere(AbstractFixedStepMethod, NonTrainableState):
             self.budget(result),
         )
 
-    def step(self, step_index, time, state, step_size, args, /) -> FixedStepResult:
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: DryAtmosphereState,
+        step_size: Array,
+        args: object,
+        /,
+    ) -> FixedStepResult:
         del args
         size = eqx.error_if(
             jnp.asarray(step_size),
@@ -689,7 +703,9 @@ class PreparedDryAtmosphere(AbstractFixedStepMethod, NonTrainableState):
                 "Atmospheric rollout requires a nonempty vector of step sizes."
             )
 
-        def body(carry, size):
+        def body(
+            carry: tuple[DryAtmosphereState, Array], size: Array
+        ) -> tuple[tuple[DryAtmosphereState, Array], tuple[Array, Array, Array]]:
             previous, running = carry
             result = self.advance(previous, jnp.where(running, size, 0.0))
             running = running & result.accepted

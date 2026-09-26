@@ -10,14 +10,16 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
+from ._diagnostics import MCMCDiagnostics
 from ._mcmc import MCMCResult
 from ._posterior import PosteriorProblem
+from ._predictive import PredictiveField
 
 
 UQProduct = Literal["forward", "calibration", "robust"]
@@ -229,18 +231,22 @@ class PosteriorRecord(StrictModule):
         return self.result.problem
 
     @property
-    def diagnostics(self):
+    def diagnostics(self) -> MCMCDiagnostics:
         return self.result.diagnostics
 
     @property
-    def samples(self):
+    def samples(self) -> PyTree[Array]:
         return self.result.samples
 
-    def predict(self, *args: Any, **kwargs: Any):
+    def predict(
+        self, *args: Any, **kwargs: Any
+    ) -> PredictiveField | frozendict[str, PredictiveField]:
         """Delegate prediction to the authoritative chain-preserving result."""
         return self.result.predict(*args, **kwargs)
 
-    def predict_observations(self, key: Array, /, *args: Any, **kwargs: Any):
+    def predict_observations(
+        self, key: Array, /, *args: Any, **kwargs: Any
+    ) -> PredictiveField | frozendict[str, PredictiveField]:
         """Delegate observation prediction without changing sample axes."""
         return self.result.predict_observations(key, *args, **kwargs)
 

@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from ...units import ANGSTROM
+from ...units import ANGSTROM, UnitDefinition
 
 
 _REAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z")
@@ -36,11 +36,11 @@ class PDBAtomRecord:
     formal_charge: str
 
     @property
-    def record_id(self):
+    def record_id(self) -> str:
         return f"{self.source_id}:line:{self.line_number}"
 
     @property
-    def atom_identity(self):
+    def atom_identity(self) -> tuple[str, str, str, str]:
         return (
             self.chain_id,
             self.author_residue_number,
@@ -49,11 +49,11 @@ class PDBAtomRecord:
         )
 
     @property
-    def length_unit(self):
+    def length_unit(self) -> UnitDefinition:
         return ANGSTROM
 
 
-def _number(value, field, line_number):
+def _number(value: str, field: str, line_number: int) -> float:
     text = value.strip()
     if _REAL.fullmatch(text) is None:
         raise ValueError(f"PDB line {line_number}: missing/invalid {field}.")
@@ -110,7 +110,8 @@ def read_pdb_atom_records(text: str, *, source_id: str) -> tuple[PDBAtomRecord, 
                 raise ValueError(
                     f"PDB line {line_number}: mandatory element columns absent."
                 )
-            model = current_model if explicit_models else "1"
+            # A declared MODEL is open here; files without MODEL records never set one.
+            model = "1" if current_model is None else current_model
             serial, atom, residue, author = (
                 line[6:11].strip(),
                 line[12:16].strip(),
@@ -134,9 +135,10 @@ def read_pdb_atom_records(text: str, *, source_id: str) -> tuple[PDBAtomRecord, 
                     f"PDB line {line_number}: repeated atom serial within one model."
                 )
             seen.add(identity)
-            xyz = tuple(
-                _number(line[start : start + 8], "coordinate", line_number)
-                for start in (30, 38, 46)
+            xyz = (
+                _number(line[30:38], "coordinate", line_number),
+                _number(line[38:46], "coordinate", line_number),
+                _number(line[46:54], "coordinate", line_number),
             )
             occupancy = _number(line[54:60], "occupancy", line_number)
             if not 0 <= occupancy <= 1:

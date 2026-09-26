@@ -12,6 +12,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
@@ -54,7 +55,7 @@ CompositeCoarseOperatorSource = Literal["direct", "galerkin"]
 
 
 def _checked(value: Array, invalid: Array, message: str, /) -> Array:
-    if isinstance(invalid, jax.core.Tracer):
+    if isinstance(invalid, jax_core.Tracer):
         return eqx.error_if(value, invalid, message)
     if bool(invalid):
         raise ValueError(message)

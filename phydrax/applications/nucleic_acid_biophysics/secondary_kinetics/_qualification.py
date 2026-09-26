@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TypedDict
 
 import numpy as np
 
@@ -117,6 +118,19 @@ class StrandDisplacementQualificationResult:
     comparison_id: str
 
 
+class _ExecutionMetadata(TypedDict):
+    build_id: str
+    environment_id: str
+    backend: str
+    topology: str
+    precision: str
+    reduction: str
+    replay_id: str
+    reviewer_id: str
+    issued_at: int
+    expires_at: int
+
+
 def _metadata(
     *,
     build_id: str,
@@ -129,7 +143,7 @@ def _metadata(
     reviewer_id: str,
     issued_at: int,
     expires_at: int,
-) -> dict[str, object]:
+) -> _ExecutionMetadata:
     values = {
         "build_id": build_id,
         "environment_id": environment_id,
@@ -153,7 +167,18 @@ def _metadata(
         or expires_at <= issued_at
     ):
         raise ValueError("Qualification evidence timestamps must be ordered integers.")
-    return {**values, "issued_at": issued_at, "expires_at": expires_at}
+    return _ExecutionMetadata(
+        build_id=build_id,
+        environment_id=environment_id,
+        backend=backend,
+        topology=topology,
+        precision=precision,
+        reduction=reduction,
+        replay_id=replay_id,
+        reviewer_id=reviewer_id,
+        issued_at=issued_at,
+        expires_at=expires_at,
+    )
 
 
 def _stage_evidence(
@@ -162,7 +187,7 @@ def _stage_evidence(
     campaign_id: str,
     model_id: str,
     raw_artifact_ids: Sequence[str],
-    metadata: Mapping[str, object],
+    metadata: _ExecutionMetadata,
     /,
     *,
     criteria_ids: Sequence[str] = ("locked-prediction",),
@@ -412,7 +437,7 @@ def _completed_evaluation(
     traces: Sequence[FluorescenceTimeTrace],
     campaign_id: str,
     raw_artifact_ids: Sequence[str],
-    metadata: Mapping[str, object],
+    metadata: _ExecutionMetadata,
     /,
 ) -> LockedModelEvaluation:
     prediction = predict_locked_fluorescence(model, observation_model, traces)
@@ -519,7 +544,7 @@ def _inconclusive_evaluation(
     reasons: Sequence[str],
     campaign_id: str,
     raw_artifact_ids: Sequence[str],
-    metadata: Mapping[str, object],
+    metadata: _ExecutionMetadata,
     /,
 ) -> LockedModelEvaluation:
     reasons_ = tuple(sorted(set(reasons)))
@@ -559,7 +584,7 @@ def _claim_evidence(
     evaluation: LockedModelEvaluation,
     stage_evidence: Sequence[QualificationEvidence],
     raw_artifact_ids: Sequence[str],
-    metadata: Mapping[str, object],
+    metadata: _ExecutionMetadata,
     /,
 ) -> QualificationEvidence:
     if any("locked-prediction" in item.criteria_ids for item in stage_evidence):

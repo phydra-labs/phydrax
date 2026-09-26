@@ -216,7 +216,9 @@ def checkpointed_scan(
                 lambda value: value[offset : offset + scheduled_size], xs
             )
 
-            def run_scheduled_block(block_carry, block_inputs):
+            def run_scheduled_block(
+                block_carry: Any, block_inputs: Any
+            ) -> tuple[Any, Any]:
                 return jax.lax.scan(
                     body, block_carry, block_inputs, length=scheduled_size
                 )
@@ -258,7 +260,7 @@ def checkpointed_scan(
             xs,
         )
 
-        def run_block(block_carry, block_inputs):
+        def run_block(block_carry: Any, block_inputs: Any) -> tuple[Any, Any]:
             return jax.lax.scan(body, block_carry, block_inputs, length=size)
 
         carry, block_outputs = jax.lax.scan(

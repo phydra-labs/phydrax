@@ -47,7 +47,7 @@ def _project_capped_simplex(values: Array, caps: Array) -> Array:
     lower = jnp.min(values - caps)
     upper = jnp.max(values)
 
-    def search(_iteration, bounds):
+    def search(_iteration: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         low, high = bounds
         multiplier = 0.5 * (low + high)
         mass = jnp.sum(jnp.clip(values - multiplier, 0.0, caps))
@@ -77,7 +77,7 @@ def _fit_ocsvm_one(
     )
     step_size = float(learning_rate) / lipschitz_bound
 
-    def step(_iteration, current):
+    def step(_iteration: Array, current: Array) -> Array:
         gradient = gram @ current
         return _project_capped_simplex(current - step_size * gradient, caps)
 
@@ -155,7 +155,9 @@ class OneClassSVMModel(AbstractFittedModel):
         )
         rho = self.rho.reshape((cases,))
 
-        def score_one(query, train_, coefficients_, rho_):
+        def score_one(
+            query: Array, train_: Array, coefficients_: Array, rho_: Array
+        ) -> Array:
             cross_gram = self.kernel.matrix(query, train_)
             return rho_ - cross_gram @ coefficients_
 

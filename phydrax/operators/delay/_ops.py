@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import DomainFunction, FunctionBinding, PointwiseEvaluator
 
@@ -67,7 +69,7 @@ def delay(
 
     u_time_idx = u2.deps.index(time_var) if time_var in u2.deps else None
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Any:
         t = jnp.asarray(args[t_pos])
 
         tau_args = [args[i] for i in tau_pos]

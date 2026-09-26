@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import DomainFunction
@@ -39,6 +40,7 @@ from ._sample_statistics import (
 
 ScoreMatchingMethod: TypeAlias = Literal["exact", "implicit", "sliced"]
 ScoreMatchingSamplingMode: TypeAlias = Literal["fixed", "resample"]
+_ScoreNodeValues: TypeAlias = tuple[Array, Array, Array, Array]
 ScoreSampleProvider: TypeAlias = Callable[
     [Key[Array, ""]], TrajectoryStateTimeSamples | StochasticTrajectory
 ]
@@ -166,7 +168,7 @@ def _probes(
     key: Key[Array, ""],
     shape: tuple[int, ...],
     policy: ScoreMatchingPolicy,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> Array:
     full_shape = (policy.num_probes,) + shape
@@ -277,10 +279,12 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         safe_times = jnp.where(valid, times, 0.0)
         node_keys = jr.split(batch.probe_key, node_count)
 
-        def score_at(state, time, key):
+        def score_at(state: Array, time: Array, key: Key[Array, ""]) -> Array:
             return score(state, time, key=key)
 
-        def exact_node(state, time, key):
+        def exact_node(
+            state: Array, time: Array, key: Key[Array, ""]
+        ) -> _ScoreNodeValues:
             value = score_at(state, time, key)
             divergence = exact_state_divergence(
                 lambda current: score_at(current, time, key), state
@@ -293,7 +297,9 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
             distribution=self.policy.distribution,
         )
 
-        def implicit_node(state, time, key):
+        def implicit_node(
+            state: Array, time: Array, key: Key[Array, ""]
+        ) -> _ScoreNodeValues:
             value = score_at(state, time, key)
             estimate = stochastic_divergence_samples(
                 lambda current: score_at(current, time, key),
@@ -309,11 +315,13 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
                 estimate.standard_error,
             )
 
-        def sliced_node(state, time, key):
+        def sliced_node(
+            state: Array, time: Array, key: Key[Array, ""]
+        ) -> _ScoreNodeValues:
             value = score_at(state, time, key)
             probes = _probes(key, state_shape, self.policy, state.dtype)
 
-            def one(probe):
+            def one(probe: Array) -> tuple[Array, Array]:
                 _, derivative = jax.jvp(
                     lambda current: score_at(current, time, key),
                     (state,),

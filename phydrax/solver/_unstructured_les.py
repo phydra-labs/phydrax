@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -28,6 +29,10 @@ from ._unstructured_incompressible import (
     UnstructuredPressureProjectionPlan,
     UnstructuredPressureProjectionResult,
 )
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume import UnstructuredFiniteVolumeDiscretization
 
 
 UNSTRUCTURED_LES_SUCCESS = 0
@@ -1107,7 +1112,7 @@ def _step_status(evidence: UnstructuredLowMachLESStepEvidence, /) -> Array:
     )
 
 
-def _frequency_step(frequency: Array, limit: float, dtype, /) -> Array:
+def _frequency_step(frequency: Array, limit: float, dtype: DTypeLike, /) -> Array:
     return jnp.where(
         frequency > 0.0,
         jnp.asarray(limit, dtype=dtype) / frequency,
@@ -1146,7 +1151,9 @@ def _transition_balance(
     return state_change + step * boundary_flux
 
 
-def _negative_divergence(face_flux: Array, discretization, /) -> Array:
+def _negative_divergence(
+    face_flux: Array, discretization: UnstructuredFiniteVolumeDiscretization, /
+) -> Array:
     owner = discretization.owner_cells
     neighbor = discretization.neighbor_cells
     interior = neighbor >= 0

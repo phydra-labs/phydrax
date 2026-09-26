@@ -188,7 +188,9 @@ class TargetedWorkEvaluation(StrictModule):
     problem_id: str = eqx.field(static=True)
 
 
-def _evaluate_forward(problem: TargetedFreeEnergyProblem, value: Array, /):
+def _evaluate_forward(
+    problem: TargetedFreeEnergyProblem, value: Array, /
+) -> tuple[Array, Array, Array, Array, Array]:
     mapped, logdet = problem.mapping.forward(value)
     source = problem.source.evaluate(value)
     target = problem.target.evaluate(mapped)
@@ -205,7 +207,9 @@ def _evaluate_forward(problem: TargetedFreeEnergyProblem, value: Array, /):
     return mapped, work, logdet, residual, valid
 
 
-def _evaluate_reverse(problem: TargetedFreeEnergyProblem, value: Array, /):
+def _evaluate_reverse(
+    problem: TargetedFreeEnergyProblem, value: Array, /
+) -> tuple[Array, Array, Array, Array, Array]:
     mapped, logdet = problem.mapping.inverse(value)
     target = problem.target.evaluate(value)
     source = problem.source.evaluate(mapped)

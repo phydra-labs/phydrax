@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
@@ -12,8 +14,10 @@ from .._trainable import NonTrainableState
 from ..linalg import (
     AbstractPreconditioner,
     AbstractPreconditionerBuilder,
+    BlockFactorizationForm,
     BlockFactorizationPreconditionerBuilder,
     JacobiPreconditionerBuilder,
+    PreconditionerRefreshPolicy,
     PreconditioningPolicy,
 )
 
@@ -21,7 +25,7 @@ from ..linalg import (
 class MACImmersedPressureBlockPreconditionerEvidence(StrictModule, NonTrainableState):
     pressure_component_id: str = eqx.field(static=True)
     marker_component_id: str = eqx.field(static=True)
-    factorization: str = eqx.field(static=True)
+    factorization: BlockFactorizationForm = eqx.field(static=True)
     owns_kkt_operator: bool = eqx.field(static=True)
     pressure_action_reused: bool = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
@@ -37,9 +41,9 @@ class MACImmersedPressureBlockPreconditionerPlan(StrictModule):
 
     pressure_solver: AbstractPreconditioner | AbstractPreconditionerBuilder
     marker_solver: AbstractPreconditioner | AbstractPreconditionerBuilder
-    factorization: str = eqx.field(static=True)
-    side: str = eqx.field(static=True)
-    refresh: str = eqx.field(static=True)
+    factorization: BlockFactorizationForm = eqx.field(static=True)
+    side: Literal["left", "right"] = eqx.field(static=True)
+    refresh: PreconditionerRefreshPolicy = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     evidence: MACImmersedPressureBlockPreconditionerEvidence
 
@@ -53,9 +57,9 @@ class MACImmersedPressureBlockPreconditionerPlan(StrictModule):
         | None = None,
         /,
         *,
-        factorization: str = "diagonal",
-        side: str = "right",
-        refresh: str = "numeric",
+        factorization: BlockFactorizationForm = "diagonal",
+        side: Literal["left", "right"] = "right",
+        refresh: PreconditionerRefreshPolicy = "numeric",
     ) -> None:
         pressure = (
             JacobiPreconditionerBuilder() if pressure_solver is None else pressure_solver

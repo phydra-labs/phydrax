@@ -388,7 +388,7 @@ class GravitationalWaveDataPlan(StrictModule, NonTrainableState):
             raise ValueError("The analysis band and notches leave no active frequencies.")
         return active
 
-    def _window_values(self, dtype) -> Array:
+    def _window_values(self, dtype: jnp.dtype) -> Array:
         if self.window == "none":
             return jnp.ones((self.sample_count,), dtype=dtype)
         if self.window == "hann":

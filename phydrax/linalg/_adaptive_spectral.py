@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from statistics import NormalDist
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -38,6 +38,11 @@ from ._spectral import (
     StochasticProbeStatus,
 )
 from .krylov import KrylovBreakdownStatus, lanczos
+
+
+_TraceProbeSample: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class AdaptiveStochasticPolicy(StrictModule):
@@ -361,11 +366,11 @@ def _adaptive_stochastic_trace(
         integers,
     )
 
-    def condition(values):
+    def condition(values: tuple[Array, ...]) -> Array:
         count, done, *_ = values
         return (~done) & (count < maximum)
 
-    def body(values):
+    def body(values: tuple[Array, ...]) -> tuple[Array, ...]:
         (
             count,
             _,
@@ -525,8 +530,8 @@ def _trace_probe(
     dimension: int,
     policy: AdaptiveStochasticPolicy,
     /,
-):
-    def one(coordinates):
+) -> Callable[[Array], _TraceProbeSample]:
+    def one(coordinates: Array) -> _TraceProbeSample:
         decomposition = lanczos(
             _coordinate_action(operator),
             coordinates,

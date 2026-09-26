@@ -45,6 +45,8 @@ from ._types import (
 
 ComplementarityFormulation: TypeAlias = Literal["natural", "fischer-burmeister"]
 VariationalInequalityFeasibility: TypeAlias = Literal["allow-infeasible", "preserve-box"]
+# Static per-leaf bound records: (shape, dtype name, flattened values).
+_BoundMetadata: TypeAlias = tuple[tuple[tuple[int, ...], str, tuple[Any, ...]], ...]
 
 
 @jax.custom_jvp
@@ -53,7 +55,9 @@ def _fischer_burmeister(a: Array, b: Array, origin_coefficient: Array, /) -> Arr
 
 
 @_fischer_burmeister.defjvp
-def _fischer_burmeister_jvp(primals, tangents):
+def _fischer_burmeister_jvp(
+    primals: tuple[Array, Array, Array], tangents: tuple[Array, Array, Array]
+) -> tuple[Array, Array]:
     a, b, origin_coefficient = primals
     da, db, _ = tangents
     radius = jnp.hypot(a, b)
@@ -106,7 +110,7 @@ def _fischer_burmeister_map(
 ) -> PyTree[Array]:
     lower, upper = bounds.materialize(value)
 
-    def residual_leaf(x, f, lo, hi):
+    def residual_leaf(x: Array, f: Array, lo: Array, hi: Array) -> Array:
         coefficient = jnp.asarray(origin_coefficient, dtype=x.dtype)
         fixed = lo == hi
         lower_finite = jnp.isfinite(lo)
@@ -223,7 +227,9 @@ class VariationalInequalityProblem(StrictModule):
                 "derivative_policy must be GeneralizedDerivativePolicy or None."
             )
 
-        def residual(state, args):
+        def residual(
+            state: PyTree[Any], args: Any
+        ) -> tuple[PyTree[Array], PyTree[Array]]:
             raw_value = validate_real_inexact_tree(state, name="VI state")
             value = self.bounds.project(raw_value) if project_trials else raw_value
             physical = self.evaluate(value, args)
@@ -351,7 +357,7 @@ class ConeVariationalInequalityProblem(StrictModule):
         *,
         project_trials: bool = False,
     ) -> NonlinearSystemProblem:
-        def residual(state, args):
+        def residual(state: Any, args: Any) -> tuple[Array, Array]:
             raw = self.validate_state(state)
             value = self.cone.project(raw) if project_trials else raw
             physical = self.evaluate(value, args)
@@ -747,13 +753,15 @@ class PreparedVariationalInequalitySolve(StrictModule):
         self.topology_id = topology_id_
 
 
-def _bound_topology_id(problem: VariationalInequalityProblem, state, /) -> str:
+def _bound_topology_id(
+    problem: VariationalInequalityProblem, state: PyTree[Any], /
+) -> str:
     lower_metadata = problem.bounds._lower_metadata
     upper_metadata = problem.bounds._upper_metadata
     state_leaves = jax.tree.leaves(state)
     if lower_metadata is not None and upper_metadata is not None:
 
-        def broadcast_metadata(metadata):
+        def broadcast_metadata(metadata: _BoundMetadata) -> tuple[np.ndarray, ...]:
             if len(metadata) == 1 and metadata[0][0] == () and len(metadata[0][2]) == 1:
                 scalar = metadata[0][2][0]
                 return tuple(np.full(tuple(leaf.shape), scalar) for leaf in state_leaves)
@@ -1010,7 +1018,7 @@ def _solve_projected_semismooth(
         ).astype(jnp.int32),
     )
 
-    def condition(current):
+    def condition(current: _ProjectedVIRun) -> Array:
         within_evaluations = (
             jnp.asarray(True)
             if termination.maximum_evaluations is None
@@ -1028,7 +1036,7 @@ def _solve_projected_semismooth(
             & within_linear
         )
 
-    def body(current):
+    def body(current: _ProjectedVIRun) -> _ProjectedVIRun:
         jacobian = prepare_jacobian(
             nonlinear_problem,
             current.state,
@@ -1071,8 +1079,10 @@ def _solve_projected_semismooth(
         if jacobian.operator.capabilities.adjoint:
             merit_gradient = jacobian.operator.adjoint_mv(jacobian.residual)
         else:
-            merit_gradient = nonlinear_problem.state_space.unflatten(
-                nonlinear_problem.residual_space.flatten(jacobian.residual)
+            # The projected VI problem leaves its spaces unbound; the prepared
+            # Jacobian carries the validated state and residual coordinates.
+            merit_gradient = jacobian.operator.source.unflatten(
+                jacobian.operator.target.flatten(jacobian.residual)
             )
         fallback_direction = jax.tree.map(jnp.negative, merit_gradient)
         direction = jax.tree.map(
@@ -1108,7 +1118,7 @@ def _solve_projected_semismooth(
             nonfinite_trials=jnp.asarray(0, dtype=jnp.int32),
         )
 
-        def search_condition(item):
+        def search_condition(item: _ProjectedVISearch) -> Array:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -1126,7 +1136,7 @@ def _solve_projected_semismooth(
                 & within_evaluations
             )
 
-        def search_body(item):
+        def search_body(item: _ProjectedVISearch) -> _ProjectedVISearch:
             raw = jax.tree.map(
                 lambda value, delta: value + item.rate * delta,
                 current.state,

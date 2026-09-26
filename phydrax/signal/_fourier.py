@@ -10,9 +10,9 @@ from math import isfinite
 from numbers import Integral
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -34,7 +34,7 @@ def _nonnegative_int(value: int, name: str, /) -> int:
 
 
 def _is_traced(*values: Array) -> bool:
-    return any(isinstance(value, jax.core.Tracer) for value in values)
+    return any(isinstance(value, jax_core.Tracer) for value in values)
 
 
 def fourier_resample(

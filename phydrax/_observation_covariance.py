@@ -25,7 +25,7 @@ from .linalg import (
 
 
 if TYPE_CHECKING:
-    from .observation import CoordinateLayout
+    from .observation import CholeskyCovarianceAction, CoordinateLayout
     from .uq import AbstractCovariance
 
 
@@ -392,6 +392,8 @@ def prepare_observation_covariance(
     /,
     *,
     diagonal_nugget: ArrayLike | None = None,
+) -> (
+    DiagonalCovarianceAction | CholeskyCovarianceAction | LowRankDiagonalCovarianceAction
 ):
     """Lower a native UQ covariance into one likelihood-capable observation action."""
     from .observation import CholeskyCovarianceAction

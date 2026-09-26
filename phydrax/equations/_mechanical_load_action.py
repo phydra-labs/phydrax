@@ -261,7 +261,7 @@ class MechanicalLoadAction(StrictModule, NonTrainableState):
             )
         size = current.size
 
-        def flattened_residual(flattened):
+        def flattened_residual(flattened: Array) -> Array:
             coordinates = flattened.reshape(current.shape)
             return self.residual(coordinates, state, args).reshape((size,))
 

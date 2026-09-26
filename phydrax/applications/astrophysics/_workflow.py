@@ -19,6 +19,7 @@ from ...solver import (
     AdaptiveBalanceLawRolloutResult,
     BalanceLawRuntimeState,
 )
+from ...stochastic import StochasticRealization
 
 
 class AstrophysicalApplicationResult(StrictModule):
@@ -67,7 +68,7 @@ class AstrophysicalMultiphysicsApplicationPlan(StrictModule, NonTrainableState):
         self,
         initial_state: BalanceLawRuntimeState,
         args: Any = None,
-        realization=None,
+        realization: StochasticRealization | None = None,
         /,
     ) -> AstrophysicalApplicationResult:
         result = self.rollout.rollout(initial_state, args, realization)

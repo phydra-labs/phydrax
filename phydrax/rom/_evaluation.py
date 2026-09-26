@@ -13,6 +13,7 @@ from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import AbstractVectorSpace
 from ._affine import (
     AffineLinearROMEvaluation,
     NamedROMObservation,
@@ -30,7 +31,7 @@ class AffineLinearROMAudit(StrictModule, NonTrainableState):
     model_id: str = eqx.field(static=True)
 
 
-def _norm(space, vector, /) -> Array:
+def _norm(space: AbstractVectorSpace, vector: PyTree[Array], /) -> Array:
     value = space.validate(vector)
     return jnp.sqrt(jnp.maximum(jnp.real(space.inner(value, value)), 0.0))
 

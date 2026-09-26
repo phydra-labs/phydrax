@@ -104,7 +104,7 @@ class GammaSCFEvidence(StrictModule, NonTrainableState):
             )
         finite = jnp.all(jnp.isfinite(residuals)) & jnp.all(residuals >= 0.0)
         factor_ok = jnp.asarray(True)
-        if factorization is not None:
+        if factorization is not None and factorization_limit is not None:
             factor_ok = (
                 jnp.isfinite(factorization)
                 & (factorization >= 0.0)

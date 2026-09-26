@@ -226,7 +226,7 @@ class ThermalEquivalentCircuitInitialCondition(StrictModule):
             ~jnp.isfinite(temperature),
             "Initial temperature must be finite.",
         )
-        if relaxed:
+        if polarization_voltages_v is None:
             polarization = jnp.zeros((0,), dtype=jnp.result_type(charge, temperature))
         else:
             polarization = _real_array(polarization_voltages_v, "polarization_voltages_v")
@@ -793,7 +793,8 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(raw_values))
         )
         values = jnp.where(successful, raw_values, jnp.zeros_like(raw_values))
-        return ThermalEquivalentCircuitLedger(*values, successful)
+        fields = (*values, successful)
+        return ThermalEquivalentCircuitLedger(*fields)
 
 
 __all__ = [

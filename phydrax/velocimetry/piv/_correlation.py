@@ -71,8 +71,8 @@ def correlate_windows(
     fraction = float(minimum_valid_fraction)
     if not 0.0 < fraction <= 1.0:
         raise ValueError("minimum_valid_fraction must be in (0, 1].")
-    first_shape = tuple(first.values.shape[-2:])
-    second_shape = tuple(second.values.shape[-2:])
+    first_shape = (first.values.shape[-2], first.values.shape[-1])
+    second_shape = (second.values.shape[-2], second.values.shape[-1])
     if mode_ == "circular" and first_shape != second_shape:
         raise ValueError("Circular correlation requires equal window shapes.")
     if mode_ == "extended":
@@ -87,7 +87,10 @@ def correlate_windows(
     fft_shape = (
         first_shape
         if mode_ == "circular"
-        else tuple(first_shape[axis] + second_shape[axis] - 1 for axis in range(2))
+        else (
+            first_shape[0] + second_shape[0] - 1,
+            first_shape[1] + second_shape[1] - 1,
+        )
     )
     lags = _lag_grid(margin)
     count = first.values.shape[0]

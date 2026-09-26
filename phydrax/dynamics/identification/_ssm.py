@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -147,7 +149,9 @@ class SpectralSubmanifoldModel(StrictModule, NonTrainableState):
         value = jnp.asarray(reduced)
         return self.flow_coefficients @ self.features(value)
 
-    def invariance_residual(self, reduced: ArrayLike, full_vector_field, /) -> Array:
+    def invariance_residual(
+        self, reduced: ArrayLike, full_vector_field: Callable[[Array], ArrayLike], /
+    ) -> Array:
         value = jnp.asarray(reduced)
         tangent = jax.jacfwd(self.decode)(value)
         return tangent @ self.flow(value) - jnp.asarray(

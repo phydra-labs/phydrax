@@ -80,7 +80,7 @@ def _operator_columns(
 ) -> Array:
     space = operator.source
 
-    def apply(column):
+    def apply(column: Array) -> Array:
         value = operator.mv(space.unflatten(column))
         return space.flatten(value)
 

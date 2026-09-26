@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from ._contracts import (
     _mean_domain_result,
@@ -19,6 +21,7 @@ from ._contracts import (
     EXPONENTIAL_FAMILY_NONFINITE,
     ExponentialFamilyConversionResult,
     ExponentialFamilyDomainResult,
+    ExponentialFamilyLaw,
     ExponentialFamilySignature,
     MeanCoordinates,
     NaturalCoordinates,
@@ -34,6 +37,9 @@ _GAMMA_SIGNATURE = ExponentialFamilySignature(
     "positive-real",
     "log-linear-shape-rate",
 )
+
+# shape, lower, upper, iterations, converged, loop iteration
+_GammaShapeSolveState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 def _gamma_shape_residual(shape: Array, delta: Array, /) -> Array:
@@ -59,7 +65,7 @@ def _solve_gamma_shape(
     lower = jnp.maximum(0.5 * initial, tiny)
     upper = jnp.maximum(2.0 * initial, 1.0)
 
-    def bracket_step(_, bounds):
+    def bracket_step(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         lower_value, upper_value = bounds
         lower_residual = _gamma_shape_residual(lower_value, delta)
         upper_residual = _gamma_shape_residual(upper_value, delta)
@@ -72,11 +78,11 @@ def _solve_gamma_shape(
     iterations = jnp.zeros(delta.shape, dtype=jnp.int32)
     converged = jnp.zeros(delta.shape, dtype=jnp.bool_)
 
-    def condition(state):
+    def condition(state: _GammaShapeSolveState) -> Array:
         _, _, _, _, converged_values, loop_iteration = state
         return (loop_iteration < max_iterations) & jnp.any(~converged_values)
 
-    def step(state):
+    def step(state: _GammaShapeSolveState) -> _GammaShapeSolveState:
         (
             shape_value,
             lower_value,
@@ -135,7 +141,9 @@ def _implicit_gamma_shape(delta: Array, shape: Array, /) -> Array:
 
 
 @_implicit_gamma_shape.defjvp
-def _implicit_gamma_shape_jvp(primals, tangents):
+def _implicit_gamma_shape_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     delta, shape = primals
     delta_tangent, _ = tangents
     del delta
@@ -189,7 +197,9 @@ class GammaFamily(AbstractExponentialFamily):
             )
         )
 
-    def law_from_shape_rate(self, shape: ArrayLike, rate: ArrayLike, /):
+    def law_from_shape_rate(
+        self, shape: ArrayLike, rate: ArrayLike, /
+    ) -> ExponentialFamilyLaw:
         """Return a Gamma law from conventional shape and rate."""
         return self.law(self.natural_from_shape_rate(shape, rate))
 
@@ -327,7 +337,7 @@ class GammaFamily(AbstractExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

@@ -14,7 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -39,10 +39,10 @@ class PinocchioCatalogSidecar(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        initial_positions: Array,
-        particle_counts: Array,
-        particle_count_known: Array,
-        active_mask: Array,
+        initial_positions: ArrayLike,
+        particle_counts: ArrayLike,
+        particle_count_known: ArrayLike,
+        active_mask: ArrayLike,
         /,
     ) -> None:
         initial = jax.lax.stop_gradient(jnp.asarray(initial_positions))
@@ -88,17 +88,17 @@ class PinocchioLightConeProduct(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        halo_ids: Array,
-        true_redshifts: Array,
-        comoving_positions: Array,
-        velocities: Array,
-        masses: Array,
-        theta_degrees: Array,
-        phi_degrees: Array,
-        radial_velocities: Array,
-        observed_redshifts: Array,
-        phase_space_known: Array,
-        active_mask: Array,
+        halo_ids: ArrayLike,
+        true_redshifts: ArrayLike,
+        comoving_positions: ArrayLike,
+        velocities: ArrayLike,
+        masses: ArrayLike,
+        theta_degrees: ArrayLike,
+        phi_degrees: ArrayLike,
+        radial_velocities: ArrayLike,
+        observed_redshifts: ArrayLike,
+        phase_space_known: ArrayLike,
+        active_mask: ArrayLike,
         /,
     ) -> None:
         ids = jax.lax.stop_gradient(jnp.asarray(halo_ids, dtype=jnp.int64))
@@ -244,19 +244,19 @@ class PinocchioMergerHistory(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        group_ids: Array,
-        tree_numbers: Array,
-        indices_within_tree: Array,
-        linking_indices: Array,
-        merged_with_indices: Array,
-        sink_group_ids: Array,
-        descendant_group_ids: Array,
-        halo_masses_at_merger_particles: Array,
-        main_masses_at_merger_particles: Array,
-        merger_redshifts: Array,
-        peak_collapse_redshifts: Array,
-        minimum_mass_redshifts: Array,
-        active_mask: Array,
+        group_ids: ArrayLike,
+        tree_numbers: ArrayLike,
+        indices_within_tree: ArrayLike,
+        linking_indices: ArrayLike,
+        merged_with_indices: ArrayLike,
+        sink_group_ids: ArrayLike,
+        descendant_group_ids: ArrayLike,
+        halo_masses_at_merger_particles: ArrayLike,
+        main_masses_at_merger_particles: ArrayLike,
+        merger_redshifts: ArrayLike,
+        peak_collapse_redshifts: ArrayLike,
+        minimum_mass_redshifts: ArrayLike,
+        active_mask: ArrayLike,
         /,
     ) -> None:
         arrays = tuple(

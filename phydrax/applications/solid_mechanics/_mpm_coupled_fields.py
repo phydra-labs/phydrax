@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import IntEnum
 
 import equinox as eqx
@@ -221,9 +222,9 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        grid_shape,
-        spacing,
-        periodic,
+        grid_shape: Iterable[int],
+        spacing: Iterable[float],
+        periodic: Iterable[bool],
         biot: BiotPoromechanicsParameters,
         thermal: ThermalMPMParameters,
         boundaries: MPMCoupledBoundaryPlan,
@@ -257,7 +258,7 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
             }
         )
 
-    def _neighbors(self, value, axis):
+    def _neighbors(self, value: Array, axis: int) -> tuple[Array, Array]:
         if self.periodic[axis]:
             return jnp.roll(value, 1, axis=axis), jnp.roll(value, -1, axis=axis)
         indices = jnp.arange(value.shape[axis])
@@ -267,14 +268,14 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
         )
         return lower, upper
 
-    def gradient(self, value):
+    def gradient(self, value: Array) -> Array:
         components = []
         for axis, spacing in enumerate(self.spacing):
             lower, upper = self._neighbors(value, axis)
             components.append((upper - lower) / (2.0 * spacing))
         return jnp.stack(components, axis=-1)
 
-    def laplacian(self, value):
+    def laplacian(self, value: Array) -> Array:
         result = jnp.zeros_like(value)
         for axis, spacing in enumerate(self.spacing):
             lower, upper = self._neighbors(value, axis)
@@ -355,14 +356,14 @@ class PreparedMPMCoupledFieldOperator(StrictModule, NonTrainableState):
         self,
         state: MPMCoupledFieldState,
         state_direction: MPMCoupledFieldState,
-        pressure_rate,
-        temperature_rate,
-        volumetric_strain_rate,
-        plastic_dissipation_rate,
+        pressure_rate: ArrayLike,
+        temperature_rate: ArrayLike,
+        volumetric_strain_rate: ArrayLike,
+        plastic_dissipation_rate: ArrayLike,
         cotangent: tuple[ArrayLike, ArrayLike],
         /,
-    ):
-        def function(pressure, temperature):
+    ) -> MPMCoupledLinearization:
+        def function(pressure: Array, temperature: Array) -> tuple[Array, Array]:
             current = MPMCoupledFieldState(
                 pressure,
                 state.saturation,

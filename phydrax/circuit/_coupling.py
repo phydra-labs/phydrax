@@ -123,7 +123,7 @@ class _ElectrothermalResidualCore(StrictModule):
         inputs: Array | None,
         args: Any,
         /,
-    ):
+    ) -> Array:
         circuit_state, temperature = state[:-1], state[-1]
         circuit_rate, temperature_rate = state_rate[:-1], state_rate[-1]
         circuit_args = {"temperature": temperature, "user": args}
@@ -146,7 +146,9 @@ class _ElectrothermalResidualCore(StrictModule):
 class _AutonomousElectrothermalResidual(StrictModule):
     core: _ElectrothermalResidualCore
 
-    def __call__(self, time: Array, state: Array, state_rate: Array, args: Any, /):
+    def __call__(
+        self, time: Array, state: Array, state_rate: Array, args: Any, /
+    ) -> Array:
         return self.core.evaluate(time, state, state_rate, None, args)
 
 
@@ -161,7 +163,7 @@ class _InputElectrothermalResidual(StrictModule):
         inputs: Array,
         args: Any,
         /,
-    ):
+    ) -> Array:
         return self.core.evaluate(time, state, state_rate, inputs, args)
 
 

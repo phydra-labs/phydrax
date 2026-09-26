@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -34,6 +35,7 @@ from ._dark_sector_species import DarkSectorSpeciesPlan
 from ._distances import FLRWDistancePlan
 from ._particle_mesh import (
     _advance_particle_mesh_interval,
+    _ParticleMeshCarry,
     CosmologicalParticleMeshDiagnostics,
     CosmologicalParticleMeshPlan,
 )
@@ -210,7 +212,7 @@ def _pair_keys(key: Array, pairs: ParticlePairRelation, epoch: ArrayLike, /) -> 
     )
 
 
-def _isotropic_directions(keys: Array, dtype, /) -> Array:
+def _isotropic_directions(keys: Array, dtype: DTypeLike, /) -> Array:
     samples = jax.vmap(lambda key: jr.normal(key, (3,), dtype=dtype))(keys)
     norms = jnp.sqrt(ein.contract("...i,...i->...", samples, samples))
     fallback = jnp.asarray((1.0, 0.0, 0.0), dtype=dtype)
@@ -233,7 +235,7 @@ def _select_endpoint_disjoint(
     selected = jnp.zeros(proposed.shape, dtype=jnp.bool_)
     used = jnp.zeros((particle_capacity,), dtype=jnp.bool_)
 
-    def body(index, carry):
+    def body(index: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         accepted, occupied = carry
         route = order[index]
         left = pairs.left_indices[route]
@@ -745,7 +747,17 @@ class CosmologicalSIDMPlan(StrictModule):
         )
         end_scales = self.particle_mesh.scale_factors[1:].astype(state.scale_factor.dtype)
 
-        def step(carry, schedule):
+        def step(
+            carry: _ParticleMeshCarry, schedule: tuple[Array, Array]
+        ) -> tuple[
+            _ParticleMeshCarry,
+            tuple[
+                tuple[Array, Array, Array, Array, Array, Array],
+                SIDMCollisionDiagnostics,
+                SIDMCollisionDiagnostics,
+                Array,
+            ],
+        ]:
             (
                 current,
                 acceleration_start,

@@ -289,7 +289,7 @@ def _rewrite_jaxpr(
     /,
     *,
     allow_boundary_dtype_change: bool,
-):
+) -> tuple[Any, tuple[tuple[str, str], ...]]:
     rules = _rule_map(policy)
     equations = []
     records: list[tuple[str, str]] = []
@@ -476,14 +476,14 @@ def _execute_jaxpr(
     environment: dict[Any, Any] = {}
     rule_map = {rule.primitive: rule for rule in rules}
 
-    def read(variable):
+    def read(variable: object) -> Any:
         if isinstance(variable, jax_core.Literal):
             return variable.val
         if type(variable) is not jax_core.Var:
             raise TypeError("Precision JAXPR inputs must be Literal or Var atoms.")
         return environment[variable]
 
-    def write(variable, value) -> None:
+    def write(variable: object, value: Any) -> None:
         if type(variable) is jax_core.Var:
             environment[variable] = value
         elif not isinstance(variable, jax_core.Var):
@@ -528,7 +528,7 @@ def _execute_jaxpr(
     return [read(variable) for variable in closed_jaxpr.jaxpr.outvars]
 
 
-def execute_precision_rewrite(plan: PrecisionRewritePlan, *args: Any):
+def execute_precision_rewrite(plan: PrecisionRewritePlan, *args: Any) -> Any:
     """Execute one prepared rewrite after exact input/device validation."""
     if not isinstance(plan, PrecisionRewritePlan):
         raise TypeError("plan must be a PrecisionRewritePlan.")

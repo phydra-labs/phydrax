@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import numpy as np
+from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from ._operators import AbstractLinearOperator, FunctionLinearOperator
@@ -17,7 +20,7 @@ from ._properties import OperatorProperties
 from ._runtime import solve
 
 
-def _sum(left, right):
+def _sum(left: PyTree[Array], right: PyTree[Array]) -> PyTree[Array]:
     return jax.tree.map(lambda a, b: a + b, left, right)
 
 
@@ -39,7 +42,7 @@ def hcurl_auxiliary_space_preconditioner(
     ) or not gradient.source.compatible(scalar_inverse.space):
         raise ValueError("H(curl) edge/scalar spaces and gradient do not compose.")
 
-    def action(residual):
+    def action(residual: PyTree[Any]) -> PyTree[Array]:
         edge = edge_inverse.apply(residual)
         scalar_residual = gradient.adjoint_mv(residual)
         scalar = scalar_inverse.apply(scalar_residual)
@@ -130,7 +133,7 @@ def shifted_helmholtz_preconditioner(
         ),
     )
 
-    def inverse(residual):
+    def inverse(residual: PyTree[Any]) -> PyTree[Array]:
         result = solve(LinearSystem(shifted), residual, policy=selected)
         return eqx.error_if(
             result.value,
@@ -178,7 +181,7 @@ def porous_cpr_preconditioner(
             "CPR system, restriction, local, and pressure spaces do not compose."
         )
 
-    def action(residual):
+    def action(residual: PyTree[Any]) -> PyTree[Array]:
         local = local_inverse.apply(residual)
         remaining = jax.tree.map(
             lambda value, applied: value - applied,

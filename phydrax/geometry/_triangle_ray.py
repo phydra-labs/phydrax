@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -552,6 +552,14 @@ def _query_exhaustive_one(
     )
 
 
+# (stack, stack size, candidate, steps, tests, exhausted)
+_RayTraversalState: TypeAlias = tuple[
+    Array, Array, tuple[Array, ...], Array, Array, Array
+]
+# (stack, stack size, candidate, tests, exhausted)
+_RayNodeState: TypeAlias = tuple[Array, Array, tuple[Array, ...], Array, Array]
+
+
 def _query_bvh_one(
     prepared: PreparedTriangleRayQuery,
     geometry: TriangleRayGeometryState,
@@ -569,10 +577,10 @@ def _query_bvh_one(
         jnp.asarray(False),
     )
 
-    def body(_, state):
+    def body(_: Array, state: _RayTraversalState) -> _RayTraversalState:
         stack_, size, candidate, steps, tests, exhausted = state
 
-        def visit(active_state):
+        def visit(active_state: _RayTraversalState) -> _RayTraversalState:
             stack__, size_, candidate_, steps_, tests_, exhausted_ = active_state
             next_size = size_ - 1
             node = stack__[next_size]
@@ -587,11 +595,11 @@ def _query_bvh_one(
                 prepared.tie_tolerance,
             )
 
-            def inspect_node(node_state):
+            def inspect_node(node_state: _RayNodeState) -> _RayNodeState:
                 stack___, size__, candidate__, tests__, exhausted__ = node_state
                 leaf = prepared.leaf_id[node]
 
-                def inspect_leaf(leaf_state):
+                def inspect_leaf(leaf_state: _RayNodeState) -> _RayNodeState:
                     stack____, size___, candidate___, tests___, exhausted___ = leaf_state
                     merged, tested = _merge_for_ray(
                         prepared,
@@ -603,7 +611,7 @@ def _query_bvh_one(
                     )
                     return stack____, size___, merged, tests___ + tested, exhausted___
 
-                def inspect_branch(branch_state):
+                def inspect_branch(branch_state: _RayNodeState) -> _RayNodeState:
                     stack____, size___, candidate___, tests___, exhausted___ = (
                         branch_state
                     )

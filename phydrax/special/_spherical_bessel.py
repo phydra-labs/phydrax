@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from functools import partial
 from numbers import Integral
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -23,6 +23,7 @@ _SequenceKind = Literal["j", "y", "h1", "i", "k"]
 _SERIES_BOUNDARY = 0.75
 _MILLER_EXTRA_ORDERS = 96
 _SERIES_TERMS = 24
+_MillerCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 def _validated_maximum_order(maximum_order: int, /) -> int:
@@ -172,7 +173,7 @@ def _miller_regular_sequence(
     cumulative_scale = jnp.zeros_like(argument.real)
     recurrence_limit = jnp.sqrt(jnp.asarray(jnp.finfo(argument.real.dtype).max))
 
-    def body(index: int, state: tuple[Array, Array, Array, Array, Array]):
+    def body(index: Array, state: _MillerCarry) -> _MillerCarry:
         later, current, captured, captured_scales, cumulative = state
         order = start - index
         coefficient = (2.0 * order + 1.0) / argument
@@ -483,9 +484,9 @@ def _spherical_sequence_array_jvp(
     maximum_order: int,
     kind: _SequenceKind,
     scaled: bool,
-    primals,
-    tangents,
-):
+    primals: tuple[Array],
+    tangents: tuple[Array],
+) -> tuple[Array, Array]:
     (argument,) = primals
     (argument_tangent,) = tangents
     values = _sequence_for_kind(maximum_order, argument, kind, scaled=scaled)

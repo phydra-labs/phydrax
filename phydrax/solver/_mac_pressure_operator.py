@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Literal, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -51,6 +51,26 @@ MACPressureRouteKind: TypeAlias = Literal["transform", "hybrid", "pcg", "fgmres"
 MACPressureCoefficientKind: TypeAlias = Literal["constant", "line", "general"]
 MACPressurePreconditionerKind: TypeAlias = Literal["constant", "line", "none"]
 MACPressureSideName: TypeAlias = Literal["lower", "upper"]
+
+
+_PressurePCGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+
+
+class WeightedPressureGeometry(Protocol):
+    """Geometry surface consumed by the shared mapped/ALE pressure PCG."""
+
+    @property
+    def cell_volumes(self) -> Array: ...
+
+    def validate_velocity(self, velocity: FaceVelocity, /) -> FaceVelocity: ...
+
+    def compatibility_project(self, value: ArrayLike, /) -> Array: ...
+
+    def gauge_project(self, pressure: ArrayLike, /) -> Array: ...
+
+    def pressure_action(
+        self, pressure: ArrayLike, face_inverse_momentum: FaceVelocity, /
+    ) -> Array: ...
 
 
 def _set_axis_boundary(values: Array, axis: int, index: int, data: Array, /) -> Array:
@@ -135,7 +155,7 @@ class MACPressureCoefficientReport(StrictModule, NonTrainableState):
     finite: Array
     structure: MACPressureCoefficientKind = eqx.field(static=True)
     line_axis: int | None = eqx.field(static=True)
-    coefficient_id: str = eqx.field(static=True)
+    coefficient_id: dict[str, Any] = eqx.field(static=True)
 
 
 class MACPressurePreparationEvidence(StrictModule, NonTrainableState):
@@ -164,7 +184,7 @@ class MACPressureExecutionEvidence(StrictModule, NonTrainableState):
     finite: Array
     converged: Array
     preparation_id: str = eqx.field(static=True)
-    coefficient_id: str = eqx.field(static=True)
+    coefficient_id: dict[str, Any] = eqx.field(static=True)
     geometry_epoch: int = eqx.field(static=True)
 
 
@@ -213,7 +233,9 @@ class _ScaledIdentityPressurePreconditioner(AbstractPreconditioner, NonTrainable
         )
         self.inverse_scale = 1.0 / scale_
 
-    def apply(self, residual, /, *, iteration=None):
+    def apply(
+        self, residual: PyTree[Any], /, *, iteration: ArrayLike | None = None
+    ) -> Array:
         del iteration
         return self.space.validate(residual) * self.inverse_scale
 
@@ -260,7 +282,7 @@ class MACWeightedPressureAction(StrictModule, NonTrainableState):
 
     def _robin_gradient(
         self, pressure: Array, gradient: FaceVelocity, /, *, homogeneous: bool
-    ):
+    ) -> FaceVelocity:
         output = list(gradient)
         for condition in self.robin_sides:
             axis = condition.axis
@@ -349,7 +371,7 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     maximum_resource_bytes: int = eqx.field(static=True)
     geometry_epoch: int = eqx.field(static=True)
-    coefficient_id: str = eqx.field(static=True)
+    coefficient_id: dict[str, Any] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
     spec_id: str = eqx.field(static=True)
 
@@ -881,7 +903,7 @@ class MACWeightedPressureIterationResult(StrictModule):
 
 
 def execute_weighted_pressure_iteration(
-    geometry,
+    geometry: WeightedPressureGeometry,
     right_hand_side: ArrayLike,
     face_coefficient: FaceVelocity,
     initial_guess: ArrayLike,
@@ -935,7 +957,7 @@ def execute_weighted_pressure_iteration(
     pressure = geometry.gauge_project(initial_guess)
     volumes = geometry.cell_volumes.astype(pressure.dtype)
 
-    def action(value):
+    def action(value: Array) -> Array:
         return geometry.pressure_action(value, coefficient)
 
     residual = rhs - action(pressure)
@@ -948,7 +970,7 @@ def execute_weighted_pressure_iteration(
     active = jnp.sum(volumes * residual * residual) > threshold
     failed = jnp.asarray(False)
 
-    def body(_, state):
+    def body(_: int | Array, state: _PressurePCGCarry) -> _PressurePCGCarry:
         value, residual_, direction_, pairing_, active_, failed_ = state
         image = action(direction_)
         denominator = jnp.sum(volumes * direction_ * image)

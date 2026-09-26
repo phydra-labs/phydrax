@@ -209,7 +209,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
             ).astype(jnp.int32),
         )
 
-        def condition(current):
+        def condition(current: _RichardsonRun) -> Array:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -221,7 +221,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 & within_evaluations
             )
 
-        def body(current):
+        def body(current: _RichardsonRun) -> _RichardsonRun:
             state_tree = source.unflatten(current.state)
             combined_prepared = eqx.combine(
                 current.prepared_update,
@@ -284,7 +284,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 nonfinite_trials=update_result.diagnostics.nonfinite_trials,
             )
 
-            def search_condition(item):
+            def search_condition(item: _RichardsonSearch) -> Array:
                 within_evaluations = (
                     jnp.asarray(True)
                     if termination.maximum_evaluations is None
@@ -303,7 +303,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                     & within_evaluations
                 )
 
-            def search_body(item):
+            def search_body(item: _RichardsonSearch) -> _RichardsonSearch:
                 rate = self.contraction * item.rate
                 trial_coordinates = current.state + rate * direction
                 trial_state = source.unflatten(trial_coordinates)

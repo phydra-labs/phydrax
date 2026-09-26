@@ -55,7 +55,9 @@ class SharpCoulombMPMFrictionPlan(AbstractMPMFrictionPlan):
             {"kind": "sharp-coulomb-mpm-friction", "coefficient": value}
         )
 
-    def impulse_magnitude(self, tangential_speed, normal_impulse, mass, /):
+    def impulse_magnitude(
+        self, tangential_speed: Array, normal_impulse: Array, mass: Array, /
+    ) -> Array:
         return jnp.minimum(mass * tangential_speed, self.coefficient * normal_impulse)
 
 
@@ -84,7 +86,9 @@ class SmoothCoulombMPMFrictionPlan(AbstractMPMFrictionPlan):
             }
         )
 
-    def impulse_magnitude(self, tangential_speed, normal_impulse, mass, /):
+    def impulse_magnitude(
+        self, tangential_speed: Array, normal_impulse: Array, mass: Array, /
+    ) -> Array:
         cap = self.coefficient * normal_impulse
         scale = jnp.maximum(cap, self.regularization)
         return cap * jnp.tanh(mass * tangential_speed / scale)

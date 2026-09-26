@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.ein import contract
@@ -355,7 +356,7 @@ def routed_clover_field_strength(
     spacing = float(lattice_spacing)
     if not np.isfinite(spacing) or spacing <= 0.0:
         raise ValueError("lattice_spacing must be finite and positive.")
-    colors = transport.representation.group.dimension
+    colors = transport.representation.group.point_shape[0]
     field_bytes = (
         transport.site_count
         * (transport.dimension * (transport.dimension - 1) // 2)
@@ -521,7 +522,7 @@ def measure_hypercubic_gauge_observables(
         topology_status = "measured"
     finite_values = (
         (mean_plaquette, action_density)
-        if charge is None
+        if charge is None or density is None
         else (
             mean_plaquette,
             action_density,
@@ -790,7 +791,7 @@ def realize_stochastic_sources(
         raise TypeError("plan must be StochasticSourcePlan.")
     keys = jr.split(key, len(plan.source_ids))
 
-    def one(source_key):
+    def one(source_key: Key[Array, ""]) -> Array:
         if plan.noise_kind == "z2":
             values = (
                 2 * jr.bernoulli(source_key, shape=plan.source_shape).astype("float64")
@@ -1081,7 +1082,7 @@ def meson_correlator(
     )
 
 
-def color_levi_civita_three(dtype=jnp.float32, /) -> Array:
+def color_levi_civita_three(dtype: DTypeLike = jnp.float32, /) -> Array:
     """Return ε_ijk for three-color baryon contractions."""
     epsilon = jnp.zeros((3, 3, 3), dtype=dtype)
     return epsilon.at[

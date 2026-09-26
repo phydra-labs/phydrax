@@ -13,6 +13,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
@@ -32,7 +33,7 @@ from ..operators.quantum._register import HilbertRegisterLayout
 RouteStrategy: TypeAlias = Literal["swap", "interval"]
 
 
-def _swap_matrix(dtype) -> Array:
+def _swap_matrix(dtype: DTypeLike) -> Array:
     return jnp.asarray(
         [
             [1, 0, 0, 0],

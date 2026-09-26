@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Mapping, Sequence
-from typing import Literal, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -40,6 +40,7 @@ from ._dataset import (
 
 
 if TYPE_CHECKING:
+    from .._components import DomainComponent
     from .._function import DomainFunction
 
 
@@ -126,7 +127,7 @@ def _sample_valid_cases(valid: Array, n: int, key: Key[Array, ""], /) -> Array:
 
 def _component_times(
     domain: "GraphTrajectoryDatasetDomain",
-    component,
+    component: "DomainComponent",
     case_indices: Array,
     n: int,
     key: Key[Array, ""],
@@ -488,7 +489,7 @@ class GraphTrajectoryDatasetDomain(JointFactor):
         times: ArrayLike | Sequence[float],
         /,
         *,
-        component,
+        component: "DomainComponent",
         structure: SampleLayout | None = None,
         time_indices: ArrayLike | Sequence[int] | None = None,
     ) -> GraphBatch:
@@ -583,18 +584,18 @@ class GraphTrajectoryDatasetDomain(JointFactor):
 
     def GraphModel(
         self,
-        model,
+        model: Any,
         /,
         *,
-        input_fn=None,
-        edge_input_fn=None,
-        global_input_fn=None,
+        input_fn: Any = None,
+        edge_input_fn: Any = None,
+        global_input_fn: Any = None,
         output: Literal["nodes", "edges", "globals"] = "nodes",
         input_key: str | None = None,
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap a `GraphIR -> GraphIR` model as a graph-time `DomainFunction`.
 
         The model sees the sampled batched graph topology and may also consume the
@@ -622,20 +623,20 @@ class GraphTrajectoryDatasetDomain(JointFactor):
 
     def GraphRolloutModel(
         self,
-        stepper,
+        stepper: Any,
         /,
         *,
         steps: int,
         include_initial: bool = True,
         feature: Literal["nodes", "edges", "globals"] = "nodes",
-        input_fn=None,
-        edge_input_fn=None,
-        global_input_fn=None,
+        input_fn: Any = None,
+        edge_input_fn: Any = None,
+        global_input_fn: Any = None,
         input_key: str | None = None,
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap an autoregressive graph rollout as a graph-time `DomainFunction`.
 
         Use this for graph sequence models whose state is advanced by repeatedly
@@ -683,7 +684,7 @@ class GraphTrajectoryDatasetDomain(JointFactor):
 
 
 def sample_graph_trajectory_component(
-    component,
+    component: "DomainComponent",
     num_points: NumPoints,
     *,
     structure: SampleLayout,
@@ -742,7 +743,7 @@ def sample_graph_trajectory_component(
 
 
 def graph_trajectory_default_quadrature_total_weight(
-    component, batch: GraphBatch, /
+    component: "DomainComponent", batch: GraphBatch, /
 ) -> cx.AxisArray | None:
     domain = component.domain
     if not isinstance(domain, GraphTrajectoryDatasetDomain):
@@ -775,7 +776,7 @@ def graph_trajectory_default_quadrature_total_weight(
 
 
 def graph_trajectory_quadrature_weights_by_axis(
-    component, batch: GraphBatch, /
+    component: "DomainComponent", batch: GraphBatch, /
 ) -> Mapping[str, cx.AxisArray] | None:
     domain = component.domain
     if not isinstance(domain, GraphTrajectoryDatasetDomain):

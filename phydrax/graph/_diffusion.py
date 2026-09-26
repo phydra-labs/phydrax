@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array, ArrayLike, Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -115,7 +115,9 @@ class FixedTopologyGraphDiffusion(StrictModule):
             raise ValueError("Graph payload shape differs from the template.")
         return value
 
-    def perturb(self, graph: GraphIR, key: Key[Array, ""], /, *, time) -> GraphIR:
+    def perturb(
+        self, graph: GraphIR, key: Key[Array, ""], /, *, time: ArrayLike
+    ) -> GraphIR:
         value = self._require_topology(graph)
         perturbed = self.process.perturb(key, value.reshape((-1,)), t1=time)
         result = perturbed.reshape(self.payload_shape)
@@ -127,7 +129,9 @@ class FixedTopologyGraphDiffusion(StrictModule):
             result = jnp.where(expanded, result, value)
         return _replace(graph, self.payload_kind, self.payload_key, result)
 
-    def conditional_score(self, perturbed: GraphIR, clean: GraphIR, /, *, time) -> Array:
+    def conditional_score(
+        self, perturbed: GraphIR, clean: GraphIR, /, *, time: ArrayLike
+    ) -> Array:
         noisy = self._require_topology(perturbed).reshape((-1,))
         source = self._require_topology(clean).reshape((-1,))
         score = self.process.conditional_score(noisy, source, t1=time).reshape(
@@ -144,12 +148,12 @@ class FixedTopologyGraphDiffusion(StrictModule):
 
 def graph_denoising_loss(
     diffusion: FixedTopologyGraphDiffusion,
-    score_model: Any,
+    score_model: Callable[..., ArrayLike],
     clean: GraphIR,
     key: Key[Array, ""],
     /,
     *,
-    time,
+    time: ArrayLike,
 ) -> Array:
     noise_key, model_key = jr.split(key)
     perturbed = diffusion.perturb(clean, noise_key, time=time)

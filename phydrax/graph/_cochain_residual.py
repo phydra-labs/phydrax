@@ -105,7 +105,7 @@ class CochainResidualProgram(StrictModule):
 
     input_specs: frozendict[str, CochainFieldSpec]
     output_specs: frozendict[str, CochainFieldSpec]
-    residual_fn: Callable
+    residual_fn: Callable[..., Mapping[str, Any]]
     identity: str
 
     def __init__(
@@ -159,7 +159,7 @@ class CochainResidualProgram(StrictModule):
         fields: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> frozendict[str, Array]:
         if not isinstance(fields, Mapping):

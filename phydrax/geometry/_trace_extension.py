@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import Enum
 from typing import Any
 
@@ -14,6 +15,7 @@ from jaxtyping import Array, PyTree
 from phydrax.enforcement._geometry_support import BoundaryCover
 from phydrax.linalg import (
     AbstractLinearOperator,
+    AbstractVectorSpace,
     ConstraintOperatorPlan,
     materialize,
     PreparedConstraintOperator,
@@ -226,11 +228,11 @@ class PreparedTraceExtension(StrictModule, NonTrainableState):
         )
 
     @property
-    def source_space(self):
+    def source_space(self) -> AbstractVectorSpace:
         return self.right_inverse_operator.source
 
     @property
-    def target_space(self):
+    def target_space(self) -> AbstractVectorSpace:
         return self.right_inverse_operator.target
 
     def lift(self, trace_residual: PyTree[Any], /) -> PyTree[Array]:
@@ -386,7 +388,13 @@ class TransfiniteCorrectionProvider(_TraceCorrectionProvider):
     """Exact represented transfinite/Hermite candidate extension provider."""
 
     def __init__(
-        self, trace_operator, candidate_operator, cover, /, *, cardinal_certificate_id
+        self,
+        trace_operator: AbstractLinearOperator,
+        candidate_operator: AbstractLinearOperator,
+        cover: BoundaryCover,
+        /,
+        *,
+        cardinal_certificate_id: str,
     ) -> None:
         super().__init__(
             trace_operator,
@@ -402,7 +410,13 @@ class ClosestPointCorrectionProvider(_TraceCorrectionProvider):
     """Exact represented collar extension over certified regular retractions."""
 
     def __init__(
-        self, trace_operator, candidate_operator, cover, /, *, collar_certificate_id
+        self,
+        trace_operator: AbstractLinearOperator,
+        candidate_operator: AbstractLinearOperator,
+        cover: BoundaryCover,
+        /,
+        *,
+        collar_certificate_id: str,
     ) -> None:
         if any(
             patch.collar_provider is None or patch.collar_certificate_id is None
@@ -431,12 +445,12 @@ class PartitionOfUnityCorrectionProvider(_TraceCorrectionProvider):
 
     def __init__(
         self,
-        trace_operator,
-        candidate_operator,
-        cover,
+        trace_operator: AbstractLinearOperator,
+        candidate_operator: AbstractLinearOperator,
+        cover: BoundaryCover,
         /,
         *,
-        partition_certificate_id,
+        partition_certificate_id: str,
     ) -> None:
         super().__init__(
             trace_operator,
@@ -456,16 +470,16 @@ class EllipticExtensionCorrectionProvider(_TraceCorrectionProvider):
 
     def __init__(
         self,
-        trace_operator,
-        candidate_operator,
-        cover,
+        trace_operator: AbstractLinearOperator,
+        candidate_operator: AbstractLinearOperator,
+        cover: BoundaryCover,
         /,
         *,
-        coercivity_certificate_id,
-        pure_neumann=False,
-        gauge_certificate_id=None,
-        preservation_operator=None,
-        preservation_certificate_id=None,
+        coercivity_certificate_id: str,
+        pure_neumann: bool = False,
+        gauge_certificate_id: str | None = None,
+        preservation_operator: AbstractLinearOperator | None = None,
+        preservation_certificate_id: str | None = None,
     ) -> None:
         pure = bool(pure_neumann)
         gauge = None if gauge_certificate_id is None else str(gauge_certificate_id)
@@ -494,16 +508,16 @@ class DiscreteTraceCorrectionProvider(_TraceCorrectionProvider):
 
     def __init__(
         self,
-        trace_operator,
-        candidate_operator,
-        cover,
+        trace_operator: AbstractLinearOperator,
+        candidate_operator: AbstractLinearOperator,
+        cover: BoundaryCover,
         /,
         *,
-        representation_id,
-        representation_certificate_id,
-        preservation_operator=None,
-        preservation_certificate_id=None,
-        stability_owner_ids=(),
+        representation_id: str,
+        representation_certificate_id: str,
+        preservation_operator: AbstractLinearOperator | None = None,
+        preservation_certificate_id: str | None = None,
+        stability_owner_ids: Sequence[str] = (),
     ) -> None:
         representation = str(representation_id)
         if not representation:

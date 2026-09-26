@@ -227,7 +227,9 @@ class PreparedThermochemicalNonequilibriumProcess(AbstractPreparedBalanceLawProc
         )
 
     @property
-    def system(self):
+    def system(
+        self,
+    ) -> TwoTemperatureMixtureEulerSystem | TwoTemperatureMixtureNavierStokesSystem:
         return self.transport.dynamics.system
 
     def initialize(
@@ -305,13 +307,13 @@ class PreparedThermochemicalNonequilibriumProcess(AbstractPreparedBalanceLawProc
         step = (end_time - start_time) / self.plan.subcycles
         runtime = args if isinstance(args, ChemicalRateRuntime) else None
 
-        def subcycle(_, carry):
+        def subcycle(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             candidate, chemistry_success = carry
             mass_rate, rate_success = self._chemistry_rate(candidate, runtime)
             candidate = candidate.at[..., self.species_indices].add(step * mass_rate)
             mode_start = candidate[..., self.mode_indices]
 
-            def relaxation_iteration(_, current):
+            def relaxation_iteration(_: Array, current: Array) -> Array:
                 relaxation = self.plan.relaxation.evaluate(self.system, current)
                 fraction = -jnp.expm1(
                     -step / relaxation.relaxation_times.astype(current.dtype)

@@ -214,7 +214,7 @@ class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         value = self.residual(batch, key=key, **kwargs)
@@ -222,9 +222,20 @@ class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
             raise TypeError("Residual evaluation must return a phydrax.axes.AxisArray.")
         return _squared_frobenius_field(value)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         value = jnp.asarray(self.residual.func(*args, key=key, **kwargs))
         return jnp.sum(jnp.real(jnp.conj(value) * value))
+
+
+def _squared_frobenius_function(residual: DomainFunction, /) -> DomainFunction:
+    return DomainFunction(
+        domain=residual.domain,
+        deps=residual.deps,
+        func=_SquaredFrobeniusResidual(residual),
+        metadata=residual.metadata,
+    )
 
 
 class _DensityWeightedResidual(StrictModule, BatchEvaluator):
@@ -240,7 +251,7 @@ class _DensityWeightedResidual(StrictModule, BatchEvaluator):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         score = self.score(batch, key=key, **kwargs)
@@ -260,7 +271,9 @@ class _DensityWeightedResidual(StrictModule, BatchEvaluator):
         checked_density = cx.AxisArray(density_data, dims=density.dims)
         return score * checked_density
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         density = jnp.asarray(self.density.func(*args, key=key, **kwargs))
         if jnp.iscomplexobj(density):
             raise TypeError("Penalty density must be real.")
@@ -430,12 +443,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         /,
     ) -> DomainFunction:
         residual = _planned_residual(self.condition, functions)
-        score = DomainFunction(
-            domain=residual.domain,
-            deps=residual.deps,
-            func=_SquaredFrobeniusResidual(residual),
-            metadata=residual.metadata,
-        )
+        score = _squared_frobenius_function(residual)
         if self.density is None:
             return score
         density = self.density
@@ -482,6 +490,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             raise TypeError("realization must be an IntegrationRealization.")
         resolved = resolve_term_realization(
             self.source,
+            key=DOC_KEY0,
             realization=prepare_term_realization(realization),
         )
         target = resolved.target
@@ -507,6 +516,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             target,
             batch,
             key=evaluation_key,
+            kwargs={},
         )
         base = target.base if isinstance(target, DensityTarget) else target
         if not isinstance(base, ComponentTarget):

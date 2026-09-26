@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, Protocol, TYPE_CHECKING
 
 import jax
@@ -403,7 +403,14 @@ class CollocationPolicy(AbstractCollocationPolicy):
         )
         return cx.AxisArray(jnp.maximum(data, 0.0), dims=score.dims)
 
-    def _refresh_r3(self, constraint, functions, population, *, key):
+    def _refresh_r3(
+        self,
+        constraint: PointwiseSamplingTerm,
+        functions: Mapping[str, DomainFunction],
+        population: CollocationPopulation,
+        *,
+        key: Key[Array, ""],
+    ) -> CollocationPopulation:
         sampling = _point_sampling(constraint)
         axis, n = _single_axis_and_size(population.batch)
         scores = self._scores(
@@ -447,7 +454,14 @@ class CollocationPolicy(AbstractCollocationPolicy):
         )
         return CollocationPopulation(batch, age=age)
 
-    def _refresh_rar_d(self, constraint, functions, population, *, key):
+    def _refresh_rar_d(
+        self,
+        constraint: PointwiseSamplingTerm,
+        functions: Mapping[str, DomainFunction],
+        population: CollocationPopulation,
+        *,
+        key: Key[Array, ""],
+    ) -> CollocationPopulation:
         sampling = _point_sampling(constraint)
         if population.active is None:
             raise ValueError("RAR-D population requires an active mask.")
@@ -545,7 +559,7 @@ def _validate_axis_field(field: cx.AxisArray, *, axis: str, size: int, name: str
         raise ValueError(f"{name} must have shape ({size},), got {field.data.shape}.")
 
 
-def _map_batch_fields(batch: PointBatch, fn) -> PointBatch:
+def _map_batch_fields(batch: PointBatch, fn: Callable[[object], object]) -> PointBatch:
     points = jtu.tree_map(fn, batch.points, is_leaf=lambda x: isinstance(x, cx.AxisArray))
     metadata = jtu.tree_map(
         fn,
@@ -558,7 +572,7 @@ def _map_batch_fields(batch: PointBatch, fn) -> PointBatch:
 def _take_batch(batch: PointBatch, indices: Array) -> PointBatch:
     axis, _ = _single_axis_and_size(batch)
 
-    def take(field):
+    def take(field: object) -> object:
         if not isinstance(field, cx.AxisArray) or axis not in field.named_dims:
             return field
         pos = field.dims.index(axis)
@@ -572,7 +586,7 @@ def _concat_batches(left: PointBatch, right: PointBatch) -> PointBatch:
         raise ValueError("Cannot concatenate batches with different structures.")
     axis, _ = _single_axis_and_size(right)
 
-    def concat(a, b):
+    def concat(a: object, b: object) -> object:
         if not isinstance(a, cx.AxisArray) or not isinstance(b, cx.AxisArray):
             if a != b:
                 raise ValueError("Fixed batch leaves differ during concatenation.")
@@ -606,7 +620,7 @@ def _concat_batches(left: PointBatch, right: PointBatch) -> PointBatch:
 def _set_batch_rows(target: PointBatch, indices: Array, source: PointBatch) -> PointBatch:
     axis, _ = _single_axis_and_size(target)
 
-    def set_rows(a, b):
+    def set_rows(a: object, b: object) -> object:
         if not isinstance(a, cx.AxisArray) or not isinstance(b, cx.AxisArray):
             return a
         if axis not in a.named_dims:

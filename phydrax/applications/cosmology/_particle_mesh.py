@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,12 @@ from ._particles import (
     CosmologicalKDKPlan,
     CosmologicalParticleState,
 )
+
+
+_ParticleMeshCarry: TypeAlias = tuple[
+    CosmologicalParticleState, Array, Array, Array, Array, Array
+]
+_ParticleMeshRecord: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class CosmologicalParticleMeshDiagnostics(StrictModule):
@@ -190,7 +196,9 @@ class CosmologicalParticleMeshPlan(StrictModule):
         running = initial_force.successful
         accepted_count = jnp.asarray(0, dtype=jnp.int32)
 
-        def step(carry, end_scale):
+        def step(
+            carry: _ParticleMeshCarry, end_scale: Array
+        ) -> tuple[_ParticleMeshCarry, _ParticleMeshRecord]:
             (
                 current,
                 acceleration_start,
@@ -200,7 +208,7 @@ class CosmologicalParticleMeshPlan(StrictModule):
                 count,
             ) = carry
 
-            def attempt(_):
+            def attempt(_: None) -> tuple[_ParticleMeshCarry, _ParticleMeshRecord]:
                 interval = _advance_particle_mesh_interval(
                     self.kinematics,
                     self.gravity,
@@ -248,7 +256,7 @@ class CosmologicalParticleMeshPlan(StrictModule):
                 )
                 return next_carry, diagnostics
 
-            def stopped(_):
+            def stopped(_: None) -> tuple[_ParticleMeshCarry, _ParticleMeshRecord]:
                 zero = jnp.asarray(0.0, dtype=current.positions.dtype)
                 diagnostics = (
                     zero,

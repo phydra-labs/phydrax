@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax
@@ -197,7 +197,7 @@ class OpenSystemHistorySolution(StrictModule):
         *,
         problem_id: str,
         representation_id: str,
-        approximation_axes,
+        approximation_axes: Sequence[ApproximationAxis],
         temporal_precision: TemporalPrecisionPolicy,
         geometry_precision: GeometryPrecisionPolicy,
         hermitian_precision: HermitianPrecisionPolicy,
@@ -613,7 +613,7 @@ def exponential_memory_qubit_problem(
     sigma_minus = jnp.asarray([[0, 0], [1, 0]], dtype=jnp.complex128)
     sigma_plus = jnp.conj(sigma_minus.T)
 
-    def kernel(lag, density):
+    def kernel(lag: Array, density: Array) -> Array:
         commutator = sigma_minus @ density @ sigma_plus - 0.5 * (
             sigma_plus @ sigma_minus @ density + density @ sigma_plus @ sigma_minus
         )

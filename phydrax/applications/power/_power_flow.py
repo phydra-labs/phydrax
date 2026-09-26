@@ -8,6 +8,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -133,7 +134,7 @@ def fixed_mode_power_flow(
     pv = jnp.asarray([mode == "pv" for mode in modes_])
     target = compiled.initial_voltage
 
-    def residual(coordinates, specified):
+    def residual(coordinates: Array, specified: Array) -> Array:
         v = coordinates[:n] + 1j * coordinates[n:]
         mismatch = compiled.bus_power(v) - specified
         real = jnp.where(reference, v.real - target.real, mismatch.real)
@@ -166,7 +167,9 @@ def fixed_mode_power_flow(
     )
 
 
-def _allocate(total, initial, lower, upper):
+def _allocate(
+    total: float, initial: npt.ArrayLike, lower: np.ndarray, upper: np.ndarray
+) -> np.ndarray:
     """Bounded equal incremental participation; at most one saturation per pass."""
     value = np.clip(np.asarray(initial, dtype=np.float64), lower, upper)
     for _ in range(len(value) + 1):
@@ -180,7 +183,7 @@ def _allocate(total, initial, lower, upper):
     return value
 
 
-def _limit_violation(value, lower, upper):
+def _limit_violation(value: Array, lower: Array, upper: Array) -> Array:
     return jnp.maximum(
         jnp.max(lower - value, initial=0.0), jnp.max(value - upper, initial=0.0)
     )

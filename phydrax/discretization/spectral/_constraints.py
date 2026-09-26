@@ -160,7 +160,9 @@ class SpectralBoundaryConditionPlan(StrictModule, NonTrainableState):
         lower: tuple[float, float],
         upper: tuple[float, float],
     ) -> "SpectralBoundaryConditionPlan":
-        def constraint(side, coefficients):
+        def constraint(
+            side: Literal["lower", "upper"], coefficients: tuple[float, float]
+        ) -> SpectralTraceConstraint:
             terms = tuple(
                 SpectralTraceTerm(order, coefficient)
                 for order, coefficient in enumerate(coefficients)
@@ -191,7 +193,10 @@ def _basis_normalizers(
     ):
         return np.ones((count,), dtype=np.float64)
     if prepared.family == "legendre":
-        return _legendre_normalizers(count, float(np.asarray(prepared.length)))
+        # A host float length yields NumPy normalizers; asarray returns them as-is.
+        return np.asarray(
+            _legendre_normalizers(count, float(np.asarray(prepared.length)))
+        )
     raise ValueError("The prepared basis does not expose polynomial trace rows.")
 
 

@@ -17,8 +17,10 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
     DenseLinearOperator,
+    LinearSolveResult,
     LinearSystem,
     SmallLinearSolvePlan,
+    SmallLinearSolveResult,
     solve,
     solve_small_linear,
 )
@@ -85,7 +87,9 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _solve_linear(self, matrix, right_hand_side):
+    def _solve_linear(
+        self, matrix: Array, right_hand_side: Array
+    ) -> tuple[Array, SmallLinearSolveResult | LinearSolveResult]:
         if self.dimension <= 3:
             result = solve_small_linear(
                 SmallLinearSolvePlan(self.dimension),
@@ -99,8 +103,8 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         )
         return result.value, result
 
-    def _newton(self, residual, guess):
-        def body(_, value):
+    def _newton(self, residual: Callable[[Array], Array], guess: Array) -> Array:
+        def body(_: int | Array, value: Array) -> Array:
             current = residual(value)
             jacobian = jax.jacfwd(residual)(value)
             delta, solve = self._solve_linear(jacobian, current)
@@ -110,7 +114,7 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
 
         return jax.lax.fori_loop(0, self.maximum_steps, body, guess)
 
-    def solve(self, residual: Callable[[Array], Array], initial: ArrayLike, /):
+    def solve(self, residual: Callable[[Array], Array], initial: ArrayLike, /) -> Array:
         if not callable(residual):
             raise TypeError("residual must be callable.")
         initial_ = jnp.asarray(initial)
@@ -121,10 +125,12 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
         if not jnp.issubdtype(initial_.dtype, jnp.inexact):
             raise TypeError("Vector local root initial state must have an inexact dtype.")
 
-        def solve_fn(function, guess):
+        def solve_fn(function: Callable[[Array], Array], guess: Array) -> Array:
             return self._newton(function, guess)
 
-        def tangent_solve(linearize, right_hand_side):
+        def tangent_solve(
+            linearize: Callable[[Array], Array], right_hand_side: Array
+        ) -> Array:
             basis = jnp.eye(self.dimension, dtype=right_hand_side.dtype)
             matrix = jax.vmap(linearize)(basis).T
             value, _ = self._solve_linear(matrix, right_hand_side)
@@ -132,7 +138,9 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
 
         return jax.lax.custom_root(residual, initial_, solve_fn, tangent_solve)
 
-    def solve_with_diagnostics(self, residual, initial, /):
+    def solve_with_diagnostics(
+        self, residual: Callable[[Array], Array], initial: ArrayLike, /
+    ) -> tuple[Array, VectorLocalRootDiagnostics]:
         root = self.solve(residual, initial)
         value = residual(root)
         jacobian = jax.jacfwd(residual)(root)
@@ -209,7 +217,7 @@ class LocalRootPlan(StrictModule, NonTrainableState):
         )
 
     def _newton(self, residual: Callable[[Array], Array], guess: Array) -> Array:
-        def body(_, value):
+        def body(_: int | Array, value: Array) -> Array:
             current = residual(value)
             derivative = jax.grad(residual)(value)
             safe = jnp.where(
@@ -233,10 +241,12 @@ class LocalRootPlan(StrictModule, NonTrainableState):
                 "Local constitutive root initial state must have an inexact dtype."
             )
 
-        def solve_fn(function, guess):
+        def solve_fn(function: Callable[[Array], Array], guess: Array) -> Array:
             return self._newton(function, guess)
 
-        def tangent_solve(linearize, right_hand_side):
+        def tangent_solve(
+            linearize: Callable[[Array], Array], right_hand_side: Array
+        ) -> Array:
             derivative = jax.grad(linearize)(jnp.zeros_like(right_hand_side))
             safe = jnp.where(
                 jnp.abs(derivative) >= self.minimum_derivative,

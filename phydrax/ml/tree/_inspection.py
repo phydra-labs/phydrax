@@ -152,7 +152,14 @@ class TreeExport(StrictModule):
     gain: Array
     cover: Array
 
-    def __init__(self, model: TreeEnsemble, tree_index: int, /, *, case_index=()) -> None:
+    def __init__(
+        self,
+        model: TreeEnsemble,
+        tree_index: int,
+        /,
+        *,
+        case_index: int | tuple[int, ...] = (),
+    ) -> None:
         tree = int(tree_index)
         if tree < 0 or tree >= model.tree_capacity:
             raise IndexError("tree_index is outside the fixed tree capacity.")
@@ -259,7 +266,7 @@ def partial_dependence(
         raise ValueError("sample_weight must have positive mass in every case.")
     denominator = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
 
-    def one_grid(value):
+    def one_grid(value: Array) -> tuple[Array, Array]:
         prediction = model(values.at[..., feature].set(value))
         output_ndim = prediction.ndim - weights.ndim
         weighted = prediction * weights.reshape(weights.shape + (1,) * output_ndim)

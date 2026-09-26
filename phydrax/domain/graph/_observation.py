@@ -22,6 +22,7 @@ from ..._interpolation import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...graph import GraphIR
 from .._evaluation import BatchEvaluator
 from .._function import DomainFunction
 from ._batch import GRAPH_ENTITY_INDEX_KEY, GraphBatch
@@ -43,7 +44,7 @@ GraphClassificationTargetEncoding = Literal["hard", "soft"]
 
 def _classification_array(
     name: str,
-    value: ArrayLike,
+    value: ArrayLike | Sequence[ArrayLike],
     encoding: GraphClassificationTargetEncoding,
     /,
     *,
@@ -123,7 +124,7 @@ def _classification_case_arrays(
     return tuple(arr[i] for i in range(n))
 
 
-def _size_for_kind(graph, kind: GraphComponentKind, /) -> int:
+def _size_for_kind(graph: GraphIR, kind: GraphComponentKind, /) -> int:
     if kind == "nodes":
         return int(graph.num_nodes)
     if kind == "edges":
@@ -390,7 +391,9 @@ class _GraphTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.kind = kind
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del args, key, kwargs
         raise TypeError("GraphTarget requires GraphBatch evaluation.")
 
@@ -399,7 +402,7 @@ class _GraphTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -443,7 +446,9 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
         self.kind = kind
         self.interpolation = interpolation
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del args, key, kwargs
         raise TypeError("GraphTrajectorySignal requires GraphBatch evaluation.")
 
@@ -455,7 +460,7 @@ class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableS
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -602,7 +607,9 @@ class _GraphClassificationTargetCallable(StrictModule, BatchEvaluator, NonTraina
         self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.kind = kind
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del args, key, kwargs
         raise TypeError("GraphClassificationTarget requires GraphBatch evaluation.")
 
@@ -611,7 +618,7 @@ class _GraphClassificationTargetCallable(StrictModule, BatchEvaluator, NonTraina
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -660,7 +667,9 @@ class _GraphTrajectoryClassificationSignalCallable(
         self.interpolation = interpolation
         self.logical_interpolation = bool(logical_interpolation)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del args, key, kwargs
         raise TypeError(
             "GraphTrajectoryClassificationSignal requires GraphBatch evaluation."
@@ -674,7 +683,7 @@ class _GraphTrajectoryClassificationSignalCallable(
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs

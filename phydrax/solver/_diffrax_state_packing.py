@@ -11,7 +11,7 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_dtype_name
@@ -93,7 +93,9 @@ class _PackedEventCondition(StrictModule):
     condition: Any
     state_adapter: "_PreparedDiffraxStateAdapter"
 
-    def __call__(self, t, y, args, **kwargs):
+    def __call__(
+        self, t: ArrayLike, y: PyTree, args: PyTree, **kwargs: object
+    ) -> ArrayLike:
         return self.condition(
             t,
             self.state_adapter.unpack_state(y),

@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._callable import _KeyIterAdapter
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
@@ -37,7 +38,7 @@ class _PirateBranch(StrictModule):
         key: Key[Array, ""],
     ) -> None:
         keys = jr.split(key, 3)
-        self.layers = tuple(
+        first, second, third = (
             Linear(
                 in_size=width,
                 out_size=width,
@@ -49,6 +50,7 @@ class _PirateBranch(StrictModule):
             )
             for layer_key in keys
         )
+        self.layers = (first, second, third)
 
     @staticmethod
     def _gate(gate: Array, encoder_u: Array, encoder_v: Array, /) -> Array:
@@ -205,8 +207,12 @@ class PirateNet(_AbstractBaseModel):
         )
         for block in self.blocks:
             # x + alpha * (F(x) - x) with a constant alpha: a sum of x and F(x).
-            # AdaptiveResidual stores the branch behind its key adapter.
-            branch = block.branch.func._regularity(hidden, encoder_u, encoder_v)
+            # AdaptiveResidual stores the key-only branch behind its key adapter.
+            adapter = block.branch
+            assert isinstance(adapter, _KeyIterAdapter)
+            pirate_branch = adapter.func
+            assert isinstance(pirate_branch, _PirateBranch)
+            branch = pirate_branch._regularity(hidden, encoder_u, encoder_v)
             hidden = sum_regularity((hidden, branch))
         return compose_regularity(
             hidden,

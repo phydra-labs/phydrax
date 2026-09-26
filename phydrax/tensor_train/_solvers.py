@@ -247,17 +247,51 @@ def plan_tensor_train_solve(
 def plan_als(
     operator: TensorTrainOperator,
     /,
-    **resources,
+    *,
+    max_rank: int,
+    enrichment_rank: int,
+    sweeps: int,
+    relative_tolerance: float,
+    local_regularization: float,
+    max_dense_entries: int,
+    max_local_unknowns: int,
 ) -> TensorTrainSolvePlan:
-    return plan_tensor_train_solve(operator, method="als", **resources)
+    return plan_tensor_train_solve(
+        operator,
+        method="als",
+        max_rank=max_rank,
+        enrichment_rank=enrichment_rank,
+        sweeps=sweeps,
+        relative_tolerance=relative_tolerance,
+        local_regularization=local_regularization,
+        max_dense_entries=max_dense_entries,
+        max_local_unknowns=max_local_unknowns,
+    )
 
 
 def plan_amen(
     operator: TensorTrainOperator,
     /,
-    **resources,
+    *,
+    max_rank: int,
+    enrichment_rank: int,
+    sweeps: int,
+    relative_tolerance: float,
+    local_regularization: float,
+    max_dense_entries: int,
+    max_local_unknowns: int,
 ) -> TensorTrainSolvePlan:
-    return plan_tensor_train_solve(operator, method="amen", **resources)
+    return plan_tensor_train_solve(
+        operator,
+        method="amen",
+        max_rank=max_rank,
+        enrichment_rank=enrichment_rank,
+        sweeps=sweeps,
+        relative_tolerance=relative_tolerance,
+        local_regularization=local_regularization,
+        max_dense_entries=max_dense_entries,
+        max_local_unknowns=max_local_unknowns,
+    )
 
 
 def prepare_tensor_train_solve(

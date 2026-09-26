@@ -9,6 +9,7 @@ from enum import IntFlag
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from phydrax.ein import contract
@@ -282,7 +283,9 @@ class DSMCMomentPlan(StrictModule, NonTrainableState):
             axis=-1,
         )
 
-    def initialize_accumulator(self, dtype=jnp.float64, /) -> DSMCMomentAccumulatorState:
+    def initialize_accumulator(
+        self, dtype: DTypeLike = jnp.float64, /
+    ) -> DSMCMomentAccumulatorState:
         shape = (self.cells.cell_count, self.observable_count)
         return DSMCMomentAccumulatorState(
             jnp.zeros(shape, dtype=dtype),

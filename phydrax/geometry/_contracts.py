@@ -314,6 +314,14 @@ class AbstractGeometryKernel(StrictModule):
             f"{type(self).__name__} does not provide a boundary atlas."
         )
 
+    def cubature_atlas(
+        self, state: DesignState, component: CubatureComponent, /
+    ) -> CubatureAtlas:
+        del state, component
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide a cubature atlas."
+        )
+
 
 class CompiledGeometry(StrictModule):
     """JAX-safe kernel, dynamic state, schema, and tolerance bundle."""

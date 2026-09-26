@@ -125,7 +125,7 @@ def solve_fermionic_gaussian(
     if count < 0 or not bool(jnp.isfinite(step) & (step > 0.0)):
         raise ValueError("steps must be nonnegative and step_size finite and positive.")
 
-    def advance(covariance, _):
+    def advance(covariance: Array, _: None) -> tuple[Array, Array]:
         first = problem.rhs(covariance)
         second = problem.rhs(covariance + 0.5 * step * first)
         third = problem.rhs(covariance + 0.5 * step * second)

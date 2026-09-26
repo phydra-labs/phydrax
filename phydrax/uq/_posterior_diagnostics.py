@@ -302,7 +302,9 @@ def _roundtrip_failures(
     return tuple(locations)
 
 
-def _tree_allclose(left, right, *, rtol: float, atol: float) -> bool:
+def _tree_allclose(
+    left: PyTree[Any], right: PyTree[Any], *, rtol: float, atol: float
+) -> bool:
     comparisons = jax.tree_util.tree_map(
         lambda first, second: jnp.allclose(
             first,

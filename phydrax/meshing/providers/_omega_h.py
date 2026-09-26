@@ -155,8 +155,8 @@ def _run(command: Sequence[str], timeout: float, environment: Mapping[str, str])
 
 
 def _decode_json_object(data: bytes, owner: str, /) -> dict:
-    def pairs(values):
-        record = {}
+    def pairs(values: list[tuple[str, object]]) -> dict[str, object]:
+        record: dict[str, object] = {}
         for key, value in values:
             if key in record:
                 raise ValueError(f"{owner} contains duplicate field {key!r}.")
@@ -197,7 +197,9 @@ def _unpack_metric(values: np.ndarray, dimension: int) -> np.ndarray:
     return result
 
 
-def _merge_partitions(records: list[dict], dimension: int, limits: MeshingLimits, /):
+def _merge_partitions(
+    records: list[dict], dimension: int, limits: MeshingLimits, /
+) -> tuple[CellMesh, np.ndarray, np.ndarray, tuple[OmegaHPartition, ...]]:
     """Reject contradictory copies, missing owners and incomplete global covers."""
     partitions = []
     vertices, cells = {}, {}

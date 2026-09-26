@@ -211,7 +211,10 @@ class _FixedHybridStageFluxCallback(StrictModule):
         /,
     ) -> FiniteVolumeStageFlux:
         del stage_index, time
-        discretization = self.finite_volume.dynamics.discretization
+        dynamics = self.finite_volume.dynamics
+        # Construction admits only stationary structured finite-volume dynamics.
+        assert isinstance(dynamics, PreparedFiniteVolumeDynamics)
+        discretization = dynamics.discretization
         replacements = tuple(
             jnp.zeros(
                 layout.shape + (state.shape[-1],),
@@ -716,7 +719,10 @@ class PreparedFixedPartitionHybridRuntime(StrictModule):
         /,
     ) -> Array:
         residuals = []
-        discretization = self.finite_volume.dynamics.discretization
+        dynamics = self.finite_volume.dynamics
+        # Construction admits only stationary structured finite-volume dynamics.
+        assert isinstance(dynamics, PreparedFiniteVolumeDynamics)
+        discretization = dynamics.discretization
         for interface_index, (axis, face_index) in enumerate(
             zip(
                 self.finite_volume_face_axes,
@@ -1191,7 +1197,7 @@ class DynamicHybridOwnershipPlan(StrictModule):
             or learned_energy.plan.material.material_id != method.material.material_id
         ):
             raise ValueError("Dynamic ownership method and learned lift must match.")
-        radius = tuple(stencil[axis] + reach[axis] for axis in range(2))
+        radius = (stencil[0] + reach[0], stencil[1] + reach[1])
         shifts = tuple(
             (first, second)
             for first, second in product(

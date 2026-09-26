@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from phydrax.ein import contract
 
@@ -33,7 +33,7 @@ def _safe_norm(value: Array, /) -> Array:
 
 
 @_safe_norm.defjvp
-def _safe_norm_jvp(primals, tangents):
+def _safe_norm_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
     (value,), (tangent,) = primals, tangents
     norm = _safe_norm(value)
     derivative = jnp.where(
@@ -58,7 +58,9 @@ def _parameters(name: str, value: ArrayLike, /, *, positive: bool = False) -> Ar
     return jnp.asarray(host)
 
 
-def _term_identity(kind: str, name: str, group: int, arrays, /, **extra) -> str:
+def _term_identity(
+    kind: str, name: str, group: int, arrays: PyTree[ArrayLike], /, **extra: object
+) -> str:
     return canonical_fingerprint(
         {
             "kind": kind,
@@ -164,7 +166,9 @@ class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
-                zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
+                zero,
+                jnp.zeros((self.system.capacity,), dtype=zero.dtype),
+                jnp.asarray(True),
             )
         displacement = (
             context.unwrapped_positions[indices[:, 0]]
@@ -279,7 +283,9 @@ class PreparedFiniteExtensibleNonlinearElasticBondPotential(
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
-                zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
+                zero,
+                jnp.zeros((self.system.capacity,), dtype=zero.dtype),
+                jnp.asarray(True),
             )
         displacement = (
             context.unwrapped_positions[indices[:, 0]]
@@ -400,7 +406,9 @@ class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
-                zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
+                zero,
+                jnp.zeros((self.system.capacity,), dtype=zero.dtype),
+                jnp.asarray(True),
             )
         route_scale = context.interaction_scales.angle
         route_active = route_scale > 0.0
@@ -560,7 +568,9 @@ class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
-                zero, jnp.zeros((self.system.capacity,), dtype=zero.dtype), True
+                zero,
+                jnp.zeros((self.system.capacity,), dtype=zero.dtype),
+                jnp.asarray(True),
             )
         route_scale = (
             context.interaction_scales.improper

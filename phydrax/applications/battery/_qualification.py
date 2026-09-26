@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ..._fingerprint import canonical_fingerprint
 from ...artifacts import ArtifactManifest, ScientificArtifactEnvelope
@@ -30,6 +31,11 @@ from ._validity import (
 )
 
 
+if TYPE_CHECKING:
+    from ...qualification._trust import AsymmetricReleaseTrustPolicy
+    from ._release import BatteryReleaseBundle
+
+
 _PROVIDER = "phydrax"
 _CANDIDATE_VERSION = "candidate"
 
@@ -52,7 +58,12 @@ THERMAL_ECM_CANDIDATE = CapabilityProfile(
 
 
 def build_thermal_ecm_release_profile(
-    bundle, /, *, trust_policy, at_time: int, expires_at: int
+    bundle: BatteryReleaseBundle,
+    /,
+    *,
+    trust_policy: AsymmetricReleaseTrustPolicy,
+    at_time: int,
+    expires_at: int,
 ) -> CapabilityProfile:
     """Build only from authenticated typed causal records and complete coverage."""
     from ._release import build_battery_release

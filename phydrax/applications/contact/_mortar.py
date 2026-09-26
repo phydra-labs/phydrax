@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -70,7 +71,7 @@ class MortarContactState(StrictModule, NonTrainableState):
         plan: MortarContactPlan,
         /,
         *,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> MortarContactState:
         tangent_dimension = interface.ambient_dimension - 1
         return cls(

@@ -351,7 +351,7 @@ def _vertex_aliases(points: np.ndarray, relative_tolerance: float) -> np.ndarray
     tree = cKDTree(points)
     parent = np.arange(len(points), dtype=np.int64)
 
-    def root(index):
+    def root(index: int | np.int64) -> int | np.int64:
         while parent[index] != index:
             parent[index] = parent[parent[index]]
             index = parent[index]

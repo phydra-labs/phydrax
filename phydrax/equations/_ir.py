@@ -105,7 +105,7 @@ def _literal(value: PDELiteral, name: str, /) -> PDELiteral:
 def _exact_integer_literal(value: PDELiteral | None, /) -> int | None:
     if value is None or isinstance(value, bool):
         return None
-    if isinstance(value, Integral):
+    if isinstance(value, (int, Integral)):
         return int(value)
     if isinstance(value, Fraction):
         return value.numerator if value.denominator == 1 else None

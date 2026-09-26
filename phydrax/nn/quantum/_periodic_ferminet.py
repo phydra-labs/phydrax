@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from numbers import Integral
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -31,6 +31,7 @@ from ...linalg import (
     factorization_policy_from_linear_solve,
     FactorizationPolicy,
     factorize,
+    LowRankDeterminantResult,
     LowRankDeterminantStatus,
     LowRankSolvePolicy,
     prepare_factorized_low_rank_sequence,
@@ -52,6 +53,10 @@ from ._periodic_features import PeriodicCellFeatureResult, PeriodicCellFeatures
 _COMPACT_UPDATE = 0
 _FULL_REBASE = 1
 _NO_LOW_RANK_STATUS = -1
+
+_DeterminantCandidate: TypeAlias = tuple[
+    PreparedLowRankSequence, Array, Array, Array, Array, Array, Array
+]
 
 
 class PeriodicFermiNetCache(StrictModule):
@@ -147,14 +152,14 @@ def _propose_determinant_row(
     row_delta: Array,
     row_index: Array,
     /,
-):
+) -> LowRankDeterminantResult:
     update = row_low_rank_update(row_index[None], row_delta[None, :])
     return propose_low_rank_update(sequence, update)
 
 
 def _accept_determinant_row(
     sequence: PreparedLowRankSequence,
-    proposal,
+    proposal: LowRankDeterminantResult,
     /,
 ) -> PreparedLowRankSequence:
     return accept_low_rank_update(sequence, proposal)
@@ -211,7 +216,9 @@ def _determinant_mixture(
     return log_abs, phase, finite_mixture & jnp.isfinite(log_abs)
 
 
-def _pair_jastrow(model: PeriodicFermiNet, features: PeriodicCellFeatureResult, /):
+def _pair_jastrow(
+    model: PeriodicFermiNet, features: PeriodicCellFeatureResult, /
+) -> Array:
     pair_mask = jnp.triu(
         jnp.ones((model.electron_count, model.electron_count), dtype=jnp.bool_),
         k=1,
@@ -557,7 +564,7 @@ def _propose_periodic_ferminet_cache(
         & jnp.all(cache.compact_eligible)
     )
 
-    def compact_candidate(_):
+    def compact_candidate(_: None) -> _DeterminantCandidate:
         sequences = eqx.filter_vmap(
             _accept_determinant_row,
             in_axes=(eqx.if_array(0), eqx.if_array(0)),
@@ -575,7 +582,7 @@ def _propose_periodic_ferminet_cache(
             determinant_proposals.status,
         )
 
-    def rebased_candidate(_):
+    def rebased_candidate(_: None) -> _DeterminantCandidate:
         factorizations = eqx.filter_vmap(
             _factorize_determinant,
             in_axes=(0, None),
@@ -688,7 +695,20 @@ def _select_periodic_ferminet_cache(
     )
 
 
-def _logical_periodic_ferminet_cache(cache: PeriodicFermiNetCache, /):
+def _logical_periodic_ferminet_cache(
+    cache: PeriodicFermiNetCache, /
+) -> tuple[
+    PeriodicCellFeatureResult,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]:
     return (
         cache.features,
         cache.orbital_matrices,

@@ -43,6 +43,7 @@ from ..units import (
     UnitDefinition,
 )
 from ._activation import InventoryTransition
+from ._identity import NuclideKey
 
 
 _ACTIVITY_KINDS = frozenset(
@@ -121,7 +122,9 @@ def _time_axis_and_dimension(asset: MeasurementAsset, /) -> tuple[SampleTimeAxis
     )
 
 
-def _reduced_support(asset: MeasurementAsset, time_dimension: int, /):
+def _reduced_support(
+    asset: MeasurementAsset, time_dimension: int, /
+) -> MedicalImageSupport | IndexSampleSupport | _ScalarActivitySupport:
     support = asset.field.support
     if isinstance(support, MedicalImageSupport):
         return MedicalImageSupport(support.spatial_shape, support.spatial_affine)
@@ -198,10 +201,9 @@ class TimeActivitySeries:
             raise ValueError(
                 "The activity asset references must include the transition data artifact."
             )
-        if (
-            self.asset.metadata.get("radionuclide_id")
-            != self.transition.parent.nuclide_id
-        ):
+        metadata = self.asset.metadata
+        assert metadata is not None
+        if metadata.get("radionuclide_id") != self.transition.parent.nuclide_id:
             raise ValueError(
                 "Time-activity asset radionuclide identity must match the transition."
             )
@@ -229,7 +231,7 @@ class TimeActivitySeries:
         return _time_axis_and_dimension(self.asset)[1]
 
     @property
-    def radionuclide(self):
+    def radionuclide(self) -> NuclideKey:
         return self.transition.parent
 
 
@@ -362,10 +364,12 @@ class TimeActivityIntegrationResult:
 
     @property
     def valid_mask(self) -> np.ndarray:
-        return self.asset.field.valid_mask
+        mask = self.asset.field.valid_mask
+        assert mask is not None
+        return mask
 
     @property
-    def radionuclide(self):
+    def radionuclide(self) -> NuclideKey:
         return self.transition.parent
 
 
@@ -466,9 +470,11 @@ class TimeActivityIntegrationPlan:
         activity_kind = field_.quantity.quantity_kind
         source_reference_unit = _REFERENCE_UNIT[activity_kind]
         scale = float(conversion_factor(field_.quantity.unit, source_reference_unit))
+        valid_mask = field_.valid_mask
+        assert valid_mask is not None
         evaluation = self.prepare(series.time_dimension).evaluate(
             np.asarray(field_.values) * scale,
-            field_.valid_mask,
+            valid_mask,
         )
         values = np.asarray(evaluation.values)
         valid = np.asarray(evaluation.valid)

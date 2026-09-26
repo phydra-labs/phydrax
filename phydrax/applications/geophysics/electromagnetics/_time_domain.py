@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -95,14 +97,20 @@ class ImplicitTimeDomainEMPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def _operators(self, material: ConductiveEMMaterial, dt: Array):
-        def mass(field):
+    def _operators(
+        self, material: ConductiveEMMaterial, dt: Array
+    ) -> tuple[
+        la.FunctionLinearOperator,
+        Callable[[ArrayLike], Array],
+        Callable[[ArrayLike], Array],
+    ]:
+        def mass(field: ArrayLike) -> Array:
             return self.space.mass_action(field, material.conductivity_S_m)
 
-        def stiffness(field):
+        def stiffness(field: ArrayLike) -> Array:
             return self.space.curl_curl_action(field, material.inverse_permeability_m_H)
 
-        def action(reduced):
+        def action(reduced: Array) -> Array:
             full = (
                 jnp.zeros((self.space.edge_count,), dtype=reduced.dtype)
                 .at[self.free_edges]

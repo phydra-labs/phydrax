@@ -9,12 +9,14 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._temporal_precision import TemporalPrecisionPolicy
 from ..linalg import (
     DenseLinearOperator,
     DenseLU,
+    HermitianPrecisionPolicy,
     LinearSolvePolicy,
     LinearSystem,
     solve as solve_linear,
@@ -143,8 +145,8 @@ class GaussianLindbladSolution(StrictModule):
         problem_id: str,
         hbar: float,
         precision: TemporalPrecisionPolicy,
-        geometry_precision,
-        hermitian_precision,
+        geometry_precision: GeometryPrecisionPolicy,
+        hermitian_precision: HermitianPrecisionPolicy,
     ) -> None:
         if not isinstance(precision, TemporalPrecisionPolicy):
             raise TypeError("precision must be TemporalPrecisionPolicy.")
@@ -212,7 +214,9 @@ def solve_gaussian_lindblad(
     if count < 0 or float(step) <= 0.0:
         raise ValueError("steps and step_size must be positive.")
 
-    def advance(state, _):
+    def advance(
+        state: tuple[Array, Array], _: None
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         mean, covariance = state
         k1_mean, k1_covariance = jax.tree.map(
             precision_.stage,

@@ -208,7 +208,9 @@ class MappedInfiniteDefectResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _chebyshev_operators(count: int, scale: float, /):
+def _chebyshev_operators(
+    count: int, scale: float, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     order = count - 1
     descending = np.cos(np.pi * np.arange(count) / order)
     coefficients = np.ones(count)
@@ -636,8 +638,8 @@ def run_defect_scattering(
             self_adjoint=True,
             positive_definite=True,
             evidence={
-                "self_adjoint": "defect field-space metric",
-                "positive_definite": "defect field-space metric",
+                "self_adjoint": "asserted",
+                "positive_definite": "asserted",
             },
         ),
     )

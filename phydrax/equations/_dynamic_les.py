@@ -8,9 +8,9 @@ import abc
 from typing import Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -70,7 +70,7 @@ class DynamicLESProvenance(StrictModule, NonTrainableState):
             raise ValueError("Resolved and test LES commutation semantics must match.")
 
         ratio_array = jnp.asarray(test_filter_ratio)
-        if isinstance(ratio_array, jax.core.Tracer):
+        if isinstance(ratio_array, jax_core.Tracer):
             raise TypeError("The test-filter ratio must be concrete provenance metadata.")
         ratio = np.asarray(ratio_array, dtype=np.float64)
         if ratio.shape == ():
@@ -81,7 +81,7 @@ class DynamicLESProvenance(StrictModule, NonTrainableState):
             raise ValueError(
                 "Every directional test-filter ratio must be finite and > 1."
             )
-        ratio_tuple = tuple(float(value) for value in ratio)
+        ratio_tuple = (float(ratio[0]), float(ratio[1]), float(ratio[2]))
 
         self.parameter_provenance = parameter_provenance
         self.test_filter = test_filter
@@ -383,7 +383,7 @@ class LocalKernelDynamicLESAveraging(AbstractDynamicLESAveraging, NonTrainableSt
 
     def __init__(self, kernel_weights: ArrayLike, /) -> None:
         array = jnp.asarray(kernel_weights)
-        if isinstance(array, jax.core.Tracer):
+        if isinstance(array, jax_core.Tracer):
             raise TypeError("Local averaging kernel weights must be concrete.")
         weights = np.asarray(array, dtype=np.float64)
         if weights.ndim != 3:
@@ -906,7 +906,7 @@ def _inexact_array(value: ArrayLike, /) -> Array:
 
 
 def _is_concrete(value: Array, /) -> bool:
-    return not isinstance(value, jax.core.Tracer)
+    return not isinstance(value, jax_core.Tracer)
 
 
 def _require_finite(value: Array, name: str, /) -> None:

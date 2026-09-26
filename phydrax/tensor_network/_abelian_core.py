@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from itertools import pairwise
+from typing import Literal, overload, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,6 +20,10 @@ from .._strict import StrictModule
 from ._abelian import AbelianCharge, AbelianLeg, AbelianTensor, AbelianTensorLayout
 from ._core import MatrixProductOperator, MatrixProductState
 from ._precision import TensorNetworkPrecisionPolicy
+
+
+# (merged sector ordinal, active offset); the first contribution has offset 0.
+_LegRoute: TypeAlias = tuple[int, Array | int]
 
 
 def _same_leg_catalog(left: AbelianLeg, right: AbelianLeg, /) -> bool:
@@ -180,7 +185,12 @@ class AbelianMatrixProductOperator(StrictModule):
         return dense.to_dense(maximum_elements=maximum_elements)
 
 
-def _block_map(tensor: AbelianTensor):
+_AbelianChainT = TypeVar(
+    "_AbelianChainT", AbelianMatrixProductState, AbelianMatrixProductOperator
+)
+
+
+def _block_map(tensor: AbelianTensor) -> dict[tuple[int, ...], Array]:
     return dict(zip(tensor.layout.sectors, tensor.blocks, strict=True))
 
 
@@ -303,7 +313,7 @@ def abelian_mps_one_site_expectation(
     return precision.output(environment[(0, 0)].reshape(()))
 
 
-def _replace_blocks(tensor, blocks):
+def _replace_blocks(tensor: AbelianTensor, blocks: Sequence[Array]) -> AbelianTensor:
     return AbelianTensor(tensor.layout, tuple(blocks), precision=tensor.precision)
 
 
@@ -499,7 +509,7 @@ def _merged_leg(
     *,
     orientation: int,
     subtract: bool,
-) -> tuple[AbelianLeg, tuple[tuple[int, int], ...]]:
+) -> tuple[AbelianLeg, tuple[_LegRoute, ...]]:
     if first.group.group_id != second.group.group_id:
         raise ValueError("Composite Abelian legs must use the same group.")
     group = first.group
@@ -545,7 +555,7 @@ def _merged_leg(
 
 def _direct_sum_leg(
     left: AbelianLeg, right: AbelianLeg, /
-) -> tuple[AbelianLeg, tuple[tuple[int, int], ...], tuple[tuple[int, int], ...]]:
+) -> tuple[AbelianLeg, tuple[_LegRoute, ...], tuple[_LegRoute, ...]]:
     if (
         left.group.group_id != right.group.group_id
         or left.orientation != right.orientation
@@ -640,7 +650,29 @@ def adjoint_abelian_mpo(
     return AbelianMatrixProductOperator(tuple(tensors))
 
 
-def _add_abelian_chains(left, right, /, *, operator: bool):
+@overload
+def _add_abelian_chains(
+    left: AbelianMatrixProductState,
+    right: AbelianMatrixProductState,
+    /,
+    *,
+    operator: Literal[False],
+) -> AbelianMatrixProductState: ...
+
+
+@overload
+def _add_abelian_chains(
+    left: AbelianMatrixProductOperator,
+    right: AbelianMatrixProductOperator,
+    /,
+    *,
+    operator: Literal[True],
+) -> AbelianMatrixProductOperator: ...
+
+
+def _add_abelian_chains(
+    left: _AbelianChainT, right: _AbelianChainT, /, *, operator: bool
+) -> AbelianMatrixProductState | AbelianMatrixProductOperator:
     expected_type = (
         AbelianMatrixProductOperator if operator else AbelianMatrixProductState
     )
@@ -1008,7 +1040,7 @@ def _mpo_as_fused_abelian_mps(
     operator: AbelianMatrixProductOperator, /
 ) -> tuple[
     AbelianMatrixProductState,
-    tuple[tuple[AbelianLeg, tuple[tuple[int, Array], ...]], ...],
+    tuple[tuple[AbelianLeg, tuple[_LegRoute, ...]], ...],
 ]:
     tensors = []
     physical_records = []
@@ -1059,7 +1091,7 @@ def _mpo_as_fused_abelian_mps(
 def _fused_abelian_mps_as_mpo(
     state: AbelianMatrixProductState,
     template: AbelianMatrixProductOperator,
-    physical_records: tuple[tuple[AbelianLeg, tuple[tuple[int, Array], ...]], ...],
+    physical_records: tuple[tuple[AbelianLeg, tuple[_LegRoute, ...]], ...],
     /,
 ) -> AbelianMatrixProductOperator:
     tensors = []

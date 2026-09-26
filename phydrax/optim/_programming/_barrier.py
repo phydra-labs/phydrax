@@ -3,9 +3,12 @@
 #
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from ..._strict import StrictModule
@@ -43,7 +46,7 @@ class ConeBarrierOracle(StrictModule):
         vector_ = self.cone._validate(vector)
         gradient = jax.grad(lambda value: _barrier_value(self.cone, value))
 
-        def action(value, direction):
+        def action(value: Array, direction: Array) -> Array:
             return jax.jvp(gradient, (value,), (direction,))[1]
 
         result = _map_leading_axes(action, point_, vector_)
@@ -64,7 +67,7 @@ class ConeBarrierOracle(StrictModule):
     def centrality_residual(self, slack: Array, dual: Array, mu: Array, /) -> Array:
         return dual + mu * self.gradient(slack)
 
-    def interior_reference(self, dtype, /) -> Array:
+    def interior_reference(self, dtype: DTypeLike, /) -> Array:
         return _interior_reference(self.cone, dtype)
 
     def maximum_interior_step(
@@ -88,14 +91,14 @@ class ConeBarrierOracle(StrictModule):
         lower = jnp.zeros(initial.shape, dtype=point.dtype)
         upper = jnp.ones(initial.shape, dtype=point.dtype)
 
-        def expand(_, state):
+        def expand(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             lo, hi = state
             accepted = _barrier_margin(self.cone, point + hi[..., None] * direction) > 0.0
             return jnp.where(accepted, hi, lo), jnp.where(accepted, 2.0 * hi, hi)
 
         lower, upper = jax.lax.fori_loop(0, 32, expand, (lower, upper))
 
-        def bisect(_, state):
+        def bisect(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             lo, hi = state
             middle = 0.5 * (lo + hi)
             accepted = (
@@ -107,14 +110,14 @@ class ConeBarrierOracle(StrictModule):
         return fraction_ * lower
 
 
-def _map_leading_axes(function, *values):
+def _map_leading_axes(function: Callable[..., Array], *values: Array) -> Array:
     mapped = function
     for _ in range(values[0].ndim - 1):
         mapped = jax.vmap(mapped)
     return mapped(*values)
 
 
-def _barrier_margin(cone, point):
+def _barrier_margin(cone: AbstractConvexCone, point: Array) -> Array:
     if isinstance(cone, ZeroCone):
         return jnp.full(point.shape[:-1], jnp.inf, dtype=point.dtype)
     if isinstance(cone, ProductCone):
@@ -126,7 +129,7 @@ def _barrier_margin(cone, point):
     return cone.interior_margin(point)
 
 
-def _barrier_value(cone, point):
+def _barrier_value(cone: AbstractConvexCone, point: Array) -> Array:
     value = cone._validate(point)
     if isinstance(cone, ZeroCone):
         return jnp.zeros(value.shape[:-1], dtype=value.dtype)
@@ -168,7 +171,7 @@ def _barrier_value(cone, point):
     raise TypeError(f"No native barrier oracle for {type(cone).__name__}.")
 
 
-def _interior_reference(cone, dtype):
+def _interior_reference(cone: AbstractConvexCone, dtype: DTypeLike) -> Array:
     if isinstance(cone, ZeroCone):
         return jnp.zeros((cone.dimension,), dtype=dtype)
     if isinstance(cone, NonnegativeCone):

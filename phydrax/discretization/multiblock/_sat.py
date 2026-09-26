@@ -22,6 +22,7 @@ from ._core import (
     _trace,
     BlockInterface,
     BlockSide,
+    PreparedBlock,
     PreparedMultiblockGrid,
 )
 from ._interpolation import NormCompatibleInterpolationPlan
@@ -274,7 +275,7 @@ class MultiblockSATCoupling(StrictModule, NonTrainableState):
 
 
 def _trace_tangential_weight(
-    block,
+    block: PreparedBlock,
     sbp: PreparedSBPOperator,
     side: BlockSide,
     /,
@@ -290,7 +291,7 @@ def _trace_tangential_weight(
 
 
 def _trace_coordinate_and_weight(
-    block,
+    block: PreparedBlock,
     sbp: PreparedSBPOperator,
     side: BlockSide,
     /,

@@ -234,7 +234,9 @@ class GaugeCovariantGLPlan(StrictModule, NonTrainableState):
         potential = coordinates[2 * count :]
         return self._anchor(ChargedGaugeState(scalar, potential, self.gauge.plan_id))
 
-    def _coordinate_energy(self, coordinates: Array, template: GinzburgLandauState, /):
+    def _coordinate_energy(
+        self, coordinates: Array, template: GinzburgLandauState, /
+    ) -> Array:
         gauge = self._decode(coordinates)
         return self.energy(
             GinzburgLandauState(

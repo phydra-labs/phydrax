@@ -317,7 +317,7 @@ def finite_size_growth(
         reference_step = evolution.advance(reference, source, target, args)
         next_reference = reference_step.final_state
 
-        def advance_perturbed(value):
+        def advance_perturbed(value: Array) -> tuple[Array, Array]:
             step = evolution.advance(value, source, target, args)
             return step.final_state, step.valid
 
@@ -516,7 +516,7 @@ def recurrence_quantification(
         )
     output_shape = data.case_shape
 
-    def shaped(values):
+    def shaped(values: np.ndarray) -> Array:
         return jnp.asarray(values).reshape(output_shape)
 
     return RecurrenceQuantificationResult(

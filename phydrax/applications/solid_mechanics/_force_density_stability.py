@@ -309,7 +309,7 @@ def force_density_continuation_problem(
         raise TypeError("decode_inputs must be callable.")
     structure = problem.structure
 
-    def residual(reduced: PyTree[Any], coordinate: Array, args: Any):
+    def residual(reduced: PyTree[Any], coordinate: Array, args: Any) -> Array:
         inputs = decode_inputs(coordinate, args)
         if not isinstance(inputs, ForceDensityInputs):
             raise TypeError("decode_inputs must return ForceDensityInputs.")

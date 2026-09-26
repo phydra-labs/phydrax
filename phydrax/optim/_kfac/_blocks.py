@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from ...linalg import (
@@ -42,7 +43,7 @@ def initialize_block_state(
     /,
     *,
     num_terms: int,
-    dtype,
+    dtype: DTypeLike,
 ) -> BlockCurvatureState:
     """Create uninitialized per-term factor state for a static block layout."""
 
@@ -318,7 +319,7 @@ def kron_dense_matrix(
 
 
 def preconditioned_conjugate_gradient(
-    matvec,
+    matvec: Callable[[Array], Array],
     rhs: Array,
     preconditioner_diagonal: Array,
     /,

@@ -19,6 +19,8 @@ from ..discretization import DiscretizationBundle, DiscretizationRecord
 from ..discretization.particle import (
     AbstractParticleNeighborhoodPlan,
     CellListParticleNeighborhoodPlan,
+    DEMDiagnostics,
+    DEMStepRestriction,
     HierarchicalRadiusParticleNeighborhoodPlan,
     ImplicitDEMBarrier,
     ParticleDiscretization,
@@ -156,11 +158,11 @@ class CompiledDiscreteElementProblem(StrictModule, NonTrainableState):
 
     def diagnostics(
         self, time: ArrayLike, state: DEMRuntimeState, /, *, args: Any = None
-    ):
+    ) -> DEMDiagnostics:
         zero = jnp.zeros((), dtype=state.kinematics.position.dtype)
         return self.dynamics.evaluate(jnp.asarray(time), state, zero, args).diagnostics
 
-    def step_restriction(self):
+    def step_restriction(self) -> DEMStepRestriction:
         return self.dynamics.step_restriction()
 
 

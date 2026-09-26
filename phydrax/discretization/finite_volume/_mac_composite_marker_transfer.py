@@ -305,12 +305,12 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
                 else:
 
                     def add_marker(
-                        marker_order,
-                        values,
-                        component_=component,
-                        valid_=valid,
-                        contribution_=contribution,
-                    ):
+                        marker_order: Array,
+                        values: Array,
+                        component_: int = component,
+                        valid_: Array = valid,
+                        contribution_: Array = contribution,
+                    ) -> Array:
                         marker = order[marker_order]
                         return values.at[relation.route_index[component_][marker]].add(
                             jnp.where(valid_[marker], contribution_[marker], 0.0)
@@ -340,14 +340,16 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
         interpolation_work = jnp.real(
             self.markers.active_velocity_space.inner(gathered, force)
         )
-        spreading_work = sum(
-            jnp.sum(
-                self.face_measures[level][component]
-                * velocity[level][component]
-                * spread[level][component]
+        spreading_work = jnp.asarray(
+            sum(
+                jnp.sum(
+                    self.face_measures[level][component]
+                    * velocity[level][component]
+                    * spread[level][component]
+                )
+                for level in range(self.level_count)
+                for component in range(self.markers.ambient_dimension)
             )
-            for level in range(self.level_count)
-            for component in range(self.markers.ambient_dimension)
         )
         residual = interpolation_work - spreading_work
         finite = relation.finite & jnp.isfinite(residual)
@@ -505,7 +507,7 @@ def reflux_composite_marker_impulse(
         residual,
         coarse.start_time,
         coarse.end_time,
-        sum(ledger.accepted_substeps for ledger in fine),
+        jnp.asarray(sum(ledger.accepted_substeps for ledger in fine)),
         finite,
         successful,
         coarse.transfer_id,

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import IntEnum, StrEnum
 
 import equinox as eqx
@@ -90,11 +91,11 @@ class ChemicalConditionalAffinePlan(StrictModule):
 
     def __init__(
         self,
-        affine_species,
-        driver_species=(),
+        affine_species: Iterable[str],
+        driver_species: Iterable[str] = (),
         /,
         *,
-        pivots=(),
+        pivots: Iterable[ChemicalAffinePivot] = (),
         plan_id: str | None = None,
     ) -> None:
         affine = tuple(str(value) for value in affine_species)

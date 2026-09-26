@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -100,7 +101,7 @@ class PiecewiseConstantRates:
 
     def __init__(
         self,
-        boundaries: ArrayLike,
+        boundaries: npt.ArrayLike,
         rates: ArrayLike,
         /,
         *,

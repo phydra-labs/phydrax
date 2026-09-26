@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 import phydrax.ein as ein
@@ -60,7 +61,9 @@ class VirtualElementProjectionData(StrictModule):
     projection_id: str = eqx.field(static=True)
 
 
-def _edge_trace_points(geometry: PolygonGeometry, degree: int, /):
+def _edge_trace_points(
+    geometry: PolygonGeometry, degree: int, /
+) -> tuple[Array, Array, Array]:
     from ...integration import GaussLobattoLegendreRule, interval_rule_data
 
     data = interval_rule_data(GaussLobattoLegendreRule(degree + 1))
@@ -286,7 +289,7 @@ def _prepare_h1_virtual_element_projections(
     )
 
 
-def _legendre_trace_data(degree: int, dtype, /):
+def _legendre_trace_data(degree: int, dtype: DTypeLike, /) -> tuple[Array, Array, Array]:
     from ...integration import GaussLegendreRule, interval_rule_data
 
     data = interval_rule_data(GaussLegendreRule(degree + 1))

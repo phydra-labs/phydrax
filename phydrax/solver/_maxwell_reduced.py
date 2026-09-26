@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -33,6 +34,26 @@ def _backward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
         indices = jnp.maximum(jnp.arange(value.shape[axis]) - 1, 0)
         previous = jnp.take(value, indices, axis=axis)
     return (value - previous) / spacing
+
+
+def _field_triple(
+    values: tuple[ArrayLike, ArrayLike, ArrayLike], /
+) -> tuple[Array, Array, Array]:
+    first, second, third = values
+    return jnp.asarray(first), jnp.asarray(second), jnp.asarray(third)
+
+
+def _select_triple(
+    predicate: Array,
+    new: tuple[Array, Array, Array],
+    old: tuple[Array, Array, Array],
+    /,
+) -> tuple[Array, Array, Array]:
+    return (
+        jnp.where(predicate, new[0], old[0]),
+        jnp.where(predicate, new[1], old[1]),
+        jnp.where(predicate, new[2], old[2]),
+    )
 
 
 class PreparedReducedMaxwellCPMLTerm(StrictModule, NonTrainableState):
@@ -85,7 +106,9 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
             if 2 * width >= count:
                 raise ValueError("Reduced Maxwell CPML leaves no undamped interior.")
 
-        def make_term(axis: int, component: int, kind: str):
+        def make_term(
+            axis: int, component: int, kind: str
+        ) -> PreparedReducedMaxwellCPMLTerm | None:
             width = widths[axis]
             if width == 0:
                 return None
@@ -153,7 +176,7 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, /, *, dtype=jnp.float64) -> MaxwellCPMLState:
+    def initialize(self, /, *, dtype: DTypeLike = jnp.float64) -> MaxwellCPMLState:
         return MaxwellCPMLState(
             tuple(
                 jnp.zeros(term.indices.shape, dtype=dtype) for term in self.electric_terms
@@ -286,10 +309,10 @@ def _apply_boundary_traces(
                 elif boundary.kind == "impedance":
                     admittance = jnp.asarray(boundary.admittance, dtype=value.dtype)
                     trace = trace / (1.0 + step_size * admittance)
-                indices = [slice(None)] * value.ndim
+                indices: list[slice | int] = [slice(None)] * value.ndim
                 indices[axis] = boundary_index
                 result[component] = value.at[tuple(indices)].set(trace)
-    return tuple(result)
+    return result[0], result[1], result[2]
 
 
 class ReducedMaxwellDiagnostics(StrictModule):
@@ -345,7 +368,10 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "CompatibleMaxwell2DPlan requires a prepared 2-D tensor grid."
             )
-        periodic = tuple(bool(axis.periodic) for axis in grid.structured_axes)
+        periodic = (
+            bool(grid.structured_axes[0].periodic),
+            bool(grid.structured_axes[1].periodic),
+        )
         boundary_pairs = (
             tuple((None, None) for _ in periodic)
             if boundaries is None
@@ -417,16 +443,8 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         charge: ArrayLike | None = None,
     ) -> CompatibleMaxwell2DState:
         zero = jnp.zeros(self.shape)
-        e = (
-            (zero, zero, zero)
-            if electric is None
-            else tuple(jnp.asarray(v) for v in electric)
-        )
-        b = (
-            (zero, zero, zero)
-            if magnetic is None
-            else tuple(jnp.asarray(v) for v in magnetic)
-        )
+        e = (zero, zero, zero) if electric is None else _field_triple(electric)
+        b = (zero, zero, zero) if magnetic is None else _field_triple(magnetic)
         rho = zero if charge is None else jnp.asarray(charge)
         if any(value.shape != self.shape for value in e + b) or rho.shape != self.shape:
             raise ValueError(
@@ -499,7 +517,7 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         d_x_ez = _forward(ez, 0, dx, self.periodic[0])
         d_x_ey = _forward(ey, 0, dx, self.periodic[0])
         d_y_ex = _forward(ex, 1, dy, self.periodic[1])
-        if self.pml is not None:
+        if self.pml is not None and pml_memory is not None:
             d_y_ez, pml_memory = self.pml.apply(
                 d_y_ez, pml_memory, 0.5 * dt, electric=False, axis=1, component=0
             )
@@ -520,7 +538,7 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         d_x_bz = _backward(half_bz / self.permeability, 0, dx, self.periodic[0])
         d_x_by = _backward(half_by / self.permeability, 0, dx, self.periodic[0])
         d_y_bx = _backward(half_bx / self.permeability, 1, dy, self.periodic[1])
-        if self.pml is not None:
+        if self.pml is not None and pml_memory is not None:
             d_y_bz, pml_memory = self.pml.apply(
                 d_y_bz, pml_memory, dt, electric=True, axis=1, component=0
             )
@@ -540,7 +558,7 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         d_x_next_ez = _forward(next_ez, 0, dx, self.periodic[0])
         d_x_next_ey = _forward(next_ey, 0, dx, self.periodic[0])
         d_y_next_ex = _forward(next_ex, 1, dy, self.periodic[1])
-        if self.pml is not None:
+        if self.pml is not None and pml_memory is not None:
             d_y_next_ez, pml_memory = self.pml.apply(
                 d_y_next_ez, pml_memory, 0.5 * dt, electric=False, axis=1, component=0
             )
@@ -574,12 +592,14 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         )
         old_energy = self.energy(state)
         new_energy = self.energy(candidate)
+        electric_x, electric_y, electric_z = candidate.electric
         source_power = (
             self.spacing[0]
             * self.spacing[1]
-            * sum(
-                jnp.sum(e * current_component)
-                for e, current_component in zip(candidate.electric, current, strict=True)
+            * (
+                jnp.sum(electric_x * jx)
+                + jnp.sum(electric_y * jy)
+                + jnp.sum(electric_z * jz)
             )
         )
         gauss = jnp.max(jnp.abs(self.divergence_electric(candidate) - next_charge))
@@ -596,14 +616,8 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
         stable = jnp.isfinite(dt) & (dt > 0.0) & (dt <= self.stable_dt)
         successful = finite & stable
         accepted = CompatibleMaxwell2DState(
-            tuple(
-                jnp.where(successful, new, old)
-                for new, old in zip(candidate.electric, state.electric, strict=True)
-            ),
-            tuple(
-                jnp.where(successful, new, old)
-                for new, old in zip(candidate.magnetic, state.magnetic, strict=True)
-            ),
+            _select_triple(successful, candidate.electric, state.electric),
+            _select_triple(successful, candidate.magnetic, state.magnetic),
             jnp.where(successful, candidate.charge, state.charge),
             _select_cpml_state(successful, candidate.pml_memory, state.pml_memory),
         )
@@ -727,16 +741,8 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         charge: ArrayLike | None = None,
     ) -> CompatibleMaxwell1DState:
         zero = jnp.zeros((self.count,))
-        electric_ = (
-            (zero, zero, zero)
-            if electric is None
-            else tuple(jnp.asarray(value) for value in electric)
-        )
-        magnetic_ = (
-            (zero, zero, zero)
-            if magnetic is None
-            else tuple(jnp.asarray(value) for value in magnetic)
-        )
+        electric_ = (zero, zero, zero) if electric is None else _field_triple(electric)
+        magnetic_ = (zero, zero, zero) if magnetic is None else _field_triple(magnetic)
         charge_ = zero if charge is None else jnp.asarray(charge)
         expected = (self.count,)
         if (
@@ -800,7 +806,7 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         pml_memory = state.pml_memory
         d_x_ez = _forward(ez, 0, self.spacing, self.periodic[0])
         d_x_ey = _forward(ey, 0, self.spacing, self.periodic[0])
-        if self.pml is not None:
+        if self.pml is not None and pml_memory is not None:
             d_x_ez, pml_memory = self.pml.apply(
                 d_x_ez, pml_memory, 0.5 * dt, electric=False, axis=0, component=1
             )
@@ -813,7 +819,7 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         next_ex = ex - dt * jx / self.permittivity
         d_x_bz = _backward(half_bz / self.permeability, 0, self.spacing, self.periodic[0])
         d_x_by = _backward(half_by / self.permeability, 0, self.spacing, self.periodic[0])
-        if self.pml is not None:
+        if self.pml is not None and pml_memory is not None:
             d_x_bz, pml_memory = self.pml.apply(
                 d_x_bz, pml_memory, dt, electric=True, axis=0, component=1
             )
@@ -824,7 +830,7 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         next_ez = ez + dt / self.permittivity * (d_x_by - jz)
         d_x_next_ez = _forward(next_ez, 0, self.spacing, self.periodic[0])
         d_x_next_ey = _forward(next_ey, 0, self.spacing, self.periodic[0])
-        if self.pml is not None:
+        if self.pml is not None and pml_memory is not None:
             d_x_next_ez, pml_memory = self.pml.apply(
                 d_x_next_ez, pml_memory, 0.5 * dt, electric=False, axis=0, component=1
             )
@@ -844,9 +850,9 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
             next_electric, next_magnetic, charge, pml_memory
         )
         old_energy, new_energy = self.energy(state), self.energy(candidate)
-        source_power = self.spacing * sum(
-            jnp.sum(e * value)
-            for e, value in zip(candidate.electric, current, strict=True)
+        electric_x, electric_y, electric_z = candidate.electric
+        source_power = self.spacing * (
+            jnp.sum(electric_x * jx) + jnp.sum(electric_y * jy) + jnp.sum(electric_z * jz)
         )
         gauss = jnp.max(
             jnp.abs(
@@ -870,14 +876,8 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
         stable = jnp.isfinite(dt) & (dt > 0.0) & (dt <= self.stable_dt)
         successful = finite & stable
         accepted = CompatibleMaxwell1DState(
-            tuple(
-                jnp.where(successful, new, old)
-                for new, old in zip(candidate.electric, state.electric, strict=True)
-            ),
-            tuple(
-                jnp.where(successful, new, old)
-                for new, old in zip(candidate.magnetic, state.magnetic, strict=True)
-            ),
+            _select_triple(successful, candidate.electric, state.electric),
+            _select_triple(successful, candidate.magnetic, state.magnetic),
             jnp.where(successful, candidate.charge, state.charge),
             _select_cpml_state(successful, candidate.pml_memory, state.pml_memory),
         )

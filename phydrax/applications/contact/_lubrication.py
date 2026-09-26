@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -343,7 +344,7 @@ class PreparedReynoldsFilm(StrictModule, NonTrainableState):
     cell_area: Array
     prepared_id: str = eqx.field(static=True)
 
-    def initialize(self, dtype=jnp.float64, /) -> ReynoldsFilmState:
+    def initialize(self, dtype: DTypeLike = jnp.float64, /) -> ReynoldsFilmState:
         pressure = jnp.full(
             (self.plan.film_mesh.coordinates.shape[0],),
             self.plan.cavitation_pressure,

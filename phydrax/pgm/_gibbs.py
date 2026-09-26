@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from math import prod
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -42,6 +43,11 @@ _GIBBS_ADDRESS = SampleAddress(
     target="site",
     role="conditional-sample",
 )
+
+
+# Per-draw scan output: positions, log score, validity, invalid conditionals,
+# state-change fraction.
+_GibbsDrawOutput: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class ChromaticGibbs(StrictModule):
@@ -105,7 +111,7 @@ class GibbsState(StrictModule):
         /,
         *,
         valid: ArrayLike | None = None,
-        sweep_index: int | Array = 0,
+        sweep_index: ArrayLike = 0,
     ) -> None:
         states = jnp.asarray(positions)
         if states.ndim != 2 or not jnp.issubdtype(states.dtype, jnp.integer):
@@ -657,7 +663,7 @@ def sample_gibbs(
     if clamp_mask.shape != (prepared.graph.num_variables,):
         raise ValueError("clamped must have one boolean per graph variable.")
 
-    def warmup_step(carry, sweep_index):
+    def warmup_step(carry: GibbsState, sweep_index: Array) -> tuple[GibbsState, None]:
         next_state, _info = gibbs_sweep(
             prepared,
             carry,
@@ -672,8 +678,12 @@ def sample_gibbs(
         xs=jnp.arange(schedule.warmup_sweeps, dtype=jnp.uint32),
     )
 
-    def collect_draw(carry, draw_index):
-        def transition_step(inner, transition_index):
+    def collect_draw(
+        carry: GibbsState, draw_index: Array
+    ) -> tuple[GibbsState, _GibbsDrawOutput]:
+        def transition_step(
+            inner: GibbsState, transition_index: Array
+        ) -> tuple[GibbsState, GibbsTransitionInfo]:
             sweep_index = (
                 schedule.warmup_sweeps
                 + draw_index * schedule.sweeps_per_draw

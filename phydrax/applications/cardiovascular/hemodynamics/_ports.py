@@ -633,7 +633,7 @@ def prepare_terminal_measurements(
         axis = axis_names.index(face.axis)
         if discretization.periodic[axis]:
             raise ValueError("A periodic grid face cannot be a cardiovascular terminal.")
-        face_slice: list[object] = [slice(None)] * 3
+        face_slice: list[int | slice] = [slice(None)] * 3
         face_slice[axis] = 0 if face.side == "lower" else -1
         region = np.zeros(discretization.grid.shape, dtype=np.bool_)
         region[tuple(face_slice)] = mask[tuple(face_slice)]

@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import numpy as np
 import yaml
+from jax import core as jax_core
 from jaxtyping import ArrayLike
 
 from ..._document_resource import decode_text_resource
@@ -441,7 +442,7 @@ class CanteraReferenceAdapter(StrictModule, NonTrainableState):
 
 
 def _refuse_device_value(value: Any, name: str, /) -> None:
-    if isinstance(value, (jax.Array, jax.core.Tracer)):
+    if isinstance(value, (jax.Array, jax_core.Tracer)):
         raise CanteraNonDifferentiableBoundaryError(
             f"{name} crossed the host-only, non-differentiable Cantera boundary."
         )

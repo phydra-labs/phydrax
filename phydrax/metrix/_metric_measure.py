@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ._chart import CoordinateChart
 from ._curvature import ricci_tensor
 from ._density import VolumeDensity
 from ._metric import RiemannianMetric
@@ -76,7 +77,7 @@ class WeightedRiemannianMeasure(StrictModule):
         self.log_weight_function = log_weight
 
     @property
-    def chart(self):
+    def chart(self) -> CoordinateChart:
         return self.metric.chart
 
     def _log_weight_point(self, coordinates: Array, /) -> Array:

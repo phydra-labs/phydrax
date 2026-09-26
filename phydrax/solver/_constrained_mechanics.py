@@ -98,10 +98,14 @@ class SHAKERATTLEPlan:
         object.__setattr__(self, "constraint_tolerance", tolerance)
         object.__setattr__(self, "plan_id", identifier)
 
-    def _position_projection(self, trial: Array, args: object, /):
+    def _position_projection(
+        self, trial: Array, args: object, /
+    ) -> tuple[Array, Array, Array]:
         inverse_mass = self.inverse_mass
 
-        def project(_, carry):
+        def project(
+            _: Array, carry: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             configuration, active, used = carry
             residual = jnp.atleast_1d(jnp.asarray(self.constraint(configuration, args)))
             jacobian = jax.jacfwd(

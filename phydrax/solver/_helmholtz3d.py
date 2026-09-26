@@ -114,7 +114,9 @@ def _trace_matrices_3d(
         for target_index in range(start, stop):
             source_indices = jnp.arange(start, stop, dtype=jnp.int32)
 
-            def evaluate_source(source_index):
+            def evaluate_source(
+                source_index: Array,
+            ) -> tuple[Array, Array, Array, Array, Array]:
                 density = jnp.zeros_like(zero_density).at[source_index].set(1.0 + 0.0j)
                 single_estimate = evaluate_single_layer_self_triangle_3d(
                     single_base.with_density(density),

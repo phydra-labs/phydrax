@@ -22,7 +22,11 @@ from ...discretization.fem._mixed_constraint import (
     PreparedMixedFiniteElementConstraint,
     PressureGaugePolicy,
 )
-from ...equations import CellResidualAction, FiniteElementForm
+from ...equations import (
+    CellResidualAction,
+    FiniteElementExecutionContext,
+    FiniteElementForm,
+)
 from ...nn.parameters import ParameterSubspace
 from ...solver._field_equilibrium import (
     prepare_functional_stationarity,
@@ -381,8 +385,14 @@ def mixed_hyperelastic_form(
         raise TypeError("model must be MixedHyperelasticModel.")
 
     def displacement_kernel(
-        values, gradients, points, weights, basis_values, basis_gradients, context
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        basis_values: Array,
+        basis_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         del points, basis_values, context
         displacement_gradient = jnp.swapaxes(jnp.asarray(gradients[0]), -1, -2)
         pressure = jnp.asarray(values[1])
@@ -399,8 +409,14 @@ def mixed_hyperelastic_form(
         )
 
     def pressure_kernel(
-        values, gradients, points, weights, basis_values, basis_gradients, context
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        basis_values: Array,
+        basis_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         del points, basis_gradients, context
         displacement_gradient = jnp.swapaxes(jnp.asarray(gradients[0]), -1, -2)
         dimension = displacement_gradient.shape[-1]

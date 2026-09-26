@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import ceil, isfinite, log2, pi
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -899,10 +900,12 @@ def execute_gauge_preserving_program(
     )
     final = state
     for operation in prepared.program.operations:
+        # Prepared gauge programs are state-vector programs, which reject Kraus channels.
+        unitary_operation = cast(LocalUnitaryOperation, operation)
         final = apply_local_unitary_to_state(
             prepared.program.layout,
-            operation.unitary,
-            operation.target_wire_ids,
+            unitary_operation.unitary,
+            unitary_operation.target_wire_ids,
             final,
         )
     final_leakage = gauss_leakage(

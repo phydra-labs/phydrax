@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -19,7 +20,7 @@ from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSys
 from ._beam import AcceleratorBunch, AcceleratorConvention
 
 
-def _symplectic_form(dtype):
+def _symplectic_form(dtype: DTypeLike) -> Array:
     form = jnp.zeros((6, 6), dtype=dtype)
     for index in (0, 2, 4):
         form = form.at[index, index + 1].set(1.0)
@@ -145,7 +146,9 @@ def track_ring(plan: RingTrackingPlan, bunch: AcceleratorBunch, /) -> RingTracki
     if plan.one_turn.convention.convention_id != bunch.convention.convention_id:
         raise ValueError("Ring map and bunch coordinate conventions differ.")
 
-    def turn(carry, turn_index):
+    def turn(
+        carry: tuple[Array, Array, Array], turn_index: Array
+    ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array]]:
         coordinates, active, loss_turn = carry
         candidate = coordinates @ plan.one_turn.matrix.T + plan.one_turn.offset
         inside = (jnp.abs(candidate[:, 0]) <= plan.horizontal_aperture) & (

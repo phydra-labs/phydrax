@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+from types import TracebackType
 from typing import Self
 
 import equinox as eqx
@@ -81,7 +82,12 @@ class AbstractMeshingSession(abc.ABC):
             raise RuntimeError("Cannot enter a closed meshing session.")
         return self
 
-    def __exit__(self, exception_type, exception, traceback) -> bool:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
         self.close()
         return False
 

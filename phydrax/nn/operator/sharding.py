@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax
 import numpy as np
 from jax.experimental import multihost_utils
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._frozendict import frozendict
@@ -21,6 +22,9 @@ from .data import (
     OperatorBatch,
     OperatorTargetBatch,
 )
+
+
+_ModelT = TypeVar("_ModelT")
 
 
 class OperatorShardingPolicy(StrictModule):
@@ -116,14 +120,14 @@ class OperatorShardingPolicy(StrictModule):
 
 
 def _put_array(
-    value,
+    value: ArrayLike,
     policy: OperatorShardingPolicy,
     /,
     *,
     per_case: bool,
     process_local: bool = False,
     global_case_count: int | None = None,
-):
+) -> jax.Array:
     array = jax.numpy.asarray(value)
     sharding = policy.for_array(array.ndim, per_case=per_case)
     if not process_local or not per_case:
@@ -316,13 +320,13 @@ def shard_operator_targets(
 
 
 def shard_operator_case_array(
-    value,
+    value: ArrayLike,
     policy: OperatorShardingPolicy,
     /,
     *,
     process_local: bool = False,
     global_case_count: int | None = None,
-):
+) -> jax.Array:
     """Shard one array whose leading dimensions are operator case dimensions."""
 
     array = jax.numpy.asarray(value)
@@ -344,7 +348,9 @@ def shard_operator_case_array(
     )
 
 
-def replicate_operator_model(model, policy: OperatorShardingPolicy, /):
+def replicate_operator_model(
+    model: _ModelT, policy: OperatorShardingPolicy, /
+) -> _ModelT:
     """Replicate every array leaf of a model on the policy mesh, whatever its role."""
     arrays, rest = eqx.partition(model, eqx.is_array)
     return eqx.combine(jax.device_put(arrays, policy.replicated), rest)

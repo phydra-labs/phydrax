@@ -9,6 +9,7 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -84,7 +85,9 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize_surface(self, dtype=jnp.float64) -> PICBoundarySurfaceState:
+    def initialize_surface(
+        self, dtype: DTypeLike = jnp.float64
+    ) -> PICBoundarySurfaceState:
         shape = (len(self.kinds),)
         return PICBoundarySurfaceState(
             jnp.zeros(shape, dtype=dtype),

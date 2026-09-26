@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +16,7 @@ from ..._strict import StrictModule
 from ...ml._batch import MLBatch
 from ...ml._contracts import FitResult
 from ...ml.covariance._estimators import (
+    CovarianceModel,
     EmpiricalCovariance,
     FactorCovariance as MLFactorCovariance,
     LedoitWolfCovariance,
@@ -277,7 +278,8 @@ def fit_covariance(
             regularization=definition.regularization,
         )
     fit = recipe.fit_batch(batch)
-    covariance_model = fit.model.model
+    # Native covariance recipes always wrap a CovarianceModel.
+    covariance_model = cast(CovarianceModel, fit.model.model)
     matrix = covariance_model.covariance
     values = jnp.linalg.eigvalsh(matrix)
     safe_values = jnp.where(plan.sample_mask[:, None], plan.values, 0.0)
@@ -361,7 +363,8 @@ def fit_factor_model(
         correction=definition.correction,
         regularization=definition.regularization,
     ).fit_batch(batch)
-    covariance_model = fit.model.model
+    # The native factor recipe always wraps a CovarianceModel.
+    covariance_model = cast(CovarianceModel, fit.model.model)
     loadings = covariance_model.factor_loadings[:, ::-1]
     pivot = jnp.argmax(jnp.abs(loadings), axis=0)
     signs = jnp.sign(loadings[pivot, jnp.arange(definition.rank)])

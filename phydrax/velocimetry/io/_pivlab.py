@@ -470,7 +470,8 @@ def write_pivlab(
 
 
 def _read_mat_variables(path: Path, /) -> dict[str, Any]:
-    loaded = scipy.io.loadmat(path, squeeze_me=False, struct_as_record=True)
+    # The `spmatrix` keyword is absent from the supported scipy>=1.14 floor.
+    loaded = scipy.io.loadmat(path, squeeze_me=False, struct_as_record=True)  # ty: ignore[deprecated]
     return {name: value for name, value in loaded.items() if not name.startswith("__")}
 
 
@@ -653,11 +654,11 @@ def _unit_mode(units: str, /) -> str:
 
 
 def _physical_grid(
-    x,
-    y,
-    vector_x,
-    vector_y,
-    valid,
+    x: np.ndarray,
+    y: np.ndarray,
+    vector_x: np.ndarray,
+    vector_y: np.ndarray,
+    valid: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     x_ = np.asarray(x, dtype=np.float64).reshape((-1,))
@@ -706,7 +707,7 @@ def _physical_grid(
     return positions, vectors, validity
 
 
-def _h5py():
+def _h5py() -> Any:
     if importlib.util.find_spec("h5py") is None:
         raise AdapterError(
             AdapterStatus.OPTIONAL_DEPENDENCY_UNAVAILABLE,

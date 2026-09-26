@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import abc
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,12 +19,16 @@ from ..._trainable import NonTrainableState
 from ._core import ParticleDiscretization
 
 
+if TYPE_CHECKING:
+    from ._particle_internal_unstructured import ParticleInternalMeshMetrics
+
+
 class AbstractParticleInternalMeshPlan(StrictModule, NonTrainableState):
     mesh_id: eqx.AbstractVar[str]
     cell_capacity: eqx.AbstractVar[int]
 
     @abc.abstractmethod
-    def prepare(self):
+    def prepare(self) -> AbstractPreparedParticleInternalMesh:
         raise NotImplementedError
 
 
@@ -32,7 +37,9 @@ class AbstractPreparedParticleInternalMesh(StrictModule, NonTrainableState):
     cell_capacity: eqx.AbstractVar[int]
 
     @abc.abstractmethod
-    def metrics(self, outer_scale: ArrayLike, /):
+    def metrics(
+        self, outer_scale: ArrayLike, /
+    ) -> ParticleShellMetrics | ParticleInternalMeshMetrics:
         raise NotImplementedError
 
 
@@ -235,7 +242,9 @@ class ParticleInternalBatchPlan(StrictModule, NonTrainableState):
         if not self.batch_id:
             raise ValueError("batch_id must be nonempty.")
 
-    def prepare(self, particles: ParticleDiscretization, /):
+    def prepare(
+        self, particles: ParticleDiscretization, /
+    ) -> PreparedParticleInternalBatch:
         return PreparedParticleInternalBatch(self, particles)
 
 

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, TypeAlias
 
 import diffrax as dfx
 import equinox as eqx
@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._data_plane import EPOCH_ORDER_ALGORITHM, IndexEpochPlan
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
@@ -31,6 +31,7 @@ from .._training_kernel import (
     run_training_attempt,
     TrainingKernelSpec,
     TrainingKernelState,
+    TrainingKeys,
 )
 from .._training_objective import _ObjectiveContribution
 from ._diffrax_cde import solve_diffrax_cde
@@ -552,7 +553,23 @@ def train_neural_cde(
     )
 
 
-def _observation_objective(parameters, model_state, fixed, payload, keys, /):
+_ObservationPayload: TypeAlias = tuple[
+    NeuralCDETrainingData,
+    tuple[int, ...],
+    Any | None,
+    Any,
+    Mapping[str, Any] | None,
+]
+
+
+def _observation_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: _ObservationPayload,
+    keys: TrainingKeys,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[()]]:
     del keys
     data, batch_indices, drift, args, solve_options = payload
     loss = neural_cde_loss(

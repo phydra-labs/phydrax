@@ -309,7 +309,7 @@ def _scalar_moment_projection(
     mass = jnp.sum(jnp.where(active, probability, 0.0))
     feasible = (mass <= 0.0) | ((minimum <= tolerance) & (maximum >= -tolerance))
 
-    def mean(theta):
+    def mean(theta: Array) -> Array:
         score = jnp.where(active, theta * delta, -jnp.inf)
         maximum_score = jnp.max(score)
         weights = jnp.where(

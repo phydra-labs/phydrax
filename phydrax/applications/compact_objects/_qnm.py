@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from enum import IntEnum
 from numbers import Integral
 
@@ -12,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -536,7 +538,7 @@ def _continued_fraction_value(
 
 
 def _continued_fraction_evidence(
-    coefficient_function,
+    coefficient_function: Callable[[int], tuple[Array, Array, Array]],
     plan: BoundedContinuedFractionPlan,
     /,
 ) -> ContinuedFractionDepthEvidence:
@@ -740,7 +742,7 @@ def qnm_continuation_problem(plan: QnmSolvePlan, /) -> ParameterContinuationProb
     )
 
 
-def _root_problem(plan: QnmSolvePlan, dtype, /) -> NonlinearSystemProblem:
+def _root_problem(plan: QnmSolvePlan, dtype: DTypeLike, /) -> NonlinearSystemProblem:
     space = ArraySpace((4,), dtype=dtype, space_id=f"{plan.plan_id}:qnm-root-space")
     return NonlinearSystemProblem(
         lambda state, spin: _real_residual(state, spin, plan),

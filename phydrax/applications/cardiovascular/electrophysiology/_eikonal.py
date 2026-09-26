@@ -460,7 +460,7 @@ def solve_anisotropic_eikonal(
     arrivals = jnp.full((prepared.node_count,), infinity, dtype=dtype)
     arrivals = arrivals.at[sources].min(source_times)
 
-    def relax(sweep, carry):
+    def relax(sweep: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         values, first_converged = carry
         edge_proposals = values[origins] + weights
         best = jnp.full_like(values, infinity).at[destinations].min(edge_proposals)

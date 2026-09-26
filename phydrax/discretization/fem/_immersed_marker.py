@@ -93,10 +93,10 @@ class PreparedFiniteElementImmersedMarkerMap(StrictModule, NonTrainableState):
             }
         )
 
-    def active_position(self, configuration: PyTree, /):
+    def active_position(self, configuration: PyTree, /) -> PyTree[Array]:
         return self.interpolation.mv(configuration)
 
-    def active_velocity(self, velocity: PyTree, /):
+    def active_velocity(self, velocity: PyTree, /) -> PyTree[Array]:
         return self.interpolation.mv(velocity)
 
     def kinematics(
@@ -109,7 +109,7 @@ class PreparedFiniteElementImmersedMarkerMap(StrictModule, NonTrainableState):
             self.markers.expand_active(active_velocity),
         )
 
-    def structural_load(self, marker_force_density: ArrayLike, /):
+    def structural_load(self, marker_force_density: ArrayLike, /) -> PyTree[Array]:
         values = self.markers.active_velocity_space.validate(
             jnp.asarray(marker_force_density)
         )

@@ -18,7 +18,7 @@ from .._materialization import materialize
 from .._operators import AbstractLinearOperator
 from .._policies import FailurePolicy
 from .._spaces import _coordinate_pairing_matrix
-from ._problems import Eigenproblem
+from ._problems import Eigenproblem, EigenproblemLike
 from ._self_adjoint_spectrum import (
     prepare_self_adjoint_spectrum,
     PreparedSelfAdjointSpectrum,
@@ -192,7 +192,7 @@ class SelfAdjointSpectralDerivativeResult(StrictModule):
 
 
 def self_adjoint_spectral_subspace(
-    spectrum_or_problem,
+    spectrum_or_problem: PreparedSelfAdjointSpectrum | EigenproblemLike,
     selection: SpectralSelection,
     /,
     *,
@@ -432,16 +432,16 @@ def self_adjoint_spectral_projector_derivative(
 
 
 def _subspace_evidence(
-    spectrum,
-    selection,
-    policy,
-    values,
-    vectors,
-    inverse_basis,
-    selected_mask,
-    observed_count,
-    projector,
-):
+    spectrum: PreparedSelfAdjointSpectrum,
+    selection: SpectralSelection,
+    policy: SelfAdjointSpectralSubspacePolicy,
+    values: Array,
+    vectors: Array,
+    inverse_basis: Array,
+    selected_mask: Array,
+    observed_count: Array,
+    projector: Array,
+) -> tuple[SelfAdjointSpectralSubspaceDiagnostics, Array, Array]:
     n = spectrum.problem.dimension
     expected = selection.expected_dimension
     if expected is None:
@@ -587,22 +587,22 @@ def _subspace_evidence(
 
 
 def _derivative_evidence(
-    spectrum,
-    subspace,
-    operator_matrix,
-    metric_matrix,
-    values,
-    vectors,
-    inverse_basis,
-    selected_mask,
-    perturbation,
-    derivative_in_basis,
-    projector_derivative,
-    density_derivative,
-    paired_metric_tangent,
-    expected,
-    policy,
-):
+    spectrum: PreparedSelfAdjointSpectrum,
+    subspace: SelfAdjointSpectralSubspace,
+    operator_matrix: Array,
+    metric_matrix: Array,
+    values: Array,
+    vectors: Array,
+    inverse_basis: Array,
+    selected_mask: Array,
+    perturbation: Array,
+    derivative_in_basis: Array,
+    projector_derivative: Array,
+    density_derivative: Array,
+    paired_metric_tangent: Array,
+    expected: int,
+    policy: SelfAdjointSpectralSubspacePolicy,
+) -> tuple[SelfAdjointSpectralDerivativeDiagnostics, Array]:
     expected = int(expected)
     membership = selected_mask.astype(vectors.dtype)
     membership_difference = membership[:, None] - membership[None, :]
@@ -705,10 +705,10 @@ def _derivative_evidence(
 
 
 def _perturbation_matrix(
-    spectrum,
-    perturbation,
-    name,
-):
+    spectrum: PreparedSelfAdjointSpectrum,
+    perturbation: AbstractLinearOperator | ArrayLike,
+    name: str,
+) -> Array:
     n = spectrum.problem.dimension
     if isinstance(perturbation, AbstractLinearOperator):
         if not perturbation.source.compatible(spectrum.problem.operator.source):

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -14,7 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...metrix import EuclideanStateGeometry
 from .._layout import InputLayout, StateLayout
-from .._system import ContinuousSystem, DiscreteSystem
+from .._system import ContinuousSystem, DiscreteStepContext, DiscreteSystem
 from ._features import AbstractFeatureLibrary
 from ._sindy_design import SINDyDesign, SINDyProblem
 from ._sparse_regression import AbstractSparseRegression, SparseRegressionResult
@@ -28,10 +30,10 @@ class _IdentifiedSINDyLaw(StrictModule):
 
     def __call__(
         self,
-        coordinate: Array,
+        coordinate: Array | DiscreteStepContext,
         state: Array,
-        inputs_or_args,
-        args=None,
+        inputs_or_args: Any,
+        args: object = None,
     ) -> Array:
         del coordinate, args
         inputs = inputs_or_args if self.controlled else None

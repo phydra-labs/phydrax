@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -191,6 +191,11 @@ class SpalartAllmarasWallBoundary(AbstractConservationBoundary):
         raise ValueError("ALE SA-neg wall semantics are unsupported.")
 
 
+_ManufacturedPointTerms: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
 class SpalartAllmarasManufacturedEvidence(StrictModule):
     state: Array
     conserved_gradient: Array
@@ -242,8 +247,8 @@ class SpalartAllmarasManufacturedPlan(StrictModule):
         if points.ndim < 1 or points.shape[-1] != self.system.dimension:
             raise ValueError("Manufactured coordinates have the wrong dimension.")
 
-        def at_point(point):
-            def state_at(location):
+        def at_point(point: Array) -> _ManufacturedPointTerms:
+            def state_at(location: Array) -> Array:
                 return self.system.primitive_to_conserved(
                     jnp.asarray(self.exact_primitive(location, args))
                 )
@@ -263,7 +268,7 @@ class SpalartAllmarasManufacturedPlan(StrictModule):
                 )(point)
                 inviscid_divergence = inviscid_divergence + jacobian[..., axis]
 
-            def diffusive_flux(location):
+            def diffusive_flux(location: Array) -> Array:
                 local_state = state_at(location)
                 local_gradient = jax.jacfwd(state_at)(location)
                 local_arguments = SpalartAllmarasArguments(
@@ -295,8 +300,27 @@ class SpalartAllmarasManufacturedPlan(StrictModule):
         flat = points.reshape((-1, self.system.dimension))
         values = jax.vmap(at_point)(flat)
         cell_shape = points.shape[:-1]
-        reshaped = tuple(value.reshape(cell_shape + value.shape[1:]) for value in values)
-        return SpalartAllmarasManufacturedEvidence(*reshaped, self.case_id)
+        (
+            state,
+            gradient,
+            inviscid_divergence,
+            diffusive_divergence,
+            local_source,
+            exact_rate,
+            finite,
+            successful,
+        ) = (value.reshape(cell_shape + value.shape[1:]) for value in values)
+        return SpalartAllmarasManufacturedEvidence(
+            state,
+            gradient,
+            inviscid_divergence,
+            diffusive_divergence,
+            local_source,
+            exact_rate,
+            finite,
+            successful,
+            self.case_id,
+        )
 
 
 __all__ = [

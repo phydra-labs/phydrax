@@ -187,7 +187,7 @@ class AffineFeedbackPolicy(AbstractControlParameterization, NonTrainableState):
             "online or roll it out through ControlProblem."
         )
 
-    def __call__(self, time: ArrayLike, state: ArrayLike, args=None) -> Array:
+    def __call__(self, time: ArrayLike, state: ArrayLike, args: object = None) -> Array:
         del args
         coefficients = jnp.zeros(self.case_shape, dtype=self.feedback_gain.dtype)
         return self.evaluate(coefficients, time, case_shape=self.case_shape, state=state)
@@ -351,7 +351,7 @@ def _finite_inputs(
     terminal_constant: ArrayLike,
     cost_tolerance: float,
     /,
-):
+) -> tuple[tuple[Array, ...], tuple[int, ...], int, int, int]:
     a = jnp.asarray(dynamics_matrices)
     if a.ndim < 3 or a.shape[-1] != a.shape[-2]:
         raise ValueError(
@@ -578,7 +578,13 @@ def finite_horizon_lqr(
         to_time_major(constants, 0),
     )
 
-    def step(carry, stage):
+    def step(
+        carry: tuple[Array, Array, Array],
+        stage: tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array],
+    ) -> tuple[
+        tuple[Array, Array, Array],
+        tuple[Array, Array, Array, Array, Array, Array, Array, Array],
+    ]:
         p_next, linear_next, constant_next = carry
         a_t, b_t, q_t, r_t, c_t, cross_t, q_t_linear, r_t_linear, d_t = stage
         p_b = p_next @ b_t

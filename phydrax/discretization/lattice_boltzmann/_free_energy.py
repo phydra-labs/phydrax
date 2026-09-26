@@ -9,6 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -434,7 +435,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
         )
 
     def _wetting_data(
-        self, parameters: FreeEnergyLBMRuntimeParameters, dtype, /
+        self, parameters: FreeEnergyLBMRuntimeParameters, dtype: DTypeLike, /
     ) -> tuple[Array | None, Array | None, Array]:
         if parameters.wetting_mask.size == 0:
             return None, None, jnp.asarray(True)
@@ -453,7 +454,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
         return safe_wall, mask, jnp.all(~mask | normal_valid)
 
     def _safe_thermodynamics(
-        self, parameters: FreeEnergyLBMRuntimeParameters, dtype, /
+        self, parameters: FreeEnergyLBMRuntimeParameters, dtype: DTypeLike, /
     ) -> tuple[BinaryThermodynamicParameters, Array, Array]:
         values = parameters.thermodynamics
         bulk = jnp.asarray(values.bulk_scale, dtype=dtype)

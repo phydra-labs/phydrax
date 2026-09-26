@@ -146,9 +146,13 @@ class AerothermodynamicConservationLedger(StrictModule):
         external_boundary_exchange: ArrayLike = 0.0,
         tolerance: float = 1.0e-10,
     ) -> AerothermodynamicConservationLedger:
-        defects = tuple(
-            jnp.asarray(value)
-            for value in (mass, elements, charge, momentum, energy, surface_sites)
+        defects = (
+            jnp.asarray(mass),
+            jnp.asarray(elements),
+            jnp.asarray(charge),
+            jnp.asarray(momentum),
+            jnp.asarray(energy),
+            jnp.asarray(surface_sites),
         )
         interface = jnp.asarray(interface_exchange)
         external = jnp.asarray(external_boundary_exchange)

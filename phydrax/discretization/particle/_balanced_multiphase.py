@@ -49,6 +49,8 @@ def corrected_phase_interface_geometry(
 ) -> PhaseInterfaceGeometryState:
     tq, _, trho = target.dynamics.state_layout.unpack(target_state)
     sq, _, srho = source.dynamics.state_layout.unpack(source_state)
+    if trho is None or srho is None:
+        raise ValueError("Multiphase WCSPH requires continuity-density phases.")
     relation = relation_state.relation
     ti = relation.target_indices
     sj = relation.source_indices

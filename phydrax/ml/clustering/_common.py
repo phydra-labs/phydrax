@@ -172,13 +172,13 @@ def initialize_centers(
             )
         keys = jax.random.split(key, case_count)
 
-        def choose(values, weights, case_key):
+        def choose(values: Array, weights: Array, case_key: Array) -> Array:
             first_key, current_key = jax.random.split(case_key)
             logits = jnp.where(weights > 0.0, jnp.log(weights), -jnp.inf)
             first = jax.random.categorical(first_key, logits).astype(jnp.int32)
             indices = jnp.zeros((cluster_count,), dtype=jnp.int32).at[0].set(first)
 
-            def add_center(i, state):
+            def add_center(i: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
                 indices, current_key = state
                 current_key, draw_key = jax.random.split(current_key)
                 chosen = values[indices]

@@ -85,7 +85,9 @@ def _matrix_charge_delta(
     return tuple(int(value) for value in unique[0])
 
 
-def _catalog(charges: tuple[tuple[int, ...], ...], /):
+def _catalog(
+    charges: tuple[tuple[int, ...], ...], /
+) -> tuple[tuple[tuple[int, ...], ...], tuple[int, ...], dict[int, int]]:
     counts = Counter(charges)
     ordered = tuple(sorted(counts))
     capacities = tuple(counts[value] for value in ordered)

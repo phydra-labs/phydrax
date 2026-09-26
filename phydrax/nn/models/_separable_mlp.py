@@ -41,7 +41,7 @@ class SeparableMLP(_AbstractStructuredInputModel):
 
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
-    model: _AbstractStructuredInputModel
+    model: Separable
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise("flat")
 
     def __init__(

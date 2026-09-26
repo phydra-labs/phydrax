@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -90,7 +91,7 @@ def _ifc2_reverse_indices(relation: EdgeRelation, translations: np.ndarray) -> n
 def _ifc3_permutation_indices(
     atom_triplets: np.ndarray, translations: np.ndarray, valid: np.ndarray
 ) -> np.ndarray:
-    keys: dict[tuple[int, int, int, tuple[int, ...], tuple[int, ...]], int] = {}
+    keys: dict[tuple[int | tuple[int, ...], ...], int] = {}
     for route in np.flatnonzero(valid):
         key = (
             *(int(value) for value in atom_triplets[route]),
@@ -199,12 +200,12 @@ class IFCConstraintEvidence(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        raw_residuals,
-        corrected_residuals,
-        relative_correction,
-        rank,
-        condition,
-        successful,
+        raw_residuals: ArrayLike,
+        corrected_residuals: ArrayLike,
+        relative_correction: ArrayLike,
+        rank: int,
+        condition: float,
+        successful: ArrayLike,
         /,
     ) -> None:
         raw = jnp.asarray(raw_residuals).reshape((3,))
@@ -770,12 +771,12 @@ class FiniteDisplacementIFC2Result(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        force_constants,
-        equilibrium,
-        antisymmetry,
-        refinement,
-        force_evaluations,
-        successful,
+        force_constants: SecondOrderForceConstants,
+        equilibrium: ArrayLike,
+        antisymmetry: ArrayLike,
+        refinement: ArrayLike,
+        force_evaluations: int,
+        successful: ArrayLike,
         /,
     ) -> None:
         self.force_constants = force_constants
@@ -1090,7 +1091,9 @@ def normalize_second_order_force_constants(
     )
 
 
-def normalize_third_order_force_constants(*args, **kwargs) -> ThirdOrderForceConstants:
+def normalize_third_order_force_constants(
+    *args: Any, **kwargs: Any
+) -> ThirdOrderForceConstants:
     """Construct a provider-normalized canonical IFC3 after full closure checks."""
 
     return ThirdOrderForceConstants(*args, **kwargs)

@@ -38,7 +38,7 @@ def _finite(value: ArrayLike, owner: str, /) -> Array:
 
 
 def _boundary_slice(value: Array, axis: int, index: int, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value[tuple(location)]
 
@@ -165,12 +165,13 @@ class MACThermalBoundarySet(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Each MAC thermal wall axis requires lower/upper data."
                     )
-                pair = tuple(
+                lower_condition, upper_condition = (
                     value
                     if isinstance(value, MACThermalBoundaryCondition)
                     else MACThermalBoundaryCondition(value)
                     for value in raw
                 )
+                pair = (lower_condition, upper_condition)
                 if any(value.kind == "periodic" for value in pair):
                     raise ValueError("Static MAC walls cannot use periodic thermal data.")
                 axis_index = grid.axis_names.index(axis_name)
@@ -197,16 +198,19 @@ class MACThermalBoundarySet(StrictModule, NonTrainableState):
     def diffusion_conditions(
         self,
     ) -> dict[str, tuple[ConservativeBoundaryCondition, ConservativeBoundaryCondition]]:
-        return {
-            axis_name: tuple(
-                ConservativeBoundaryCondition(
-                    "periodic"
-                    if condition.kind == "periodic"
-                    else ("dirichlet" if condition.kind == "temperature" else "neumann")
-                )
-                for condition in pair
+
+        def diffusion_condition(
+            condition: MACThermalBoundaryCondition,
+        ) -> ConservativeBoundaryCondition:
+            return ConservativeBoundaryCondition(
+                "periodic"
+                if condition.kind == "periodic"
+                else ("dirichlet" if condition.kind == "temperature" else "neumann")
             )
-            for axis_name, pair in zip(
+
+        return {
+            axis_name: (diffusion_condition(lower), diffusion_condition(upper))
+            for axis_name, (lower, upper) in zip(
                 self.operators.discretization.grid.axis_names,
                 self.conditions,
                 strict=True,
@@ -217,7 +221,7 @@ class MACThermalBoundarySet(StrictModule, NonTrainableState):
         self, time: Array, args: Any = None, /
     ) -> dict[str, tuple[Array, Array]]:
         discretization = self.operators.discretization
-        output = {}
+        output: dict[str, tuple[Array, Array]] = {}
         for axis, (axis_name, pair) in enumerate(
             zip(discretization.grid.axis_names, self.conditions, strict=True)
         ):
@@ -231,7 +235,7 @@ class MACThermalBoundarySet(StrictModule, NonTrainableState):
                     if condition.kind == "temperature"
                     else jnp.asarray(0.0, dtype=coordinates.dtype)
                 )
-            output[axis_name] = tuple(values)
+            output[axis_name] = (values[0], values[1])
         return output
 
 
@@ -424,7 +428,7 @@ class PreparedMACEnthalpyTransport(StrictModule, NonTrainableState):
                     discretization.face_centers[axis], index, axis=axis
                 )
                 outward_loss = condition.evaluate(time, coordinates, args)
-                location = [slice(None)] * output[axis].ndim
+                location: list[slice | int] = [slice(None)] * output[axis].ndim
                 location[axis] = index
                 output[axis] = (
                     output[axis].at[tuple(location)].set(orientation * outward_loss)
@@ -559,8 +563,31 @@ class PreparedMACEnthalpyTransport(StrictModule, NonTrainableState):
             )
         )
         finite = result.finite & jnp.all(jnp.isfinite(values))
+        (
+            total_value,
+            rate_value,
+            advective_value,
+            conductive_value,
+            boundary_value,
+            source_value,
+            defect_value,
+            minimum_temperature,
+            maximum_temperature,
+            minimum_fraction,
+            maximum_fraction,
+        ) = values
         return MACEnthalpyDiagnostics(
-            *tuple(values),
+            total_value,
+            rate_value,
+            advective_value,
+            conductive_value,
+            boundary_value,
+            source_value,
+            defect_value,
+            minimum_temperature,
+            maximum_temperature,
+            minimum_fraction,
+            maximum_fraction,
             finite,
             finite,
             self.prepared_id,

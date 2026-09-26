@@ -6,13 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 from ..._differentiation import (
     ComponentAuthority,
@@ -27,6 +27,7 @@ from ..._training_kernel import (
     OptaxUpdateRule,
     prepare_training_kernel,
     TrainingKernelSpec,
+    TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
 from ..._tree_math import tree_allfinite, tree_inner, tree_norm
@@ -201,7 +202,17 @@ class CircuitFitDiagnostics(StrictModule):
     gradient_method: str = eqx.field(static=True)
 
 
-def _classifier_objective(parameters, model_state, fixed, payload, keys, /):
+_ClassifierPayload: TypeAlias = tuple[Array, Array, Array, Array, float]
+
+
+def _classifier_objective(
+    parameters: PyTree,
+    model_state: PyTree,
+    fixed: PyTree,
+    payload: _ClassifierPayload,
+    keys: TrainingKeys | None,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree, tuple[()]]:
     """Weighted logistic data fit plus L2 penalty of the circuit classifier."""
     del keys
     features, encoded, weights, mass, l2_strength = payload
@@ -357,7 +368,7 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
         optimizer_state = optimizer.init(trainable)
         payload = (safe_features, encoded, safe_weights, mass, self.l2_strength)
 
-        def objective(parameters):
+        def objective(parameters: PyTree) -> Array:
             contribution, _, _ = _classifier_objective(
                 parameters, model_state, fixed, payload, None
             )
@@ -365,7 +376,9 @@ class VariationalCircuitClassifierRecipe(AbstractRecipe):
 
         value_and_grad = eqx.filter_value_and_grad(objective)
 
-        def step(value, iteration):
+        def step(
+            value: tuple[PyTree, optax.OptState], iteration: Array
+        ) -> tuple[tuple[PyTree, optax.OptState], Array, Array]:
             del iteration
             parameters, state = value
             loss, gradient = value_and_grad(parameters)

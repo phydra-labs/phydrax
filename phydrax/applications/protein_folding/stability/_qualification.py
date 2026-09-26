@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast, TypedDict, Unpack
 
 import numpy as np
 
@@ -49,6 +50,19 @@ def _role_case_ids(campaign: ScientificCampaign, role_name: str, /) -> tuple[str
         if role.name == role_name:
             return role.case_ids
     return ()
+
+
+class _ExecutionIdentity(TypedDict):
+    build_id: str
+    environment_id: str
+    backend: str
+    topology: str
+    precision: str
+    reduction: str
+    replay_id: str
+    reviewer_id: str
+    issued_at: int
+    expires_at: int
 
 
 def _evidence(
@@ -295,7 +309,7 @@ def source_admission_evidence(
     cohort: ProteinStabilityCohort,
     features: Sequence[ProteinMutationFeatures],
     /,
-    **execution,
+    **execution: Unpack[_ExecutionIdentity],
 ) -> QualificationEvidence:
     """Record measurement and feature artifacts admitted with reversible lineage."""
     manifests = _stability_raw_artifact_ids(cohort, features)
@@ -331,7 +345,7 @@ def _measurement_calibration_evidence(
     cohort: ProteinStabilityCohort,
     raw_artifact_ids: Sequence[str],
     /,
-    **execution,
+    **execution: Unpack[_ExecutionIdentity],
 ) -> QualificationEvidence:
     blocks: dict[tuple[str, str], int] = {}
     for measurement in cohort.measurements:
@@ -365,7 +379,7 @@ def _model_fit_stage_evidence(
     model_fit: ProteinStabilityModelFit,
     raw_artifact_ids: Sequence[str],
     /,
-    **execution,
+    **execution: Unpack[_ExecutionIdentity],
 ) -> QualificationEvidence:
     if model_fit.successful:
         outcome = "passed"
@@ -469,6 +483,13 @@ def qualify_protein_stability(
         )
     baseline_fit = model_selection.chosen_baseline_fit
     selected_fit = model_selection.chosen_fit
+    # Model-selection lineage validation admits only single-mutant predictors.
+    baseline_predictor = cast(
+        AbstractProteinStabilityPredictor | None, baseline_fit.predictor
+    )
+    selected_predictor = cast(
+        AbstractProteinStabilityPredictor | None, selected_fit.predictor
+    )
     if any(not isinstance(item, ProteinMutationFeatures) for item in values):
         raise TypeError("features must contain ProteinMutationFeatures.")
     feature_by_id = {item.measurement_id: item for item in values}
@@ -502,7 +523,7 @@ def qualify_protein_stability(
         raise ValueError(
             "Protein stability campaign criteria must exactly match the claim."
         )
-    execution = dict(
+    execution = _ExecutionIdentity(
         build_id=_identifier(build_id, "build_id"),
         environment_id=_identifier(environment_id, "environment_id"),
         backend=_identifier(backend, "backend"),
@@ -543,9 +564,9 @@ def qualify_protein_stability(
     locked_family_ids = {
         measurement_by_id[case_id].domain_family_id for case_id in claim_ids
     }
-    for model_fit in (baseline_fit, selected_fit):
-        if model_fit.predictor is not None and locked_family_ids.intersection(
-            model_fit.predictor.training_family_ids
+    for predictor in (baseline_predictor, selected_predictor):
+        if predictor is not None and locked_family_ids.intersection(
+            predictor.training_family_ids
         ):
             raise ValueError(
                 "Protein stability training families cannot enter locked evaluation."
@@ -555,11 +576,11 @@ def qualify_protein_stability(
     predictions: tuple[GroupedStabilityPrediction, ...] = ()
     metrics = GroupedStabilityMetrics(None, None, None, None, None, None, 0.0, 0, 0)
 
-    if selected_fit.successful and selected_fit.predictor is not None:
+    if selected_fit.successful and selected_predictor is not None:
         conformal_radius, conformal_reason = _calibrate_group_conformal(
             cohort,
             feature_by_id,
-            selected_fit.predictor,
+            selected_predictor,
             thresholds.interval_miscoverage,
         )
     calibration_outcome = "passed" if conformal_radius is not None else "inconclusive"
@@ -587,13 +608,13 @@ def qualify_protein_stability(
     elif (
         selected_fit.successful
         and baseline_fit.successful
-        and selected_fit.predictor is not None
-        and baseline_fit.predictor is not None
+        and selected_predictor is not None
+        and baseline_predictor is not None
         and quantitative_ids
     ):
         locked_features = tuple(feature_by_id[case_id] for case_id in quantitative_ids)
-        selected_prediction = selected_fit.predictor.predict(locked_features)
-        baseline_prediction = baseline_fit.predictor.predict(locked_features)
+        selected_prediction = selected_predictor.predict(locked_features)
+        baseline_prediction = baseline_predictor.predict(locked_features)
         for index, case_id in enumerate(quantitative_ids):
             selected_by_id[case_id] = (
                 float(selected_prediction.mean[index]),
@@ -641,8 +662,12 @@ def qualify_protein_stability(
                 measurement.value_kcal_per_mol,
                 predicted_value,
                 baseline_prediction_value,
-                None if radius is None else predicted_value - radius,
-                None if radius is None else predicted_value + radius,
+                None
+                if radius is None or predicted_value is None
+                else predicted_value - radius,
+                None
+                if radius is None or predicted_value is None
+                else predicted_value + radius,
                 valid,
                 reason,
             )
@@ -1208,7 +1233,7 @@ def qualify_double_mutant_challenge(
         and item.double_measurement.sign_convention == pair_model.sign_convention
         for item in locked
     )
-    execution = dict(
+    execution = _ExecutionIdentity(
         build_id=_identifier(build_id, "build_id"),
         environment_id=_identifier(environment_id, "environment_id"),
         backend=_identifier(backend, "backend"),

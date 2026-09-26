@@ -98,7 +98,7 @@ class LogConductivity(StrictModule, NonTrainableState):
         )
 
 
-def _voltage_identity(voltages, args):
+def _voltage_identity(voltages: Array, args: object) -> Array:
     del args
     return voltages
 
@@ -164,7 +164,7 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
             _voltage_identity, values, covariance, observation_id=observation_id
         )
 
-    def predict(self, parameters: ArrayLike, args=None, /) -> Array:
+    def predict(self, parameters: ArrayLike, args: object = None, /) -> Array:
         del args
         return self.dc.predict(self.parameterization(parameters))
 
@@ -194,10 +194,10 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
         parameterization = self.parameterization
         field_observation = self.field_observation
 
-        def predict(parameters):
+        def predict(parameters: ArrayLike) -> Array:
             return dc.predict(parameterization(parameters))
 
-        def log_likelihood(parameters):
+        def log_likelihood(parameters: ArrayLike) -> Array:
             return field_observation.log_likelihood(predict(parameters))
 
         covariance = field_observation.covariance
@@ -205,7 +205,7 @@ class DCElectricalObservationPlan(StrictModule, NonTrainableState):
         if isinstance(covariance, CholeskyCovarianceAction):
             observed = field_observation.observed
 
-            def residual(parameters):
+            def residual(parameters: ArrayLike) -> Array:
                 return covariance.whiten(predict(parameters) - observed)
 
         return PosteriorProblem(

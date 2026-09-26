@@ -117,15 +117,17 @@ def _basis(dimension: int, position: int, /) -> tuple[Fraction, ...]:
     return tuple(Fraction(int(index == position)) for index in range(dimension))
 
 
-def _add(left, right):
+def _add(left: tuple[Fraction, ...], right: tuple[Fraction, ...]) -> tuple[Fraction, ...]:
     return tuple(a + b for a, b in zip(left, right, strict=True))
 
 
-def _zero(value) -> bool:
+def _zero(value: tuple[Fraction, ...]) -> bool:
     return all(entry == _ZERO for entry in value)
 
 
-def _claim_from_witness(name, witness, work):
+def _claim_from_witness(
+    name: str, witness: tuple[str, ...] | None, work: int
+) -> AlgebraClaimEvidence:
     return AlgebraClaimEvidence(
         name,
         "proven" if witness is None else "disproven",

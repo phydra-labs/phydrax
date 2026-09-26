@@ -54,13 +54,12 @@ class PoolExecutionSignature(StrictModule):
         values = tuple(
             str(value) for value in (topology_id, method_id, precision_id, backend_id)
         )
-        shards = (
-            1
-            if shard_count is None and execution_group is None
-            else (
-                execution_group.device_count if shard_count is None else int(shard_count)
-            )
-        )
+        if shard_count is not None:
+            shards = int(shard_count)
+        elif execution_group is not None:
+            shards = execution_group.device_count
+        else:
+            shards = 1
         if any(not value for value in values) or shards < 1:
             raise ValueError(
                 "Pool execution signature values must be non-empty and valid."
@@ -224,7 +223,7 @@ def semantic_task_indices(
 def semantic_task_keys(
     root_key: Array,
     address: SampleAddress,
-    task_indices: ArrayLike,
+    task_indices: ArrayLike | Sequence[int],
     /,
     counters: ArrayLike | None = None,
 ) -> Array:

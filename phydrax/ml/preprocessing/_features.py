@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from hashlib import blake2b
 from itertools import combinations, combinations_with_replacement
 from numbers import Integral, Number
-from typing import Any, Literal
+from typing import Any, cast, Literal, SupportsFloat
 
 import equinox as eqx
 import jax
@@ -321,7 +321,7 @@ class FittedSplineTransformer(AbstractFittedModel):
         flat_values = values.reshape((-1,))
         flat_knots = knots.reshape((-1, knots.shape[-1]))
 
-        def basis_row(knot_row, query):
+        def basis_row(knot_row: Array, query: Array) -> Array:
             stencil = bspline_stencil(
                 knot_row,
                 query,
@@ -556,11 +556,14 @@ class FourierFeatures(AbstractRecipe):
         if weight_policy not in ("none", "statistical", "measure", "product"):
             raise ValueError("Unsupported weight policy.")
 
-        def normalize(value):
+        def normalize(
+            value: Number | Sequence[Number] | None,
+        ) -> tuple[float, ...] | None:
             if value is None:
                 return None
             raw = (value,) if isinstance(value, Number) else tuple(value)
-            converted = tuple(float(item) for item in raw)
+            # float() is the real-scalar check: it rejects non-real Numbers.
+            converted = tuple(float(cast(SupportsFloat, item)) for item in raw)
             if any(not jnp.isfinite(item) for item in converted):
                 raise ValueError("Fourier origins and periods must be finite.")
             return converted
@@ -592,7 +595,9 @@ class FourierFeatures(AbstractRecipe):
         minimum = jnp.where(mass > 0.0, minimum, jnp.zeros_like(minimum))
         maximum = jnp.where(mass > 0.0, maximum, jnp.zeros_like(maximum))
 
-        def configured(values, fallback, name):
+        def configured(
+            values: tuple[float, ...] | None, fallback: Array, name: str
+        ) -> Array:
             if values is None:
                 return fallback
             if len(values) not in (1, batch.feature_count):

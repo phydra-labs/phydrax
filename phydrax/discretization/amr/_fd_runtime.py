@@ -9,9 +9,11 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._fd_precision import FDExecutionPrecisionPolicy
@@ -152,7 +154,7 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
         )
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.plan.precision.evidence()
 
     def initial_topology(self, /) -> BlockHierarchyTopology:
@@ -174,7 +176,7 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-        dtype=None,
+        dtype: DTypeLike | None = None,
     ) -> BlockFieldTopologyTransition:
         dtype_ = self.plan.precision.field_dtype if dtype is None else dtype
         return BlockFieldTopologyTransition(

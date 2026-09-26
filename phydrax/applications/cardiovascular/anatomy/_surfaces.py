@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +18,7 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....discretization import CellMesh
+from ....discretization._cell_complex import TetrahedralConnectivity
 from ._roles import CardiacBoundaryRoles
 
 
@@ -44,7 +46,8 @@ def _oriented_closed_faces(
     edge_owners: dict[tuple[int, int], list[tuple[int, int]]] = {}
     for face_index, (first, second, third) in enumerate(faces):
         for start, stop in ((first, second), (second, third), (third, first)):
-            edge = tuple(sorted((int(start), int(stop))))
+            low, high = sorted((int(start), int(stop)))
+            edge = (low, high)
             edge_owners.setdefault(edge, []).append(
                 (face_index, _edge_sign(int(start), int(stop)))
             )
@@ -161,7 +164,7 @@ class ChamberSurfaceTopologyEvidence(StrictModule, NonTrainableState):
     outward: Array
     successful: Array
 
-    def __init__(self, **values) -> None:
+    def __init__(self, **values: ArrayLike) -> None:
         self.edge_incidence_counts = jnp.asarray(
             values["edge_incidence_counts"], dtype=jnp.int32
         )
@@ -269,7 +272,9 @@ class ChamberSurfacePlan(StrictModule, NonTrainableState):
         face_indices = np.concatenate(
             tuple(np.asarray(roles.face_indices(name), dtype=np.int32) for name in names)
         )
-        triangles = np.asarray(mesh.connectivity.faces, dtype=np.int32)[face_indices]
+        # Boundary roles admit only tetrahedral meshes and share this mesh identity.
+        connectivity = cast(TetrahedralConnectivity, mesh.connectivity)
+        triangles = np.asarray(connectivity.faces, dtype=np.int32)[face_indices]
         return cls(
             chamber_name,
             mesh.coordinates,
@@ -287,7 +292,8 @@ class ChamberSurfacePlan(StrictModule, NonTrainableState):
         edge_counts: dict[tuple[int, int], int] = {}
         for first, second, third in oriented:
             for start, stop in ((first, second), (second, third), (third, first)):
-                edge = tuple(sorted((int(start), int(stop))))
+                low, high = sorted((int(start), int(stop)))
+                edge = (low, high)
                 edge_counts[edge] = edge_counts.get(edge, 0) + 1
         evidence = ChamberSurfaceTopologyEvidence(
             edge_incidence_counts=np.asarray(tuple(edge_counts.values()), dtype=np.int32),
@@ -327,7 +333,7 @@ class CavityVolumeEvidence(StrictModule, NonTrainableState):
     positive_orientation: Array
     successful: Array
 
-    def __init__(self, **values) -> None:
+    def __init__(self, **values: ArrayLike) -> None:
         self.face_signed_contributions = jnp.asarray(values["face_signed_contributions"])
         self.signed_volume = jnp.asarray(values["signed_volume"])
         self.minimum_double_area = jnp.asarray(values["minimum_double_area"])

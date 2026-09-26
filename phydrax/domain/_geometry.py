@@ -20,6 +20,7 @@ from ..geometry import (
     CubatureAtlas,
     CubatureComponent,
     DistanceSemantics,
+    FieldCertificate,
     GeometryCapability,
     GeometryKind,
     ReconstructionReport,
@@ -163,7 +164,7 @@ class GeometryDomain(AbstractGeometry):
             leading = points_.shape[:-1]
             flat = points_.reshape((-1, self.spatial_dim))
 
-            def normalize(point):
+            def normalize(point: Array) -> Array:
                 value, gradient = jax.value_and_grad(self.adf)(point)
                 magnitude = jnp.linalg.norm(gradient)
                 denominator = jnp.where(
@@ -210,7 +211,7 @@ class GeometryDomain(AbstractGeometry):
         bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         plan_ = RejectionSamplingPlan() if plan is None else plan
 
-        def proposal(proposal_key, proposal_count):
+        def proposal(proposal_key: Key[Array, ""], proposal_count: int) -> Array:
             return jr.uniform(
                 proposal_key,
                 shape=(proposal_count, self.spatial_dim),
@@ -219,7 +220,7 @@ class GeometryDomain(AbstractGeometry):
                 dtype=bounds.dtype,
             )
 
-        def accept(points):
+        def accept(points: Array) -> Array:
             return self._contains(points) & jax.vmap(where)(points)
 
         return bounded_rejection_sample(
@@ -247,13 +248,13 @@ class GeometryDomain(AbstractGeometry):
             return self.geometry.sample_boundary(count, key=key)
         plan_ = RejectionSamplingPlan() if plan is None else plan
 
-        def proposal(proposal_key, proposal_count):
+        def proposal(proposal_key: Key[Array, ""], proposal_count: int) -> Array:
             return self.geometry.sample_boundary(
                 proposal_count,
                 key=proposal_key,
             ).points
 
-        def accept(points):
+        def accept(points: Array) -> Array:
             return jax.vmap(where)(points)
 
         return bounded_rejection_sample(
@@ -355,7 +356,7 @@ class GeometryDomain(AbstractGeometry):
         return self.geometry.boundary_normal(points)
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         return self.geometry.field_certificate
 
     def has_geometry_capability(self, capability: GeometryCapability, /) -> bool:

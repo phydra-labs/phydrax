@@ -13,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, ArrayLike, Key, PyTree
 
 import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainFunction
@@ -49,6 +49,7 @@ from ..linalg import (
     PCG,
     PreconditioningPolicy,
     prepare_linearization,
+    PropertyEvidence,
     RandomizedNystromPreconditionerBuilder,
     ScaledLinearOperator,
     solve,
@@ -97,7 +98,9 @@ def _qualified_type_name(value: Any, /) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
-def _default_parameter_subspace(functions: frozendict[str, DomainFunction]):
+def _default_parameter_subspace(
+    functions: frozendict[str, DomainFunction],
+) -> ParameterSubspace:
     resolution = require_parameter_roles(functions, context="NeuralGalerkinProblem")
     if ArrayRole.PARAMETER not in resolution.roles:
         raise ValueError("Neural Galerkin evolution requires PARAMETER function leaves.")
@@ -474,7 +477,12 @@ class _TangentEvaluation(NamedTuple):
     accepted: Array
 
 
-def _component_batches_and_keys(metric: FieldProjectionMetric):
+_ProjectionBatch: TypeAlias = PointIntegrationBatch | SeparableIntegrationBatch
+
+
+def _component_batches_and_keys(
+    metric: FieldProjectionMetric,
+) -> tuple[tuple[_ProjectionBatch, ...], tuple[Key[Array, ""], ...]]:
     target = metric.realization.target
     base = target.base if isinstance(target, DensityTarget) else target
     if not isinstance(base, ComponentTarget):
@@ -715,10 +723,10 @@ def _implicit_tangent_rate(
 
 @_implicit_tangent_rate.def_fwd
 def _implicit_tangent_rate_fwd(
-    perturbed,
+    perturbed: PyTree[bool],
     inputs: tuple[Array, Array],
     field: _NeuralGalerkinVectorField,
-):
+) -> tuple[Array, tuple[Array, Array, Array]]:
     del perturbed
     time, parameters = inputs
     rate = field.evaluate(time, parameters).rate
@@ -727,34 +735,38 @@ def _implicit_tangent_rate_fwd(
 
 @_implicit_tangent_rate.def_bwd
 def _implicit_tangent_rate_bwd(
-    residual,
+    residual: tuple[Array, Array, Array],
     rate_cotangent: Array,
-    perturbed,
+    perturbed: PyTree[bool],
     inputs: tuple[Array, Array],
     field: _NeuralGalerkinVectorField,
-):
+) -> tuple[Array, Array]:
     del perturbed, inputs
     time, parameters, rate = residual
     damping = jnp.asarray(field.policy.damping, dtype=parameters.real.dtype)
 
-    def sampled(candidate):
+    def sampled(candidate: Array) -> Array:
         return field._sampled_fields(candidate)
 
     _, pullback = jax.vjp(sampled, parameters)
 
-    def normal_action(vector):
+    def normal_action(vector: Array) -> Array:
         tangent = jax.jvp(sampled, (parameters,), (vector,))[1]
         return pullback(tangent)[0] + damping * vector
 
     source = ArraySpace(parameters.shape, dtype=parameters.dtype)
+    positive_definite = field.policy.damping > 0.0
+    evidence: dict[str, PropertyEvidence] = {
+        "self_adjoint": "construction",
+        "positive_semidefinite": "construction",
+    }
+    if positive_definite:
+        evidence["positive_definite"] = "construction"
     properties = OperatorProperties(
         self_adjoint=True,
         positive_semidefinite=True,
-        positive_definite=field.policy.damping > 0.0,
-        evidence={
-            "self_adjoint": "implicit-normal-equation",
-            "positive_semidefinite": "construction",
-        },
+        positive_definite=positive_definite,
+        evidence=evidence,
     )
     normal = FunctionLinearOperator(
         normal_action,
@@ -781,10 +793,10 @@ def _implicit_tangent_rate_bwd(
         "Neural Galerkin implicit adjoint solve failed its residual audit.",
     )
 
-    def stationarity(t, candidate):
+    def stationarity(t: Array, candidate: Array) -> Array:
         target = field._target(t, candidate)
 
-        def sampled_candidate(value):
+        def sampled_candidate(value: Array) -> Array:
             return field._sampled_fields(value)
 
         sampled_value, sampled_pullback = jax.vjp(

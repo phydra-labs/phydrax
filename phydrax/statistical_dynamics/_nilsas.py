@@ -198,13 +198,13 @@ class NILSASPlan(AbstractShadowingSolvePlan):
             if (terminal_basis is None) == (key is None):
                 raise ValueError("Provide exactly one of terminal_basis and key.")
             basis = (
-                jax.random.normal(
+                jnp.asarray(terminal_basis, dtype=trajectory.states.dtype)
+                if key is None
+                else jax.random.normal(
                     key,
                     (self.state_dimension, self.basis_dimension),
                     dtype=trajectory.states.dtype,
                 )
-                if terminal_basis is None
-                else jnp.asarray(terminal_basis, dtype=trajectory.states.dtype)
             )
             if basis.shape != (self.state_dimension, self.basis_dimension):
                 raise ValueError("terminal_basis has an incompatible shape.")

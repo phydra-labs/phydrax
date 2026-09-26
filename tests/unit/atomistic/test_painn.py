@@ -8,12 +8,12 @@ from opt_einsum import contract
 
 from phydrax.atomistic import (
     AtomicStructure,
+    atomistic_potential_revision,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
     AtomisticStatus,
-    atomistic_potential_revision,
     energy_and_forces,
 )
 from phydrax.nn.atomistic import PaiNNPotential

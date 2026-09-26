@@ -42,6 +42,8 @@ def _evaluate_target_expression(
 ) -> Array:
     op = expression.op
     if op == "constant":
+        # validate_pde_ir admits constant nodes only with a numeric value.
+        assert expression.value is not None
         return jnp.asarray(float(expression.value))
     if op == "parameter":
         if not isinstance(context.args, Mapping) or expression.symbol not in context.args:

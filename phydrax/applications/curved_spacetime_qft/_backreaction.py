@@ -146,7 +146,9 @@ def semiclassical_einstein_backreaction(
     initial_hubble = jnp.asarray(plan.initial_hubble, dtype=energy.dtype)
     interval_source = 0.5 * (energy[:-1] + pressure[:-1] + energy[1:] + pressure[1:])
 
-    def backreaction_step(carry, interval_data):
+    def backreaction_step(
+        carry: tuple[Array, Array], interval_data: tuple[Array, Array]
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         current_scale, current_hubble = carry
         width, average_source = interval_data
         next_hubble = current_hubble - (

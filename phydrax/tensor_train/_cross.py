@@ -13,7 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import core as jax_core
+from jax.typing import DTypeLike
+from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
@@ -182,7 +184,7 @@ class TTCrossResult(StrictModule):
         self,
         tensor: TensorTrain,
         evidence: TTCrossEvidence,
-        converged: Array,
+        converged: ArrayLike,
         /,
     ) -> None:
         self.tensor = tensor
@@ -219,7 +221,7 @@ def _rank_one_cross(
     /,
 ) -> TensorTrain | None:
     anchor = values[0]
-    if isinstance(anchor, jax.core.Tracer):
+    if isinstance(anchor, jax_core.Tracer):
         return None
     if not bool(np.asarray(jnp.isfinite(anchor) & (jnp.abs(anchor) > 0.0))):
         return None
@@ -240,7 +242,7 @@ def _rank_one_cross(
 
 
 def _initial_train(
-    mode_sizes: tuple[int, ...], max_rank: int, mean: Array, dtype, /
+    mode_sizes: tuple[int, ...], max_rank: int, mean: Array, dtype: DTypeLike, /
 ) -> TensorTrain:
     total = prod(mode_sizes)
     ranks = [1]
@@ -262,7 +264,7 @@ def _initial_train(
 
 
 def _left_samples(tensor: TensorTrain, points: Array, stop: int, /) -> Array:
-    def one(point):
+    def one(point: Array) -> Array:
         value = jnp.ones((1,), dtype=tensor.dtype)
         for axis in range(stop):
             value = ein.contract("a,ab->b", value, tensor.cores[axis][:, point[axis], :])
@@ -272,7 +274,7 @@ def _left_samples(tensor: TensorTrain, points: Array, stop: int, /) -> Array:
 
 
 def _right_samples(tensor: TensorTrain, points: Array, start: int, /) -> Array:
-    def one(point):
+    def one(point: Array) -> Array:
         value = jnp.ones((1,), dtype=tensor.dtype)
         for axis in range(tensor.order - 1, start - 1, -1):
             value = ein.contract("ab,b->a", tensor.cores[axis][:, point[axis], :], value)

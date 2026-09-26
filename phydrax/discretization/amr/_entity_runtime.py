@@ -11,6 +11,8 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -82,7 +84,7 @@ class VariablePatchEntityRoute(StrictModule, NonTrainableState):
         self,
         complex: VariablePatchEntityComplex,
         view: VariablePatchEntityBucketView,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> None:
         if not isinstance(complex, VariablePatchEntityComplex) or not isinstance(
@@ -133,7 +135,7 @@ class VariablePatchEntityExecutionPlan(StrictModule, NonTrainableState):
     complex: VariablePatchEntityComplex
     degree: int = eqx.field(static=True)
     component_shape: tuple[int, ...] = eqx.field(static=True)
-    dtype: object = eqx.field(static=True)
+    dtype: np.dtype = eqx.field(static=True)
     routes: tuple[VariablePatchEntityRoute, ...]
     plan_id: str = eqx.field(static=True)
 
@@ -144,7 +146,7 @@ class VariablePatchEntityExecutionPlan(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> None:
         degree_ = int(degree)
         components = tuple(component_shape)

@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import itertools
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax.typing import DTypeLike
+from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -228,6 +230,20 @@ def _reference_breakpoints(
     return tuple(result)
 
 
+# (estimate, error, split indicators, finite)
+_CellEvaluation: TypeAlias = tuple[Array, Array, Array, Array]
+# (moment, moment correction, absolute, absolute correction, weighted,
+#  weighted correction, square, square correction, finite)
+_BatchAccumulator: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+# (lower, upper, estimates, errors, split indicators, active, count, value,
+#  error, evaluations, status, done)
+_CubatureState: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
 _ROUNDOFF_FACTOR = 50.0
 
 
@@ -236,7 +252,7 @@ _MAX_CELL_ASPECT_RATIO = 16.0
 
 
 def _canonical_initial_cells(
-    breakpoints: tuple[Any, ...], dtype, /
+    breakpoints: tuple[Any, ...], dtype: DTypeLike, /
 ) -> tuple[Array, Array, Array]:
     edges: list[Array] = []
     valid = jnp.asarray(True)
@@ -277,7 +293,7 @@ def _canonical_initial_cells(
 
 
 def _adaptive_cubature_solve(
-    integrand,
+    integrand: Callable[[Array], ArrayLike],
     plan: AdaptiveCubaturePlan,
     reference_breakpoints: tuple[Any, ...],
     /,
@@ -336,7 +352,7 @@ def _adaptive_cubature_solve(
     )
     absolute_weight_batches = absolute_weights.reshape((num_batches, batch_size))
 
-    def evaluate_cell(lower: Array, upper: Array):
+    def evaluate_cell(lower: Array, upper: Array) -> _CellEvaluation:
         center = precision.evaluation(0.5 * (lower + upper))
         half = precision.evaluation(0.5 * (upper - lower))
         volume = precision.accumulation(jnp.prod(half))
@@ -345,7 +361,9 @@ def _adaptive_cubature_solve(
         value_zero = jnp.zeros(output_shape, dtype=value_dtype)
         absolute_zero = jnp.zeros(output_shape, dtype=real_dtype)
 
-        def evaluate_batch(carry, batch):
+        def evaluate_batch(
+            carry: _BatchAccumulator, batch: tuple[Array, Array, Array]
+        ) -> tuple[_BatchAccumulator, None]:
             (
                 moment_high,
                 moment_correction,
@@ -542,15 +560,17 @@ def _adaptive_cubature_solve(
             ),
         )
 
-    def evaluate_initial(carry, bounds):
+    def evaluate_initial(
+        carry: None, bounds: tuple[Array, Array]
+    ) -> tuple[None, _CellEvaluation]:
         del carry
         return None, evaluate_cell(bounds[0], bounds[1])
 
-    def evaluate_initial_partition(_):
+    def evaluate_initial_partition(_: None) -> _CellEvaluation:
         _, values = jax.lax.scan(evaluate_initial, None, (initial_lower, initial_upper))
         return values
 
-    def invalid_initial_partition(_):
+    def invalid_initial_partition(_: None) -> _CellEvaluation:
         return (
             jnp.zeros((initial_count,) + output_shape, dtype=value_dtype),
             jnp.full((initial_count,), jnp.inf, dtype=real_dtype),
@@ -631,8 +651,8 @@ def _adaptive_cubature_solve(
         done,
     )
 
-    def iteration(carry, _):
-        def refine(current):
+    def iteration(carry: _CubatureState, _: None) -> tuple[_CubatureState, None]:
+        def refine(current: _CubatureState) -> _CubatureState:
             (
                 lower_all,
                 upper_all,
@@ -651,7 +671,7 @@ def _adaptive_cubature_solve(
             capacity_exhausted = count >= capacity
             evaluation_exhausted = evaluations + 2 * local_cost > maximum_evaluations
 
-            def fail(_):
+            def fail(_: None) -> _CubatureState:
                 failure = jnp.where(
                     capacity_exhausted,
                     int(IntegrationStatus.MAXIMUM_CELLS_REACHED),
@@ -672,7 +692,7 @@ def _adaptive_cubature_solve(
                     jnp.asarray(True),
                 )
 
-            def split(_):
+            def split(_: None) -> _CubatureState:
                 ratios = aspect_ratios(lower_all, upper_all, active_all)
                 numerically_ready = _meets_plan_tolerance(
                     global_estimate, global_error, plan, precision
@@ -699,7 +719,7 @@ def _adaptive_cubature_solve(
                 midpoint = 0.5 * (lower[axis] + upper[axis])
                 stagnated = (midpoint == lower[axis]) | (midpoint == upper[axis])
 
-                def stagnation(_):
+                def stagnation(_: None) -> _CubatureState:
                     return (
                         lower_all,
                         upper_all,
@@ -718,11 +738,13 @@ def _adaptive_cubature_solve(
                         jnp.asarray(True),
                     )
 
-                def evaluate_children(_):
+                def evaluate_children(_: None) -> _CubatureState:
                     left_upper = upper.at[axis].set(midpoint)
                     right_lower = lower.at[axis].set(midpoint)
 
-                    def evaluate_child(child_carry, bounds):
+                    def evaluate_child(
+                        child_carry: None, bounds: tuple[Array, Array]
+                    ) -> tuple[None, _CellEvaluation]:
                         del child_carry
                         return None, evaluate_cell(bounds[0], bounds[1])
 
@@ -895,7 +917,7 @@ def _adaptive_cubature_solve(
 
 
 def adaptive_cubature_callable(
-    integrand,
+    integrand: Callable[[Array], ArrayLike],
     plan: AdaptiveCubaturePlan,
     /,
     *,

@@ -28,6 +28,7 @@ from ..graph._operator_topology import (
     OperatorTopologyKind,
     OperatorTopologySite,
 )
+from ..nn.operator.capabilities import OperatorCompatibilityReport
 from ..nn.operator.data import (
     FunctionSamples,
     OperatorAxis,
@@ -187,7 +188,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
             {name: self.restore_field(prediction, name) for name in prediction.fields}
         )
 
-    def compatibility(self, model: Any, /, **kwargs: Any):
+    def compatibility(self, model: Any, /, **kwargs: Any) -> OperatorCompatibilityReport:
         """Return the configured model's capability report for this view."""
         if not isinstance(model, OperatorModel):
             raise TypeError("Operator domain preflight requires a neural operator model.")

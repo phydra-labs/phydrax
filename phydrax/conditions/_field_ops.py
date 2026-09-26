@@ -2,10 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import DomainFunction
 
@@ -32,7 +34,9 @@ class _CrossEvaluator(StrictModule):
         self.left_positions = left_positions
         self.right_positions = right_positions
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         left = self.left.func(
             *(args[index] for index in self.left_positions),
             key=key,

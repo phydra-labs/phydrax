@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import StrEnum
 
 import equinox as eqx
@@ -117,7 +118,12 @@ class ChemicalCalibrationPlan(StrictModule, NonTrainableState):
     parameters: tuple[ChemicalCalibrationParameter, ...]
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, mechanism: PreparedChemicalMechanism, parameters, /) -> None:
+    def __init__(
+        self,
+        mechanism: PreparedChemicalMechanism,
+        parameters: Iterable[ChemicalCalibrationParameter],
+        /,
+    ) -> None:
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         values = tuple(parameters)

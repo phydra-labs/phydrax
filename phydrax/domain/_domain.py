@@ -2,12 +2,15 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
 import abc
 from collections.abc import Callable, Mapping
 from math import prod
 from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
+from jaxtyping import ArrayLike
 
 from .._model import ModelPorts, PortMapping, ValuePort
 from .._strict import StrictModule
@@ -17,7 +20,9 @@ from ._coordinate import CoordinateSpec
 
 if TYPE_CHECKING:
     from .._model import ModelBinding
+    from ._components import DomainComponent
     from ._evaluation import FunctionBinding
+    from ._function import DomainFunction
 
 
 class Domain(StrictModule):
@@ -173,10 +178,10 @@ class Domain(StrictModule):
         self,
         spec: Any = None,
         *,
-        where: Mapping[str, Callable] | None = None,
+        where: Mapping[str, Callable[..., Any]] | None = None,
         where_all: Any = None,
         weight_all: Any = None,
-    ):
+    ) -> DomainComponent:
         from ._components import DomainComponent
         from ._selection import SelectionSpec
 
@@ -192,8 +197,8 @@ class Domain(StrictModule):
     def Function(
         self,
         *deps: str,
-        binding: "FunctionBinding | None" = None,
-    ):
+        binding: FunctionBinding | None = None,
+    ) -> Callable[[Callable[..., Any] | ArrayLike], DomainFunction]:
         """Bind a pointwise callable or explicit batch evaluator to this domain."""
         from ._evaluation import (
             BatchEvaluator,
@@ -210,7 +215,7 @@ class Domain(StrictModule):
                     f"Unknown dependency label {dep!r}; expected subset of {self.labels}."
                 )
 
-        def decorator(function):
+        def decorator(function: Callable[..., Any] | ArrayLike) -> DomainFunction:
             if not callable(function):
                 if binding is not None:
                     raise TypeError("Constant domain functions do not accept a binding.")
@@ -231,9 +236,9 @@ class Domain(StrictModule):
     def Model(
         self,
         *deps: str,
-        binding: "ModelBinding | None" = None,
+        binding: ModelBinding | None = None,
         port_mapping: PortMapping | None = None,
-    ):
+    ) -> Callable[[Callable[..., Any]], DomainFunction]:
         """Bind a model with an explicit domain input contract.
 
         A model declaring intrinsic ports (a `PortProvider`, such as a fitted ML
@@ -278,7 +283,7 @@ class Domain(StrictModule):
         if binding is not None:
             binding.require_dependencies(tuple(deps_))
 
-        def decorator(model):
+        def decorator(model: Callable[..., Any]) -> DomainFunction:
             _reject_model_state(model, context="Domain.Model")
             if isinstance(model, ModelEvaluator):
                 declared_binding = model.input_binding()
@@ -354,7 +359,7 @@ class Domain(StrictModule):
         *,
         transform: Callable[[Any], Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
-    ):
+    ) -> DomainFunction:
         from ._function import (
             _TrainableConstCallable,
             DomainFunction,

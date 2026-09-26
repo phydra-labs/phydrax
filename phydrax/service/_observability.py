@@ -83,7 +83,7 @@ class HostTelemetrySnapshot:
         maximum_classification: PrivacyClassification = PrivacyClassification.INTERNAL,
         /,
     ) -> dict[str, JSONValue]:
-        observations = [
+        observations: list[JSONValue] = [
             _telemetry_record(value)
             for value in self.observations
             if value.classification <= maximum_classification

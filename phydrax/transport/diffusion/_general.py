@@ -20,7 +20,14 @@ from ...stochastic._general_diffusion import AbstractItoScoreDiffusion
 from ._guidance import GuidedScoreField, ScoreContext
 
 
-def _evaluate_score(score, state, time, context, key, /):
+def _evaluate_score(
+    score: StateTimeScoreField | GuidedScoreField,
+    state: Array,
+    time: Array,
+    context: ScoreContext,
+    key: Key[Array, ""],
+    /,
+) -> Array:
     if isinstance(score, GuidedScoreField):
         return score(state, time, context=context, key=key)
     required = tuple(
@@ -36,9 +43,15 @@ def _evaluate_score(score, state, time, context, key, /):
 
 class _GeneralReverseDrift(StrictModule):
     process: AbstractItoScoreDiffusion
-    score: Any
+    score: StateTimeScoreField | GuidedScoreField
 
-    def __call__(self, reverse_time, state, args, /):
+    def __call__(
+        self,
+        reverse_time: Array,
+        state: Array,
+        args: tuple[Key[Array, ""], ScoreContext],
+        /,
+    ) -> Array:
         score_key, context = args
         score = _evaluate_score(
             self.score,
@@ -52,11 +65,11 @@ class _GeneralReverseDrift(StrictModule):
 
 class _GeneralProbabilityFlowField(StrictModule):
     process: AbstractItoScoreDiffusion
-    score: Any
+    score: StateTimeScoreField | GuidedScoreField
     score_key: Array
     context: ScoreContext
 
-    def __call__(self, reverse_time, state, args, /):
+    def __call__(self, reverse_time: Array, state: Array, args: object, /) -> Array:
         del args
         forward_time = self.process.terminal_time - reverse_time
         score = _evaluate_score(
@@ -72,7 +85,9 @@ class _GeneralProbabilityFlowField(StrictModule):
 class _GeneralDiffusionOperator(StrictModule):
     process: AbstractItoScoreDiffusion
 
-    def __call__(self, reverse_time, state, args, /):
+    def __call__(
+        self, reverse_time: Array, state: Array, args: object, /
+    ) -> lx.MatrixLinearOperator:
         del args
         forward_time = self.process.terminal_time - reverse_time
         factor = self.process.diffusion_factor(forward_time, state)

@@ -294,7 +294,7 @@ class SphericalThermomechanicalPlan(StrictModule, NonTrainableState):
             raise TypeError("Momentum factory returned an incompatible operator.")
         nv = self.velocity_space.size
 
-        def kkt(values):
+        def kkt(values: Array) -> Array:
             velocity = self.velocity_space.unflatten(values[:nv])
             pressure = self.pressure_space.unflatten(values[nv:])
             momentum_residual = momentum.mv(velocity) + self.divergence.transpose_mv(

@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
 
 import meshio
 import numpy as np
+from numpy.typing import ArrayLike
 
 from .._external_resource import open_bounded_resource, ResourceLimits
 from .._mesh_file_profiles import resolve_mesh_file_profile
@@ -47,6 +50,10 @@ from ._organization import (
     validate_mesh_zones,
 )
 from ._scope import MeshingEntityKind, MeshingScope
+
+
+if TYPE_CHECKING:
+    from ..interchange._report import _AdapterDirection, _AdapterLossCategory
 
 
 _POINT_IDS = "phydrax_point_global_ids"
@@ -103,8 +110,8 @@ class CellMeshExportResult:
     report: AdapterReport
 
 
-def _decoded_bytes(source) -> int:
-    def size(value):
+def _decoded_bytes(source: meshio.Mesh) -> int:
+    def size(value: object) -> int:
         if isinstance(value, dict):
             return sum(size(item) for item in value.values())
         if isinstance(value, (tuple, list)):
@@ -127,13 +134,22 @@ def _decoded_bytes(source) -> int:
     )
 
 
-def _loss(path, direction, reason, *, category="dropped", changes_interpretation=True):
+def _loss(
+    path: str,
+    direction: _AdapterDirection,
+    reason: str,
+    *,
+    category: _AdapterLossCategory = "dropped",
+    changes_interpretation: bool = True,
+) -> AdapterLoss:
     return AdapterLoss(
         path, direction, category, reason, changes_interpretation=changes_interpretation
     )
 
 
-def _require_permission(losses, policy):
+def _require_permission(
+    losses: Sequence[AdapterLoss], policy: MeshInteropPolicy
+) -> tuple[AdapterWaiver, ...]:
     changing = tuple(loss for loss in losses if loss.changes_interpretation)
     if changing and not policy.allow_lossy:
         raise ValueError(
@@ -147,17 +163,17 @@ def _require_permission(losses, policy):
 
 
 def _report(
-    source_format,
-    target_format,
-    source_id,
-    target_id,
-    losses,
-    policy,
+    source_format: str,
+    target_format: str,
+    source_id: str,
+    target_id: str,
+    losses: Sequence[AdapterLoss],
+    policy: MeshInteropPolicy,
     *,
-    preserved=(),
-    native=False,
-    assumptions=(),
-):
+    preserved: Iterable[str] = (),
+    native: bool = False,
+    assumptions: Sequence[str] = (),
+) -> AdapterReport:
     return AdapterReport(
         AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
         source_format,
@@ -186,7 +202,7 @@ def _report(
     )
 
 
-def _check_array_limits(artifact, policy) -> None:
+def _check_array_limits(artifact: MeshArrayArtifact, policy: MeshInteropPolicy) -> None:
     if artifact.points.shape[0] > policy.maximum_vertices:
         raise ValueError("Mesh artifact exceeds maximum_vertices.")
     if (
@@ -369,7 +385,9 @@ def read_mesh_array_artifact(
     return artifact, report
 
 
-def _scope(mesh, dimension, identifiers, kind="mesh"):
+def _scope(
+    mesh: CellMesh, dimension: int, identifiers: np.ndarray, kind: str = "mesh"
+) -> MeshingScope:
     entity_set = mesh.entity_set(dimension)
     if not np.all(np.isin(identifiers, np.asarray(entity_set.entity_ids))):
         raise ValueError("Mesh interchange scope indexes undeclared entity IDs.")
@@ -383,7 +401,7 @@ def _scope(mesh, dimension, identifiers, kind="mesh"):
     )
 
 
-def _validate_scope(scope, mesh) -> None:
+def _validate_scope(scope: MeshingScope, mesh: CellMesh) -> None:
     if scope.source_id != mesh.mesh_id or scope.source_revision != mesh.numeric_version:
         raise ValueError("Mesh interchange scope has a stale or foreign source binding.")
     entity_set = mesh.entity_set(scope.entity_dimension)
@@ -610,7 +628,7 @@ def export_mesh_array_artifact(
     zones: tuple[MeshZone, ...] = (),
     labels: tuple[MeshLabel, ...] = (),
     patches: tuple[MeshPatch, ...] = (),
-    point_global_ids=None,
+    point_global_ids: ArrayLike | None = None,
 ) -> tuple[MeshArrayArtifact, AdapterReport]:
     """Preserve native mesh semantics without imposing external-file limitations.
 
@@ -727,7 +745,7 @@ def export_mesh_array_artifact(
     for value in (*zones, *labels, *patches):
         _validate_scope(value.scope, mesh)
 
-    def zone_selection(value):
+    def zone_selection(value: MeshZone) -> MeshArraySelection:
         return MeshArraySelection(
             value.name,
             value.scope.entity_dimension,
@@ -738,7 +756,7 @@ def export_mesh_array_artifact(
             region_role=None if value.region_role is None else value.region_role.value,
         )
 
-    def label_selection(value):
+    def label_selection(value: MeshLabel) -> MeshArraySelection:
         return MeshArraySelection(
             value.name,
             value.scope.entity_dimension,
@@ -746,7 +764,7 @@ def export_mesh_array_artifact(
             entity_kind=value.scope.entity_kind.value,
         )
 
-    def patch_selection(value):
+    def patch_selection(value: MeshPatch) -> MeshArraySelection:
         return MeshArraySelection(
             value.name,
             value.scope.entity_dimension,
@@ -789,9 +807,13 @@ def export_mesh_array_artifact(
     return artifact, report
 
 
-def _external_fields(artifact, dimension, losses):
-    point_data = {_POINT_IDS: artifact.point_global_ids}
-    cell_data = {_CELL_IDS: [block.global_ids for block in artifact.blocks]}
+def _external_fields(
+    artifact: MeshArrayArtifact, dimension: int, losses: list[AdapterLoss]
+) -> tuple[dict[str, ArrayLike], dict[str, list[ArrayLike]], list[str]]:
+    point_data: dict[str, ArrayLike] = {_POINT_IDS: artifact.point_global_ids}
+    cell_data: dict[str, list[ArrayLike]] = {
+        _CELL_IDS: [block.global_ids for block in artifact.blocks]
+    }
     groups = {}
     for field in artifact.fields:
         if field.name in (_POINT_IDS, _CELL_IDS):
@@ -892,7 +914,7 @@ def _external_fields(artifact, dimension, losses):
     return point_data, cell_data, preserved
 
 
-def _written_array_losses(target, decoded):
+def _written_array_losses(target: meshio.Mesh, decoded: meshio.Mesh) -> list[AdapterLoss]:
     """Check the actual codec rather than assuming all meshio writers preserve data."""
     losses = []
     expected_points = target.points
@@ -932,11 +954,13 @@ def _written_array_losses(target, decoded):
                 "The external codec changes cell types, block grouping, or connectivity ordering.",
             )
         )
-    for name, values in target.point_data.items():
+    for name, raw_values in target.point_data.items():
+        values = np.asarray(raw_values)
         if (
             name not in decoded.point_data
-            or values.dtype.kind != decoded.point_data[name].dtype.kind
-            or values.dtype.itemsize != decoded.point_data[name].dtype.itemsize
+            or values.dtype.kind != np.asarray(decoded.point_data[name]).dtype.kind
+            or values.dtype.itemsize
+            != np.asarray(decoded.point_data[name]).dtype.itemsize
             or not np.array_equal(values, decoded.point_data[name])
         ):
             losses.append(
@@ -952,8 +976,8 @@ def _written_array_losses(target, decoded):
             actual is None
             or len(values) != len(actual)
             or any(
-                a.dtype.kind != b.dtype.kind
-                or a.dtype.itemsize != b.dtype.itemsize
+                np.asarray(a).dtype.kind != np.asarray(b).dtype.kind
+                or np.asarray(a).dtype.itemsize != np.asarray(b).dtype.itemsize
                 or not np.array_equal(a, b)
                 for a, b in zip(values, actual)
             )
@@ -979,7 +1003,7 @@ def export_cell_mesh(
     zones: tuple[MeshZone, ...] = (),
     labels: tuple[MeshLabel, ...] = (),
     patches: tuple[MeshPatch, ...] = (),
-    point_global_ids=None,
+    point_global_ids: ArrayLike | None = None,
 ) -> CellMeshExportResult:
     """Write meshio arrays with explicit accounting for native semantic losses."""
     artifact, native_report = export_mesh_array_artifact(

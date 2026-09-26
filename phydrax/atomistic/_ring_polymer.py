@@ -139,7 +139,7 @@ class PreparedRingPolymerDynamics(StrictModule):
         )
 
     def _physical(self, positions: Array, /) -> tuple[Array, Array, Array]:
-        def evaluate_bead(bead_positions):
+        def evaluate_bead(bead_positions: Array) -> tuple[Array, Array, Array]:
             neighborhood = self.neighborhood.build(bead_positions)
             evaluation = self.potential.evaluate(
                 bead_positions,

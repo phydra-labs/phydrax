@@ -153,7 +153,9 @@ class FactorAnalysisModel(AbstractFittedModel):
 
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, mean, loadings, noise_variance) -> None:
+    def __init__(
+        self, mean: ArrayLike, loadings: ArrayLike, noise_variance: ArrayLike
+    ) -> None:
         self.mean = jnp.asarray(mean)
         self.loadings = jnp.asarray(loadings)
         self.noise_variance = jnp.asarray(noise_variance)
@@ -239,7 +241,9 @@ class FactorAnalysis(AbstractRecipe):
         diagonal = jnp.real(jnp.diagonal(covariance, axis1=-2, axis2=-1))
         noise0 = jnp.maximum(0.5 * diagonal, self.min_noise)
 
-        def step(carry, _):
+        def step(
+            carry: tuple[Array, Array, Array, Array], _: None
+        ) -> tuple[tuple[Array, Array, Array, Array], Array]:
             noise, _previous, done, used = carry
             reduced = (
                 covariance - jnp.eye(width, dtype=covariance.dtype) * noise[..., None, :]
@@ -370,7 +374,7 @@ class ICAModel(AbstractFittedModel):
 
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, mean, unmixing) -> None:
+    def __init__(self, mean: ArrayLike, unmixing: ArrayLike) -> None:
         self.mean = jnp.asarray(mean)
         self.unmixing = jnp.asarray(unmixing)
         relative_cutoff = (
@@ -479,7 +483,9 @@ class ICA(AbstractRecipe):
             jnp.sum(weights, axis=-1, keepdims=True), jnp.finfo(weights.dtype).tiny
         )
 
-        def step(carry, _):
+        def step(
+            carry: tuple[Array, Array, Array, Array], _: None
+        ) -> tuple[tuple[Array, Array, Array, Array], Array]:
             matrix, done, used, residual = carry
             projections = whitened @ jnp.swapaxes(matrix, -1, -2)
             activation = jnp.tanh(projections)

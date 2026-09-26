@@ -177,13 +177,13 @@ class MixedDimensionalCasingPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _operator(self):
+    def _operator(self) -> la.FunctionLinearOperator:
         formation_count = self.formation_operator.source.size
         stations = self.coupling.shape[0]
         gauge_formation = self.gauge[:formation_count]
         gauge_casing = self.gauge[formation_count : formation_count + stations]
 
-        def action(values):
+        def action(values: Array) -> Array:
             formation = values[:formation_count]
             casing = values[formation_count : formation_count + stations]
             multiplier = values[-1]

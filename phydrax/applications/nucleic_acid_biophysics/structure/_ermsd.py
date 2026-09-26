@@ -9,11 +9,14 @@ NOT number of pairs. The cutoff is continuous but not globally differentiable.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -26,7 +29,12 @@ from ....ein import contract
 from ....series import SampledSeries
 from ....units import ANGSTROM, conversion_factor, UnitDefinition
 from .._binding import PreparedNucleotideBinding
+from .._construct import NucleotideKey
 from ._frames import base_frames
+
+
+if TYPE_CHECKING:
+    from ....discretization import PeriodicCell
 
 
 class GFeatureEvaluation(StrictModule):
@@ -59,13 +67,13 @@ class NucleotideGDescriptor(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        binding,
+        binding: PreparedNucleotideBinding,
         *,
         length_unit: UnitDefinition,
-        pairs=None,
-        cutoff=2.4,
+        pairs: Iterable[tuple[NucleotideKey, NucleotideKey]] | None = None,
+        cutoff: float = 2.4,
         image_policy: str,
-        smooth_width=0.0,
+        smooth_width: float = 0.0,
     ) -> None:
         """Fixed directed pair support; omission changes the descriptor identity.
 
@@ -118,7 +126,7 @@ class NucleotideGDescriptor(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, positions) -> GFeatureEvaluation:
+    def evaluate(self, positions: ArrayLike) -> GFeatureEvaluation:
         frames = base_frames(positions, self.binding, image_policy=self.image_policy)
         left, right = self.pair_indices[:, 0], self.pair_indices[:, 1]
         relative = frames.centers[right] - frames.centers[left]
@@ -148,7 +156,7 @@ class NucleotideGDescriptor(StrictModule, NonTrainableState):
             self.descriptor_id,
         )
 
-    def compare(self, positions, reference) -> ERMSDEvaluation:
+    def compare(self, positions: ArrayLike, reference: ArrayLike) -> ERMSDEvaluation:
         left, right = self.evaluate(positions), self.evaluate(reference)
         valid = left.pair_valid & right.pair_valid
         squared = (
@@ -208,7 +216,7 @@ class ERMSDCollectiveVariableProgram(
     metrics: tuple[CollectiveVariableMetric, ...]
     program_id: str = eqx.field(static=True)
 
-    def __init__(self, descriptor, reference) -> None:
+    def __init__(self, descriptor: NucleotideGDescriptor, reference: ArrayLike) -> None:
         evaluated = descriptor.evaluate(reference)
         if not bool(jnp.all(evaluated.pair_valid)):
             raise ValueError(
@@ -223,7 +231,14 @@ class ERMSDCollectiveVariableProgram(
             }
         )
 
-    def evaluate(self, positions, /, *, cell=None, cell_vectors=None):
+    def evaluate(
+        self,
+        positions: ArrayLike,
+        /,
+        *,
+        cell: PeriodicCell | None = None,
+        cell_vectors: ArrayLike | None = None,
+    ) -> tuple[Array, Array]:
         """Native program ABI; geometry is already unwrapped before evaluation."""
         if cell is not None or cell_vectors is not None:
             raise ValueError(

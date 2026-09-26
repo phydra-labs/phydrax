@@ -212,7 +212,7 @@ def _edge_label(row: int, column: int, direction: str, /) -> str:
 
 
 def _grid_structure(
-    shapes: Sequence[tuple[int, int, int, int]], rows: int, columns: int, /
+    shapes: Sequence[Sequence[int]], rows: int, columns: int, /
 ) -> ContractionStructure:
     nodes = []
     for row in range(rows):
@@ -242,7 +242,9 @@ def _grid_structure(
     return ContractionStructure(tuple(nodes), ())
 
 
-def _double_layer_specification(left: PEPS, right: PEPS, /):
+def _double_layer_specification(
+    left: PEPS, right: PEPS, /
+) -> tuple[ContractionStructure, tuple[tuple[int, ...], ...]]:
     if (
         left.rows != right.rows
         or left.columns != right.columns

@@ -326,9 +326,10 @@ def normalized_otf_mtf(intensity: IntensityPlane, /) -> NormalizedTransferFuncti
     hermitian_error = jnp.max(jnp.abs(normalized - conjugate_partner))
     centered = jnp.fft.fftshift(normalized)
     mtf = jnp.abs(centered)
-    frequency_axes = tuple(
-        jnp.fft.fftshift(jnp.fft.fftfreq(count, d=spacing))
-        for count, spacing in zip(intensity.space.shape, spacings, strict=True)
+    shape = intensity.space.shape
+    frequency_axes = (
+        jnp.fft.fftshift(jnp.fft.fftfreq(shape[0], d=spacings[0])),
+        jnp.fft.fftshift(jnp.fft.fftfreq(shape[1], d=spacings[1])),
     )
     nyquist = 0.5 / spacings
     finite = (

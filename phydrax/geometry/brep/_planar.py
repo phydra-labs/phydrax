@@ -13,18 +13,18 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from OCP.BOPAlgo import BOPAlgo_CellsBuilder  # ty: ignore[unresolved-import]
-from OCP.BRep import BRep_Tool  # ty: ignore[unresolved-import]
-from OCP.BRepAdaptor import BRepAdaptor_Surface  # ty: ignore[unresolved-import]
-from OCP.BRepBuilderAPI import (  # ty: ignore[unresolved-import]
+from OCP.BOPAlgo import BOPAlgo_CellsBuilder
+from OCP.BRep import BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeFace,
     BRepBuilderAPI_MakePolygon,
 )
-from OCP.BRepCheck import BRepCheck_Analyzer  # ty: ignore[unresolved-import]
-from OCP.BRepTools import BRepTools_WireExplorer  # ty: ignore[unresolved-import]
-from OCP.GeomAbs import GeomAbs_Plane  # ty: ignore[unresolved-import]
-from OCP.gp import gp_Ax3, gp_Dir, gp_Pln, gp_Pnt  # ty: ignore[unresolved-import]
-from OCP.TopAbs import (  # ty: ignore[unresolved-import]
+from OCP.BRepCheck import BRepCheck_Analyzer
+from OCP.BRepTools import BRepTools_WireExplorer
+from OCP.GeomAbs import GeomAbs_Plane
+from OCP.gp import gp_Ax3, gp_Dir, gp_Pln, gp_Pnt
+from OCP.TopAbs import (
     TopAbs_EDGE,
     TopAbs_FACE,
     TopAbs_REVERSED,
@@ -32,8 +32,8 @@ from OCP.TopAbs import (  # ty: ignore[unresolved-import]
     TopAbs_VERTEX,
     TopAbs_WIRE,
 )
-from OCP.TopExp import TopExp_Explorer  # ty: ignore[unresolved-import]
-from OCP.TopoDS import TopoDS, TopoDS_Shape  # ty: ignore[unresolved-import]
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopoDS import TopoDS, TopoDS_Shape
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
@@ -78,7 +78,7 @@ def _vector3(value: Sequence[float], name: str) -> tuple[float, float, float]:
     array = np.asarray(value, dtype=np.float64)
     if array.shape != (3,) or not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must be a finite three-vector.")
-    return tuple(float(component) for component in array)
+    return (float(array[0]), float(array[1]), float(array[2]))
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -491,12 +491,12 @@ def _roundoff_tolerance(embedding: PlanarEmbedding, points: np.ndarray) -> float
         float(np.max(np.abs(np.asarray(embedding.origin)))),
         float(np.max(np.abs(points))) if points.size else 0.0,
     )
-    return 512.0 * np.finfo(np.float64).eps * scale
+    return float(512.0 * np.finfo(np.float64).eps * scale)
 
 
 def _face_vertices(face: Any, /) -> np.ndarray:
     points: list[tuple[float, float, float]] = []
-    for vertex in _explore_unique(face, TopAbs_VERTEX, TopoDS.Vertex_s):
+    for vertex in _explore_unique(face, TopAbs_VERTEX, TopoDS.Vertex):
         point = BRep_Tool.Pnt_s(vertex)
         points.append((point.X(), point.Y(), point.Z()))
     return np.asarray(points, dtype=np.float64)
@@ -566,11 +566,11 @@ def _face_edge_occurrences(
     wires: list[tuple[int, ...]] = []
     oriented_edges: dict[int, Any] = {}
     while wire_explorer.More():
-        wire = TopoDS.Wire_s(wire_explorer.Current())
+        wire = TopoDS.Wire(wire_explorer.Current())
         edge_explorer = BRepTools_WireExplorer(wire, face)
         signed_indices: list[int] = []
         while edge_explorer.More():
-            edge = TopoDS.Edge_s(edge_explorer.Current())
+            edge = TopoDS.Edge(edge_explorer.Current())
             edge_index = _shape_index(global_edges, edge)
             if edge_index in oriented_edges:
                 raise ValueError(
@@ -647,7 +647,7 @@ def _composite_sources(
         for source_face_index, face, item in face_items:
             _require_coplanar_face(face, plan.embedding)
             global_edges = (
-                _explore_unique(face, TopAbs_EDGE, TopoDS.Edge_s)
+                _explore_unique(face, TopAbs_EDGE, TopoDS.Edge)
                 if item is None
                 else item.edges
             )
@@ -736,7 +736,7 @@ def _members(
 ) -> frozenset[int]:
     builder.RemoveAllFromResult()
     builder.AddToResult(_shape_list((shape,)), _shape_list(()))
-    selected = _explore_unique(builder.Shape(), TopAbs_FACE, TopoDS.Face_s)
+    selected = _explore_unique(builder.Shape(), TopAbs_FACE, TopoDS.Face)
     return frozenset(_shape_index(atoms, value) for value in selected)
 
 
@@ -847,16 +847,16 @@ def _verify_roundtrip(
     embedding: PlanarEmbedding,
     /,
 ) -> _PlanarRoundtrip:
-    if _explore_unique(original_shape, TopAbs_SOLID, TopoDS.Solid_s) or _explore_unique(
-        reopened_shape, TopAbs_SOLID, TopoDS.Solid_s
+    if _explore_unique(original_shape, TopAbs_SOLID, TopoDS.Solid) or _explore_unique(
+        reopened_shape, TopAbs_SOLID, TopoDS.Solid
     ):
         raise BRepPartitionHistoryError(
             "A persisted planar partition cannot acquire solid topology."
         )
-    original_faces = _explore_unique(original_shape, TopAbs_FACE, TopoDS.Face_s)
-    original_edges = _explore_unique(original_shape, TopAbs_EDGE, TopoDS.Edge_s)
-    reopened_faces = _explore_unique(reopened_shape, TopAbs_FACE, TopoDS.Face_s)
-    reopened_edges = _explore_unique(reopened_shape, TopAbs_EDGE, TopoDS.Edge_s)
+    original_faces = _explore_unique(original_shape, TopAbs_FACE, TopoDS.Face)
+    original_edges = _explore_unique(original_shape, TopAbs_EDGE, TopoDS.Edge)
+    reopened_faces = _explore_unique(reopened_shape, TopAbs_FACE, TopoDS.Face)
+    reopened_edges = _explore_unique(reopened_shape, TopAbs_EDGE, TopoDS.Edge)
     face_map = _exact_roundtrip_map(original_faces, reopened_faces, "face")
     edge_map = _exact_roundtrip_map(original_edges, reopened_edges, "edge")
     if (
@@ -1043,7 +1043,7 @@ def _association_graph(
             source_face.shape,
             roundtrip.faces,
             TopAbs_FACE,
-            TopoDS.Face_s,
+            TopoDS.Face,
         )
         mapped_faces = tuple(
             roundtrip.face_map[index] for index in face_history.target_indices
@@ -1079,7 +1079,7 @@ def _association_graph(
                 source_edge.shape,
                 roundtrip.edges,
                 TopAbs_EDGE,
-                TopoDS.Edge_s,
+                TopoDS.Edge,
             )
             mapped_edges = tuple(
                 roundtrip.edge_map[index] for index in edge_history.target_indices
@@ -1272,7 +1272,7 @@ def partition_planar(
         builder.Perform()
         if builder.HasErrors():
             raise RuntimeError("OCCT failed to construct the exact planar Boolean cells.")
-        atoms = _explore_unique(builder.GetAllParts(), TopAbs_FACE, TopoDS.Face_s)
+        atoms = _explore_unique(builder.GetAllParts(), TopAbs_FACE, TopoDS.Face)
         if not atoms:
             raise RuntimeError("OCCT produced no planar partition cells.")
         operand_members = {
@@ -1287,10 +1287,10 @@ def partition_planar(
     atom_owners = _classify_atoms(plan, operand_members, len(atoms))
     if not BRepCheck_Analyzer(final_shape).IsValid():
         raise RuntimeError("OCCT produced an invalid planar partition topology.")
-    if _explore_unique(final_shape, TopAbs_SOLID, TopoDS.Solid_s):
+    if _explore_unique(final_shape, TopAbs_SOLID, TopoDS.Solid):
         raise RuntimeError("OCCT produced solids for a planar partition.")
-    final_faces = _explore_unique(final_shape, TopAbs_FACE, TopoDS.Face_s)
-    final_edges = _explore_unique(final_shape, TopAbs_EDGE, TopoDS.Edge_s)
+    final_faces = _explore_unique(final_shape, TopAbs_FACE, TopoDS.Face)
+    final_edges = _explore_unique(final_shape, TopAbs_EDGE, TopoDS.Edge)
     if not final_faces or not final_edges:
         raise RuntimeError("OCCT produced an incomplete planar partition result.")
     for face in final_faces:
@@ -1326,7 +1326,7 @@ def partition_planar(
             staged_model,
             plan.embedding,
         )
-        if identity_partition:
+        if builder is None:
             association_graph, history_certificate_id = _identity_association_graph(
                 plan,
                 source_revision,

@@ -16,6 +16,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -40,7 +41,9 @@ def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     return result
 
 
-def _real_array(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
+def _real_array(
+    value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None
+) -> Array:
     result = jnp.asarray(value, dtype=dtype)
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
@@ -56,7 +59,7 @@ def _scalar_flag(value: ArrayLike, name: str, /) -> Array:
     return result
 
 
-def _scalar(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
+def _scalar(value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None) -> Array:
     result = _real_array(value, name, dtype=dtype)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
@@ -934,8 +937,19 @@ class FullDarkSectorObservationPlan(StrictModule, NonTrainableState):
                 "products": [value.product_id for value in observed],
             }
         )
+        (
+            metric_stress,
+            event_shower_hadronization,
+            quantum_coherence,
+            radiation,
+            ledgers,
+        ) = observed
         return ObservedFullDarkSectorBundle(
-            *observed,
+            metric_stress,
+            event_shower_hadronization,
+            quantum_coherence,
+            radiation,
+            ledgers,
             bundle.output_id,
             self.plan_id,
             product_id,

@@ -14,7 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
-from ...sparse import ElementTensorOperator, scatter_local
+from ...sparse import ElementTensorOperator, RelationAccumulation, scatter_local
 
 
 class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
@@ -25,7 +25,7 @@ class FactorizedVirtualElementOperator(StrictModule, NonTrainableState):
     stabilization_matrices: tuple[Array, ...]
     gathers: tuple[Array, ...]
     global_size: int = eqx.field(static=True)
-    accumulation: str = eqx.field(static=True)
+    accumulation: RelationAccumulation = eqx.field(static=True)
     properties: OperatorProperties
     operator_id: str = eqx.field(static=True)
 

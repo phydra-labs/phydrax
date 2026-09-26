@@ -12,7 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -53,17 +53,17 @@ class PeriodicSpectrumResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        fractional_points,
-        weights,
-        distances,
-        energies,
-        coefficients,
-        eigen_residuals,
-        metric_residuals,
-        overlap_minimum_eigenvalues,
-        overlap_condition_numbers,
-        successful,
-        energy_unit,
+        fractional_points: ArrayLike,
+        weights: ArrayLike,
+        distances: ArrayLike,
+        energies: ArrayLike,
+        coefficients: ArrayLike,
+        eigen_residuals: ArrayLike,
+        metric_residuals: ArrayLike,
+        overlap_minimum_eigenvalues: ArrayLike,
+        overlap_condition_numbers: ArrayLike,
+        successful: ArrayLike,
+        energy_unit: UnitDefinition,
         /,
         *,
         cell_id: str,
@@ -346,7 +346,7 @@ class ChebyshevMomentPlan(StrictModule, NonTrainableState):
         half_width = 0.5 * (self.upper_bound - self.lower_bound)
         identity = jnp.eye(dimension, dtype=self.pencil.hamiltonian.state.values.dtype)
 
-        def scaled_action(vector):
+        def scaled_action(vector: Array) -> Array:
             action = self.pencil.hamiltonian.apply(points, vector)
             return (action - center * vector) / half_width
 

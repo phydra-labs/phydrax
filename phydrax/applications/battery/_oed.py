@@ -34,6 +34,7 @@ from ...qualification import (
 from ...uq import experiment_design_objective, ExperimentDesignResult
 from ._calibration import PreparedBatteryCalibration
 from ._protocol import BatteryProtocolValues
+from ._results import BatteryExperimentResult
 
 
 BatteryOEDCriterion = Literal["d_optimal", "a_optimal", "e_optimal"]
@@ -617,7 +618,9 @@ class PreparedBatteryOED(StrictModule):
         )
         return safe, supported
 
-    def _run(self, amplitudes: Array, position: PyTree[Any], /):
+    def _run(
+        self, amplitudes: Array, position: PyTree[Any], /
+    ) -> tuple[Array, BatteryExperimentResult]:
         experiment = self.calibration.plan.experiments[self.experiment_index]
         physical = self.calibration.plan.parameter_space.constrain(position)
         branches = self.calibration.plan.projection.unpack(physical)
@@ -818,7 +821,9 @@ def _continuous_value(prepared: PreparedBatteryOED, amplitudes: Array, /) -> Arr
 
 
 @_continuous_value.def_jvp
-def _continuous_value_jvp(primals, tangents):
+def _continuous_value_jvp(
+    primals: tuple[PreparedBatteryOED, Array], tangents: tuple[object, Array | None]
+) -> tuple[Array, Array]:
     prepared, amplitudes = primals
     _, amplitude_tangent = tangents
     tangent = (
@@ -834,7 +839,9 @@ def _continuous_value_jvp(primals, tangents):
 class _BatteryOEDContinuousObjective(StrictModule):
     prepared: PreparedBatteryOED
 
-    def __call__(self, amplitudes: Array, dynamic_args: Any, /):
+    def __call__(
+        self, amplitudes: Array, dynamic_args: Any, /
+    ) -> tuple[Array, BatteryOEDResult]:
         del dynamic_args
         result = self.prepared.evaluate(jax.lax.stop_gradient(amplitudes))
         value = _continuous_value(self.prepared, amplitudes)

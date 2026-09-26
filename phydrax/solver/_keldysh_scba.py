@@ -155,7 +155,7 @@ def _causal_real(gamma: Array, spacing: float, /) -> Array:
     count = gamma.shape[0]
     edges = (jnp.arange(count + 1) - 0.5) * spacing
 
-    def row(index):
+    def row(index: Array) -> Array:
         coordinate = index * spacing
         weights = jnp.log(
             jnp.abs((coordinate - edges[:-1]) / (coordinate - edges[1:]))
@@ -188,7 +188,7 @@ def solve_keldysh_scba(
     occupation = problem.phonon_occupation
     bins = problem.phonon_bins
 
-    def evaluate(state):
+    def evaluate(state: Array) -> tuple[Array, Array, Array, Array, Array]:
         lesser_diagonal, greater_diagonal = state
         broadening = lesser_diagonal + greater_diagonal
         retarded_diagonal = _causal_real(broadening, problem.spacing) - 0.5j * broadening
@@ -201,7 +201,7 @@ def solve_keldysh_scba(
         greater_green = green @ greater_source @ advanced
         return retarded_diagonal, green, lesser_green, greater_green, linear_success
 
-    def mapping(state, args):
+    def mapping(state: Array, args: object) -> Array:
         del args
         _, _, lesser_green, greater_green, _ = evaluate(state)
         lesser_density = jnp.real(jnp.diagonal(lesser_green, axis1=-2, axis2=-1))

@@ -210,7 +210,7 @@ class PreparedHypersurfaceEpoch(StrictModule):
     ) -> tuple[Array, HypersurfaceEpochEvidence]:
         roots = self.roots
 
-        def line_value(root):
+        def line_value(root: Array) -> Array:
             return hypersurface(self.origins + root[:, None] * self.directions)
 
         for _ in range(self.newton_iterations):
@@ -394,7 +394,7 @@ def solve_calabi_yau_moduli(
     evidence = problem.epoch.continue_roots(initial)[1]
     for _ in range(problem.steps):
 
-        def loss(coefficient):
+        def loss(coefficient: Array) -> Array:
             family = initial.with_coefficients(coefficient)
             return jnp.real(problem.objective(family, jnp.asarray(potential_parameters)))
 

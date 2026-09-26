@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax.flatten_util import ravel_pytree
+from jax.typing import DTypeLike
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
@@ -31,6 +32,39 @@ CausalLinearizationMode: TypeAlias = Literal[
     "fixed-block",
 ]
 CausalProbeDistribution: TypeAlias = Literal["rademacher", "normal"]
+# Norm, step, damping, actual, predicted, and ratio histories plus accepted and
+# finite flags, one entry per outer iteration.
+_CausalHistories: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
+# Trajectory, residual, converged, failed, status, damping, accepted and
+# rejected counts, transition/Jacobian/JVP work, then the histories.
+_CausalCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+# Trial count, damping, accepted flag, saved candidate/residual/step, ratio,
+# actual and predicted reductions, and the finite-seen flag.
+_CausalTrialCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 def _tree_all_finite(tree: PyTree[Any], /) -> Array:
@@ -407,7 +441,7 @@ def _linearize_transitions(
         if block_builder is None:
             raise RuntimeError("fixed-block policy lost its block builder.")
 
-        def build(previous, driver):
+        def build(previous: Array, driver: PyTree[Any]) -> Array:
             state = problem.unravel_state(previous)
             return jnp.asarray(block_builder(problem.parameters, state, driver))
 
@@ -420,8 +454,8 @@ def _linearize_transitions(
         matrices = matrices.at[0].set(jnp.zeros_like(matrices[0]))
         return matrices, jnp.asarray(0, dtype=jnp.int32), jnp.asarray(0, dtype=jnp.int32)
 
-    def probe_action(probe):
-        def one(previous, driver, direction):
+    def probe_action(probe: Array) -> Array:
+        def one(previous: Array, driver: PyTree[Any], direction: Array) -> Array:
             _, tangent = jax.jvp(
                 lambda candidate: problem.transition_flat(candidate, driver),
                 (previous,),
@@ -443,7 +477,7 @@ def _linearize_transitions(
     )
 
 
-def _empty_histories(steps: int, dtype: Any, /) -> tuple[Array, ...]:
+def _empty_histories(steps: int, dtype: DTypeLike, /) -> _CausalHistories:
     nan = jnp.full((steps,), jnp.nan, dtype=dtype)
     return (
         nan,
@@ -501,7 +535,7 @@ def _solve_causal_forward(
         dtype=dtype,
     )
 
-    carry = (
+    carry: _CausalCarry = (
         trajectory,
         residual,
         converged,
@@ -516,7 +550,7 @@ def _solve_causal_forward(
         *histories,
     )
 
-    def iteration(index, state):
+    def iteration(index: Array, state: _CausalCarry) -> _CausalCarry:
         (
             current,
             current_residual,
@@ -548,7 +582,7 @@ def _solve_causal_forward(
         )
         active = ~(already_converged | already_failed) & evaluation_available
 
-        def active_iteration(_):
+        def active_iteration(_: None) -> _CausalCarry:
             matrices, jacobian_increment, jvp_increment = _linearize_transitions(
                 problem,
                 current,
@@ -564,7 +598,7 @@ def _solve_causal_forward(
                     jnp.asarray(0.0, dtype=dtype),
                 )
                 candidate = current + step
-                candidate_residual, _ = problem.evaluate_flat(candidate)
+                candidate_residual = problem.evaluate_flat(candidate)[0]
                 linear_residual = causal_linearized_residual(
                     matrices,
                     current_residual,
@@ -583,7 +617,7 @@ def _solve_causal_forward(
                 next_damping = current_damping
                 trial_count = jnp.asarray(1, dtype=jnp.int32)
             else:
-                trial_initial = (
+                trial_initial: _CausalTrialCarry = (
                     jnp.asarray(0, dtype=jnp.int32),
                     current_damping,
                     jnp.asarray(False),
@@ -596,7 +630,9 @@ def _solve_causal_forward(
                     jnp.asarray(False),
                 )
 
-                def trial_body(_, trial_state):
+                def trial_body(
+                    _: Array, trial_state: _CausalTrialCarry
+                ) -> _CausalTrialCarry:
                     (
                         trial_number,
                         trial_damping,
@@ -610,14 +646,14 @@ def _solve_causal_forward(
                         finite_seen,
                     ) = trial_state
 
-                    def evaluate_trial(_):
+                    def evaluate_trial(_: None) -> _CausalTrialCarry:
                         direction = solve_causal_least_squares(
                             matrices,
                             current_residual,
                             trial_damping,
                         )
                         proposed = current + direction
-                        proposed_residual, _ = problem.evaluate_flat(proposed)
+                        proposed_residual = problem.evaluate_flat(proposed)[0]
                         linear_residual = causal_linearized_residual(
                             matrices,
                             current_residual,

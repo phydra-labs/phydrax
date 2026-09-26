@@ -16,6 +16,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -52,11 +53,11 @@ class ColumnOpticalProperties(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        shortwave_absorption: ArrayLike,
-        shortwave_scattering: ArrayLike,
-        longwave_absorption: ArrayLike,
+        shortwave_absorption: npt.ArrayLike,
+        shortwave_scattering: npt.ArrayLike,
+        longwave_absorption: npt.ArrayLike,
         reference_id: str,
-        shortwave_asymmetry: ArrayLike = (0.0, 0.0, 0.0, 0.0),
+        shortwave_asymmetry: npt.ArrayLike = (0.0, 0.0, 0.0, 0.0),
     ) -> None:
         arrays = {
             "shortwave_absorption": np.asarray(shortwave_absorption, dtype=np.float64),
@@ -120,7 +121,7 @@ class ColumnRadiationResult(StrictModule):
     successful: Array
 
 
-def _hemispheric_slab(absorption: Array, scattering: Array):
+def _hemispheric_slab(absorption: Array, scattering: Array) -> tuple[Array, Array, Array]:
     """Reflection, transmission, absorptance of a homogeneous SW slab.
 
     ``scattering`` already includes (1-g). The exact exponential solution uses
@@ -153,10 +154,14 @@ def _hemispheric_slab(absorption: Array, scattering: Array):
     )
 
 
-def _shortwave_fluxes(absorption, scattering, albedo, incident):
+def _shortwave_fluxes(
+    absorption: Array, scattering: Array, albedo: Array, incident: Array
+) -> tuple[Array, Array]:
     reflect, transmit, absorb = _hemispheric_slab(absorption, scattering)
 
-    def add_layer(lower, slab):
+    def add_layer(
+        lower: tuple[Array, Array], slab: tuple[Array, ...]
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         # Retain both albedo and its complement independently: 1-R loses all
         # precision in a thick conservative slab over a perfectly reflecting surface.
         r, c = lower
@@ -174,7 +179,7 @@ def _shortwave_fluxes(absorption, scattering, albedo, incident):
         reverse=True,
     )
 
-    def descend(downward, slab):
+    def descend(downward: Array, slab: tuple[Array, Array]) -> tuple[Array, Array]:
         transmission, denominator = slab
         next_downward = downward * (transmission / denominator)
         return next_downward, next_downward
@@ -189,11 +194,17 @@ def _shortwave_fluxes(absorption, scattering, albedo, incident):
     return stack_reflection * down, down
 
 
-def _longwave_fluxes(absorption, temperature, surface_temperature, emissivity, incident):
+def _longwave_fluxes(
+    absorption: Array,
+    temperature: Array,
+    surface_temperature: Array,
+    emissivity: Array,
+    incident: Array,
+) -> tuple[Array, Array]:
     transmission = jnp.exp(-2.0 * absorption)
     emission = -jnp.expm1(-2.0 * absorption) * _STEFAN_BOLTZMANN * temperature**4
 
-    def propagate(flux, layer):
+    def propagate(flux: Array, layer: tuple[Array, ...]) -> tuple[Array, Array]:
         attenuation, source = layer
         next_flux = attenuation * flux + source
         return next_flux, next_flux
@@ -404,24 +415,36 @@ class ColumnRadiationPlan(StrictModule):
         for value in (sw_up, sw_down, lw_up, lw_down, up, down, heating):
             valid = valid & jnp.all(jnp.isfinite(value), axis=-1)
         valid = valid & jnp.isfinite(residual)
+        up, down, heating, sw_up, sw_down, lw_up, lw_down, sw_abs, sw_scat, lw_abs = (
+            jnp.where(valid[..., None], x, 0.0)
+            for x in (
+                up,
+                down,
+                heating,
+                sw_up,
+                sw_down,
+                lw_up,
+                lw_down,
+                sw_abs,
+                sw_scat,
+                lw_abs,
+            )
+        )
         return ColumnRadiationResult(
-            *(jnp.where(valid[..., None], x, 0.0) for x in (up, down, heating)),
-            jnp.where(valid, surface_heating, 0.0),
-            jnp.where(valid, space_heating, 0.0),
-            *(
-                jnp.where(valid[..., None], x, 0.0)
-                for x in (
-                    sw_up,
-                    sw_down,
-                    lw_up,
-                    lw_down,
-                    sw_abs,
-                    sw_scat,
-                    lw_abs,
-                )
-            ),
-            jnp.where(valid, residual, 0.0),
-            valid,
+            upward_flux=up,
+            downward_flux=down,
+            heating=heating,
+            surface_heating=jnp.where(valid, surface_heating, 0.0),
+            space_heating=jnp.where(valid, space_heating, 0.0),
+            shortwave_upward_flux=sw_up,
+            shortwave_downward_flux=sw_down,
+            longwave_upward_flux=lw_up,
+            longwave_downward_flux=lw_down,
+            shortwave_absorption_depth=sw_abs,
+            shortwave_transport_scattering_depth=sw_scat,
+            longwave_absorption_depth=lw_abs,
+            budget_residual=jnp.where(valid, residual, 0.0),
+            successful=valid,
         )
 
 

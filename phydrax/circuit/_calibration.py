@@ -121,7 +121,9 @@ def complex_scattering_residual(
     return factor @ residual
 
 
-def _component_channels(component: AbstractScatteringComponent, /):
+def _component_channels(
+    component: AbstractScatteringComponent, /
+) -> tuple[tuple[str, ...], tuple[WaveReference, ...]]:
     identifiers: list[str] = []
     references: list[WaveReference] = []
     for port in component.ports:
@@ -265,7 +267,7 @@ def scattering_posterior_problem(
         raise TypeError("parameter_space must be ParameterSpace.")
     plan = CalibrationResidualPlan(parameterize, datasets)
 
-    def log_likelihood(parameters):
+    def log_likelihood(parameters: PyTree[Any]) -> Array:
         residual = plan.residual(parameters)
         return -0.5 * jnp.vdot(residual, residual).real
 

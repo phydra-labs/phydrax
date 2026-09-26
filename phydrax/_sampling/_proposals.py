@@ -141,14 +141,14 @@ class SingleCoordinateGaussianProposal(AbstractProposal):
         if not self.proposal_id:
             raise ValueError("proposal_id must be non-empty.")
 
-    def sample(self, key, current, /) -> Array:
+    def sample(self, key: Key[Array, ""], current: PyTree[Any], /) -> Array:
         array = _real_position(current, "current")
         index_key, displacement_key = jr.split(key)
         index = jr.randint(index_key, (), 0, array.size)
         displacement = self.scale * jr.normal(displacement_key, (), dtype=array.dtype)
         return jnp.ravel(array).at[index].add(displacement).reshape(array.shape)
 
-    def log_prob(self, proposed, current, /) -> Array:
+    def log_prob(self, proposed: PyTree[Any], current: PyTree[Any], /) -> Array:
         proposed_array = _real_position(proposed, "proposed")
         current_array = _real_position(current, "current")
         difference = jnp.ravel(proposed_array - current_array)
@@ -163,7 +163,9 @@ class SingleCoordinateGaussianProposal(AbstractProposal):
             scalar_log_density=scalar,
         )
 
-    def payload(self, key, current, proposed, /) -> SingleCoordinateProposalPayload:
+    def payload(
+        self, key: Key[Array, ""], current: PyTree[Any], proposed: PyTree[Any], /
+    ) -> SingleCoordinateProposalPayload:
         current_array = _real_position(current, "current")
         proposed_array = _real_position(proposed, "proposed")
         index_key, _ = jr.split(key)
@@ -215,7 +217,7 @@ class SingleCoordinatePeriodicProposal(AbstractProposal):
     def _wrap(self, value: Array, /) -> Array:
         return jnp.mod(value + 0.5 * self.period, self.period) - 0.5 * self.period
 
-    def sample(self, key, current, /) -> Array:
+    def sample(self, key: Key[Array, ""], current: PyTree[Any], /) -> Array:
         array = _real_position(current, "current")
         index_key, displacement_key = jr.split(key)
         index = jr.randint(index_key, (), 0, array.size)
@@ -229,7 +231,7 @@ class SingleCoordinatePeriodicProposal(AbstractProposal):
         flat = jnp.ravel(array).at[index].add(displacement)
         return self._wrap(flat).reshape(array.shape)
 
-    def log_prob(self, proposed, current, /) -> Array:
+    def log_prob(self, proposed: PyTree[Any], current: PyTree[Any], /) -> Array:
         proposed_array = _real_position(proposed, "proposed")
         current_array = _real_position(current, "current")
         difference = self._wrap(proposed_array - current_array)
@@ -247,7 +249,9 @@ class SingleCoordinatePeriodicProposal(AbstractProposal):
             -jnp.inf,
         )
 
-    def payload(self, key, current, proposed, /) -> SingleCoordinateProposalPayload:
+    def payload(
+        self, key: Key[Array, ""], current: PyTree[Any], proposed: PyTree[Any], /
+    ) -> SingleCoordinateProposalPayload:
         current_array = _real_position(current, "current")
         proposed_array = _real_position(proposed, "proposed")
         index_key, _ = jr.split(key)
@@ -273,7 +277,7 @@ class GaussianRandomWalkProposal(AbstractProposal):
         self.scale = value
         self.proposal_id = proposal_id
 
-    def sample(self, key, current, /) -> PyTree[Array]:
+    def sample(self, key: Key[Array, ""], current: PyTree[Any], /) -> PyTree[Array]:
         leaves, structure = jax.tree_util.tree_flatten(current)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
             raise TypeError("Positions must be a non-empty PyTree of inexact arrays.")
@@ -284,7 +288,7 @@ class GaussianRandomWalkProposal(AbstractProposal):
             for leaf, leaf_key in zip(leaves, keys, strict=True)
         )
 
-    def log_prob(self, proposed, current, /) -> Array:
+    def log_prob(self, proposed: PyTree[Any], current: PyTree[Any], /) -> Array:
         proposed_leaves, proposed_structure = jax.tree_util.tree_flatten(proposed)
         current_leaves, current_structure = jax.tree_util.tree_flatten(current)
         if proposed_structure != current_structure:
@@ -309,7 +313,9 @@ class GaussianRandomWalkProposal(AbstractProposal):
         )
         return -0.5 * (squared + dimension * jnp.log(2.0 * jnp.pi * self.scale**2))
 
-    def payload(self, key, current, proposed, /):
+    def payload(
+        self, key: Key[Array, ""], current: PyTree[Any], proposed: PyTree[Any], /
+    ) -> tuple[()]:
         del key, current, proposed
         return ()
 
@@ -373,7 +379,7 @@ class SingleElectronSphereProposal(AbstractProposal):
             axis=-1,
         )
 
-    def sample(self, key, current, /) -> Array:
+    def sample(self, key: Key[Array, ""], current: PyTree[Any], /) -> Array:
         coordinates = self._coordinates(current, "current")
         index_key, tangent_key, angle_key = jr.split(key, 3)
         index = jr.randint(index_key, (), 0, self.electron_count)
@@ -406,7 +412,7 @@ class SingleElectronSphereProposal(AbstractProposal):
         phi = jnp.arctan2(proposed_unit[1], proposed_unit[0])
         return coordinates.at[index].set(jnp.stack((theta, phi)))
 
-    def log_prob(self, proposed, current, /) -> Array:
+    def log_prob(self, proposed: PyTree[Any], current: PyTree[Any], /) -> Array:
         proposed_coordinates = self._coordinates(proposed, "proposed")
         current_coordinates = self._coordinates(current, "current")
         proposed_unit = self._cartesian(proposed_coordinates)
@@ -430,7 +436,9 @@ class SingleElectronSphereProposal(AbstractProposal):
             -jnp.inf,
         )
 
-    def payload(self, key, current, proposed, /) -> SphereElectronProposalPayload:
+    def payload(
+        self, key: Key[Array, ""], current: PyTree[Any], proposed: PyTree[Any], /
+    ) -> SphereElectronProposalPayload:
         coordinates = self._coordinates(current, "current")
         proposed_coordinates = self._coordinates(proposed, "proposed")
         index_key, _, _ = jr.split(key, 3)
@@ -471,7 +479,7 @@ class CallableProposal(AbstractProposal):
         self.log_prob_fn = log_prob
         self.proposal_id = proposal_id
 
-    def sample(self, key, current, /) -> PyTree[Array]:
+    def sample(self, key: Key[Array, ""], current: PyTree[Any], /) -> PyTree[Array]:
         proposed = self.sample_fn(key, current)
         if jax.tree_util.tree_structure(proposed) != jax.tree_util.tree_structure(
             current
@@ -490,7 +498,7 @@ class CallableProposal(AbstractProposal):
                 raise TypeError("Proposal must preserve every position leaf dtype.")
         return result
 
-    def log_prob(self, proposed, current, /) -> Array:
+    def log_prob(self, proposed: PyTree[Any], current: PyTree[Any], /) -> Array:
         value = jnp.asarray(self.log_prob_fn(proposed, current))
         if jnp.iscomplexobj(value):
             raise TypeError("Proposal log probabilities must be real-valued.")
@@ -498,7 +506,9 @@ class CallableProposal(AbstractProposal):
             raise ValueError("Proposal log probabilities must be scalar.")
         return value.reshape(())
 
-    def payload(self, key, current, proposed, /):
+    def payload(
+        self, key: Key[Array, ""], current: PyTree[Any], proposed: PyTree[Any], /
+    ) -> tuple[()]:
         del key, current, proposed
         return ()
 

@@ -6,16 +6,24 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import Literal, TYPE_CHECKING, TypeAlias
 from uuid import uuid4
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ..analytic import Circle
+    from ..simplicial import PlanarMeshRegion
+
+
+_SolveState: TypeAlias = tuple[Array, Array, Array]
 
 
 @jax.custom_jvp
@@ -24,7 +32,9 @@ def _finite_norm(value: Array) -> Array:
 
 
 @_finite_norm.defjvp
-def _finite_norm_jvp(primals, tangents):
+def _finite_norm_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (value,), (tangent,) = primals, tangents
     norm = _finite_norm(value)
     derivative = jnp.sum(value * tangent, axis=-1) / jnp.where(norm > 0.0, norm, 1.0)
@@ -76,7 +86,14 @@ class Coincident(AbstractSketchConstraint):
         self.first_point = int(first_point)
         self.second_point = int(second_point)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del lines, circle_centers, circle_radii
         return self._weighted(points[self.first_point] - points[self.second_point])
 
@@ -93,7 +110,14 @@ class FixedPoint(AbstractSketchConstraint):
         self.point = int(point)
         self.target = target_
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del lines, circle_centers, circle_radii
         return self._weighted(points[self.point] - self.target)
 
@@ -118,7 +142,14 @@ class PointDistance(AbstractSketchConstraint):
         self.second_point = int(second_point)
         self.distance = jnp.asarray(distance, dtype=jnp.float64).reshape(())
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del lines, circle_centers, circle_radii
         value = _finite_norm(points[self.second_point] - points[self.first_point])
         return self._weighted(value - self.distance)
@@ -131,7 +162,14 @@ class Horizontal(AbstractSketchConstraint):
         super().__init__(weight)
         self.line = int(line)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del circle_centers, circle_radii
         return self._weighted(_line_direction(points, lines, self.line)[1])
 
@@ -143,7 +181,14 @@ class Vertical(AbstractSketchConstraint):
         super().__init__(weight)
         self.line = int(line)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del circle_centers, circle_radii
         return self._weighted(_line_direction(points, lines, self.line)[0])
 
@@ -157,7 +202,14 @@ class Parallel(AbstractSketchConstraint):
         self.first_line = int(first_line)
         self.second_line = int(second_line)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del circle_centers, circle_radii
         first = _line_direction(points, lines, self.first_line)
         second = _line_direction(points, lines, self.second_line)
@@ -174,7 +226,14 @@ class Perpendicular(AbstractSketchConstraint):
         self.first_line = int(first_line)
         self.second_line = int(second_line)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del circle_centers, circle_radii
         first = _line_direction(points, lines, self.first_line)
         second = _line_direction(points, lines, self.second_line)
@@ -191,7 +250,14 @@ class EqualLength(AbstractSketchConstraint):
         self.first_line = int(first_line)
         self.second_line = int(second_line)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del circle_centers, circle_radii
         first = _finite_norm(_line_direction(points, lines, self.first_line))
         second = _finite_norm(_line_direction(points, lines, self.second_line))
@@ -218,7 +284,14 @@ class LineAngle(AbstractSketchConstraint):
         self.second_line = int(second_line)
         self.angle = jnp.asarray(angle, dtype=jnp.float64).reshape(())
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del circle_centers, circle_radii
         first = _line_direction(points, lines, self.first_line)
         second = _line_direction(points, lines, self.second_line)
@@ -236,7 +309,14 @@ class Midpoint(AbstractSketchConstraint):
         self.point = int(point)
         self.line = int(line)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del circle_centers, circle_radii
         endpoints = points[lines[self.line]]
         return self._weighted(points[self.point] - 0.5 * jnp.sum(endpoints, axis=0))
@@ -251,7 +331,14 @@ class PointOnLine(AbstractSketchConstraint):
         self.point = int(point)
         self.line = int(line)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del circle_centers, circle_radii
         endpoints = points[lines[self.line]]
         direction = endpoints[1] - endpoints[0]
@@ -270,7 +357,14 @@ class Radius(AbstractSketchConstraint):
         self.circle = int(circle)
         self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del points, lines, circle_centers
         return self._weighted(circle_radii[self.circle] - self.radius)
 
@@ -295,7 +389,14 @@ class TangentLineCircle(AbstractSketchConstraint):
         self.circle = int(circle)
         self.side = int(side)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         endpoints = points[lines[self.line]]
         direction = endpoints[1] - endpoints[0]
         center = points[circle_centers[self.circle]]
@@ -323,7 +424,14 @@ class TangentCircles(AbstractSketchConstraint):
         self.second_circle = int(second_circle)
         self.internal = bool(internal)
 
-    def residual(self, points, lines, circle_centers, circle_radii, /):
+    def residual(
+        self,
+        points: Array,
+        lines: Array,
+        circle_centers: Array,
+        circle_radii: Array,
+        /,
+    ) -> Array:
         del lines
         first_center = points[circle_centers[self.first_circle]]
         second_center = points[circle_centers[self.second_circle]]
@@ -366,12 +474,12 @@ class SketchSolution(StrictModule):
     def __init__(
         self,
         *,
-        points,
-        circle_radii,
-        residual,
-        residual_norm,
-        converged,
-        iterations,
+        points: ArrayLike,
+        circle_radii: ArrayLike,
+        residual: ArrayLike,
+        residual_norm: ArrayLike,
+        converged: ArrayLike,
+        iterations: ArrayLike,
     ) -> None:
         self.points = jnp.asarray(points, dtype=jnp.float64)
         self.circle_radii = jnp.asarray(circle_radii, dtype=jnp.float64)
@@ -446,9 +554,12 @@ class Sketch(StrictModule):
 
     @staticmethod
     def _validate_constraint_indices(
-        constraints, num_points, num_lines, num_circles
+        constraints: tuple[AbstractSketchConstraint, ...],
+        num_points: int,
+        num_lines: int,
+        num_circles: int,
     ) -> None:
-        def require(indices, size, kind) -> None:
+        def require(indices: tuple[int, ...], size: int, kind: str) -> None:
             if any(index < 0 or index >= size for index in indices):
                 raise ValueError(f"Constraint references an absent {kind}.")
 
@@ -512,25 +623,25 @@ class Sketch(StrictModule):
         point_size = self.points.size
         initial = jnp.concatenate((self.points.reshape((-1,)), self.circle_radii))
 
-        def unpack(vector):
+        def unpack(vector: Array) -> tuple[Array, Array]:
             points = vector[:point_size].reshape(self.points.shape)
             radii = vector[point_size:]
             return points, radii
 
-        def residual(vector):
+        def residual(vector: Array) -> Array:
             return self.residual(*unpack(vector))
 
         initial_norm = jnp.linalg.norm(residual(initial))
-        loop_state = (
+        loop_state: _SolveState = (
             initial,
             initial_norm <= tolerance,
             jnp.asarray(0, dtype=jnp.int32),
         )
 
-        def iteration(_, state):
+        def iteration(_: int | Array, state: _SolveState) -> _SolveState:
             vector, converged, count = state
 
-            def update(current):
+            def update(current: Array) -> Array:
                 values = residual(current)
                 jacobian = jax.jacfwd(residual)(current)
                 normal = jacobian.T @ jacobian + damping * jnp.eye(
@@ -567,7 +678,9 @@ class Sketch(StrictModule):
             iterations=iterations,
         )
 
-    def to_source(self, solution: SketchSolution | None = None):
+    def to_source(
+        self, solution: SketchSolution | None = None
+    ) -> Circle | PlanarMeshRegion:
         """Lower one closed line loop or one circle to a geometry source."""
 
         points = np.asarray(self.points if solution is None else solution.points)

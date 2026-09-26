@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax import core as jax_core
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, Key
 
@@ -42,6 +43,14 @@ ResamplingPolicy: TypeAlias = Literal["ess", "always", "never"]
 ParticleFilterStatus: TypeAlias = Literal[
     "success", "transition_failure", "weight_degeneracy", "nonfinite"
 ]
+# Per-case (particles, log weights, ancestor indices, resampled flag) selection.
+_ParticleSelection: TypeAlias = tuple[Array, Array, Array, Array]
+# (lineage, smoothed weights, lineages, horizons, valid) ancestry-smoother carry.
+_AncestrySmootherCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+# (smoothed, backward, pairs, step valid, running valid, failed) FFBSm carry.
+_BackwardSmootherCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+# (particle index, path, particle indices) FFBSi carry.
+_BackwardPathCarry: TypeAlias = tuple[Array, Array, Array]
 PARTICLE_FILTER_SUCCESS = 0
 PARTICLE_FILTER_TRANSITION_FAILURE = 1
 PARTICLE_FILTER_WEIGHT_DEGENERACY = 2
@@ -114,7 +123,7 @@ def _normalized_probabilities(
         log_weights,
         statistics_dtype=decision_dtype,
     )
-    if not isinstance(valid, jax.core.Tracer) and not bool(jnp.all(valid)):
+    if not isinstance(valid, jax_core.Tracer) and not bool(jnp.all(valid)):
         raise ValueError("Cannot resample a degenerate weight vector.")
     normalized = eqx.error_if(
         normalized,
@@ -562,8 +571,10 @@ def _propagate_particles(
         )(particle_indices)
         case_active = active_flat[case_index] & state_valid[case_index]
 
-        def propagate_one(transition_key, previous_particle):
-            def propagate(_):
+        def propagate_one(
+            transition_key: Key[Array, ""], previous_particle: Array
+        ) -> tuple[Array, Array]:
+            def propagate(_: None) -> tuple[Array, Array]:
                 sample = problem.model.transition.sample(
                     transition_key,
                     previous_particle,
@@ -627,7 +638,7 @@ def _observation_log_likelihoods(
     for case_index in range(case_count):
         context = problem.step_context(case_index, state.step_index)
 
-        def evaluate(particle):
+        def evaluate(particle: Array) -> Array:
             return jax.lax.cond(
                 active_flat[case_index],
                 lambda _: state.precision.statistics(
@@ -732,8 +743,8 @@ def particle_filter_step(
             index,
         )
 
-        def accepted_case(_):
-            def resampled_case(_):
+        def accepted_case(_: None) -> _ParticleSelection:
+            def resampled_case(_: None) -> _ParticleSelection:
                 selected = resample_indices(
                     resampling_key,
                     flat_posterior[case_index],
@@ -751,7 +762,7 @@ def particle_filter_step(
                     jnp.asarray(True),
                 )
 
-            def retained_case(_):
+            def retained_case(_: None) -> _ParticleSelection:
                 return (
                     flat_predicted[case_index],
                     flat_posterior[case_index],
@@ -766,7 +777,7 @@ def particle_filter_step(
                 operand=None,
             )
 
-        def rejected_case(_):
+        def rejected_case(_: None) -> _ParticleSelection:
             return (
                 flat_previous_particles[case_index],
                 flat_previous_weights[case_index],
@@ -874,7 +885,9 @@ def bootstrap_particle_filter(
     )
     initial_state = state
 
-    def scan_step(current_state, _):
+    def scan_step(
+        current_state: ParticleFilterState, _: None
+    ) -> tuple[ParticleFilterState, ParticleFilterStep]:
         next_state, record = particle_filter_step(problem, current_state)
         return next_state, record
 
@@ -978,7 +991,12 @@ def full_particle_smoother(
     particle_ids = jnp.arange(count, dtype=jnp.int32)
     step_ids = jnp.arange(num_steps, dtype=jnp.int32)
 
-    def smooth_case(case_weights, case_ancestors, case_active, case_filter_valid):
+    def smooth_case(
+        case_weights: Array,
+        case_ancestors: Array,
+        case_active: Array,
+        case_filter_valid: Array,
+    ) -> tuple[Array, Array, Array, Array]:
         active_count = jnp.sum(case_active, dtype=jnp.int32)
         terminal = jnp.maximum(active_count - 1, 0)
         case_valid = (active_count > 0) & jnp.all(
@@ -990,12 +1008,14 @@ def full_particle_smoother(
         horizons = step_ids
         valid = jnp.zeros((num_steps,), dtype=jnp.bool_)
 
-        def reverse_step(offset, carry):
+        def reverse_step(
+            offset: Array, carry: _AncestrySmootherCarry
+        ) -> _AncestrySmootherCarry:
             lineage, weights_, lineages_, horizons_, valid_ = carry
             active_step = offset < active_count
             step = jnp.maximum(terminal - offset, 0)
 
-            def update(values):
+            def update(values: _AncestrySmootherCarry) -> _AncestrySmootherCarry:
                 (
                     current_lineage,
                     current_weights,
@@ -1113,13 +1133,13 @@ def particle_backward_smoother(
     backward_steps = max(num_steps - 1, 0)
 
     def smooth_case(
-        case_index,
-        case_particles,
-        case_weights,
-        case_times,
-        case_active,
-        case_filter_valid,
-    ):
+        case_index: Array,
+        case_particles: Array,
+        case_weights: Array,
+        case_times: Array,
+        case_active: Array,
+        case_filter_valid: Array,
+    ) -> tuple[Array, Array, Array, Array, Array]:
         active_count = jnp.sum(case_active, dtype=jnp.int32)
         terminal = jnp.maximum(active_count - 1, 0)
         path_valid = (active_count > 0) & jnp.all(
@@ -1143,7 +1163,9 @@ def particle_backward_smoother(
         valid_ = jnp.zeros((num_steps,), dtype=jnp.bool_).at[terminal].set(running_valid)
         degenerate = jnp.asarray(False)
 
-        def reverse_step(offset, carry):
+        def reverse_step(
+            offset: Array, carry: _BackwardSmootherCarry
+        ) -> _BackwardSmootherCarry:
             (
                 smoothed_value,
                 backward_value,
@@ -1155,7 +1177,7 @@ def particle_backward_smoother(
             step = jnp.maximum(terminal - offset, 0)
             active_step = (offset < active_count) & current_valid
 
-            def update(values):
+            def update(values: _BackwardSmootherCarry) -> _BackwardSmootherCarry:
                 (
                     current_smoothed,
                     current_backward,
@@ -1168,7 +1190,7 @@ def particle_backward_smoother(
                 next_particles = case_particles[step + 1]
                 context = result.problem.step_context(case_index, step + 1)
 
-                def density_row(next_particle):
+                def density_row(next_particle: Array) -> Array:
                     return jax.vmap(
                         lambda previous_particle: jnp.asarray(
                             transition.log_prob(
@@ -1346,7 +1368,7 @@ def particle_backward_simulation(
             )
         )
 
-        def sample_path(sample_index):
+        def sample_path(sample_index: Array) -> tuple[Array, Array, Array]:
             path = jnp.full(
                 (num_steps, state_size),
                 jnp.nan,
@@ -1354,7 +1376,7 @@ def particle_backward_simulation(
             )
             indices = jnp.full((num_steps,), -1, dtype=jnp.int32)
 
-            def initialize(_):
+            def initialize(_: None) -> _BackwardPathCarry:
                 terminal_key = state_space_key(
                     key,
                     "particle-backward-simulation",
@@ -1381,12 +1403,14 @@ def particle_backward_simulation(
                 operand=None,
             )
 
-            def reverse_step(offset, carry):
+            def reverse_step(
+                offset: Array, carry: _BackwardPathCarry
+            ) -> _BackwardPathCarry:
                 current_index, current_path, current_indices = carry
                 step = jnp.maximum(terminal - offset, 0)
                 active_step = case_valid & (offset < active_count)
 
-                def update(values):
+                def update(values: _BackwardPathCarry) -> _BackwardPathCarry:
                     previous_index, previous_path, previous_indices = values
                     draw_key = state_space_key(
                         key,
@@ -2058,7 +2082,7 @@ def read_particle_filter_checkpoint(
             arrays["root_key_data"].astype(jnp.uint32),
             impl=key_impl,
         ),
-        step_index=step_index,
+        step_index=jnp.asarray(step_index, dtype=jnp.int32),
         num_particles=count,
         problem_id=problem.problem_id,
         resampling_method=method,

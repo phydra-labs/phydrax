@@ -266,3 +266,30 @@ def test_eos_identities_stability_covariance_and_domain_refusal_are_explicit():
     assert not bool(refused.valid)
     assert int(refused.status) == int(ThermalKernelStatus.OUTSIDE_TEMPERATURE_SUPPORT)
     assert bool(jnp.isnan(refused.rates[0]))
+
+
+def test_zero_eos_covariance_keeps_canonical_qualification_evidence():
+    units, frame = _units_and_frame()
+    species_ids = (
+        DarkSectorSpeciesPlan(
+            "thermal-test-species",
+            1.0,
+            mass_unit=units.scale.dimensional_scale.mass_unit.unit_id,
+            energy_unit=units.energy_unit.unit_id,
+        ).species_plan_id,
+    )
+    tables = _tables()
+    zero_covariance = ThermalKernelArtifact(
+        *tables[:-1],
+        np.zeros_like(tables[-1]),
+        units,
+        frame,
+        species_plan_ids=species_ids,
+        rate_channel_ids=("thermal-test-rate-channel",),
+        source_kind="native-analytic",
+        thermodynamic_tolerance=1.0e-10,
+    )
+    reference = _artifact()
+
+    assert zero_covariance.evidence.covariance_positive_semidefinite is True
+    assert zero_covariance.evidence.evidence_id == reference.evidence.evidence_id

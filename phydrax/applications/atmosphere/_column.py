@@ -54,7 +54,7 @@ def conservative_radiation(
     return rate, -jnp.sum(rate, axis=-1)
 
 
-def _exchange_flux(quantity, mass, exchange_rate):
+def _exchange_flux(quantity: Array, mass: Array, exchange_rate: ArrayLike) -> Array:
     rate = jnp.broadcast_to(jnp.asarray(exchange_rate), quantity[..., :-1].shape)
     interface_mass = (
         2.0 * mass[..., :-1] * mass[..., 1:] / (mass[..., :-1] + mass[..., 1:])
@@ -65,7 +65,7 @@ def _exchange_flux(quantity, mass, exchange_rate):
     )
 
 
-def _flux_divergence(flux, template):
+def _flux_divergence(flux: Array, template: Array) -> Array:
     boundary = jnp.zeros_like(template[..., :1])
     return jnp.concatenate((boundary, flux), axis=-1) - jnp.concatenate(
         (flux, boundary), axis=-1
@@ -602,7 +602,7 @@ class MoistColumnPlan(StrictModule, NonTrainableState):
         if int(steps) != steps or steps < 1:
             raise ValueError("steps must be a positive integer.")
 
-        def body(current, _):
+        def body(current: MoistColumnState, _: None) -> tuple[MoistColumnState, Array]:
             result = self.step(
                 current,
                 dt,

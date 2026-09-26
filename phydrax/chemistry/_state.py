@@ -129,7 +129,7 @@ class PreparedPeriodicElectronicSector(StrictModule, NonTrainableState):
     """Periodic electron/spin population sector bound to one atomistic system."""
 
     total_charge: float = eqx.field(static=True)
-    spin_multiplicity: float | None = eqx.field(static=True)
+    spin_multiplicity: float = eqx.field(static=True)
     electron_count: float = eqx.field(static=True)
     alpha_electron_count: float = eqx.field(static=True)
     beta_electron_count: float = eqx.field(static=True)

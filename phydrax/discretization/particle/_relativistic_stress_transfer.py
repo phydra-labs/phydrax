@@ -11,6 +11,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -23,6 +24,7 @@ from ...applications.relativistic_scattering._unit_contract import (
     RelativisticUnitContract,
 )
 from ...metrix import StressEnergyProjection
+from .._measure import DiscreteMeasure
 from ..splatting import ParticleGridSplatState, PreparedParticleGridSplat
 
 
@@ -39,7 +41,7 @@ def _real(value: ArrayLike, name: str, /) -> Array:
     return array
 
 
-def _integer(value: ArrayLike, name: str, /, *, dtype) -> Array:
+def _integer(value: ArrayLike, name: str, /, *, dtype: DTypeLike) -> Array:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.integer):
         raise TypeError(f"{name} must have an integer dtype.")
@@ -864,7 +866,10 @@ class RelativisticStressDepositPlan(StrictModule, NonTrainableState):
             topology_id=frame.geometry.topology_id,
             projection_id=projection_id,
         )
-        coordinate_measure = self.transfer.target_measure.weights.reshape(
+        target_measure = self.transfer.target_measure
+        # deposit_content above already rejected non-materialized target measures.
+        assert isinstance(target_measure, DiscreteMeasure)
+        coordinate_measure = target_measure.weights.reshape(
             self.transfer.target_shape
         ).astype(energy.dtype)
         proper_measure = coordinate_measure * sqrt_det

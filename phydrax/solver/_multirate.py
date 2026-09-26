@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -159,7 +160,14 @@ class MultiratePartitionedRK(StrictModule, NonTrainableState):
         )
 
 
-def _rk2_step(function, time, state, step_size, args, precision):
+def _rk2_step(
+    function: Callable[[Array, Array, Any], ArrayLike],
+    time: Array,
+    state: Array,
+    step_size: Array,
+    args: Any,
+    precision: TemporalPrecisionPolicy,
+) -> Array:
     staged_state = precision.stage(state)
     step = precision.coefficient(jnp.asarray(step_size, dtype=staged_state.real.dtype))
     first = precision.stage(function(time, staged_state, args))
@@ -202,11 +210,11 @@ def solve_multirate(
     precision_.validate_state(problem.initial_state)
     runtime_args = problem.args if args is None else args
 
-    def macro_step(state, values):
+    def macro_step(state: Array, values: tuple[Array, Array]) -> tuple[Array, Array]:
         time, width = values
         micro_width = width / selected.refinement_ratio
 
-        def micro_step(index, current):
+        def micro_step(index: Array, current: Array) -> Array:
             micro_time = time + index * micro_width
             if selected.order == 2:
                 return _rk2_step(

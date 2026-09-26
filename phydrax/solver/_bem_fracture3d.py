@@ -135,7 +135,7 @@ class PreparedBEMFracture3D(StrictModule, NonTrainableState):
         friction = self.problem.friction_coefficient
         cohesion = self.problem.cohesive_strength
 
-        def iteration(_, jump_flat):
+        def iteration(_: Array, jump_flat: Array) -> Array:
             residual = self.problem.traction_operator.mv(jump_flat) - load
             candidate = jump_flat - omega * residual
             vectors = candidate.reshape((count, 3))

@@ -441,8 +441,10 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
                     source_size=self._cell_count,
                     valid=accepted,
                 )
-            case PreparedCellPolynomialReconstruction():
-                route = self._polynomial_route(points, derivative, cells, accepted, share)
+            case PreparedCellPolynomialReconstruction() as polynomial:
+                route = self._polynomial_route(
+                    polynomial, points, derivative, cells, accepted, share
+                )
             case PreparedUnstructuredWENOZReconstruction():
                 route = _WENORoute(
                     cells,
@@ -458,6 +460,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
 
     def _polynomial_route(
         self,
+        polynomial: PreparedCellPolynomialReconstruction,
         points: Array,
         derivative: tuple[int, ...],
         cells: Array,
@@ -467,7 +470,6 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
     ) -> GatherStencil:
         # u(x) = u_c + sum_f B_f(x) sum_s F[c, f, s] (u_s - u_c): a fixed linear
         # route over the cell and its prepared stencil.
-        polynomial = self.reconstruction
         basis = _candidate_basis(polynomial, points, derivative, cells)
         stencil_valid = polynomial.stencil_valid[cells]
         neighbor_weights = jnp.where(
@@ -501,8 +503,11 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
             case (
                 PiecewiseConstantReconstruction() | PreparedCellPolynomialReconstruction()
             ):
+                # locate() binds gather stencils for linear reconstructions.
+                assert isinstance(route, GatherStencil)
                 return linear_apply(route.relation, route.weights, coefficients)
             case PreparedUnstructuredWENOZReconstruction():
+                assert isinstance(route, _WENORoute)
                 modal = self.reconstruction.coefficients(coefficients)
                 values = contract("pkf,pk...f->pk...", route.basis, modal[route.cells])
                 if route.constant:
@@ -516,6 +521,7 @@ class UnstructuredFiniteVolumeFieldReconstructionKernel(
             case (
                 PiecewiseConstantReconstruction() | PreparedCellPolynomialReconstruction()
             ):
+                assert isinstance(route, GatherStencil)
                 return linear_transpose_apply(route.relation, route.weights, cotangent)
             case PreparedUnstructuredWENOZReconstruction():
                 raise ValueError(

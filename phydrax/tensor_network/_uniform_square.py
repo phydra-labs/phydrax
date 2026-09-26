@@ -119,7 +119,9 @@ def _hermitian_precision(
     )
 
 
-def _matrix_residual(value: Array, reference: Array, precision, /) -> Array:
+def _matrix_residual(
+    value: Array, reference: Array, precision: TensorNetworkPrecisionPolicy, /
+) -> Array:
     numerator = precision.norm(value - reference)
     denominator = jnp.maximum(precision.norm(reference), precision.decision(1.0))
     return precision.decision(numerator / denominator)

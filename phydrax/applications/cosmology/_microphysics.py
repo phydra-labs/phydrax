@@ -317,7 +317,7 @@ class PrimordialMicrophysicsPlan(StrictModule, NonTrainableState):
         hydrogen_total = jnp.sum(state.number_densities[..., :2], axis=-1)
         helium_total = jnp.sum(state.number_densities[..., 2:5], axis=-1)
 
-        def residual(value):
+        def residual(value: Array) -> Array:
             return (
                 value
                 - initial
@@ -325,15 +325,17 @@ class PrimordialMicrophysicsPlan(StrictModule, NonTrainableState):
                 * self._rates(value, hydrogen_total, helium_total, state.scale_factor)
             )
 
-        def iteration(_, carry):
+        def iteration(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             value, converged = carry
             residual_value = residual(value)
             flat_shape = value.shape[:-1]
             flat_value = value.reshape((-1, 4))
             flat_residual = residual_value.reshape((-1, 4))
 
-            def solve_cell(cell_value, cell_residual, h_total, he_total):
-                def cell_function(candidate):
+            def solve_cell(
+                cell_value: Array, cell_residual: Array, h_total: Array, he_total: Array
+            ) -> Array:
+                def cell_function(candidate: Array) -> Array:
                     return (
                         candidate
                         - cell_value

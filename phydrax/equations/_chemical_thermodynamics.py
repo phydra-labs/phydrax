@@ -345,7 +345,7 @@ def _positive_polynomial_on_interval(
     return bool(np.all(np.isfinite(values)) and np.all(values > 0.0))
 
 
-def _nasa7(coefficients, temperature):
+def _nasa7(coefficients: Array, temperature: Array) -> tuple[Array, Array, Array]:
     a1, a2, a3, a4, a5, a6, a7 = jnp.moveaxis(coefficients, -1, 0)
     cp_r = a1 + temperature * (
         a2 + temperature * (a3 + temperature * (a4 + temperature * a5))
@@ -369,7 +369,7 @@ def _nasa7(coefficients, temperature):
     return cp_r, h_rt, s_r
 
 
-def _nasa9(coefficients, temperature):
+def _nasa9(coefficients: Array, temperature: Array) -> tuple[Array, Array, Array]:
     a1, a2, a3, a4, a5, a6, a7, a8, a9 = jnp.moveaxis(coefficients, -1, 0)
     cp_r = (
         a1 / temperature**2

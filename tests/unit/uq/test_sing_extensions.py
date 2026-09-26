@@ -174,3 +174,35 @@ def test_affine_hausdorff_smoother_rejects_nontangent_diffusion():
             key=jr.key(42),
             max_iterations=2,
         )
+
+
+def test_affine_hausdorff_smoother_rejects_non_gaussian_prior():
+    base = _affine_singular_problem()
+    model = phx.stochastic.StateSpaceModel(
+        phx.stochastic.CategoricalStatePrior(
+            jnp.asarray([[0.0, 2.0], [1.0, 2.0]]), jnp.asarray([0.5, 0.5])
+        ),
+        base.model.transition,
+        base.model.observation,
+        model_id="affine-categorical-model",
+    )
+    problem = phx.stochastic.StateSpaceProblem(
+        model,
+        base.observations,
+        initial_time=0.0,
+        problem_id="affine-categorical-problem",
+    )
+    support = SINGSupportPlan(
+        jnp.asarray([[0.0, 1.0]]),
+        jnp.asarray([[1.0], [0.0]]),
+        offset=jnp.asarray([2.0]),
+        rank=1,
+        support_id="horizontal-affine-support",
+    )
+    with pytest.raises(TypeError, match="GaussianStatePrior"):
+        sing_constrained_smoother(
+            problem,
+            transition_plan=SINGTransitionPlan(support=support),
+            key=jr.key(43),
+            max_iterations=2,
+        )

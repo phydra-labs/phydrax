@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -127,7 +128,9 @@ class ChemicalExplosiveModePlan(StrictModule, NonTrainableState):
     def reactive_dimension(self) -> int:
         return self.reactive_basis.shape[1]
 
-    def initial_tracking_state(self, dtype=jnp.complex128) -> ChemicalModeTrackingState:
+    def initial_tracking_state(
+        self, dtype: DTypeLike = jnp.complex128
+    ) -> ChemicalModeTrackingState:
         return ChemicalModeTrackingState(
             jnp.asarray(0.0 + 0.0j, dtype=dtype),
             jnp.zeros((self.mechanism.schema.species_count,), dtype=dtype),
@@ -170,7 +173,7 @@ class ChemicalExplosiveModePlan(StrictModule, NonTrainableState):
                     "source_contributions must align with labels and species."
                 )
 
-        def rates(value):
+        def rates(value: Array) -> Array:
             return self.mechanism.evaluate(
                 value, temperature_, pressure_
             ).species_amount_rate

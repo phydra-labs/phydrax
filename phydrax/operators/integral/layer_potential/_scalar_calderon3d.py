@@ -507,7 +507,9 @@ class ScalarCalderonDP0Galerkin3D(StrictModule, NonTrainableState):
     def component_count(self) -> int:
         return self._binding.component_count
 
-    def single_layer_potential(self, coefficients: ArrayLike, /):
+    def single_layer_potential(
+        self, coefficients: ArrayLike, /
+    ) -> LaplaceLayerPotential3D | HelmholtzLayerPotential3D:
         values = self.space.validate(coefficients)
         density = jnp.repeat(values, self.panelization.nodes_per_panel)
         if self.kernel.family == "laplace":
@@ -525,7 +527,9 @@ class ScalarCalderonDP0Galerkin3D(StrictModule, NonTrainableState):
             "Modified Helmholtz off-surface reconstruction is not provided by the current layer-potential substrate."
         )
 
-    def double_layer_potential(self, coefficients: ArrayLike, /):
+    def double_layer_potential(
+        self, coefficients: ArrayLike, /
+    ) -> LaplaceLayerPotential3D | HelmholtzLayerPotential3D:
         values = self.space.validate(coefficients)
         density = jnp.repeat(values, self.panelization.nodes_per_panel)
         if self.kernel.family == "laplace":
@@ -602,7 +606,7 @@ def _regular_scalar_pair(
     layer_kind: Literal["single", "double"],
     order: int,
     /,
-):
+) -> complex:
     points, weights = _regular_rule(order)
     target_points = _map_triangle(test_triangle, points)
     source_points = _map_triangle(source_triangle, points)
@@ -630,7 +634,7 @@ def _singular_scalar_pair(
     layer_kind: Literal["single", "double"],
     order: int,
     /,
-):
+) -> complex:
     if target == source and layer_kind == "double":
         return 0.0
     target_reference, source_reference, weights = _duffy_rule(order, adjacency)
@@ -682,7 +686,7 @@ def _near_scalar_pair(
     absolute_tolerance: float,
     relative_tolerance: float,
     depth: int = 0,
-):
+) -> tuple[complex, float, int]:
     low = _regular_scalar_pair(
         test_triangle, source_triangle, kernel, layer_kind, low_order
     )
@@ -752,7 +756,7 @@ def _scalar_exception_values(
     high_regular = policy.regular_order + 2
     high_singular = policy.singular_order + 2
     high_near = policy.near_order + 2
-    names = ("single", "double")
+    names: tuple[Literal["single", "double"], ...] = ("single", "double")
     for target in range(faces.shape[0]):
         for source in range(faces.shape[0]):
             key = target * faces.shape[0] + source

@@ -307,7 +307,7 @@ def fit_hawkes(
         plan=plan.likelihood_plan,
     )
 
-    def objective(parameters, _):
+    def objective(parameters: Array, _: object) -> Array:
         process = _decode_parameters(parameters, channels)
         result = evaluate_hawkes_likelihood(
             plan.observation,

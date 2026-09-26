@@ -28,7 +28,7 @@ class SingleCrystalOrientation(StrictModule):
 
     def __init__(
         self,
-        euler_angles_rad: ArrayLike = (0.0, 0.0, 0.0),
+        euler_angles_rad: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         /,
         *,
         orientation_id: str = "single-crystal",

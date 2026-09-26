@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterable
 from math import isfinite
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, cast, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -60,7 +61,7 @@ _DEFAULT_CURRICULUM = (1, 2, 4, 8, 16, 25)
 _OBJECTIVE_ID = "kinetic-rollout"
 
 
-def _positive_integer(value: int, role: str, /) -> int:
+def _positive_integer(value: object, role: str, /) -> int:
     if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
         raise TypeError(f"{role} must be an integer.")
     result = int(value)
@@ -153,9 +154,10 @@ class KineticRolloutTrainingPlan(StrictModule):
                 _positive_integer(accepted_updates_per_horizon, "accepted updates"),
             ) * len(horizons)
         else:
+            # Non-integer schedules are iterated as given; iteration rejects scalars.
+            schedule = cast(Iterable[int], accepted_updates_per_horizon)
             updates = tuple(
-                _positive_integer(value, "accepted updates")
-                for value in accepted_updates_per_horizon
+                _positive_integer(value, "accepted updates") for value in schedule
             )
             if len(updates) != len(horizons):
                 raise ValueError(
@@ -356,7 +358,9 @@ def _single_trajectory_objective(
     U_scale = jnp.asarray(statistics.U_scale, dtype=dtype)
     g_scale = jnp.asarray(statistics.g_scale, dtype=dtype)
 
-    def step(carry: _KineticRolloutScanCarry, targets: tuple[Array, Array]):
+    def step(
+        carry: _KineticRolloutScanCarry, targets: tuple[Array, Array]
+    ) -> tuple[_KineticRolloutScanCarry, None]:
         g_target, U_target = targets
         state = SmoothCompressibleKineticState(
             carry.particle_populations, carry.total_energy_populations
@@ -1191,7 +1195,8 @@ def attempt_kinetic_rollout_update(
         # A nonfinite evaluation rolls the guard judgment back with everything
         # else: the candidate was never judged.
         guard_loss = jnp.asarray(jnp.nan, dtype=judged.guard_loss.dtype)
-        guard_compact = kernel.rule.unjudged_guard()
+        # _training_kernel always installs a _GuardedRolloutRule.
+        guard_compact = cast(_GuardedRolloutRule, kernel.rule).unjudged_guard()
         proposal_finite = jnp.asarray(False)
     else:
         guard_loss = judged.guard_loss

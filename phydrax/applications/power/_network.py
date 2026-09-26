@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from math import isfinite, sqrt
 
 import equinox as eqx
@@ -189,7 +190,7 @@ class CompiledNetwork(StrictModule):
         )
 
 
-def _unique_ids(values, owner) -> None:
+def _unique_ids(values: Sequence[Bus | Branch | Generator | Load], owner: str) -> None:
     ids = tuple(value.id for value in values)
     if any(not isinstance(value, str) or not value for value in ids) or len(
         set(ids)
@@ -197,7 +198,7 @@ def _unique_ids(values, owner) -> None:
         raise ValueError(f"{owner} IDs must be unique nonempty strings.")
 
 
-def _finite(values, owner) -> None:
+def _finite(values: Iterable[float], owner: str) -> None:
     if any(not isfinite(value) for value in values):
         raise ValueError(f"{owner} must be finite.")
 

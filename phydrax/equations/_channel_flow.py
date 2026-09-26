@@ -18,6 +18,7 @@ from ..discretization.spectral import (
     PreparedChannelStokesSolver,
     PreparedPseudospectralMethod,
     PseudospectralMethodPlan,
+    TensorSpectralDiscretization,
 )
 from ._incompressible import IncompressibleFlowProblem
 
@@ -88,7 +89,7 @@ class CompiledChannelFlowDynamics(StrictModule):
         self.source_hash = problem.problem_id
 
     @property
-    def discretization(self):
+    def discretization(self) -> TensorSpectralDiscretization:
         return self.stokes_plan.discretization
 
     def validate_state(
@@ -178,6 +179,8 @@ class CompiledChannelFlowDynamics(StrictModule):
         value = self.admissible_modes(state)
         dealiasing = self.spatial_method.dealiasing
         evaluation = dealiasing.evaluation
+        # Dealiasing keeps the tensor family of the channel discretization.
+        assert isinstance(evaluation, TensorSpectralDiscretization)
         padded = dealiasing.embed(value)
         velocity = evaluation.reconstruct(padded)
         derivatives = tuple(

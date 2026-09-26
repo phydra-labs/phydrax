@@ -9,6 +9,7 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -246,7 +247,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         capacity: int,
         /,
         *,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> ContactStencilBatch:
         count = int(capacity)
         return cls(

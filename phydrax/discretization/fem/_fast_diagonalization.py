@@ -156,7 +156,7 @@ class TensorFastDiagonalizationPreconditioner(
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> PyTree[Array]:
         del iteration
         coordinates = self.space.flatten(self.space.validate(residual))
         structured = self.prepared.problem.operator.source

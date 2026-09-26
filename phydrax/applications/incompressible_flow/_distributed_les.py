@@ -24,6 +24,7 @@ from ..._trainable import fixed_field, NonTrainableState
 from ...discretization.spectral._coordinates import HermitianSpectralCoordinates
 from ...discretization.spectral._distributed_les import (
     DistributedPeriodicLESPlan,
+    DistributedPeriodicLESRestartEvidence,
     DistributedPeriodicLESStage,
     DistributedPeriodicLESStepRestriction,
     PreparedDistributedPeriodicLES,
@@ -542,7 +543,7 @@ class PreparedDistributedPeriodicLESMethod(AbstractFixedStepMethod, NonTrainable
         def advance(_: None) -> FixedStepResult:
             if self.method.startswith("etdrk"):
                 candidate = _etdrk_update(
-                    self.order,
+                    2 if self.method == "etdrk2" else 4,
                     self.dynamics.drift,
                     self.dynamics.diagonal,
                     start,
@@ -1267,6 +1268,7 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
             successful=result.successful,
             failure=result.failure,
             run_id=result.run_id,
+            iteration_session_state=result.iteration_session_state,
         )
 
     def checkpoint(self, state: ProductionRunState, /) -> ProductionRunState:
@@ -1313,7 +1315,9 @@ class PreparedDistributedPeriodicLESProduction(_PreparedProductionRoute):
             )
         return restored
 
-    def restart_evidence(self, state: ProductionRunState, /):
+    def restart_evidence(
+        self, state: ProductionRunState, /
+    ) -> DistributedPeriodicLESRestartEvidence:
         return self.plan.dynamics.backend.restart_evidence(state.accepted_state)
 
     def statistics_snapshot(

@@ -313,3 +313,23 @@ def test_axes_without_point_synthesis_or_box_support_are_refused():
     rational = _space((D.RationalChebyshevLineBasisPlan(8), D.AxisDomain.real_line()))
     with pytest.raises(ValueError, match="unbounded"):
         prepare_spectral_field_reconstruction(rational)
+
+
+@pytest.mark.parametrize(
+    "axis",
+    [
+        (D.RationalChebyshevLineBasisPlan(8), D.AxisDomain.real_line()),
+        (D.RationalChebyshevHalfLineBasisPlan(8), D.AxisDomain.half_line(0.0)),
+    ],
+    ids=["real-line", "half-line"],
+)
+def test_rational_axes_refuse_arbitrary_point_synthesis(axis):
+    rational = _space(axis)
+    coefficients = jnp.zeros(rational.modal_shape, dtype=jnp.complex128)
+    points = jnp.ones((1, 1))
+    with pytest.raises(ValueError, match="arbitrary-point synthesis"):
+        rational.evaluate(coefficients, points)
+    with pytest.raises(ValueError, match="arbitrary-point synthesis"):
+        rational.derivative_at(coefficients, points, (1,))
+    with pytest.raises(ValueError, match="arbitrary-point synthesis"):
+        rational.axes[0].evaluate_basis(points[:, 0])

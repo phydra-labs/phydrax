@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -47,7 +48,7 @@ def _validate_scalar_field(
     return values
 
 
-def _cell_size(value: ArrayLike, dtype, /) -> Array:
+def _cell_size(value: ArrayLike, dtype: DTypeLike, /) -> Array:
     cell_size = jnp.asarray(value, dtype=dtype)
     if cell_size.shape != ():
         raise ValueError("cell_size must be scalar.")

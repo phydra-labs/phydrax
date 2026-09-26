@@ -64,7 +64,7 @@ class DenseDelayHistory(StrictModule):
         capacity: int,
         interpolation_cls: Any,
     ) -> "DenseDelayHistory":
-        def allocate_leaf(value):
+        def allocate_leaf(value: Any) -> object:
             if eqx.is_array(value) or isinstance(value, jax.ShapeDtypeStruct):
                 return jnp.zeros((capacity,) + value.shape, dtype=value.dtype)
             return value
@@ -85,7 +85,7 @@ class DenseDelayHistory(StrictModule):
             "Diffrax delay history exhausted its configured capacity.",
         )
 
-        def write(buffer, value):
+        def write(buffer: Any, value: Any) -> object:
             if _is_history_buffer(buffer, self.capacity):
                 return buffer.at[index].set(value)
             return buffer
@@ -107,7 +107,9 @@ class DenseDelayHistory(StrictModule):
             ),
         )
 
-    def _interpolation(self, time: Array, left: bool, /):
+    def _interpolation(
+        self, time: Array, left: bool, /
+    ) -> tuple[dfx.AbstractLocalInterpolation, Array]:
         """Select the local polynomial for the requested one-sided limit.
 
         At an ordinary knot, ``left=True`` selects the interval ending at the
@@ -134,7 +136,7 @@ class DenseDelayHistory(StrictModule):
             index = jnp.where(in_jump_gap, jnp.minimum(index + 1, last_index), index)
         query = jnp.clip(query, self.starts[index], self.ends[index])
 
-        def gather(buffer):
+        def gather(buffer: Any) -> object:
             if _is_history_buffer(buffer, self.capacity):
                 return buffer[index]
             return buffer
@@ -203,7 +205,7 @@ class RollingDelayHistory(StrictModule):
         if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity <= 0:
             raise ValueError("Rolling delay history capacity must be a positive integer.")
 
-        def allocate_leaf(value):
+        def allocate_leaf(value: Any) -> object:
             if eqx.is_array(value) or isinstance(value, jax.ShapeDtypeStruct):
                 return jnp.zeros((capacity,) + value.shape, dtype=value.dtype)
             return value
@@ -283,7 +285,7 @@ class RollingDelayHistory(StrictModule):
         can_append = retained_size < self.capacity
         write_index = (retained_start + retained_size) % self.capacity
 
-        def write(buffer, value):
+        def write(buffer: Any, value: Any) -> object:
             if not _is_history_buffer(buffer, self.capacity):
                 return buffer
             return jax.lax.cond(
@@ -340,12 +342,14 @@ class RollingDelayHistory(StrictModule):
     def latest_info(self) -> Any:
         index = (self.start + jnp.maximum(self.size - 1, 0)) % self.capacity
 
-        def gather(buffer):
+        def gather(buffer: Any) -> object:
             return buffer[index] if _is_history_buffer(buffer, self.capacity) else buffer
 
         return jax.tree.map(gather, self.infos)
 
-    def _interpolation(self, time: Array, left: bool, /):
+    def _interpolation(
+        self, time: Array, left: bool, /
+    ) -> tuple[dfx.AbstractLocalInterpolation, Array]:
         physical = self._physical_indices()
         logical_starts = self.logical_starts
         last_offset = jnp.maximum(self.size - 1, 0)
@@ -373,7 +377,7 @@ class RollingDelayHistory(StrictModule):
         index = physical[logical_index]
         query = jnp.clip(query, self.starts[index], self.ends[index])
 
-        def gather(buffer):
+        def gather(buffer: Any) -> object:
             return buffer[index] if _is_history_buffer(buffer, self.capacity) else buffer
 
         dense_info = jax.tree.map(gather, self.infos)
@@ -421,13 +425,13 @@ class DelayHistoryView(StrictModule):
     )
 
     def value(self, time: Array, /, *, left: bool = True) -> Array:
-        def from_initial(query):
+        def from_initial(query: Array) -> Array:
             value = jnp.asarray(self.initial_history(query, self.args))
             if value.shape != self.state_shape:
                 raise ValueError("Delay history changed its declared state shape.")
             return value
 
-        def from_computed(query):
+        def from_computed(query: Array) -> Array:
             return self.computed_history.evaluate(query, left=left)
 
         value = jax.lax.cond(
@@ -460,7 +464,7 @@ class DelayHistoryView(StrictModule):
             )
         initial_derivative = self.initial_derivative
 
-        def from_initial(query):
+        def from_initial(query: Array) -> Array:
             value = jnp.asarray(initial_derivative(query, self.args))
             expected = (
                 self.state_shape
@@ -473,7 +477,7 @@ class DelayHistoryView(StrictModule):
                 )
             return value
 
-        def from_computed(query):
+        def from_computed(query: Array) -> Array:
             return self.computed_history.derivative(query, left=left)
 
         use_initial = (time < self.initial_time) | ((time == self.initial_time) & left)

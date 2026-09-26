@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, SupportsFloat
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, Key
 
 from phydrax.domain import DomainFunction
 
@@ -47,7 +47,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         integrand: Callable[[Mapping[str, DomainFunction]], DomainFunction]
         | DomainFunction,
         objective_vars: Sequence[str] | None = None,
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         label: str | None = None,
         nonfinite_integrand: Literal["raise", "propagate"] = "raise",
     ) -> None:
@@ -88,7 +88,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         source: IntegrationSource,
         operator: Callable[..., DomainFunction],
         objective_vars: str | Sequence[str],
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         label: str | None = None,
         nonfinite_integrand: Literal["raise", "propagate"] = "raise",
     ) -> "IntegralFunctional":

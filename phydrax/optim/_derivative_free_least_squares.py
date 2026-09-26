@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -47,6 +48,10 @@ from ._iterative._types import (
 from ._least_squares import _run_least_squares_iterations, LeastSquaresState
 
 
+_ResidualFunction: TypeAlias = Callable[[PyTree[Any]], PyTree[Any]]
+_StepOutput: TypeAlias = tuple[PyTree[Any], PyTree[Any], Array]
+
+
 class _FiniteDifferenceResidualModel(StrictModule):
     residual: PyTree[Array]
     objective: Array
@@ -56,7 +61,7 @@ class _FiniteDifferenceResidualModel(StrictModule):
 
 
 def _central_difference_model(
-    residual_function,
+    residual_function: _ResidualFunction,
     parameters: PyTree[Any],
     /,
     *,
@@ -69,7 +74,7 @@ def _central_difference_model(
     scales = absolute_step + relative_step * jnp.maximum(1.0, jnp.abs(flat_parameters))
     perturbations = jnp.diag(scales)
 
-    def evaluate(candidate):
+    def evaluate(candidate: Array) -> Array:
         candidate_residual = _validate_real_inexact_tree(
             residual_function(unravel(candidate)), name="residual"
         )
@@ -162,7 +167,9 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             implicit_differentiation=False,
         )
 
-    def _model(self, residual_function, parameters, /):
+    def _model(
+        self, residual_function: _ResidualFunction, parameters: PyTree[Any], /
+    ) -> _FiniteDifferenceResidualModel:
         flat, _ = ravel_pytree(parameters)
         if flat.size > self.max_dense_dimension:
             raise ValueError(
@@ -192,7 +199,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
 
     def prepare_state(
         self,
-        residual_function,
+        residual_function: _ResidualFunction,
         parameters: PyTree[Any],
         /,
     ) -> LeastSquaresState:
@@ -212,7 +219,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
 
     def step(
         self,
-        residual_function,
+        residual_function: _ResidualFunction,
         parameters: PyTree[Any],
         state: LeastSquaresState,
         /,
@@ -233,7 +240,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             <= termination.maximum_evaluations
         )
 
-        def no_budget(_):
+        def no_budget(_: None) -> _StepOutput:
             updated = LeastSquaresState(
                 iteration=state.iteration,
                 initial_optimality_norm=state.initial_optimality_norm,
@@ -258,7 +265,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             dynamic, _ = eqx.partition(updated, eqx.is_array)
             return parameters, dynamic, state.metrics.objective
 
-        def evaluate_step(_):
+        def evaluate_step(_: None) -> _StepOutput:
             model = self._model(residual_function, parameters)
             optimality = _tree_norm(model.gradient)
             initial_optimality = jnp.where(
@@ -279,7 +286,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
                 else optimality <= termination.optimality_threshold(initial_optimality)
             )
 
-            def finish(_):
+            def finish(_: None) -> _StepOutput:
                 status = jnp.where(
                     finite,
                     int(OptimizationStatus.SUCCESS),
@@ -312,8 +319,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
                 dynamic, _ = eqx.partition(updated, eqx.is_array)
                 return parameters, dynamic, model.objective
 
-            def gauss_newton(_):
-                flat_residual, _ = ravel_pytree(model.residual)
+            def gauss_newton(_: None) -> _StepOutput:
                 jacobian = self.precision.accumulation(model.jacobian)
                 normal = jnp.conj(jacobian.T) @ jacobian
                 normal = normal + self.regularization * jnp.eye(
@@ -339,7 +345,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
                 direction = _tree_where(usable, proposed, _tree_negative(model.gradient))
                 directional = _tree_inner(model.gradient, direction)
 
-                def objective(candidate):
+                def objective(candidate: PyTree[Any]) -> Array:
                     residual = residual_function(candidate)
                     return 0.5 * _tree_inner(residual, residual)
 
@@ -481,7 +487,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             )
         )
 
-        def residual_function(candidate):
+        def residual_function(candidate: PyTree[Any]) -> PyTree[Any]:
             residual, _ = problem.value(candidate, args)
             return residual
 

@@ -190,7 +190,7 @@ class DiscreteModelTransition(StrictModule):
     model: AbstractArrayModel
     has_input: bool = eqx.field(static=True)
     port_binding: PortBindingEvidence | None = eqx.field(static=True)
-    step_size: float = eqx.field(static=True)
+    step_size: float | None = eqx.field(static=True)
     step_rtol: float = eqx.field(static=True)
     step_atol: float = eqx.field(static=True)
     input_mode: Literal["fixed", "duration", "interval"] = eqx.field(static=True)

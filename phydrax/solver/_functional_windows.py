@@ -175,7 +175,7 @@ class FunctionalTimeWindowResult(StrictModule):
         self.successful = jnp.asarray(finite)
         self.plan_id = str(plan_id)
 
-    def solver_at(self, time: Array, /):
+    def solver_at(self, time: Array, /) -> Any:
         value = jnp.asarray(time)
         if value.shape != ():
             raise ValueError("Window queries require one scalar physical time.")
@@ -320,7 +320,7 @@ def train_functional_time_windows(
         )
         optimizer = plan.optimizer(index)
         transferred = False
-        if plan.transfer_optimizer_state and index > 0:
+        if plan.transfer_optimizer_state and index > 0 and training is not None:
             built, transferred = _transfer_training_state(
                 current,
                 built,

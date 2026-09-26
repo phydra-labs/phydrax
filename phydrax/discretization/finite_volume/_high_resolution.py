@@ -513,7 +513,9 @@ def _polynomial_data(
     return evaluation, smoothness_coeff
 
 
-def _prepare_nonuniform_side(edges: np.ndarray, side: str, /):
+def _prepare_nonuniform_side(
+    edges: np.ndarray, side: str, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     count = edges.size - 1
     all_indices = []
     coefficients = []

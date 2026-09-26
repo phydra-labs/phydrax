@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Iterable
 from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from ._precision import inexact_result_type
 from ._strict import StrictModule
@@ -36,7 +37,7 @@ class AbstractProbabilityLaw(StrictModule):
         raise NotImplementedError
 
     @abstractmethod
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -48,7 +49,7 @@ class AbstractProbabilityLaw(StrictModule):
         raise NotImplementedError
 
 
-def _positive_shape(value, /, *, owner: str) -> tuple[int, ...]:
+def _positive_shape(value: Iterable[int], /, *, owner: str) -> tuple[int, ...]:
     shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} must contain positive dimensions.")
@@ -88,7 +89,7 @@ class DiagonalNormalLaw(AbstractProbabilityLaw):
         scale: ArrayLike,
         /,
         *,
-        event_shape,
+        event_shape: Iterable[int],
     ) -> None:
         events = _positive_shape(event_shape, owner="event_shape")
         raw_location = jnp.asarray(location)
@@ -153,7 +154,7 @@ class DiagonalNormalLaw(AbstractProbabilityLaw):
             )
         return array
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")

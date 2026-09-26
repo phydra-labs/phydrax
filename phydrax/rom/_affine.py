@@ -389,7 +389,7 @@ class PreparedAffineObservation(StrictModule, NonTrainableState):
     output_space: Any
     observation_id: str = eqx.field(static=True)
 
-    def evaluate(self, reduced: Array, lift_coefficients: Array, /):
+    def evaluate(self, reduced: Array, lift_coefficients: Array, /) -> PyTree[Array]:
         coordinates = self.output_map @ reduced
         if self.lift_values.shape[0]:
             coordinates = coordinates + lift_coefficients @ self.lift_values

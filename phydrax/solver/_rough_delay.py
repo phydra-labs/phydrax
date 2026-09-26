@@ -50,7 +50,9 @@ RoughDelayDrift: TypeAlias = Callable[[Array, Array, DelayValues, Any], ArrayLik
 class _ZeroRoughDelayDrift(StrictModule):
     zero: Array
 
-    def __call__(self, time, state, memory, args):
+    def __call__(
+        self, time: Array, state: Array, memory: DelayValues, args: object
+    ) -> Array:
         del time, state, memory, args
         return self.zero
 
@@ -267,13 +269,13 @@ class _RoughDelayHistoryView(StrictModule):
             "Rough delay history queried beyond the available causal interval.",
         )
 
-        def initial_value(item):
+        def initial_value(item: Array) -> Array:
             value = jnp.asarray(self.initial_history(item, self.args))
             if value.shape != self.state_shape:
                 raise ValueError("Rough delay prehistory changed its state shape.")
             return value
 
-        def computed_value(item):
+        def computed_value(item: Array) -> Array:
             left_index = jnp.searchsorted(self.times, item, side="right") - 1
             left_index = jnp.maximum(left_index, 0)
             right_index = jnp.minimum(left_index + 1, self.current_index)
@@ -490,7 +492,7 @@ def _rough_delay_integrate(
     steps = jnp.diff(control.times)
     indices = jnp.arange(control.num_steps, dtype=jnp.int32)
 
-    def one_path(first, second):
+    def one_path(first: Array, second: Array | None) -> Array:
         initial_buffer = (
             jnp.zeros(
                 (control.num_steps + 1,) + problem.state_shape,
@@ -500,7 +502,10 @@ def _rough_delay_integrate(
             .set(problem.initial_state)
         )
 
-        def advance(carry, item):
+        def advance(
+            carry: tuple[Array, Array],
+            item: tuple[Array, Array, Array, Array, Array],
+        ) -> tuple[tuple[Array, Array], Array]:
             state, buffer = carry
             index, time, step, first_increment, second_increment = item
             history = _RoughDelayHistoryView(
@@ -514,7 +519,7 @@ def _rough_delay_integrate(
                 state_shape=problem.state_shape,
             )
 
-            def fields_at(candidate):
+            def fields_at(candidate: Array) -> Array:
                 memory = _rough_delay_memory(problem, time, candidate, history)
                 return jnp.asarray(
                     problem.vector_fields(time, candidate, memory, problem.args)
@@ -569,7 +574,7 @@ def _rough_delay_integrate(
                         )
                     )(directions)
 
-                    def fields_in_base(local):
+                    def fields_in_base(local: Array) -> Array:
                         point = problem.geometry.retract(state, local)
                         point_fields = fields_at(point)
                         return jax.vmap(
@@ -616,7 +621,7 @@ def _rough_delay_integrate(
                         control.num_steps - 1,
                     )
 
-                    def delayed_correction(delayed_step_index):
+                    def delayed_correction(delayed_step_index: Array) -> Array:
                         delayed_state = buffer[delayed_step_index]
                         delayed_history = _RoughDelayHistoryView(
                             times=control.times,
@@ -643,8 +648,8 @@ def _rough_delay_integrate(
                             )
                         )
 
-                        def differentiate_delayed(direction):
-                            def fields_with_delayed(delayed_value):
+                        def differentiate_delayed(direction: Array) -> Array:
+                            def fields_with_delayed(delayed_value: Array) -> Array:
                                 replaced = tuple(
                                     delayed_value
                                     if value_index == memory_index

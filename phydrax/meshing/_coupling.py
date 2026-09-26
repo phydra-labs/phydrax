@@ -62,7 +62,7 @@ def _point_pairs(
     source_scope: MeshingScope,
     target_scope: MeshingScope,
     source_ids: ArrayLike | None,
-):
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     _endpoints(source, target, source_scope, target_scope)
     ids = np.asarray(source_scope.entity_ids)
     paired = ids if source_ids is None else np.asarray(source_ids)

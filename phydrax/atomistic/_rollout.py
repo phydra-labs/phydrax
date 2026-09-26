@@ -28,6 +28,24 @@ from ._units import AtomisticUnitSystem
 
 AtomisticReplayMode: TypeAlias = Literal["full", "step", "block"]
 AtomisticRetention: TypeAlias = Literal["final", "trajectory"]
+_RolloutCarry: TypeAlias = tuple[
+    AtomisticDynamicsState,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    tuple[Any, ...],
+]
 
 
 class AtomisticReplayPolicy(StrictModule, NonTrainableState):
@@ -277,7 +295,7 @@ class AtomisticRolloutPlan(StrictModule):
             )
             valid = valid.at[0].set(initial_success)
 
-        initial_carry = (
+        initial_carry: _RolloutCarry = (
             state,
             initial_success,
             times,
@@ -300,7 +318,7 @@ class AtomisticRolloutPlan(StrictModule):
             observer_states,
         )
 
-        def advance(carry, index):
+        def advance(carry: _RolloutCarry, index: Array) -> tuple[_RolloutCarry, None]:
             (
                 current,
                 cumulative_success,
@@ -322,21 +340,22 @@ class AtomisticRolloutPlan(StrictModule):
             result = self.dynamics.step_detailed(current, self.thermodynamic)
             propagated = result.accepted_state
             iteration_successful = result.successful
-            if self.barostat is not None:
-                scheduled = (index + 1) % self.barostat_interval == 0
+            barostat, interval = self.barostat, self.barostat_interval
+            if barostat is not None and interval is not None:
+                scheduled = (index + 1) % interval == 0
                 move_counter = current.barostat_state[0]
 
-                def apply_move(_):
+                def apply_move(_: None) -> tuple[AtomisticDynamicsState, Array]:
                     evaluation = apply_isotropic_monte_carlo_barostat(
                         self.dynamics,
                         propagated,
                         self.thermodynamic,
-                        self.barostat,
+                        barostat,
                         move_counter,
                     )
                     return evaluation.accepted_state, evaluation.successful
 
-                def skip_move(_):
+                def skip_move(_: None) -> tuple[AtomisticDynamicsState, Array]:
                     return propagated, jnp.asarray(True)
 
                 proposed, barostat_successful = jax.lax.cond(

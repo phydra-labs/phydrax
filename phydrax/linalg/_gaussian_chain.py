@@ -321,7 +321,9 @@ def associative_freeze(
     )
     seeded_values = jnp.concatenate((initial[None, ...], values), axis=0)
 
-    def select_latest(left, right):
+    def select_latest(
+        left: tuple[Array, Array], right: tuple[Array, Array]
+    ) -> tuple[Array, Array]:
         left_flag, left_value = left
         right_flag, right_value = right
         selector = right_flag.reshape(
@@ -897,7 +899,9 @@ def _reduce_information_elements(
     if edge_count == 1:
         return initial
 
-    def scan_step(carry, item):
+    def scan_step(
+        carry: GaussianInformationElement, item: GaussianInformationElement
+    ) -> tuple[GaussianInformationElement, None]:
         combined = combine(carry, item)
         return combined, None
 
@@ -1085,7 +1089,12 @@ def gaussian_markov_moments(
     vector = information.information_vector.reshape((case_count, node_count, state_size))
     node_valid = information.node_valid.reshape((case_count, node_count))
 
-    def objective(diagonal_case, transition_case, vector_case, valid_case):
+    def objective(
+        diagonal_case: Array,
+        transition_case: Array,
+        vector_case: Array,
+        valid_case: Array,
+    ) -> tuple[Array, tuple[Array, Array]]:
         value, valid, status = _gaussian_markov_log_normalizer_arrays(
             diagonal_case,
             transition_case,
@@ -1333,10 +1342,10 @@ def sample_gaussian_markov(
     case_indices = jnp.arange(case_count, dtype=jnp.uint32)
     node_indices = jnp.arange(node_count, dtype=jnp.uint32)
 
-    def member_keys(member):
+    def member_keys(member: Array) -> Array:
         member_key = jr.fold_in(key, member)
 
-        def case_keys(case):
+        def case_keys(case: Array) -> Array:
             case_key = jr.fold_in(member_key, case)
             return jax.vmap(lambda node: jr.fold_in(case_key, node))(node_indices)
 
@@ -1374,7 +1383,9 @@ def sample_gaussian_markov(
         )
         conditional_factor = jnp.linalg.cholesky(conditional_covariance)
 
-        def sample_step(previous, inputs):
+        def sample_step(
+            previous: Array, inputs: tuple[Array, Array, Array, Array, Array]
+        ) -> tuple[Array, Array]:
             transition_, offset_, factor_, normal_, active_ = inputs
             value = (
                 ein.contract("cij,scj->sci", transition_, previous)

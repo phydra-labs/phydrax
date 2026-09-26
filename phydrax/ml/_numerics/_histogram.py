@@ -54,7 +54,7 @@ def histogram_gradient_statistics(
     output_shape = gradient.shape[1:]
     features = bin_indices.shape[1]
 
-    def one_feature(feature_bins):
+    def one_feature(feature_bins: Array) -> tuple[Array, Array, Array]:
         active = (
             jnp.isfinite(weight)
             & (weight >= 0.0)
@@ -128,7 +128,7 @@ def xgboost_split_gain(
     regularization = jnp.asarray(l2_regularization)
     l1 = jnp.asarray(l1_regularization)
 
-    def score(g, h):
+    def score(g: Array, h: Array) -> Array:
         shrunk = jnp.sign(g) * jnp.maximum(jnp.abs(g) - l1, 0.0)
         return jnp.sum(
             shrunk * shrunk / jnp.maximum(h + regularization, jnp.finfo(jnp.float64).tiny)

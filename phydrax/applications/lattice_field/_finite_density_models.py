@@ -283,7 +283,7 @@ def evaluate_finite_density_provider_grid(
     ft = (temperature_ - t0) / (t1 - t0)
     fm = (baryon - m0) / (m1 - m0)
 
-    def interpolate(values):
+    def interpolate(values: Array) -> Array:
         return (
             (1.0 - ft) * (1.0 - fm) * values[ti, mi]
             + ft * (1.0 - fm) * values[ti + 1, mi]

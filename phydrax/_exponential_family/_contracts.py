@@ -10,7 +10,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
@@ -361,7 +361,7 @@ class AbstractExponentialFamily(StrictModule):
     @abstractmethod
     def _sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,
@@ -493,7 +493,7 @@ class AbstractExponentialFamily(StrictModule):
 
     def sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural: NaturalCoordinates,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
@@ -597,7 +597,7 @@ class ExponentialFamilyLaw(AbstractProbabilityLaw):
     def log_prob(self, value: ArrayLike, /) -> Array:
         return self.family.log_prob(self.natural, value)
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
         return self.family.sample(key, self.natural, tuple(sample_shape))
 
     def kl_divergence(self, other: "ExponentialFamilyLaw", /) -> Array:

@@ -1042,6 +1042,8 @@ class EvenOddSchurPlan(StrictModule):
 class EvenOddSchurOperator(AbstractLinearOperator):
     """Matrix-free reduced checkerboard Schur complement."""
 
+    source: ArraySpace
+    target: ArraySpace
     operator: AbstractLatticeDiracOperator
     plan: EvenOddSchurPlan
     boundary_id: str = eqx.field(static=True)
@@ -1998,6 +2000,8 @@ class RationalSignApproximation(StrictModule):
 
 
 class _Gamma5HermitianKernel(AbstractLinearOperator):
+    source: ArraySpace
+    target: ArraySpace
     kernel: AbstractLatticeDiracOperator
     boundary_id: str = eqx.field(static=True)
     representation_id: str = eqx.field(static=True)
@@ -2031,6 +2035,8 @@ class _Gamma5HermitianKernel(AbstractLinearOperator):
 
 
 class _SquaredHermitianKernel(AbstractLinearOperator):
+    source: ArraySpace
+    target: ArraySpace
     kernel: _Gamma5HermitianKernel
     boundary_id: str = eqx.field(static=True)
     representation_id: str = eqx.field(static=True)

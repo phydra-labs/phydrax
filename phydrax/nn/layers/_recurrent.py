@@ -9,7 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
@@ -409,7 +409,9 @@ def run_associative_recurrence(
     )
     segment_start = reset & valid
 
-    def segmented_combine(left, right):
+    def segmented_combine(
+        left: tuple[PyTree[Array], Array], right: tuple[PyTree[Array], Array]
+    ) -> tuple[PyTree[Array], Array]:
         left_summary, left_reset = left
         right_summary, right_reset = right
         composed = recurrence.combine(left_summary, right_summary)
@@ -537,7 +539,7 @@ def _recurrent_time_context(
     scan_times = jnp.moveaxis(batch.time, -1, 0)
     scan_valid = jnp.moveaxis(batch.valid, -1, 0)
 
-    def update_time(last_time: Array, values: tuple[Array, Array]):
+    def update_time(last_time: Array, values: tuple[Array, Array]) -> tuple[Array, None]:
         time, valid = values
         return jnp.where(valid, time, last_time), None
 
@@ -630,7 +632,7 @@ def run_recurrent(
         carry: tuple[Any, Any],
         step_inputs: tuple[Any, Array, Array, Array, Array],
         step_key: EvalKey,
-    ):
+    ) -> tuple[tuple[Any, Any], tuple[Any, Any]]:
         state, last_output = carry
         inputs, valid, reset, time, interval = step_inputs
         restarted = _tree_where(reset & valid, restart_state, state)
@@ -660,7 +662,7 @@ def run_recurrent(
         def step_without_key(
             carry: tuple[Any, Any],
             step_inputs: tuple[Any, Array, Array, Array, Array],
-        ):
+        ) -> tuple[tuple[Any, Any], tuple[Any, Any]]:
             return evaluate_step(carry, step_inputs, None)
 
         (final_state, final_output), (scan_states, scan_outputs) = jax.lax.scan(
@@ -674,7 +676,7 @@ def run_recurrent(
         def step_with_key(
             carry: tuple[Any, Any],
             step_inputs: tuple[Any, Array, Array, Array, Array, Array],
-        ):
+        ) -> tuple[tuple[Any, Any], tuple[Any, Any]]:
             inputs, valid, reset, time, interval, step_key = step_inputs
             return evaluate_step(
                 carry,

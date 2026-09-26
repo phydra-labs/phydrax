@@ -266,7 +266,9 @@ class HardEventProduction(StrictModule, NonTrainableState):
         return self.events.successful & self.ledger.successful
 
 
-def _one_hard_point(prepared: PreparedHardProcess, unit: Array, /):
+def _one_hard_point(
+    prepared: PreparedHardProcess, unit: Array, /
+) -> tuple[Array, Array, Array, Array]:
     total = jnp.asarray([prepared.plan.beam.center_of_mass_energy, 0.0, 0.0, 0.0])
     point = prepared.phase_space.map(unit, total)
     matrix_element = jnp.asarray(

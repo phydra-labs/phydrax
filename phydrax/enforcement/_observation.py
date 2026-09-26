@@ -9,7 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, Key
 
 import phydrax.axes as cx
 from phydrax.conditions._ir import (
@@ -148,7 +148,14 @@ class PointObservationAction(AbstractConditionOperator):
     def observation_count(self) -> int:
         return self.evidence.observation_count
 
-    def _apply(self, values: Mapping[str, Any], /, *, key=None, **kwargs: Any) -> Array:
+    def _apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         if self.field not in values:
             raise KeyError(f"Missing observed field {self.field!r}.")
         value = values[self.field]

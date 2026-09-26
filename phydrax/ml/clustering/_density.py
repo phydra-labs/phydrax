@@ -160,7 +160,7 @@ def _density_one(
     root = jnp.where(core, jnp.arange(n, dtype=jnp.int32), sentinel)
     core_edges = adjacency & core[:, None] & core[None, :]
 
-    def propagate(_, labels):
+    def propagate(_: Array, labels: Array) -> Array:
         candidate = jnp.where(core_edges, labels[None, :], sentinel)
         return jnp.where(core, jnp.minimum(labels, jnp.min(candidate, axis=-1)), sentinel)
 

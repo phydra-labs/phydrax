@@ -6,11 +6,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -39,13 +41,13 @@ class ThreePhononScatteringResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        decay,
-        coalescence,
-        momentum,
-        detailed_balance,
-        decay_count,
-        coalescence_count,
-        successful,
+        decay: ArrayLike,
+        coalescence: ArrayLike,
+        momentum: ArrayLike,
+        detailed_balance: ArrayLike,
+        decay_count: int,
+        coalescence_count: int,
+        successful: ArrayLike,
         /,
     ) -> None:
         self.decay_rates = jnp.asarray(decay)
@@ -93,14 +95,14 @@ class ThreePhononModeVertices(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        decay_vertices,
-        coalescence_vertices,
-        angular_frequencies,
-        qpoint_indices,
-        mesh_shape,
-        energy_unit,
-        ifc3_id,
-        phonon_result_id,
+        decay_vertices: npt.ArrayLike,
+        coalescence_vertices: npt.ArrayLike,
+        angular_frequencies: npt.ArrayLike,
+        qpoint_indices: npt.ArrayLike,
+        mesh_shape: Sequence[int],
+        energy_unit: UnitDefinition,
+        ifc3_id: str,
+        phonon_result_id: str,
         /,
     ) -> None:
         decay = np.asarray(decay_vertices)
@@ -363,17 +365,17 @@ class ThreePhononRTAResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        scattering,
-        lifetimes,
-        mode_conductivity,
-        conductivity,
-        mean_free_paths,
-        ballistic,
-        antisymmetry,
-        eigenvalues,
-        finite_conductivity,
-        successful,
-        unit_system_id,
+        scattering: ThreePhononScatteringResult,
+        lifetimes: ArrayLike,
+        mode_conductivity: ArrayLike,
+        conductivity: ArrayLike,
+        mean_free_paths: ArrayLike,
+        ballistic: ArrayLike,
+        antisymmetry: ArrayLike,
+        eigenvalues: ArrayLike,
+        finite_conductivity: ArrayLike,
+        successful: ArrayLike,
+        unit_system_id: str,
         /,
     ) -> None:
         self.scattering = scattering
@@ -712,8 +714,8 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
 def evaluate_three_phonon_rta(
     prepared: ThreePhononRTAPlan,
     mode_vertices: ThreePhononModeVertices,
-    group_velocities,
-    heat_capacities,
+    group_velocities: ArrayLike,
+    heat_capacities: ArrayLike,
     /,
 ) -> ThreePhononRTAResult:
     if not isinstance(prepared, ThreePhononRTAPlan):

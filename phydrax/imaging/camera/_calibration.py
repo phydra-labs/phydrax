@@ -408,7 +408,7 @@ def _calibration_evidence(
     training_rms = _masked_rms(residual, training)
     holdout_rms = _masked_rms(residual, holdout)
 
-    def raw_training(candidate):
+    def raw_training(candidate: Array) -> Array:
         raw, _ = _pixel_residuals(problem, plan, candidate)
         return jnp.where(training[..., None], raw, 0.0).reshape(-1)
 
@@ -526,7 +526,7 @@ def calibrate_camera_rig(
             None,
         )
 
-    def residual_function(candidate, _):
+    def residual_function(candidate: Array, _: object) -> Array:
         return _training_residual(problem, plan, candidate)
 
     optimization = least_squares(

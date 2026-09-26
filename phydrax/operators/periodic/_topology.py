@@ -11,6 +11,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -38,7 +39,7 @@ class PeriodicBandManifold(StrictModule, NonTrainableState):
     def __init__(
         self,
         spectrum: PeriodicSpectrumResult,
-        band_indices: ArrayLike,
+        band_indices: npt.ArrayLike,
         /,
         *,
         gap_tolerance: float = 1.0e-8,

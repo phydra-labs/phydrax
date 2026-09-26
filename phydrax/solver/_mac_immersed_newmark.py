@@ -183,7 +183,9 @@ class MACDeformableImmersedNewmarkMethod(StrictModule, NonTrainableState):
             state.marker_force_density,
         )
 
-        def residual(unknown, _):
+        def residual(
+            unknown: tuple[Array, Array, Array, Array, Array, Array], _: object
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
             fluid_coordinates, q, v, acceleration, pressure, multiplier = unknown
             fluid_velocity = tuple(operators.velocity_space.unflatten(fluid_coordinates))
             marker = base.marker_map.kinematics(q, v)

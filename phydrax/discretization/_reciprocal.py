@@ -12,6 +12,7 @@ from math import isfinite, prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -157,7 +158,7 @@ class ReciprocalMeshPlan(StrictModule, NonTrainableState):
         /,
         *,
         shift: tuple[float, ...] | None = None,
-        dtype=np.float64,
+        dtype: npt.DTypeLike = np.float64,
         maximum_points: int = 1_000_000,
     ) -> "ReciprocalMeshPlan":
         cell_ = _require_cell(cell)
@@ -489,10 +490,10 @@ class ReciprocalConnectivityPlan(StrictModule, NonTrainableState):
             )
         return cls(
             mesh,
-            sources,
-            targets,
-            shifts,
-            reverse,
+            np.asarray(sources, dtype=np.int64),
+            np.asarray(targets, dtype=np.int64),
+            np.asarray(shifts),
+            np.asarray(reverse, dtype=np.int64),
             plaquette_edges=np.asarray(plaquettes, dtype=np.int32).reshape((-1, 4)),
             maximum_edges=maximum_edges,
             maximum_plaquettes=maximum_plaquettes,

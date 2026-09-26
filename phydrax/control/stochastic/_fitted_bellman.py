@@ -280,7 +280,7 @@ def _feature_table(
     flat_states = paths.states.reshape((-1,) + paths.state_shape)
     flat_times = jnp.broadcast_to(paths.time_grid.times, (count, nodes)).reshape((-1,))
 
-    def evaluate(time, state):
+    def evaluate(time: Array, state: Array) -> Array:
         return jnp.asarray(problem.feature_map(time, state, problem.args))
 
     features = jax.vmap(evaluate)(flat_times, flat_states)
@@ -910,7 +910,7 @@ def bridge_fitted_bellman_to_bsde(
     ):
         raise ValueError("Selected, fitted, and controlled time grids must match.")
 
-    def action_at(time, state):
+    def action_at(time: Array, state: Array) -> Array:
         context = _policy_context(selected, time)
         value = jnp.asarray(frozen_policy(context, state, controlled_problem.args))
         if value.shape != controlled_problem.action_shape:
@@ -965,7 +965,7 @@ def bridge_fitted_bellman_to_bsde(
         },
     )
 
-    def closed_drift(time, state, args):
+    def closed_drift(time: Array, state: Array, args: object) -> Array:
         del args
         action = action_at(time, state)
         value = jnp.asarray(
@@ -975,7 +975,7 @@ def bridge_fitted_bellman_to_bsde(
             raise ValueError("controlled_drift returned an incompatible state shape.")
         return value
 
-    def closed_diffusion(time, state, args):
+    def closed_diffusion(time: Array, state: Array, args: object) -> Array:
         del args
         action = action_at(time, state)
         value = jnp.asarray(
@@ -993,7 +993,9 @@ def bridge_fitted_bellman_to_bsde(
     closed_drift(probe_time, probe_state, None)
     closed_diffusion(probe_time, probe_state, None)
 
-    def generator(time, state, value, z, args):
+    def generator(
+        time: Array, state: Array, value: Array, z: Array, args: object
+    ) -> Array:
         del value, z, args
         context = _policy_context(selected, time)
         action = action_at(time, state)
@@ -1004,7 +1006,7 @@ def bridge_fitted_bellman_to_bsde(
             raise ValueError("controlled stage_cost must return a scalar.")
         return (cost / (context.target - context.source))[None]
 
-    def terminal(state, args):
+    def terminal(state: Array, args: object) -> Array:
         del args
         value = jnp.asarray(
             controlled_problem.terminal_cost(
@@ -1031,7 +1033,7 @@ def bridge_fitted_bellman_to_bsde(
         state_label="x",
     )
 
-    def value_predictor(time, state):
+    def value_predictor(time: Array, state: Array) -> Array:
         return result.predict(time, state)[None]
 
     control_mode = "autodiff" if z_predictor is None else "explicit"

@@ -5,6 +5,7 @@
 """Differentiable coordinate, Riemannian, and signed geometry for Phydrax."""
 
 from importlib import import_module
+from typing import Any
 
 from . import algebra, clifford
 from ._adm import (
@@ -417,7 +418,7 @@ from ._validation import MetricValidationReport, validate_metric
 _FACADE_EXPORT_MODULES = ("._gauge_representation", "._gaussian_entanglement")
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

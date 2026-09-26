@@ -86,10 +86,12 @@ class ModelWithLoss(
                 "ModelWithLoss requires a model with an explicit input binding."
             )
         terms = tuple(loss_terms)
-        bad = tuple(t for t in terms if not isinstance(t, ModelLossTerm))
-        if bad:
+        if any(not isinstance(t, ModelLossTerm) for t in terms):
+            bad = tuple(
+                type(t).__name__ for t in terms if not isinstance(t, ModelLossTerm)
+            )
             raise TypeError(
-                f"loss_terms must contain ModelLossTerm instances; got {tuple(type(t).__name__ for t in bad)!r}."
+                f"loss_terms must contain ModelLossTerm instances; got {bad!r}."
             )
         self.model = model
         self.loss_terms = terms

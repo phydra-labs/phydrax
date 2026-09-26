@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -150,7 +151,8 @@ class ChemicalEquilibriumPlan(StrictModule):
         phase_pressure = np.ones((schema.phase_count,), dtype=np.float64)
         for index, phase in enumerate(schema.phase_specs):
             if phase.kind is ChemicalPhaseKind.GAS:
-                phase_pressure[index] = float(phase.standard_pressure)
+                # ChemicalPhaseSpec validation requires a pressure for every gas phase.
+                phase_pressure[index] = float(cast(float, phase.standard_pressure))
         self.thermodynamics = thermodynamics
         self.ensemble = ensemble_
         self.balance_matrix = jnp.asarray(balance)
@@ -176,7 +178,9 @@ class ChemicalEquilibriumPlan(StrictModule):
             }
         )
 
-    def evaluate_state(self, amount: Array, temperature: Array, pressure: Array, /):
+    def evaluate_state(
+        self, amount: Array, temperature: Array, pressure: Array, /
+    ) -> ChemicalEquilibriumThermodynamicState:
         tiny = jnp.finfo(amount.dtype).tiny
         phase_amount = jnp.stack(
             tuple(
@@ -278,7 +282,9 @@ class ChemicalEquilibriumPlan(StrictModule):
             UNIVERSAL_GAS_CONSTANT * temperature_,
         )
 
-        def decode(value):
+        def decode(
+            value: Array,
+        ) -> tuple[Array, Array, Array, ChemicalEquilibriumThermodynamicState]:
             reaction_coordinate = value[:reaction_dimension]
             scaled_amount = scaled_initial + self.balance_nullspace @ reaction_coordinate
             amount = amount_scale * scaled_amount
@@ -301,7 +307,7 @@ class ChemicalEquilibriumPlan(StrictModule):
             state = self.evaluate_state(amount, solved_temperature, solved_pressure)
             return amount, solved_temperature, solved_pressure, state
 
-        def physical_objective(value):
+        def physical_objective(value: Array) -> Array:
             _, _, _, state = decode(value)
             if ensemble is ChemicalEquilibriumEnsemble.TP:
                 return state.gibbs
@@ -316,10 +322,10 @@ class ChemicalEquilibriumPlan(StrictModule):
                 return state.enthalpy
             return state.internal_energy
 
-        def objective(value, _):
+        def objective(value: Array, _: object) -> Array:
             return physical_objective(value) / objective_scale
 
-        def scaled_amount_constraint(value, _):
+        def scaled_amount_constraint(value: Array, _: object) -> Array:
             return scaled_initial + self.balance_nullspace @ value[:reaction_dimension]
 
         constraints = [
@@ -343,7 +349,7 @@ class ChemicalEquilibriumPlan(StrictModule):
         property_scale = jnp.maximum(jnp.abs(conserved_target), 1.0)
         if conserved_name != "none":
 
-            def conserved(value, _):
+            def conserved(value: Array, _: object) -> Array:
                 _, _, _, state = decode(value)
                 selected = (
                     state.enthalpy

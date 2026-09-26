@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from operator import index
-from typing import Literal
+from typing import Literal, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
@@ -30,12 +32,35 @@ from ._laplace3d import (
     _translation_quadrature,
     AbstractLaplaceMultipoleEvaluation3D,
     AbstractPreparedLaplaceMultipole3D,
-    LaplaceMultipoleEvaluation3D,
     LaplaceMultipolePlan3D,
+    MultipoleCapacityEvidence3D,
+    MultipoleTruncationEvidence3D,
 )
 
 
 RadialKernel3D = Literal["helmholtz", "modified-helmholtz"]
+
+
+class _EvaluationFields(TypedDict):
+    values: Array
+    far_values: Array
+    near_values: Array
+    truncation: MultipoleTruncationEvidence3D
+    capacity: MultipoleCapacityEvidence3D
+    maximum_reference_displacement: Array
+    stale_topology: Array
+    finite: Array
+    successful: Array
+    p2m_count: Array
+    m2m_count: Array
+    m2l_count: Array
+    l2l_count: Array
+    l2p_count: Array
+    p2p_count: Array
+    expansion_order: int
+    source_convention: str
+    local_convention: str
+    evaluation_id: str
 
 
 class HelmholtzMultipoleEvaluation3D(AbstractLaplaceMultipoleEvaluation3D):
@@ -344,7 +369,7 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
         radial_values = self._radial_sequence(radius, radial=radial)
         return angular * radial_values[:, None]
 
-    def _kernel_prefactor(self, dtype) -> Array:
+    def _kernel_prefactor(self, dtype: DTypeLike) -> Array:
         parameter = jnp.asarray(self.kernel_plan.parameter, dtype=dtype)
         if self.kernel_plan.kernel == "helmholtz":
             return 1j * parameter
@@ -358,7 +383,12 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
         basis = self._wave_basis(relative, radial="irregular")
         return self._kernel_prefactor(relative.dtype) * jnp.conj(basis)
 
-    def _evaluate_basis(self, coefficients: Array, relative: Array, radial: str) -> Array:
+    def _evaluate_basis(
+        self,
+        coefficients: Array,
+        relative: Array,
+        radial: Literal["regular", "irregular"],
+    ) -> Array:
         modal = self._validate_coefficients(coefficients, "coefficients")
         basis = self._wave_basis(relative, radial=radial)
         modal_flat, payload_shape = _flatten_payload(modal, 2)
@@ -371,7 +401,7 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
 
     def _project_on_sphere(
         self,
-        function,
+        function: Callable[[Array], Array],
         center: Array,
         radius: Array,
         /,
@@ -517,8 +547,10 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
             pair_mask, dtype=jnp.int32
         )
 
-    def _wrap_evaluation(self, evaluation: LaplaceMultipoleEvaluation3D):
-        common = dict(
+    def _wrap_evaluation(
+        self, evaluation: AbstractLaplaceMultipoleEvaluation3D
+    ) -> HelmholtzMultipoleEvaluation3D | ModifiedHelmholtzMultipoleEvaluation3D:
+        common = _EvaluationFields(
             values=evaluation.values,
             far_values=evaluation.far_values,
             near_values=evaluation.near_values,
@@ -562,7 +594,7 @@ class _AbstractPreparedRadialMultipole3D(AbstractPreparedLaplaceMultipole3D):
         source_normals: ArrayLike | None = None,
         active_mask: ArrayLike | None = None,
         target_source_indices: ArrayLike | None = None,
-    ):
+    ) -> HelmholtzMultipoleEvaluation3D | ModifiedHelmholtzMultipoleEvaluation3D:
         evaluation = super().evaluate(
             source_positions,
             source_strengths,

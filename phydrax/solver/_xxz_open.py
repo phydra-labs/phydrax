@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..tensor_network import (
@@ -22,7 +23,9 @@ from ._purified_tebd import (
 )
 
 
-def _generalized_amplitude_kraus(probability_ground: float, damping: float):
+def _generalized_amplitude_kraus(
+    probability_ground: float, damping: float | Array
+) -> Array:
     p = float(probability_ground)
     gamma = float(damping)
     if not 0.0 <= p <= 1.0 or not 0.0 <= gamma <= 1.0:
@@ -102,8 +105,8 @@ class XXZQualificationResult(StrictModule):
 
     def __init__(
         self,
-        final_result,
-        magnetization_history,
+        final_result: object,
+        magnetization_history: ArrayLike,
         diagnostic: PurifiedStationarityDiagnostic,
         /,
     ) -> None:

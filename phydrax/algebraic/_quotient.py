@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from enum import IntEnum
 
 import equinox as eqx
@@ -367,7 +368,7 @@ class QuotientRootResult(StrictModule):
 
 def _exact_degree_monomials(
     variable_count: int, degree: int, prefix: tuple[int, ...] = ()
-):
+) -> Iterator[tuple[int, ...]]:
     if variable_count == 1:
         yield prefix + (degree,)
         return
@@ -588,7 +589,9 @@ def assemble_macaulay_matrix(
     )
 
 
-def _rank_interval(matrix: np.ndarray, policy: QuotientRankPolicy, /):
+def _rank_interval(
+    matrix: np.ndarray, policy: QuotientRankPolicy, /
+) -> tuple[np.ndarray, int, int, np.ndarray]:
     _, singular_values, right = np.linalg.svd(matrix, full_matrices=True)
     if singular_values.size == 0:
         return singular_values, 0, 0, right
@@ -1026,8 +1029,10 @@ def _minimum_separation(values: np.ndarray, /) -> float:
     return float(np.min(difference))
 
 
-def _joint_schur_recovery(matrices: np.ndarray, /):
-    best = None
+def _joint_schur_recovery(
+    matrices: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, float, float, np.ndarray]:
+    best: tuple[np.ndarray, np.ndarray, float, float, np.ndarray] | None = None
     best_scaled_separation = -math.inf
     for weights in _joint_weight_candidates(matrices.shape[0]):
         joint = ein.contract("v,vij->ij", weights, matrices)
@@ -1166,7 +1171,7 @@ def _polish_simple_roots(
         return roots, polished, statuses
     variable_count = system.support.variable_count
 
-    def embedded_residual(state, _):
+    def embedded_residual(state: Array, _: object) -> Array:
         point = state[:variable_count] + 1j * state[variable_count:]
         residual = system.evaluate(point)
         return jnp.concatenate((jnp.real(residual), jnp.imag(residual)))

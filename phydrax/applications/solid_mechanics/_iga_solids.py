@@ -42,7 +42,7 @@ def _prepared(
 def _local_certificate(value: LocalGeometryCertificate, /) -> LocalGeometryCertificate:
     if not isinstance(value, LocalGeometryCertificate):
         raise TypeError("reference_certificate must be a LocalGeometryCertificate.")
-    if not bool(value.passed):
+    if not bool(value.accepted):
         raise ValueError("reference_certificate did not pass; IGA lowering fails closed.")
     return value
 
@@ -99,7 +99,7 @@ class IGASolidFormulation(StrictModule, NonTrainableState):
                 raise TypeError(
                     "deformed_certificate is not an IGA deformation certificate."
                 )
-            if not bool(deformed_certificate.passed):
+            if not bool(deformed_certificate.accepted):
                 raise ValueError(
                     "deformed_certificate did not pass; IGA lowering fails closed."
                 )

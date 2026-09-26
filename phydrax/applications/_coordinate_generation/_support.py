@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -125,10 +127,10 @@ class PreparedCoordinateSupport(StrictModule, NonTrainableState):
     support_id: str = eqx.field(static=True)
 
     @property
-    def dimension(self):
+    def dimension(self) -> int:
         return self.template.atom_capacity * 3
 
-    def center(self, positions):
+    def center(self, positions: ArrayLike) -> Array:
         """Numeric fixed-support mass centering, including explicit padding."""
         values = jnp.asarray(positions)
         mask = self.template.atom_mask[0]
@@ -137,7 +139,7 @@ class PreparedCoordinateSupport(StrictModule, NonTrainableState):
         center = jnp.sum(clean * weights[:, None], axis=-2, keepdims=True)
         return jnp.where(mask[:, None], clean - center, 0.0)
 
-    def canonicalize(self, positions):
+    def canonicalize(self, positions: ArrayLike) -> tuple[Array, Array]:
         """Proper anchor frame, never a reflection; returns geometry validity."""
         values = self.center(positions)
         a, b, c = self.gauge_indices
@@ -160,16 +162,16 @@ class PreparedCoordinateSupport(StrictModule, NonTrainableState):
 
 
 def prepare_coordinate_support(
-    template,
+    template: AtomisticBatch,
     *,
-    construct_id,
-    token_labels,
-    atom_token_indices,
-    atom_names,
-    gauge_atom_ids,
-    geometry,
-    resources=CoordinateResourcePolicy(),
-):
+    construct_id: str,
+    token_labels: Sequence[str],
+    atom_token_indices: Sequence[int],
+    atom_names: Sequence[str],
+    gauge_atom_ids: Sequence[int],
+    geometry: CoordinateGeometryPolicy,
+    resources: CoordinateResourcePolicy = CoordinateResourcePolicy(),
+) -> PreparedCoordinateSupport:
     """Internal shared fixed-support compiler; biological wrappers bind the tokens."""
     if not isinstance(template, AtomisticBatch) or template.case_count != 1:
         raise ValueError("Coordinate models require one fixed-chemistry template case.")
@@ -278,9 +280,14 @@ def prepare_coordinate_support(
         tokens,
         names,
         tuple(features),
-        tuple(lookup[i] for i in gauge_atom_ids),
-        tuple(tuple(lookup[i] for i in pair) for pair in geometry.bond_atom_ids),
-        tuple(tuple(lookup[i] for i in atoms) for atoms in geometry.chiral_atom_ids),
+        (lookup[gauge_atom_ids[0]], lookup[gauge_atom_ids[1]], lookup[gauge_atom_ids[2]]),
+        tuple(
+            (lookup[first], lookup[second]) for first, second in geometry.bond_atom_ids
+        ),
+        tuple(
+            (lookup[first], lookup[second], lookup[third], lookup[fourth])
+            for first, second, third, fourth in geometry.chiral_atom_ids
+        ),
         geometry,
         resources,
         support_id,
@@ -292,11 +299,11 @@ def prepare_coordinate_support(
 
 
 class CoordinateProposalQualification(StrictModule):
-    finite: object
-    gauge_valid: object
-    bond_valid: object
-    chirality_valid: object
-    accepted: object
+    finite: Array
+    gauge_valid: Array
+    bond_valid: Array
+    chirality_valid: Array
+    accepted: Array
     policy_id: str = eqx.field(static=True)
     scientific_claim: str = eqx.field(
         static=True,
@@ -304,7 +311,12 @@ class CoordinateProposalQualification(StrictModule):
     )
 
 
-def qualify_coordinate_proposals(support, positions, *, solver_valid=None):
+def qualify_coordinate_proposals(
+    support: PreparedCoordinateSupport,
+    positions: ArrayLike,
+    *,
+    solver_valid: ArrayLike | None = None,
+) -> CoordinateProposalQualification:
     """Retain one result per sample; no rejection sampling or hidden repairs."""
     values = jnp.asarray(positions)
     if values.ndim != 3 or values.shape[1:] != (support.template.atom_capacity, 3):

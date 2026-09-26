@@ -109,13 +109,15 @@ def _volume(
             / 6.0
         )
 
-    return sum(
-        (
-            tetra(p000, p100, p010, p001),
-            tetra(p100, p110, p010, p111),
-            tetra(p100, p010, p001, p111),
-            tetra(p100, p001, p101, p111),
-            tetra(p010, p001, p111, p011),
+    return jnp.asarray(
+        sum(
+            (
+                tetra(p000, p100, p010, p001),
+                tetra(p100, p110, p010, p111),
+                tetra(p100, p010, p001, p111),
+                tetra(p100, p001, p101, p111),
+                tetra(p010, p001, p111, p011),
+            )
         )
     )
 
@@ -170,20 +172,22 @@ def _swept_volume_rate(corners: Array, velocities: Array, dimension: int, /) -> 
             (p11, p01, v11, v01),
             (p01, p00, v01, v00),
         )
-        return sum(
-            jnp.sum(
-                0.5
-                * (left_velocity + right_velocity)
-                * jnp.stack(
-                    (
-                        right[..., 1] - left[..., 1],
-                        left[..., 0] - right[..., 0],
+        return jnp.asarray(
+            sum(
+                jnp.sum(
+                    0.5
+                    * (left_velocity + right_velocity)
+                    * jnp.stack(
+                        (
+                            right[..., 1] - left[..., 1],
+                            left[..., 0] - right[..., 0],
+                        ),
+                        axis=-1,
                     ),
                     axis=-1,
-                ),
-                axis=-1,
+                )
+                for left, right, left_velocity, right_velocity in edges
             )
-            for left, right, left_velocity, right_velocity in edges
         )
     if dimension != 3:
         raise ValueError("Patch geometry supports one, two, or three dimensions.")

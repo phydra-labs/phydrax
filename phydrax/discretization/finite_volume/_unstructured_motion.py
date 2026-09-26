@@ -34,6 +34,7 @@ from ._geometry_protocol import (
 )
 from ._unstructured import (
     _TETRAHEDRAL_FACE_QUADRATURE_BARYCENTRIC,
+    _UnstructuredGeometry,
     evaluate_unstructured_fv_geometry,
     UnstructuredFiniteVolumePlan,
 )
@@ -42,7 +43,7 @@ from ._unstructured import (
 VertexMotion = Callable[[Array, Array, Any], ArrayLike]
 
 
-def _boundary_patches(plan: UnstructuredFiniteVolumePlan, /):
+def _boundary_patches(plan: UnstructuredFiniteVolumePlan, /) -> dict[str, np.ndarray]:
     connectivity = (
         polygonal_connectivity(
             plan.triangles, plan.quadrilaterals, plan.vertices.shape[0]
@@ -459,7 +460,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         args: Any,
         /,
     ) -> _InstantaneousALEGeometry:
-        def evaluate_vertices(value):
+        def evaluate_vertices(value: Array) -> Array:
             return jnp.asarray(self.motion(value, self.base_plan.vertices, args))
 
         vertices, vertex_velocity = jax.jvp(
@@ -478,7 +479,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             vertex_velocity,
         )
 
-        def evaluate_geometry(points):
+        def evaluate_geometry(points: Array) -> _UnstructuredGeometry:
             return evaluate_unstructured_fv_geometry(
                 points,
                 self.base_plan.triangles,
@@ -584,7 +585,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         )
         finite_limit = jnp.sqrt(jnp.asarray(jnp.finfo(dtype).max, dtype=dtype)) / 8.0
 
-        def bounded(values):
+        def bounded(values: Array) -> Array:
             array = jnp.asarray(values, dtype=dtype)
             return jnp.clip(
                 jnp.nan_to_num(

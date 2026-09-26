@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from collections.abc import Mapping, Sequence
+from typing import Any, cast
 
 from ...particle_physics import (
     HostAttribute,
@@ -93,7 +94,7 @@ def _attribute_from_record(record: Mapping[str, object], /) -> HostAttribute:
 
 
 def host_events_from_records(
-    records: Sequence[Mapping[str, object]], /
+    records: Sequence[Mapping[str, Any]], /
 ) -> tuple[HostEventRecord, ...]:
     """Reconstruct and validate canonical host-event records."""
     result: list[HostEventRecord] = []
@@ -118,7 +119,11 @@ def host_events_from_records(
                 int(value["pdg_id"]),
                 ParticleRole(int(value["role"])),
                 int(value["provider_status"]),
-                tuple(float(item) for item in value["momentum"]),
+                # HostParticleRecord rejects momenta without exactly four components.
+                cast(
+                    tuple[float, float, float, float],
+                    tuple(float(item) for item in value["momentum"]),
+                ),
                 float(value["rest_energy"]),
                 None
                 if value["production_vertex_id"] is None
@@ -132,7 +137,11 @@ def host_events_from_records(
         vertices = tuple(
             HostVertexRecord(
                 int(value["vertex_id"]),
-                tuple(float(item) for item in value["position"]),
+                # HostVertexRecord rejects positions without exactly four components.
+                cast(
+                    tuple[float, float, float, float],
+                    tuple(float(item) for item in value["position"]),
+                ),
                 tuple(value["incoming_particle_ids"]),
                 tuple(value["outgoing_particle_ids"]),
                 tuple(_attribute_from_record(item) for item in value["attributes"]),
@@ -163,7 +172,7 @@ def host_events_from_records(
     return tuple(result)
 
 
-def host_events_to_awkward(events: Sequence[HostEventRecord], /):
+def host_events_to_awkward(events: Sequence[HostEventRecord], /) -> Any:
     """Create an optional Awkward host view without changing Phydrax ownership."""
     if importlib.util.find_spec("awkward") is None:
         raise HEPOptionalDependencyError(
@@ -173,7 +182,7 @@ def host_events_to_awkward(events: Sequence[HostEventRecord], /):
     return awkward.Array(host_events_to_records(events))
 
 
-def host_events_from_awkward(array, /) -> tuple[HostEventRecord, ...]:
+def host_events_from_awkward(array: object, /) -> tuple[HostEventRecord, ...]:
     if importlib.util.find_spec("awkward") is None:
         raise HEPOptionalDependencyError(
             "Awkward host-event import requires optional awkward."

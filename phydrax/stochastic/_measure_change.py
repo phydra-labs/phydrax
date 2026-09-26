@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -14,6 +14,10 @@ from jaxtyping import Array, ArrayLike
 from .._strict import StrictModule
 from ._jump import JumpEventBatch
 from ._wiener import WienerRealization
+
+
+if TYPE_CHECKING:
+    from ..integration._targets import WeightedSampleTarget
 
 
 MeasureChangeKind: TypeAlias = Literal["diffusion", "jump"]
@@ -409,7 +413,7 @@ def measure_changed_target(
     *,
     sample_axes: int | tuple[int, ...] = 0,
     independent: bool = False,
-):
+) -> WeightedSampleTarget:
     """Expose a path-law change as Phydrax's canonical weighted empirical measure."""
 
     from ..integration import weighted

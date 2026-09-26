@@ -15,8 +15,10 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.vortex import (
+    AbstractPreparedVortexVelocity,
     VortexFilamentState,
     VortexFilamentTopology,
+    VortexVelocityEvaluation,
 )
 from ...discretization.vortex._source import (
     VortexSourceState,
@@ -45,7 +47,12 @@ class PassiveVortexProbes(StrictModule, NonTrainableState):
             }
         )
 
-    def sample(self, prepared_velocity, source: VortexSourceState, /):
+    def sample(
+        self,
+        prepared_velocity: AbstractPreparedVortexVelocity,
+        source: VortexSourceState,
+        /,
+    ) -> VortexVelocityEvaluation:
         if not isinstance(source, VortexSourceState):
             raise TypeError("source must be VortexSourceState.")
         return prepared_velocity.evaluate(

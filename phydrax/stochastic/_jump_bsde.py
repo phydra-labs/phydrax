@@ -174,8 +174,20 @@ def _jump_values(
         role="event",
     )
 
-    def one_path(path_index, times, states, channels, marks):
-        def one_event(event_index, time, state, channel, mark):
+    def one_path(
+        path_index: Array,
+        times: Array,
+        states: Array,
+        channels: Array,
+        marks: Array,
+    ) -> Array:
+        def one_event(
+            event_index: Array,
+            time: Array,
+            state: Array,
+            channel: Array,
+            mark: Array,
+        ) -> Array:
             event_key = derive_key(key, address, path_index, event_index)
             value = jnp.asarray(
                 jump_control(
@@ -242,7 +254,7 @@ def _compensator_rates(
     sample_size = paths.num_paths
     flat_states = eval_states.reshape((sample_size, paths.num_steps) + paths.state_shape)
 
-    def one_path(path_states):
+    def one_path(path_states: Array) -> Array:
         return jax.vmap(
             lambda time, state: jnp.asarray(
                 problem.compensator_rate(
@@ -274,7 +286,7 @@ def _node_compensator_rates(
         (sample_size, paths.times.shape[0]) + paths.state_shape
     )
 
-    def one_path(path_states):
+    def one_path(path_states: Array) -> Array:
         return jax.vmap(
             lambda time, state: jnp.asarray(
                 problem.compensator_rate(

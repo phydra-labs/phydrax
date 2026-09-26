@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
 def quadrature_moment_rates(
@@ -12,7 +12,7 @@ def quadrature_moment_rates(
     weight_rates: ArrayLike,
     orders: ArrayLike,
     /,
-):
+) -> Array:
     x = jnp.asarray(nodes)
     w = jnp.asarray(weights)
     dx = jnp.asarray(node_rates)

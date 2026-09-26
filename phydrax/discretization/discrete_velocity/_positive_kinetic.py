@@ -9,6 +9,7 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._exponential_family import (
@@ -457,7 +458,7 @@ def guided_d3q39_plan(
     gamma: float = 1.4,
     gas_constant: float = 1.0,
     collision_kind: PositiveKineticCollisionKind = "bgk",
-    dtype: np.dtype | str = np.float64,
+    dtype: npt.DTypeLike = np.float64,
 ) -> PositiveCompressibleKineticPlan:
     return PositiveCompressibleKineticPlan(
         d3q39_guided_rule(dtype=dtype),
@@ -471,7 +472,7 @@ def entropic_d3q343_plan(
     *,
     gamma: float = 1.4,
     gas_constant: float = 1.0,
-    dtype: np.dtype | str = np.float64,
+    dtype: npt.DTypeLike = np.float64,
 ) -> PositiveCompressibleKineticPlan:
     return PositiveCompressibleKineticPlan(
         d3q343_entropic_rule(dtype=dtype),

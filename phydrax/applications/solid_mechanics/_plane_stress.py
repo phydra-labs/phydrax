@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from enum import IntEnum
-from typing import Any, Callable
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -232,19 +233,21 @@ class BlockDiagonalPlaneStressReductionPlan(StrictModule, NonTrainableState):
             failure.reshape(batch_shape),
         )
 
-    def _evaluate_point(self, deformation: Array, law: HyperelasticLaw, h0: Array):
+    def _evaluate_point(
+        self, deformation: Array, law: HyperelasticLaw, h0: Array
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array]:
         lower = jnp.asarray(self.log_stretch_bounds[0], dtype=deformation.dtype)
         upper = jnp.asarray(self.log_stretch_bounds[1], dtype=deformation.dtype)
 
-        def embedded(eta):
+        def embedded(eta: Array) -> Array:
             value = jnp.zeros((3, 3), dtype=deformation.dtype)
             value = value.at[:2, :2].set(deformation)
             return value.at[2, 2].set(jnp.exp(eta))
 
-        def residual(eta):
+        def residual(eta: Array) -> Array:
             return law.evaluate(embedded(eta)).first_piola[2, 2]
 
-        def solve(function, initial):
+        def solve(function: Callable[[Array], Array], initial: Array) -> Array:
             lower_residual = function(lower)
             upper_residual = function(upper)
             initial_residual = function(initial)
@@ -257,7 +260,9 @@ class BlockDiagonalPlaneStressReductionPlan(StrictModule, NonTrainableState):
                 & (lower_residual * upper_residual <= 0.0)
             )
 
-            def body(_, carry):
+            def body(
+                _: Array, carry: tuple[Array, Array, Array, Array]
+            ) -> tuple[Array, Array, Array, Array]:
                 left, right, left_residual, state = carry
                 midpoint = 0.5 * (left + right)
                 midpoint_residual = function(midpoint)
@@ -281,7 +286,9 @@ class BlockDiagonalPlaneStressReductionPlan(StrictModule, NonTrainableState):
                 jnp.where(bracketed, root, initial),
             )
 
-        def tangent_solve(linearized, right_hand_side):
+        def tangent_solve(
+            linearized: Callable[[Array], Array], right_hand_side: Array
+        ) -> Array:
             derivative = jax.grad(linearized)(jnp.zeros_like(right_hand_side))
             safe = jnp.where(jnp.abs(derivative) > 0.0, derivative, 1.0)
             return right_hand_side / safe
@@ -517,7 +524,9 @@ class CoupledPlaneStressIncompressiblePlan(StrictModule, NonTrainableState):
             failure.reshape(batch_shape),
         )
 
-    def _evaluate_coupled_point(self, deformation: Array, law: Any, h0: Array):
+    def _evaluate_coupled_point(
+        self, deformation: Array, law: Any, h0: Array
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         lower = jnp.asarray(
             (self.log_stretch_bounds[0], self.pressure_bounds[0]),
             dtype=deformation.dtype,
@@ -527,12 +536,12 @@ class CoupledPlaneStressIncompressiblePlan(StrictModule, NonTrainableState):
             dtype=deformation.dtype,
         )
 
-        def embedded(eta, in_plane=deformation):
+        def embedded(eta: Array, in_plane: Array = deformation) -> Array:
             value = jnp.zeros((3, 3), dtype=in_plane.dtype)
             value = value.at[:2, :2].set(in_plane)
             return value.at[2, 2].set(jnp.exp(eta))
 
-        def equations(state, in_plane=deformation):
+        def equations(state: Array, in_plane: Array = deformation) -> Array:
             eta, pressure = state
             value = embedded(eta, in_plane)
             first_piola = law.first_piola(value, pressure)
@@ -647,7 +656,9 @@ class CoupledPlaneStressIncompressiblePlan(StrictModule, NonTrainableState):
         )
 
 
-def _ordered_finite_bounds(bounds, /, *, name: str) -> tuple[float, float]:
+def _ordered_finite_bounds(
+    bounds: Sequence[float], /, *, name: str
+) -> tuple[float, float]:
     if len(bounds) != 2:
         raise ValueError(f"{name} must contain two endpoints.")
     lower, upper = (float(value) for value in bounds)
@@ -656,7 +667,12 @@ def _ordered_finite_bounds(bounds, /, *, name: str) -> tuple[float, float]:
     return lower, upper
 
 
-def _bounded_two_root(function, lower, upper, policy):
+def _bounded_two_root(
+    function: Callable[[Array], Array],
+    lower: Array,
+    upper: Array,
+    policy: NonlinearTermination,
+) -> tuple[Array, Array, Array]:
     state = 0.5 * (lower + upper)
     residual = function(state)
     initial_norm = jnp.sqrt(jnp.sum(residual * residual))
@@ -665,7 +681,9 @@ def _bounded_two_root(function, lower, upper, policy):
     linear_success = jnp.asarray(True)
     rates = jnp.asarray((1.0, 0.5, 0.25, 0.125, 0.0625), dtype=state.dtype)
 
-    def body(_, carry):
+    def body(
+        _: Array, carry: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         current, current_residual, current_active, solves_successful = carry
         jacobian = jax.jacfwd(function)(current)
         direction = solve_small_linear(

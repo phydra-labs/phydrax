@@ -193,7 +193,7 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
         w_cases = weights.reshape((cases, batch.sample_count))
         initial = jnp.eye(components, batch.feature_count, dtype=x.dtype)
 
-        def fit_one(points, target, weight):
+        def fit_one(points: Array, target: Array, weight: Array) -> tuple[Array, Array]:
             same = target[:, None] == target[None, :]
             active = weight > 0
             pair_mask = (
@@ -202,7 +202,7 @@ class NeighborhoodComponentsAnalysisRecipe(AbstractRecipe):
                 & ~jnp.eye(points.shape[0], dtype=jnp.bool_)
             )
 
-            def objective(factor):
+            def objective(factor: Array) -> Array:
                 embedded = points @ factor.T
                 delta = embedded[:, None, :] - embedded[None, :, :]
                 distance = jnp.sum(delta * delta, axis=-1)

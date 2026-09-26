@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import IntEnum
 from math import isfinite
 from typing import Literal, TypeAlias
@@ -310,7 +311,7 @@ def solve_mixed_integer_program(
     ).result
 
 
-def _indices(values, variables, name):
+def _indices(values: Iterable[int], variables: int, name: str) -> tuple[int, ...]:
     original = tuple(values)
     if any(
         isinstance(value, bool) or not isinstance(value, (int, np.integer))

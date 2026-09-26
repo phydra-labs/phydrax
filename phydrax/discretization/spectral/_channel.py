@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from operator import index
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -45,7 +47,7 @@ class ChannelMeanConstraint(StrictModule, NonTrainableState):
     def __init__(
         self,
         kind: ChannelMeanConstraintKind = "pressure_gradient",
-        values: ArrayLike = (0.0, 0.0),
+        values: ArrayLike | Sequence[float] = (0.0, 0.0),
         /,
     ) -> None:
         if kind not in ("pressure_gradient", "bulk_flux"):
@@ -87,8 +89,8 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         viscosity: ArrayLike,
         /,
         *,
-        lower_wall_velocity: ArrayLike = (0.0, 0.0, 0.0),
-        upper_wall_velocity: ArrayLike = (0.0, 0.0, 0.0),
+        lower_wall_velocity: ArrayLike | Sequence[float] = (0.0, 0.0, 0.0),
+        upper_wall_velocity: ArrayLike | Sequence[float] = (0.0, 0.0, 0.0),
         mean_constraint: ChannelMeanConstraint | None = None,
         tangential_boundary: ChannelTangentialBoundaryKind = "velocity",
         route: ChannelStokesRoute = "ultraspherical_banded",
@@ -544,7 +546,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
 
     def _tangential_boundary_modes(
         self,
-        dtype,
+        dtype: DTypeLike,
         lower_tangential_traction: ArrayLike | None,
         upper_tangential_traction: ArrayLike | None,
         /,
@@ -645,6 +647,9 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 diagnostics=diagnostics,
                 prepared_id=self.prepared_id,
             )
+        factorization = self.factorization
+        # Dense-route preparations always carry the block factorization.
+        assert factorization is not None
         interior = self.synthesis[1:-1]
         physical_rhs = ein.contract("ij,kjc->kic", interior, modal_modes, backend="jax")
         batch_rhs = jnp.zeros((modal_modes.shape[0], self.block_size), dtype=value.dtype)
@@ -690,7 +695,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 self.zero_mode_index,
                 2 * interior_count : 3 * interior_count,
             ].add(gradient[1])
-            solution, failed = solve_local_blocks(self.factorization, batch_rhs)
+            solution, failed = solve_local_blocks(factorization, batch_rhs)
             residual = (
                 ein.contract("kij,kj->ki", self.blocks, solution, backend="jax")
                 - batch_rhs
@@ -698,7 +703,7 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
         else:
             if self.bulk_block is None or self.bulk_factorization is None:
                 raise RuntimeError("Prepared bulk-flux factorization is missing.")
-            solution, failed = solve_local_blocks(self.factorization, batch_rhs)
+            solution, failed = solve_local_blocks(factorization, batch_rhs)
             augmented_rhs = jnp.concatenate(
                 (
                     batch_rhs[self.zero_mode_index],

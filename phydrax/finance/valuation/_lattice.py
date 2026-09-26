@@ -185,7 +185,7 @@ def evaluate_lattice(
     )
     values = _intrinsic(problem.payoff, terminal_spots)
 
-    def backward(iteration, current):
+    def backward(iteration: Array, current: Array) -> Array:
         step = plan_.steps - 1 - iteration
         active = indices <= step
         continuation = prepared.discount * (

@@ -8,8 +8,10 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from math import prod
 from multiprocessing import get_context
+from multiprocessing.connection import Connection
 from numbers import Integral
 from time import perf_counter
+from typing import Literal
 
 import equinox as eqx
 import jax
@@ -205,7 +207,12 @@ class ContractionPlanCache(NonTrainableState):
         return len(self._plans)
 
 
-def _bounded_contract_path_worker(connection, equation, shapes, optimizer) -> None:
+def _bounded_contract_path_worker(
+    connection: Connection,
+    equation: str,
+    shapes: tuple[tuple[int, ...], ...],
+    optimizer: Literal["greedy", "optimal"],
+) -> None:
     try:
         # Readiness marks the end of interpreter startup and module import; the
         # planning deadline covers only the search that follows.
@@ -426,7 +433,9 @@ def plan_contraction(
     return plan
 
 
-def _validate_operands(plan: ContractionPlan, operands: Sequence[ArrayLike], /):
+def _validate_operands(
+    plan: ContractionPlan, operands: Sequence[ArrayLike], /
+) -> tuple[Array, ...]:
     arrays = tuple(jnp.asarray(value) for value in operands)
     if len(arrays) != len(plan.structure.operands):
         raise ValueError("Operand count differs from the contraction plan.")
@@ -614,7 +623,7 @@ def execute_contraction_reverse(
             "Reverse contraction exceeds maximum_workspace_bytes before allocation."
         )
 
-    def contraction(*operands):
+    def contraction(*operands: Array) -> Array:
         converted = plan.precision.contraction(operands)
         return plan.precision.output(execute_schedule(plan.schedule, converted))
 

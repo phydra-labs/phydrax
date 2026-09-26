@@ -12,7 +12,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._model import ValuePort
 from ..._strict import StrictModule
-from ...equations._ir import PDEProblemIR
+from ...equations._ir import PDEExpression, PDEProblemIR
 from ...equations._serialize import pde_ir_from_dict, pde_ir_to_dict
 from ...graph._operator_topology import OperatorTopologySite
 from ...units import DimensionSignature
@@ -342,7 +342,7 @@ class OperatorTask(StrictModule):
                 *(item.dimension for item in pde.parameters),
             ]
 
-            def append_expression_dimensions(expression) -> None:
+            def append_expression_dimensions(expression: PDEExpression) -> None:
                 pde_dimensions.append(expression.dimension)
                 for argument in expression.args:
                     append_expression_dimensions(argument)

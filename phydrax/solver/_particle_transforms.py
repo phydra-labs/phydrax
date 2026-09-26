@@ -75,8 +75,10 @@ class ShepardDensityRenormalizationTransform(
             (one_based - self.first_step) % self.apply_every_steps == 0
         )
 
-        def apply_transform(state):
+        def apply_transform(state: Array) -> AcceptedStepTransformResult:
             position, velocity, density = self.dynamics.state_layout.unpack(state)
+            # __init__ requires an evolved-density layout.
+            assert density is not None
             neighborhood = self.dynamics.neighborhood.build(position)
             position = neighborhood.require_success(position)
             geometry = particle_pair_geometry(
@@ -115,7 +117,7 @@ class ShepardDensityRenormalizationTransform(
                 transformed, jnp.asarray(True), successful, norm
             )
 
-        def skip(state):
+        def skip(state: Array) -> AcceptedStepTransformResult:
             return AcceptedStepTransformResult(
                 state,
                 jnp.asarray(False),

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -104,10 +105,10 @@ class NativeVorticityLearningPlan(StrictModule, NonTrainableState):
             else jnp.asarray(previous_prediction, dtype=position.dtype)
         )
 
-        def predict(parameters):
+        def predict(parameters: Callable[[Array], Array]) -> Array:
             return jax.vmap(parameters)(position)
 
-        def objective(parameters, args):
+        def objective(parameters: Callable[[Array], Array], args: object) -> Array:
             del args
             prediction = predict(parameters)
             residual = prediction - target

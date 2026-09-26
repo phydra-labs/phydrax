@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -78,7 +79,11 @@ def _time_integral(values: Array, temporal_axis: int, time_step: float, /) -> Ar
 
 
 def _oscillator_transition(
-    angular_frequency: Array, damping_rate: Array, time_step: float, dtype, /
+    angular_frequency: Array,
+    damping_rate: Array,
+    time_step: float,
+    dtype: DTypeLike,
+    /,
 ) -> tuple[Array, Array, Array, Array]:
     omega = angular_frequency.astype(dtype)
     damping = damping_rate.astype(dtype)
@@ -290,7 +295,9 @@ class PreparedDelayedRamanResponse(PreparedCarrierResolvedResponse):
             jnp.zeros(moved.shape[1:], dtype=dtype),
         )
 
-        def advance(state, forcing):
+        def advance(
+            state: tuple[Array, Array], forcing: Array
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
             displacement, velocity = state
             next_displacement = (
                 transition[0] * displacement
@@ -578,7 +585,7 @@ class PreparedDrudePlasmaResponse(StrictModule, NonTrainableState):
         ) ** 2 / self.plan.electron_mass.astype(dtype)
         initial = jnp.zeros(moved_field.shape[1:], dtype=dtype)
 
-        def advance(current, inputs):
+        def advance(current: Array, inputs: tuple[Array, Array]) -> tuple[Array, Array]:
             interval_field, interval_density = inputs
             forcing = acceleration_scale * interval_density * interval_field
             next_current = decay * current + collision_scale * forcing
@@ -810,7 +817,7 @@ class PreparedIonizingDrudeResponse(PreparedCarrierResolvedResponse):
         step = jnp.asarray(self.time_space.sample_spacing, dtype=dtype)
         initial_neutral = jnp.full(moved_rate.shape[1:], neutral_total, dtype=dtype)
 
-        def deplete(neutral, interval_rate):
+        def deplete(neutral: Array, interval_rate: Array) -> tuple[Array, Array]:
             next_neutral = neutral * jnp.exp(-interval_rate * step)
             return next_neutral, next_neutral
 

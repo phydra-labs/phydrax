@@ -13,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from ...._fingerprint import canonical_fingerprint
 from ....solver import finite_state_generator, FiniteStateGenerator
@@ -232,14 +232,21 @@ class BloodTransitJumpProcess(AbstractJumpProcess):
         index = jnp.clip(value, 0, self.compartment_count - 1).astype(jnp.int32)
         return index, valid
 
-    def intensities(self, t: ArrayLike, state: ArrayLike, args=None, /) -> Array:
+    def intensities(
+        self, t: ArrayLike, state: ArrayLike, args: object = None, /
+    ) -> Array:
         del t, args
         index, valid = self._state_index(state)
         rates = jnp.where(self.source_indices == index, self.transition_rates_per_s, 0.0)
         return jnp.where(valid, rates, jnp.full_like(rates, jnp.nan))
 
     def jump(
-        self, state: ArrayLike, channel: ArrayLike, mark: ArrayLike, args=None, /
+        self,
+        state: ArrayLike,
+        channel: ArrayLike,
+        mark: ArrayLike,
+        args: object = None,
+        /,
     ) -> Array:
         del mark, args
         values = jnp.asarray(state)
@@ -255,7 +262,15 @@ class BloodTransitJumpProcess(AbstractJumpProcess):
         destination = self.target_indices[selected].astype(values.dtype)
         return jnp.where(active, destination[None], values)
 
-    def sample_mark(self, key, t, state, channel, args=None, /) -> Array:
+    def sample_mark(
+        self,
+        key: Key[Array, ""],
+        t: ArrayLike,
+        state: ArrayLike,
+        channel: ArrayLike,
+        args: object = None,
+        /,
+    ) -> Array:
         del key, t, channel, args
         return jnp.asarray(0, dtype=jnp.asarray(state).dtype)
 
@@ -323,11 +338,18 @@ def prepare_circulating_blood_model(
     identifiers = tuple(value.compartment_id for value in model.compartments)
     indices = {identifier: index for index, identifier in enumerate(identifiers)}
     volumes = {value.compartment_id: value.volume_m3 for value in model.compartments}
-    source = tuple(indices[value.source_compartment_id] for value in model.flows)
-    target = tuple(indices[value.target_compartment_id] for value in model.flows)
-    rates = tuple(
-        value.volume_flow_m3_per_s / volumes[value.source_compartment_id]
-        for value in model.flows
+    source = np.asarray(
+        [indices[value.source_compartment_id] for value in model.flows], dtype=np.int32
+    )
+    target = np.asarray(
+        [indices[value.target_compartment_id] for value in model.flows], dtype=np.int32
+    )
+    rates = np.asarray(
+        [
+            value.volume_flow_m3_per_s / volumes[value.source_compartment_id]
+            for value in model.flows
+        ],
+        dtype=np.float64,
     )
     process = BloodTransitJumpProcess(
         source,

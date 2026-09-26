@@ -12,7 +12,7 @@ from ...qualification import (
 )
 
 
-def _support(profile: str, **attributes) -> SupportTuple:
+def _support(profile: str, **attributes: str | int) -> SupportTuple:
     return SupportTuple(
         "coupled-phase-field-multiphysics", {"profile": profile, **attributes}
     )

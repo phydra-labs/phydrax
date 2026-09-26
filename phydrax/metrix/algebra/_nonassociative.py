@@ -152,7 +152,7 @@ class BracketingPlan(StrictModule):
         count = int(operand_count)
         seen = []
 
-        def visit(node) -> None:
+        def visit(node: object) -> None:
             if isinstance(node, int):
                 if not 0 <= node < count:
                     raise ValueError("Bracketing operand index is out of range.")
@@ -178,7 +178,7 @@ class BracketingPlan(StrictModule):
         if len(values) != self.operand_count:
             raise ValueError("Bracketing operands do not match operand_count.")
 
-        def evaluate_node(node):
+        def evaluate_node(node: int | tuple) -> Array:
             if isinstance(node, int):
                 return values[node]
             return product(evaluate_node(node[0]), evaluate_node(node[1]))
@@ -195,7 +195,7 @@ class PreparedUnitOctonionEvolution(StrictModule):
     def __init__(
         self,
         geometry: UnitOctonionStateGeometry,
-        vector_field,
+        vector_field: Callable[[Array, Array, BracketingPlan], ArrayLike],
         brackets: BracketingPlan,
         /,
         *,

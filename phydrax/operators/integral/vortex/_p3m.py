@@ -12,6 +12,7 @@ from jaxtyping import Array
 from ...._fingerprint import canonical_fingerprint
 from ...._interpolation import fourier_interpolate
 from ...._strict import StrictModule
+from ....discretization import ParticleGridSplatState, SplatDepositResult
 from ....discretization.vortex._interfaces import (
     DEFAULT_VORTEX_FIELD_REQUEST,
     VortexFieldRequest,
@@ -84,7 +85,9 @@ class CorrectedP3MPlan(StrictModule):
             }
         )
 
-    def _far_grid(self, source: VortexSourceState, /):
+    def _far_grid(
+        self, source: VortexSourceState, /
+    ) -> tuple[ParticleGridSplatState, SplatDepositResult, Array, Array]:
         transfer_state = self.mesh.transfer.build(source.safe_positions())
         deposited = self.mesh.transfer.deposit_content(
             transfer_state, source.safe_strength()
@@ -106,7 +109,11 @@ class CorrectedP3MPlan(StrictModule):
         return transfer_state, deposited, velocity_coefficients, velocity_grid
 
     def _far_targets(
-        self, transfer_state, velocity_grid: Array, target: VortexTargetState, /
+        self,
+        transfer_state: ParticleGridSplatState,
+        velocity_grid: Array,
+        target: VortexTargetState,
+        /,
     ) -> Array:
         same = (
             target.source_indices is not None
@@ -211,30 +218,33 @@ class CorrectedP3MPlan(StrictModule):
         correction, pair_count, correction_norm = self._near_correction(source, target)
         velocity_all = far + correction
         gradient_all = None
+        vorticity = None
         if request.velocity_gradient or request.vorticity:
-            gradient_all = jax.vmap(
-                jax.jacfwd(
-                    lambda point: self.evaluate(
-                        source,
-                        VortexTargetState(point[None, :]),
-                        request=VortexFieldRequest(velocity=True),
-                    ).velocity[0]
-                )
-            )(target.positions)
-        if request.vorticity:
-            if source.dimension == 2:
-                vorticity = gradient_all[:, 1, 0] - gradient_all[:, 0, 1]
-            else:
-                vorticity = jnp.stack(
-                    (
-                        gradient_all[:, 2, 1] - gradient_all[:, 1, 2],
-                        gradient_all[:, 0, 2] - gradient_all[:, 2, 0],
-                        gradient_all[:, 1, 0] - gradient_all[:, 0, 1],
-                    ),
-                    axis=-1,
-                )
-        else:
-            vorticity = None
+
+            def point_velocity(point: Array) -> Array:
+                velocity = self.evaluate(
+                    source,
+                    VortexTargetState(point[None, :]),
+                    request=VortexFieldRequest(velocity=True),
+                ).velocity
+                # A velocity request always populates the velocity field.
+                assert velocity is not None
+                return velocity[0]
+
+            jacobian = jax.vmap(jax.jacfwd(point_velocity))(target.positions)
+            gradient_all = jacobian
+            if request.vorticity:
+                if source.dimension == 2:
+                    vorticity = jacobian[:, 1, 0] - jacobian[:, 0, 1]
+                else:
+                    vorticity = jnp.stack(
+                        (
+                            jacobian[:, 2, 1] - jacobian[:, 1, 2],
+                            jacobian[:, 0, 2] - jacobian[:, 2, 0],
+                            jacobian[:, 1, 0] - jacobian[:, 0, 1],
+                        ),
+                        axis=-1,
+                    )
         finite = jnp.all(jnp.isfinite(velocity_all))
         cutoff_tail = jnp.exp(-((self.splitting_parameter * self.cutoff_radius) ** 2))
         backend = CorrectedP3MEvidence(

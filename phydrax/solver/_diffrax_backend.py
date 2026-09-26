@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite, prod
-from typing import Any, cast, Protocol
+from typing import Any, cast, Protocol, TYPE_CHECKING
 
 import diffrax as dfx
 import equinox as eqx
@@ -13,7 +14,7 @@ import jax
 import jax.numpy as jnp
 import lineax as lx
 import optimistix as optx
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
@@ -30,8 +31,13 @@ from .._iteration import (
 )
 from .._strict import StrictModule
 from ..linalg import AbstractLinearOperator, AbstractRealCoordinateMap
+from ..metrix import AbstractStateGeometry
 from ..stochastic._wiener import WienerRealization
-from ._differential import DifferentialProblem, DifferentialSolution
+from ._differential import (
+    DifferentialProblem,
+    DifferentialSolution,
+    DifferentialVectorField,
+)
 from ._differential_ir import lower_deterministic_problem
 from ._diffrax_state_packing import (
     _prepare_diffrax_state_adapter,
@@ -57,10 +63,15 @@ from ._temporal_method import (
     configuration_id,
     diffrax_differentiation_evidence,
     diffrax_method_capabilities,
+    TemporalEquationForm,
     TemporalMethodCapabilities,
     TemporalSolveEvidence,
 )
 from ._temporal_precision import TemporalPrecisionPolicy
+
+
+if TYPE_CHECKING:
+    from diffrax._custom_types import RealScalarLike
 
 
 class _StochasticProblemContract(Protocol):
@@ -202,16 +213,17 @@ def _realized_wiener_path(
 
 
 def _vector_field(
-    function,
+    function: DifferentialVectorField,
     state_adapter: _PreparedDiffraxStateAdapter,
-    geometry,
-    tangent_shape,
+    geometry: AbstractStateGeometry | None,
+    tangent_shape: tuple[int, ...] | None,
     /,
-):
-    def evaluate(t, state, args):
+) -> Callable[[RealScalarLike, PyTree, PyTree], PyTree]:
+    def evaluate(t: RealScalarLike, state: PyTree, args: PyTree) -> PyTree:
         public_state = state_adapter.unpack_state(state)
         public_args = state_adapter.unpack_args(args)
-        value = function(t, public_state, public_args)
+        # Diffrax converts solve and step times to JAX arrays before calling terms.
+        value = function(cast(Array, t), public_state, public_args)
         if geometry is None:
             return state_adapter.pack_state(value, owner="Vector field")
         value = jnp.asarray(value)
@@ -237,10 +249,12 @@ def _combined_diffusion(
     path_sign: Array,
     state_adapter: _PreparedDiffraxStateAdapter,
     /,
-):
+) -> Callable[[RealScalarLike, PyTree, PyTree], Array | lx.FunctionLinearOperator]:
     structured = any(term.representation != "dense" for term in problem.wiener_terms)
 
-    def evaluate(time, state, args):
+    def evaluate(
+        time: RealScalarLike, state: PyTree, args: PyTree
+    ) -> Array | lx.FunctionLinearOperator:
         public_state = state_adapter.unpack_state(state)
         public_args = state_adapter.unpack_args(args)
         tangent_shape = problem.tangent_shape
@@ -284,7 +298,7 @@ def _combined_diffusion(
             for term in problem.wiener_terms
         )
 
-        def apply(control):
+        def apply(control: ArrayLike) -> Array:
             flat_control = jnp.asarray(control).reshape(problem.noise_shape)
             total = jnp.zeros(tangent_shape, dtype=public_state.dtype)
             for term, block, coefficient in zip(
@@ -592,7 +606,9 @@ def _solver_precision(
     return requested
 
 
-def _equation_form(problem: DifferentialProblem | SplitDifferentialProblem, /) -> str:
+def _equation_form(
+    problem: DifferentialProblem | SplitDifferentialProblem, /
+) -> TemporalEquationForm:
     if isinstance(problem, SplitDifferentialProblem):
         return "additive-ode"
     if problem.stochastic:
@@ -801,7 +817,7 @@ def _native_solution(
     dense: bool,
     max_steps: int | None,
     throw: bool,
-):
+) -> dfx.Solution:
     if initial_state is None:
         resolved_initial_state = problem.initial_state
     else:
@@ -947,7 +963,7 @@ def _split_terminal_record(native: Any, count: int, /) -> Any:
     terminal = jnp.sum(jnp.isfinite(times)) - 1
     requested = jnp.arange(count) < terminal
 
-    def requested_values(leaf):
+    def requested_values(leaf: Array) -> Array:
         mask = requested.reshape((count,) + (1,) * (leaf.ndim - 1))
         return jnp.where(mask, leaf[:count], jnp.inf)
 
@@ -993,7 +1009,7 @@ def _dense_interpolation(
 def _reshape_native_sample_shape(native: Any, sample_shape: tuple[int, ...], /) -> Any:
     count = prod(sample_shape)
 
-    def reshape(value):
+    def reshape(value: Any) -> Any:
         if eqx.is_array(value):
             if value.ndim == 0 or value.shape[0] != count:
                 raise ValueError(
@@ -1209,6 +1225,8 @@ def solve_diffrax(
         max_steps=max_steps,
         throw=throw,
     )
+    # SaveAt always requests saved times, so Diffrax populates ts and ys.
+    assert native.ts is not None and native.ys is not None
     native_times = jnp.asarray(native.ts["requested"])
     native_states = precision.output(
         state_adapter.unpack_values(native.ys["requested"], 1)
@@ -1372,7 +1390,7 @@ def solve_diffrax_ensemble(
     signs = realization.path_signs.reshape((count,))
     initial = ensemble_initials.reshape((count,) + tuple(problem.initial_state.shape))
 
-    def one(key, sign, initial_state):
+    def one(key: Array, sign: Array, initial_state: Array) -> dfx.Solution:
         return _native_solution(
             problem,
             times,

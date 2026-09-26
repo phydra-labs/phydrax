@@ -20,14 +20,14 @@ from ._approximation import (
     qualify_likelihood,
 )
 from ._data import DetectorNetworkData
-from ._detector import DetectorResponsePlan
+from ._detector import DetectorResponsePlan, DetectorResponseResult
 from ._likelihood import (
     AbstractGravitationalWaveLikelihood,
     GravitationalWaveLikelihoodEvaluation,
     GravitationalWaveLikelihoodPlan,
 )
 from ._status import GravitationalWaveStatus
-from ._waveform import AbstractFrequencyDomainWaveform
+from ._waveform import AbstractFrequencyDomainWaveform, FrequencyDomainPolarizations
 
 
 class _RelativeBinningLikelihood(AbstractGravitationalWaveLikelihood):
@@ -154,7 +154,7 @@ class _RelativeBinningLikelihood(AbstractGravitationalWaveLikelihood):
 
     def detector_signal(
         self, parameters: PyTree[Any], /, *, frequency: Array | None = None
-    ):
+    ) -> tuple[Array, DetectorResponseResult, FrequencyDomainPolarizations]:
         return self.base.detector_signal(parameters, frequency=frequency)
 
     def evaluate(

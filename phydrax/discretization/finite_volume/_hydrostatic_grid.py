@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,6 +19,8 @@ from ._structured import FiniteVolumeDiscretization
 
 VerticalCoordinate = Literal["zstar", "partial-z"]
 HorizontalCoordinate = Literal["cartesian", "latitude-longitude"]
+_AxisBoundaryValues: TypeAlias = tuple[ArrayLike | None, ArrayLike | None]
+_BoundaryValues: TypeAlias = tuple[_AxisBoundaryValues, _AxisBoundaryValues]
 
 
 def _face_neighbor_min(value: Array, axis: int, periodic: bool, /) -> Array:
@@ -56,7 +58,7 @@ def _face_difference(
     periodic: bool,
     /,
     *,
-    boundary_values: tuple[Array | None, Array | None] | None = None,
+    boundary_values: _AxisBoundaryValues | None = None,
 ) -> Array:
     moved = jnp.moveaxis(value, axis, 0)
     if periodic:
@@ -247,7 +249,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         potential: Array,
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> tuple[Array, Array]:
         boundaries = (
             ((None, None), (None, None)) if boundary_values is None else boundary_values
@@ -290,7 +292,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         )
 
     def surface_gradient(
-        self, potential: ArrayLike, /, *, boundary_values=None
+        self, potential: ArrayLike, /, *, boundary_values: _BoundaryValues | None = None
     ) -> tuple[Array, Array]:
         value = jnp.asarray(potential, dtype=self.cell_area.dtype)
         if value.shape != self.horizontal_shape:
@@ -303,7 +305,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         epoch: HydrostaticMetricEpoch,
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> tuple[Array, Array]:
         gx, gy = self.surface_gradient(potential, boundary_values=boundary_values)
         return (
@@ -336,7 +338,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         return _face_neighbor_average(value_, axis, self.periodic[axis])
 
     def layer_gradient(
-        self, potential: ArrayLike, /, *, boundary_values=None
+        self, potential: ArrayLike, /, *, boundary_values: _BoundaryValues | None = None
     ) -> tuple[Array, Array]:
         value = jnp.asarray(potential, dtype=self.cell_area.dtype)
         if value.shape != self.cell_shape:
@@ -349,7 +351,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         epoch: HydrostaticMetricEpoch,
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> tuple[Array, Array]:
         gx, gy = self.layer_gradient(potential, boundary_values=boundary_values)
         return -epoch.x_face_area * gx, -epoch.y_face_area * gy

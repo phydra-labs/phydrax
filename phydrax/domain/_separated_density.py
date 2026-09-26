@@ -8,7 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -19,7 +19,7 @@ class _SeparatedEvaluator(StrictModule):
     factors: tuple[Any, ...]
     rank_weights: Array
 
-    def __call__(self, *coordinates, key=None):
+    def __call__(self, *coordinates: Any, key: Key[Array, ""] | None = None) -> Array:
         if len(coordinates) != len(self.factors):
             raise ValueError("Separated density requires one coordinate per factor.")
         products = self.rank_weights
@@ -81,7 +81,7 @@ class SeparatedLogDensityField(StrictModule):
         self.state_labels = labels
         self.field_id = resolved_id
 
-    def __call__(self, *coordinates, key=None):
+    def __call__(self, *coordinates: Any, key: Key[Array, ""] | None = None) -> Array:
         return _SeparatedEvaluator(self.factors, self.rank_weights)(*coordinates, key=key)
 
     def as_domain_function(self, domain: Any, /) -> DomainFunction:

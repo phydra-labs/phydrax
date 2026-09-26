@@ -12,6 +12,7 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from numpy.typing import ArrayLike
 
 from ..._document_resource import decode_text_resource
 from ..._external_resource import read_bounded_resource, ResourceLimits
@@ -45,13 +46,13 @@ class OpenPTVTargetRecords(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        target_ids,
-        positions_rc,
-        pixel_count,
-        extent_rc,
-        summed_intensity,
-        correspondence_ids,
-        valid,
+        target_ids: ArrayLike,
+        positions_rc: ArrayLike,
+        pixel_count: ArrayLike,
+        extent_rc: ArrayLike,
+        summed_intensity: ArrayLike,
+        correspondence_ids: ArrayLike,
+        valid: ArrayLike,
         /,
         *,
         camera_id: str,
@@ -112,10 +113,10 @@ class OpenPTVReconstructionRecords(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        record_ids,
-        positions_xyz,
-        target_indices,
-        valid,
+        record_ids: ArrayLike,
+        positions_xyz: ArrayLike,
+        target_indices: ArrayLike,
+        valid: ArrayLike,
         /,
         *,
         frame_index: int,
@@ -168,11 +169,11 @@ class OpenPTVTrackRecords(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        track_ids,
-        times,
-        positions_xyz,
-        valid,
-        reset_before,
+        track_ids: ArrayLike,
+        times: ArrayLike,
+        positions_xyz: ArrayLike,
+        valid: ArrayLike,
+        reset_before: ArrayLike,
         /,
         *,
         frame_id: str,

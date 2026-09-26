@@ -11,7 +11,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 from scipy.linalg import expm
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -35,11 +35,11 @@ class CASSCFResult(StrictModule, NonTrainableState):
     def __init__(
         self,
         casci: CASCIResult,
-        orbital_rotation,
-        macro_energies,
-        orbital_gradient_norms,
+        orbital_rotation: ArrayLike,
+        macro_energies: ArrayLike,
+        orbital_gradient_norms: ArrayLike,
         iterations: int,
-        successful,
+        successful: ArrayLike,
         plan_id: str,
         /,
     ) -> None:
@@ -87,7 +87,7 @@ class CASSCFPlan(StrictModule, NonTrainableState):
         casci: CASCIPlan,
         /,
         *,
-        state_weights=None,
+        state_weights: ArrayLike | None = None,
         maximum_macro_iterations: int = 32,
         orbital_gradient_tolerance: float = 1.0e-6,
         finite_difference_step: float = 1.0e-4,

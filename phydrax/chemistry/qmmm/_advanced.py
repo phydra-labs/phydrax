@@ -216,7 +216,13 @@ class MutualPolarizationResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
     def __init__(
-        self, qmmm, polarizable_embedding, mutual_residual, iterations, successful, /
+        self,
+        qmmm: QMMMEvaluation,
+        polarizable_embedding: PolarizableEmbeddingState,
+        mutual_residual: ArrayLike,
+        iterations: ArrayLike,
+        successful: ArrayLike,
+        /,
     ) -> None:
         if not isinstance(qmmm, QMMMEvaluation) or not isinstance(
             polarizable_embedding, PolarizableEmbeddingState
@@ -420,7 +426,7 @@ class MutualPolarizableQMMMSurface(AbstractPreparedPotentialEnergySurface):
         if converged and iteration_successful and bool(classical.successful):
             frozen_induced = jax.lax.stop_gradient(induced)
 
-            def polarization_function(mm_coordinate):
+            def polarization_function(mm_coordinate: Array) -> Array:
                 operator = self.polarization_operator.apply(
                     mm_coordinate,
                     frozen_induced,

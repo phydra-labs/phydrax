@@ -27,6 +27,7 @@ from ._rod_loads import RodLoadLedger
 from ._rod_reduced_dynamics import (
     PreparedReducedRodDynamics,
     ReducedRodDynamicsEvaluation,
+    ReducedRodInverseDynamicsResult,
     ReducedRodMaterialControl,
     ReducedRodMaterialState,
     ReducedRodSolveEvidence,
@@ -261,7 +262,9 @@ class _MidpointResidual(StrictModule):
     native_loads: RodLoadLedger | None
     step_size: Array
 
-    def __call__(self, state: tuple[Array, Array], _arguments: Any, /):
+    def __call__(
+        self, state: tuple[Array, Array], _arguments: Any, /
+    ) -> tuple[tuple[Array, Array], ReducedRodInverseDynamicsResult]:
         q0 = self.source.reduced_state.coefficients
         v0 = self.source.reduced_state.coefficient_velocities
         q1, v1 = state

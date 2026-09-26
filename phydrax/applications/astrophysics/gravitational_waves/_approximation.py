@@ -16,14 +16,14 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ._data import DetectorNetworkData
-from ._detector import DetectorResponsePlan
+from ._detector import DetectorResponsePlan, DetectorResponseResult
 from ._likelihood import (
     AbstractGravitationalWaveLikelihood,
     GravitationalWaveLikelihoodEvaluation,
     GravitationalWaveLikelihoodPlan,
 )
 from ._status import GravitationalWaveStatus
-from ._waveform import AbstractFrequencyDomainWaveform
+from ._waveform import AbstractFrequencyDomainWaveform, FrequencyDomainPolarizations
 
 
 class LikelihoodApproximationPolicy(StrictModule, NonTrainableState):
@@ -169,7 +169,7 @@ class LinearQuadraticCompressedLikelihood(AbstractGravitationalWaveLikelihood):
 
     def detector_signal(
         self, parameters: PyTree[Any], /, *, frequency: Array | None = None
-    ):
+    ) -> tuple[Array, DetectorResponseResult, FrequencyDomainPolarizations]:
         return self.base.detector_signal(parameters, frequency=frequency)
 
     def evaluate(
@@ -265,7 +265,7 @@ class QualifiedGravitationalWaveLikelihood(AbstractGravitationalWaveLikelihood):
 
     def detector_signal(
         self, parameters: PyTree[Any], /, *, frequency: Array | None = None
-    ):
+    ) -> tuple[Array, DetectorResponseResult, FrequencyDomainPolarizations]:
         return self.candidate.detector_signal(parameters, frequency=frequency)
 
     def evaluate(

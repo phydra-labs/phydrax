@@ -12,7 +12,11 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ....observation import CovarianceAction, LinearNuisancePlan
+from ....observation import (
+    CovarianceAction,
+    LinearNuisancePlan,
+    NuisanceProjectionResult,
+)
 from ..potential_fields import RegionalTrendPlan
 
 
@@ -143,7 +147,9 @@ class InSARObservationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, displacement_parameters: ArrayLike, /):
+    def evaluate(
+        self, displacement_parameters: ArrayLike, /
+    ) -> tuple[Array, Array, Array, NuisanceProjectionResult | None]:
         prediction = self.forward.predict(
             displacement_parameters
         ).insar_los_displacement_m

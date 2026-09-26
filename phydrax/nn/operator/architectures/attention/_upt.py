@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from math import prod
-from typing import Any, ClassVar, Literal, overload
+from typing import Any, ClassVar, Literal, overload, TypedDict
 
 import equinox as eqx
 import jax
@@ -53,6 +53,21 @@ from phydrax.nn.operator.data import (
 )
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 from phydrax.nn.operator.layers._attention import _measure_attention_regularity
+
+
+class _AttentionOptions(TypedDict):
+    num_heads: int
+    head_dim: int
+    kernel: AttentionKernel
+    execution: AttentionExecution
+    block_size: int
+    accumulation_dtype: str
+
+
+class _ChanneledAttentionOptions(_AttentionOptions):
+    source_channels: int
+    query_channels: int
+    out_channels: int
 
 
 def _feature_norm(norm: eqx.nn.RMSNorm, values: Array, /) -> Array:
@@ -433,14 +448,14 @@ class UPT(AbstractEncodedOperatorModel):
         self.latent_tokens = jr.normal(keys[1], (self.num_tokens, self.width)) / jnp.sqrt(
             float(self.width)
         )
-        attention_kwargs = dict(
-            num_heads=int(num_heads),
-            head_dim=resolved_head_dim,
-            kernel=attention_kernel,
-            execution=attention_execution,
-            block_size=attention_block_size,
-            accumulation_dtype=accumulation_dtype,
-        )
+        attention_kwargs: _AttentionOptions = {
+            "num_heads": int(num_heads),
+            "head_dim": resolved_head_dim,
+            "kernel": attention_kernel,
+            "execution": attention_execution,
+            "block_size": attention_block_size,
+            "accumulation_dtype": accumulation_dtype,
+        }
         self.encoder_attention = MeasureAwareAttention(
             source_channels=self.width,
             query_channels=self.width,
@@ -792,17 +807,17 @@ class ABUPT(AbstractEncodedOperatorModel):
             )
             for _ in range(self.depth)
         )
-        attention_kwargs = dict(
-            source_channels=self.width,
-            query_channels=self.width,
-            out_channels=self.width,
-            num_heads=int(num_heads),
-            head_dim=resolved_head_dim,
-            kernel=attention_kernel,
-            execution=attention_execution,
-            block_size=attention_block_size,
-            accumulation_dtype=accumulation_dtype,
-        )
+        attention_kwargs: _ChanneledAttentionOptions = {
+            "source_channels": self.width,
+            "query_channels": self.width,
+            "out_channels": self.width,
+            "num_heads": int(num_heads),
+            "head_dim": resolved_head_dim,
+            "kernel": attention_kernel,
+            "execution": attention_execution,
+            "block_size": attention_block_size,
+            "accumulation_dtype": accumulation_dtype,
+        }
         self.interaction_attention = tuple(
             MeasureAwareAttention(key=next(keys), **attention_kwargs) for _ in groups
         )

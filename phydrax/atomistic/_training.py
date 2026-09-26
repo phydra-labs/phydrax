@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._doc import DOC_KEY0
@@ -39,6 +40,7 @@ from .._training_kernel import (
     run_training_attempt,
     TrainingKernelSpec,
     TrainingKernelState,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
@@ -571,7 +573,15 @@ def _host_loss(
     )
 
 
-def _supervision_objective(parameters, model_state, fixed, payload, keys):
+def _supervision_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[
+        AtomisticTrainingProblem, AtomisticTrainingNormalization, AtomisticTrainingPolicy
+    ],
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[Array, Array]]:
     """Full-batch energy/force data fit; the payload is `(problem, normalization, policy)`."""
     del keys
     problem, normalization, policy = payload

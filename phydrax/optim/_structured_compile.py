@@ -137,10 +137,10 @@ def compile_structured_minimization(
         variable_lower = ravel_pytree(lower_parameters)[0]
         variable_upper = ravel_pytree(upper_parameters)[0]
 
-    def objective(value, args):
+    def objective(value: Array, args: Any) -> Array:
         return problem.value(unflatten(value), args)[0]
 
-    def constraints(value, args):
+    def constraints(value: Array, args: Any) -> Array:
         return _constraint_values(problem, unflatten(value), args)
 
     jacobian = compile_sparse_jacobian(
@@ -156,7 +156,7 @@ def compile_structured_minimization(
     hessian = None
     if exact_hessian:
 
-        def lagrangian(value, packed):
+        def lagrangian(value: Array, packed: tuple[Any, Array, Array]) -> Array:
             args, objective_factor, multipliers = packed
             return objective_factor * objective(value, args) + jnp.vdot(
                 multipliers,

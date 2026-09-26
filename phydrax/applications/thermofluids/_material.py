@@ -4,18 +4,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ...dynamics import (
     DAEComponent,
     DAEDerivativeIncidence,
     DAEEquationBlock,
+    DAEJet,
     DAEPort,
     DAEVariableBlock,
 )
-from ...equations import HomogeneousHelmholtzPlan
+from ...equations import (
+    HomogeneousHelmholtzPlan,
+    HomogeneousThermodynamicEvaluation,
+)
 from ._heat import _heat_port
 from ._process import (
     HeatFlowOrientation,
@@ -26,7 +33,7 @@ from ._process import (
 )
 
 
-def _residual_numeric_id(semantic_id: str, parameters, /) -> str:
+def _residual_numeric_id(semantic_id: str, parameters: object, /) -> str:
     return canonical_fingerprint(
         {
             "kind": "thermofluid-residual-binding",
@@ -36,22 +43,22 @@ def _residual_numeric_id(semantic_id: str, parameters, /) -> str:
     )
 
 
-def _species_count(value):
+def _species_count(value: int) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError("species_count must be a nonnegative integer.")
     return value
 
 
 def _material_port(
-    name,
-    prefix,
-    direction,
-    catalog_id,
-    thermodynamics_id,
-    species_count,
+    name: str,
+    prefix: str,
+    direction: MaterialFlowDirection,
+    catalog_id: str,
+    thermodynamics_id: str,
+    species_count: int,
     *,
-    orientation=1,
-):
+    orientation: int = 1,
+) -> tuple[DAEPort, ThermofluidPortSpec]:
     potentials = (f"{prefix}pressure", f"{prefix}specific_enthalpy") + tuple(
         f"{prefix}mass_fraction_{index}" for index in range(species_count)
     )
@@ -142,8 +149,10 @@ def material_boundary_component(
         f"mass_fraction_{index}" for index in range(count)
     )
 
-    def prescribe(variable, target):
-        def residual(time, jet, args):
+    def prescribe(
+        variable: str, target: float
+    ) -> Callable[[Array, DAEJet, object], Array]:
+        def residual(time: Array, jet: DAEJet, args: object) -> Array:
             del time, args
             return jet.value(variable) - target
 
@@ -222,24 +231,26 @@ def material_mixer_component(
         for port in names
     )
 
-    def equal_pressure(inlet):
-        def residual(time, jet, args):
+    def equal_pressure(inlet: str) -> Callable[[Array, DAEJet, object], Array]:
+        def residual(time: Array, jet: DAEJet, args: object) -> Array:
             del time, args
             return jet.value(f"{inlet}_pressure") - jet.value("outlet_pressure")
 
         return residual
 
-    def mass_balance(time, jet, args):
+    def mass_balance(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
-        return sum(jet.value(f"{port}_mass_flow") for port in names)
+        flows = tuple(jet.value(f"{port}_mass_flow") for port in names)
+        return sum(flows[1:], start=flows[0])
 
-    def advective_balance(field):
-        def residual(time, jet, args):
+    def advective_balance(field: str) -> Callable[[Array, DAEJet, object], Array]:
+        def residual(time: Array, jet: DAEJet, args: object) -> Array:
             del time, args
-            return sum(
+            fluxes = tuple(
                 jet.value(f"{port}_mass_flow") * jet.value(f"{port}_{field}")
                 for port in names
             )
+            return sum(fluxes[1:], start=fluxes[0])
 
         return residual
 
@@ -350,24 +361,24 @@ def homogeneous_fluid_heat_exchanger_component(
         "heat", "heat_temperature", "heat_flow", HeatFlowOrientation.INTO_COMPONENT
     )
 
-    def pressure_balance(time, jet, args):
+    def pressure_balance(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("inlet_pressure") - jet.value("outlet_pressure")
 
-    def mass_balance(time, jet, args):
+    def mass_balance(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("inlet_mass_flow") + jet.value("outlet_mass_flow")
 
-    def state(jet):
+    def state(jet: DAEJet) -> HomogeneousThermodynamicEvaluation:
         return thermodynamics.evaluate(
             jet.value("temperature"), jet.value("molar_density"), jnp.asarray(fraction)
         )
 
-    def pressure_closure(time, jet, args):
+    def pressure_closure(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("outlet_pressure") - state(jet).pressure
 
-    def enthalpy_closure(time, jet, args):
+    def enthalpy_closure(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         evaluation = state(jet)
         return (
@@ -375,7 +386,7 @@ def homogeneous_fluid_heat_exchanger_component(
             - evaluation.molar_enthalpy / evaluation.molar_mass
         )
 
-    def energy_balance(time, jet, args):
+    def energy_balance(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return (
             jet.value("inlet_mass_flow") * jet.value("inlet_specific_enthalpy")
@@ -383,7 +394,7 @@ def homogeneous_fluid_heat_exchanger_component(
             + jet.value("heat_flow")
         )
 
-    def heat_transfer(time, jet, args):
+    def heat_transfer(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("heat_flow") - conductance_value * (
             jet.value("heat_temperature") - jet.value("temperature")

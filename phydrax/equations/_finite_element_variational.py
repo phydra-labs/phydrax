@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import cast, Literal, TYPE_CHECKING, TypeAlias
+from typing import cast, Literal, Protocol, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
@@ -35,6 +35,7 @@ from ..discretization.fem import (
     FiniteElementHPEpoch,
     FiniteElementHPTraceConstraintPlan,
     FiniteElementLinearConstraint,
+    FiniteElementRuntimeData,
     IntegrationDomain,
 )
 from ..dynamics import (
@@ -44,6 +45,7 @@ from ..dynamics import (
 )
 from ..linalg import (
     AbstractLinearOperator,
+    AbstractVectorSpace,
     adjoint,
     assemble_diagonal,
     BlockLinearOperator,
@@ -68,7 +70,13 @@ from ..linalg import (
 from ..linalg.eigen import GeneralizedEigenproblem
 from ..nonlinear import LaggedLinearSolveUpdate, NonlinearSystemProblem
 from ..optim import MinimizationProblem
-from ..sparse import EdgeRelation, RowRelation, SparseCoordinateOperator
+from ..sparse import (
+    EdgeRelation,
+    RelationAccumulation,
+    RowRelation,
+    SparseCoordinateOperator,
+    SparseLinearMap,
+)
 from ..variational import (
     Functional,
     FunctionalEvaluation,
@@ -90,54 +98,89 @@ from ._variational import (
 
 
 if TYPE_CHECKING:
+    import scipy.sparse as sp
+
+    from ..integration import (
+        ReferenceCellData,
+        ReferenceHexahedronRule,
+        ReferenceIntervalRule,
+        ReferencePrismRule,
+        ReferencePyramidRule,
+        ReferenceQuadrilateralRule,
+        ReferenceTetrahedronRule,
+        ReferenceTriangleRule,
+    )
+    from ..linalg import LinearSolveResult
+    from .fem import (
+        FiniteElementAuxiliaryEvaluation,
+        FiniteElementDiagonalData,
+        FiniteElementPreconditionerData,
+    )
     from .fem._ir import LocalActionIR
     from .fem._kernels import KernelTable
     from .fem._worksets import WorksetProgram
 
 
-def _reference_rule_data(rule: ReferenceRule, /):
+class _IdentifiedRuntime(Protocol):
+    @property
+    def runtime_id(self) -> str: ...
+
+
+def _runtime_id(context: FiniteElementExecutionContext, /) -> str:
+    # Every prepared local provider validates its own runtime data, which carries runtime_id.
+    return cast(_IdentifiedRuntime, context.runtime).runtime_id
+
+
+def _finite_element_runtime(
+    context: FiniteElementExecutionContext, /
+) -> FiniteElementRuntimeData:
+    # FE providers reject any runtime that is not FiniteElementRuntimeData.
+    return cast(FiniteElementRuntimeData, context.runtime)
+
+
+def _reference_rule_data(rule: ReferenceRule, /) -> ReferenceCellData:
     from ..integration import reference_rule_data
 
     return reference_rule_data(rule)
 
 
-def _interval_rule():
+def _interval_rule() -> ReferenceIntervalRule:
     from ..integration import ReferenceIntervalRule
 
     return ReferenceIntervalRule()
 
 
-def _triangle_rule():
+def _triangle_rule() -> ReferenceTriangleRule:
     from ..integration import ReferenceTriangleRule
 
     return ReferenceTriangleRule()
 
 
-def _quadrilateral_rule():
+def _quadrilateral_rule() -> ReferenceQuadrilateralRule:
     from ..integration import ReferenceQuadrilateralRule
 
     return ReferenceQuadrilateralRule()
 
 
-def _tetrahedron_rule():
+def _tetrahedron_rule() -> ReferenceTetrahedronRule:
     from ..integration import ReferenceTetrahedronRule
 
     return ReferenceTetrahedronRule()
 
 
-def _hexahedron_rule():
+def _hexahedron_rule() -> ReferenceHexahedronRule:
     from ..integration import ReferenceHexahedronRule
 
     return ReferenceHexahedronRule()
 
 
-def _prism_rule():
+def _prism_rule() -> ReferencePrismRule:
     from ..integration import ReferencePrismRule
 
     return ReferencePrismRule()
 
 
-def _pyramid_rule():
+def _pyramid_rule() -> ReferencePyramidRule:
     from ..integration import ReferencePyramidRule
 
     return ReferencePyramidRule()
@@ -205,7 +248,7 @@ class FiniteElementExecutionPolicy(StrictModule, NonTrainableState):
 
     realization: str = eqx.field(static=True)
     local_kernel: str = eqx.field(static=True)
-    accumulation: str = eqx.field(static=True)
+    accumulation: RelationAccumulation = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -1112,13 +1155,16 @@ class FiniteElementForm(StrictModule, NonTrainableState):
         if functional_ is not None:
             if not isinstance(functional_, Functional):
                 raise TypeError("functional must be variational.Functional or None.")
-            if not all(
-                isinstance(action, LocalFunctionalAction) for action in action_values
-            ):
+            functional_actions = tuple(
+                action
+                for action in action_values
+                if isinstance(action, LocalFunctionalAction)
+            )
+            if len(functional_actions) != len(action_values):
                 raise ValueError(
                     "A functional finite-element form may contain only LocalFunctionalAction values."
                 )
-            if tuple(action.term.term_id for action in action_values) != tuple(
+            if tuple(action.term.term_id for action in functional_actions) != tuple(
                 term.term_id for term in functional_.terms
             ):
                 raise ValueError(
@@ -1282,7 +1328,7 @@ def _pure_neumann_sipg(form: FiniteElementForm, /) -> bool:
 def _sipg_constant_subspace(
     form: FiniteElementForm,
     discretization: FiniteElementDiscretization,
-    space,
+    space: AbstractVectorSpace,
     /,
 ) -> LinearSubspace:
     if len(form.field_names) != 1:
@@ -1343,7 +1389,7 @@ def _assemble_tensor_diffusion_action(
     discretization: FiniteElementDiscretization,
     context: FiniteElementExecutionContext,
     /,
-):
+) -> SparseLinearMap:
     field_index = discretization._field_index(action.field_name)
     dof_map = discretization.dof_maps[field_index]
     if dof_map.component_shape:
@@ -1358,7 +1404,7 @@ def _assemble_tensor_diffusion_action(
         geometry = discretization.evaluate_block_geometry(
             action.field_name,
             block_index,
-            context.runtime.coordinates,
+            _finite_element_runtime(context).coordinates,
             rule_data.points,
             rule_data.weights,
         )
@@ -1444,7 +1490,7 @@ def _assemble_tensor_diffusion_action(
                 "kind": "finite-element-tensor-diffusion",
                 "action": action.action_id,
                 "coefficient": action.diffusivity.coefficient_id,
-                "runtime": context.runtime.runtime_id,
+                "runtime": _runtime_id(context),
                 "domain": domain.domain_id,
             }
         ),
@@ -1680,7 +1726,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         return self.discretization._field_index(self.form.field_names[0])
 
     @property
-    def full_space(self):
+    def full_space(self) -> AbstractVectorSpace:
         spaces = tuple(
             self.discretization.field_spaces[
                 self.discretization._field_index(name)
@@ -1694,7 +1740,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
 
     @property
-    def state_space(self):
+    def state_space(self) -> AbstractVectorSpace:
         spaces = tuple(
             (
                 self.discretization.field_spaces[
@@ -1716,11 +1762,14 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
 
     @property
-    def residual_space(self):
+    def residual_space(self) -> AbstractVectorSpace:
         if len(self.form.field_names) == 1:
             return DualSpace(self.state_space)
+        state_space = self.state_space
+        # Mixed forms always build product spaces.
+        assert isinstance(state_space, BlockSpace)
         return BlockSpace(
-            tuple(DualSpace(space) for space in self.state_space.spaces),
+            tuple(DualSpace(space) for space in state_space.spaces),
             names=self.form.field_names,
         )
 
@@ -1729,11 +1778,15 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         if len(self.form.field_names) == 1:
             constraint = self.constraints[0]
             return constraint
+        full_space = self.full_space
+        state_space = self.state_space
+        # Mixed forms always build product spaces.
+        assert isinstance(full_space, BlockSpace) and isinstance(state_space, BlockSpace)
         blocks = []
         for row, (full_block, reduced_block, constraint) in enumerate(
             zip(
-                self.full_space.spaces,
-                self.state_space.spaces,
+                full_space.spaces,
+                state_space.spaces,
                 self.constraints,
                 strict=True,
             )
@@ -1749,8 +1802,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             blocks.append(tuple(block_row))
         prolongation = BlockLinearOperator(
             tuple(blocks),
-            source=self.state_space,
-            target=self.full_space,
+            source=state_space,
+            target=full_space,
             operator_id=canonical_fingerprint(
                 {
                     "kind": "finite-element-block-constraint-prolongation",
@@ -1786,7 +1839,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         self.discretization.validate_local_runtime(context.runtime)
         return context
 
-    def expand(self, state: object, args: object = None, /):
+    def expand(self, state: object, args: object = None, /) -> PyTree[Array]:
         values = self.state_space.validate(state)
         context = self._execution_context(args)
         lifts = self.lift if context.lift is None else context.lift
@@ -1797,12 +1850,15 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             return constraint.expand(values, lifts)
         if not isinstance(lifts, tuple):
             raise ValueError("Mixed finite-element lifts must be field-block tuples.")
+        full_space = self.full_space
+        # Mixed forms always build product spaces.
+        assert isinstance(full_space, BlockSpace)
         expanded = []
         for value, lift, constraint, full_block in zip(
             values,
             lifts,
             self.constraints,
-            self.full_space.spaces,
+            full_space.spaces,
             strict=True,
         ):
             expanded.append(
@@ -1871,7 +1927,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         """Evaluate the scalar functional on the constrained state space."""
         return self.potential_evaluation(state, args).value
 
-    def value_and_residual(self, state: object, args: object = None, /):
+    def value_and_residual(
+        self, state: object, args: object = None, /
+    ) -> tuple[Array, PyTree[Array]]:
         """Return the scalar functional and reduced variation in one local pass."""
         from .fem._executor import execute_finite_element_value_and_residual
 
@@ -1891,14 +1949,12 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             reduced = (
                 self.residual_space.validate(full_residual)
                 if constraint is None
-                else constraint.constraint_map.pullback_dual(full_residual)
+                else constraint.pullback_dual(full_residual)
             )
         else:
             reduced = self.residual_space.validate(
                 tuple(
-                    block
-                    if constraint is None
-                    else constraint.constraint_map.pullback_dual(block)
+                    block if constraint is None else constraint.pullback_dual(block)
                     for block, constraint in zip(
                         full_residual,
                         self.constraints,
@@ -1914,7 +1970,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             raise ValueError("Only functional-generated forms define minimization.")
         return MinimizationProblem(lambda state, args: self.potential(state, args))
 
-    def full_residual(self, state: object, args: object = None, /):
+    def full_residual(self, state: object, args: object = None, /) -> PyTree[Array]:
         from .fem._executor import execute_finite_element_residual
 
         full = self.full_space.validate(state)
@@ -1930,7 +1986,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             context,
         )
 
-    def residual(self, state: object, args: object = None, /):
+    def residual(self, state: object, args: object = None, /) -> PyTree[Array]:
         context = self._execution_context(args)
         full_residual = self.full_residual(self.expand(state, context), context)
         if len(self.form.field_names) == 1:
@@ -1948,7 +2004,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
         return self.residual_space.validate(reduced)
 
-    def weak_residual(self, state: object, args: object = None, /):
+    def weak_residual(self, state: object, args: object = None, /) -> PyTree[Array]:
         """Return the assembled dual-valued weak residual without a mass inverse."""
         return self.residual(state, args)
 
@@ -1961,7 +2017,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         mass_coefficient: ArrayLike = 1.0,
         mass_policy: object = None,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> PyTree[Array]:
         """Solve the explicitly selected mass operator for the negative residual."""
         if len(self.form.field_names) != 1:
             raise ValueError("Mass-inverted rates currently require one field.")
@@ -1989,7 +2045,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 {
                     "kind": "finite-element-mass-inverted-rate",
                     "compilation": self.compilation_id,
-                    "runtime": context.runtime.runtime_id,
+                    "runtime": _runtime_id(context),
                 }
             ),
         )
@@ -2005,7 +2061,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         state: object,
         args: object = None,
         /,
-    ):
+    ) -> tuple[PyTree[Array], FiniteElementAuxiliaryEvaluation]:
         from .fem import FiniteElementAuxiliaryEvaluation
 
         residual = self.residual(state, args)
@@ -2042,7 +2098,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
 
     def linearization_operator(
         self,
-        state: ArrayLike,
+        state: object,
         args: object = None,
         /,
     ) -> FunctionLinearOperator:
@@ -2071,7 +2127,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 {
                     "kind": "finite-element-linearization",
                     "compilation": self.compilation_id,
-                    "runtime": context.runtime.runtime_id,
+                    "runtime": _runtime_id(context),
                 }
             ),
         )
@@ -2115,10 +2171,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     continue
 
                 def block_action(
-                    direction,
-                    row_index_=row_index,
-                    column_index_=column_index,
-                ):
+                    direction: PyTree[Array],
+                    row_index_: int = row_index,
+                    column_index_: int = column_index,
+                ) -> PyTree[Array]:
                     directions = list(self.state_space.zeros())
                     directions[column_index_] = direction
                     image = jax.jvp(
@@ -2139,7 +2195,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                                 "compilation": self.compilation_id,
                                 "row": row_index,
                                 "column": column_index,
-                                "runtime": context.runtime.runtime_id,
+                                "runtime": _runtime_id(context),
                             }
                         ),
                     )
@@ -2153,7 +2209,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 {
                     "kind": "finite-element-block-linearization",
                     "compilation": self.compilation_id,
-                    "runtime": context.runtime.runtime_id,
+                    "runtime": _runtime_id(context),
                     "graph": [list(row) for row in graph],
                 }
             ),
@@ -2165,7 +2221,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         state: object,
         args: object = None,
         /,
-    ):
+    ) -> BlockLinearOperator | FunctionLinearOperator:
         if not isinstance(preconditioner_form, FiniteElementForm):
             raise TypeError("preconditioner_form must be a FiniteElementForm.")
         if preconditioner_form.field_names != self.form.field_names:
@@ -2195,7 +2251,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         *,
         allow_coordinate_fallback: bool = False,
         maximum_coordinate_size: int = 4096,
-    ):
+    ) -> FiniteElementDiagonalData:
         from .fem import FiniteElementDiagonalData
 
         raw = (
@@ -2235,7 +2291,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 dtype=self.state_space.flatten(self.state_space.zeros()).dtype,
             )
 
-            def column(direction):
+            def column(direction: Array) -> Array:
                 image = raw.mv(self.state_space.unflatten(direction))
                 return self.residual_space.flatten(image)
 
@@ -2253,7 +2309,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         state: object | None = None,
         args: object = None,
         /,
-    ):
+    ) -> FiniteElementPreconditionerData:
         from .fem import FiniteElementPreconditionerData
 
         diagonal_data = self.exact_diagonal(
@@ -2273,7 +2329,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             tuple(workset.workset_id for workset in self._workset_program.worksets),
         )
 
-    def operator_function(self, state, args):
+    def operator_function(self, state: object, args: object) -> AbstractLinearOperator:
         if len(self.form.field_names) > 1:
             return self.block_linearization_operator(state, args)
         if self.execution_policy.realization == "sparse":
@@ -2331,7 +2387,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         /,
         *,
         linear_policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> LinearSolveResult:
         raw_jacobian = self.linearization_operator(solution, args)
         primal_jacobian = FunctionLinearOperator(
             lambda direction: self.state_space.inverse_riesz(raw_jacobian.mv(direction)),
@@ -2351,27 +2407,29 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             policy=linear_policy,
         )
 
-    def _structural_affine_operator(self, args: object = None, /):
+    def _structural_affine_operator(
+        self, args: object = None, /
+    ) -> AbstractLinearOperator | None:
         if (
             self.execution_policy.realization != "sparse"
             or len(self.form.field_names) != 1
             or self.constraint is not None
         ):
             return None
+        # Sparse realization is offered only by finite-element local providers.
+        discretization = cast(FiniteElementDiscretization, self.discretization)
         context = self._execution_context(args)
-        if context.runtime.runtime_id != self.discretization.default_runtime.runtime_id:
+        if _runtime_id(context) != discretization.default_runtime.runtime_id:
             return None
         operators = []
-        mass, stiffness = self.discretization.assemble_field_operators(
+        mass, stiffness = discretization.assemble_field_operators(
             self.form.field_name,
-            context.runtime,
+            _finite_element_runtime(context),
         )
         for action in self.form.actions:
             if isinstance(action, TensorDiffusionAction):
                 operators.append(
-                    _assemble_tensor_diffusion_action(
-                        action, self.discretization, context
-                    )
+                    _assemble_tensor_diffusion_action(action, discretization, context)
                 )
             elif (
                 isinstance(action, DiffusionAction)
@@ -2400,7 +2458,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             result = result + operator
         return result
 
-    def affine_operator(self, args: object = None, /):
+    def affine_operator(self, args: object = None, /) -> AbstractLinearOperator:
         """Return exact structural storage or linearize the authoritative program."""
         structural = self._structural_affine_operator(args)
         if structural is not None:
@@ -2412,7 +2470,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             else self.linearization_operator(zero, args)
         )
 
-    def to_scipy_csr(self, args: object = None, /):
+    def to_scipy_csr(self, args: object = None, /) -> sp.csr_array:
         """Assemble exact sparse coordinates and convert them directly to SciPy CSR."""
         import scipy.sparse as sp
 
@@ -2487,11 +2545,11 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             if zero.ndim != 2 or zero.shape[1] not in (2, 3):
                 return None
             dimension = zero.shape[1]
-            coordinates = self.discretization.dof_maps[
-                self.field_index
-            ].evaluate_coordinates(
-                self.discretization.mesh,
-                self.discretization.default_runtime.coordinates,
+            # Rigid-body modes read FE DOF coordinates; this default is FE-only.
+            discretization = cast(FiniteElementDiscretization, self.discretization)
+            coordinates = discretization.dof_maps[self.field_index].evaluate_coordinates(
+                discretization.mesh,
+                discretization.default_runtime.coordinates,
             )
             modes = []
             for component in range(dimension):
@@ -2576,7 +2634,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         if nullspace_policy is None and _pure_neumann_sipg(self.form):
             constant_modes = _sipg_constant_subspace(
                 self.form,
-                self.discretization,
+                # Construction rejects SIPG facet actions on non-FE discretizations.
+                cast(FiniteElementDiscretization, self.discretization),
                 self.state_space,
             )
             certificate = KernelCertificate(
@@ -2637,7 +2696,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             raise TypeError("mass_policy must be FiniteElementMassPolicy or None.")
         local_kernel = "collocated" if policy.kind == "collocated_diagonal" else "auto"
         mass_rules = {}
-        field_index = self.discretization._field_index(self.form.field_name)
+        # Unit-mass quadrature selection reads FE element storage; it is FE-only.
+        discretization = cast(FiniteElementDiscretization, self.discretization)
+        field_index = discretization._field_index(self.form.field_name)
         if policy.kind in ("exact", "lumped"):
             from ..integration import (
                 GaussLegendreRule,
@@ -2648,9 +2709,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )
 
             for block, element, coordinate_element in zip(
-                self.discretization.mesh.blocks,
-                self.discretization.elements[field_index],
-                self.discretization.coordinate_elements,
+                discretization.mesh.blocks,
+                discretization.elements[field_index],
+                discretization.coordinate_elements,
                 strict=True,
             ):
                 exact_degree = 2 * element.degree + element.topological_dimension * max(
@@ -2690,8 +2751,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )
 
             for block, element in zip(
-                self.discretization.mesh.blocks,
-                self.discretization.elements[field_index],
+                discretization.mesh.blocks,
+                discretization.elements[field_index],
                 strict=True,
             ):
                 nodes = np.asarray(element.reference_nodes)
@@ -2858,7 +2919,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 {
                     "kind": "constrained-finite-element-mass",
                     "compilation": self.compilation_id,
-                    "runtime": context.runtime.runtime_id,
+                    "runtime": _runtime_id(context),
                     "policy": policy.policy_id,
                 }
             ),
@@ -2888,7 +2949,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             else str(system_id)
         )
 
-        def execution_context(time, args):
+        def execution_context(
+            time: ArrayLike, args: object
+        ) -> FiniteElementExecutionContext:
             base = self._execution_context(args)
             return FiniteElementExecutionContext(
                 base.runtime,
@@ -2900,12 +2963,14 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 user_args=base.user_args,
             )
 
-        def mass_matrix(time, state, args):
+        def mass_matrix(
+            time: ArrayLike, state: object, args: object
+        ) -> AbstractLinearOperator:
             context = execution_context(time, args)
             _, reduced_mass = self._mass_operators(context, coefficient_, mass_policy)
             return reduced_mass
 
-        def vector_field(time, state, args):
+        def vector_field(time: ArrayLike, state: object, args: object) -> PyTree[Array]:
             context = execution_context(time, args)
             full_mass, _ = self._mass_operators(context, coefficient_, mass_policy)
             residual = self.residual(state, context)
@@ -2950,7 +3015,13 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
         compiled_mass = self._compile_unit_mass_problem(mass_policy)
 
-        def residual(time, configuration, velocity, acceleration, args):
+        def residual(
+            time: ArrayLike,
+            configuration: object,
+            velocity: PyTree[Array],
+            acceleration: PyTree[Array],
+            args: object,
+        ) -> PyTree[Array]:
             base = self._execution_context(args)
             context = FiniteElementExecutionContext(
                 base.runtime,

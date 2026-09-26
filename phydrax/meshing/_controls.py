@@ -9,6 +9,7 @@ from enum import StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -234,7 +235,7 @@ class LayerSchedule(StrictModule, NonTrainableState):
     thicknesses: tuple[float, ...] = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
 
-    def __init__(self, thicknesses: ArrayLike, /) -> None:
+    def __init__(self, thicknesses: npt.ArrayLike, /) -> None:
         values = np.asarray(thicknesses)
         if values.ndim != 1 or values.size == 0:
             raise ValueError("thicknesses must be one non-empty vector.")

@@ -127,8 +127,8 @@ def _strict_fields(value: Mapping[str, Any], expected: set[str], owner: str, /) 
 
 
 def _decode_json_object(data: bytes, owner: str, /) -> dict[str, Any]:
-    def pairs(values):
-        record = {}
+    def pairs(values: list[tuple[str, Any]]) -> dict[str, Any]:
+        record: dict[str, Any] = {}
         for key, value in values:
             if key in record:
                 raise ValueError(f"{owner} contains duplicate field {key!r}.")

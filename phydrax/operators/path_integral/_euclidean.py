@@ -188,7 +188,9 @@ def euclidean_kernel(
         jnp.full(batch_shape, -jnp.inf, dtype=jnp.float64),
     )
 
-    def accumulate(carry, index):
+    def accumulate(
+        carry: tuple[Array, Array], index: Array
+    ) -> tuple[tuple[Array, Array], None]:
         log_sum, log_sum_sq = carry
         path_indices = index * chunk + path_offsets
         path_keys = jax.vmap(lambda path_index: jr.fold_in(key, path_index))(path_indices)

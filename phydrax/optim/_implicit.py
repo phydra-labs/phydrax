@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -51,6 +51,11 @@ from ._nonlinear_constraints import _canonical_constraints, _constraint_layout
 from ._scalar import _run_scalar_iterations
 
 
+_TreeMap: TypeAlias = Callable[[PyTree[Any]], PyTree[Any]]
+_TangentSolve: TypeAlias = Callable[[_TreeMap, PyTree[Any]], PyTree[Any]]
+_RootMap: TypeAlias = Callable[[Array], Array]
+
+
 def _default_implicit_linear_policy() -> LinearSolvePolicy:
     return LinearSolvePolicy(
         MINRES(),
@@ -87,12 +92,12 @@ def _implicit_tangent_solve(
     root: PyTree[Any],
     policy: LinearSolvePolicy,
     /,
-):
+) -> _TangentSolve:
     space = PyTreeSpace(root)
     algorithmic_policy = _algorithmic_linear_policy(policy)
 
-    def tangent_solve(linearized, right_hand_side):
-        def solve_action(action, rhs):
+    def tangent_solve(linearized: _TreeMap, right_hand_side: PyTree[Any]) -> PyTree[Any]:
+        def solve_action(action: _TreeMap, rhs: PyTree[Any]) -> PyTree[Array]:
             operator = FunctionLinearOperator(
                 action,
                 source=space,
@@ -132,7 +137,7 @@ def _implicit_tangent_solve(
 
 
 def _regularity_anchor(
-    stationarity,
+    stationarity: _TreeMap,
     root: PyTree[Any],
     policy: LinearSolvePolicy,
     /,
@@ -192,15 +197,15 @@ def implicit_minimize(
         name="initial_parameters",
     )
 
-    def value_function(parameters):
+    def value_function(parameters: PyTree[Any]) -> Array:
         value, _ = problem.value(parameters, args)
         return value
 
-    def stationarity(parameters):
+    def stationarity(parameters: PyTree[Any]) -> PyTree[Array]:
         _, gradient = problem.value_and_gradient(parameters, args)
         return gradient
 
-    def primal_solve(_, guess):
+    def primal_solve(_equation: _TreeMap, guess: PyTree[Any]) -> PyTree[Array]:
         run, _, _, _ = _run_scalar_iterations(
             method_,
             value_function,
@@ -279,17 +284,17 @@ def implicit_least_squares(
         name="initial_parameters",
     )
 
-    def residual_function(parameters):
+    def residual_function(parameters: PyTree[Any]) -> PyTree[Any]:
         residual, _ = problem.value(parameters, args)
         return residual
 
-    def stationarity(parameters):
+    def stationarity(parameters: PyTree[Any]) -> PyTree[Array]:
         return _prepare_residual_model(
             residual_function,
             parameters,
         ).gradient
 
-    def primal_solve(_, guess):
+    def primal_solve(_equation: _TreeMap, guess: PyTree[Any]) -> PyTree[Array]:
         run, _, _, _ = _run_least_squares_iterations(
             method_,
             residual_function,
@@ -347,12 +352,12 @@ def _implicit_kkt_tangent_solve(
     root: PyTree[Any],
     policy: LinearSolvePolicy,
     /,
-):
+) -> _TangentSolve:
     space = PyTreeSpace(root)
     algorithmic_policy = _algorithmic_linear_policy(policy)
 
-    def tangent_solve(linearized, right_hand_side):
-        def solve_action(action, rhs):
+    def tangent_solve(linearized: _TreeMap, right_hand_side: PyTree[Any]) -> PyTree[Any]:
+        def solve_action(action: _TreeMap, rhs: PyTree[Any]) -> PyTree[Array]:
             operator = FunctionLinearOperator(
                 action,
                 source=space,
@@ -392,7 +397,7 @@ def _implicit_kkt_tangent_solve(
 
 
 def _kkt_regularity_anchor(
-    equation,
+    equation: _RootMap,
     root: PyTree[Any],
     policy: LinearSolvePolicy,
     /,
@@ -488,12 +493,14 @@ def implicit_constrained_minimize(
     has_dynamic_args = args is not None
     callback_argument = args if has_dynamic_args else jnp.asarray(0, dtype=jnp.int32)
 
-    def actual_args(callback_args):
+    def actual_args(callback_args: Any) -> Any:
         return callback_args if has_dynamic_args else None
 
-    def host_primal_solve(callback_args, callback_initial):
+    def host_primal_solve(
+        callback_args: Any, callback_initial: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         dynamic_args = actual_args(callback_args)
-        primal_initial = unravel(callback_initial)
+        primal_initial = unravel(jnp.asarray(callback_initial))
         result = method_.solve(
             problem,
             primal_initial,
@@ -540,7 +547,9 @@ def implicit_constrained_minimize(
         )
 
     @jax.custom_jvp
-    def primal_callback(dynamic_callback_args, callback_initial):
+    def primal_callback(
+        dynamic_callback_args: Any, callback_initial: Array
+    ) -> tuple[Array, Array, Array]:
         return jax.pure_callback(
             host_primal_solve,
             output_spec,
@@ -550,19 +559,21 @@ def implicit_constrained_minimize(
         )
 
     @primal_callback.defjvp
-    def primal_callback_jvp(primals, tangents):
+    def primal_callback_jvp(
+        primals: tuple[Any, Array], tangents: tuple[Any, Array]
+    ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array]]:
         del tangents
         values = primal_callback(*primals)
         return values, jax.tree.map(jnp.zeros_like, values)
 
-    def root_equation(root, callback_args, active_mask):
+    def root_equation(root: Array, callback_args: Any, active_mask: Array) -> Array:
         flat_parameters = root[:parameter_size]
         equality_multipliers = root[parameter_size : parameter_size + equality_size]
         inequality_multipliers = root[parameter_size + equality_size :]
         parameters = unravel(flat_parameters)
         dynamic_args = actual_args(callback_args)
 
-        def constraints(candidate):
+        def constraints(candidate: PyTree[Any]) -> tuple[Array, Array]:
             return _canonical_constraints(
                 problem,
                 layout,
@@ -592,7 +603,7 @@ def implicit_constrained_minimize(
         )
         return jnp.concatenate((flat_stationarity, equality, inequality_equation))
 
-    def primal_bundle(dynamic_callback_args):
+    def primal_bundle(dynamic_callback_args: Any) -> tuple[Array, Array]:
         root, active_mask, valid = primal_callback(
             dynamic_callback_args,
             flat_initial,
@@ -615,18 +626,18 @@ def implicit_constrained_minimize(
         )
     )
 
-    def solve_dynamic(dynamic_callback_args):
+    def solve_dynamic(dynamic_callback_args: Any) -> PyTree[Array]:
         solved_root, active_mask = primal_bundle(dynamic_callback_args)
         solved_root = jax.lax.stop_gradient(solved_root)
 
-        def equation(root):
+        def equation(root: Array) -> Array:
             return root_equation(
                 root,
                 dynamic_callback_args,
                 active_mask,
             )
 
-        def primal_solve(_, guess):
+        def primal_solve(_: _RootMap, guess: Array) -> Array:
             del guess
             regularity_anchor = _kkt_regularity_anchor(
                 equation,

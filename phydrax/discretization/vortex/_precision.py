@@ -8,6 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import precision_itemsize, real_precision_dtype_name
@@ -76,11 +77,11 @@ class VortexPrecisionPolicy(StrictModule, NonTrainableState):
             )
         return observed
 
-    def compute(self, value: Any, /):
+    def compute(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array if self.compute_dtype is None else array.astype(self.compute_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return (
             array
@@ -88,11 +89,18 @@ class VortexPrecisionPolicy(StrictModule, NonTrainableState):
             else array.astype(self.accumulation_dtype)
         )
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array if self.output_dtype is None else array.astype(self.output_dtype)
 
-    def sum(self, value: Any, /, *, axis: Any = None, keepdims: bool = False):
+    def sum(
+        self,
+        value: ArrayLike,
+        /,
+        *,
+        axis: int | tuple[int, ...] | None = None,
+        keepdims: bool = False,
+    ) -> Array:
         return jnp.sum(self.accumulation(value), axis=axis, keepdims=keepdims)
 
 

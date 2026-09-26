@@ -22,6 +22,8 @@ from ...discretization import (
     PressureGaugePolicy,
     tetrahedral_bdm_element,
 )
+from ...discretization._cell_complex import TetrahedralConnectivity
+from ...discretization.fem import FiniteElementDiscretization, FiniteElementSpec
 from ...ein import contract
 from ...linalg import AbstractVectorSpace, BlockSpace, OperatorProperties
 from ...sparse import EdgeRelation, SparseLinearMap
@@ -29,6 +31,7 @@ from .._finite_element_variational import (
     CellResidualAction,
     compile_finite_element_problem,
     CompiledFiniteElementProblem,
+    FiniteElementExecutionContext,
     FiniteElementForm,
 )
 
@@ -73,7 +76,15 @@ def hdiv_stokes_form(
 
     viscosity_ = jnp.asarray(viscosity)
 
-    def momentum(values, gradients, points, weights, test_basis, test_gradients, context):
+    def momentum(
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         del points, test_basis, context
         velocity_gradient, _ = gradients
         _, pressure = values
@@ -87,8 +98,14 @@ def hdiv_stokes_form(
         return viscous - pressure_term
 
     def incompressibility(
-        values, gradients, points, weights, test_basis, test_gradients, context
-    ):
+        values: tuple[Array, ...],
+        gradients: tuple[Array, ...],
+        points: Array,
+        weights: Array,
+        test_basis: Array,
+        test_gradients: Array,
+        context: FiniteElementExecutionContext,
+    ) -> Array:
         del values, points, test_gradients, context
         divergence = jnp.trace(gradients[0], axis1=-2, axis2=-1)
         if test_basis.ndim == 2:
@@ -282,7 +299,7 @@ class PreparedHDivStokes(StrictModule):
 
 
 def _physical_basis(
-    element,
+    element: FiniteElementSpec,
     cell_points: np.ndarray,
     local_face: int,
     orientation: np.ndarray,
@@ -312,7 +329,7 @@ def _physical_basis(
 
 
 def _tangential_nitsche_entries(
-    discretization,
+    discretization: FiniteElementDiscretization,
     viscosity: float,
     penalty: float,
     /,
@@ -322,6 +339,8 @@ def _tangential_nitsche_entries(
         raise ValueError("H(div) Nitsche preparation requires one tetrahedral block.")
     block = mesh.blocks[0]
     connectivity = mesh.connectivity
+    # Tetrahedral BDM discretizations are only prepared on TetrahedralConnectivity.
+    assert isinstance(connectivity, TetrahedralConnectivity)
     cells = np.asarray(block.vertices, dtype=np.int32)
     coordinates = np.asarray(mesh.coordinates)
     face_vertices = np.asarray(connectivity.faces, dtype=np.int32)
@@ -431,13 +450,15 @@ def _tangential_nitsche_entries(
 
 
 def _normal_boundary_operators(
-    discretization,
+    discretization: FiniteElementDiscretization,
     boundaries: tuple[HDivNormalBoundaryCondition, ...],
     operator_prefix: str,
     /,
 ) -> tuple[SparseLinearMap, SparseLinearMap, Array, Array]:
     mesh = discretization.mesh
     connectivity = mesh.connectivity
+    # Tetrahedral BDM discretizations are only prepared on TetrahedralConnectivity.
+    assert isinstance(connectivity, TetrahedralConnectivity)
     face_entities = mesh.topology.entity_sets[2]
     face_ids = np.asarray(face_entities.entity_ids, dtype=np.int64)
     boundary_faces = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
@@ -708,13 +729,16 @@ class HDivStokesPlan(StrictModule):
         normal_resistance_relation = normal_resistance.relation
         if not isinstance(normal_resistance_relation, EdgeRelation):
             raise RuntimeError("Normal resistance lost its edge-list relation.")
+        problem_state_space = problem.state_space
+        # The velocity-pressure form always builds a product state space.
+        assert isinstance(problem_state_space, BlockSpace)
         state_space = (
             BlockSpace(
-                (*problem.state_space.spaces, normal_flux.target),
+                (*problem_state_space.spaces, normal_flux.target),
                 names=("velocity", "pressure", "normal_flux_multiplier"),
             )
             if normal_flux_target.size > 0
-            else problem.state_space
+            else problem_state_space
         )
         probe = jnp.arange(velocity_space.size, dtype=coefficients.dtype) + 1.0
         finite = (

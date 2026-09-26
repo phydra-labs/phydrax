@@ -31,6 +31,7 @@ from ..discretization import (
     PreparedConservativeAdvection,
     PreparedConservativeDiffusion,
     PreparedFiniteDifferenceDiscretization,
+    PreparedStencilOperator,
     PreparedTensorGrid,
 )
 from ._fd_boundary_lowering import (
@@ -302,7 +303,9 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
     discretization: PreparedFiniteDifferenceDiscretization
     layout: StencilStateLayout
     equations: tuple[tuple[str, PDEExpression], ...] = eqx.field(static=True)
-    parameter_defaults: tuple[tuple[str, float | None], ...] = eqx.field(static=True)
+    parameter_defaults: tuple[tuple[str, float | tuple[float, ...] | None], ...] = (
+        eqx.field(static=True)
+    )
     boundary_program: PreparedFDBoundaryProgram
     ghost_rules: tuple[_GhostDerivativeRule, ...]
     interfaces: tuple[PreparedFDInterface, ...]
@@ -318,7 +321,7 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
         discretization: PreparedFiniteDifferenceDiscretization,
         layout: StencilStateLayout,
         equations: tuple[tuple[str, PDEExpression], ...],
-        parameter_defaults: tuple[tuple[str, float | None], ...],
+        parameter_defaults: tuple[tuple[str, float | tuple[float, ...] | None], ...],
         boundary_program: PreparedFDBoundaryProgram,
         ghost_rules: tuple[_GhostDerivativeRule, ...],
         interfaces: tuple[PreparedFDInterface, ...],
@@ -368,7 +371,7 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
             )
         return components[0] if len(components) == 1 else jnp.stack(components, axis=-1)
 
-    def _operator(self, axis: str, order: int):
+    def _operator(self, axis: str, order: int) -> PreparedStencilOperator:
         return self.discretization.operator(f"d_{axis}_{order}")
 
     def _diffusion_template(
@@ -484,6 +487,8 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
         if op == "coordinate":
             return self._coordinate(str(expression.symbol))
         if op == "constant":
+            # validate_pde_ir admits constant nodes only with a numeric value.
+            assert expression.value is not None
             return jnp.asarray(float(expression.value))
         if op == "divergence" and set(
             _expression_axes(expression, self.coordinate_axes)

@@ -9,7 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.linalg as la
 
@@ -32,6 +32,7 @@ from ._interfaces import (
     VortexDiffusionDiagnostics,
     VortexDiffusionEvaluation,
     VortexFieldRequest,
+    VortexVelocityEvaluation,
 )
 from ._particle import VortexParticleProperties, VortexParticleStateLayout
 from ._source import VortexSourceState, VortexTargetState
@@ -405,7 +406,17 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
         )
         return jnp.where(active, value, 0.0)
 
-    def evaluate(self, time: ArrayLike, state: ArrayLike, args: Any = None, /):
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> tuple[
+        Array,
+        Array,
+        Array,
+        Array,
+        Array | None,
+        VortexVelocityEvaluation,
+        VortexDiffusionEvaluation,
+    ]:
         unpacked = self.state_layout.unpack(state)
         active = self.particles.active_mask
         source = VortexSourceState(
@@ -615,7 +626,13 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
             advective, diffusive, jnp.minimum(advective, diffusive)
         )
 
-    def linearize(self, time: Array, state: Array, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> tuple[
+        PyTree[Array],
+        Callable[[PyTree[Any]], PyTree[Array]],
+        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+    ]:
         linearization = la.prepare_linearization(
             lambda current: self(time, current, args), state
         )

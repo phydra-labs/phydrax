@@ -33,6 +33,9 @@ MPMReplayMode: TypeAlias = Literal["full", "step", "block"]
 MPMRetentionMode: TypeAlias = Literal["final", "checkpoints", "trajectory"]
 MPMGradientKind: TypeAlias = Literal["piecewise-discrete", "frozen-surrogate"]
 MPMRolloutLoss = Callable[[MPMRuntimeState, MaterialPointArguments], Array]
+_MPMRolloutCarry: TypeAlias = tuple[MPMRuntimeState, Array]
+_MPMRolloutInterval: TypeAlias = tuple[Array, Array]
+_MPMRolloutOutput: TypeAlias = tuple[MPMParticleState | Array, ...]
 
 
 class MPMReplayPolicy(StrictModule, NonTrainableState):
@@ -268,11 +271,13 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
         del initial_time
         retain_states = self.retention != "final"
 
-        def step(carry, interval):
+        def step(
+            carry: _MPMRolloutCarry, interval: _MPMRolloutInterval
+        ) -> tuple[_MPMRolloutCarry, _MPMRolloutOutput]:
             runtime_state, active = carry
             start, width = interval
 
-            def execute(_):
+            def execute(_: None) -> tuple[_MPMRolloutCarry, _MPMRolloutOutput]:
                 current = eqx.error_if(
                     runtime_state.time,
                     jnp.abs(runtime_state.time - start) > tolerance,
@@ -304,7 +309,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
                 )
                 return (detail.accepted_state, next_active), output
 
-            def skip(_):
+            def skip(_: None) -> tuple[_MPMRolloutCarry, _MPMRolloutOutput]:
                 dtype = runtime_state.time.dtype
                 common = (
                     runtime_state.time,
@@ -449,7 +454,9 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
         if not np.isfinite(epsilon_) or epsilon_ <= 0.0:
             raise ValueError("epsilon must be finite and positive.")
 
-        def objective(particle_state, argument_values):
+        def objective(
+            particle_state: MPMParticleState, argument_values: MaterialPointArguments
+        ) -> Array:
             runtime = MPMRuntimeState(
                 particle_state,
                 initial_state.time,

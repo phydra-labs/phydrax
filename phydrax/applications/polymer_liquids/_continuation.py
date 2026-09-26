@@ -126,7 +126,7 @@ def continue_prism_density(
         space_id=f"{prepared.prepared_id}:density-continuation-space",
     )
 
-    def residual(gamma, density_scale, _):
+    def residual(gamma: Array, density_scale: Array, _: object) -> Array:
         evaluation = prepared.evaluate(
             gamma,
             number_densities=prepared.mixture.number_densities * density_scale,

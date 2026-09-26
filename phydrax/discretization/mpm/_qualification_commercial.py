@@ -137,7 +137,7 @@ class MPMStandardsTraceabilityMatrix(StrictModule, NonTrainableState):
         )
 
     @property
-    def satisfied(self):
+    def satisfied(self) -> bool:
         return all(value.satisfied for value in self.traces)
 
 

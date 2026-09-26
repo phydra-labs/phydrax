@@ -11,6 +11,7 @@ from typing import ClassVar, Literal, Protocol, runtime_checkable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ._differentiation import AbstractConstructionCertificate
@@ -35,7 +36,7 @@ class ComplexAffineNormalization(StrictModule, NonTrainableState):
     matrix: Array
     normalization_id: str = eqx.field(static=True)
 
-    def __init__(self, center: ArrayLike, matrix: ArrayLike, /) -> None:
+    def __init__(self, center: npt.ArrayLike, matrix: npt.ArrayLike, /) -> None:
         center_ = np.asarray(center, dtype=np.complex128).reshape((-1,))
         matrix_ = np.asarray(matrix, dtype=np.complex128)
         if center_.size == 0 or matrix_.shape != (center_.size, center_.size):

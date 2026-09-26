@@ -315,7 +315,7 @@ class PolynomialClosureDealiasingPlan(AbstractDealiasingPlan):
 
     def prepare(
         self,
-        discretization: TensorSpectralDiscretization,
+        discretization: TensorSpectralDiscretization | SphericalSpectralDiscretization,
         /,
         *,
         required_polynomial_degree: int | None,
@@ -328,6 +328,10 @@ class PolynomialClosureDealiasingPlan(AbstractDealiasingPlan):
         if required > self.maximum_polynomial_degree:
             raise ValueError(
                 "Compiled polynomial degree exceeds the closure dealiasing contract."
+            )
+        if not isinstance(discretization, TensorSpectralDiscretization):
+            raise TypeError(
+                "Polynomial closure dealiasing requires a tensor spectral discretization."
             )
         if any(axis.family == "sine" for axis in discretization.axes):
             raise ValueError(
@@ -571,7 +575,7 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
         ) and isinstance(evaluation, SphericalSpectralDiscretization)
         if not tensor_pair and not spherical_pair:
             raise TypeError("retained and evaluation must use one spectral family.")
-        if spherical_pair:
+        if isinstance(retained, SphericalSpectralDiscretization):
             masks = tuple(jnp.asarray(mask, dtype=jnp.bool_) for mask in modal_masks)
             if masks and (
                 len(masks) != 1 or masks[0].shape != retained.coefficient_shape

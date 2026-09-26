@@ -34,8 +34,9 @@ def _axes(
     axes = value if isinstance(value, tuple) else (value,)
     if not axes:
         raise ValueError("sample_axes must contain at least one axis.")
-    if all(isinstance(axis, int) for axis in axes):
-        return tuple(axes)
+    integer_axes = tuple(axis for axis in axes if isinstance(axis, int))
+    if len(integer_axes) == len(axes):
+        return integer_axes
     if all(isinstance(axis, str) and axis for axis in axes):
         return tuple(str(axis) for axis in axes)
     raise TypeError("sample_axes must contain only integers or only non-empty names.")

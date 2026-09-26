@@ -429,7 +429,9 @@ def _sample_advanced(
             chain_indices
         )
 
-        def advance_chain(state, transition_key):
+        def advance_chain(
+            state: SGHMCState | PSGLDState, transition_key: Array
+        ) -> SGHMCState | PSGLDState:
             position_tree = unravel(state.position)
             gradient_tree = gradient_fn(position_tree, batch)
             gradient, _ = ravel_pytree(gradient_tree)

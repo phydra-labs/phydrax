@@ -20,7 +20,12 @@ from ._gp_actions import (
     BlockSparseGaussianProcessActionPolicy,
     FixedGaussianProcessActionPolicy,
 )
-from ._gp_computation_backend import _factorize_positive, _solve_columns, _solve_vector
+from ._gp_computation_backend import (
+    _factorize_positive,
+    _PositiveFactor,
+    _solve_columns,
+    _solve_vector,
+)
 from ._gp_likelihood import GaussianProcessLikelihoodState
 
 
@@ -30,7 +35,7 @@ class StructuredComputationAwareGaussianProcessFactor(StrictModule):
     action_matrix: Array
     active_mask: Array
     projected_covariance: Array
-    covariance_factor: object
+    covariance_factor: _PositiveFactor
     observation_count: int = eqx.field(static=True)
     action_count: int = eqx.field(static=True)
 

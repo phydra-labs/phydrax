@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -654,13 +654,13 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                 accepted_integrals=transport.accepted_integrals,
                 transport_id=self.transport.transport_id,
             )
-            result = coupling.apply(context, args)
+            coupling_result = coupling.apply(context, args)
             incoming_coupling_average = average
             average, coupling_successful, component_ownership = (
                 self._accepted_candidate_average(
                     average,
-                    result.cell_average,
-                    result.successful,
+                    coupling_result.cell_average,
+                    coupling_result.successful,
                     self.coupling_forbidden_component_indices[index],
                 )
             )
@@ -671,7 +671,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             )
             successful = successful & coupling_successful
             ownership_valid = ownership_valid & component_ownership
-            coupling_diagnostics.append(result.diagnostics)
+            coupling_diagnostics.append(coupling_result.diagnostics)
 
         candidate_transport = self.transport.with_source_view(transport.state, average)
         budget = BalanceLawAcceptedBudget(
@@ -716,6 +716,10 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             stability_margin=margin,
             process_diagnostics=diagnostics,
         )
+
+
+_RolloutCarry: TypeAlias = tuple[BalanceLawRuntimeState, Array]
+_RolloutOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
@@ -794,11 +798,13 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
         if not isinstance(initial_state, BalanceLawRuntimeState):
             raise TypeError("initial_state must be BalanceLawRuntimeState.")
 
-        def step(carry, interval):
+        def step(
+            carry: _RolloutCarry, interval: tuple[Array, Array]
+        ) -> tuple[_RolloutCarry, _RolloutOutput]:
             state, active = carry
             start, end = interval
 
-            def execute(_):
+            def execute(_: None) -> tuple[_RolloutCarry, _RolloutOutput]:
                 result = self.runtime.advance_prescribed(
                     state, start, end, args, realization
                 )
@@ -818,7 +824,7 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
                     ),
                 )
 
-            def skip(_):
+            def skip(_: None) -> tuple[_RolloutCarry, _RolloutOutput]:
                 return (
                     (state, active),
                     (

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -12,7 +13,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import optax
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
@@ -28,6 +29,7 @@ from .._training_kernel import (
     run_training_attempt,
     TrainingKernelSpec,
     TrainingKernelState,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
@@ -269,7 +271,13 @@ class SparseVariationalGaussianProcessResult(StrictModule):
         return elbo.predict(self.state, query_points)
 
 
-def _negative_elbo(parameters, model_state, fixed, payload, keys):
+def _negative_elbo(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[Callable[..., Array], LikelihoodBatch],
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[()]]:
     """Negative SVGP ELBO; the payload is `(elbo, batch)`."""
     elbo, batch = payload
     complete = combine_parameters(parameters, model_state, fixed)
@@ -313,7 +321,8 @@ def fit_sparse_variational_gaussian_process(
         )
         rule_id = (
             "svgp-clipped-adam:"
-            f"{configuration.gradient_clip.hex()}:{configuration.learning_rate.hex()}"
+            f"{float(configuration.gradient_clip).hex()}:"
+            f"{float(configuration.learning_rate).hex()}"
         )
     else:
         transformation = optimizer

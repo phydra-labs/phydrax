@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -85,7 +86,7 @@ def _component_convolutions(
 def _translate_tensor_convolutions(
     matrices: Array,
     lattice: LatticeHarmonicDiscretization,
-    translation: ArrayLike,
+    translation: ArrayLike | Sequence[float],
     /,
 ) -> Array:
     values = jnp.transpose(matrices, (2, 3, 0, 1))
@@ -396,7 +397,7 @@ def prepare_fourier_material(
     factorization: AbstractFourierFactorizationPlan,
     /,
     *,
-    translation: ArrayLike = (0.0, 0.0),
+    translation: ArrayLike | Sequence[float] = (0.0, 0.0),
 ) -> PreparedFourierMaterial:
     epsilon_samples, epsilon_scalar = _tensor_samples(material.permittivity, lattice)
     mu_samples, mu_scalar = _tensor_samples(material.permeability, lattice)
@@ -470,7 +471,7 @@ def prepare_fourier_material(
 def translate_prepared_fourier_material(
     material: PreparedFourierMaterial,
     lattice: LatticeHarmonicDiscretization,
-    translation: ArrayLike,
+    translation: ArrayLike | Sequence[float],
     /,
 ) -> PreparedFourierMaterial:
     """Apply reciprocal-space translation without rebuilding material convolutions."""

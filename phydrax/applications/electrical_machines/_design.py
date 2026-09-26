@@ -290,7 +290,7 @@ def optimize_machine_design(
         raise TypeError("termination must be OptimizationTermination or None.")
     offset, span = jnp.asarray(lower), jnp.asarray(upper - lower)
 
-    def physical_objective(normalized, context):
+    def physical_objective(normalized: Array, context: object) -> Array:
         candidate = offset + span * normalized
         evaluated = scan_machine_angles(study, candidate, policy=policy)
         value = (

@@ -286,7 +286,7 @@ def _inspect_expression(
     input_count: int,
 ) -> tuple[int, int, str]:
     if isinstance(expression, ReactionIRLiteral):
-        return 1, 1, f"literal({expression.value.hex()})"
+        return 1, 1, f"literal({float(expression.value).hex()})"
     if isinstance(expression, ReactionIRInput):
         if expression.slot >= input_count:
             raise ValueError(

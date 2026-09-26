@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax
@@ -302,7 +302,7 @@ class QuadraticStateChart(AbstractReferenceStateChart):
 class CoordinateConditionedStateChart(AbstractReferenceStateChart):
     """Fixed decoder queried on one declared reference support."""
 
-    decoder: object = eqx.field(static=True)
+    decoder: Callable[[Array, Array], ArrayLike] = eqx.field(static=True)
     query_points: Array
     latent_space: AbstractVectorSpace
     reference_space: AbstractVectorSpace
@@ -313,7 +313,7 @@ class CoordinateConditionedStateChart(AbstractReferenceStateChart):
 
     def __init__(
         self,
-        decoder,
+        decoder: Callable[[Array, Array], ArrayLike],
         query_points: ArrayLike,
         latent_space: AbstractVectorSpace,
         reference_space: AbstractVectorSpace,

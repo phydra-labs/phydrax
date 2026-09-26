@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Iterable
 from enum import StrEnum
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._model import register_artifact_value
@@ -86,7 +88,14 @@ class ArrheniusRatePlan(AbstractChemicalRatePlan):
         self.temperature_exponent = exponent
         self.activation_energy = activation
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         del pressure, concentrations, runtime
         valid = (
             jnp.isfinite(temperature)
@@ -121,12 +130,19 @@ class ThirdBodyRatePlan(AbstractChemicalRatePlan):
         self.base = base
         self.efficiencies = values
 
-    def effective_concentration(self, concentrations):
+    def effective_concentration(self, concentrations: Array) -> Array:
         if concentrations.shape[-1] != self.efficiencies.shape[0]:
             raise ValueError("Third-body efficiencies must match species axis.")
         return jnp.sum(concentrations * self.efficiencies, axis=-1)
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         return self.base.evaluate(
             temperature, pressure, concentrations, runtime
         ) * self.effective_concentration(concentrations)
@@ -137,7 +153,13 @@ class LindemannRatePlan(AbstractChemicalRatePlan):
     high_pressure: ArrheniusRatePlan
     efficiencies: Array
 
-    def __init__(self, low_pressure, high_pressure, efficiencies: ArrayLike, /) -> None:
+    def __init__(
+        self,
+        low_pressure: ArrheniusRatePlan,
+        high_pressure: ArrheniusRatePlan,
+        efficiencies: ArrayLike,
+        /,
+    ) -> None:
         if not isinstance(low_pressure, ArrheniusRatePlan) or not isinstance(
             high_pressure, ArrheniusRatePlan
         ):
@@ -150,14 +172,27 @@ class LindemannRatePlan(AbstractChemicalRatePlan):
         self.high_pressure = high_pressure
         self.efficiencies = values
 
-    def reduced_pressure(self, temperature, pressure, concentrations, runtime):
+    def reduced_pressure(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+    ) -> tuple[Array, Array]:
         effective = jnp.sum(concentrations * self.efficiencies, axis=-1)
         low = self.low_pressure.evaluate(temperature, pressure, concentrations, runtime)
         high = self.high_pressure.evaluate(temperature, pressure, concentrations, runtime)
         reduced = low * effective / jnp.maximum(high, jnp.finfo(high.dtype).tiny)
         return reduced, high
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         reduced, high = self.reduced_pressure(
             temperature, pressure, concentrations, runtime
         )
@@ -175,8 +210,8 @@ class TroeRatePlan(AbstractChemicalRatePlan):
 
     def __init__(
         self,
-        low_pressure,
-        high_pressure,
+        low_pressure: ArrheniusRatePlan,
+        high_pressure: ArrheniusRatePlan,
         efficiencies: ArrayLike,
         alpha: ArrayLike,
         temperature_1: ArrayLike,
@@ -201,14 +236,27 @@ class TroeRatePlan(AbstractChemicalRatePlan):
         self.efficiencies = efficiency_values
         self.alpha, self.temperature_1, self.temperature_2, self.temperature_3 = values
 
-    def reduced_pressure(self, temperature, pressure, concentrations, runtime):
+    def reduced_pressure(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+    ) -> tuple[Array, Array]:
         effective = jnp.sum(concentrations * self.efficiencies, axis=-1)
         low = self.low_pressure.evaluate(temperature, pressure, concentrations, runtime)
         high = self.high_pressure.evaluate(temperature, pressure, concentrations, runtime)
         reduced = low * effective / jnp.maximum(high, jnp.finfo(high.dtype).tiny)
         return reduced, high
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         reduced, high = self.reduced_pressure(
             temperature, pressure, concentrations, runtime
         )
@@ -232,7 +280,9 @@ class PLogRatePlan(AbstractChemicalRatePlan):
     pressures: Array
     rates: tuple[ArrheniusRatePlan, ...]
 
-    def __init__(self, pressures: ArrayLike, rates, /) -> None:
+    def __init__(
+        self, pressures: npt.ArrayLike, rates: Iterable[ArrheniusRatePlan], /
+    ) -> None:
         pressure_values = np.asarray(pressures, dtype=np.float64)
         rate_values = tuple(rates)
         if (
@@ -249,7 +299,14 @@ class PLogRatePlan(AbstractChemicalRatePlan):
         self.pressures = jnp.asarray(pressure_values)
         self.rates = rate_values
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         valid = jnp.isfinite(pressure) & (pressure > 0.0)
         safe_pressure = jnp.where(valid, pressure, self.pressures[0])
         index = jnp.clip(
@@ -320,7 +377,14 @@ class ChebyshevRatePlan(AbstractChemicalRatePlan):
             self.maximum_pressure,
         ) = bounds
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         del concentrations, runtime
         valid = (
             jnp.isfinite(temperature)
@@ -367,7 +431,14 @@ class PhotolysisRatePlan(AbstractChemicalRatePlan):
         self.kind = ChemicalRateKind.PHOTOLYSIS
         self.channel = value
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         del temperature, pressure, concentrations
         if self.channel >= runtime.photolysis_rates.shape[0]:
             raise ValueError("Photolysis runtime does not provide the requested channel.")
@@ -413,7 +484,14 @@ class SurfaceCoverageRatePlan(AbstractChemicalRatePlan):
             self.activation_energy_coefficient,
         ) = values
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         if self.species_index >= concentrations.shape[-1]:
             raise ValueError("Coverage species index exceeds concentration axis.")
         coverage = concentrations[..., self.species_index]
@@ -455,7 +533,14 @@ class StickingRatePlan(AbstractChemicalRatePlan):
         self.sticking_coefficient = coefficient
         self.molar_mass = mass
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         del pressure, concentrations, runtime
         valid = (
             jnp.isfinite(temperature)
@@ -501,7 +586,14 @@ class ButlerVolmerRatePlan(AbstractChemicalRatePlan):
         self.electron_count = electrons
         self.direction = direction_
 
-    def evaluate(self, temperature, pressure, concentrations, runtime, /):
+    def evaluate(
+        self,
+        temperature: Array,
+        pressure: Array,
+        concentrations: Array,
+        runtime: ChemicalRateRuntime,
+        /,
+    ) -> Array:
         del pressure, concentrations
         coefficient = (
             self.transfer_coefficient
@@ -529,7 +621,7 @@ class ButlerVolmerRatePlan(AbstractChemicalRatePlan):
         return jnp.where(valid, self.exchange_rate * jnp.exp(exponent), jnp.nan)
 
 
-def _chebyshev_basis(value, count):
+def _chebyshev_basis(value: Array, count: int) -> Array:
     terms = [jnp.ones_like(value)]
     if count > 1:
         terms.append(value)

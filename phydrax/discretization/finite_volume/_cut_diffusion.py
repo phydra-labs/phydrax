@@ -22,6 +22,7 @@ from ...linalg import (
     FunctionLinearOperator,
     KernelCertificate,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSubspace,
     LinearSystem,
     NullspacePolicy,
@@ -252,7 +253,7 @@ class MultivaluedCutCellDiffusionPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-9,
         absolute_tolerance: float = 1.0e-11,
         maximum_iterations: int = 1000,
-    ):
+    ) -> LinearSolveResult:
         rhs = jnp.asarray(right_hand_side)
         if rhs.shape != (self.cell_count,):
             raise ValueError("Cut-cell diffusion right-hand side has invalid shape.")

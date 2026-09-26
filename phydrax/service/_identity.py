@@ -340,13 +340,13 @@ def _verify_jwk(
     signature: bytes,
 ) -> bool:
     try:
-        from cryptography.exceptions import (  # ty: ignore[unresolved-import]
+        from cryptography.exceptions import (
             InvalidSignature,
         )
-        from cryptography.hazmat.primitives import (  # ty: ignore[unresolved-import]
+        from cryptography.hazmat.primitives import (
             hashes,
         )
-        from cryptography.hazmat.primitives.asymmetric import (  # ty: ignore[unresolved-import]
+        from cryptography.hazmat.primitives.asymmetric import (
             ed25519,
             padding,
             rsa,
@@ -499,18 +499,18 @@ class X509WorkloadCertificateValidator:
 
     def validate(self, certificate: bytes, /) -> WorkloadIdentity:
         try:
-            from cryptography import x509  # ty: ignore[unresolved-import]
-            from cryptography.hazmat.primitives import (  # ty: ignore[unresolved-import]
+            from cryptography import x509
+            from cryptography.hazmat.primitives import (
                 hashes,
             )
-            from cryptography.hazmat.primitives.asymmetric import (  # ty: ignore[unresolved-import]
+            from cryptography.hazmat.primitives.asymmetric import (
                 ec,
                 ed448,
                 ed25519,
                 padding,
                 rsa,
             )
-            from cryptography.x509.oid import (  # ty: ignore[unresolved-import]
+            from cryptography.x509.oid import (
                 ExtendedKeyUsageOID,
             )
         except ImportError as error:

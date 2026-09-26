@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -41,7 +42,14 @@ class SparseAugmentedKKTPlan(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _position_map(entries: set[tuple[int, int]], /):
+def _position_map(
+    entries: set[tuple[int, int]], /
+) -> tuple[
+    tuple[tuple[int, int], ...],
+    dict[tuple[int, int], int],
+    npt.NDArray[np.int32],
+    npt.NDArray[np.int32],
+]:
     ordered = tuple(sorted(entries))
     lookup = {entry: index for index, entry in enumerate(ordered)}
     rows = np.asarray([row for row, _ in ordered], dtype=np.int32)

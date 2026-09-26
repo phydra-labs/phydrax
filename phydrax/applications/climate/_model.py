@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
@@ -21,6 +21,7 @@ from ...solver import (
     AbstractFixedStepMethod,
     FixedStepProblem,
     FixedStepResult,
+    FixedStepRetentionPolicy,
     FixedStepRolloutPlan,
     FixedStepRolloutResult,
 )
@@ -188,8 +189,11 @@ class PreparedReducedClimate(StrictModule):
             )
         if time_spec is not None and not isinstance(time_spec, GeophysicalTimeSpec):
             raise TypeError("time_spec must be GeophysicalTimeSpec.")
+        # Exactly one clock source is bound (validated above).
         scale = float(
-            seconds_per_time_unit if time_spec is None else time_spec.seconds_per_unit
+            cast(float, seconds_per_time_unit)
+            if time_spec is None
+            else time_spec.seconds_per_unit
         )
         if not np.isfinite(scale) or scale <= 0.0:
             raise ValueError(
@@ -428,7 +432,7 @@ class PreparedReducedClimate(StrictModule):
         *,
         start_step: int = 0,
         stop_step: int | None = None,
-        retention: str = "trajectory",
+        retention: FixedStepRetentionPolicy = "trajectory",
     ) -> FixedStepRolloutResult:
         return FixedStepRolloutPlan(retention=retention).rollout(
             self.problem(

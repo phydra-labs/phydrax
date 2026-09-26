@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from phydrax.ein import contract
 
@@ -137,7 +137,7 @@ class EvolvingFlowCellPlan(StrictModule, NonTrainableState):
             raise ValueError("time_step must be finite and positive.")
         operator = DenseLinearOperator(gradient)
 
-        def evolve(column):
+        def evolve(column: Array) -> tuple[PyTree[Array], Array]:
             result = matrix_exponential_action(operator, column, step)
             return result.value, result.successful
 

@@ -15,10 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import sha256
-from typing import ClassVar
+from typing import ClassVar, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from ._membrane_scaling import CardiacMembraneScaling
@@ -114,13 +115,25 @@ def _ohmic_ir(program_name: str) -> CompiledReactionIR:
 
 
 class _VentricularReactionBase:
-    state_layout: CardiacReactionStateLayout
-    parameter_layout: CardiacReactionParameterLayout
+    state_layout: ClassVar[CardiacReactionStateLayout]
+    parameter_layout: ClassVar[CardiacReactionParameterLayout]
     default_parameters: Array
-    current_names: tuple[str, ...]
+    current_names: ClassVar[tuple[str, ...]]
     model_id: str
     scaling: CardiacMembraneScaling
     reaction_ir: CompiledReactionIR
+
+    if TYPE_CHECKING:
+
+        def evaluate(
+            self,
+            state: Array,
+            parameters: Array | None = None,
+            *,
+            stimulus_current_uA_per_mm2: ArrayLike = 0.0,
+        ) -> CardiacReactionEvaluation: ...
+
+        def admissible(self, state: Array, parameters: Array | None = None) -> Array: ...
 
     @property
     def membrane_capacitance_uF_per_mm2(self) -> float:
@@ -130,7 +143,7 @@ class _VentricularReactionBase:
     def membrane_surface_to_volume_per_mm(self) -> float:
         return self.scaling.membrane_surface_to_volume_per_mm
 
-    def _parameters(self, parameters: Array | None, dtype: object) -> Array:
+    def _parameters(self, parameters: Array | None, dtype: DTypeLike) -> Array:
         if parameters is None:
             return jnp.asarray(self.default_parameters, dtype=dtype)
         return self.parameter_layout.require_shape(parameters).astype(dtype)
@@ -402,7 +415,7 @@ class TenTusscherPanfilov2006Model(_VentricularReactionBase):
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array:
         resolved_dtype = jnp.asarray(0.0).dtype if dtype is None else dtype
         initial = jnp.asarray(
@@ -969,7 +982,7 @@ class ORdVentricularModel(_VentricularReactionBase):
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array:
         resolved_dtype = jnp.asarray(0.0).dtype if dtype is None else dtype
         initial = jnp.asarray(

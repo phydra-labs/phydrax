@@ -89,7 +89,7 @@ class GeneralizedSusceptibilityIndex(StrictModule, NonTrainableState):
     def __init__(
         self, baryon_order: int, charge_order: int, strangeness_order: int, /
     ) -> None:
-        orders = tuple(map(int, (baryon_order, charge_order, strangeness_order)))
+        orders = (int(baryon_order), int(charge_order), int(strangeness_order))
         if any(value < 0 for value in orders):
             raise ValueError("Susceptibility derivative orders must be nonnegative.")
         total = sum(orders)
@@ -123,7 +123,12 @@ class FiniteDensityDomain(StrictModule, NonTrainableState):
             tuple(map(float, item)) for item in chemical_potential_over_temperature_bounds
         )
         maximum = int(maximum_total_order)
-        if len(bounds) != 3 or not 0.0 < temperatures[0] < temperatures[1] or maximum < 0:
+        if (
+            len(bounds) != 3
+            or len(temperatures) != 2
+            or not 0.0 < temperatures[0] < temperatures[1]
+            or maximum < 0
+        ):
             raise ValueError(
                 "Finite-density domain shape, temperature, or order is invalid."
             )
@@ -137,8 +142,10 @@ class FiniteDensityDomain(StrictModule, NonTrainableState):
             raise ValueError(
                 "Every chemical-potential ratio bound must be finite and ordered."
             )
-        self.temperature_bounds = temperatures
-        self.chemical_potential_over_temperature_bounds = bounds
+        self.temperature_bounds = (temperatures[0], temperatures[1])
+        self.chemical_potential_over_temperature_bounds = tuple(
+            (item[0], item[1]) for item in bounds
+        )
         self.maximum_total_order = maximum
         self.domain_id = canonical_fingerprint(
             {

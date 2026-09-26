@@ -13,13 +13,13 @@ exact coordinate transpose of its forward action. No constitutive term is omitte
 
 from __future__ import annotations
 
-from typing import NoReturn
+from typing import Any, Literal, NoReturn, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -30,6 +30,7 @@ from ....linalg import (
     AbstractPreconditioner,
     AbstractPreconditionerBuilder,
     AbstractSparseLinearOperator,
+    AbstractVectorSpace,
     analyze_sparse_triangular,
     ArraySpace,
     BlockFactorizationPreconditioner,
@@ -43,6 +44,7 @@ from ....linalg import (
     LinearSystem,
     LocalBlockDiagonalLinearOperator,
     LocalBlockPreconditioner,
+    MaterializationPolicy,
     OperatorCapabilities,
     OperatorProperties,
     PreconditionerCostEstimate,
@@ -63,14 +65,32 @@ from ....linalg import (
     TransposeLinearOperator,
 )
 from ....linalg._costs import _array_tree_storage_bytes
+from ....linalg._operators import _assemble_operator_diagonal
+from ....linalg._sparse_triangular import SparseTriangle
 from ....sparse import EdgeRelation, SparseCoordinateOperator
-from ._almonacid_2024_material import almonacid_2024_material_response
+from ._almonacid_2024_material import (
+    Almonacid2024MaterialParameters,
+    almonacid_2024_material_response,
+)
+
+
+if TYPE_CHECKING:
+    from ._almonacid_2024 import (
+        Almonacid2024Control,
+        PreparedAlmonacid2024MuscleAponeurosis,
+    )
+    from ._almonacid_2024_geometry import PreparedAlmonacid2024Geometry
 
 
 _RECIPE = "almonacid-2024/cell-exact-q2-dgpm1/ldu-element-schwarz"
 
+# Root coordinates: (free displacement[n, 3], pressure[c, 4], dilation[c, 4]).
+_RootCoordinates: TypeAlias = tuple[Array, Array, Array]
+# Internal block order: (cell scalars[c, 8], free displacement[3n]).
+_RootBlocks: TypeAlias = tuple[Array, Array]
 
-def _properties():
+
+def _properties() -> PreconditionerProperties:
     # Row equilibration and the dynamic active tangent are not self-adjoint.
     return PreconditionerProperties(
         linear=True,
@@ -108,7 +128,9 @@ class Almonacid2024SymbolicPreconditioning(StrictModule, NonTrainableState):
     symbolic_id: str = eqx.field(static=True)
 
 
-def _triangular_symbolic(operator, triangle):
+def _triangular_symbolic(
+    operator: SparseCoordinateOperator, triangle: SparseTriangle
+) -> tuple[SparseTriangularAnalysis, Array]:
     storage = operator.sparse_storage()
     indices = np.asarray(storage.indices)
     indptr = np.asarray(storage.indptr)
@@ -127,7 +149,9 @@ def _triangular_symbolic(operator, triangle):
     )
 
 
-def almonacid_2024_prepare_symbolic(geometry):
+def almonacid_2024_prepare_symbolic(
+    geometry: PreparedAlmonacid2024Geometry,
+) -> Almonacid2024SymbolicPreconditioning:
     """Analyze the constrained Q2 graph once, outside JAX tracing.
 
     The internal two-field order is ((p_cell[4], j_cell[4]), u_free[3]).
@@ -294,12 +318,12 @@ def almonacid_2024_prepare_symbolic(geometry):
     )
 
 
-def _to_blocks(vector):
+def _to_blocks(vector: _RootCoordinates) -> _RootBlocks:
     mechanical, pressure, dilation = vector
     return jnp.concatenate((pressure, dilation), axis=1), mechanical.reshape((-1,))
 
 
-def _from_blocks(blocks):
+def _from_blocks(blocks: _RootBlocks) -> _RootCoordinates:
     scalars, mechanical = blocks
     return mechanical.reshape((-1, 3)), scalars[:, :4], scalars[:, 4:]
 
@@ -310,7 +334,7 @@ class _CanonicalSparseOperator(AbstractSparseLinearOperator):
     action: AbstractLinearOperator
     storage: SparseStorage
 
-    def __init__(self, action, storage, /) -> None:
+    def __init__(self, action: AbstractLinearOperator, storage: SparseStorage, /) -> None:
         if storage.shape != (action.target.size, action.source.size):
             raise ValueError("Canonical sparse storage must match the action spaces.")
         self.action = action
@@ -322,22 +346,22 @@ class _CanonicalSparseOperator(AbstractSparseLinearOperator):
         self.batch_shape = action.batch_shape
         self.operator_id = f"{action.operator_id}/canonical-csr"
 
-    def sparse_storage(self, /):
+    def sparse_storage(self, /) -> SparseStorage:
         return self.storage
 
-    def mv(self, vector, /):
+    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self.action.mv(vector)
 
-    def transpose_mv(self, vector, /):
+    def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self.action.transpose_mv(vector)
 
-    def adjoint_mv(self, vector, /):
+    def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self.action.adjoint_mv(vector)
 
-    def _assemble_diagonal(self, /):
-        return self.action._assemble_diagonal()
+    def _assemble_diagonal(self, /) -> Array:
+        return _assemble_operator_diagonal(self.action)
 
-    def _materialize(self, /):
+    def _materialize(self, /) -> Array:
         return self.action._materialize()
 
 
@@ -363,15 +387,15 @@ class _Almonacid2024SetupOperator(AbstractLinearOperator):
 
     def __init__(
         self,
-        blocks,
-        scalar_inverse,
-        mechanical_schur,
-        patch_blocks,
-        full_storage,
-        symbolic,
-        coordinates,
+        blocks: BlockLinearOperator,
+        scalar_inverse: LocalBlockPreconditioner,
+        mechanical_schur: SparseCoordinateOperator,
+        patch_blocks: Array,
+        full_storage: SparseStorage,
+        symbolic: Almonacid2024SymbolicPreconditioning,
+        coordinates: _RootCoordinates,
         *,
-        dynamic,
+        dynamic: bool,
     ) -> None:
         self.block_operator = blocks
         self.scalar_inverse = scalar_inverse
@@ -398,15 +422,15 @@ class _Almonacid2024SetupOperator(AbstractLinearOperator):
         self.batch_shape = ()
         self.operator_id = f"{symbolic.symbolic_id}/root-setup"
 
-    def mv(self, vector, /):
+    def mv(self, vector: PyTree[Any], /) -> _RootCoordinates:
         blocks = _to_blocks(self.source.validate(vector))
         return _from_blocks(self.block_operator.mv(blocks))
 
-    def transpose_mv(self, vector, /):
+    def transpose_mv(self, vector: PyTree[Any], /) -> _RootCoordinates:
         blocks = _to_blocks(self.target.validate(vector))
         return _from_blocks(self.block_operator.transpose_mv(blocks))
 
-    def adjoint_mv(self, vector, /):
+    def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return jax.tree.map(jnp.conj, self.transpose_mv(jax.tree.map(jnp.conj, vector)))
 
     def _materialize(self, /) -> NoReturn:
@@ -415,7 +439,11 @@ class _Almonacid2024SetupOperator(AbstractLinearOperator):
         )
 
 
-def _element_tangents(model, coordinates, control):
+def _element_tangents(
+    model: PreparedAlmonacid2024MuscleAponeurosis,
+    coordinates: _RootCoordinates,
+    control: Almonacid2024Control,
+) -> tuple[Array, Array, Array, Array]:
     """Differentiate at material points, then integrate bounded-size elements."""
     g = model.geometry
     length, stress = model.plan.geometry.muscle_length_m, model.plan.stress_scale_Pa
@@ -438,7 +466,13 @@ def _element_tangents(model, coordinates, control):
         axis=-1,
     )
 
-    def point_residual(point, parameters, previous_F, direction, tissue):
+    def point_residual(
+        point: Array,
+        parameters: Almonacid2024MaterialParameters,
+        previous_F: Array,
+        direction: Array,
+        tissue: Array,
+    ) -> Array:
         response = almonacid_2024_material_response(
             parameters,
             point[:9].reshape((3, 3)),
@@ -462,7 +496,13 @@ def _element_tangents(model, coordinates, control):
 
     point_tangent = jax.jacfwd(point_residual)
 
-    def cell(parameters, values, last, direction, tissue):
+    def cell(
+        parameters: Almonacid2024MaterialParameters,
+        values: Array,
+        last: Array,
+        direction: Array,
+        tissue: Array,
+    ) -> Array:
         return jax.vmap(
             lambda point, old: point_tangent(point, parameters, old, direction, tissue)
         )(values, last)
@@ -543,7 +583,11 @@ def _element_tangents(model, coordinates, control):
     return mechanical, lower, upper, scalar
 
 
-def almonacid_2024_setup_operator(model, coordinates, control):
+def almonacid_2024_setup_operator(
+    model: PreparedAlmonacid2024MuscleAponeurosis,
+    coordinates: _RootCoordinates,
+    control: Almonacid2024Control,
+) -> _Almonacid2024SetupOperator:
     """Refresh the exact mixed blocks and condensed sparse mechanical values."""
     symbolic = model.linear_symbolic
     mechanical, lower, upper, scalar = _element_tangents(model, coordinates, control)
@@ -580,7 +624,7 @@ def almonacid_2024_setup_operator(model, coordinates, control):
         full_coefficients,
     )
 
-    def assemble(values):
+    def assemble(values: Array) -> SparseCoordinateOperator:
         coefficients = (
             jnp.zeros_like(symbolic.mechanical_template.coefficients)
             .at[symbolic.assembly_targets]
@@ -633,7 +677,7 @@ class _SparseDirectPreconditioner(AbstractPreconditioner, NonTrainableState):
 
     prepared: PreparedLinearSolve
 
-    def __init__(self, prepared, /) -> None:
+    def __init__(self, prepared: PreparedLinearSolve, /) -> None:
         self.prepared = prepared
         self.space = prepared.problem.operator.source
         self.properties = _properties()
@@ -641,7 +685,9 @@ class _SparseDirectPreconditioner(AbstractPreconditioner, NonTrainableState):
             f"{prepared.problem.operator.operator_id}/jax-cpu-sparse-lu"
         )
 
-    def apply(self, residual, /, *, iteration=None):
+    def apply(
+        self, residual: PyTree[Any], /, *, iteration: ArrayLike | None = None
+    ) -> PyTree[Array]:
         del iteration
         result = solve_linear(self.prepared, self.space.validate(residual))
         return eqx.error_if(
@@ -661,7 +707,15 @@ class _MechanicalPatchPreconditioner(AbstractPreconditioner, NonTrainableState):
     transpose_action: bool = eqx.field(static=True)
 
     def __init__(
-        self, blocks, gathers, valid, weights, space, /, *, transpose_action=False
+        self,
+        blocks: Array,
+        gathers: Array,
+        valid: Array,
+        weights: Array,
+        space: AbstractVectorSpace,
+        /,
+        *,
+        transpose_action: bool = False,
     ) -> None:
         transpose_action = bool(transpose_action)
         factored = jnp.swapaxes(blocks, -1, -2) if transpose_action else blocks
@@ -677,7 +731,9 @@ class _MechanicalPatchPreconditioner(AbstractPreconditioner, NonTrainableState):
         suffix = "transpose" if transpose_action else "forward"
         self.preconditioner_id = f"{_RECIPE}/patch/{suffix}"
 
-    def apply(self, residual, /, *, iteration=None):
+    def apply(
+        self, residual: PyTree[Any], /, *, iteration: ArrayLike | None = None
+    ) -> Array:
         del iteration
         right_hand_side = self.space.validate(residual)
         local = right_hand_side[self.gathers]
@@ -701,7 +757,14 @@ class _MechanicalSweepPreconditioner(AbstractPreconditioner, NonTrainableState):
     sweeps: int = eqx.field(static=True)
 
     def __init__(
-        self, operator, lower, upper, /, *, transpose_action=False, sweeps=4
+        self,
+        operator: SparseCoordinateOperator,
+        lower: SparseTriangularFactor,
+        upper: SparseTriangularFactor,
+        /,
+        *,
+        transpose_action: bool = False,
+        sweeps: int = 4,
     ) -> None:
         self.operator = operator
         self.lower = lower
@@ -716,7 +779,12 @@ class _MechanicalSweepPreconditioner(AbstractPreconditioner, NonTrainableState):
         )
 
     @staticmethod
-    def _solve(factor, right_hand_side, *, transpose=False):
+    def _solve(
+        factor: SparseTriangularFactor,
+        right_hand_side: Array,
+        *,
+        transpose: bool = False,
+    ) -> Array:
         result = factor.solve(right_hand_side, transpose=transpose)
         return eqx.error_if(
             result.value,
@@ -724,7 +792,7 @@ class _MechanicalSweepPreconditioner(AbstractPreconditioner, NonTrainableState):
             "Almonacid mechanical triangular sweep failed.",
         )
 
-    def _one_sweep(self, right_hand_side):
+    def _one_sweep(self, right_hand_side: Array) -> Array:
         if not self.transpose_action:
             first = self._solve(self.lower, right_hand_side)
             defect = right_hand_side - self.operator.mv(first)
@@ -735,11 +803,13 @@ class _MechanicalSweepPreconditioner(AbstractPreconditioner, NonTrainableState):
             second = self._solve(self.lower, defect, transpose=True)
         return first + second
 
-    def apply(self, residual, /, *, iteration=None):
+    def apply(
+        self, residual: PyTree[Any], /, *, iteration: ArrayLike | None = None
+    ) -> Array:
         del iteration
         right_hand_side = self.space.validate(residual)
 
-        def correction(_, current):
+        def correction(_: Array, current: Array) -> Array:
             image = (
                 self.operator.transpose_mv(current)
                 if self.transpose_action
@@ -757,18 +827,22 @@ class _Almonacid2024Preconditioner(AbstractPreconditioner):
 
     inner: BlockFactorizationPreconditioner
 
-    def __init__(self, inner, setup) -> None:
+    def __init__(
+        self, inner: BlockFactorizationPreconditioner, setup: AbstractLinearOperator
+    ) -> None:
         self.inner = inner
         self.space = setup.source
         self.properties = inner.properties
         self.preconditioner_id = f"{setup.operator_id}/ldu"
 
-    def apply(self, residual, /, *, iteration=None):
+    def apply(
+        self, residual: PyTree[Any], /, *, iteration: ArrayLike | None = None
+    ) -> _RootCoordinates:
         blocks = _to_blocks(self.space.validate(residual))
         return _from_blocks(self.inner.apply(blocks, iteration=iteration))
 
 
-def _source_setup(operator):
+def _source_setup(operator: AbstractLinearOperator) -> _Almonacid2024SetupOperator:
     source = (
         operator.operator if isinstance(operator, TransposeLinearOperator) else operator
     )
@@ -782,7 +856,7 @@ def _source_setup(operator):
 class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
     mechanical_solver: str = eqx.field(static=True)
 
-    def __init__(self, mechanical_solver=None) -> None:
+    def __init__(self, mechanical_solver: str | None = None) -> None:
         if mechanical_solver is None:
             selected = (
                 "full-mixed-jax-cpu"
@@ -802,18 +876,26 @@ class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
         self.mechanical_solver = selected
 
     @property
-    def builder_id(self):
+    def builder_id(self) -> str:
         return f"{_RECIPE}/{self.mechanical_solver}"
 
     @property
-    def default_refresh(self):
+    def default_refresh(self) -> Literal["numeric"]:
         return "numeric"
 
-    def properties_for(self, setup_operator, /):
+    def properties_for(
+        self, setup_operator: AbstractLinearOperator, /
+    ) -> PreconditionerProperties:
         _source_setup(setup_operator)
         return _properties()
 
-    def cost_for(self, setup_operator, /, *, materialization=None):
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
         del materialization
         source = _source_setup(setup_operator)
         itemsize = source.mechanical_schur.coefficients.dtype.itemsize
@@ -857,7 +939,13 @@ class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
             reason=reason,
         )
 
-    def prepare(self, setup_operator, /, *, materialization):
+    def prepare(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> _SparseDirectPreconditioner | _Almonacid2024Preconditioner:
         del materialization
         source = _source_setup(setup_operator)
         transpose_action = isinstance(setup_operator, TransposeLinearOperator)
@@ -912,7 +1000,15 @@ class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
         properties = _properties()
         blocks = source.block_operator.blocks
         scalar_inverse = source.scalar_inverse
-        mechanical, lower, upper = blocks[1][1], blocks[1][0], blocks[0][1]
+        scalar_block, upper, lower, mechanical = (
+            blocks[0][0],
+            blocks[0][1],
+            blocks[1][0],
+            blocks[1][1],
+        )
+        # almonacid_2024_setup_operator fills all four blocks, the scalar one local.
+        assert isinstance(scalar_block, LocalBlockDiagonalLinearOperator)
+        assert mechanical is not None and lower is not None and upper is not None
         if self.mechanical_solver == "condensed-jax-cpu" and source.dynamic:
             mechanical_inverse = sparse_inverse
         elif source.dynamic:
@@ -941,12 +1037,11 @@ class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
             )
         if transpose_action:
             scalar_inverse = LocalBlockPreconditioner(
-                jnp.swapaxes(blocks[0][0].blocks, -1, -2),
+                jnp.swapaxes(scalar_block.blocks, -1, -2),
                 preconditioner_id=f"{setup_operator.operator_id}/cell-lu",
             )
             mechanical = TransposeLinearOperator(mechanical)
-            lower = TransposeLinearOperator(upper)
-            upper = TransposeLinearOperator(blocks[1][0])
+            lower, upper = TransposeLinearOperator(upper), TransposeLinearOperator(lower)
         schur = SchurComplementLinearOperator(
             mechanical,
             lower,
@@ -964,7 +1059,14 @@ class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
         )
         return _Almonacid2024Preconditioner(inner, setup_operator)
 
-    def refresh(self, preconditioner, setup_operator, /, *, materialization):
+    def refresh(
+        self,
+        preconditioner: AbstractPreconditioner,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> _SparseDirectPreconditioner | _Almonacid2024Preconditioner:
         if not isinstance(
             preconditioner,
             (_SparseDirectPreconditioner, _Almonacid2024Preconditioner),
@@ -977,7 +1079,9 @@ class _Almonacid2024PreconditionerBuilder(AbstractPreconditionerBuilder):
         return self.prepare(setup_operator, materialization=materialization)
 
 
-def almonacid_2024_linear_policy(mechanical_solver=None):
+def almonacid_2024_linear_policy(
+    mechanical_solver: str | None = None,
+) -> LinearSolvePolicy:
     """Source-scaled right-preconditioned GMRES with numeric setup refresh."""
     return LinearSolvePolicy(
         GMRES(restart=128),

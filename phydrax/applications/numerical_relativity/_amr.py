@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, overload
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -107,8 +108,8 @@ class AMRTransferBinding(StrictModule, NonTrainableState):
             transfer_plan,
             transition_plan,
         ) = identifiers
-        self.source_content_id = source_id
-        self.target_content_id = target_id
+        self.source_content_id = canonical_fingerprint(source_id)
+        self.target_content_id = canonical_fingerprint(target_id)
         self.source_topology_id = source_topology
         self.target_topology_id = target_topology
         self.source_epoch_id = source_epoch
@@ -493,7 +494,7 @@ class RelativisticMaterialTransferPlan(StrictModule, NonTrainableState):
         return state
 
     @staticmethod
-    def _volume(value: ArrayLike, shape: tuple[int, int, int], dtype: Any, /) -> Array:
+    def _volume(value: ArrayLike, shape: tuple[int, ...], dtype: DTypeLike, /) -> Array:
         volume = jnp.asarray(value, dtype=dtype)
         if volume.shape == ():
             volume = jnp.broadcast_to(volume, shape)
@@ -642,7 +643,7 @@ class RelativisticRadiationTransferPlan(StrictModule, NonTrainableState):
         return state
 
     @staticmethod
-    def _volume(value: ArrayLike, shape: tuple[int, int, int], dtype, /) -> Array:
+    def _volume(value: ArrayLike, shape: tuple[int, ...], dtype: DTypeLike, /) -> Array:
         volume = jnp.asarray(value, dtype=dtype)
         if volume.shape == ():
             volume = jnp.broadcast_to(volume, shape)
@@ -1211,6 +1212,30 @@ def _packed_material_valid(
             & jnp.all(block[..., 4] >= 0.0)
         )
     return valid
+
+
+@overload
+def _with_transfer_binding(
+    evidence: Z4cAMRTransferEvidence,
+    binding: AMRTransferBinding,
+    /,
+) -> Z4cAMRTransferEvidence: ...
+
+
+@overload
+def _with_transfer_binding(
+    evidence: RelativisticMaterialTransferEvidence,
+    binding: AMRTransferBinding,
+    /,
+) -> RelativisticMaterialTransferEvidence: ...
+
+
+@overload
+def _with_transfer_binding(
+    evidence: RelativisticMagneticTransferEvidence,
+    binding: AMRTransferBinding,
+    /,
+) -> RelativisticMagneticTransferEvidence: ...
 
 
 def _with_transfer_binding(

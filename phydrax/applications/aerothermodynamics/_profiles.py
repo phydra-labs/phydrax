@@ -38,7 +38,14 @@ class IonizedContinuumProfile(StrictModule):
     profile_id: str = eqx.field(static=True)
 
     def __init__(
-        self, system, thermochemical_source, plasma_transport, /, *, electrostatic=None
+        self,
+        system: IonizedMultitemperatureEulerSystem
+        | IonizedMultitemperatureNavierStokesSystem,
+        thermochemical_source: FixedWorkThermochemicalSourcePlan,
+        plasma_transport: AmbipolarPlasmaTransportPlan,
+        /,
+        *,
+        electrostatic: ElectrostaticPlasmaCouplingPlan | None = None,
     ) -> None:
         if (
             not isinstance(
@@ -112,7 +119,15 @@ class AblatingEntryProfile(StrictModule):
     recession: FixedConnectivityRecessionPlan
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, radiating, wall, material, interface, recession, /) -> None:
+    def __init__(
+        self,
+        radiating: RadiatingContinuumProfile,
+        wall: ReactingPlasmaWallPlan,
+        material: PorousAblatingMaterialPlan,
+        interface: ConjugateAerothermalInterfacePlan,
+        recession: FixedConnectivityRecessionPlan,
+        /,
+    ) -> None:
         if (
             not isinstance(radiating, RadiatingContinuumProfile)
             or not isinstance(wall, ReactingPlasmaWallPlan)
@@ -159,7 +174,13 @@ class FixedContinuumDSMCProfile(StrictModule):
     interface: ContinuumDSMCInterfacePlan
     profile_id: str = eqx.field(static=True)
 
-    def __init__(self, continuum, rarefied, interface, /) -> None:
+    def __init__(
+        self,
+        continuum: IonizedContinuumProfile,
+        rarefied: RarefiedDSMCProfile,
+        interface: ContinuumDSMCInterfacePlan,
+        /,
+    ) -> None:
         if (
             not isinstance(continuum, IonizedContinuumProfile)
             or not isinstance(rarefied, RarefiedDSMCProfile)

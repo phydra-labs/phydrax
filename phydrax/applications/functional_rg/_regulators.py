@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._numerics import gauss_legendre_data
+from ..._numerics import gauss_legendre_data, QuadratureRuleData
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -149,7 +149,7 @@ class ThresholdQuadraturePlan(StrictModule, NonTrainableState):
         fine_rule = gauss_legendre_data(order)
         coarse_rule = gauss_legendre_data(coarse_order)
 
-        def map_rule(rule):
+        def map_rule(rule: QuadratureRuleData) -> tuple[Array, Array]:
             return (
                 0.5 * upper * (jnp.asarray(rule.nodes) + 1.0),
                 0.5 * upper * jnp.asarray(rule.weights),

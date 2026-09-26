@@ -10,6 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import numpy as np
+from jax.stages import Compiled
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
@@ -131,7 +132,7 @@ class PreparedCompilationService:
     """Single-process in-memory executable cache keyed by semantic program IDs."""
 
     def __init__(self) -> None:
-        self._executables: dict[str, Any] = {}
+        self._executables: dict[str, Compiled] = {}
 
     @property
     def entry_count(self) -> int:
@@ -142,7 +143,7 @@ class PreparedCompilationService:
         lowered: LoweredOperatorProgram,
         sample_inputs: Mapping[str, Any],
         /,
-    ):
+    ) -> Compiled:
         if not isinstance(lowered, LoweredOperatorProgram):
             raise TypeError("compile requires LoweredOperatorProgram.")
         backend = jax.default_backend()

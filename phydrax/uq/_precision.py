@@ -8,6 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from .._precision import (
     complex_precision_dtype,
@@ -61,7 +62,7 @@ class PredictivePrecisionPolicy(StrictModule, NonTrainableState):
         self.summary_dtype = summary
         self.policy_id = request.request_id
 
-    def storage(self, value: Any, /):
+    def storage(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if self.storage_dtype is None:
             return array
@@ -72,7 +73,7 @@ class PredictivePrecisionPolicy(StrictModule, NonTrainableState):
         )
         return array.astype(target)
 
-    def summary(self, value: Any, /):
+    def summary(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if self.summary_dtype is None:
             return array
@@ -205,7 +206,7 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
         )
         return PrecisionEvidenceEnvelope(resolution, dict(resolution.effective))
 
-    def state(self, value: Any, /):
+    def state(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if self.state_storage_dtype is None:
             return array
@@ -216,13 +217,13 @@ class ParticlePrecisionPolicy(StrictModule, NonTrainableState):
         )
         return array.astype(target)
 
-    def statistics(self, value: Any, /):
+    def statistics(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.statistics_dtype)
 
-    def decision(self, value: Any, /):
+    def decision(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.decision_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if self.output_dtype is None:
             return array

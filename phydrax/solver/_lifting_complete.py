@@ -64,7 +64,7 @@ class CompleteLiftingSystemPlan(StrictModule, NonTrainableState):
         method: str = "horseshoe-vlm",
         /,
         *,
-        wake_direction: ArrayLike = (1.0, 0.0, 0.0),
+        wake_direction: ArrayLike | tuple[float, float, float] = (1.0, 0.0, 0.0),
         wake_length: float = 50.0,
         core_radius: float = 0.02,
         density: float = 1.0,
@@ -166,7 +166,7 @@ class CompleteLiftingSystemPlan(StrictModule, NonTrainableState):
         wake_velocity: ArrayLike | None = None,
         previous_bound_circulation: ArrayLike | None = None,
         shed_circulation: ArrayLike | None = None,
-        reference_point: ArrayLike = (0.0, 0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> CompleteLiftingResult:
         incident = jnp.asarray(incident_velocity, dtype=self.surface.control_point.dtype)
         if incident.shape == (3,):

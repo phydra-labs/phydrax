@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import equinox as eqx
@@ -23,7 +24,14 @@ class ImplicitGenerator(StrictModule):
     event_shape: tuple[int, ...] = eqx.field(static=True)
     generator_id: str = eqx.field(static=True)
 
-    def __init__(self, generator, event_shape, /, *, generator_id: str) -> None:
+    def __init__(
+        self,
+        generator: Callable[[Key[Array, ""], tuple[int, ...]], ArrayLike],
+        event_shape: Sequence[int],
+        /,
+        *,
+        generator_id: str,
+    ) -> None:
         if not callable(generator) or not generator_id:
             raise TypeError("generator must be callable with a non-empty ID.")
         shape = tuple(event_shape)
@@ -33,7 +41,7 @@ class ImplicitGenerator(StrictModule):
         self.event_shape = shape
         self.generator_id = generator_id
 
-    def sample(self, key: Key[Array, ""], sample_shape, /) -> Array:
+    def sample(self, key: Key[Array, ""], sample_shape: Sequence[int], /) -> Array:
         samples = tuple(sample_shape)
         value = jnp.asarray(self.generator(key, samples))
         expected = samples + self.event_shape
@@ -94,7 +102,7 @@ def wasserstein_adversarial_evaluation(
         interpolated = alpha * real_array + (1.0 - alpha) * fake_array
         penalty_keys = jr.split(jr.fold_in(key, 3), real_array.shape[0])
 
-        def gradient_norm(value, local):
+        def gradient_norm(value: Array, local: Key[Array, ""]) -> Array:
             gradient = jax.grad(
                 lambda current: jnp.asarray(critic(current, key=local)).reshape(())
             )(value)

@@ -197,7 +197,7 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
     ) -> Array:
         speed, tangent = jnp.asarray(wavespeed_m_s), jnp.asarray(direction)
 
-        def whitened(value):
+        def whitened(value: Array) -> Array:
             residuals = self.residuals(value)
             outputs = []
             whitening_types = (
@@ -222,7 +222,7 @@ class AcousticWaveformInversionPlan(StrictModule, NonTrainableState):
         speed = jnp.asarray(background_wavespeed_m_s)
         slowness_squared = 1.0 / speed**2
 
-        def objective(slowness):
+        def objective(slowness: Array) -> Array:
             return self.objective(1.0 / jnp.sqrt(slowness))
 
         value, gradient = jax.value_and_grad(objective)(slowness_squared)

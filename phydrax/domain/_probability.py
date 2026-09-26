@@ -10,7 +10,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Bool, Key
+from jaxtyping import Array, ArrayLike, Bool, Key
 
 from .._sampling import materialize_design
 from .._strict import StrictModule
@@ -206,11 +206,11 @@ def construct_reference_transport(distribution: Any, /) -> ReferenceTransport:
             "Quantile transport construction requires the declared CDF hypothesis."
         )
 
-    def forward(reference):
+    def forward(reference: ArrayLike) -> Array:
         probability = open_unit_interval(0.5 * (jnp.asarray(reference) + 1.0))
         return distribution.icdf(probability)
 
-    def inverse(value):
+    def inverse(value: Any) -> Array:
         return 2.0 * jnp.asarray(distribution.cdf(value)) - 1.0
 
     return _validate_transport(

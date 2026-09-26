@@ -230,7 +230,9 @@ class LocallyLinearEmbeddingModel(AbstractFittedModel):
         )
         active = self.active.reshape((cases, self.active.shape[-1]))
 
-        def transform_one(query, train_, embedding_, active_):
+        def transform_one(
+            query: Array, train_: Array, embedding_: Array, active_: Array
+        ) -> Array:
             distances = _euclidean_distances(query, train_)
             ranked = jnp.where(active_[None, :], distances, jnp.inf)
             _negative, indices = jax.lax.top_k(-ranked, self.n_neighbors)

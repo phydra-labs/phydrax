@@ -216,7 +216,7 @@ class EarthquakeCyclePlan(StrictModule, NonTrainableState):
             "Earthquake-cycle timestep must be positive.",
         )
 
-        def residual(velocity, args):
+        def residual(velocity: Array, args: tuple[EarthquakeCycleState, Array]) -> Array:
             old, step = args
             slip_increment = step * velocity
             stress = (

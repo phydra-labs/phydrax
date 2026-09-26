@@ -4,15 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import product
 from math import comb
-from typing import Any, cast
+from typing import Any, cast, TYPE_CHECKING, TypeAlias
 
 import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from phydrax._strict import StrictModule
 
@@ -43,6 +44,18 @@ class DynamicDiscontinuityState(StrictModule):
 class DynamicControllerState(StrictModule):
     inner_state: Any
     discontinuities: DynamicDiscontinuityState
+
+
+_AdaptOutput: TypeAlias = tuple[
+    Array, Array, Array, Array, DynamicControllerState, dfx.RESULTS
+]
+
+if TYPE_CHECKING:
+    from diffrax._custom_types import Args, IntScalarLike, RealScalarLike, VF, Y
+
+    _StepSizeFunc: TypeAlias = Callable[
+        [PyTree[dfx.AbstractTerm], RealScalarLike, Y, Args], VF
+    ]
 
 
 def constant_discontinuity_schedule(
@@ -139,7 +152,9 @@ class StateDependentDiscontinuityTracker(StrictModule):
         ordered_generations = initial_generations[order].astype(jnp.int32)
         if initial_count:
 
-            def reduce_generation(carry, item):
+            def reduce_generation(
+                carry: tuple[Array, Array], item: tuple[Array, Array]
+            ) -> tuple[tuple[Array, Array], Array]:
                 previous_time, minimum_generation = carry
                 item_time, item_generation = item
                 same_root = item_time == previous_time
@@ -397,7 +412,9 @@ class StateDependentDiscontinuityTracker(StrictModule):
         for delay in tuple(self.constant_delays):
             child_time = time + delay
 
-            def add_child(current):
+            def add_child(
+                current: DynamicDiscontinuityState,
+            ) -> DynamicDiscontinuityState:
                 return self._insert_source(
                     current,
                     child_time,
@@ -651,12 +668,12 @@ def _dynamic_adapt(
     args: Any,
     base_output: tuple[Any, ...],
     old_state: DynamicControllerState,
-) -> tuple[Any, ...]:
+) -> _AdaptOutput:
     base_keep, base_t0, base_t1, base_jump, new_inner, base_result = base_output
     discontinuities = old_state.discontinuities
 
-    def bracket_branch(_):
-        def rejected_by_error(_):
+    def bracket_branch(_: object) -> _AdaptOutput:
+        def rejected_by_error(_: object) -> _AdaptOutput:
             next_time = tracker.cap_next(discontinuities, t0, base_t1)
             return (
                 base_keep,
@@ -667,7 +684,7 @@ def _dynamic_adapt(
                 base_result,
             )
 
-        def refine(_):
+        def refine(_: object) -> _AdaptOutput:
             refined, next_time, accept_root, below_root = tracker.refine_bracket(
                 discontinuities,
                 t1,
@@ -675,7 +692,7 @@ def _dynamic_adapt(
                 args,
             )
 
-            def accept(_):
+            def accept(_: object) -> _AdaptOutput:
                 accepted = tracker.accept_root(refined, t1, y1, args)
                 next_end = tracker.cap_next(accepted, base_t0, base_t1)
                 return (
@@ -687,7 +704,7 @@ def _dynamic_adapt(
                     base_result,
                 )
 
-            def accept_before_root(_):
+            def accept_before_root(_: object) -> _AdaptOutput:
                 next_end = tracker.cap_next(refined, base_t0, next_time)
                 return (
                     jnp.asarray(True),
@@ -698,7 +715,7 @@ def _dynamic_adapt(
                     base_result,
                 )
 
-            def reject(_):
+            def reject(_: object) -> _AdaptOutput:
                 return (
                     jnp.asarray(False),
                     t0,
@@ -722,7 +739,7 @@ def _dynamic_adapt(
 
         return jax.lax.cond(base_keep, refine, rejected_by_error, operand=None)
 
-    def ordinary_branch(_):
+    def ordinary_branch(_: object) -> _AdaptOutput:
         bracketed, next_time, has_crossing = tracker.start_bracket(
             discontinuities,
             t0,
@@ -732,7 +749,7 @@ def _dynamic_adapt(
             args,
         )
 
-        def start(_):
+        def start(_: object) -> _AdaptOutput:
             return (
                 jnp.asarray(False),
                 t0,
@@ -742,7 +759,7 @@ def _dynamic_adapt(
                 dfx.RESULTS.successful,
             )
 
-        def no_root(_):
+        def no_root(_: object) -> _AdaptOutput:
             landed, landed_any = jax.lax.cond(
                 base_keep,
                 lambda current: tracker.mark_pending_landed(current, t1),
@@ -786,18 +803,18 @@ class StateDependentAdaptiveController(dfx.AbstractAdaptiveStepSizeController):
         self.tracker = tracker
 
     @property
-    def rtol(self):
+    def rtol(self) -> RealScalarLike:
         return self.controller.rtol
 
     @property
-    def atol(self):
+    def atol(self) -> RealScalarLike:
         return self.controller.atol
 
     @property
-    def norm(self):
+    def norm(self) -> Callable[[PyTree], RealScalarLike]:
         return self.controller.norm
 
-    def wrap(self, direction):
+    def wrap(self, direction: IntScalarLike) -> StateDependentAdaptiveController:
         return StateDependentAdaptiveController(
             cast(
                 dfx.AbstractAdaptiveStepSizeController,
@@ -806,7 +823,17 @@ class StateDependentAdaptiveController(dfx.AbstractAdaptiveStepSizeController):
             self.tracker,
         )
 
-    def init(self, terms, t0, t1, y0, dt0, args, func, error_order):
+    def init(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        dt0: RealScalarLike | None,
+        args: Args,
+        func: _StepSizeFunc,
+        error_order: RealScalarLike | None,
+    ) -> tuple[RealScalarLike, DynamicControllerState]:
         next_time, inner_state = self.controller.init(
             terms,
             t0,
@@ -817,21 +844,23 @@ class StateDependentAdaptiveController(dfx.AbstractAdaptiveStepSizeController):
             func,
             error_order,
         )
-        discontinuities = self.tracker.initial_state(t0, y0, args)
-        next_time = self.tracker.cap_next(discontinuities, t0, next_time)
+        # diffeqsolve always hands step-size controllers array-valued times.
+        start = cast(Array, t0)
+        discontinuities = self.tracker.initial_state(start, y0, args)
+        next_time = self.tracker.cap_next(discontinuities, start, next_time)
         return next_time, DynamicControllerState(inner_state, discontinuities)
 
     def adapt_step_size(
         self,
-        t0,
-        t1,
-        y0,
-        y1_candidate,
-        args,
-        y_error,
-        error_order,
-        controller_state,
-    ):
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        y1_candidate: Y,
+        args: Args,
+        y_error: Y | None,
+        error_order: RealScalarLike,
+        controller_state: DynamicControllerState,
+    ) -> _AdaptOutput:
         base_output = self.controller.adapt_step_size(
             t0,
             t1,
@@ -842,10 +871,11 @@ class StateDependentAdaptiveController(dfx.AbstractAdaptiveStepSizeController):
             error_order,
             controller_state.inner_state,
         )
+        # diffeqsolve always hands step-size controllers array-valued times.
         return _dynamic_adapt(
             self.tracker,
-            t0,
-            t1,
+            cast(Array, t0),
+            cast(Array, t1),
             y0,
             y1_candidate,
             args,
@@ -868,12 +898,22 @@ class StateDependentFixedController(dfx.AbstractStepSizeController):
         self.controller = controller
         self.tracker = tracker
 
-    def wrap(self, direction):
+    def wrap(self, direction: IntScalarLike) -> StateDependentFixedController:
         return StateDependentFixedController(
             self.controller.wrap(direction), self.tracker
         )
 
-    def init(self, terms, t0, t1, y0, dt0, args, func, error_order):
+    def init(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        dt0: RealScalarLike | None,
+        args: Args,
+        func: _StepSizeFunc,
+        error_order: RealScalarLike | None,
+    ) -> tuple[RealScalarLike, DynamicControllerState]:
         next_time, inner_state = self.controller.init(
             terms,
             t0,
@@ -884,21 +924,23 @@ class StateDependentFixedController(dfx.AbstractStepSizeController):
             func,
             error_order,
         )
-        discontinuities = self.tracker.initial_state(t0, y0, args)
-        next_time = self.tracker.cap_next(discontinuities, t0, next_time)
+        # diffeqsolve always hands step-size controllers array-valued times.
+        start = cast(Array, t0)
+        discontinuities = self.tracker.initial_state(start, y0, args)
+        next_time = self.tracker.cap_next(discontinuities, start, next_time)
         return next_time, DynamicControllerState(inner_state, discontinuities)
 
     def adapt_step_size(
         self,
-        t0,
-        t1,
-        y0,
-        y1_candidate,
-        args,
-        y_error,
-        error_order,
-        controller_state,
-    ):
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        y1_candidate: Y,
+        args: Args,
+        y_error: Y | None,
+        error_order: RealScalarLike,
+        controller_state: DynamicControllerState,
+    ) -> _AdaptOutput:
         base_output = self.controller.adapt_step_size(
             t0,
             t1,
@@ -909,10 +951,11 @@ class StateDependentFixedController(dfx.AbstractStepSizeController):
             error_order,
             controller_state.inner_state,
         )
+        # diffeqsolve always hands step-size controllers array-valued times.
         return _dynamic_adapt(
             self.tracker,
-            t0,
-            t1,
+            cast(Array, t0),
+            cast(Array, t1),
             y0,
             y1_candidate,
             args,

@@ -123,7 +123,7 @@ class SuperquadricDEMPlan(StrictModule, NonTrainableState):
         *,
         execution: ParticleExecutionPolicy | None = None,
         precision: ParticlePrecisionPolicy | None = None,
-    ):
+    ) -> PreparedSuperquadricDEMDynamics:
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         if not isinstance(neighborhood, AbstractParticleNeighborhoodPlan):
@@ -210,17 +210,17 @@ class PreparedSuperquadricDEMDynamics(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        bodies,
-        shapes,
-        neighborhood,
-        pair_key_space,
-        contact_model,
-        geometry_plan,
-        walls,
-        wall_geometry_plan,
-        execution,
-        precision,
-        plan_id,
+        bodies: PreparedRigidBodySet,
+        shapes: PreparedSuperquadricSet,
+        neighborhood: AbstractPreparedParticleNeighborhood,
+        pair_key_space: ParticlePairKeySpace,
+        contact_model: PreparedDEMContactModel,
+        geometry_plan: SuperquadricContactPlan,
+        walls: Sequence[PreparedTriangleWall],
+        wall_geometry_plan: SuperquadricTriangleContactPlan,
+        execution: ParticleExecutionPolicy,
+        precision: ParticlePrecisionPolicy,
+        plan_id: str,
         /,
     ) -> None:
         if bodies.particles.prepared_id != shapes.particles.prepared_id:
@@ -487,7 +487,9 @@ class PreparedSuperquadricDEMDynamics(StrictModule, NonTrainableState):
     ) -> SuperquadricDEMStepResult:
         first = self.evaluate(state, step_size, step_index=step_index)
 
-        def load_function(next_time, kinematics, args):
+        def load_function(
+            next_time: Array, kinematics: RigidBodyKinematics, args: object
+        ) -> RigidBodyLoad:
             del next_time, args
             staged = SuperquadricDEMState(
                 kinematics, state.contact_history, state.boundary_histories

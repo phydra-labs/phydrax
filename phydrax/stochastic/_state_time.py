@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -21,6 +21,13 @@ from ._trajectory import StochasticTrajectory
 
 
 TrajectoryStateTimeMode: TypeAlias = Literal["global", "per_time"]
+
+
+class _StateTimeSampleOptions(TypedDict, total=False):
+    mode: TrajectoryStateTimeMode
+    log_weights: ArrayLike | cx.AxisArray | None
+    state_label: str
+    time_label: str
 
 
 def _independence_indices(
@@ -86,7 +93,7 @@ class TrajectoryStateTimeSamples(StrictModule):
         return self.realization_axes
 
     @property
-    def samples(self):
+    def samples(self) -> frozendict[str, cx.AxisArray]:
         return frozendict(
             {
                 self.state_label: self.states,
@@ -196,7 +203,7 @@ def trajectory_state_time_samples(
 def trajectory_state_time_measure(
     trajectory: StochasticTrajectory,
     /,
-    **kwargs,
+    **kwargs: Unpack[_StateTimeSampleOptions],
 ) -> WeightedSampleTarget:
     """Return the generic weighted-target view of state-time trajectory nodes."""
     return trajectory_state_time_samples(trajectory, **kwargs).target()

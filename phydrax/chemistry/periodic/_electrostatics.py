@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal
+from typing import cast, Literal
 
 import equinox as eqx
 import jax
@@ -324,7 +324,9 @@ class PreparedPeriodicEwald(StrictModule, NonTrainableState):
             }
         )
 
-    def _energy(self, positions: Array, charges: Array, cell: Array, /):
+    def _energy(
+        self, positions: Array, charges: Array, cell: Array, /
+    ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
         determinant = jnp.dot(cell[0], jnp.cross(cell[1], cell[2]))
         volume = jnp.abs(determinant)
         inverse = (
@@ -390,7 +392,8 @@ class PreparedPeriodicEwald(StrictModule, NonTrainableState):
             else jnp.asarray(0.0, dtype=positions.dtype)
         )
         components = (real_energy, reciprocal_energy, self_energy, background)
-        return sum(components), components
+        # A non-empty tuple of arrays never yields sum's integer start value.
+        return cast(Array, sum(components)), components
 
     def evaluate(
         self,
@@ -450,7 +453,7 @@ class PreparedPeriodicEwald(StrictModule, NonTrainableState):
         determinant = jnp.dot(cell[0], jnp.cross(cell[1], cell[2]))
         volume = jnp.abs(determinant)
 
-        def strained_energy(strain):
+        def strained_energy(strain: Array) -> Array:
             deformation = jnp.eye(3, dtype=cell.dtype) + strain
             return self._energy(
                 coordinate @ deformation.T,

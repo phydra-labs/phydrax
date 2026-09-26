@@ -139,7 +139,7 @@ class WilsonGaugeAction(AbstractIncrementalLatticeAction):
             (path_indices.shape[0],) + self.link_space.point_shape,
         )
 
-        def step(accumulator, position):
+        def step(accumulator: Array, position: Array) -> tuple[Array, None]:
             edges = paths.edge_indices[path_indices, position]
             factors = links[edges]
             inverses = self.link_space.group.inverse(factors)

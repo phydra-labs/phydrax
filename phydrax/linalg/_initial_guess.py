@@ -387,7 +387,7 @@ class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
         effective = self.effective_dimension
         full = effective >= self.capacity
 
-        def append(values, entry):
+        def append(values: Array, entry: Array) -> Array:
             return jax.lax.cond(
                 full,
                 lambda current: jnp.concatenate(
@@ -397,7 +397,7 @@ class HistoryInitialGuess(AbstractInitialGuessProvider, NonTrainableState):
                 values,
             )
 
-        def record(history):
+        def record(history: HistoryInitialGuess) -> HistoryInitialGuess:
             return eqx.tree_at(
                 lambda value: (
                     value.solution_basis,

@@ -1,8 +1,10 @@
 from itertools import product
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.units import COULOMB, KELVIN, KILOGRAM, SECOND
@@ -161,3 +163,56 @@ def test_periodic_learned_graph_execution_is_explicit_and_finite():
     result = program.evaluate(positions, relation, species=system.plan.atomic_numbers)
     assert bool(result.successful)
     assert bool(jnp.isfinite(result.energy))
+
+
+class _CutoffFreeGraphTerm(phx.atomistic.AbstractAtomisticEnergyTerm):
+    """Consumer graph term that declares a directed graph but no cutoff."""
+
+    learned: phx.atomistic.LearnedGraphPotentialTerm
+    name: str = eqx.field(static=True)
+    force_group: int = eqx.field(static=True)
+    term_id: str = eqx.field(static=True)
+    capabilities: phx.atomistic.AtomisticPotentialCapabilities
+    requirements: phx.atomistic.AtomisticPotentialRequirements
+
+    def __init__(self, learned):
+        self.learned = learned
+        self.name = learned.name
+        self.force_group = learned.force_group
+        self.term_id = f"cutoff-free-{learned.term_id}"
+        self.capabilities = learned.capabilities
+        self.requirements = phx.atomistic.AtomisticPotentialRequirements(
+            pair_geometry=True, directed_graph=True
+        )
+
+    def prepare(self, system, /):
+        return self.learned.prepare(system)
+
+
+def test_directed_graph_terms_without_cutoff_are_rejected_at_preparation():
+    units = phx.atomistic.AtomisticUnitSystem.electronvolt_angstrom_dalton_femtosecond()
+    system = phx.atomistic.AtomisticSystemPlan(
+        [0, 1],
+        [1, 1],
+        [1.0, 1.0],
+        units,
+        atom_type_ids=[1, 1],
+    ).prepare()
+    model = phx.nn.atomistic.PaiNNPotential(
+        units.scale,
+        cutoff=2.0,
+        feature_count=4,
+        interaction_count=1,
+        radial_basis_count=3,
+        key=jr.key(77),
+    )
+    program = phx.atomistic.AtomisticPotentialProgram(
+        [_CutoffFreeGraphTerm(phx.atomistic.LearnedGraphPotentialTerm(model))]
+    )
+    with pytest.raises(ValueError, match="require a cutoff"):
+        program.prepare(
+            system,
+            graph_execution=phx.atomistic.AtomisticGraphExecutionPlan(
+                1, backend="particle"
+            ),
+        )

@@ -20,6 +20,7 @@ from .._spaces import DiscreteFieldSpace
 
 
 if TYPE_CHECKING:
+    from ._dyadic import DyadicFiniteVolumeDiscretization
     from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 _INT32_INFO = np.iinfo(np.int32)
@@ -162,8 +163,8 @@ class FiniteVolumeStageFaceLayout(StrictModule, NonTrainableState):
         active_mask: ArrayLike,
         boundary_policy_ids: ArrayLike | None = None,
         boundary_policy_count: int,
-        spatial_shape: tuple[int, int],
-        quadrature_shape: tuple[int, int],
+        spatial_shape: tuple[int, ...],
+        quadrature_shape: tuple[int, ...],
         block_id: str,
         block_kind: str = "physical",
     ) -> None:
@@ -922,7 +923,8 @@ class FiniteVolumeStageMetrics(StrictModule, NonTrainableState):
 
 
 def lower_static_unstructured_stage_metrics(
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
     /,
     *,
     time: ArrayLike = 0.0,

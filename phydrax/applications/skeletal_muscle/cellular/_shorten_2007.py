@@ -2067,7 +2067,9 @@ class PreparedShortenIntegrator(StrictModule):
             raise TypeError("initial must be a ShortenCellState or None.")
         indices = jnp.arange(self.plan.time_grid_ms.shape[0] - 1, dtype=jnp.int32)
 
-        def advance(current: ShortenCellState, index: Array):
+        def advance(
+            current: ShortenCellState, index: Array
+        ) -> tuple[ShortenCellState, tuple[Array, Array, Array, Array]]:
             candidate = self.candidate(current, index)
             committed = candidate.commit()
             return committed, (

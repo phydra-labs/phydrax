@@ -282,10 +282,14 @@ def _ratio_estimate(
             jnp.finfo(jnp.real(denominator_data).dtype).tiny,
         )
     )
+    numerator_error = numerator.error_estimate
+    denominator_error = denominator.error_estimate
+    # Adaptive triangle estimates always carry their paired-rule error estimate.
+    assert numerator_error is not None and denominator_error is not None
     error = precision.decision(
-        numerator.error_estimate / denominator_norm
+        numerator_error / denominator_norm
         + precision.decision(_error_norm(numerator.value.data))
-        * denominator.error_estimate
+        * denominator_error
         / denominator_norm**2
     )
     ratio_converged = _meets_plan_tolerance(value_data, error, plan, precision)

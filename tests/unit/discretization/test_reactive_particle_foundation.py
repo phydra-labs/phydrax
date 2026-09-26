@@ -5,6 +5,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 
@@ -287,6 +288,34 @@ def test_radial_mesh_morphology_and_fixed_pool_insertion_preserve_inventory():
     assert insertion.owner_slots[0] == 1
     assert insertion.accepted_dem_state.body_properties.active[1]
     assert insertion.accepted_internal_state.internal_energy[1, 0] < 0.0
+
+
+def test_density_porosity_morphology_rejects_unstructured_internal_meshes():
+    mesh = phx.discretization.UnstructuredParticleInternalMeshPlan(
+        jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+        tetrahedra=jnp.asarray([[0, 1, 2, 3]]),
+    )
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=3
+    ).prepare()
+    batch = phx.discretization.ParticleInternalBatchPlan(
+        jnp.asarray([0]), mesh, 1
+    ).prepare(particles)
+    state = phx.discretization.initialize_particle_internal_batch(
+        batch,
+        jnp.ones((1, 1)),
+        jnp.ones((1, 1, 1)),
+        jnp.asarray([[0.2]]),
+        jnp.ones((1, 1)),
+        jnp.asarray([1.0]),
+    )
+    conversion = phx.discretization.initialize_particle_conversion_state((state,))
+    morphology = phx.discretization.DensityPorosityMorphologyPlan(
+        (jnp.asarray([1.0]),), neighborhood_skin=0.1
+    )
+
+    with pytest.raises(TypeError, match="radial shell meshes"):
+        morphology.evaluate((batch,), conversion, (jnp.asarray([1.0]),))
 
 
 def test_wall_observables_and_wear_close_force_and_volume_channels():

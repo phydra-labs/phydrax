@@ -4,14 +4,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any
+from typing import Any, overload, Self
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 
@@ -165,11 +166,11 @@ class AxisArray:
         self.data = value
         self.layout = layout
 
-    def tree_flatten(self):
+    def tree_flatten(self) -> tuple[tuple[Array], AxisLayout]:
         return (self.data,), self.layout
 
     @classmethod
-    def tree_unflatten(cls, layout: AxisLayout, children):
+    def tree_unflatten(cls, layout: AxisLayout, children: tuple[Any]) -> Self:
         (data,) = children
         if not eqx.is_array(data):
             obj = object.__new__(cls)
@@ -207,7 +208,7 @@ class AxisArray:
         return self.data.ndim
 
     @property
-    def dtype(self):
+    def dtype(self) -> np.dtype:
         return self.data.dtype
 
     @property
@@ -285,7 +286,9 @@ class AxisArray:
     def _coerce(value: Any) -> AxisArray:
         return value if isinstance(value, AxisArray) else AxisArray(value)
 
-    def _binary(self, other: Any, operation, /) -> AxisArray:
+    def _binary(
+        self, other: Any, operation: Callable[[Array, Array], Array], /
+    ) -> AxisArray:
         right = self._coerce(other)
         references = tuple(
             dict.fromkeys((*self.layout.named_axes, *right.layout.named_axes))
@@ -398,58 +401,60 @@ class AxisArray:
             ),
         )
 
-    def __add__(self, other):
+    def __add__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.add)
 
-    def __radd__(self, other):
+    def __radd__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._coerce(other)._binary(self, jnp.add)
 
-    def __sub__(self, other):
+    def __sub__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.subtract)
 
-    def __rsub__(self, other):
+    def __rsub__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._coerce(other)._binary(self, jnp.subtract)
 
-    def __mul__(self, other):
+    def __mul__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.multiply)
 
-    def __rmul__(self, other):
+    def __rmul__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._coerce(other)._binary(self, jnp.multiply)
 
-    def __truediv__(self, other):
+    def __truediv__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.divide)
 
-    def __rtruediv__(self, other):
+    def __rtruediv__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._coerce(other)._binary(self, jnp.divide)
 
-    def __pow__(self, other):
+    def __pow__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.power)
 
-    def __neg__(self):
+    def __neg__(self) -> AxisArray:
         return AxisArray(-self.data, axes=self.layout)
 
-    def __abs__(self):
+    def __abs__(self) -> AxisArray:
         return AxisArray(jnp.abs(self.data), axes=self.layout)
 
-    def __matmul__(self, other):
+    def __matmul__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.matmul)
 
-    def __eq__(self, other):
+    # Elementwise array comparison intentionally returns an AxisArray, as jax.Array does.
+    def __eq__(self, other: object) -> AxisArray:  # ty: ignore[invalid-method-override]
         return self._binary(other, jnp.equal)
 
-    def __ne__(self, other):
+    # Elementwise array comparison intentionally returns an AxisArray, as jax.Array does.
+    def __ne__(self, other: object) -> AxisArray:  # ty: ignore[invalid-method-override]
         return self._binary(other, jnp.not_equal)
 
-    def __lt__(self, other):
+    def __lt__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.less)
 
-    def __le__(self, other):
+    def __le__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.less_equal)
 
-    def __gt__(self, other):
+    def __gt__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.greater)
 
-    def __ge__(self, other):
+    def __ge__(self, other: AxisArray | ArrayLike) -> AxisArray:
         return self._binary(other, jnp.greater_equal)
 
 
@@ -555,7 +560,21 @@ def reduce_axes(
     return AxisReductionPlan(value.layout, tuple(axes)).apply(value)
 
 
-def cmap(function=None, /, *, out_axes: str = "leading"):
+@overload
+def cmap(
+    function: Callable[..., Any], /, *, out_axes: str = "leading"
+) -> Callable[..., Any]: ...
+
+
+@overload
+def cmap(
+    function: None = None, /, *, out_axes: str = "leading"
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]: ...
+
+
+def cmap(
+    function: Callable[..., Any] | None = None, /, *, out_axes: str = "leading"
+) -> Callable[..., Any] | Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Map one positional kernel over the union of bound array axes.
 
     Every array output is an `AxisArray` whose leading axes are the mapped bound
@@ -565,9 +584,9 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
     if out_axes != "leading":
         raise ValueError("Native cmap supports out_axes='leading'.")
 
-    def decorate(fn):
+    def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(fn)
-        def wrapped(*args, **kwargs):
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
             leaves = jax.tree.leaves(
                 (args, kwargs),
                 is_leaf=lambda value: isinstance(value, AxisArray),
@@ -588,7 +607,7 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
                         )
                     sizes[reference] = reference.axis.size
 
-            def unwrap(value):
+            def unwrap(value: object) -> object:
                 if not isinstance(value, AxisArray):
                     return value
                 return value._aligned_refs(references, sizes)
@@ -604,7 +623,7 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
                 is_leaf=lambda value: isinstance(value, AxisArray),
             )
 
-            def call_packed(arguments):
+            def call_packed(arguments: tuple[tuple[Any, ...], dict[str, Any]]) -> Any:
                 positional, keyword = arguments
                 return fn(*positional, **keyword)
 
@@ -613,7 +632,7 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
                 mapped = jax.vmap(mapped, in_axes=(packed_axes,))
             result = mapped(packed)
 
-            def rewrap(value):
+            def rewrap(value: object) -> object:
 
                 if not isinstance(value, (jax.Array, jnp.ndarray)):
                     return value

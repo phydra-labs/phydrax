@@ -105,7 +105,7 @@ class VortexCapacityGrowthPlan(StrictModule, NonTrainableState):
         )
         padding = request.selected_capacity - old_plan.capacity
 
-        def pad(value, fill):
+        def pad(value: Array, fill: float | bool) -> Array:
             return jnp.pad(
                 value,
                 ((0, padding),) + ((0, 0),) * (value.ndim - 1),

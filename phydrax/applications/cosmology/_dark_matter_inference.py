@@ -21,6 +21,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -70,7 +71,7 @@ def _parameter_vector(
     name: str,
     /,
     *,
-    dtype=None,
+    dtype: DTypeLike | None = None,
 ) -> Array:
     array = jnp.asarray(value, dtype=dtype).reshape((-1,))
     if array.shape != (size,):

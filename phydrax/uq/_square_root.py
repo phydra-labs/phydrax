@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._strict import StrictModule
+from ..stochastic._state_space import StateSpaceProblem
 from ._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 from ._kalman import (
     _linear_problem,
@@ -143,7 +144,7 @@ class _SquareRootFilterStep(StrictModule):
 
 
 def _square_root_kalman_filter(
-    problem,
+    problem: StateSpaceProblem,
     /,
     *,
     covariance_regularization: float,
@@ -172,7 +173,9 @@ def _square_root_kalman_filter(
     sequence = problem.observations
     case_rank = len(case_shape)
 
-    def step(state: _SquareRootFilterState, _):
+    def step(
+        state: _SquareRootFilterState, _: None
+    ) -> tuple[_SquareRootFilterState, _SquareRootFilterStep]:
         index = state.step_index
         active = sequence.step_valid[..., index].reshape((case_count,))
         target_time = sequence.times[..., index].reshape((case_count,))

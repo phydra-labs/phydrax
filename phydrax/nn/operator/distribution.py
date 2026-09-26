@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from math import prod
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -26,6 +27,10 @@ from .data import (
     OperatorPrediction,
 )
 from .engine import AbstractOperatorModel
+
+
+if TYPE_CHECKING:
+    from ...uq._operator import OperatorPredictiveField
 
 
 class AbstractOperatorDistribution(StrictModule):
@@ -151,7 +156,7 @@ class AbstractProbabilisticOperatorModel(AbstractOperatorModel):
         num_samples: int,
         key: Array,
         sample_dim: str | None = None,
-    ):
+    ) -> OperatorPredictiveField:
         """Return coordinate-aware samples labeled by their uncertainty source."""
         from ...uq._operator import operator_predictive_from_samples
         from ...uq._predictive import SampleAxis

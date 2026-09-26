@@ -15,6 +15,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -478,7 +479,9 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
                     f"No canonical {kind.value} term is available for its control."
                 )
 
-        def selected(membership: np.ndarray, mode: AlchemicalRegionInteractionMode):
+        def selected(
+            membership: np.ndarray, mode: AlchemicalRegionInteractionMode
+        ) -> np.ndarray:
             count = np.count_nonzero(membership, axis=1)
             if mode is AlchemicalRegionInteractionMode.CROSS:
                 return (count > 0) & (count < membership.shape[1])
@@ -667,7 +670,7 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
         left: Array,
         right: Array,
         controls: Array,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> AtomisticInteractionScaleState:
         value = jnp.asarray(controls, dtype=dtype)
@@ -836,7 +839,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         self,
         state_index: ArrayLike | None,
         control_values: ArrayLike | None,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> tuple[Array, Array, Array]:
         if state_index is not None and control_values is not None:
@@ -859,7 +862,7 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
         self,
         neighborhood: ParticleNeighborhoodState,
         controls: Array,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> AtomisticInteractionScaleState:
         pairs = neighborhood.pair_relation
@@ -972,11 +975,15 @@ class PreparedControlledHamiltonian(AbstractPreparedAtomisticHamiltonian):
                 - selected_cell.fractional_with_vectors(position, vectors)
             )
 
-        def closure(value: Array, control: Array):
+        def closure(
+            value: Array, control: Array
+        ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
             kwargs = dict(context_kwargs)
             if unwrapped_offset is not None:
                 kwargs["unwrapped_positions"] = value + unwrapped_offset
             if fractional_offset is not None:
+                # fractional_offset is only bound together with a cell and cell vectors.
+                assert selected_cell is not None and vectors is not None
                 kwargs["fractional_positions"] = (
                     selected_cell.fractional_with_vectors(value, vectors)
                     + fractional_offset

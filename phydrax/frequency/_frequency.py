@@ -31,7 +31,7 @@ class FrequencyAxis(StrictModule, NonTrainableState):
         )
 
     @property
-    def angular_frequency_rad_s(self):
+    def angular_frequency_rad_s(self) -> Array:
         return 2 * jnp.pi * self.frequency_hz
 
 

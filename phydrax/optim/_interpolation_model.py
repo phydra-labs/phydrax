@@ -19,6 +19,7 @@ from ..linalg import (
     DenseSVD,
     LeastSquaresProblem,
     LinearSolvePolicy,
+    LinearSolveResult,
     prepare as prepare_linear,
     solve as solve_linear,
     solve_many as solve_linear_many,
@@ -141,7 +142,7 @@ def _fit_design(
     precision: NonlinearPrecisionPolicy,
     linear: LinearSolvePolicy | None,
     /,
-):
+) -> LinearSolveResult:
     linear_ = (
         LinearSolvePolicy(DenseSVD(damping=regularization**0.5))
         if linear is None

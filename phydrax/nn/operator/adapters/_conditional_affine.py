@@ -21,6 +21,9 @@ from phydrax.dynamics import (
 )
 from phydrax.nn._keys import EvalKey
 from phydrax.nn.operator.architectures import ChemicalConditionalAffineOperator
+from phydrax.nn.operator.architectures.dynamics._conditional_affine import (
+    ChemicalConditionalAffineResult,
+)
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 
 
@@ -189,7 +192,7 @@ class TrainedChemicalConditionalAffineTransition(StrictModule):
         /,
         *,
         key: EvalKey = DOC_KEY0,
-    ):
+    ) -> ChemicalConditionalAffineResult:
         state_ = jnp.asarray(state)
         duration_ = jnp.asarray(duration, dtype=state_.dtype)
         inputs_ = jnp.asarray(inputs, dtype=state_.dtype)

@@ -81,7 +81,6 @@ def read_openpiv_text(
             names=True,
             delimiter=delimiter,
             dtype=None,
-            encoding=None,
         )
     )
     if table.size == 0 or table.dtype.names != columns:
@@ -393,11 +392,11 @@ def write_openpiv_text(
 
 
 def _physical_grid(
-    x,
-    y,
-    u,
-    v,
-    valid,
+    x: np.ndarray,
+    y: np.ndarray,
+    u: np.ndarray,
+    v: np.ndarray,
+    valid: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     x_ = np.asarray(x, dtype=np.float64).reshape((-1,))

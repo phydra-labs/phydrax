@@ -100,7 +100,7 @@ class NonlinearLocalCondensation(StrictModule, NonTrainableState):
     ) -> HPNewtonKrylovResult:
         retained = jnp.asarray(retained_values)
 
-        def interior_residual(interior):
+        def interior_residual(interior: Array) -> Array:
             full = jnp.zeros(
                 (self.retained_dofs.size + self.interior_dofs.size,), dtype=interior.dtype
             )

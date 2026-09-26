@@ -15,7 +15,7 @@ import h5py
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -89,12 +89,12 @@ class HbtHeronsSidecar(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_names: Sequence[str],
-        field_values: Sequence[Array],
-        row_mask: Array,
-        bound_particle_ids: Array,
-        bound_particle_mask: Array,
-        source_particle_ids: Array,
-        source_particle_mask: Array,
+        field_values: Sequence[ArrayLike],
+        row_mask: ArrayLike,
+        bound_particle_ids: ArrayLike,
+        bound_particle_mask: ArrayLike,
+        source_particle_ids: ArrayLike,
+        source_particle_mask: ArrayLike,
         snapshot_index: int,
         /,
     ) -> None:

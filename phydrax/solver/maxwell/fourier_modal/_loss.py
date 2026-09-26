@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array
 
 from phydrax.ein import contract
@@ -20,7 +21,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....linalg import HermitianSpectrum
 from ._continuous import PreparedContinuousFourierModalLayer
-from ._fields import fields_in_layer
+from ._fields import fields_in_layer, FourierModalFieldResult
 from ._numeric_revision import (
     fourier_modal_physical_stack_digest,
     fourier_modal_physical_state_digest,
@@ -138,7 +139,12 @@ def _hermitian_imaginary(value: Array, /) -> Array:
     return (value - _adjoint_constitutive(value)) / (2.0j)
 
 
-def _loss_density(field, layer: PreparedFourierModalLayer, omega: Array, /) -> Array:
+def _loss_density(
+    field: FourierModalFieldResult,
+    layer: PreparedFourierModalLayer,
+    omega: Array,
+    /,
+) -> Array:
     epsilon_loss = _hermitian_imaginary(layer.operator.permittivity)
     mu_loss = _hermitian_imaginary(layer.operator.permeability)
     electric = field.electric_harmonics
@@ -505,7 +511,7 @@ def assess_fourier_modal_loss_convergence(
     if len(set(revision_ids)) != len(revision_ids):
         raise ValueError("Loss convergence requires distinct numeric revisions.")
     if any(
-        isinstance(leaf, jax.core.Tracer)
+        isinstance(leaf, jax_core.Tracer)
         for value in values
         for leaf in jax.tree.leaves((value.primitive_vectors, value.accepted))
     ):

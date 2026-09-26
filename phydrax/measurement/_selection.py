@@ -15,7 +15,12 @@ from ._asset import DataStage, DerivationRecord, MeasurementAsset
 from ._collection import MeasurementCollection, MeasurementRoleAssignment
 from ._field import IndependentStandardUncertainty, QualityFlag, QuantityField
 from ._quantity import canonical_quantity_text
-from ._support import IndexSampleSupport, PointSampleSupport, RaySampleSupport
+from ._support import (
+    IndexSampleSupport,
+    PointSampleSupport,
+    RaySampleSupport,
+    SampleSupport,
+)
 from ._time import SampleTimeAxis
 
 
@@ -93,7 +98,9 @@ class MeasurementSelectionPlan:
         )
 
 
-def _slice_support(support, start: int, stop: int | None):
+def _slice_support(
+    support: SampleSupport, start: int, stop: int | None
+) -> IndexSampleSupport | PointSampleSupport | RaySampleSupport:
     selection = slice(start, stop)
     if isinstance(support, IndexSampleSupport):
         shape = (
@@ -116,6 +123,9 @@ def _slice_support(support, start: int, stop: int | None):
             support.frame_id,
         )
     if isinstance(support, PointSampleSupport):
+        active_mask = support.active_mask
+        # PointSampleSupport.__post_init__ always materializes active_mask.
+        assert active_mask is not None
         return PointSampleSupport(
             support.points[selection],
             support.sample_ids[selection],
@@ -124,9 +134,12 @@ def _slice_support(support, start: int, stop: int | None):
             if support.sample_times is None
             else support.sample_times[selection],
             time_unit=support.time_unit,
-            active_mask=support.active_mask[selection],
+            active_mask=active_mask[selection],
         )
     if isinstance(support, RaySampleSupport):
+        active_mask, near, far = support.active_mask, support.near, support.far
+        # RaySampleSupport.__post_init__ always materializes active_mask, near and far.
+        assert active_mask is not None and near is not None and far is not None
         return RaySampleSupport(
             support.origins[selection],
             support.directions[selection],
@@ -136,9 +149,9 @@ def _slice_support(support, start: int, stop: int | None):
             if support.sample_times is None
             else support.sample_times[selection],
             time_unit=support.time_unit,
-            active_mask=support.active_mask[selection],
-            near=support.near[selection],
-            far=support.far[selection],
+            active_mask=active_mask[selection],
+            near=near[selection],
+            far=far[selection],
         )
     raise TypeError("Selection supports index, point, or ray measurements.")
 

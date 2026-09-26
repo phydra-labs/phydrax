@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._array_archive import (
@@ -59,7 +60,7 @@ class AbstractAtomisticBiasPlan(StrictModule):
     bias_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
-    def initialize(self, dtype=jnp.float64) -> AbstractAtomisticBiasState:
+    def initialize(self, dtype: DTypeLike = jnp.float64) -> AbstractAtomisticBiasState:
         raise NotImplementedError
 
 
@@ -149,7 +150,7 @@ class AtomisticBiasPlan(AbstractAtomisticBiasPlan, NonTrainableState):
             }
         )
 
-    def initialize(self, dtype=jnp.float64) -> "AtomisticBiasState":
+    def initialize(self, dtype: DTypeLike = jnp.float64) -> "AtomisticBiasState":
         dimension = self.variables.output_size
         return AtomisticBiasState(
             hill_centers=jnp.zeros((self.maximum_hills, dimension), dtype=dtype),
@@ -204,7 +205,7 @@ class AbstractPreparedAtomisticBias(StrictModule):
         state: AbstractAtomisticBiasState,
         time: Array,
         /,
-    ):
+    ) -> tuple[Array, tuple[Array, ...]]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -246,7 +247,13 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
             }
         )
 
-    def energy(self, positions: Array, state: AtomisticBiasState, time: Array, /):
+    def energy(
+        self,
+        positions: Array,
+        state: AbstractAtomisticBiasState,
+        time: Array,
+        /,
+    ) -> tuple[Array, tuple[Array, Array]]:
         if not isinstance(state, AtomisticBiasState):
             raise TypeError("state must be an AtomisticBiasState.")
         if state.bias_id != self.plan.bias_id:
@@ -304,7 +311,7 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
         return energy, (values, valid & state.successful)
 
     def evaluate(
-        self, positions: Array, state: AtomisticBiasState, time: Array, /
+        self, positions: Array, state: AbstractAtomisticBiasState, time: Array, /
     ) -> AtomisticBiasEvaluation:
         (energy, auxiliary), gradient = jax.value_and_grad(
             lambda value: self.energy(value, state, time), has_aux=True
@@ -339,7 +346,7 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
 
     def update(
         self,
-        state: AtomisticBiasState,
+        state: AbstractAtomisticBiasState,
         evaluation: AtomisticBiasEvaluation,
         physical_force: Array,
         /,
@@ -506,7 +513,9 @@ class PreparedBiasedDynamics(StrictModule):
         return BiasedDynamicsState(base, bias_state, state.force, self.prepared_id)
 
     @staticmethod
-    def _augment_force(physical: AtomisticForceState, bias, /):
+    def _augment_force(
+        physical: AtomisticForceState, bias: AtomisticBiasEvaluation, /
+    ) -> AtomisticForceState:
         return AtomisticForceState(
             physical.forces + bias.forces,
             physical.potential_energy + bias.energy,

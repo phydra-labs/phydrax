@@ -223,7 +223,7 @@ class SparseGridDiagnostics(StrictModule):
 class MappedIntegrationDiagnostics(StrictModule):
     status: Array
     num_evaluations: Array
-    target_mass: Array
+    target_mass: Array | None
     num_active_points: Array
     cell: str = eqx.field(static=True)
 

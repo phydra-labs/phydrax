@@ -231,7 +231,7 @@ def _validate_likelihood(likelihood: AbstractLikelihood, /) -> None:
         )
 
 
-def _positive_real(value: Real, /, *, name: str) -> float:
+def _positive_real(value: object, /, *, name: str) -> float:
     if not isinstance(value, Real) or isinstance(value, bool):
         raise TypeError(f"{name} must be a real scalar.")
     result = float(value)
@@ -241,7 +241,7 @@ def _positive_real(value: Real, /, *, name: str) -> float:
 
 
 def _bounded_real(
-    value: Real,
+    value: object,
     /,
     *,
     name: str,

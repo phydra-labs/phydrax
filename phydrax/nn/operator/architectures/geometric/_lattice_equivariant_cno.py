@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 import equinox as eqx
@@ -16,7 +16,7 @@ from jaxtyping import Array, Key
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey
-from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
+from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.nn.operator.layers import (
     InvariantFilterBasis,
@@ -35,7 +35,7 @@ from phydrax.nn.operator.representations import (
 LatticeActivation = Literal["gelu", "silu", "tanh"]
 
 
-def _activation(name: LatticeActivation, /):
+def _activation(name: LatticeActivation, /) -> Callable[[Array], Array]:
     if name == "gelu":
         return jax.nn.gelu
     if name == "silu":
@@ -45,7 +45,7 @@ def _activation(name: LatticeActivation, /):
     raise ValueError("activation must be 'gelu', 'silu', or 'tanh'.")
 
 
-def _operator_source(batch: OperatorBatch, source_key: str | None, /):
+def _operator_source(batch: OperatorBatch, source_key: str | None, /) -> FunctionSamples:
     if source_key is not None:
         return batch.input(source_key)
     if len(batch.inputs) != 1:

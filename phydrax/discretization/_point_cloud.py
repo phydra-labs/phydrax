@@ -227,11 +227,11 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
             condition_limit=plan.condition_limit,
         )
         factors = np.asarray(fit.factors)
-        derivative_weights = []
+        derivative_weights: list[tuple[Array, Array]] = []
         residuals = []
         amplifications = []
         for axis in range(dimension):
-            axis_weights = []
+            axis_weights: list[Array] = []
             for order in (1, 2):
                 target = np.zeros((count, exponents.shape[0] + 1))
                 exponent = np.zeros(dimension, dtype=np.int32)
@@ -247,7 +247,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
                 residuals.append(np.max(np.abs(moments - target)))
                 amplifications.append(np.max(np.sum(np.abs(weights), axis=1)))
                 axis_weights.append(jnp.asarray(weights))
-            derivative_weights.append(tuple(axis_weights))
+            derivative_weights.append((axis_weights[0], axis_weights[1]))
         trust = (
             np.full(count, np.inf)
             if query_count == plan.neighbor_count

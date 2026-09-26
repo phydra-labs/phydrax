@@ -27,7 +27,11 @@ from ..discretization.dsmc._collisions import (
     DSMCVHSCollisionPlan,
     DSMCVSSCollisionPlan,
 )
-from ..discretization.dsmc._core import DSMCParticleState, DSMCStreamingPlan
+from ..discretization.dsmc._core import (
+    DSMCParticleState,
+    DSMCStreamingPlan,
+    DSMCStreamingResult,
+)
 from ..discretization.dsmc._moments import (
     DSMCMomentAccumulatorState,
     DSMCMomentEvaluation,
@@ -322,7 +326,7 @@ class DSMCProductionPlan(StrictModule, NonTrainableState):
     def _apply_surfaces(
         self,
         incoming: DSMCParticleState,
-        streamed,
+        streamed: DSMCStreamingResult,
         step: Array,
         key: PRNGKeyArray,
         /,
@@ -534,7 +538,10 @@ class DSMCProductionPlan(StrictModule, NonTrainableState):
         event_keys = jax.random.split(collision_key, self.ntc.event_capacity)
         event_majorant = state.ntc.majorant_sigma_speed[schedule.event_cells]
 
-        def event_body(current, event):
+        def event_body(
+            current: DSMCParticleState,
+            event: tuple[Array, Array, Array, Array, Array, Array],
+        ) -> tuple[DSMCParticleState, tuple[Array, ...]]:
             first, second, valid, event_cell, majorant, key = event
             collision_uniforms = jax.random.uniform(
                 jax.random.fold_in(key, 0),

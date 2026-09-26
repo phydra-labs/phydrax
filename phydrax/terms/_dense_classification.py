@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax
@@ -27,6 +27,7 @@ from phydrax.domain import (
 
 from .._classification import (
     classification_probabilities,
+    ClassificationKind,
     pointwise_classification_loss,
 )
 from .._doc import DOC_KEY0
@@ -202,6 +203,11 @@ def _class_count(schema: TargetSchema, /) -> int | None:
             raise ValueError("Multilabel schemas require named label coordinates.")
         return count
     return None
+
+
+def _classification_kind(schema: TargetSchema, /) -> ClassificationKind:
+    # Dense classification constructors admit only classification schema kinds.
+    return cast(ClassificationKind, schema.kind)
 
 
 def _objective_alpha(objective: ClassificationObjective, /) -> ArrayLike | float | None:
@@ -728,7 +734,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         pointwise = pointwise_classification_loss(
             safe_logits,
             safe_target,
-            kind=self.target_schema.kind,
+            kind=_classification_kind(self.target_schema),
             objective=self.objective.kind,
             class_count=self.class_count,
             target_mask=(
@@ -981,7 +987,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         safe_logits = jnp.where(logit_mask, logits, 0.0)
         probability = classification_probabilities(
             safe_logits,
-            kind=self.target_schema.kind,
+            kind=_classification_kind(self.target_schema),
             class_count=self.class_count,
             thresholds=self.objective.thresholds,
         )

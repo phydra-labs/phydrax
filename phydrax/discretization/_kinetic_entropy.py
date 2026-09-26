@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,6 +18,8 @@ from .._trainable import NonTrainableState
 
 
 KineticEntropyRootStrategy = Literal["exact", "asymptotic", "hybrid"]
+# (alpha, lower, upper, active, newton steps, bisection steps, iterations)
+_RootCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 KINETIC_ENTROPY_SUCCESS = 0
 KINETIC_ENTROPY_NONFINITE = 1
@@ -217,7 +219,7 @@ def solve_kinetic_entropy_root(
     bisection_count = jnp.zeros(values.shape[:-1], dtype=jnp.int32)
     iteration_count = jnp.zeros(values.shape[:-1], dtype=jnp.int32)
 
-    def body(_, state):
+    def body(_: Array, state: _RootCarry) -> _RootCarry:
         (
             current,
             lo,

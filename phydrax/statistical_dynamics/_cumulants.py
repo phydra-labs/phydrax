@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Self, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,6 +25,10 @@ from ..linalg import (
     MatrixEquationResult,
     solve_matrix_equation,
 )
+
+
+if TYPE_CHECKING:
+    from ._interactions import InteractionPartition
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -107,11 +112,11 @@ class SecondCumulantLayout(StrictModule, NonTrainableState):
     @classmethod
     def from_partition(
         cls,
-        partition,
+        partition: InteractionPartition,
         /,
         *,
         layout_id: str | None = None,
-    ) -> "SecondCumulantLayout":
+    ) -> Self:
         from ._interactions import InteractionPartition
 
         if not isinstance(partition, InteractionPartition):

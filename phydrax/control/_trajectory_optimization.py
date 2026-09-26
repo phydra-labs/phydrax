@@ -177,7 +177,7 @@ class TrajectoryOptimizationView(StrictModule):
             self.case_shape + (query.size,),
         ).reshape((sample_count,))
 
-        def interpolate(base, point, fraction):
+        def interpolate(base: Array, point: Array, fraction: Array) -> Array:
             local = jnp.asarray(self.state_geometry.inverse_retract(base, point))
             return jnp.asarray(self.state_geometry.retract(base, fraction * local))
 

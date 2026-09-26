@@ -288,7 +288,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             else geometry.cell_fluid_measure.astype(dtype)
         )
 
-        def masked_gauge(value):
+        def masked_gauge(value: Array) -> Array:
             denominator = jnp.sum(jnp.where(liquid, full_volumes, 0.0))
             mean = jnp.where(
                 denominator > 0.0,
@@ -298,7 +298,7 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             )
             return jnp.where(liquid, value - mean, 0.0)
 
-        def atmospheric(_):
+        def atmospheric(_: None) -> MACFreeSurfaceProjectionResult:
             coefficient_cell = jnp.full(
                 self.operators.discretization.cell_shape,
                 dt / self.density,
@@ -468,16 +468,23 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
                 )
                 - physical_swept
             )
-            energy_before = 0.5 * sum(
-                jnp.sum(dual * opened * value**2)
-                for dual, opened, value in zip(
-                    self.operators.face_dual_measures, aperture, values, strict=True
+            energy_before = 0.5 * jnp.asarray(
+                sum(
+                    jnp.sum(dual * opened * value**2)
+                    for dual, opened, value in zip(
+                        self.operators.face_dual_measures, aperture, values, strict=True
+                    )
                 )
             )
-            energy_after = 0.5 * sum(
-                jnp.sum(dual * opened * value**2)
-                for dual, opened, value in zip(
-                    self.operators.face_dual_measures, aperture, corrected, strict=True
+            energy_after = 0.5 * jnp.asarray(
+                sum(
+                    jnp.sum(dual * opened * value**2)
+                    for dual, opened, value in zip(
+                        self.operators.face_dual_measures,
+                        aperture,
+                        corrected,
+                        strict=True,
+                    )
                 )
             )
             return MACFreeSurfaceProjectionResult(

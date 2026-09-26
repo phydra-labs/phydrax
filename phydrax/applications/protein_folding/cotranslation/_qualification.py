@@ -188,18 +188,25 @@ class CotranslationObservationLaw:
                 "Latent and measured dwell values and uncertainties must align."
             )
         if self.observable_kind == "length-resolved-fret":
-            factor = float(conversion_factor(latent_unit, self.length_unit))
+            length_unit = self.length_unit
+            radius = self.forster_radius
+            radius_error = self.forster_radius_standard_error
+            # __init__ requires every FRET calibration field for this observable.
+            assert (
+                length_unit is not None
+                and radius is not None
+                and radius_error is not None
+            )
+            factor = float(conversion_factor(latent_unit, length_unit))
             distance = values * factor
             distance_error = latent_errors * factor
-            ratio = distance / self.forster_radius
+            ratio = distance / radius
             denominator = 1.0 + ratio**6
             prediction = 1.0 / denominator
-            distance_derivative = (
-                6.0 * jnp.abs(ratio) ** 5 / (self.forster_radius * denominator**2)
-            )
-            radius_derivative = 6.0 * ratio**6 / (self.forster_radius * denominator**2)
+            distance_derivative = 6.0 * jnp.abs(ratio) ** 5 / (radius * denominator**2)
+            radius_derivative = 6.0 * ratio**6 / (radius * denominator**2)
             variance = (distance_derivative * distance_error) ** 2 + (
-                radius_derivative * self.forster_radius_standard_error
+                radius_derivative * radius_error
             ) ** 2
             return prediction, jnp.sqrt(jnp.maximum(variance, 0.0))
         factor = float(conversion_factor(latent_unit, _PER_SECOND))

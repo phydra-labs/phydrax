@@ -9,12 +9,13 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..domain import (
+    Domain,
     DomainComponent,
     DomainFunction,
     LocalFieldRef,
@@ -49,7 +50,7 @@ def _field_names(
 
 
 def _target_field(
-    domain,
+    domain: Domain,
     target: DomainFunction | ArrayLike,
     /,
 ) -> DomainFunction:
@@ -86,7 +87,9 @@ class _NormalContract(StrictModule):
         self.flux_positions = tuple(by_label[label] for label in flux.deps)
         self.normal_positions = tuple(by_label[label] for label in normal.deps)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         flux = self.flux.func(
             *(args[index] for index in self.flux_positions),
             key=key,

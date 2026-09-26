@@ -15,7 +15,10 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..discretization.finite_volume import UpwindConstrainedTransportPlan
+from ..discretization.finite_volume import (
+    MHDCTRateResult,
+    UpwindConstrainedTransportPlan,
+)
 
 
 class ConstrainedMHDRunStatus(IntEnum):
@@ -175,7 +178,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
     ) -> tuple[Array, Array, Array]:
         candidate_valid = self._admissible(candidate_cell, candidate_magnetic)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             cell = base_cell + midpoint * (candidate_cell - base_cell)
@@ -209,7 +212,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule):
         increment: Array,
         args: Any,
         /,
-    ):
+    ) -> tuple[Array, Array, Array, MHDCTRateResult]:
         if self.ctu_predictor:
             predictor = self.spatial.rate(
                 time,

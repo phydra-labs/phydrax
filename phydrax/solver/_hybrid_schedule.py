@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -83,9 +83,9 @@ class HybridSchedulePlan(StrictModule, NonTrainableState):
         events: Sequence[ScheduledHybridGuard],
         /,
         *,
-        maximum_events=64,
-        simultaneous_tolerance=1.0e-10,
-        minimum_event_separation=1.0e-12,
+        maximum_events: int = 64,
+        simultaneous_tolerance: float = 1.0e-10,
+        minimum_event_separation: float = 1.0e-12,
     ) -> None:
         items = tuple(events)
         if not items or any(not isinstance(item, ScheduledHybridGuard) for item in items):
@@ -486,8 +486,13 @@ def replay_hybrid_schedule(
         or tape.policy_id != prepared.replay_policy.policy_id
     ):
         raise ValueError("Prepared schedule and HybridEventTape identities do not match.")
-    return replay_hybrid_events(
+    # prepare_hybrid_schedule rejects schedules with a missing explicit-ODE event.
+    events = cast(
+        "tuple[HybridEventPlan, ...]",
         tuple(item.event for item in prepared.plan.events),
+    )
+    return replay_hybrid_events(
+        events,
         tape,
         initial_state,
         args=args,

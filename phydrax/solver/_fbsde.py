@@ -150,8 +150,8 @@ class CoupledFBSDEResult(StrictModule):
 def solve_coupled_fbsde_explicit(
     key: Key[Array, ""],
     problem: CoupledFBSDEProblem,
-    value_predictor: Callable | DomainFunction,
-    control_predictor: Callable | DomainFunction,
+    value_predictor: Callable[[Array, Array], object] | DomainFunction,
+    control_predictor: Callable[[Array, Array], object] | DomainFunction,
     /,
     *,
     realization: WienerRealization | None = None,
@@ -196,8 +196,12 @@ def solve_coupled_fbsde_explicit(
         (problem.num_paths, 1) + problem.state_shape,
     )
     valid = jnp.ones((problem.num_paths,), dtype=jnp.bool_)
+
+    def predictor_only_sampler(sample_key: Array, /) -> BSDEPathBatch:
+        raise TypeError("forward_sampler must return a BSDEPathBatch.")
+
     predictor_problem = BSDEProblem(
-        lambda sample_key: None,
+        predictor_only_sampler,
         lambda time, state, args: jnp.zeros(problem.state_shape),
         lambda time, state, args: jnp.zeros(problem.state_shape + problem.noise_shape),
         problem.backward_generator,
@@ -297,14 +301,14 @@ def solve_coupled_fbsde_explicit(
         metadata={"scheme": "explicit-euler-maruyama"},
     )
 
-    def coupled_drift(time, state, args):
+    def coupled_drift(time: Array, state: Array, args: Any) -> Array:
         value = _predictor_value(value_predictor, time, state, predictor_problem, key=key)
         control = _predictor_value(
             control_predictor, time, state, predictor_problem, key=key
         )
         return problem.forward_drift(time, state, value, control, args)
 
-    def coupled_diffusion(time, state, args):
+    def coupled_diffusion(time: Array, state: Array, args: Any) -> Array:
         value = _predictor_value(value_predictor, time, state, predictor_problem, key=key)
         control = _predictor_value(
             control_predictor, time, state, predictor_problem, key=key

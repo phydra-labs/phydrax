@@ -216,7 +216,7 @@ class Guccione1991Energy(StrictModule, NonTrainableState):
             float(parameters.transverse_exponent),
             float(parameters.fiber_shear_exponent),
             tuple(
-                tuple(float(component) for component in row)
+                (float(row[0]), float(row[1]), float(row[2]))
                 for row in self.material_frame.tolist()
             ),
         )

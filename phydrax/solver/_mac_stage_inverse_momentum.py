@@ -68,7 +68,7 @@ class MACDiagonalStageInverseMomentum(StrictModule, NonTrainableState):
                     for layout in operators.discretization.face_layouts
                 )
                 if array.shape == ()
-                else operators.validate_velocity(inverse_diagonal)
+                else operators.validate_velocity(tuple(array))
             )
         values = tuple(
             eqx.error_if(

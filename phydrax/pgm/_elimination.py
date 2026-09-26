@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from math import prod
 from typing import Literal
 
@@ -110,7 +110,9 @@ def _initial_scopes(graph: DiscreteFactorGraph) -> list[set[int]]:
     return scopes
 
 
-def _choose_order(graph: DiscreteFactorGraph, method: VariableEliminationMethod):
+def _choose_order(
+    graph: DiscreteFactorGraph, method: VariableEliminationMethod
+) -> tuple[tuple[int, ...], tuple[tuple[int, ...], ...], int, int]:
     if method.ordering == "given":
         assert method.order is not None
         if sorted(method.order) != list(range(graph.num_variables)):
@@ -216,7 +218,7 @@ def plan_variable_elimination(
 
 def _align(
     table: Array, scope: tuple[int, ...], union: tuple[int, ...], cards: tuple[int, ...]
-):
+) -> Array:
     present = tuple(variable for variable in union if variable in scope)
     permutation = tuple(scope.index(variable) for variable in present)
     transposed = (
@@ -230,7 +232,9 @@ def _align(
     return transposed.reshape(shape)
 
 
-def _factor_tables(graph: DiscreteFactorGraph, evidence: Array):
+def _factor_tables(
+    graph: DiscreteFactorGraph, evidence: Array
+) -> list[tuple[tuple[int, ...], Array]]:
     factors: list[tuple[tuple[int, ...], Array]] = []
     for group_index, scope in enumerate(graph.factor_scopes):
         tables = factor_group_dense_tables(graph, group_index)
@@ -294,8 +298,8 @@ def _eliminate(
 def _clamp_evidence(
     graph: DiscreteFactorGraph,
     evidence: Array,
-    assignments: dict[int, int | Array],
-):
+    assignments: Mapping[int, ArrayLike],
+) -> Array:
     result = evidence
     offsets = np.asarray(graph.variable_state_offsets)
     for variable, state in assignments.items():
@@ -392,7 +396,7 @@ def plan_junction_tree(plan: VariableEliminationPlan, /) -> JunctionTreePlan:
     clique_count = len(cliques)
     union_parent = list(range(clique_count))
 
-    def find(index):
+    def find(index: int) -> int:
         while union_parent[index] != index:
             union_parent[index] = union_parent[union_parent[index]]
             index = union_parent[index]
@@ -556,7 +560,7 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
         return ()
 
     @property
-    def density_measure_kind(self):
+    def density_measure_kind(self) -> str:
         return "counting"
 
     def contains(self, value: ArrayLike, /) -> Array:
@@ -583,7 +587,7 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
         count = prod(tuple(sample_shape)) if sample_shape else 1
         keys = jr.split(key, count)
 
-        def one_sample(sample_key):
+        def one_sample(sample_key: Key[Array, ""]) -> Array:
             chosen: dict[int, Array] = {}
             state = jnp.zeros((self.plan.graph.num_variables,), dtype=jnp.int32)
             for variable, cardinality in enumerate(

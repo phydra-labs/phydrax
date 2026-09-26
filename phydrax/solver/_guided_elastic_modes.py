@@ -251,14 +251,19 @@ def solve_guided_elastic_modes(
     )
 
 
-def _guided_elastic_operators(stiffness, mass):
+def _guided_elastic_operators(
+    stiffness: AbstractLinearOperator | ArrayLike,
+    mass: AbstractLinearOperator | ArrayLike,
+) -> tuple[AbstractLinearOperator, AbstractLinearOperator]:
     stiffness_is_operator = isinstance(stiffness, AbstractLinearOperator)
     mass_is_operator = isinstance(mass, AbstractLinearOperator)
     if stiffness_is_operator != mass_is_operator:
         raise TypeError(
             "stiffness_operator and mass_operator must both be operators or both be arrays."
         )
-    if stiffness_is_operator:
+    if isinstance(stiffness, AbstractLinearOperator) and isinstance(
+        mass, AbstractLinearOperator
+    ):
         if (
             not stiffness.source.compatible(stiffness.target)
             or not mass.source.compatible(mass.target)

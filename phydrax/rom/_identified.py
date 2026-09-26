@@ -25,7 +25,7 @@ def _encode_flat(basis: ReducedBasisArtifact, values: Array, offset: Array, /) -
     columns = basis.basis_matrix
     space = basis.subspace.space
 
-    def encode_one(value):
+    def encode_one(value: Array) -> Array:
         vector = space.unflatten(value)
         return jax.vmap(
             lambda column: space.inner(space.unflatten(column), vector),

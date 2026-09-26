@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -15,6 +18,9 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._rigid_body import quaternion_rotation_matrix
+
+
+_T = TypeVar("_T")
 
 
 class TopologyEventPlan(StrictModule, NonTrainableState):
@@ -90,7 +96,7 @@ class TopologyEventResult(StrictModule):
 
 
 def initialize_topology_event_record(
-    plan: TopologyEventPlan, dtype: np.dtype = np.float64, /
+    plan: TopologyEventPlan, dtype: DTypeLike = np.float64, /
 ) -> TopologyEventRecord:
     events = plan.event_capacity
     return TopologyEventRecord(
@@ -342,7 +348,7 @@ def split_preallocated_owner(
     return TopologyEventResult(candidate, accepted, accepted_record, successful)
 
 
-def jax_tree_where(condition: Array, proposed, current, /):
+def jax_tree_where(condition: Array, proposed: _T, current: _T, /) -> _T:
     import jax
 
     return jax.tree.map(

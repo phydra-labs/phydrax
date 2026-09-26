@@ -348,16 +348,16 @@ def _master_program(
 
 
 def _finalize(
-    program,
-    policy,
-    status,
-    audit,
-    lower_bound,
-    global_bound_certified,
-    search_complete,
-    work,
-    last_master,
-):
+    program: ConvexMixedIntegerNonlinearProgram,
+    policy: ConvexMINLPOuterApproximation,
+    status: ConvexMINLPStatus,
+    audit: ConvexMINLPCandidateAudit | None,
+    lower_bound: float,
+    global_bound_certified: bool,
+    search_complete: bool,
+    work: ConvexMINLPWork,
+    last_master: MixedIntegerResult | None,
+) -> ConvexMINLPResult:
     objective = float("inf") if audit is None else float(np.asarray(audit.objective))
     if np.isfinite(objective) and np.isfinite(lower_bound):
         lower_bound = min(lower_bound, objective)
@@ -431,7 +431,7 @@ def solve_convex_minlp(
     candidates_audited = 0
     candidates_accepted = 0
 
-    def accept(cut):
+    def accept(cut: ConvexMINLPCut) -> bool:
         nonlocal cuts_proposed, cuts_accepted
         cuts_proposed += 1
         for existing in cuts:

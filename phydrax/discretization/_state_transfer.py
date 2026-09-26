@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -127,7 +128,7 @@ class AbstractRefinementTransfer(StrictModule):
         self,
         /,
         *,
-        dtype=np.float64,
+        dtype: DTypeLike = np.float64,
     ) -> FunctionLinearOperator:
         """Return restriction as a rectangular canonical linear operator."""
         source = ArraySpace(self.fine_shape, dtype=dtype)
@@ -143,7 +144,7 @@ class AbstractRefinementTransfer(StrictModule):
         self,
         /,
         *,
-        dtype=np.float64,
+        dtype: DTypeLike = np.float64,
     ) -> FunctionLinearOperator:
         """Return prolongation as a rectangular canonical linear operator."""
         source = ArraySpace(self.coarse_shape, dtype=dtype)

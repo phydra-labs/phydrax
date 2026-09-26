@@ -58,7 +58,7 @@ class PreparedAffineLinearEvolution(StrictModule, NonTrainableState):
             "Affine evolution duration must be finite and nonnegative.",
         )
 
-        def advance(_):
+        def advance(_: None) -> AffineLinearEvolutionResult:
             action = matrix_exponential_phi_combination_action(
                 self.operator,
                 (state_, self.source),

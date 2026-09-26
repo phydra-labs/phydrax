@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
@@ -15,7 +16,11 @@ from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from .._conservation_ledger import ConservationStageLedger
+from .._conservation_ledger import (
+    ConservationStageFluxRateBlock,
+    ConservationStageLedger,
+)
+from ._dyadic import DyadicFiniteVolumeDiscretization
 from ._mapped import MappedFiniteVolumeDiscretization
 from ._riemann import (
     _NORMAL_ALE_CONTRACT,
@@ -286,7 +291,7 @@ class FluxPositivityPlan(StrictModule):
         fallback_valid = jnp.all(system.admissible(fallback))
         direction = high - fallback
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             valid = jnp.all(system.admissible(fallback + midpoint * direction))
@@ -334,19 +339,21 @@ class FluxPositivityPlan(StrictModule):
             | MappedFiniteVolumeDiscretization
             | TriangleFiniteVolumeDiscretization
             | UnstructuredFiniteVolumeDiscretization
+            | DyadicFiniteVolumeDiscretization
         ),
         /,
     ) -> PositivityBlendResult:
         if len(high_order_fluxes) != len(fallback_fluxes):
             raise ValueError("High-order and fallback face fluxes must align.")
 
-        def residual(fluxes):
+        def residual(fluxes: Sequence[Array]) -> Array:
             output = jnp.zeros_like(base_state)
             if isinstance(
                 discretization,
                 (
                     TriangleFiniteVolumeDiscretization,
                     UnstructuredFiniteVolumeDiscretization,
+                    DyadicFiniteVolumeDiscretization,
                 ),
             ):
                 if len(fluxes) != 1:
@@ -381,7 +388,7 @@ class FluxPositivityPlan(StrictModule):
         fallback_valid_cells = system.admissible(fallback_state)
         high_valid_cells = system.admissible(high_state)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             candidate = fallback_state + midpoint[..., None] * direction
@@ -406,6 +413,7 @@ class FluxPositivityPlan(StrictModule):
             (
                 TriangleFiniteVolumeDiscretization,
                 UnstructuredFiniteVolumeDiscretization,
+                DyadicFiniteVolumeDiscretization,
             ),
         ):
             owner_factor = cell_factor[discretization.owner_cells]
@@ -448,7 +456,7 @@ class FluxPositivityPlan(StrictModule):
         )
         preliminary_valid = jnp.all(system.admissible(preliminary_state))
 
-        def secondary_body(_, bounds):
+        def secondary_body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             candidate_fluxes = tuple(
@@ -490,6 +498,7 @@ class FluxPositivityPlan(StrictModule):
             (
                 TriangleFiniteVolumeDiscretization,
                 UnstructuredFiniteVolumeDiscretization,
+                DyadicFiniteVolumeDiscretization,
             ),
         ):
             integrated_fluxes = (
@@ -530,7 +539,7 @@ class FluxPositivityPlan(StrictModule):
         fallback: tuple[ShallowWaterBalancedFaceResult, ...],
         common_residual: Array,
         step_size: Array,
-        discretization: FiniteVolumeDiscretization,
+        discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         /,
     ) -> BalancedPositivityBlendResult:
         """Blend transport and both bed corrections with one face factor."""
@@ -579,7 +588,7 @@ class FluxPositivityPlan(StrictModule):
         high_valid_cells = system.admissible(high_state)
         direction = high_state - fallback_state
 
-        def local_body(_, bounds):
+        def local_body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             candidate = fallback_state + midpoint[..., None] * direction
@@ -630,7 +639,7 @@ class FluxPositivityPlan(StrictModule):
         preliminary_state = base + dt * (residual(preliminary_tuple) + common)
         preliminary_valid = jnp.all(system.admissible(preliminary_state))
 
-        def global_body(_, bounds):
+        def global_body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             candidate_contributions = tuple(
@@ -832,7 +841,7 @@ class FluxPositivityPlan(StrictModule):
         first_active = jnp.argmax(active.astype(jnp.int32))
 
         def admissible_active_cells(candidate_average: Array, /) -> Array:
-            def evaluate(_):
+            def evaluate(_: None) -> Array:
                 seed = candidate_average[first_active]
                 safe_average = jnp.where(
                     active_components,
@@ -860,7 +869,7 @@ class FluxPositivityPlan(StrictModule):
         high_valid_cells = admissible_active_cells(high_average)
         direction = high_content - fallback_content
 
-        def local_body(_, bounds):
+        def local_body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             candidate_content = fallback_content + midpoint[:, None] * direction
@@ -909,8 +918,8 @@ class FluxPositivityPlan(StrictModule):
             )
 
         def make_ledger(
-            blocks,
-            blend_factors,
+            blocks: Sequence[ConservationStageFluxRateBlock],
+            blend_factors: Sequence[Array],
         ) -> ConservationStageLedger:
             return ConservationStageLedger(
                 tuple(blocks),
@@ -940,7 +949,7 @@ class FluxPositivityPlan(StrictModule):
             admissible_active_cells(cell_average(preliminary_content))
         )
 
-        def secondary_body(_, bounds):
+        def secondary_body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             candidate_blocks = tuple(

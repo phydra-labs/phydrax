@@ -5,18 +5,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._status import AstrodynamicsStatus
+
+
+_StateProvider: TypeAlias = Callable[[Array, Any], ArrayLike]
+_LightTimeCarry: TypeAlias = tuple[Array, Array, Array]
 
 
 class LightTimeResult(StrictModule):
@@ -32,9 +37,9 @@ class LightTimeResult(StrictModule):
 
 
 class LightTimePlan(StrictModule, NonTrainableState):
-    transmitter_state: Callable
-    receiver_state: Callable
-    gravitating_body_state: Callable
+    transmitter_state: _StateProvider
+    receiver_state: _StateProvider
+    gravitating_body_state: _StateProvider
     body_mu: Array
     speed_of_light: Array
     max_iterations: int = eqx.field(static=True)
@@ -46,19 +51,19 @@ class LightTimePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        transmitter_state,
-        receiver_state,
-        gravitating_body_state,
-        body_mu,
+        transmitter_state: _StateProvider,
+        receiver_state: _StateProvider,
+        gravitating_body_state: _StateProvider,
+        body_mu: npt.ArrayLike,
         /,
         *,
-        speed_of_light=299792458.0,
-        max_iterations=16,
-        tolerance=1.0e-12,
-        plan_id="one-way-light-time",
-        transmitter_provider_id,
-        receiver_provider_id,
-        gravitating_body_provider_id,
+        speed_of_light: npt.ArrayLike = 299792458.0,
+        max_iterations: int = 16,
+        tolerance: float = 1.0e-12,
+        plan_id: str = "one-way-light-time",
+        transmitter_provider_id: str,
+        receiver_provider_id: str,
+        gravitating_body_provider_id: str,
     ) -> None:
         if not all(
             callable(value)
@@ -126,7 +131,7 @@ class LightTimePlan(StrictModule, NonTrainableState):
         if receiver.shape != (3,):
             raise ValueError("receiver_state must return one position three-vector.")
 
-        def residual(transmit):
+        def residual(transmit: Array) -> tuple[Array, Array, Array, Array]:
             transmitter = jnp.asarray(self.transmitter_state(transmit, args))
             body = jnp.asarray(self.gravitating_body_state(receive, args))
             if transmitter.shape != (3,) or body.shape != (3,):
@@ -158,7 +163,7 @@ class LightTimePlan(StrictModule, NonTrainableState):
 
         initial = receive
 
-        def step(index, carry):
+        def step(index: Array, carry: _LightTimeCarry) -> _LightTimeCarry:
             transmit, converged, first = carry
             value, _, _, _ = residual(transmit)
             derivative = jax.grad(lambda time: residual(time)[0])(transmit)

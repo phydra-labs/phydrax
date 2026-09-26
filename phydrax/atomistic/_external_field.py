@@ -159,7 +159,8 @@ class PreparedGriddedExternalField(StrictModule, NonTrainableState):
         if not isinstance(plan, GriddedExternalFieldPlan):
             raise TypeError("plan must be a GriddedExternalFieldPlan.")
         self.plan = plan
-        self.grid_shape = tuple(plan.values.shape[:3])
+        shape = plan.values.shape
+        self.grid_shape = (shape[0], shape[1], shape[2])
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-gridded-external-field", "plan": plan.plan_id}
         )

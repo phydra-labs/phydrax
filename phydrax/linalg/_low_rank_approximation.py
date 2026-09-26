@@ -45,12 +45,14 @@ def pivoted_cholesky_factor(
     factor = jnp.zeros((size_, rank_), dtype=diagonal.dtype)
     permutation = indices
 
-    def swap_rows(array, left, right):
+    def swap_rows(array: Array, left: Array, right: Array) -> Array:
         left_row = array[left]
         right_row = array[right]
         return array.at[left].set(right_row).at[right].set(left_row)
 
-    def step(column_index, state):
+    def step(
+        column_index: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         factor_, permutation_, successful_ = state
         permuted_diagonal = diagonal[permutation_]
         residual = permuted_diagonal - jnp.sum(jnp.abs(factor_) ** 2, axis=1)

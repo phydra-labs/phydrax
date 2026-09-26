@@ -252,7 +252,7 @@ class TetrahedralNedelecSpace(StrictModule, NonTrainableState):
         mass_tensor: ArrayLike = 0.0,
         curl_tensor: ArrayLike = 1.0,
     ) -> FunctionLinearOperator:
-        def action(values):
+        def action(values: Array) -> Array:
             return self.curl_curl_action(values, curl_tensor) + self.mass_action(
                 values, mass_tensor
             )

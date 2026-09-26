@@ -43,7 +43,12 @@ def evaluate_triangle_second_moments(
     return jnp.stack((second_xx, second_xy, second_yy), axis=-1)
 
 
-def _design_rows(delta, neighbor_moments, target_moment, scale):
+def _design_rows(
+    delta: np.ndarray,
+    neighbor_moments: np.ndarray,
+    target_moment: np.ndarray,
+    scale: float,
+) -> np.ndarray:
     return np.stack(
         (
             delta[:, 0] / scale,
@@ -57,7 +62,11 @@ def _design_rows(delta, neighbor_moments, target_moment, scale):
     )
 
 
-def _quadratic_stencils(discretization, moments, scales):
+def _quadratic_stencils(
+    discretization: TriangleFiniteVolumeDiscretization,
+    moments: np.ndarray,
+    scales: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     count = discretization.cell_count
     owner = np.asarray(discretization.owner_cells, dtype=np.int32)
     neighbor = np.asarray(discretization.neighbor_cells, dtype=np.int32)
@@ -226,7 +235,7 @@ class TriangleKExactReconstructionPlan(StrictModule, NonTrainableState):
         neighbor = discretization.neighbor_cells
         safe_neighbor = jnp.maximum(neighbor, 0)
 
-        def basis(cell_indices):
+        def basis(cell_indices: Array) -> Array:
             centers = discretization.cell_centers.astype(value.dtype)
             offset = points - centers[cell_indices, None, :]
             moments = self.prepared.moments.astype(value.dtype)[cell_indices, None, :]

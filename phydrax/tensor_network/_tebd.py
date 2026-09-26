@@ -100,7 +100,7 @@ def _layer(
     step: Array,
     maximum_bond_dimension: int,
     normalize: bool,
-):
+) -> tuple[MatrixProductState, list[TensorTruncationEvidence]]:
     current = state
     evidence: list[TensorTruncationEvidence] = []
     for bond in bonds:

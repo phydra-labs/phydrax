@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._strict import StrictModule
 from .._tree_math import (
@@ -30,6 +30,11 @@ from ._pde_constrained import (
     StateDesignProblem,
     StateEquationResult,
 )
+
+
+# ``{"shared": tree, "local": tuple}``, validated by ``_check_design``.
+_MultipointDesign: TypeAlias = dict[str, Any]
+_CaseTrees: TypeAlias = tuple[PyTree[Any], ...]
 
 
 class StateDesignCase(StrictModule):
@@ -72,7 +77,9 @@ class StateDesignCase(StrictModule):
         self.design_binding = design_binding
         self.args = args
 
-    def bind_design(self, shared, own_local, /):
+    def bind_design(
+        self, shared: PyTree[Any], own_local: PyTree[Any], /
+    ) -> PyTree[Array]:
         """Bind only this case's design at its declared operating point."""
         return _validate_real_inexact_tree(
             self.design_binding(shared, own_local, self.args),
@@ -80,14 +87,14 @@ class StateDesignCase(StrictModule):
         )
 
 
-def _check_design(design, case_count) -> None:
+def _check_design(design: object, case_count: int) -> None:
     if not isinstance(design, dict) or set(design) != {"shared", "local"}:
         raise TypeError("Multipoint design must be {'shared': tree, 'local': tuple}.")
     if not isinstance(design["local"], tuple) or len(design["local"]) != case_count:
         raise ValueError("Multipoint local design must have one tuple entry per case.")
 
 
-def _check_states(state, case_count) -> None:
+def _check_states(state: object, case_count: int) -> None:
     if not isinstance(state, tuple) or len(state) != case_count:
         raise ValueError("Multipoint state must have one tuple entry per case.")
 
@@ -95,7 +102,9 @@ def _check_states(state, case_count) -> None:
 class _MultipointResidual(StrictModule):
     cases: tuple[StateDesignCase, ...]
 
-    def __call__(self, state, design, args):
+    def __call__(
+        self, state: _CaseTrees, design: _MultipointDesign, args: object
+    ) -> tuple[PyTree[Array], ...]:
         del args
         _check_design(design, len(self.cases))
         _check_states(state, len(self.cases))
@@ -112,7 +121,9 @@ class _MultipointResidual(StrictModule):
 class _MultipointObjective(StrictModule):
     cases: tuple[StateDesignCase, ...]
 
-    def __call__(self, state, design, args):
+    def __call__(
+        self, state: _CaseTrees, design: _MultipointDesign, args: object
+    ) -> Array | int:
         del args
         _check_design(design, len(self.cases))
         _check_states(state, len(self.cases))
@@ -132,7 +143,9 @@ class _CaseResponse(StrictModule):
     case_count: int = eqx.field(static=True)
     constraint: StateDesignConstraint | None
 
-    def __call__(self, state, design, args):
+    def __call__(
+        self, state: _CaseTrees, design: _MultipointDesign, args: object
+    ) -> PyTree[Array]:
         del args
         _check_design(design, self.case_count)
         bound_design = self.case.bind_design(
@@ -149,16 +162,16 @@ class _MultipointStateCertification(StrictModule):
 
     def __call__(
         self,
-        state,
-        design,
-        residual,
-        status,
+        state: _CaseTrees,
+        design: _MultipointDesign,
+        residual: _CaseTrees,
+        status: ArrayLike,
         /,
         *,
-        reference_norm,
-        args=None,
-        solver_acceptance=None,
-    ):
+        reference_norm: object,
+        args: object = None,
+        solver_acceptance: StateAcceptanceEvidence | None = None,
+    ) -> StateAcceptanceEvidence:
         # References are repeatable per operating point, never an aggregate norm
         # or the changing warm start of an outer optimizer.
         del reference_norm, args
@@ -193,7 +206,9 @@ class _MultipointStateCertification(StrictModule):
         )
 
 
-def _with_solver_status(evidence, previous):
+def _with_solver_status(
+    evidence: StateAcceptanceEvidence, previous: StateAcceptanceEvidence
+) -> StateAcceptanceEvidence:
     """Keep actual child status gates while independently recertifying physics."""
     if evidence.block_ids != previous.block_ids:
         raise ValueError("Recertified state evidence changed block identities.")
@@ -219,15 +234,15 @@ class _MultipointAdjointCertification(StrictModule):
 
     def __call__(
         self,
-        adjoint,
-        transpose_image,
-        right_hand_side,
-        status,
+        adjoint: _CaseTrees,
+        transpose_image: _CaseTrees,
+        right_hand_side: _CaseTrees,
+        status: ArrayLike,
         /,
         *,
-        admissible,
-        realization_matches,
-    ):
+        admissible: ArrayLike,
+        realization_matches: ArrayLike,
+    ) -> AdjointAcceptanceEvidence:
         for value in (adjoint, transpose_image, right_hand_side):
             _check_states(value, len(self.cases))
         return AdjointAcceptanceEvidence.from_blocks(
@@ -249,14 +264,22 @@ class _MultipointAdjointCertification(StrictModule):
 class _MultipointStateSolver(AbstractStateSolver):
     cases: tuple[StateDesignCase, ...]
 
-    def __init__(self, cases, /) -> None:
+    def __init__(self, cases: Sequence[StateDesignCase], /) -> None:
         self.cases = tuple(cases)
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "multipoint-independent-state"
 
-    def solve(self, problem, design, initial_state, /, *, args):
+    def solve(
+        self,
+        problem: StateDesignProblem,
+        design: _MultipointDesign,
+        initial_state: _CaseTrees,
+        /,
+        *,
+        args: Any,
+    ) -> StateEquationResult:
         del problem, args
         _check_design(design, len(self.cases))
         _check_states(initial_state, len(self.cases))
@@ -285,7 +308,7 @@ class _MultipointStateSolver(AbstractStateSolver):
 
         # Only work counters add across heterogeneous child solvers. Quantities
         # such as damping, step size and optimality norms have no common scale.
-        def total(select):
+        def total(select: Callable[[OptimizationDiagnostics], Array]) -> Array | int:
             return sum(select(result.diagnostics) for result in results)
 
         diagnostics = OptimizationDiagnostics(
@@ -383,11 +406,11 @@ class MultipointStateDesignProblem(StrictModule):
         self.problem_id = identifier
 
     @property
-    def case_ids(self):
+    def case_ids(self) -> tuple[str, ...]:
         return tuple(case.case_id for case in self.cases)
 
     @property
-    def initial_state(self):
+    def initial_state(self) -> tuple[PyTree[Array], ...]:
         return tuple(case.initial_state for case in self.cases)
 
     def to_state_design_problem(self) -> StateDesignProblem:

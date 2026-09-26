@@ -12,11 +12,13 @@ break this discrete conserving approximation.
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ...._strict import StrictModule
 from ....ein import contract
@@ -31,7 +33,14 @@ class OpticalPhononBath(StrictModule):
     temperature: Array
     bath_id: str = eqx.field(static=True)
 
-    def __init__(self, energy, coupling, temperature, *, bath_id) -> None:
+    def __init__(
+        self,
+        energy: ArrayLike,
+        coupling: ArrayLike,
+        temperature: ArrayLike,
+        *,
+        bath_id: str,
+    ) -> None:
         self.energy = _array(energy, "phonon energy", positive=True)
         self.coupling = _array(coupling, "local phonon coupling")
         self.temperature = _array(temperature, "phonon bath temperature", positive=True)
@@ -48,7 +57,7 @@ class OpticalPhononBath(StrictModule):
         self.bath_id = bath_id
 
     @property
-    def occupation(self):
+    def occupation(self) -> Array:
         return 1 / jnp.expm1(self.energy / (KB * self.temperature))
 
 
@@ -65,7 +74,14 @@ class PhononEnergyGrid(StrictModule):
     points: int = eqx.field(static=True)
     phonon_bins: int = eqx.field(static=True)
 
-    def __init__(self, lower, upper, *, points, phonon_energy) -> None:
+    def __init__(
+        self,
+        lower: float | Array,
+        upper: float | Array,
+        *,
+        points: int,
+        phonon_energy: ArrayLike,
+    ) -> None:
         lo, hi = float(lower), float(upper)
         if (
             isinstance(points, bool)
@@ -89,19 +105,19 @@ class PhononEnergyGrid(StrictModule):
         self.points, self.phonon_bins = n, shift
 
     @property
-    def spacing(self):
+    def spacing(self) -> Array:
         return (self.upper - self.lower) / self.points
 
     @property
-    def energies(self):
+    def energies(self) -> Array:
         return self.lower + (jnp.arange(self.points) + 0.5) * self.spacing
 
-    def refined(self, phonon_energy):
+    def refined(self, phonon_energy: ArrayLike) -> PhononEnergyGrid:
         return PhononEnergyGrid(
             self.lower, self.upper, points=2 * self.points, phonon_energy=phonon_energy
         )
 
-    def expanded(self, phonon_energy):
+    def expanded(self, phonon_energy: ArrayLike) -> PhononEnergyGrid:
         width = self.upper - self.lower
         return PhononEnergyGrid(
             self.lower - width / 2,
@@ -111,14 +127,14 @@ class PhononEnergyGrid(StrictModule):
         )
 
 
-def _shift(values, bins):
+def _shift(values: Array, bins: int) -> Array:
     if bins > 0:  # value(E-phonon)
         return jnp.concatenate((jnp.zeros_like(values[:bins]), values[:-bins]), axis=0)
     bins = -bins
     return jnp.concatenate((values[bins:], jnp.zeros_like(values[:bins])), axis=0)
 
 
-def _causal_real(gamma, spacing):
+def _causal_real(gamma: Array, spacing: Array) -> Array:
     """PV Hilbert transform of positive, piecewise-constant broadening.
 
     Log integration is exact for the declared bin representation. A row is
@@ -127,7 +143,7 @@ def _causal_real(gamma, spacing):
     n = gamma.shape[0]
     edges = (jnp.arange(n + 1) - 0.5) * spacing
 
-    def row(i):
+    def row(i: Array) -> Array:
         x = i * spacing
         weights = jnp.log(jnp.abs((x - edges[:-1]) / (x - edges[1:]))) / (2 * jnp.pi)
         return contract("e,en->n", weights, gamma, backend="jax")
@@ -135,11 +151,18 @@ def _causal_real(gamma, spacing):
     return jax.lax.map(row, jnp.arange(n))
 
 
-def _chain_correlations(diagonal, hopping, source_in, source_out):
+_ChainCarry: TypeAlias = tuple[Array, Array, Array]
+
+
+def _chain_correlations(
+    diagonal: Array, hopping: Array, source_in: Array, source_out: Array
+) -> tuple[Array, Array, Array, Array]:
     """Recursive selected diagonal/correlation blocks, O(cells) storage."""
 
-    def sweep(d, t, sin, sout):
-        def step(carry, values):
+    def sweep(d: Array, t: Array, sin: Array, sout: Array) -> _ChainCarry:
+        def step(
+            carry: _ChainCarry, values: tuple[Array, Array, Array, Array]
+        ) -> tuple[_ChainCarry, _ChainCarry]:
             previous_g, previous_n, previous_p = carry
             di, ti, ni, pi = values
             g = 1 / (di - ti * ti * previous_g)
@@ -147,7 +170,12 @@ def _chain_correlations(diagonal, hopping, source_in, source_out):
             pp = jnp.abs(g) ** 2 * (pi + ti * ti * previous_p)
             return (g, nn, pp), (g, nn, pp)
 
-        return jax.lax.scan(step, (0j, 0.0, 0.0), (d, t, sin, sout))[1]
+        initial: _ChainCarry = (
+            jnp.asarray(0j, dtype=jnp.complex128),
+            jnp.asarray(0.0, dtype=jnp.float64),
+            jnp.asarray(0.0, dtype=jnp.float64),
+        )
+        return jax.lax.scan(step, initial, (d, t, sin, sout))[1]
 
     left_t = jnp.concatenate((jnp.zeros(1), hopping))
     right_t = jnp.concatenate((hopping, jnp.zeros(1)))
@@ -216,7 +244,15 @@ class ScatteringResult(StrictModule):
     successful: Array
 
 
-def _solve_grid(device, bath, grid, *, tolerance, maximum_steps, damping):
+def _solve_grid(
+    device: CoherentDevice,
+    bath: OpticalPhononBath,
+    grid: PhononEnergyGrid,
+    *,
+    tolerance: float,
+    maximum_steps: int,
+    damping: float,
+) -> ScatteringResult:
     h = device.hamiltonian
     n, ne = h.size, grid.points
     nm = device.transverse.offsets.size
@@ -241,7 +277,7 @@ def _solve_grid(device, bath, grid, *, tolerance, maximum_steps, damping):
     occupation = bath.occupation
     shift = grid.phonon_bins
 
-    def self_energies(nn, pp):
+    def self_energies(nn: Array, pp: Array) -> tuple[Array, Array]:
         sin = coupling**2 * (
             occupation * _shift(nn, shift) + (occupation + 1) * _shift(nn, -shift)
         )
@@ -277,7 +313,9 @@ def _solve_grid(device, bath, grid, *, tolerance, maximum_steps, damping):
             .add(gamma_lead[:, 1] * (1 - f[:, 1]))
         )
 
-        def evaluate(state, injected=injected, extracted=extracted):
+        def evaluate(
+            state: Array, injected: Array = injected, extracted: Array = extracted
+        ) -> tuple[Array, Array, Array, Array, Array]:
             sin, sout = state
             broadening = sin + sout
             sr = _causal_real(broadening, de) - 0.5j * broadening
@@ -286,7 +324,7 @@ def _solve_grid(device, bath, grid, *, tolerance, maximum_steps, damping):
             )
             return sr, g, nn, pp, bond
 
-        def mapping(state, args):
+        def mapping(state: Array, args: object) -> Array:
             _, _, nn, pp, _ = evaluate(state)
             return jnp.stack(self_energies(nn, pp))
 
@@ -455,15 +493,15 @@ def _solve_grid(device, bath, grid, *, tolerance, maximum_steps, damping):
 
 
 def solve_phonon_transport(
-    device,
-    bath,
-    grid,
+    device: CoherentDevice,
+    bath: OpticalPhononBath,
+    grid: PhononEnergyGrid,
     *,
-    tolerance=1e-8,
-    observable_tolerance=2e-3,
-    maximum_steps=300,
-    damping=0.35,
-):
+    tolerance: float = 1e-8,
+    observable_tolerance: float = 2e-3,
+    maximum_steps: int = 300,
+    damping: float = 0.35,
+) -> ScatteringResult:
     """SCBA plus independent doubled-resolution and doubled-window solves.
 
     Returned ``successful`` gates nonlinear, charge, energy, causality,
@@ -506,7 +544,7 @@ def solve_phonon_transport(
         device, bath, grid.refined(bath.energy).expanded(bath.energy), **options
     )
 
-    def observables(result):
+    def observables(result: ScatteringResult) -> Array:
         return jnp.concatenate(
             (
                 result.electron_density * device.hamiltonian.cell_volumes,

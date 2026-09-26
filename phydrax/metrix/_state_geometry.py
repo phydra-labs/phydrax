@@ -12,7 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.linalg as la
 
@@ -122,100 +122,100 @@ class AbstractStateGeometry(StrictModule):
     supports_commutator_free: eqx.AbstractVar[bool]
 
     @abstractmethod
-    def contains(self, state: ArrayLike, /) -> Array:
+    def contains(self, state: PyTree[ArrayLike], /) -> Array:
         """Return one scalar boolean indicating membership in the point space."""
         raise NotImplementedError
 
     @abstractmethod
     def project_tangent(
         self,
-        state: ArrayLike,
-        vector: ArrayLike,
+        state: PyTree[ArrayLike],
+        vector: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Project a point-storage ambient vector to a physical tangent."""
         raise NotImplementedError
 
     @abstractmethod
     def retract(
         self,
-        state: ArrayLike,
-        local_tangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        local_tangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Map a local perturbation at ``state`` to point storage."""
         raise NotImplementedError
 
     @abstractmethod
     def inverse_retract(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Return local perturbation coordinates for a nearby point."""
         raise NotImplementedError
 
     @abstractmethod
     def retraction_jvp(
         self,
-        state: ArrayLike,
-        local_tangent: ArrayLike,
-        local_velocity: ArrayLike,
+        state: PyTree[ArrayLike],
+        local_tangent: PyTree[ArrayLike],
+        local_velocity: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Push a local velocity to a physical tangent at the retracted point."""
         raise NotImplementedError
 
     @abstractmethod
     def retraction_inverse_jvp(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
-        tangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
+        tangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Push a physical tangent through the inverse chart to local velocity."""
         raise NotImplementedError
 
     @abstractmethod
     def retraction_vjp(
         self,
-        state: ArrayLike,
-        local_tangent: ArrayLike,
-        cotangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        local_tangent: PyTree[ArrayLike],
+        cotangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Algebraically transpose the retraction differential to a local covector."""
         raise NotImplementedError
 
     @abstractmethod
     def transport_tangent(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
-        tangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
+        tangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Transport a physical tangent from ``state`` to ``point``."""
         raise NotImplementedError
 
     @abstractmethod
     def transport_cotangent_pullback(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
-        cotangent: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
+        cotangent: PyTree[ArrayLike],
         /,
-    ) -> Array:
+    ) -> PyTree[Array]:
         """Pull a physical cotangent at ``point`` back to ``state``."""
         raise NotImplementedError
 
     @abstractmethod
     def cut_locus_margin(
         self,
-        state: ArrayLike,
-        point: ArrayLike,
+        state: PyTree[ArrayLike],
+        point: PyTree[ArrayLike],
         /,
     ) -> Array:
         """Return a non-negative scalar margin for the supported inverse chart."""
@@ -1359,7 +1359,9 @@ def _symmetric_matrix_logarithm(value: Array, /) -> Array:
 
 
 @_symmetric_matrix_logarithm.defjvp
-def _symmetric_matrix_logarithm_jvp(primals, tangents):
+def _symmetric_matrix_logarithm_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (value,) = primals
     (tangent,) = tangents
     symmetric_value = _symmetric(value)
@@ -1400,7 +1402,9 @@ def _symmetric_matrix_square_root(value: Array, /) -> Array:
 
 
 @_symmetric_matrix_square_root.defjvp
-def _symmetric_matrix_square_root_jvp(primals, tangents):
+def _symmetric_matrix_square_root_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (value,) = primals
     (tangent,) = tangents
     eigenvalues, eigenvectors = jnp.linalg.eigh(_symmetric(value))
@@ -1611,7 +1615,7 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
             )
             return _skew(_transpose(velocity))
 
-        def differential(local_velocity):
+        def differential(local_velocity: Array) -> Array:
             ambient_velocity = self.retraction_jvp(
                 matrix,
                 local,

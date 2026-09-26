@@ -5,12 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.linalg as la
 
@@ -60,6 +60,10 @@ from ._stabilization import (
     sph_density_diffusion_rate,
     SPHDensityDiffusionResult,
 )
+
+
+if TYPE_CHECKING:
+    from ...graph import GraphIR
 
 
 ExternalParticleAcceleration = Callable[[Array, Array, Array, Array, Any], ArrayLike]
@@ -651,7 +655,7 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         /,
         *,
         directed: bool = True,
-    ):
+    ) -> GraphIR:
         evaluation = self._evaluate(time, state, args)
         return particle_graph_view(
             self.particles,
@@ -869,7 +873,11 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
         state: Array,
         args: Any = None,
         /,
-    ):
+    ) -> tuple[
+        PyTree[Array],
+        Callable[[PyTree[Any]], PyTree[Array]],
+        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+    ]:
         linearization = la.prepare_linearization(
             lambda current: self(time, current, args), state
         )

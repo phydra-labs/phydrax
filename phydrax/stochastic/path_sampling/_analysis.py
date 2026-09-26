@@ -221,7 +221,7 @@ def fit_committor(
     )
     normalizer = jnp.sum(sample_weights)
 
-    def objective(coefficients):
+    def objective(coefficients: Array) -> Array:
         logits = contract("np,p->n", augmented, coefficients)
         likelihood = (
             jnp.maximum(logits, 0.0)
@@ -233,7 +233,7 @@ def fit_committor(
 
     value_and_gradient = jax.value_and_grad(objective)
 
-    def body(_, carry):
+    def body(_: Array, carry: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
         coefficients, converged, iterations = carry
         loss, gradient = value_and_gradient(coefficients)
         norm = jnp.sqrt(jnp.sum(gradient**2))
@@ -310,7 +310,7 @@ def integrated_autocorrelation_time(values: ArrayLike, /, *, maximum_lag: int) -
     variance = jnp.mean(centered**2)
     indices = jnp.arange(samples.size, dtype=jnp.int32)
 
-    def correlation(lag):
+    def correlation(lag: Array) -> Array:
         paired = indices < samples.size - lag
         product = centered * centered[jnp.clip(indices + lag, 0, samples.size - 1)]
         return jnp.sum(jnp.where(paired, product, 0.0)) / jnp.maximum(

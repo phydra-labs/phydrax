@@ -72,25 +72,29 @@ class NuisanceProjectionResult(StrictModule):
     successful: Array
 
 
-def _whiten(covariance, value):
-    if isinstance(
-        covariance,
-        (
-            CholeskyCovarianceAction,
-            DiagonalCovarianceAction,
-            KroneckerCholeskyCovarianceAction,
-            CirculantCovarianceAction,
-        ),
-    ):
-        if value.ndim == 1:
-            return covariance.whiten(value)
-        return jax.vmap(covariance.whiten, in_axes=1, out_axes=1)(value)
-    return None
+_WHITENING_ACTIONS = (
+    CholeskyCovarianceAction,
+    DiagonalCovarianceAction,
+    KroneckerCholeskyCovarianceAction,
+    CirculantCovarianceAction,
+)
 
 
-def _precision_apply(covariance, value):
-    whitened = _whiten(covariance, value)
-    if whitened is not None:
+def _whiten(
+    covariance: CholeskyCovarianceAction
+    | DiagonalCovarianceAction
+    | KroneckerCholeskyCovarianceAction
+    | CirculantCovarianceAction,
+    value: Array,
+) -> Array:
+    if value.ndim == 1:
+        return covariance.whiten(value)
+    return jax.vmap(covariance.whiten, in_axes=1, out_axes=1)(value)
+
+
+def _precision_apply(covariance: _CovarianceProtocol, value: Array) -> Array:
+    if isinstance(covariance, _WHITENING_ACTIONS):
+        whitened = _whiten(covariance, value)
         if value.ndim == 1:
             # WᴴW action is obtained without materializing W.
             _, pullback = jax.vjp(covariance.whiten, jnp.zeros_like(value))

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntFlag
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -274,7 +274,9 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         operators = self.dynamics.momentum.operators
         boundaries = self.dynamics.momentum.boundaries
 
-        def residual(unknown, _):
+        def residual(
+            unknown: tuple[Array, Array, Array, Array, Array], _: object
+        ) -> tuple[Array, Array, Array, Array, Array]:
             fluid_coordinates, q, v, pressure, multiplier = unknown
             fluid_velocity = tuple(operators.velocity_space.unflatten(fluid_coordinates))
             marker_kinematics = self.marker_map.kinematics(q, v)
@@ -513,7 +515,10 @@ class MACDeformableImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
         )
 
 
-def jax_tree_where(condition: Array, candidate, fallback):
+_Tree = TypeVar("_Tree")
+
+
+def jax_tree_where(condition: Array, candidate: _Tree, fallback: _Tree) -> _Tree:
     import jax
 
     return jax.tree.map(

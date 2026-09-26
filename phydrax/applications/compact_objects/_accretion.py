@@ -17,7 +17,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...equations._relativistic_eos import GammaLawEOS
+from ...equations._relativistic_eos import GammaLawEOS, RelativisticEOSState
 from ...metrix._adm_exchange import ADMGridGeometry
 from ...metrix._spacetime_conventions import RelativityConvention
 
@@ -142,7 +142,7 @@ class MichelBondiAccretionPlan(StrictModule, NonTrainableState):
         infinity_pressure = (gamma - 1.0) * density * infinity_internal
         polytropic = infinity_pressure / density**gamma
 
-        def critical_residual(sound):
+        def critical_residual(sound: float) -> float:
             enthalpy = (gamma - 1.0) / (gamma - 1.0 - sound)
             return enthalpy / np.sqrt(1.0 + 3.0 * sound) - infinity_enthalpy
 
@@ -199,7 +199,9 @@ class MichelBondiAccretionPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _integrals(self, radius: Array, speed: Array, /):
+    def _integrals(
+        self, radius: Array, speed: Array, /
+    ) -> tuple[Array, Array, Array, RelativisticEOSState, Array]:
         gamma = jnp.asarray(self.eos.adiabatic_index, dtype=radius.dtype)
         mass = jnp.asarray(self.mass_parameter, dtype=radius.dtype)
         rate = jnp.asarray(self.mass_accretion_rate, dtype=radius.dtype)
@@ -274,7 +276,9 @@ class MichelBondiAccretionPlan(StrictModule, NonTrainableState):
         )
         low_residual = self._integrals(radius_, jnp.exp(low_log))[0]
 
-        def body(_, values):
+        def body(
+            _: Array, values: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             lower, upper, lower_value = values
             middle = 0.5 * (lower + upper)
             middle_value = self._integrals(radius_, jnp.exp(middle))[0]
@@ -293,7 +297,7 @@ class MichelBondiAccretionPlan(StrictModule, NonTrainableState):
         )
         log_speed = 0.5 * (low_log + high_log)
 
-        def refine(_, current_log_speed):
+        def refine(_: Array, current_log_speed: Array) -> Array:
             current_speed = jnp.exp(current_log_speed)
             current = self._integrals(radius_, current_speed)
             schwarzschild_factor = 1.0 - 2.0 * mass / radius_
@@ -630,7 +634,7 @@ class FishboneMoncriefTorusPlan(StrictModule, NonTrainableState):
             )
         inner_potential = float(np.log(inner_minus_ut))
 
-        def outer_surface_residual(radius):
+        def outer_surface_residual(radius: float) -> float:
             g_tt, g_t_phi, g_phi_phi = self._metric_components_host(
                 mass, spin, radius, np.pi / 2.0
             )
@@ -696,7 +700,9 @@ class FishboneMoncriefTorusPlan(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _metric_components_host(mass, spin, radius, polar):
+    def _metric_components_host(
+        mass: float, spin: float, radius: float, polar: float
+    ) -> tuple[float, float, float]:
         sigma = radius**2 + spin**2 * np.cos(polar) ** 2
         sine_squared = np.sin(polar) ** 2
         g_tt = -(1.0 - 2.0 * mass * radius / sigma)
@@ -707,14 +713,18 @@ class FishboneMoncriefTorusPlan(StrictModule, NonTrainableState):
         return g_tt, g_t_phi, g_phi_phi
 
     @staticmethod
-    def _minus_ut_host(g_tt, g_t_phi, g_phi_phi, angular_momentum):
+    def _minus_ut_host(
+        g_tt: float, g_t_phi: float, g_phi_phi: float, angular_momentum: float
+    ) -> float:
         numerator = g_t_phi**2 - g_tt * g_phi_phi
         denominator = (
             g_phi_phi + 2.0 * angular_momentum * g_t_phi + angular_momentum**2 * g_tt
         )
         return np.sqrt(numerator / denominator)
 
-    def _circular_fields(self, radius: Array, polar: Array, /):
+    def _circular_fields(
+        self, radius: Array, polar: Array, /
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         mass = jnp.asarray(self.mass_parameter, dtype=radius.dtype)
         spin = jnp.asarray(self.spin_parameter, dtype=radius.dtype)
         angular_momentum = jnp.asarray(self.specific_angular_momentum, dtype=radius.dtype)

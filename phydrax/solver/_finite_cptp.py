@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import cast, Literal
 
 import equinox as eqx
 import jax
@@ -76,7 +76,8 @@ class FiniteLindbladChannelPlan(StrictModule):
         if not isinstance(plan_id, str) or not plan_id:
             raise ValueError("plan_id must be nonempty.")
         if callable(hamiltonian):
-            function = hamiltonian
+            # No ArrayLike member is callable, so callable() selects the callback.
+            function = cast(Callable[[Array], Array], hamiltonian)
         else:
             matrix = jnp.asarray(hamiltonian)
             if matrix.shape != (dimension, dimension):

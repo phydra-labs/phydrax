@@ -9,7 +9,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Float, Int
+from jaxtyping import Array, ArrayLike, Float, Int
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
@@ -33,11 +33,11 @@ class ChemicalComponentCatalog(StrictModule, NonTrainableState):
     def __init__(
         self,
         component_names: Sequence[str],
-        molar_masses: Float[Array, " component"],
+        molar_masses: ArrayLike,
         element_names: Sequence[str],
-        element_composition: Int[Array, "element component"],
+        element_composition: ArrayLike,
         *,
-        charges: Int[Array, " component"] | None = None,
+        charges: ArrayLike | None = None,
         provenance: str = "user-supplied",
     ) -> None:
         names = tuple(str(name) for name in component_names)

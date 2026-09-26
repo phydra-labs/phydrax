@@ -36,7 +36,9 @@ from ._fiber_current import FiberCurrentState, PreparedFiberCurrent
 FARINA_2004_CYLINDRICAL_DOI = "10.1109/TBME.2003.820998"
 
 
-def _i_basis(order: Array, q: Array, radius: Array, reference: Array):
+def _i_basis(
+    order: Array, q: Array, radius: Array, reference: Array
+) -> tuple[Array, Array]:
     x, xref = q * radius, q * reference
     scale = jnp.exp(x - xref) / ive(order, xref)
     value = ive(order, x) * scale
@@ -44,7 +46,9 @@ def _i_basis(order: Array, q: Array, radius: Array, reference: Array):
     return value, derivative
 
 
-def _k_basis(order: Array, q: Array, radius: Array, reference: Array):
+def _k_basis(
+    order: Array, q: Array, radius: Array, reference: Array
+) -> tuple[Array, Array]:
     x, xref = q * radius, q * reference
     scale = jnp.exp(xref - x) / kve(order, xref)
     value = kve(order, x) * scale
@@ -429,7 +433,9 @@ class PreparedFarina2004CylindricalConductor(StrictModule):
         self.contact_lead_field_ohm = contact_field
         self.radial_transfer_ohm_m = radial
         self.interface_relative_residual = jnp.max(relative)
-        self.source_current_shape = source.control_length_m.shape
+        # PreparedFiberCurrent builds control_length_m as (fiber, node) by construction.
+        fiber_count, node_count = source.control_length_m.shape
+        self.source_current_shape = (fiber_count, node_count)
         self.source_prepared_id, self.geometry_id = (
             source.prepared_id,
             source.plan.geometry_id,

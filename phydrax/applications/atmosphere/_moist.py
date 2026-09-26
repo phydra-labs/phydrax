@@ -14,6 +14,7 @@ exactly the enthalpy differences of this caloric model.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import equinox as eqx
 import jax
@@ -250,7 +251,14 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
         ) / self.vapor_gas_constant
         return self.reference_saturation_pressure * jnp.exp(exponent)
 
-    def _partition(self, constraint, temperature, total_water, frozen, isobaric):
+    def _partition(
+        self,
+        constraint: Array,
+        temperature: Array,
+        total_water: Array,
+        frozen: Array | bool,
+        isobaric: bool,
+    ) -> tuple[Array, Array, Array]:
         es = jnp.where(
             frozen,
             self.saturation_pressure(temperature, phase="ice"),
@@ -301,7 +309,7 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
     ) -> MoistAdjustmentResult:
         return self._adjust(pressure, total_water, specific_enthalpy, True)
 
-    def _arrays(self, a, b, c):
+    def _arrays(self, a: ArrayLike, b: ArrayLike, c: ArrayLike) -> list[Array]:
         a, b, c = jnp.asarray(a), jnp.asarray(b), jnp.asarray(c)
         dtype = jnp.result_type(a.dtype, b.dtype, c.dtype, jnp.float32)
         return jnp.broadcast_arrays(
@@ -310,7 +318,7 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
             jnp.asarray(c, dtype=dtype),
         )
 
-    def _valid(self, constraint, temperature, qt):
+    def _valid(self, constraint: Array, temperature: Array, qt: Array) -> Array:
         return (
             jnp.isfinite(constraint)
             & (constraint > 0)
@@ -322,7 +330,14 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
             & (qt < 1)
         )
 
-    def _caloric(self, constraint, temperature, qt, frozen, isobaric):
+    def _caloric(
+        self,
+        constraint: Array,
+        temperature: Array,
+        qt: Array,
+        frozen: Array | bool,
+        isobaric: bool,
+    ) -> Array:
         qv, ql, qi = self._partition(constraint, temperature, qt, frozen, isobaric)
         return (
             self.enthalpy(temperature, qv, ql, qi)
@@ -330,7 +345,16 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
             else self.energy(constraint, temperature, qv, ql, qi)
         )
 
-    def _regular(self, constraint, t, qt, qv, ql, qi, isobaric):
+    def _regular(
+        self,
+        constraint: Array,
+        t: Array,
+        qt: Array,
+        qv: Array,
+        ql: Array,
+        qi: Array,
+        isobaric: bool,
+    ) -> Array:
         es = jnp.where(
             t < self.reference_temperature,
             self.saturation_pressure(t, phase="ice"),
@@ -348,7 +372,13 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
             & (t < self.maximum_temperature)
         )
 
-    def _adjust(self, constraint, total_water, specific_energy, isobaric):
+    def _adjust(
+        self,
+        constraint: ArrayLike,
+        total_water: ArrayLike,
+        specific_energy: ArrayLike,
+        isobaric: bool,
+    ) -> MoistAdjustmentResult:
         c, qt, target = self._arrays(constraint, total_water, specific_energy)
         shape = c.shape
         freezing = jnp.full_like(c, self.reference_temperature)
@@ -375,7 +405,7 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
         scale = self.dry_cv
         arguments = tuple(x.reshape(-1) for x in (c, qt, target, frozen, coexistence))
 
-        def residual_one(t_vector, args):
+        def residual_one(t_vector: Array, args: tuple[Array, ...]) -> Array:
             constraint_, water_, energy_, frozen_, coexistence_ = args
             t = t_vector[0]
             residual = (
@@ -385,7 +415,7 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
                 jnp.where(coexistence_, t - self.reference_temperature, residual), (1,)
             )
 
-        def residual_all(temperatures):
+        def residual_all(temperatures: Array) -> Array:
             return jax.vmap(residual_one)(temperatures[:, None], arguments)[:, 0]
 
         tolerance = max(
@@ -400,11 +430,13 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
             relative_tolerance=0.0,
         )
 
-        def solve(function, guess):
+        def solve(function: Callable[[Array], Array], guess: Array) -> Array:
             del function
             return kernel.solve(guess[:, None], arguments).state[:, 0]
 
-        def tangent_solve(linearized, right_hand_side):
+        def tangent_solve(
+            linearized: Callable[[Array], Array], right_hand_side: Array
+        ) -> Array:
             return right_hand_side / linearized(jnp.ones_like(right_hand_side))
 
         t = jax.lax.custom_root(

@@ -13,6 +13,7 @@ from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import ModuleType
 from typing import Any
 
 import numpy as np
@@ -34,7 +35,7 @@ from ...units import (
     UnitDefinition,
 )
 from ._contracts import SurfaceMetadata
-from ._model import SurfaceModel
+from ._model import _surface_connectivity, SurfaceModel
 
 
 class SurfaceFileFormat(str, Enum):
@@ -379,7 +380,7 @@ def _resolve_format(
     return _EXTENSION_FORMAT[suffix]
 
 
-def _require_module(module: str, purpose: str, /):
+def _require_module(module: str, purpose: str, /) -> ModuleType:
     if find_spec(module) is None:
         raise SurfaceProviderUnavailableError(
             f"{purpose} requires installed provider module {module!r}."
@@ -473,7 +474,7 @@ def _cell_data(
 
 def _marker_values_valid(value: ArrayLike, count: int, /) -> bool:
     array = np.asarray(value)
-    return array.shape == (count,) and np.all(array == 0)
+    return array.shape == (count,) and bool(np.all(array == 0))
 
 
 def _decode_single_marker(
@@ -906,7 +907,7 @@ def _metadata_point_data(
     point_count: int,
     unit: UnitDefinition,
     /,
-):
+) -> dict[str, np.ndarray]:
     marker = np.zeros((point_count,), dtype=np.uint8)
     data = {
         _META_SOURCE + _encode_text(model.metadata.source_id): marker,
@@ -927,11 +928,13 @@ def _meshio_export_mesh(
     target_unit: UnitDefinition,
     include_metadata: bool,
     /,
-):
+) -> Any:
     source_unit = model.metadata.coordinate_contract.length_unit
     scale = float(conversion_factor(source_unit, target_unit))
     points = np.asarray(model.mesh.coordinates, dtype=np.float64) * scale
-    faces = np.asarray(model.mesh.connectivity.cell_vertices, dtype=np.int32)[:, :3]
+    faces = np.asarray(_surface_connectivity(model.mesh).cell_vertices, dtype=np.int32)[
+        :, :3
+    ]
     point_data = {}
     cell_data = {}
     field_data = {}

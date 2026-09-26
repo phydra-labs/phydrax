@@ -6,16 +6,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from enum import IntFlag
 from math import isfinite
+from typing import Any, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from equinox.internal import while_loop
-from jaxtyping import Array
+from jax.typing import DTypeLike
+from jaxtyping import Array, ArrayLike
 
 from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -24,6 +26,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import localize_numerical_event
 from ._cable import (
+    CableState,
     CableStepInputs,
     initialize_cable_state,
     PreparedCableSolver,
@@ -105,6 +108,17 @@ class SpikeSourceState(StrictModule):
     time_ms: Array
 
 
+_NeuralCellModel: TypeAlias = (
+    PreparedCableSolver
+    | LeakyIntegrateAndFire
+    | AdaptiveExponentialIntegrateAndFire
+    | SpikeSource
+)
+_CellState: TypeAlias = CableState | PointNeuronState | SpikeSourceState
+_IonCurrentMap: TypeAlias = Callable[[CableState, CableState], Array]
+_T = TypeVar("_T")
+
+
 class NeuralCellPlan(StrictModule):
     """Stable cell identity, physical model and one observable spike site.
 
@@ -126,13 +140,13 @@ class NeuralCellPlan(StrictModule):
 
     def __init__(
         self,
-        cell_id,
-        model,
+        cell_id: str,
+        model: _NeuralCellModel,
         /,
         *,
-        detector_compartment=0,
-        threshold_mV=None,
-        rearm_mV=None,
+        detector_compartment: int = 0,
+        threshold_mV: ArrayLike | None = None,
+        rearm_mV: ArrayLike | None = None,
     ) -> None:
         if not isinstance(cell_id, str) or not cell_id:
             raise ValueError("cell_id must be a nonempty string.")
@@ -180,10 +194,18 @@ class NeuralIonCoupling(StrictModule, NonTrainableState):
 
     cell_id: str = eqx.field(static=True)
     runtime: PreparedIonDynamics
-    current: Callable = eqx.field(static=True)
+    current: _IonCurrentMap = eqx.field(static=True)
     coupling_id: str = eqx.field(static=True)
 
-    def __init__(self, cell_id, runtime, current, /, *, coupling_id) -> None:
+    def __init__(
+        self,
+        cell_id: str,
+        runtime: PreparedIonDynamics,
+        current: _IonCurrentMap,
+        /,
+        *,
+        coupling_id: str,
+    ) -> None:
         if not isinstance(cell_id, str) or not cell_id:
             raise ValueError("cell_id must be a nonempty string.")
         if not isinstance(runtime, PreparedIonDynamics):
@@ -209,7 +231,13 @@ class NeuralChannelCoupling(StrictModule):
     coupling_id: str = eqx.field(static=True)
 
     def __init__(
-        self, cell_id, runtime, open_state, single_channel_conductance_uS, reversal_mV, /
+        self,
+        cell_id: str,
+        runtime: PreparedMarkovChannel,
+        open_state: int,
+        single_channel_conductance_uS: float | Array,
+        reversal_mV: float | Array,
+        /,
     ) -> None:
         if not isinstance(cell_id, str) or not cell_id:
             raise ValueError("cell_id must be a nonempty string.")
@@ -270,21 +298,21 @@ class NeuralNetworkPlan(StrictModule):
         synapses: SynapseNetworkPlan,
         /,
         *,
-        queue_capacity=1024,
-        spike_capacity=1024,
-        recording_capacity=1024,
-        maximum_events_per_step=128,
-        root_subdivisions=4,
-        root_iterations=48,
-        root_tolerance_ms=1e-7,
-        grazing_tolerance=1e-8,
-        learning=None,
-        modulation_scope="global",
-        current_clamps=(),
-        voltage_clamps=(),
-        external_spikes=(),
-        ion_couplings=(),
-        channel_couplings=(),
+        queue_capacity: int = 1024,
+        spike_capacity: int = 1024,
+        recording_capacity: int = 1024,
+        maximum_events_per_step: int = 128,
+        root_subdivisions: int = 4,
+        root_iterations: int = 48,
+        root_tolerance_ms: float = 1e-7,
+        grazing_tolerance: float = 1e-8,
+        learning: PairSTDPPlan | EligibilitySTDPPlan | None = None,
+        modulation_scope: str = "global",
+        current_clamps: Iterable[tuple[str, CurrentClamp]] = (),
+        voltage_clamps: Iterable[tuple[str, VoltageClamp]] = (),
+        external_spikes: Iterable[tuple[float, str]] = (),
+        ion_couplings: Iterable[NeuralIonCoupling] = (),
+        channel_couplings: Iterable[NeuralChannelCoupling] = (),
     ) -> None:
         cells = tuple(cells)
         if not cells or any(not isinstance(cell, NeuralCellPlan) for cell in cells):
@@ -340,7 +368,7 @@ class NeuralNetworkPlan(StrictModule):
                     and right.start_ms < left.stop_ms
                 ):
                     raise ValueError("Overlapping voltage commands target one endpoint.")
-        spikes = []
+        spikes: list[tuple[float, str]] = []
         for time, cell_id in external_spikes:
             time = float(time)
             if not isfinite(time) or time < 0 or cell_id not in ids:
@@ -454,7 +482,7 @@ class NeuralNetworkPlan(StrictModule):
             }
         )
 
-    def prepare(self):
+    def prepare(self) -> PreparedNeuralNetwork:
         return prepare_neural_network(self)
 
 
@@ -492,7 +520,8 @@ def prepare_neural_network(plan: NeuralNetworkPlan, /) -> PreparedNeuralNetwork:
             signatures.append(signature)
             grouped.append([index])
     offsets = plan.synapses.offsets
-    groups, locations = [], [None] * len(plan.cells)
+    groups: list[NeuralCellGroup] = []
+    locations: dict[int, tuple[int, int]] = {}
     for group_index, indices in enumerate(grouped):
         endpoints = [list(range(offsets[i], offsets[i + 1])) for i in indices]
         groups.append(
@@ -528,7 +557,7 @@ def prepare_neural_network(plan: NeuralNetworkPlan, /) -> PreparedNeuralNetwork:
         plan,
         plan.synapses.prepare(),
         tuple(groups),
-        tuple(locations),
+        tuple(locations[index] for index in range(len(plan.cells))),
         jnp.asarray(physical),
         jnp.asarray(detectors, dtype=jnp.int32),
         jnp.asarray([time for time, _ in plan.external_spikes]),
@@ -550,7 +579,7 @@ class NeuralRecording(StrictModule):
 
 
 class NeuralNetworkState(StrictModule):
-    groups: tuple
+    groups: tuple[_CellState, ...]
     relations: SynapseRelationState
     queue: NeuralEventQueue
     fanout: SourceFanout
@@ -601,23 +630,48 @@ class NeuralNetworkRunResult(StrictModule):
 class NeuralNetworkCheckpoint(StrictModule, NonTrainableState):
     state: NeuralNetworkState
     runtime_id: str = eqx.field(static=True)
-    content_id: str = eqx.field(static=True)
+    content_id: dict[str, Any] = eqx.field(static=True)
 
 
-def _stack(values):
+_EmitCarry: TypeAlias = tuple[
+    Array, NeuralEventQueue, NeuralSpikeRecording, Array, Array, Array
+]
+_DeliverCarry: TypeAlias = tuple[NeuralEventQueue, Array, Array, Array]
+_TransitionResult: TypeAlias = tuple[
+    NeuralNetworkState, Array, Array, Array, Array, Array
+]
+_EventCarry: TypeAlias = tuple[
+    NeuralNetworkState, Array, Array, Array, Array, Array, Array
+]
+_RunCarry: TypeAlias = tuple[NeuralNetworkState, Array]
+_RunOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+
+
+def _stack(values: Sequence[_T]) -> _T:
     return jax.tree.map(lambda *leaves: jnp.stack(leaves), *values)
 
 
-def _group_models(runtime, group):
+def _group_models(
+    runtime: PreparedNeuralNetwork, group: NeuralCellGroup
+) -> _NeuralCellModel:
     return _stack([runtime.plan.cells[i].model for i in group.indices])
 
 
-def _cell_state(runtime, groups, cell_index):
+def _cell_state(
+    runtime: PreparedNeuralNetwork,
+    groups: tuple[_CellState, ...],
+    cell_index: int,
+) -> _CellState:
     group, index = runtime.cell_locations[cell_index]
     return jax.tree.map(lambda value: value[index], groups[group])
 
 
-def _replace_cell(runtime, groups, cell_index, cell):
+def _replace_cell(
+    runtime: PreparedNeuralNetwork,
+    groups: tuple[_CellState, ...],
+    cell_index: int,
+    cell: _CellState,
+) -> tuple[_CellState, ...]:
     group, index = runtime.cell_locations[cell_index]
     changed = jax.tree.map(
         lambda values, value: values.at[index].set(value), groups[group], cell
@@ -639,14 +693,14 @@ def neural_voltage(runtime: PreparedNeuralNetwork, state: NeuralNetworkState, /)
 
 def initialize_neural_network(
     runtime: PreparedNeuralNetwork,
-    voltage_mV=None,
+    voltage_mV: ArrayLike | None = None,
     /,
     *,
-    time_ms=0.0,
-    intracellular_mM=(),
-    extracellular_mM=(),
-    channel_counts=(),
-    key=None,
+    time_ms: float | Array = 0.0,
+    intracellular_mM: Sequence[Array] = (),
+    extracellular_mM: Sequence[Array] = (),
+    channel_counts: Sequence[Array] = (),
+    key: Array | None = None,
 ) -> NeuralNetworkState:
     plan = runtime.plan
     if not isfinite(float(time_ms)) or time_ms < 0:
@@ -680,7 +734,7 @@ def initialize_neural_network(
             plan.ion_couplings, intracellular_mM, extracellular_mM, strict=True
         )
     )
-    cells = []
+    cells: list[_CellState] = []
     for index, cell in enumerate(plan.cells):
         start, stop = plan.synapses.offsets[index : index + 2]
         voltage = None if voltage_mV is None else voltage_mV[start:stop]
@@ -714,12 +768,17 @@ def initialize_neural_network(
         cells.append(value)
     groups = tuple(_stack([cells[i] for i in group.indices]) for group in runtime.groups)
     dtype = inexact_result_type(*[jax.tree.leaves(value)[0] for value in cells])
-    channels = tuple(
-        initialize_stochastic_channels(
-            binding.runtime, counts, jax.random.fold_in(key, index)
-        )
-        for index, (binding, counts) in enumerate(
-            zip(plan.channel_couplings, channel_counts, strict=True)
+    # Validation above guarantees channel_counts is empty whenever key is None.
+    channels: tuple[StochasticChannelState, ...] = (
+        ()
+        if key is None
+        else tuple(
+            initialize_stochastic_channels(
+                binding.runtime, counts, jax.random.fold_in(key, index)
+            )
+            for index, (binding, counts) in enumerate(
+                zip(plan.channel_couplings, channel_counts, strict=True)
+            )
         )
     )
     synapses = initialize_synapse_network(runtime.synapses)
@@ -764,7 +823,7 @@ def initialize_neural_network(
 
 
 def zero_neural_inputs(
-    runtime: PreparedNeuralNetwork, /, *, dtype=None
+    runtime: PreparedNeuralNetwork, /, *, dtype: DTypeLike | None = None
 ) -> NeuralNetworkInputs:
     zeros = jnp.zeros((runtime.plan.synapses.endpoint_count,), dtype=dtype)
     scope = runtime.plan.modulation_scope
@@ -785,7 +844,9 @@ def zero_neural_inputs(
     )
 
 
-def _rearm(runtime, state, armed):
+def _rearm(
+    runtime: PreparedNeuralNetwork, state: NeuralNetworkState, armed: Array
+) -> Array:
     voltage = neural_voltage(runtime, state)
     for index, cell in enumerate(runtime.plan.cells):
         endpoint = runtime.plan.synapses.offsets[index] + cell.detector_compartment
@@ -802,7 +863,9 @@ def _rearm(runtime, state, armed):
     return armed
 
 
-def _stimulus(runtime, inputs, time):
+def _stimulus(
+    runtime: PreparedNeuralNetwork, inputs: NeuralNetworkInputs, time: Array
+) -> NeuralNetworkInputs:
     injected, mask, target = (
         inputs.injected_current_nA,
         inputs.voltage_clamp_mask,
@@ -829,7 +892,9 @@ def _stimulus(runtime, inputs, time):
     return NeuralNetworkInputs(injected, mask, target, inputs.modulation)
 
 
-def _drive(runtime, state, elapsed):
+def _drive(
+    runtime: PreparedNeuralNetwork, state: NeuralNetworkState, elapsed: Array
+) -> tuple[Array, Array]:
     x = elapsed / state.relations.time_constant_ms
     factor = -jnp.expm1(-x) / jnp.where(x == 0, 1.0, x)
     averaged = eqx.tree_at(
@@ -855,9 +920,19 @@ def _drive(runtime, state, elapsed):
 
 
 def _advance_one(
-    model, state, elapsed, injected, conductance, offset, clamp_mask, clamp_target, time
-):
+    model: _NeuralCellModel,
+    state: _CellState,
+    elapsed: Array,
+    injected: Array,
+    conductance: Array,
+    offset: Array,
+    clamp_mask: Array,
+    clamp_target: Array,
+    time: Array,
+) -> tuple[_CellState, Array]:
+    # Group states are initialized from, and stacked alongside, their models.
     if isinstance(model, PreparedCableSolver):
+        assert isinstance(state, CableState)
         result = step_cable(
             model,
             state,
@@ -867,6 +942,7 @@ def _advance_one(
         return result.state, result.evidence.successful
     if isinstance(model, SpikeSource):
         return SpikeSourceState(time + elapsed), jnp.asarray(True)
+    assert isinstance(state, PointNeuronState)
     value = advance_point_neuron(
         model, state, elapsed, injected[0], conductance[0], offset[0], time_ms=time
     )
@@ -875,7 +951,12 @@ def _advance_one(
     )
 
 
-def _flow(runtime, state, elapsed, inputs):
+def _flow(
+    runtime: PreparedNeuralNetwork,
+    state: NeuralNetworkState,
+    elapsed: Array,
+    inputs: NeuralNetworkInputs,
+) -> tuple[NeuralNetworkState, Array]:
     conductance, offset = _drive(runtime, state, elapsed)
     inputs = _stimulus(runtime, inputs, state.time_ms)
     groups, successful = [], jnp.asarray(True)
@@ -898,7 +979,7 @@ def _flow(runtime, state, elapsed, inputs):
         groups.append(advanced)
         successful = successful & jnp.all(valid)
     groups = tuple(groups)
-    ions = []
+    ions: list[IonConcentrationState] = []
     ids = tuple(cell.cell_id for cell in runtime.plan.cells)
     for binding, ion in zip(runtime.plan.ion_couplings, state.ions, strict=True):
         index = ids.index(binding.cell_id)
@@ -906,6 +987,8 @@ def _flow(runtime, state, elapsed, inputs):
             _cell_state(runtime, state.groups, index),
             _cell_state(runtime, groups, index),
         )
+        # Plan validation restricts ion couplings to cable cells.
+        assert isinstance(old, CableState) and isinstance(new, CableState)
         candidate = evaluate_ion_concentration_transition(
             binding.runtime, ion, binding.current(old, new), elapsed
         )
@@ -929,7 +1012,12 @@ def _flow(runtime, state, elapsed, inputs):
     ), successful
 
 
-def _flow_or_identity(runtime, state, elapsed, inputs):
+def _flow_or_identity(
+    runtime: PreparedNeuralNetwork,
+    state: NeuralNetworkState,
+    elapsed: Array,
+    inputs: NeuralNetworkInputs,
+) -> tuple[NeuralNetworkState, Array]:
     return jax.lax.cond(
         elapsed > 0,
         lambda _: _flow(runtime, state, elapsed, inputs),
@@ -938,7 +1026,9 @@ def _flow_or_identity(runtime, state, elapsed, inputs):
     )
 
 
-def _next_boundary(runtime, state, target):
+def _next_boundary(
+    runtime: PreparedNeuralNetwork, state: NeuralNetworkState, target: Array
+) -> Array:
     time = state.time_ms
     end = jnp.minimum(
         target, time + runtime.plan.synapses.dt_ms / runtime.plan.root_subdivisions
@@ -970,7 +1060,7 @@ def _next_boundary(runtime, state, target):
     return end
 
 
-def _thresholds(runtime):
+def _thresholds(runtime: PreparedNeuralNetwork) -> Array:
     return jnp.stack(
         [
             cell.model.threshold_mV
@@ -983,7 +1073,13 @@ def _thresholds(runtime):
     )
 
 
-def _localize(runtime, state, candidate, elapsed, inputs):
+def _localize(
+    runtime: PreparedNeuralNetwork,
+    state: NeuralNetworkState,
+    candidate: NeuralNetworkState,
+    elapsed: Array,
+    inputs: NeuralNetworkInputs,
+) -> tuple[Array, Array, Array, Array]:
     initial, final = neural_voltage(runtime, state), neural_voltage(runtime, candidate)
     threshold = _thresholds(runtime)
     endpoints = runtime.detector_endpoints
@@ -1000,9 +1096,17 @@ def _localize(runtime, state, candidate, elapsed, inputs):
 
         # The endpoint row is an array argument; no dynamic Python cell indexing.
         def locate(
-            model, value, detector, active, level, current, mask, clamp, endpoint_row
-        ):
-            def at_time(h):
+            model: _NeuralCellModel,
+            value: _CellState,
+            detector: Array,
+            active: Array,
+            level: Array,
+            current: Array,
+            mask: Array,
+            clamp: Array,
+            endpoint_row: Array,
+        ) -> tuple[Array, Array, Array]:
+            def at_time(h: Array) -> Array:
                 g, o = _drive(runtime, state, h)
                 advanced, _ = _advance_one(
                     model,
@@ -1019,7 +1123,7 @@ def _localize(runtime, state, candidate, elapsed, inputs):
                     return jnp.asarray(0.0, dtype=elapsed.dtype)
                 return advanced.voltage_mV.reshape(-1)[detector]
 
-            def guard(h, voltage):
+            def guard(h: Array, voltage: Array) -> Array:
                 return jnp.where(active, voltage - level, h - elapsed * 0.5)
 
             result = localize_numerical_event(
@@ -1066,18 +1170,20 @@ def _localize(runtime, state, candidate, elapsed, inputs):
     return earliest, fired, root_valid, derivative_valid
 
 
-def _external(runtime, state, counts):
+def _external(
+    runtime: PreparedNeuralNetwork, state: NeuralNetworkState, counts: Array
+) -> tuple[NeuralNetworkState, Array]:
     if not runtime.plan.external_spikes:
         return state, counts
     total = len(runtime.plan.external_spikes)
 
-    def condition(carry):
+    def condition(carry: tuple[Array, Array]) -> Array:
         cursor, _ = carry
         return (cursor < total) & (
             runtime.external_times_ms[jnp.minimum(cursor, total - 1)] <= state.time_ms
         )
 
-    def body(carry):
+    def body(carry: tuple[Array, Array]) -> tuple[Array, Array]:
         cursor, values = carry
         endpoint = runtime.external_endpoints[cursor]
         one = jnp.asarray(1, dtype=values.dtype)
@@ -1089,25 +1195,29 @@ def _external(runtime, state, counts):
     return eqx.tree_at(lambda value: value.external_cursor, state, cursor), counts
 
 
-def _emit(runtime, state, counts):
+def _emit(
+    runtime: PreparedNeuralNetwork, state: NeuralNetworkState, counts: Array
+) -> tuple[NeuralNetworkState, Array, Array, Array]:
     source_indices = jnp.nonzero(counts, size=counts.shape[0], fill_value=0)[0]
     source_count = jnp.count_nonzero(counts)
 
-    def condition(carry):
+    def condition(carry: _EmitCarry) -> Array:
         source, _, _, queue_valid, recording_valid, _ = carry
         return (source < source_count) & queue_valid & recording_valid
 
-    def body(carry):
+    def body(carry: _EmitCarry) -> _EmitCarry:
         source, queue, recording, queue_valid, recording_valid, occupancy = carry
         endpoint = source_indices[source]
         count = counts[endpoint]
         first, stop = state.fanout.offsets[endpoint], state.fanout.offsets[endpoint + 1]
 
-        def send_condition(inner):
+        def send_condition(inner: tuple[Array, NeuralEventQueue, Array]) -> Array:
             slot_index, _, okay = inner
             return (slot_index < stop) & okay
 
-        def send(inner):
+        def send(
+            inner: tuple[Array, NeuralEventQueue, Array],
+        ) -> tuple[Array, NeuralEventQueue, Array]:
             slot_index, events, okay = inner
             slot = state.fanout.slots[slot_index]
             events, accepted = enqueue_neural_event(
@@ -1129,11 +1239,13 @@ def _emit(runtime, state, counts):
         )
         room = recording.count + count <= runtime.plan.spike_capacity
 
-        def record_condition(inner):
+        def record_condition(inner: tuple[Array, NeuralSpikeRecording]) -> Array:
             written, _ = inner
             return (written < count) & room
 
-        def record(inner):
+        def record(
+            inner: tuple[Array, NeuralSpikeRecording],
+        ) -> tuple[Array, NeuralSpikeRecording]:
             written, value = inner
             index = value.count
             value = NeuralSpikeRecording(
@@ -1179,16 +1291,18 @@ def _emit(runtime, state, counts):
     return proposed, queue_valid, recording_valid, occupancy
 
 
-def _deliver(runtime, state):
+def _deliver(
+    runtime: PreparedNeuralNetwork, state: NeuralNetworkState
+) -> tuple[NeuralNetworkState, Array, Array]:
     capacity = runtime.plan.synapses.synapse_capacity
     amplitudes = jnp.zeros((capacity,), dtype=state.relations.weight.dtype)
     counts = jnp.zeros((capacity,), dtype=jnp.int32)
 
-    def condition(carry):
+    def condition(carry: _DeliverCarry) -> Array:
         queue, _, _, _ = carry
         return (queue.size > 0) & (peek_neural_event_time(queue) <= state.time_ms)
 
-    def body(carry):
+    def body(carry: _DeliverCarry) -> _DeliverCarry:
         queue, amounts, arrivals, delivered = carry
         queue, _, slot, generation, amplitude, count, popped = pop_neural_event(queue)
         valid = (
@@ -1220,7 +1334,9 @@ def _deliver(runtime, state):
     )
 
 
-def _interventions(runtime, state, fired):
+def _interventions(
+    runtime: PreparedNeuralNetwork, state: NeuralNetworkState, fired: Array
+) -> NeuralNetworkState:
     groups = state.groups
     for group, values in zip(runtime.groups, groups, strict=True):
         if isinstance(values, PointNeuronState):
@@ -1244,16 +1360,26 @@ def _interventions(runtime, state, fired):
     )
 
 
-def _learn(runtime, state, counts, arrivals, elapsed, modulation):
+def _learn(
+    runtime: PreparedNeuralNetwork,
+    state: NeuralNetworkState,
+    counts: Array,
+    arrivals: Array,
+    elapsed: Array,
+    modulation: Array,
+) -> tuple[NeuralNetworkState, Array]:
     plan = runtime.plan.learning
     if plan is None:
         return state, jnp.asarray(True)
+    # Initialization allocates the learning state matching the plan kind.
     if isinstance(plan, EligibilitySTDPPlan):
+        eligibility = state.learning
+        assert isinstance(eligibility, EligibilitySTDPState)
         candidate = evaluate_eligibility_stdp(
             runtime.synapses,
             plan,
             state.relations,
-            state.learning,
+            eligibility,
             counts,
             counts,
             elapsed_ms=elapsed,
@@ -1262,26 +1388,32 @@ def _learn(runtime, state, counts, arrivals, elapsed, modulation):
             modulation_scope=runtime.plan.modulation_scope,
         )
         relations, learning = commit_eligibility_stdp(
-            candidate, state.relations, state.learning
+            candidate, state.relations, eligibility
         )
+        successful = candidate.successful
     else:
+        pair = state.learning
+        assert isinstance(pair, PairSTDPState)
         candidate = evaluate_pair_stdp(
             runtime.synapses,
             plan,
             state.relations,
-            state.learning,
+            pair,
             counts,
             counts,
             elapsed_ms=elapsed,
             presynaptic_arrivals=arrivals,
         )
-        relations, learning = commit_pair_stdp(candidate, state.relations, state.learning)
+        relations, learning = commit_pair_stdp(candidate, state.relations, pair)
+        successful = candidate.successful
     return eqx.tree_at(
         lambda value: (value.relations, value.learning), state, (relations, learning)
-    ), candidate.successful
+    ), successful
 
 
-def _channel_updates(runtime, state):
+def _channel_updates(
+    runtime: PreparedNeuralNetwork, state: NeuralNetworkState
+) -> tuple[NeuralNetworkState, Array]:
     channels, times, valid = (
         list(state.channels),
         state.next_channel_times_ms,
@@ -1290,7 +1422,11 @@ def _channel_updates(runtime, state):
     for index, binding in enumerate(runtime.plan.channel_couplings):
         due = times[index] <= state.time_ms
 
-        def update(_, binding=binding, channel=channels[index]):
+        def update(
+            _: None,
+            binding: NeuralChannelCoupling = binding,
+            channel: StochasticChannelState = channels[index],
+        ) -> tuple[StochasticChannelState, Array]:
             candidate = evaluate_stochastic_channel_transition(binding.runtime, channel)
             return candidate.proposed, candidate.evidence.successful
 
@@ -1310,12 +1446,17 @@ def _channel_updates(runtime, state):
     ), valid
 
 
-def _event_transition(runtime, state, target, inputs):
+def _event_transition(
+    runtime: PreparedNeuralNetwork,
+    state: NeuralNetworkState,
+    target: Array,
+    inputs: NeuralNetworkInputs,
+) -> _TransitionResult:
     end = _next_boundary(runtime, state, target)
     elapsed = jnp.maximum(end - state.time_ms, 0.0)
     candidate, flow_ok = _flow_or_identity(runtime, state, elapsed, inputs)
 
-    def localize(_):
+    def localize(_: None) -> tuple[Array, Array, Array, Array]:
         return _localize(runtime, state, candidate, elapsed, inputs)
 
     duration, fired, root_ok, derivative_valid = jax.lax.cond(
@@ -1365,7 +1506,12 @@ def _event_transition(runtime, state, target, inputs):
     )
 
 
-def _clock_transition(runtime, state, target, inputs):
+def _clock_transition(
+    runtime: PreparedNeuralNetwork,
+    state: NeuralNetworkState,
+    target: Array,
+    inputs: NeuralNetworkInputs,
+) -> _TransitionResult:
     # Sources and arrivals at the left boundary are consumed exactly once.
     zeros = jnp.zeros_like(state.armed, dtype=jnp.int32)
     state, initial_counts = _external(runtime, state, zeros)
@@ -1432,7 +1578,7 @@ def _clock_transition(runtime, state, target, inputs):
     )
 
 
-def _sensitivity_gate(value, valid):
+def _sensitivity_gate(value: Array, valid: Array) -> Array:
     return guard_derivative_validity(
         value,
         valid,
@@ -1494,11 +1640,11 @@ def step_neural_network(
         batches = jnp.asarray(1, dtype=jnp.int32)
     else:
 
-        def condition(carry):
+        def condition(carry: _EventCarry) -> Array:
             current, status, _, _, _, _, _ = carry
             return (current.time_ms < target) & (status == 0)
 
-        def body(carry):
+        def body(carry: _EventCarry) -> _EventCarry:
             current, status, valid, batches, emissions, deliveries, occupancy = carry
             changed, next_status, transverse, emitted, delivered, next_occupancy = (
                 _event_transition(runtime, current, target, inputs)
@@ -1597,14 +1743,14 @@ def run_neural_network(
     if isinstance(steps, bool) or not isinstance(steps, int) or steps < 0:
         raise ValueError("steps must be a nonnegative integer.")
 
-    def advance(carry, _):
+    def advance(carry: _RunCarry, _: None) -> tuple[_RunCarry, _RunOutputs]:
         current, failed_status = carry
 
-        def run(_):
+        def run(_: None) -> tuple[NeuralNetworkState, NeuralNetworkEvidence]:
             result = step_neural_network(runtime, current, inputs)
             return result.state, result.evidence
 
-        def stopped(_):
+        def stopped(_: None) -> tuple[NeuralNetworkState, NeuralNetworkEvidence]:
             zero = jnp.asarray(0, dtype=jnp.int32)
             return current, NeuralNetworkEvidence(
                 failed_status,

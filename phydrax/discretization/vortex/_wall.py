@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -66,7 +67,7 @@ class BoundarySheetParticleTransferPlan2D(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, /, *, dtype=jnp.float64) -> WallVortexPoolState:
+    def initialize(self, /, *, dtype: DTypeLike = jnp.float64) -> WallVortexPoolState:
         return WallVortexPoolState(
             jnp.zeros((self.particle_capacity, 2), dtype=dtype),
             jnp.zeros((self.particle_capacity,), dtype=dtype),

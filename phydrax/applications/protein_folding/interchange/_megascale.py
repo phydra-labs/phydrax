@@ -92,8 +92,14 @@ def _optional_positive(value: float | None, name: str, /) -> float | None:
     return result
 
 
-def _source_fields(row: Mapping[str, str], headers: Sequence[str], /):
+def _source_fields(
+    row: Mapping[str, str], headers: Sequence[str], /
+) -> tuple[tuple[str, str], ...]:
     return tuple((name, row[name]) for name in headers)
+
+
+def _standard_error_label(value: float | None, /) -> str:
+    return "unquantified" if value is None else float(value).hex()
 
 
 def _processed_stability_value(
@@ -201,13 +207,17 @@ def convert_stability_censoring(
         raise ValueError("Only interval censoring accepts two censoring bounds.")
     if source == target:
         return censoring, bounds
-    converted = {
+    reversed_censoring: dict[
+        Literal["none", "lower", "upper", "interval", "unknown"],
+        Literal["none", "lower", "upper", "interval", "unknown"],
+    ] = {
         "none": "none",
         "lower": "upper",
         "upper": "lower",
         "interval": "interval",
         "unknown": "unknown",
-    }[censoring]
+    }
+    converted = reversed_censoring[censoring]
     converted_bounds = None if bounds is None else (-float(bounds[1]), -float(bounds[0]))
     return converted, converted_bounds
 
@@ -921,7 +931,7 @@ def admit_megascale_processed_table(
         raise ValueError(
             "Censoring and quality mappings must cover selected names exactly."
         )
-    standard_errors = (
+    standard_errors: dict[str, float | None] = (
         {name: None for name in selected}
         if standard_error_by_name is None
         else dict(standard_error_by_name)
@@ -949,11 +959,7 @@ def admit_megascale_processed_table(
             "protein-stability-standard-error:"
             + name
             + ":"
-            + (
-                "unquantified"
-                if standard_errors[name] is None
-                else float(standard_errors[name]).hex()
-            )
+            + _standard_error_label(standard_errors[name])
             for name in selected
         }
         if not required_lineage.issubset(standard_error_manifest.lineage_ids):

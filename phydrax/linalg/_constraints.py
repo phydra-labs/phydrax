@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
+from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -80,7 +83,7 @@ class ConstraintMap(StrictModule, NonTrainableState):
         self.dual_pullback = pullback
         self.constraint_id = resolved_id
 
-    def expand(self, reduced: object, lift: object, /):
+    def expand(self, reduced: object, lift: object, /) -> PyTree[Array]:
         reduced_ = self.reduced_space.validate(reduced)
         lift_ = self.full_space.validate(lift)
         return self.full_space.validate(
@@ -91,15 +94,15 @@ class ConstraintMap(StrictModule, NonTrainableState):
             )
         )
 
-    def homogeneous_correction(self, reduced: object, /):
+    def homogeneous_correction(self, reduced: object, /) -> PyTree[Array]:
         return self.full_space.validate(
             self.prolongation.mv(self.reduced_space.validate(reduced))
         )
 
-    def pullback_dual(self, residual, /):
+    def pullback_dual(self, residual: PyTree[Any], /) -> PyTree[Array]:
         return self.dual_pullback.mv(residual)
 
-    def reduce_vector(self, residual, /):
+    def reduce_vector(self, residual: PyTree[Any], /) -> PyTree[Array]:
         return self.prolongation.adjoint_mv(self.full_space.validate(residual))
 
 

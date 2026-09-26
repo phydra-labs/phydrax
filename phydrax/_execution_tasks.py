@@ -11,22 +11,24 @@ import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Any, Generic, Protocol, Self, TypeVar
 
 from ._execution_control import CancellationMode, CancellationToken
 
 
 T = TypeVar("T")
+T_co = TypeVar("T_co", covariant=True)
 
 
-class TaskHandle(Protocol[T]):
+class TaskHandle(Protocol[T_co]):
     task_id: str
 
     def done(self) -> bool: ...
 
     def cancel(self, reason: str = "task canceled") -> bool: ...
 
-    def result(self, timeout: float | None = None) -> T: ...
+    def result(self, timeout: float | None = None) -> T_co: ...
 
 
 class HostTaskExecutor(Protocol):
@@ -133,7 +135,12 @@ class InlineTaskExecutor:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exception_type, exception, traceback) -> bool:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
         self.close()
         return False
 
@@ -233,7 +240,12 @@ class _BoundedFutureExecutor:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exception_type, exception, traceback) -> bool:
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
         self.close()
         return False
 
@@ -275,15 +287,17 @@ class BoundedThreadTaskExecutor(_BoundedFutureExecutor):
             raise ValueError("process cancellation requires an isolated process executor")
         self._reserve(task, byte_count)
         token = CancellationToken() if mode is CancellationMode.COOPERATIVE else None
+        # ty cannot solve T through a generic callable passed to Executor.submit.
+        future: Future[T]
         if token is None:
-            future = self._executor.submit(
+            future = self._executor.submit(  # ty: ignore[invalid-assignment]
                 _call_without_token,
                 operation,
                 tuple(args),
                 dict(kwargs),
             )
         else:
-            future = self._executor.submit(
+            future = self._executor.submit(  # ty: ignore[invalid-assignment]
                 _call_with_token,
                 operation,
                 token,
@@ -333,7 +347,8 @@ class SpawnedProcessTaskExecutor(_BoundedFutureExecutor):
                 "worker for killable process cancellation"
             )
         self._reserve(task, byte_count)
-        future = self._executor.submit(
+        # ty cannot solve T through a generic callable passed to Executor.submit.
+        future: Future[T] = self._executor.submit(  # ty: ignore[invalid-assignment]
             _call_without_token,
             operation,
             tuple(args),

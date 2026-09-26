@@ -1,7 +1,9 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Self
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +21,7 @@ class ManufacturingProcessGraph:
     stages: tuple[ManufacturingStage, ...]
 
     @classmethod
-    def create(cls, stages):
+    def create(cls, stages: Iterable[ManufacturingStage]) -> Self:
         return cls(tuple(stages))
 
     def __post_init__(self) -> None:
@@ -32,7 +34,7 @@ class ManufacturingProcessGraph:
         done = set()
         by = {s.stage_id: s for s in self.stages}
 
-        def visit(name) -> None:
+        def visit(name: str) -> None:
             if name in visiting:
                 raise ValueError("Manufacturing graph contains a cycle.")
             if name in done:

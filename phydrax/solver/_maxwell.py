@@ -60,6 +60,7 @@ from ._maxwell_sources import (
     AbstractMaxwellSourcePlan,
     MaxwellSourceForcing,
     PreparedMaxwellSource,
+    PreparedMaxwellSourceContract,
 )
 
 
@@ -810,7 +811,7 @@ class PreparedCompatibleMaxwell(StrictModule):
     constitutive: AbstractPreparedMaxwellConstitutive
     boundaries: tuple[PreparedMaxwellBoundary, ...]
     observers: tuple[AbstractPreparedMaxwellObserver, ...]
-    sources: tuple[PreparedMaxwellSource, ...]
+    sources: tuple[PreparedMaxwellSourceContract, ...]
     capabilities: MaxwellCapabilities
     pml: PreparedMaxwellCPML | None
     magnetic_incidence: Any
@@ -893,7 +894,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         )
         magnetic_constraint_solver = (
             None
-            if top_form or plan.magnetic_constraint.mode == "elide"
+            if magnetic_incidence is None or plan.magnetic_constraint.mode == "elide"
             else prepare(
                 MinimumNormProblem(
                     magnetic_incidence,
@@ -2015,7 +2016,9 @@ def solve_compatible_maxwell(
     fixed = _fixed_step(runtime, step_size, state.primary.electric_displacement.dtype)
     start = jnp.asarray(start_time)
 
-    def body(carry: CompatibleMaxwellState, index: Array, /):
+    def body(
+        carry: CompatibleMaxwellState, index: Array, /
+    ) -> tuple[CompatibleMaxwellState, None]:
         time = start + index * fixed.parameters.step_size
         return fixed.step(time, carry, args), None
 

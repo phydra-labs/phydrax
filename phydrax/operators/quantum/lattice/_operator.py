@@ -217,7 +217,7 @@ class QuantumSectorOperator(AbstractLinearOperator):
         result = jnp.zeros((target.dimension,), dtype=jnp.complex128)
         fallback = target._coordinate_unchecked(jnp.asarray(0, dtype=jnp.int64))
 
-        def add_column(index, accumulated):
+        def add_column(index: Array, accumulated: Array) -> Array:
             coordinate = source._coordinate_unchecked(jnp.asarray(index, dtype=jnp.int64))
             outputs, amplitudes = _apply_compiled_unchecked(self.prepared, coordinate)
             valid = jax.vmap(target._contains_unchecked)(outputs) & (
@@ -236,7 +236,7 @@ class QuantumSectorOperator(AbstractLinearOperator):
         fallback = target._coordinate_unchecked(jnp.asarray(0, dtype=jnp.int64))
         result = jnp.zeros((source.dimension,), dtype=jnp.complex128)
 
-        def set_column(index, accumulated):
+        def set_column(index: Array, accumulated: Array) -> Array:
             coordinate = source._coordinate_unchecked(jnp.asarray(index, dtype=jnp.int64))
             outputs, amplitudes = _apply_compiled_unchecked(self.prepared, coordinate)
             valid = jax.vmap(target._contains_unchecked)(outputs) & (

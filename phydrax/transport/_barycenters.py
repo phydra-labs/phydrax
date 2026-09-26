@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -27,6 +28,23 @@ from ._status import TransportStatus
 
 
 BarycenterMeasure = DiscreteMeasureTarget | WeightedSampleTarget | IntegrationRealization
+# (f, g, q, residual, per_measure, dual_residual, first_converged, converged,
+#  failed, best_residual, stagnant_checks, stagnated, terminal_iteration)
+_BarycenterCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class BarycenterProblemProvenance(StrictModule):
@@ -483,7 +501,9 @@ class SinkhornBarycenter(StrictModule):
             jnp.asarray(-1, dtype=jnp.int32),
         )
 
-        def step(carry, index):
+        def step(
+            carry: _BarycenterCarry, index: Array
+        ) -> tuple[_BarycenterCarry, tuple[Array, Array]]:
             (
                 current_f,
                 current_g,
@@ -501,7 +521,7 @@ class SinkhornBarycenter(StrictModule):
             ) = carry
             frozen = failed | ((converged | stagnated) & self.early_stop)
 
-            def update(_):
+            def update(_: None) -> tuple[Array, Array, Array, Array, Array]:
                 next_f_parts = []
                 log_support_parts = []
                 for measure_index in range(problem.num_measures):
@@ -578,7 +598,7 @@ class SinkhornBarycenter(StrictModule):
                     ~finite,
                 )
 
-            def retain(_):
+            def retain(_: None) -> tuple[Array, Array, Array, Array, Array]:
                 return current_f, current_g, current_q, current_dual_residual, failed
 
             next_f, next_g, next_q, next_dual, next_failed = jax.lax.cond(
@@ -594,7 +614,7 @@ class SinkhornBarycenter(StrictModule):
                 | (iteration == self.min_iterations)
             )
 
-            def check(_):
+            def check(_: None) -> tuple[Array, Array, Array]:
                 per_measure, consensus, finite = _marginal_residuals(
                     problem,
                     next_f,
@@ -610,7 +630,7 @@ class SinkhornBarycenter(StrictModule):
                     ~finite,
                 )
 
-            def no_check(_):
+            def no_check(_: None) -> tuple[Array, Array, Array]:
                 return current_residual, current_per_measure, jnp.asarray(False)
 
             next_residual, next_per_measure, objective_failed = jax.lax.cond(
@@ -1238,12 +1258,12 @@ def _row_logsumexp(
     padded_column_active = jnp.pad(column_active, (0, padded_columns - column_count))
     output = jnp.full((padded_rows,), -jnp.inf, dtype=values.dtype)
 
-    def row_body(row_block, result):
+    def row_body(row_block: Array, result: Array) -> Array:
         row_start = row_block * size
         row_mask = jax.lax.dynamic_slice(padded_row_active, (row_start,), (size,))
         accumulator = jnp.full((size,), -jnp.inf, dtype=values.dtype)
 
-        def column_body(column_block, current):
+        def column_body(column_block: Array, current: Array) -> Array:
             column_start = column_block * size
             block = jax.lax.dynamic_slice(
                 padded_costs, (row_start, column_start), (size, size)

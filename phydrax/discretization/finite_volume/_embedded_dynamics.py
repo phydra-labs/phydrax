@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -16,6 +18,7 @@ from ..._trainable import NonTrainableState
 from .._cell_complex import PolygonalConnectivity
 from .._conservation_boundary import AbstractConservationBoundary
 from ._geometry_protocol import (
+    FiniteVolumeFaceBlock,
     FiniteVolumeGeometryStatus,
     FiniteVolumeStageFaceBlock,
     FiniteVolumeStageFaceLayout,
@@ -25,6 +28,10 @@ from ._geometry_protocol import (
 from ._physical_boundaries import SlipWallBoundary
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 from ._unstructured_embedded_boundary import EmbeddedBoundaryMetrics
+
+
+if TYPE_CHECKING:
+    from ._dyadic import DyadicFiniteVolumeDiscretization
 
 
 class UnstructuredEmbeddedBoundarySet(StrictModule, NonTrainableState):
@@ -81,7 +88,7 @@ class UnstructuredEmbeddedBoundarySet(StrictModule, NonTrainableState):
 def _physical_stage_block(
     discretization: UnstructuredFiniteVolumeDiscretization,
     metrics: EmbeddedBoundaryMetrics,
-    block,
+    block: FiniteVolumeFaceBlock,
     topology_epoch_id: str,
     block_index: int,
     /,
@@ -214,7 +221,7 @@ def _cut_stage_block(
     metrics: EmbeddedBoundaryMetrics,
     boundary_set: UnstructuredEmbeddedBoundarySet,
     topology_epoch_id: str,
-    policy_ids,
+    policy_ids: Array,
     cut_face_start: int,
     /,
 ) -> FiniteVolumeStageFaceBlock | None:
@@ -283,7 +290,7 @@ def _cut_stage_block(
 def _translated_evidence(
     discretization: UnstructuredFiniteVolumeDiscretization,
     metrics: EmbeddedBoundaryMetrics,
-    evidence_version,
+    evidence_version: ArrayLike,
     /,
 ) -> FiniteVolumeStageGeometryEvidence:
     embedded = metrics.evidence
@@ -339,14 +346,15 @@ def _translated_evidence(
 
 
 def lower_embedded_stage_metrics(
-    discretization: UnstructuredFiniteVolumeDiscretization,
+    discretization: UnstructuredFiniteVolumeDiscretization
+    | DyadicFiniteVolumeDiscretization,
     metrics: EmbeddedBoundaryMetrics,
     boundary_set: UnstructuredEmbeddedBoundarySet,
     topology_epoch_id: str,
-    geometry_version,
-    evidence_version,
+    geometry_version: ArrayLike,
+    evidence_version: ArrayLike,
     *,
-    time=0.0,
+    time: ArrayLike = 0.0,
 ) -> FiniteVolumeStageMetrics:
     """Host-lower stationary 2-D cut geometry into compact stage face blocks."""
 

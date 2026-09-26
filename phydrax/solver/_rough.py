@@ -36,7 +36,7 @@ RoughDrift: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 class _ZeroRoughDrift(StrictModule):
     zero: Array
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Array, state: Array, args: object) -> Array:
         del time, state, args
         return self.zero
 
@@ -232,7 +232,7 @@ def _davie_correction(
     equal_roles = problem.state_shape == problem.local_shape == problem.tangent_shape
     if equal_roles:
 
-        def differentiate(direction):
+        def differentiate(direction: Array) -> Array:
             return jax.jvp(
                 lambda value: jnp.asarray(
                     problem.vector_fields(time, value, problem.args)
@@ -259,7 +259,7 @@ def _davie_correction(
             )
         )(directions)
 
-        def fields_in_base(local):
+        def fields_in_base(local: Array) -> Array:
             point = problem.geometry.retract(state, local)
             point_fields = jnp.asarray(problem.vector_fields(time, point, problem.args))
             return jax.vmap(
@@ -305,8 +305,10 @@ def _classical_integrate(
     second_level = control.levels[1] if davie else None
     steps = jnp.diff(control.times)
 
-    def one_path(first, second):
-        def advance(state, item):
+    def one_path(first: Array, second: Array | None) -> Array:
+        def advance(
+            state: Array, item: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array]:
             time, step, first_increment, second_increment = item
             drift = jnp.asarray(problem.drift(time, state, problem.args))
             fields = jnp.asarray(problem.vector_fields(time, state, problem.args))

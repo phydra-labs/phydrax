@@ -10,6 +10,7 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -47,7 +48,7 @@ class LagrangianInitialConditionResult(StrictModule):
 
 
 def _wavevectors(
-    shape: tuple[int, ...], box_size: tuple[float, ...], dtype, /
+    shape: tuple[int, ...], box_size: tuple[float, ...], dtype: DTypeLike, /
 ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
     components = tuple(
         2.0 * jnp.pi * jnp.fft.fftfreq(count, length / count, dtype=dtype)

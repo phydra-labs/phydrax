@@ -499,12 +499,20 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
                     axis.periodic,
                 )
 
-    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
+    def validate_input(
+        self, assignment_input: object, source_count: int, dimension: int, /
+    ) -> None:
         del source_count, dimension
         if assignment_input is not None:
             raise ValueError("Multilinear assignment accepts no source-domain input.")
 
-    def update_input(self, position, deformation_gradient, committed_input, /) -> object:
+    def update_input(
+        self,
+        position: Array,
+        deformation_gradient: Array,
+        committed_input: object,
+        /,
+    ) -> object:
         del position, deformation_gradient, committed_input
         return None
 

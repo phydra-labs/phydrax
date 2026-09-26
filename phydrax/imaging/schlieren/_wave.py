@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
 
 import equinox as eqx
 import jax
@@ -217,7 +218,9 @@ class WaveSchlierenPlan(StrictModule, NonTrainableState):
             successful,
             self.plan_id,
         )
-        return WaveSchlierenResult(at_detector.field, intensity, evidence)
+        # Scalar thin masks and angular-spectrum propagation preserve scalar fields.
+        detector_field = cast(ScalarPlaneField, at_detector.field)
+        return WaveSchlierenResult(detector_field, intensity, evidence)
 
 
 class MultisliceEvidence(StrictModule, NonTrainableState):
@@ -297,7 +300,9 @@ class MultisliceRefractivePlan(StrictModule, NonTrainableState):
             raise ValueError(f"refractive_index_perturbation must have shape {expected}.")
         input_power = jnp.sum(jnp.abs(incident.values) ** 2 * incident.space.area_weights)
 
-        def step(field, inputs):
+        def step(
+            field: ScalarPlaneField, inputs: tuple[Array, Array]
+        ) -> tuple[ScalarPlaneField, tuple[Array, Array, Array]]:
             delta_n, thickness = inputs
             half = self.propagation.execute(
                 field, 0.5 * thickness, self.medium_wavenumber
@@ -319,7 +324,9 @@ class MultisliceRefractivePlan(StrictModule, NonTrainableState):
             successful = (
                 half.successful & output.successful & jnp.all(jnp.isfinite(phase))
             )
-            return output.field, (jnp.max(jnp.abs(phase)), leakage, successful)
+            # Angular-spectrum propagation preserves the scalar field kind.
+            output_field = cast(ScalarPlaneField, output.field)
+            return output_field, (jnp.max(jnp.abs(phase)), leakage, successful)
 
         output, records = jax.lax.scan(
             step, incident, (perturbation, self.slice_thicknesses)
@@ -427,12 +434,12 @@ class ScalarHelmholtzContinuationPlan(StrictModule, NonTrainableState):
         if source_.shape != self.space.shape or susceptibility_.shape != self.space.shape:
             raise ValueError("source and susceptibility must match the Helmholtz space.")
 
-        def apply_green(value):
+        def apply_green(value: Array) -> Array:
             return jnp.fft.ifft2(jnp.fft.fft2(value) * self.green_symbol)
 
         incident = apply_green(source_)
 
-        def step(field, _):
+        def step(field: Array, _: None) -> tuple[Array, None]:
             return incident - apply_green(
                 (self.background_wavenumber**2) * susceptibility_ * field
             ), None

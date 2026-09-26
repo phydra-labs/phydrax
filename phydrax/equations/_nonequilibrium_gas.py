@@ -17,6 +17,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._chemical_species import ChemicalSpeciesSchema
 from ._chemical_thermodynamics import (
     AbstractSpeciesThermodynamicsPlan,
     UNIVERSAL_GAS_CONSTANT,
@@ -47,7 +48,10 @@ def _implicit_heavy_temperature(
 
 
 @_implicit_heavy_temperature.defjvp
-def _implicit_heavy_temperature_jvp(primals, tangents):
+def _implicit_heavy_temperature_jvp(
+    primals: tuple[Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array],
+) -> tuple[Array, Array]:
     temperature, _, _, heat_capacity = primals
     _, target_tangent, evaluated_tangent, _ = tangents
     tangent = (target_tangent - evaluated_tangent) / heat_capacity
@@ -121,7 +125,7 @@ class TwoTemperatureThermodynamicsPlan(StrictModule, NonTrainableState):
         )
 
     @property
-    def schema(self):
+    def schema(self) -> ChemicalSpeciesSchema:
         return self.heavy_thermodynamics.schema
 
     def _heavy_state(
@@ -259,7 +263,7 @@ class TwoTemperatureThermodynamicsPlan(StrictModule, NonTrainableState):
         upper_energy = self._heavy_state(density, upper)[4]
         bracketed = (target >= lower_energy) & (target <= upper_energy)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             midpoint = 0.5 * (low + high)
             energy = self._heavy_state(density, midpoint)[4]

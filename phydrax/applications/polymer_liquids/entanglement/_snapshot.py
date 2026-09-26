@@ -149,7 +149,8 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
         for row, active_row in zip(indices, mask, strict=True):
             chain = row[active_row]
             expected.extend(
-                tuple(sorted((int(left), int(right)))) for left, right in pairwise(chain)
+                (min(int(left), int(right)), max(int(left), int(right)))
+                for left, right in pairwise(chain)
             )
         actual = {
             tuple(sorted((int(left), int(right))))

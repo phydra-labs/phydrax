@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -35,6 +35,7 @@ from ...linalg import (
     RankPolicy,
 )
 from .._axis import TensorGridPlan, UniformAxisSpec, UniformCellAxisSpec
+from .._tensor_entities import StructuredAxis
 from .._tensor_support import PreparedTensorGrid
 from ..finite_volume._diffusion import (
     ConservativeDiffusionPlan,
@@ -326,7 +327,7 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
         )
         tolerance = max(
             1e-12,
-            256.0 * np.finfo(np.dtype(precision_.coefficient_dtype)).eps,
+            256.0 * float(np.finfo(np.dtype(precision_.coefficient_dtype)).eps),
         )
         report = StructuredTransferReport(
             fine_shape=fine_grid.shape,
@@ -392,7 +393,7 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
         raise ValueError("Structured transfer role must be 'field' or 'coefficient'.")
 
 
-def _cell_edges(axis, /) -> np.ndarray:
+def _cell_edges(axis: StructuredAxis, /) -> np.ndarray:
     return np.concatenate(
         (
             np.asarray([axis.bounds[0]]),
@@ -401,7 +402,9 @@ def _cell_edges(axis, /) -> np.ndarray:
     )
 
 
-def _cell_restriction(fine_axis, coarse_axis, /) -> np.ndarray:
+def _cell_restriction(
+    fine_axis: StructuredAxis, coarse_axis: StructuredAxis, /
+) -> np.ndarray:
     fine_edges = _cell_edges(fine_axis)
     coarse_edges = _cell_edges(coarse_axis)
     matrix = np.zeros(
@@ -485,11 +488,11 @@ class _DenseCoarsePreconditioner(AbstractPreconditioner, NonTrainableState):
 
     def apply(
         self,
-        residual,
+        residual: PyTree[Any],
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> PyTree[Array]:
         del iteration
         coordinates = self.precision.accumulation(
             self.space.flatten(self.space.validate(residual))
@@ -558,11 +561,11 @@ class _RedBlackPreconditioner(AbstractPreconditioner, NonTrainableState):
 
     def apply(
         self,
-        residual,
+        residual: PyTree[Any],
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> Array:
         del iteration
         rhs = self.space.validate(residual)
         estimate = jnp.zeros_like(rhs)
@@ -610,11 +613,11 @@ class _LinePreconditioner(AbstractPreconditioner, NonTrainableState):
 
     def apply(
         self,
-        residual,
+        residual: PyTree[Any],
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> Array:
         del iteration
         rhs = self.space.validate(residual)
         return _tridiagonal_solve(
@@ -690,7 +693,9 @@ def _tridiagonal_solve(
     first_c = upper_[0] / diagonal_[0]
     first_d = rhs_[0] / diagonal_[0]
 
-    def forward(carry, values):
+    def forward(
+        carry: tuple[Array, Array], values: tuple[Array, Array, Array, Array]
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         previous_c, previous_d = carry
         lower_value, diagonal_value, upper_value, rhs_value = values
         denominator = diagonal_value - lower_value * previous_c
@@ -706,7 +711,7 @@ def _tridiagonal_solve(
     c_values = jnp.concatenate((first_c[None], history[0]), axis=0)
     d_values = jnp.concatenate((first_d[None], history[1]), axis=0)
 
-    def backward(next_value, values):
+    def backward(next_value: Array, values: tuple[Array, Array]) -> tuple[Array, Array]:
         c_value, d_value = values
         current = d_value - c_value * next_value
         return current, current
@@ -910,8 +915,8 @@ class PreparedStructuredMultigrid(StrictModule):
             transfer.prepare(fine.source, coarse.source)
             for transfer, fine, coarse in zip(
                 transfers,
-                level_operators[:-1],
-                level_operators[1:],
+                diffusions[:-1],
+                diffusions[1:],
                 strict=True,
             )
         )

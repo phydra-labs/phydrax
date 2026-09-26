@@ -20,6 +20,7 @@ from .._strict import StrictModule
 from ..fidelity import FidelityLevelSpec
 from ..stochastic._hierarchy import StochasticCouplingPlan, StochasticLevelSpec
 from ._api import integrate
+from ._estimates import IntegrationEstimate
 from ._fidelity import FidelityBatchEvaluation, FidelityMultilevelSampler
 from ._multilevel import MultilevelSampleBatch
 from ._plans import SparseGridPlan
@@ -98,15 +99,18 @@ class SmolyakProbabilityInputSampler(StrictModule):
         /,
     ) -> "SmolyakProbabilityInputSampler":
         interpolant = _smolyak_interpolant(surrogate)
-        if any(
-            not isinstance(factor, ProbabilityDomain) for factor in interpolant.factors
-        ):
+        factors = tuple(
+            factor
+            for factor in interpolant.factors
+            if isinstance(factor, ProbabilityDomain)
+        )
+        if len(factors) != len(interpolant.factors):
             raise TypeError(
                 "Automatic surrogate input sampling requires every interpolation axis "
                 "to be a ProbabilityDomain. Supply input_sampler explicitly otherwise."
             )
         return cls(
-            tuple(interpolant.factors),
+            factors,
             axis_labels=interpolant.axis_labels,
         )
 
@@ -322,7 +326,7 @@ def smolyak_surrogate_expectation(
     /,
     *,
     quadrature_level: int | None = None,
-):
+) -> IntegrationEstimate:
     """Integrate a Smolyak surrogate over its declared physical/probability axes."""
 
     interpolant = _smolyak_interpolant(surrogate)

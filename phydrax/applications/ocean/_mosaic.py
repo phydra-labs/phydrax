@@ -4,8 +4,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Literal, TypeAlias
+from collections.abc import Callable, Mapping
+from typing import (
+    Any,
+    cast,
+    Literal,
+    TYPE_CHECKING,
+    TypeAlias,
+    TypedDict,
+    TypeVar,
+    Unpack,
+)
 
 import equinox as eqx
 import jax
@@ -22,13 +31,34 @@ from ...discretization import TensorGridPlan, UniformCellAxisSpec
 from ...discretization.finite_volume._hydrostatic_grid import PreparedHydrostaticGrid
 from ...discretization.multiblock import (
     BlockInterface,
+    BlockSide,
     InterfaceOrientation,
     MultiblockGridPlan,
     PreparedMultiblockGrid,
 )
 
 
+if TYPE_CHECKING:
+    from ._hydrostatic import (
+        _HydrostaticPlanOptions,
+        HydrostaticOceanState,
+        PreparedHydrostaticOcean,
+    )
+    from ._hydrostatic_step import HydrostaticContinuationState
+
+
 SphericalMosaicKind: TypeAlias = Literal["polar-cap", "tripolar", "cubed-sphere"]
+_CoordinateMap: TypeAlias = Callable[[Array], Array]
+_BoundaryPairs: TypeAlias = list[list[Array | None]]
+_Value = TypeVar("_Value")
+_Default = TypeVar("_Default")
+
+
+class _MosaicPlanOptions(TypedDict, total=False):
+    radius: float
+    rotation_rate: float
+    cap_latitude: float
+    hemisphere: Literal["north", "south"]
 
 
 class SphericalHydrostaticBlock(StrictModule, NonTrainableState):
@@ -77,10 +107,10 @@ class SphericalMosaicSeam(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     left_block: str = eqx.field(static=True)
     left_axis: str = eqx.field(static=True)
-    left_side: str = eqx.field(static=True)
+    left_side: BlockSide = eqx.field(static=True)
     right_block: str = eqx.field(static=True)
     right_axis: str = eqx.field(static=True)
-    right_side: str = eqx.field(static=True)
+    right_side: BlockSide = eqx.field(static=True)
     orientation: InterfaceOrientation
     interface: BlockInterface
     vector_rotation: Array
@@ -104,25 +134,27 @@ class SphericalMosaicSeam(StrictModule, NonTrainableState):
             side not in ("lower", "upper") for side in sides
         ):
             raise ValueError("Spherical seam axes and sides are invalid.")
+        # Validated above: both sides are "lower" or "upper".
+        left_side_, right_side_ = cast(tuple[BlockSide, BlockSide], sides)
         orientation = InterfaceOrientation(1, flips=(flip,))
         interface = BlockInterface(
             name,
             left_block,
             axes[0],
-            sides[0],
+            left_side_,
             right_block,
             axes[1],
-            sides[1],
+            right_side_,
             orientation,
         )
         rotation = jnp.eye(2)
         self.name = str(name)
         self.left_block = str(left_block)
         self.left_axis = axes[0]
-        self.left_side = sides[0]
+        self.left_side = left_side_
         self.right_block = str(right_block)
         self.right_axis = axes[1]
-        self.right_side = sides[1]
+        self.right_side = right_side_
         self.orientation = orientation
         self.interface = interface
         self.vector_rotation = rotation
@@ -197,14 +229,18 @@ class PreparedHydrostaticMosaicGrid(StrictModule, NonTrainableState):
             raise KeyError(f"Unknown hydrostatic mosaic block {name!r}.")
         return self.blocks[names.index(name)]
 
-    def prepare_ocean(self, block_name: str, /, **plan_kwargs):
+    def prepare_ocean(
+        self, block_name: str, /, **plan_kwargs: Unpack[_HydrostaticPlanOptions]
+    ) -> PreparedHydrostaticOcean:
         from ._hydrostatic import HydrostaticPrimitiveEquationPlan
 
         return HydrostaticPrimitiveEquationPlan(
             self.block(block_name).geometry, **plan_kwargs
         ).prepare()
 
-    def prepare_oceans(self, /, **plan_kwargs) -> "PreparedHydrostaticMosaicOcean":
+    def prepare_oceans(
+        self, /, **plan_kwargs: Unpack[_HydrostaticPlanOptions]
+    ) -> "PreparedHydrostaticMosaicOcean":
         """Prepare the public, seam-coupled multiblock ocean workflow."""
         return PreparedHydrostaticMosaicOcean(self, plan_kwargs)
 
@@ -235,7 +271,7 @@ class PreparedHydrostaticMosaicGrid(StrictModule, NonTrainableState):
     def seam_transport_traces(
         self,
         seam_index: int,
-        block_states,
+        block_states: Mapping[str, HydrostaticOceanState],
         /,
     ) -> tuple[Array, Array]:
         index = int(seam_index)
@@ -335,14 +371,16 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
             }
         )
 
-    def ocean(self, block_name: str, /):
+    def ocean(self, block_name: str, /) -> PreparedHydrostaticOcean:
         names = self.grid.topology.plan.block_names
         if block_name not in names:
             raise KeyError(f"Unknown hydrostatic mosaic block {block_name!r}.")
         return self.oceans[names.index(block_name)]
 
     @staticmethod
-    def _block_argument(value, name: str, default):
+    def _block_argument(
+        value: Mapping[str, _Value] | _Value | None, name: str, default: _Default
+    ) -> _Value | _Default:
         if value is None:
             return default
         if isinstance(value, Mapping):
@@ -387,21 +425,21 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
 
     @staticmethod
     def _replace_transport_trace(
-        continuation,
-        ocean,
+        continuation: HydrostaticContinuationState,
+        ocean: PreparedHydrostaticOcean,
         axis: int,
         side: str,
         trace: Array,
         /,
         *,
         step_size: Array | None = None,
-    ):
+    ) -> HydrostaticContinuationState:
         from ._hydrostatic import HydrostaticOceanState
         from ._hydrostatic_step import HydrostaticContinuationState
 
         geometry = ocean.geometry
 
-        location = [slice(None)] * 3
+        location: list[slice | int] = [slice(None)] * 3
         location[axis] = 0 if side == "lower" else -1
         location_ = tuple(location)
         transports = list(continuation.state.transports)
@@ -411,7 +449,7 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
         ledger = continuation.ledger
         filtered_eta = continuation.filtered_eta
         if step_size is not None:
-            cell_location = [slice(None)] * 2
+            cell_location: list[slice | int] = [slice(None)] * 2
             cell_location[axis] = 0 if side == "lower" else -1
             cell_location_ = tuple(cell_location)
             outward_sign = -1.0 if side == "lower" else 1.0
@@ -470,16 +508,16 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
 
     @staticmethod
     def _replace_tracer_inventory_traces(
-        continuation,
+        continuation: HydrostaticContinuationState,
         axis: int,
         side: str,
         corrections: Mapping[str, Array],
         /,
-    ):
+    ) -> HydrostaticContinuationState:
         from ._hydrostatic import HydrostaticOceanState
         from ._hydrostatic_step import HydrostaticContinuationState
 
-        cell_location = [slice(None)] * 3
+        cell_location: list[slice | int] = [slice(None)] * 3
         cell_location[axis] = 0 if side == "lower" else -1
         cell_location_ = tuple(cell_location)
         inventory = dict(continuation.state.tracer_inventory)
@@ -513,12 +551,16 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
 
     @staticmethod
     def _replace_tke_inventory_trace(
-        continuation, axis: int, side: str, correction: Array, /
-    ):
+        continuation: HydrostaticContinuationState,
+        axis: int,
+        side: str,
+        correction: Array,
+        /,
+    ) -> HydrostaticContinuationState:
         from ._hydrostatic import HydrostaticOceanState
         from ._hydrostatic_step import HydrostaticContinuationState
 
-        location = [slice(None)] * 3
+        location: list[slice | int] = [slice(None)] * 3
         location[axis] = 0 if side == "lower" else -1
         tke = continuation.state.tke_inventory.at[tuple(location)].add(correction)
         state = HydrostaticOceanState(
@@ -537,7 +579,11 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
         )
 
     @staticmethod
-    def _with_ocean_state(continuation, ocean_state, /):
+    def _with_ocean_state(
+        continuation: HydrostaticContinuationState,
+        ocean_state: HydrostaticOceanState,
+        /,
+    ) -> HydrostaticContinuationState:
         from ._hydrostatic_step import HydrostaticContinuationState
 
         return HydrostaticContinuationState(
@@ -551,7 +597,7 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
 
     def _tracer_trace(
         self,
-        continuation,
+        continuation: HydrostaticContinuationState,
         block_name: str,
         axis: str,
         side: str,
@@ -573,7 +619,7 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
 
     def _tke_trace(
         self,
-        continuation,
+        continuation: HydrostaticContinuationState,
         block_name: str,
         axis: str,
         side: str,
@@ -839,16 +885,29 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
             for name, continuation in state.blocks.items()
         }
         tracer_names = tuple(sorted(next(iter(views.values())).tracers))
-        empty = lambda: [[None, None], [None, None]]
-        surface = {block.name: empty() for block in self.grid.blocks}
-        pressure = {block.name: empty() for block in self.grid.blocks}
-        density = {block.name: empty() for block in self.grid.blocks}
-        tke = {block.name: empty() for block in self.grid.blocks}
-        tracers = {
+
+        def empty() -> _BoundaryPairs:
+            return [[None, None], [None, None]]
+
+        surface: dict[str, _BoundaryPairs] = {
+            block.name: empty() for block in self.grid.blocks
+        }
+        pressure: dict[str, _BoundaryPairs] = {
+            block.name: empty() for block in self.grid.blocks
+        }
+        density: dict[str, _BoundaryPairs] = {
+            block.name: empty() for block in self.grid.blocks
+        }
+        tke: dict[str, _BoundaryPairs] = {
+            block.name: empty() for block in self.grid.blocks
+        }
+        tracers: dict[str, dict[str, _BoundaryPairs]] = {
             block.name: {name: empty() for name in tracer_names}
             for block in self.grid.blocks
         }
-        velocity = {block.name: [empty(), empty()] for block in self.grid.blocks}
+        velocity: dict[str, list[_BoundaryPairs]] = {
+            block.name: [empty(), empty()] for block in self.grid.blocks
+        }
         cell_velocity = {}
         tke_concentration = {}
         for block in self.grid.blocks:
@@ -876,7 +935,7 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
             )
 
         def assign(
-            storage,
+            storage: Mapping[str, _BoundaryPairs],
             seam: SphericalMosaicSeam,
             left_value: Array,
             right_value: Array,
@@ -961,9 +1020,9 @@ class PreparedHydrostaticMosaicOcean(StrictModule):
                 tuple(tuple(pair) for pair in surface[block.name]),
                 tuple(tuple(pair) for pair in pressure[block.name]),
                 tuple(tuple(pair) for pair in density[block.name]),
-                tuple(
-                    tuple(tuple(pair) for pair in component)
-                    for component in velocity[block.name]
+                (
+                    tuple(tuple(pair) for pair in velocity[block.name][0]),
+                    tuple(tuple(pair) for pair in velocity[block.name][1]),
                 ),
                 {
                     name: tuple(tuple(pair) for pair in tracers[block.name][name])
@@ -1429,7 +1488,7 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _cartesian(longitude: Array, latitude: Array, /) -> Array:
+    def _cartesian(longitude: ArrayLike, latitude: ArrayLike, /) -> Array:
         cosine = jnp.cos(latitude)
         return jnp.stack(
             (
@@ -1462,7 +1521,7 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
     def _block(
         self,
         name: str,
-        coordinate_map,
+        coordinate_map: _CoordinateMap,
         /,
         *,
         periodic_first: bool = False,
@@ -1597,11 +1656,12 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
             }
         )
         nz = self.vertical_faces.size - 1
+        rows, columns = area.shape
         geometry = PreparedHydrostaticGrid(
             horizontal_coordinate="latitude-longitude",
             vertical_coordinate="zstar",
-            cell_shape=area.shape + (nz,),
-            horizontal_shape=area.shape,
+            cell_shape=(rows, columns, nz),
+            horizontal_shape=(rows, columns),
             periodic=(periodic_first, False),
             cell_area=area,
             x_edge_length=x_edge_length,
@@ -1670,7 +1730,7 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
         sine_cap = jnp.sin(self.cap_latitude)
         sign = 1.0 if self.hemisphere == "north" else -1.0
 
-        def coordinate_map(point):
+        def coordinate_map(point: Array) -> Array:
             longitude = -jnp.pi + 2.0 * jnp.pi * point[0]
             sine = sine_cap + (1.0 - sine_cap) * point[1]
             latitude = sign * jnp.arcsin(sine)
@@ -1695,7 +1755,7 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
             )
         )
 
-    def _bipolar_cap_map(self, eastern: bool, /):
+    def _bipolar_cap_map(self, eastern: bool, /) -> _CoordinateMap:
         """Return one side of a two-pole spherical transfinite cap.
 
         The lower boundary is the ordinary latitude belt.  The upper boundary
@@ -1709,7 +1769,7 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
         date_join = self._cartesian(-jnp.pi, cap)
         central_join = self._cartesian(0.0, cap)
 
-        def coordinate_map(point):
+        def coordinate_map(point: Array) -> Array:
             xi, eta = point[0], point[1]
             if eastern:
                 longitude = jnp.pi * xi
@@ -1744,8 +1804,8 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
     def _tripolar_blocks(self) -> tuple[SphericalHydrostaticBlock, ...]:
         sine_cap = jnp.sin(self.cap_latitude)
 
-        def belt_map(lower: float):
-            def coordinate_map(point):
+        def belt_map(lower: float) -> _CoordinateMap:
+            def coordinate_map(point: Array) -> Array:
                 longitude = lower + jnp.pi * point[0]
                 sine = -1.0 + (1.0 + sine_cap) * point[1]
                 return self._cartesian(longitude, jnp.arcsin(sine))
@@ -1774,8 +1834,8 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
         )
 
     def _cube_blocks(self) -> tuple[SphericalHydrostaticBlock, ...]:
-        def cube_map(name: str):
-            def coordinate_map(point):
+        def cube_map(name: str) -> _CoordinateMap:
+            def coordinate_map(point: Array) -> Array:
                 alpha = -0.25 * jnp.pi + 0.5 * jnp.pi * point[0]
                 beta = -0.25 * jnp.pi + 0.5 * jnp.pi * point[1]
                 tangent_alpha = jnp.tan(alpha)
@@ -2039,7 +2099,11 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
 
 
 def polar_cap(
-    resolution: tuple[int, int], vertical_faces: ArrayLike, rest_depth: float, /, **kwargs
+    resolution: tuple[int, int],
+    vertical_faces: ArrayLike,
+    rest_depth: float,
+    /,
+    **kwargs: Unpack[_MosaicPlanOptions],
 ) -> SphericalHydrostaticMosaicPlan:
     return SphericalHydrostaticMosaicPlan(
         "polar-cap", resolution, vertical_faces, rest_depth, **kwargs
@@ -2047,7 +2111,11 @@ def polar_cap(
 
 
 def tripolar(
-    resolution: tuple[int, int], vertical_faces: ArrayLike, rest_depth: float, /, **kwargs
+    resolution: tuple[int, int],
+    vertical_faces: ArrayLike,
+    rest_depth: float,
+    /,
+    **kwargs: Unpack[_MosaicPlanOptions],
 ) -> SphericalHydrostaticMosaicPlan:
     return SphericalHydrostaticMosaicPlan(
         "tripolar", resolution, vertical_faces, rest_depth, **kwargs
@@ -2055,7 +2123,11 @@ def tripolar(
 
 
 def equiangular_cubed_sphere(
-    resolution: tuple[int, int], vertical_faces: ArrayLike, rest_depth: float, /, **kwargs
+    resolution: tuple[int, int],
+    vertical_faces: ArrayLike,
+    rest_depth: float,
+    /,
+    **kwargs: Unpack[_MosaicPlanOptions],
 ) -> SphericalHydrostaticMosaicPlan:
     return SphericalHydrostaticMosaicPlan(
         "cubed-sphere", resolution, vertical_faces, rest_depth, **kwargs

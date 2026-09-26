@@ -97,7 +97,10 @@ def parse_epw(
         -90 <= lat <= 90 and -180 <= lon <= 180 and -14 <= offset <= 14
     ):
         raise ValueError("EPW location or standard time offset is invalid.")
-    location = EPWLocation(*loc[1:6], lat, lon, offset, elevation)
+    city, region, country, source, station = loc[1:6]
+    location = EPWLocation(
+        city, region, country, source, station, lat, lon, offset, elevation
+    )
     periods = rows[7]
     if len(periods) < 7 or int(periods[1]) != 1:
         raise ValueError(
@@ -249,7 +252,9 @@ def read_epw(
     *,
     trusted_root: str | Path | None = None,
     maximum_file_bytes: int = 64 * 1024 * 1024,
-    **kwargs,
+    typical_year: bool | None = None,
+    calendar_year: int | None = None,
+    asset_id: str = "weather",
 ) -> EPWWeather:
     source = Path(path).expanduser().absolute()
     root = source.parent if trusted_root is None else Path(trusted_root)
@@ -262,4 +267,9 @@ def read_epw(
         text = resource.data.decode("utf-8-sig")
     except UnicodeDecodeError as error:
         raise ValueError("EPW source must be valid UTF-8 text.") from error
-    return parse_epw(text, **kwargs)
+    return parse_epw(
+        text,
+        typical_year=typical_year,
+        calendar_year=calendar_year,
+        asset_id=asset_id,
+    )

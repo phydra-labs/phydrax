@@ -290,10 +290,10 @@ class MultimodalJointInferencePlan(StrictModule, NonTrainableState):
         return tuple(value.predict(parameters) for value in self.modalities)
 
     def posterior(self) -> PosteriorProblem:
-        def likelihood(parameters):
+        def likelihood(parameters: object) -> Array:
             return self.log_likelihood(parameters)
 
-        def prediction(parameters):
+        def prediction(parameters: object) -> tuple[object, ...]:
             return self.predictions(parameters)
 
         return PosteriorProblem(

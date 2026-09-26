@@ -7,6 +7,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 import equinox as eqx
@@ -25,7 +26,7 @@ class PackmolRegionConstraint(StrictModule, NonTrainableState):
     parameters: tuple[float, ...] = eqx.field(static=True)
     constraint_id: str = eqx.field(static=True)
 
-    def __init__(self, kind: str, parameters, /) -> None:
+    def __init__(self, kind: str, parameters: Iterable[float], /) -> None:
         if kind not in (
             "inside-box",
             "inside-sphere",
@@ -67,7 +68,12 @@ class PackmolComponentPlan(StrictModule, NonTrainableState):
     component_id: str = eqx.field(static=True)
 
     def __init__(
-        self, template: AtomisticFrame, count: int, /, *, constraints=()
+        self,
+        template: AtomisticFrame,
+        count: int,
+        /,
+        *,
+        constraints: Iterable[PackmolRegionConstraint] = (),
     ) -> None:
         if not isinstance(template, AtomisticFrame):
             raise TypeError("template must be AtomisticFrame.")
@@ -101,7 +107,7 @@ class PackmolAssemblyPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        components,
+        components: Iterable[PackmolComponentPlan],
         /,
         *,
         tolerance: float = 2.0,

@@ -1,9 +1,11 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -16,7 +18,11 @@ class MaterialState(StrictModule, NonTrainableState):
     internal_variables: Array
 
     def __init__(
-        self, temperature_k, pressure_pa, phase_fractions, internal_variables=()
+        self,
+        temperature_k: ArrayLike,
+        pressure_pa: ArrayLike,
+        phase_fractions: ArrayLike,
+        internal_variables: ArrayLike | Sequence[float] = (),
     ) -> None:
         fractions = jnp.asarray(phase_fractions)
         if fractions.ndim < 1 or fractions.shape[-1] == 0:
@@ -39,7 +45,7 @@ class MaterialState(StrictModule, NonTrainableState):
         self.internal_variables = internal
 
     @property
-    def admissible(self):
+    def admissible(self) -> Array:
         return (
             jnp.all(jnp.isfinite(self.temperature_k))
             & jnp.all(self.temperature_k > 0)

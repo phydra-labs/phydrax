@@ -13,7 +13,9 @@ class ConformationTransformResult:
     positive_definite: Array
 
 
-def log_conformation_with_status(conformation: ArrayLike, /):
+def log_conformation_with_status(
+    conformation: ArrayLike, /
+) -> ConformationTransformResult:
     values, vectors = jnp.linalg.eigh(jnp.asarray(conformation))
     positive = jnp.all(jnp.isfinite(values) & (values > 0), axis=-1)
     safe = jnp.where(positive[..., None], values, 1.0)

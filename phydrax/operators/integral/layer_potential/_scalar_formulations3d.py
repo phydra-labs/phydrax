@@ -17,6 +17,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....linalg import (
     AbstractLinearOperator,
+    ArraySpace,
     DiagonalLinearOperator,
     estimate_operator_action_cost,
     IdentityLinearOperator,
@@ -101,7 +102,7 @@ class _ComponentMeanProjector3D(_AbstractCostedLinearOperator):
 
     def __init__(
         self,
-        space,
+        space: ArraySpace,
         areas: Array,
         component_ids: Array,
         component_count: int,
@@ -183,7 +184,7 @@ class _ComponentMeanProjector3D(_AbstractCostedLinearOperator):
         return self.workspace_bytes, "surface-component-mean-projector-action"
 
 
-def _checked(calderon: ScalarCalderonDP0Galerkin3D, /):
+def _checked(calderon: ScalarCalderonDP0Galerkin3D, /) -> ScalarCalderonDP0Galerkin3D:
     if not isinstance(calderon, ScalarCalderonDP0Galerkin3D):
         raise TypeError("calderon must be ScalarCalderonDP0Galerkin3D.")
     if not bool(calderon.assembly_report.accuracy_supported):

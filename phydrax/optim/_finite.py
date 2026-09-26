@@ -9,20 +9,21 @@ import math
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from numbers import Integral
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import core as jax_core
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._iteration import (
     bind_iteration_scope,
     IterationCapabilities,
     IterationCoordinates,
+    IterationGranularity,
     IterationPhase,
     IterationPlan,
     IterationRecord,
@@ -45,6 +46,7 @@ from ._pareto import nondominated_mask
 _FINITE_SPACE_VERSION = 1
 _FINITE_SEARCH_METHOD_ID = "finite-exhaustive"
 FiniteEvaluator = Callable[[PyTree[Array]], tuple[Array, Array]]
+_Interval: TypeAlias = tuple[int, int]
 
 
 def _is_finite_axis(value: Any, /) -> bool:
@@ -415,11 +417,11 @@ class FiniteSearchIterationMetrics(StrictModule):
 
     def __init__(
         self,
-        attempted_evaluations,
-        invalid_evaluations,
-        retained_candidates,
-        total_candidates,
-        complete,
+        attempted_evaluations: ArrayLike,
+        invalid_evaluations: ArrayLike,
+        retained_candidates: ArrayLike,
+        total_candidates: ArrayLike,
+        complete: ArrayLike,
         /,
     ) -> None:
         self.attempted_evaluations = jnp.asarray(attempted_evaluations, dtype=jnp.int64)
@@ -430,7 +432,7 @@ class FiniteSearchIterationMetrics(StrictModule):
 
 
 def _finite_search_scope(
-    granularity: str,
+    granularity: IterationGranularity,
     /,
     *,
     host_stop: bool,
@@ -697,13 +699,13 @@ class _FiniteAdaptiveProblem(AbstractBranchAndBoundProblem):
             }
         )
 
-    def root(self, /):
+    def root(self, /) -> _Interval:
         return (0, self.space.size)
 
-    def node_id(self, node, /) -> str:
+    def node_id(self, node: _Interval, /) -> str:
         return f"{int(node[0]):020d}:{int(node[1]):020d}"
 
-    def evaluate(self, node, /) -> BranchNodeEvaluation:
+    def evaluate(self, node: _Interval, /) -> BranchNodeEvaluation:
         start, stop = (int(node[0]), int(node[1]))
         if not 0 <= start < stop <= self.space.size:
             return BranchNodeEvaluation.failed(
@@ -747,7 +749,9 @@ class _FiniteAdaptiveProblem(AbstractBranchAndBoundProblem):
             terminal=True,
         )
 
-    def branch(self, node, evaluation, /):
+    def branch(
+        self, node: _Interval, evaluation: BranchNodeEvaluation, /
+    ) -> tuple[_Interval, _Interval]:
         del evaluation
         start, stop = (int(node[0]), int(node[1]))
         midpoint = start + (stop - start) // 2
@@ -921,7 +925,7 @@ def search_finite(
         )
 
     @eqx.filter_jit
-    def evaluate_batch(indices):
+    def evaluate_batch(indices: Array) -> tuple[Array, Array]:
         points = space._take_unchecked(indices)
         points = jax.tree_util.tree_map(jax.lax.stop_gradient, points)
         return jax.vmap(evaluator)(points)

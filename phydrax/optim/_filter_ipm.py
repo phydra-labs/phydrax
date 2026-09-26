@@ -27,7 +27,7 @@ from ._certificates import (
     certify_constrained_physical,
     reconcile_optimization_status,
 )
-from ._constrained_model import prepare_constrained_model
+from ._constrained_model import ConstrainedModelEvaluation, prepare_constrained_model
 from ._iterative import (
     AbstractMinimizationMethod,
     ConstrainedOptimalityCertificate,
@@ -49,11 +49,13 @@ from ._kkt import (
 )
 
 
-def _max_abs(value):
+def _max_abs(value: jax.Array) -> jax.Array:
     return jnp.max(jnp.abs(value), initial=0.0)
 
 
-def _fraction_to_boundary(value, direction, fraction):
+def _fraction_to_boundary(
+    value: jax.Array, direction: jax.Array, fraction: float
+) -> jax.Array:
     ratios = jnp.where(direction < 0.0, -value / direction, jnp.inf)
     return jnp.minimum(1.0, fraction * jnp.min(ratios, initial=jnp.inf))
 
@@ -79,11 +81,11 @@ class FilterInteriorPointEvidence(StrictModule):
 
 
 def _condensed_hessian(
-    hessian,
-    inequality_jacobian,
-    slack,
-    dual,
-):
+    hessian: jax.Array,
+    inequality_jacobian: jax.Array,
+    slack: jax.Array,
+    dual: jax.Array,
+) -> jax.Array:
     inverse_slack = 1.0 / jnp.maximum(slack, 1e-30)
     diagonal = dual * inverse_slack
     return hessian + jnp.conj(inequality_jacobian.T) @ (
@@ -93,14 +95,14 @@ def _condensed_hessian(
 
 def _condensed_kkt_direction(
     factorization: KKTFactorization,
-    inequality_jacobian,
-    slack,
-    dual,
-    dual_residual,
-    equality_residual,
-    inequality_residual,
-    complementarity_residual,
-):
+    inequality_jacobian: jax.Array,
+    slack: jax.Array,
+    dual: jax.Array,
+    dual_residual: jax.Array,
+    equality_residual: jax.Array,
+    inequality_residual: jax.Array,
+    complementarity_residual: jax.Array,
+) -> _IPMDirection:
     inverse_slack = 1.0 / jnp.maximum(slack, 1e-30)
     correction = inverse_slack * (complementarity_residual + dual * inequality_residual)
     adjusted_dual = dual_residual + jnp.conj(inequality_jacobian.T) @ correction
@@ -173,11 +175,11 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
         self.precision = precision_
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "filter-interior-point"
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> OptimizationCapabilities:
         return OptimizationCapabilities(
             scalar_objective=True,
             residual_objective=False,
@@ -366,7 +368,16 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 dtype=alpha.dtype,
             )
 
-            def evaluate_trial(step_size):
+            def evaluate_trial(
+                step_size: jax.Array,
+            ) -> tuple[
+                PyTree[jax.Array],
+                ConstrainedModelEvaluation,
+                jax.Array,
+                jax.Array,
+                jax.Array,
+                jax.Array,
+            ]:
                 candidate_coordinates = (
                     evaluation.coordinates + step_size * direction.primal
                 )
@@ -588,6 +599,10 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 dtype=final.objective.dtype,
             )
         )
+        canonical_evidence = self.precision.evidence_for(
+            parameters,
+            model.unflatten(dual_residual),
+        )
         canonical = ConstrainedOptimalityCertificate(
             equality_multipliers=equality_dual,
             inequality_multipliers=inequality_dual,
@@ -599,10 +614,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             complementarity=final_complementarity,
             equality_sources=model.equality_sources,
             inequality_sources=model.inequality_sources,
-            precision_evidence=self.precision.evidence_for(
-                parameters,
-                model.unflatten(dual_residual),
-            ),
+            precision_evidence=canonical_evidence,
         )
         budget_reached = status == int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
         if not budget_reached and (
@@ -646,7 +658,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 & (canonical_optimality <= termination.absolute_optimality),
                 evaluation_work=0,
                 certificate_id=f"{problem.problem_id}/budgeted-active-kkt",
-                precision_evidence=canonical.precision_evidence,
+                precision_evidence=canonical_evidence,
             )
         status_evidence = reconcile_optimization_status(
             status,
@@ -707,12 +719,15 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             ),
         )
         output_parameters = jax.tree.map(self.precision.output, parameters)
+        certificate_evidence = certificate.precision_evidence
+        # Both certificate branches above attach precision evidence by construction.
+        assert certificate_evidence is not None
         precision_evidence = self.precision.evidence_for(
             parameters,
             model.unflatten(dual_residual),
             children={
-                "canonical-kkt": canonical.precision_evidence,
-                "physical-certificate": certificate.precision_evidence,
+                "canonical-kkt": canonical_evidence,
+                "physical-certificate": certificate_evidence,
             },
             output_value=output_parameters,
         )

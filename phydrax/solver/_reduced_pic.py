@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,6 +24,9 @@ from ._maxwell_reduced import (
     CompatibleMaxwell2DPlan,
     ReducedMaxwellDiagnostics,
 )
+
+
+_Tree = TypeVar("_Tree")
 
 
 class ReducedElectromagneticPICState(StrictModule):
@@ -183,7 +186,7 @@ class ReducedElectromagneticPICPlan(StrictModule, NonTrainableState):
         )
 
 
-def jax_tree_where(predicate: Array, candidate: Any, current: Any, /):
+def jax_tree_where(predicate: Array, candidate: _Tree, current: _Tree, /) -> _Tree:
     import jax
 
     return jax.tree.map(

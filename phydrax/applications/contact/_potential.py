@@ -457,7 +457,7 @@ class PreparedConvergentContactPotential(StrictModule, NonTrainableState):
             else jnp.asarray(stiffness, dtype=current.dtype)
         )
 
-        def objective(value):
+        def objective(value: Array) -> Array:
             return self.energy(value, epoch, rest_positions=rest, stiffness=scale)
 
         energy, gradient = jax.value_and_grad(objective)(current)

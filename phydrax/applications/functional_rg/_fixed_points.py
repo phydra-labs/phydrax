@@ -104,7 +104,7 @@ class PolynomialONFlowPlan(StrictModule, NonTrainableState):
         sextic = value[2] if self.coupling_count == 3 else jnp.zeros_like(mass)
         eta = self.anomalous_dimension(value)
 
-        def threshold(mass_squared):
+        def threshold(mass_squared: Array) -> Array:
             return self.threshold.evaluate(self.regulator, mass_squared, eta).value
 
         first = jax.grad(threshold)(mass)
@@ -213,7 +213,9 @@ class FixedPointSearchPlan(StrictModule, NonTrainableState):
             raise ValueError("Initial couplings have the wrong fixed shape.")
         initial_scale = jnp.maximum(jnp.linalg.norm(initial), 1.0)
 
-        def body(index, carry):
+        def body(
+            index: Array, carry: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array]:
             current, active, iterations, linear_success = carry
             residual = flow.beta(current)
             norm = jnp.linalg.norm(residual)

@@ -13,7 +13,11 @@ from jaxtyping import Array, ArrayLike
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
-from ..geometry.complex import HypersurfaceKahlerGeometry, ProjectiveHypersurface
+from ..geometry.complex import (
+    HypersurfaceKahlerEvaluation,
+    HypersurfaceKahlerGeometry,
+    ProjectiveHypersurface,
+)
 from ._calabi_yau import CalabiYauMetricResult
 from ._calabi_yau_evidence import CalabiYauMetricEvidence
 
@@ -108,7 +112,7 @@ class CalabiYauMetricArtifact(StrictModule):
         hypersurface: ProjectiveHypersurface,
         homogeneous_point: ArrayLike,
         /,
-    ):
+    ) -> HypersurfaceKahlerEvaluation:
         if (
             hypersurface.hypersurface_id != self.hypersurface_id
             or hypersurface.projective_dimension != self.projective_dimension

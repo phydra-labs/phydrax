@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._strict import StrictModule
@@ -92,6 +93,37 @@ def _capability_payload(subsystem: AbstractCouplingSubsystem, /) -> dict[str, An
     }
 
 
+def _subsystem_payload(subsystem: AbstractCouplingSubsystem, /) -> dict[str, Any]:
+    return {
+        "id": subsystem.subsystem_id,
+        "inputs": sorted(
+            (_port_payload(port) for port in subsystem.input_ports),
+            key=lambda item: item["id"],
+        ),
+        "outputs": sorted(
+            (_port_payload(port) for port in subsystem.output_ports),
+            key=lambda item: item["id"],
+        ),
+        "capabilities": _capability_payload(subsystem),
+        "bundle": subsystem.discretization_bundle_id,
+    }
+
+
+def _exchange_payload(exchange: CouplingExchange, /) -> dict[str, Any]:
+    return {
+        "id": exchange.exchange_id,
+        "source": exchange.source_port_id,
+        "target": exchange.target_port_id,
+        "transfer": (
+            None if exchange.transfer is None else exchange.transfer.transfer_id
+        ),
+        "adjoint": exchange.use_adjoint,
+        "requirement": (
+            None if exchange.requirement is None else exchange.requirement.requirement_id
+        ),
+    }
+
+
 class CouplingGraph(StrictModule, NonTrainableState):
     """Finite participant and exchange graph with explicit semantic identity."""
 
@@ -135,44 +167,11 @@ class CouplingGraph(StrictModule, NonTrainableState):
         payload = {
             "kind": "coupling-graph",
             "subsystems": sorted(
-                (
-                    {
-                        "id": subsystem.subsystem_id,
-                        "inputs": sorted(
-                            (_port_payload(port) for port in subsystem.input_ports),
-                            key=lambda item: item["id"],
-                        ),
-                        "outputs": sorted(
-                            (_port_payload(port) for port in subsystem.output_ports),
-                            key=lambda item: item["id"],
-                        ),
-                        "capabilities": _capability_payload(subsystem),
-                        "bundle": subsystem.discretization_bundle_id,
-                    }
-                    for subsystem in subsystems_
-                ),
+                (_subsystem_payload(subsystem) for subsystem in subsystems_),
                 key=lambda item: item["id"],
             ),
             "exchanges": sorted(
-                (
-                    {
-                        "id": exchange.exchange_id,
-                        "source": exchange.source_port_id,
-                        "target": exchange.target_port_id,
-                        "transfer": (
-                            None
-                            if exchange.transfer is None
-                            else exchange.transfer.transfer_id
-                        ),
-                        "adjoint": exchange.use_adjoint,
-                        "requirement": (
-                            None
-                            if exchange.requirement is None
-                            else exchange.requirement.requirement_id
-                        ),
-                    }
-                    for exchange in exchanges_
-                ),
+                (_exchange_payload(exchange) for exchange in exchanges_),
                 key=lambda item: item["id"],
             ),
         }
@@ -351,10 +350,13 @@ def _validate_physical_exchange(
             "Instantaneous values and interval integrals cannot be exchanged."
         )
     if source.measure is not None and target.measure is not None:
+        source_unit = source.measure_unit
+        target_unit = target.measure_unit
+        # CouplingPort construction requires a UnitDefinition for measured ports.
+        assert source_unit is not None and target_unit is not None
         if (
-            source.measure_unit.dimension != target.measure_unit.dimension
-            or source.measure_unit.reference_system_id
-            != target.measure_unit.reference_system_id
+            source_unit.dimension != target_unit.dimension
+            or source_unit.reference_system_id != target_unit.reference_system_id
         ):
             raise ValueError(
                 "Coupling measures require compatible dimensions and reference systems."
@@ -365,16 +367,22 @@ def _validate_physical_exchange(
             raise ValueError(
                 "Changing component frames requires an explicit FieldTransfer."
             )
-        if (source.field_space is None) != (target.field_space is None) or (
-            source.field_space is not None
-            and source.field_space.field_space_id != target.field_space.field_space_id
+        source_field_space = source.field_space
+        target_field_space = target.field_space
+        if (source_field_space is None) != (target_field_space is None) or (
+            source_field_space is not None
+            and target_field_space is not None
+            and source_field_space.field_space_id != target_field_space.field_space_id
         ):
             raise ValueError(
                 "Different physical storage requires an explicit FieldTransfer."
             )
-        if (source.measure is None) != (target.measure is None) or (
-            source.measure is not None
-            and source.measure.measure_id != target.measure.measure_id
+        source_measure = source.measure
+        target_measure = target.measure
+        if (source_measure is None) != (target_measure is None) or (
+            source_measure is not None
+            and target_measure is not None
+            and source_measure.measure_id != target_measure.measure_id
         ):
             raise ValueError("Direct physical exchange requires exact measure identity.")
         if source.measure_unit != target.measure_unit:
@@ -382,48 +390,56 @@ def _validate_physical_exchange(
                 "Direct physical exchange requires exact measure-unit identity."
             )
     else:
-        if requirement is None or source.measure is None or target.measure is None:
+        source_measure = source.measure
+        target_measure = target.measure
+        if requirement is None or source_measure is None or target_measure is None:
             raise ValueError(
                 "Physical FieldTransfer requires explicit measure and transfer semantics."
             )
         if (source.frame == target.frame) != (requirement.frame_action == "preserve"):
             raise ValueError("Transfer frame_action does not match the physical frames.")
-    if source.temporal_kind == "interval_integral" and exchange.transfer is not None:
-        if not requirement.conservative:
-            raise ValueError(
-                "Interval-integrated exchanges require conservative transfers."
+        if source.temporal_kind == "interval_integral":
+            if not requirement.conservative:
+                raise ValueError(
+                    "Interval-integrated exchanges require conservative transfers."
+                )
+        if requirement.conservative:
+            operator = (
+                exchange.transfer.hilbert_adjoint_operator
+                if exchange.use_adjoint
+                else exchange.transfer.primal_operator
             )
-    if exchange.transfer is not None and requirement.conservative:
-        operator = (
-            exchange.transfer.hilbert_adjoint_operator
-            if exchange.use_adjoint
-            else exchange.transfer.primal_operator
-        )
-        if operator is None:
-            raise RuntimeError("Prepared coupling transfer action is unavailable.")
+            if operator is None:
+                raise RuntimeError("Prepared coupling transfer action is unavailable.")
+            source_unit = source.measure_unit
+            target_unit = target.measure_unit
+            # CouplingPort construction requires a UnitDefinition for measured ports.
+            assert source_unit is not None and target_unit is not None
 
-        # One transposed operator action proves the measure pairing without a
-        # dense transfer matrix or a basis-by-basis allocation.
-        def coordinate_action(value):
-            return target.space.flatten(operator.mv(source.space.unflatten(value)))
+            # One transposed operator action proves the measure pairing without a
+            # dense transfer matrix or a basis-by-basis allocation.
+            def coordinate_action(value: Array) -> Array:
+                return target.space.flatten(operator.mv(source.space.unflatten(value)))
 
-        source_weights = source.measure.masked_weights() * float(
-            source.measure_unit.scale_to_reference
-        )
-        target_weights = target.measure.masked_weights() * float(
-            target.measure_unit.scale_to_reference
-        )
-        (pulled_weights,) = jax.linear_transpose(
-            coordinate_action, jnp.zeros_like(source_weights)
-        )(target_weights)
-        tolerance = 64 * np.finfo(np.asarray(source_weights).dtype).eps
-        if not np.allclose(
-            np.asarray(pulled_weights),
-            np.asarray(source_weights),
-            rtol=tolerance,
-            atol=tolerance * float(np.max(np.asarray(source_weights))),
-        ):
-            raise ValueError("FieldTransfer fails the declared physical measure pairing.")
+            source_weights = source_measure.masked_weights() * float(
+                source_unit.scale_to_reference
+            )
+            target_weights = target_measure.masked_weights() * float(
+                target_unit.scale_to_reference
+            )
+            (pulled_weights,) = jax.linear_transpose(
+                coordinate_action, jnp.zeros_like(source_weights)
+            )(target_weights)
+            tolerance = 64 * np.finfo(np.asarray(source_weights).dtype).eps
+            if not np.allclose(
+                np.asarray(pulled_weights),
+                np.asarray(source_weights),
+                rtol=tolerance,
+                atol=tolerance * float(np.max(np.asarray(source_weights))),
+            ):
+                raise ValueError(
+                    "FieldTransfer fails the declared physical measure pairing."
+                )
 
 
 def _strongly_connected_components(

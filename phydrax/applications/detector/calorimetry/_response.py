@@ -122,7 +122,7 @@ def apply_calorimeter_response(
     if truth.geometry_id != plan.geometry.geometry_id:
         raise ValueError("Calorimeter truth and response geometry differ.")
 
-    def event_noise(event_id):
+    def event_noise(event_id: Array) -> Array:
         event_key = jr.fold_in(key, jnp.asarray(event_id, dtype=jnp.uint32))
         return jr.normal(
             event_key, (plan.geometry.cell_count,), dtype=truth.cell_energies.dtype

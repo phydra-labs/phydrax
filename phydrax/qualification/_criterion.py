@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import equinox as eqx
 
@@ -140,7 +141,7 @@ class QualificationCriterion(StrictModule, NonTrainableState):
         return {**self._content_record(), "criterion_id": self.criterion_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> QualificationCriterion:
+    def from_record(cls, record: Mapping[str, Any], /) -> QualificationCriterion:
         """Reconstruct and content-verify a serialized criterion."""
         if not isinstance(record, Mapping):
             raise TypeError("Qualification-criterion record must be a mapping.")
@@ -210,7 +211,7 @@ class CampaignStartRecord(StrictModule, NonTrainableState):
         return {**self._content_record(), "start_record_id": self.start_record_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> CampaignStartRecord:
+    def from_record(cls, record: Mapping[str, Any], /) -> CampaignStartRecord:
         """Reconstruct and content-verify a serialized campaign start."""
         if not isinstance(record, Mapping):
             raise TypeError("Campaign-start record must be a mapping.")
@@ -285,7 +286,7 @@ class CampaignObservationRecord(StrictModule, NonTrainableState):
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> CampaignObservationRecord:
+    def from_record(cls, record: Mapping[str, Any], /) -> CampaignObservationRecord:
         """Reconstruct and content-verify a serialized campaign observation."""
         if not isinstance(record, Mapping):
             raise TypeError("Campaign-observation record must be a mapping.")

@@ -82,7 +82,7 @@ def radau_collocation_defects(
     stage_states = stage_states.reshape((intervals, method.stage_count) + state_shape)
     stage_times = times_[:-1, None] + widths[:, None] * method.c[None, :]
 
-    def interval_defects(t, y, k, u):
+    def interval_defects(t: Array, y: Array, k: Array, u: Array) -> Array:
         if implicit:
             return jax.vmap(
                 lambda ti, yi, ki: jnp.asarray(dynamics(ti, yi, ki, u, args))
@@ -121,7 +121,14 @@ class DirectCollocationPhase(StrictModule, NonTrainableState):
     phase_id: str = eqx.field(static=True)
 
     def __init__(
-        self, problem, plan, initial_decision, bounds=None, /, *, phase_id: str
+        self,
+        problem: TrajectoryOptimizationProblem,
+        plan: DirectCollocationPlan | RadauIIAMethod,
+        initial_decision: DirectCollocationDecision | Array,
+        bounds: DirectCollocationBounds | None = None,
+        /,
+        *,
+        phase_id: str,
     ) -> None:
         if not isinstance(problem, TrajectoryOptimizationProblem):
             raise TypeError("phase problem must be a TrajectoryOptimizationProblem.")
@@ -692,7 +699,7 @@ def manifold_radau_collocation_defects(
     anchors = states_[:-1]
     right_endpoints = states_[1:]
 
-    def retract_stages(anchor, local):
+    def retract_stages(anchor: Array, local: Array) -> Array:
         return jax.vmap(lambda value: jnp.asarray(geometry.retract(anchor, value)))(local)
 
     stage_states = jax.vmap(retract_stages)(anchors, stage_local)
@@ -723,7 +730,7 @@ def manifold_radau_collocation_defects(
             "geometry.retract must preserve reconstructed endpoint state shape."
         )
 
-    def membership(point):
+    def membership(point: Array) -> Array:
         contained = jnp.asarray(geometry.contains(point), dtype=jnp.bool_)
         if contained.shape != ():
             raise ValueError("geometry.contains must return one scalar boolean.")
@@ -742,7 +749,7 @@ def manifold_radau_collocation_defects(
         axis=1,
     )
 
-    def projected_physical(point, ambient):
+    def projected_physical(point: Array, ambient: Array) -> Array:
         projected = jnp.asarray(geometry.project_tangent(point, ambient))
         if projected.shape != tangent_shape:
             raise ValueError(
@@ -750,7 +757,7 @@ def manifold_radau_collocation_defects(
             )
         return projected
 
-    def anchored_inverse_jvp(anchor, point, tangent):
+    def anchored_inverse_jvp(anchor: Array, point: Array, tangent: Array) -> Array:
         coordinate_rate = jnp.asarray(
             geometry.retraction_inverse_jvp(anchor, point, tangent)
         )
@@ -760,7 +767,7 @@ def manifold_radau_collocation_defects(
             )
         return coordinate_rate
 
-    def anchored_jvp(anchor, local, coordinate_rate):
+    def anchored_jvp(anchor: Array, local: Array, coordinate_rate: Array) -> Array:
         physical_rate = jnp.asarray(
             geometry.retraction_jvp(anchor, local, coordinate_rate)
         )
@@ -770,20 +777,20 @@ def manifold_radau_collocation_defects(
             )
         return physical_rate
 
-    def inverse_jvp_interval(anchor, points, tangents):
+    def inverse_jvp_interval(anchor: Array, points: Array, tangents: Array) -> Array:
         return jax.vmap(
             lambda point, vector: anchored_inverse_jvp(anchor, point, vector)
         )(points, tangents)
 
-    def jvp_interval(anchor, local, coordinate_rate):
+    def jvp_interval(anchor: Array, local: Array, coordinate_rate: Array) -> Array:
         return jax.vmap(
             lambda coordinates, velocity: anchored_jvp(anchor, coordinates, velocity)
         )(local, coordinate_rate)
 
-    def interval_finite(value):
+    def interval_finite(value: Array) -> Array:
         return jnp.all(jnp.isfinite(value.reshape((intervals, -1))), axis=1)
 
-    def interval_error(left, right):
+    def interval_error(left: Array, right: Array) -> Array:
         return jnp.max(
             jnp.abs(left - right).reshape((intervals, -1)),
             axis=1,
@@ -808,7 +815,7 @@ def manifold_radau_collocation_defects(
                 "geometry.retraction_inverse_jvp must preserve local stage rates."
             )
 
-        def interval_equations(t, y, y_dot, control):
+        def interval_equations(t: Array, y: Array, y_dot: Array, control: Array) -> Array:
             return jax.vmap(
                 lambda ti, yi, y_dot_i: jnp.asarray(
                     dynamics(ti, yi, y_dot_i, control, args)
@@ -862,7 +869,7 @@ def manifold_radau_collocation_defects(
         )
     else:
 
-        def interval_fields(t, y, control):
+        def interval_fields(t: Array, y: Array, control: Array) -> Array:
             return jax.vmap(lambda ti, yi: jnp.asarray(dynamics(ti, yi, control, args)))(
                 t, y
             )

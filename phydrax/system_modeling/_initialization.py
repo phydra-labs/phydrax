@@ -14,7 +14,9 @@ class InitializationResult:
     successful: Array
 
 
-def initialization_result(state: ArrayLike, residual: ArrayLike, tolerance: float, /):
+def initialization_result(
+    state: ArrayLike, residual: ArrayLike, tolerance: float, /
+) -> InitializationResult:
     value = jnp.asarray(state)
     norm = jnp.linalg.norm(jnp.asarray(residual))
     return InitializationResult(

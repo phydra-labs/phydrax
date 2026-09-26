@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import TypedDict, Unpack
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -194,15 +197,15 @@ class ProteinInternalCoordinatePlan(StrictModule, NonTrainableState):
     scientific_scope: str = eqx.field(static=True)
 
     @property
-    def coordinate_size(self):
+    def coordinate_size(self) -> int:
         return self._coordinate_size
 
     @property
-    def support_id(self):
+    def support_id(self) -> str:
         return self._support_id
 
     @property
-    def representation_id(self):
+    def representation_id(self) -> str:
         return self._representation_id
 
 
@@ -230,7 +233,7 @@ class ProteinDecodedCoordinates(StrictModule):
     guaranteed_invariants: tuple[str, ...] = eqx.field(static=True)
 
     @property
-    def residuals(self):
+    def residuals(self) -> Array:
         return jnp.concatenate(
             (
                 self.bond_residuals,
@@ -247,18 +250,18 @@ class PreparedProteinCoordinateDecoder(AbstractCoordinateDecoder, NonTrainableSt
     plan: ProteinInternalCoordinatePlan
 
     @property
-    def coordinate_size(self):
+    def coordinate_size(self) -> int:
         return self.plan.coordinate_size
 
     @property
-    def support_id(self):
+    def support_id(self) -> str:
         return self.plan.support_id
 
     @property
-    def representation_id(self):
+    def representation_id(self) -> str:
         return self.plan.representation_id
 
-    def project(self, coordinates):
+    def project(self, coordinates: ArrayLike) -> Array:
         values = jnp.asarray(coordinates)
         if values.shape != (self.coordinate_size,):
             raise ValueError(
@@ -266,20 +269,22 @@ class PreparedProteinCoordinateDecoder(AbstractCoordinateDecoder, NonTrainableSt
             )
         return values
 
-    def reference_periodic_coordinates(self):
+    def reference_periodic_coordinates(self) -> Array:
         rows = jnp.asarray(self.plan.variable_torsion_rows, dtype=jnp.int32)
         angles = self.plan.reference_torsions[rows]
         return jnp.stack((jnp.sin(angles), jnp.cos(angles)), axis=-1).reshape(
             (self.coordinate_size,)
         )
 
-    def reconstruct(self, positions):
+    def reconstruct(
+        self, positions: ArrayLike
+    ) -> tuple[CoordinateEncoding, ProteinDecodedCoordinates]:
         """No-learning fixed-geometry reconstruction with all evidence retained."""
         encoding = self.encode(positions)
         decoded = self.decode(encoding.coordinates)
         return encoding, decoded
 
-    def encode(self, positions):
+    def encode(self, positions: ArrayLike) -> CoordinateEncoding:
         values = jnp.asarray(positions)
         capacity = self.plan.reference_positions.shape[0]
         if values.shape[-2:] != (capacity, 3):
@@ -302,8 +307,8 @@ class PreparedProteinCoordinateDecoder(AbstractCoordinateDecoder, NonTrainableSt
             self.representation_id,
         )
 
-    def decode(self, periodic_coordinates):
-        raw = jnp.asarray(periodic_coordinates)
+    def decode(self, coordinates: ArrayLike) -> ProteinDecodedCoordinates:
+        raw = jnp.asarray(coordinates)
         if raw.shape[-1:] != (self.coordinate_size,):
             raise ValueError(
                 "Protein periodic coordinates must end in twice the torsion count."
@@ -415,11 +420,11 @@ class PreparedProteinCoordinateDecoder(AbstractCoordinateDecoder, NonTrainableSt
         )
 
 
-def _wrap_angle(value):
+def _wrap_angle(value: Array) -> Array:
     return jnp.arctan2(jnp.sin(value), jnp.cos(value))
 
 
-def _dihedral_jax(positions, indices):
+def _dihedral_jax(positions: Array, indices: Array) -> tuple[Array, Array]:
     points = tuple(positions[..., indices[:, i], :] for i in range(4))
     first = points[1] - points[0]
     axis = points[2] - points[1]
@@ -442,7 +447,7 @@ def _dihedral_jax(positions, indices):
     return jnp.arctan2(y, x), valid
 
 
-def _bond_angle_jax(positions, indices):
+def _bond_angle_jax(positions: Array, indices: Array) -> tuple[Array, Array]:
     first = positions[..., indices[:, 0], :] - positions[..., indices[:, 1], :]
     last = positions[..., indices[:, 2], :] - positions[..., indices[:, 1], :]
     cross = jnp.sqrt(jnp.sum(jnp.cross(first, last) ** 2, axis=-1))
@@ -453,21 +458,23 @@ def _bond_angle_jax(positions, indices):
     return jnp.arctan2(cross, dot), valid
 
 
-def _dihedral_numpy(positions, indices):
+def _dihedral_numpy(positions: npt.ArrayLike, indices: Sequence[int]) -> float:
     values, valid = _dihedral_jax(jnp.asarray(positions), jnp.asarray([indices]))
     if not bool(valid[0]):
         raise ValueError("Reference topology contains a degenerate torsion frame.")
     return float(values[0])
 
 
-def _bond_angle_numpy(positions, indices):
+def _bond_angle_numpy(positions: npt.ArrayLike, indices: Sequence[int]) -> float:
     values, valid = _bond_angle_jax(jnp.asarray(positions), jnp.asarray([indices]))
     if not bool(valid[0]):
         raise ValueError("Reference topology contains a degenerate bond angle.")
     return float(values[0])
 
 
-def _component_without_edge(adjacency, start, edge):
+def _component_without_edge(
+    adjacency: Mapping[int, set[int]], start: int, edge: frozenset[int]
+) -> set[int]:
     seen, pending = set(), [start]
     while pending:
         node = pending.pop()
@@ -482,8 +489,10 @@ def _component_without_edge(adjacency, start, edge):
     return seen
 
 
-def _cycle_components(nonbridges):
-    adjacency = {}
+def _cycle_components(
+    nonbridges: Iterable[frozenset[int]],
+) -> tuple[tuple[int, ...], ...]:
+    adjacency: dict[int, set[int]] = {}
     for edge in nonbridges:
         left, right = tuple(edge)
         adjacency.setdefault(left, set()).add(right)
@@ -504,16 +513,28 @@ def _cycle_components(nonbridges):
     return tuple(groups)
 
 
+class _InternalCoordinateOptions(TypedDict, total=False):
+    cis_peptide_indices: Iterable[int]
+    closure_tolerance: float
+    construction_length_tolerance: float
+    construction_angle_tolerance: float
+    minimum_periodic_norm: float
+
+
+def _sorted_edge(left: int, right: int) -> tuple[int, int]:
+    return (left, right) if left <= right else (right, left)
+
+
 def prepare_protein_internal_coordinate_plan(
-    binding,
-    support,
+    binding: PreparedProteinBinding,
+    support: PreparedCoordinateSupport,
     *,
-    cis_peptide_indices=(),
-    closure_tolerance=1e-5,
-    construction_length_tolerance=1e-5,
-    construction_angle_tolerance=1e-5,
-    minimum_periodic_norm=1e-8,
-):
+    cis_peptide_indices: Iterable[int] = (),
+    closure_tolerance: float = 1e-5,
+    construction_length_tolerance: float = 1e-5,
+    construction_angle_tolerance: float = 1e-5,
+    minimum_periodic_norm: float = 1e-8,
+) -> ProteinInternalCoordinatePlan:
     """Compile exact standard chemistry into rigid-ring torsion kinematics.
 
     Only the resolved uncapped canonical-L single-chain profile is accepted.
@@ -573,7 +594,7 @@ def prepare_protein_internal_coordinate_plan(
     bonds = tuple(
         sorted(
             {
-                tuple(sorted((local_by_system[int(left)], local_by_system[int(right)])))
+                _sorted_edge(local_by_system[int(left)], local_by_system[int(right)])
                 for left, right in bonds_system
             }
         )
@@ -931,7 +952,11 @@ def prepare_protein_internal_coordinate_plan(
     )
 
 
-def prepare_protein_coordinate_decoder(binding, support, **kwargs):
+def prepare_protein_coordinate_decoder(
+    binding: PreparedProteinBinding,
+    support: PreparedCoordinateSupport,
+    **kwargs: Unpack[_InternalCoordinateOptions],
+) -> PreparedProteinCoordinateDecoder:
     """Prepare the numeric decoder for one exact binding and support."""
     return PreparedProteinCoordinateDecoder(
         prepare_protein_internal_coordinate_plan(binding, support, **kwargs)

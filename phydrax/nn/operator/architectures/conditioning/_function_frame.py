@@ -21,7 +21,7 @@ import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._frozendict import frozendict
 from phydrax._model import AbstractArrayModel, FrozenModel, register_artifact_value
-from phydrax._numerics import solve_weighted_least_squares
+from phydrax._numerics import solve_weighted_least_squares, WeightedLeastSquaresResult
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.nn._contracts import AFFINE, model_regularity, sum_regularity
@@ -672,7 +672,9 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         flat_response = response.reshape((case_count, equation_count))
         flat_weights = weights.reshape((case_count, equation_count))
 
-        def solve_case(matrix, values, equation_weight):
+        def solve_case(
+            matrix: Array, values: Array, equation_weight: Array
+        ) -> WeightedLeastSquaresResult:
             return solve_weighted_least_squares(
                 matrix,
                 values,

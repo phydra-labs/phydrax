@@ -17,8 +17,11 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._core import ParticleDiscretization
 from ._free_surface import detect_free_surface, FreeSurfaceDetectionPlan
-from ._neighborhood import AbstractPreparedParticleNeighborhood
-from ._pairwise import particle_pair_geometry
+from ._neighborhood import (
+    AbstractPreparedParticleNeighborhood,
+    ParticleNeighborhoodState,
+)
+from ._pairwise import particle_pair_geometry, ParticlePairGeometry
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._qualification import (
     particle_constraint_residuals,
@@ -194,7 +197,9 @@ class PreparedIISPH(StrictModule, NonTrainableState):
         )
         return self.layout.pack(position, velocity, p)
 
-    def _geometry(self, position):
+    def _geometry(
+        self, position: Array
+    ) -> tuple[ParticleNeighborhoodState, ParticlePairGeometry, Array, Array]:
         neighborhood = self.neighborhood.build(position)
         position = neighborhood.require_success(position)
         geometry = particle_pair_geometry(
@@ -297,7 +302,7 @@ class PreparedIISPH(StrictModule, NonTrainableState):
             dtype=position.dtype,
         )
 
-        def body(_, carry):
+        def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             pressure, _ = carry
             corrected = predicted_density + self.pressure_action(
                 position, pressure, step_size

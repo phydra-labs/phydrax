@@ -38,6 +38,7 @@ from ._linear_gaussian import (
     LinearGaussianDynamics,
     LinearGaussianParameterization,
     LinearGaussianParameters,
+    ParameterValue,
 )
 from ._process import AbstractMarginalTransitionLaw, AbstractProcessDistribution
 from ._state_space_input import (
@@ -593,7 +594,15 @@ class CallableTransitionKernel(AbstractTransitionKernel, NonTrainableState):
         self.approximation_id = _name(approximation_id, owner="approximation_id")
         self.has_log_density = log_prob_fn is not None
 
-    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+    def sample(
+        self,
+        key: Key[Array, ""],
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
         state_array = jnp.asarray(state)
         _ends_with(state_array, self.state_shape, owner="state")
         result = self.sample_fn(
@@ -615,7 +624,15 @@ class CallableTransitionKernel(AbstractTransitionKernel, NonTrainableState):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         if self.log_prob_fn is None:
             raise ValueError("This transition kernel does not provide a log density.")
         return jnp.asarray(
@@ -651,7 +668,15 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
         self.approximation_id = _name(approximation_id, owner="approximation_id")
         self.has_log_density = True
 
-    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+    def sample(
+        self,
+        key: Key[Array, ""],
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
         del context
         state_array = jnp.asarray(state)
         _ends_with(state_array, self.state_shape, owner="state")
@@ -670,7 +695,15 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         del context
         distribution = self.law.marginal_transition(state, t0=t0, t1=t1)
         return distribution.log_prob(next_state)
@@ -698,15 +731,18 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         self,
         transition: (
             ArrayLike
-            | Callable[[Array, Array], ArrayLike]
+            | Callable[[Array, Array, StateSpaceStepContext], ArrayLike]
             | LinearGaussianParameterization
             | LinearGaussianDynamics
         ),
-        covariance: ArrayLike | Callable[[Array, Array], ArrayLike] | None = None,
+        covariance: (
+            ArrayLike | Callable[[Array, Array, StateSpaceStepContext], ArrayLike] | None
+        ) = None,
         /,
         *,
         state_shape: Sequence[int] | None = None,
-        offset: ArrayLike | Callable[[Array, Array], ArrayLike] = 0.0,
+        offset: ArrayLike
+        | Callable[[Array, Array, StateSpaceStepContext], ArrayLike] = 0.0,
         process_id: str | None = None,
         approximation_id: str | None = None,
         has_log_density: bool = True,
@@ -779,7 +815,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         self.has_log_density = bool(has_log_density)
 
     @property
-    def transition(self):
+    def transition(self) -> ParameterValue | LinearGaussianDynamics:
         return (
             self.parameterization.transition
             if isinstance(self.parameterization, LinearGaussianParameterization)
@@ -787,11 +823,11 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         )
 
     @property
-    def offset(self):
+    def offset(self) -> ParameterValue:
         return self.parameterization.offset
 
     @property
-    def covariance(self):
+    def covariance(self) -> ParameterValue:
         return (
             self.parameterization.covariance
             if isinstance(self.parameterization, LinearGaussianParameterization)
@@ -829,7 +865,15 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         )
         return mean.reshape(batch_shape + self.state_shape)
 
-    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+    def sample(
+        self,
+        key: Key[Array, ""],
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> TransitionSample:
         mean = self.mean(state, t0, t1, context)
         covariance = self.parameters(t0, t1, context).covariance
         size = _event_size(self.state_shape)
@@ -860,7 +904,15 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+    def log_prob(
+        self,
+        next_state: ArrayLike,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         if not self.has_log_density:
             raise ValueError("This transition kernel does not provide a log density.")
         mean = self.mean(state, t0, t1, context)
@@ -958,14 +1010,24 @@ class CallableObservationModel(AbstractObservationModel):
         self.observation_shape = _shape(observation_shape, owner="observation_shape")
         self.observation_id = _name(observation_id, owner="observation_id")
 
-    def location(self, state, time, context, /) -> Array:
+    def location(
+        self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         values = jnp.asarray(
             self.location_fn(jnp.asarray(state), jnp.asarray(time), context)
         )
         _ends_with(values, self.observation_shape, owner="observation location")
         return values
 
-    def log_prob(self, value, state, time, mask, context, /) -> Array:
+    def log_prob(
+        self,
+        value: ArrayLike,
+        state: ArrayLike,
+        time: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         return jnp.asarray(
             self.log_prob_fn(
                 jnp.asarray(value),
@@ -976,7 +1038,14 @@ class CallableObservationModel(AbstractObservationModel):
             )
         )
 
-    def sample(self, key, state, time, context, sample_shape=()) -> Array:
+    def sample(
+        self,
+        key: Key[Array, ""],
+        state: ArrayLike,
+        time: ArrayLike,
+        context: StateSpaceStepContext,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
         return jnp.asarray(
             self.sample_fn(
                 key,
@@ -1176,7 +1245,9 @@ class GaussianObservationModel(AbstractObservationModel):
         self.observation_shape = _shape(observation_shape, owner="observation_shape")
         self.observation_id = _name(observation_id, owner="observation_id")
 
-    def location(self, state, time, context, /) -> Array:
+    def location(
+        self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         values = jnp.asarray(
             self.location_fn(jnp.asarray(state), jnp.asarray(time), context)
         )
@@ -1190,7 +1261,15 @@ class GaussianObservationModel(AbstractObservationModel):
             raise ValueError("Observation covariance has an incompatible trailing shape.")
         return values
 
-    def log_prob(self, value, state, time, mask, context, /) -> Array:
+    def log_prob(
+        self,
+        value: ArrayLike,
+        state: ArrayLike,
+        time: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         return _masked_gaussian_log_prob(
             jnp.asarray(value),
             self.location(state, time, context),
@@ -1199,7 +1278,14 @@ class GaussianObservationModel(AbstractObservationModel):
             observation_shape=self.observation_shape,
         )
 
-    def sample(self, key, state, time, context, sample_shape=()) -> Array:
+    def sample(
+        self,
+        key: Key[Array, ""],
+        state: ArrayLike,
+        time: ArrayLike,
+        context: StateSpaceStepContext,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
         location = self.location(state, time, context)
         size = _event_size(self.observation_shape)
         batch_shape = (
@@ -1281,7 +1367,9 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         offset = jnp.broadcast_to(offset, matrix.shape[:-2] + (observation_size,))
         return matrix, offset, covariance
 
-    def location(self, state, time, context, /) -> Array:
+    def location(
+        self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         state_array = jnp.asarray(state, dtype=jnp.float64)
         _ends_with(state_array, self.state_shape, owner="state")
         state_size = _event_size(self.state_shape)
@@ -1302,7 +1390,15 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         )
         return values.reshape(batch_shape + self.observation_shape)
 
-    def log_prob(self, value, state, time, mask, context, /) -> Array:
+    def log_prob(
+        self,
+        value: ArrayLike,
+        state: ArrayLike,
+        time: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         _, _, covariance = self.parameters(time, context)
         return _masked_gaussian_log_prob(
             jnp.asarray(value),
@@ -1312,7 +1408,14 @@ class LinearGaussianObservationModel(AbstractObservationModel):
             observation_shape=self.observation_shape,
         )
 
-    def sample(self, key, state, time, context, sample_shape=()) -> Array:
+    def sample(
+        self,
+        key: Key[Array, ""],
+        state: ArrayLike,
+        time: ArrayLike,
+        context: StateSpaceStepContext,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
         location = self.location(state, time, context)
         _, _, covariance = self.parameters(time, context)
         observation_size = _event_size(self.observation_shape)

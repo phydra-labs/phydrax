@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, Key
+from jaxtyping import Array, Key, PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._sampling import derive_key, SampleAddress
@@ -22,6 +22,7 @@ from .._training_kernel import (
     run_training_attempt,
     SubspaceTrainingTree,
     TrainingKernelSpec,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
@@ -97,7 +98,13 @@ _FINAL_SMOOTHER_ADDRESS = SampleAddress(
 )
 
 
-def _negative_sing_objective(parameters, model_state, fixed, payload, keys):
+def _negative_sing_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[SINGState, Any, SINGTransitionPlan, Any],
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[()]]:
     """Held-posterior negative SING objective of the subspace parameters.
 
     The payload is `(posterior_state, batch, transition_plan, observation_factor)`.
@@ -196,6 +203,8 @@ def fit_sing(
                 factor_sampling_state,
             )
         if kernel is not None:
+            # `kernel`, `training`, and `parameter_subspace` are set together above.
+            assert training is not None and parameter_subspace is not None
             payload = (
                 posterior.state,
                 batch,

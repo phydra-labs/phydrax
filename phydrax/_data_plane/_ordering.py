@@ -95,11 +95,13 @@ class StatelessIndexPermutation:
         if self.population == 1:
             return jnp.zeros_like(index)
 
-        def apply(value):
+        def apply(value: Array) -> Array:
             left = value >> jnp.uint32(self._half_bits)
             right = value & jnp.uint32(self._half_mask)
 
-            def round_body(round_index, pair):
+            def round_body(
+                round_index: Array, pair: tuple[Array, Array]
+            ) -> tuple[Array, Array]:
                 current_left, current_right = pair
                 key = jnp.asarray(self._round_keys, dtype=jnp.uint32)[round_index]
                 mixed = current_right ^ key

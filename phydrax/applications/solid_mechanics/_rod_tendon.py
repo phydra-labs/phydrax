@@ -400,7 +400,7 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
         segment_ids = self.segment_ids
         offsets = self.offsets
 
-        def action(velocity):
+        def action(velocity: tuple[Array, Array]) -> Array:
             linear, angular = velocity
             center_velocity = (1.0 - xis)[:, None] * linear[start_ids] + xis[
                 :, None
@@ -419,7 +419,7 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
                 axis=-1,
             )
 
-        def transpose_action(covector):
+        def transpose_action(covector: Array) -> tuple[Array, Array]:
             return self._native_span_length_pullback(
                 frames, directions, jnp.asarray(covector)
             )
@@ -443,10 +443,10 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
         """Linearize total route length against native physical rod velocity."""
         span_operator = self.native_span_length_rate_operator(state)
 
-        def action(velocity):
+        def action(velocity: tuple[Array, Array]) -> Array:
             return jnp.sum(span_operator.mv(velocity))
 
-        def transpose_action(covector):
+        def transpose_action(covector: Array) -> tuple[Array, Array]:
             repeated = jnp.broadcast_to(jnp.asarray(covector), (self.span_count,))
             return span_operator.transpose_mv(repeated)
 
@@ -477,10 +477,10 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
         native_operator = self.native_span_length_rate_operator(native)
         lift = self.reduction.lift_velocity_operator(state.coefficients)
 
-        def action(rates):
+        def action(rates: Array) -> Array:
             return native_operator.mv(lift.mv(rates))
 
-        def transpose_action(covector):
+        def transpose_action(covector: Array) -> Array:
             return lift.transpose_mv(native_operator.transpose_mv(covector))
 
         return FunctionLinearOperator(
@@ -507,10 +507,10 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
             raise TypeError("This tendon route was not prepared against a reduction.")
         span_operator = self.reduced_span_length_rate_operator(state)
 
-        def action(rates):
+        def action(rates: Array) -> Array:
             return jnp.sum(span_operator.mv(rates))
 
-        def transpose_action(covector):
+        def transpose_action(covector: Array) -> Array:
             repeated = jnp.broadcast_to(jnp.asarray(covector), (self.span_count,))
             return span_operator.transpose_mv(repeated)
 
@@ -573,10 +573,10 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
         """Map independently varying span tensions to native rod effort."""
         span_rate = self.native_span_length_rate_operator(state)
 
-        def action(tensions):
+        def action(tensions: Array) -> tuple[Array, Array]:
             return span_rate.transpose_mv(-tensions)
 
-        def transpose_action(effort_coordinates):
+        def transpose_action(effort_coordinates: tuple[Array, Array]) -> Array:
             return -span_rate.mv(effort_coordinates)
 
         return FunctionLinearOperator(
@@ -602,10 +602,10 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
             raise TypeError("This tendon route was not prepared against a reduction.")
         span_rate = self.reduced_span_length_rate_operator(state)
 
-        def action(tensions):
+        def action(tensions: Array) -> Array:
             return span_rate.transpose_mv(-tensions)
 
-        def transpose_action(effort_coordinates):
+        def transpose_action(effort_coordinates: Array) -> Array:
             return -span_rate.mv(effort_coordinates)
 
         return FunctionLinearOperator(
@@ -630,10 +630,10 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
         """Map positive tendon tension to the declared native rod effort dual."""
         length_rate = self.native_length_rate_operator(state)
 
-        def action(tension):
+        def action(tension: Array) -> tuple[Array, Array]:
             return length_rate.transpose_mv(-tension)
 
-        def transpose_action(effort_coordinates):
+        def transpose_action(effort_coordinates: tuple[Array, Array]) -> Array:
             return -length_rate.mv(effort_coordinates)
 
         return FunctionLinearOperator(
@@ -659,10 +659,10 @@ class PreparedTendonRoute(StrictModule, NonTrainableState):
             raise TypeError("This tendon route was not prepared against a reduction.")
         length_rate = self.reduced_length_rate_operator(state)
 
-        def action(tension):
+        def action(tension: Array) -> Array:
             return length_rate.transpose_mv(-tension)
 
-        def transpose_action(effort_coordinates):
+        def transpose_action(effort_coordinates: Array) -> Array:
             return -length_rate.mv(effort_coordinates)
 
         return FunctionLinearOperator(

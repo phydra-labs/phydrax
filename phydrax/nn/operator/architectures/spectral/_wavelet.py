@@ -276,7 +276,7 @@ def _decode_multiwavelet_queries(
     flat_coordinates = coordinates.reshape((cases, -1))
     reference_nodes = (jnp.arange(order, dtype=coordinates.dtype) + 0.5) / float(order)
 
-    def one(case_values, case_coordinates):
+    def one(case_values: Array, case_coordinates: Array) -> Array:
         continuous_index = (
             (case_coordinates - nodes[0])
             / (nodes[-1] - nodes[0])

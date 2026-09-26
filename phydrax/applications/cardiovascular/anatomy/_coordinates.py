@@ -498,7 +498,9 @@ class PreparedHarmonicCoordinates(StrictModule, NonTrainableState):
         )
 
 
-def _expand_affine_fields(finite_element, nodal_values: Array, /) -> tuple[Array, Array]:
+def _expand_affine_fields(
+    finite_element: FiniteElementDiscretization, nodal_values: Array, /
+) -> tuple[Array, Array]:
     cell_values: list[Array] = []
     cell_gradients: list[Array] = []
     for block, geometry in zip(

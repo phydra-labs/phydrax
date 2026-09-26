@@ -125,7 +125,9 @@ class ConvexContactResult(StrictModule):
     successful: Array
 
 
-def _world_shape(shape: PreparedConvexShape, position: Array, orientation: Array, /):
+def _world_shape(
+    shape: PreparedConvexShape, position: Array, orientation: Array, /
+) -> tuple[Array, Array, Array, Array]:
     rotation = quaternion_rotation_matrix(orientation[None, :])[0]
     vertices = contract("ij,kj->ki", rotation, shape.plan.vertices) + position
     normals = contract("ij,kj->ki", rotation, shape.face_normals)

@@ -18,6 +18,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..stochastic._state_space import (
+    AbstractObservationModel,
     GaussianObservationModel,
     LinearGaussianObservationModel,
     state_space_key,
@@ -91,7 +92,7 @@ def _case_value(value: Array, case_index: int, case_shape: tuple[int, ...], /) -
 
 
 def _observation_covariance(
-    model, time: Array, context: StateSpaceStepContext, /
+    model: AbstractObservationModel, time: Array, context: StateSpaceStepContext, /
 ) -> Array:
     if isinstance(model, GaussianObservationModel):
         return model.covariance_at(time, context)
@@ -185,7 +186,7 @@ def initialize_ensemble_filter(
     member_indices = jnp.arange(count, dtype=jnp.int32)
     for case_index, case_id in enumerate(problem.observations.case_ids):
 
-        def draw_member(member):
+        def draw_member(member: Array) -> Array:
             member_key = state_space_key(
                 key,
                 "ensemble-filter-prior",
@@ -242,7 +243,7 @@ def _forecast(
         context = problem.step_context(case_index, state.step_index)
         case_active = active_flat[case_index] & state_valid[case_index]
 
-        def forecast_member(member, previous_member):
+        def forecast_member(member: Array, previous_member: Array) -> tuple[Array, Array]:
             member_key = state_space_key(
                 state.root_key,
                 "ensemble-filter-transition",
@@ -251,7 +252,7 @@ def _forecast(
                 member=member,
             )
 
-            def propagate(_):
+            def propagate(_: None) -> tuple[Array, Array]:
                 sample = problem.model.transition.sample(
                     member_key,
                     previous_member,

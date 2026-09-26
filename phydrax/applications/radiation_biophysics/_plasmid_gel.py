@@ -163,7 +163,7 @@ class PlasmidGelAssay:
             )
         parameters = jnp.concatenate((self.response_matrix.reshape(-1), self.background))
 
-        def calibrated_mean(parameter_vector):
+        def calibrated_mean(parameter_vector: Array) -> Array:
             response = parameter_vector[:9].reshape((3, 3))
             background = parameter_vector[9:]
             return background + gain[..., None] * (fractions @ response.T)

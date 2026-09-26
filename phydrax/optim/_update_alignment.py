@@ -562,12 +562,12 @@ def project_conflict_free_direction(
     dual_linear = jnp.where(effective, raw_cosines, 0.0)
 
     def solve_dual(_: None) -> tuple[Array, Array]:
-        multipliers_, successful_, _ = _dual_solution(
+        multipliers_, successful_ = _dual_solution(
             gram,
             dual_linear,
             tolerance=effective_tolerance,
             policy=resolved,
-        )
+        )[:2]
         return multipliers_, successful_
 
     def skip_dual(_: None) -> tuple[Array, Array]:

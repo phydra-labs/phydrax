@@ -172,7 +172,7 @@ def evaluate_imaginary_chemical_potential_reference(
     if not identifier:
         raise ValueError("grand_partition_id must be non-empty.")
 
-    def evaluate(mu):
+    def evaluate(mu: Array) -> Array:
         value = jnp.asarray(grand_partition(mu))
         if value.shape != ():
             raise ValueError("grand_partition must return one scalar.")

@@ -4,8 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any, Literal, TypeAlias
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,6 +20,10 @@ from ..._trainable import NonTrainableState
 from ._core import AbstractFiniteRealAlgebraSpec
 from ._layout import AlgebraElementLayout
 from ._resources import AlgebraResourceEvidence
+
+
+if TYPE_CHECKING:
+    from ...discretization._lowered_operator import LoweredOperatorProgram
 
 
 AlgebraProductBackend: TypeAlias = Literal["sparse", "dense"]
@@ -245,7 +249,9 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
             self(middle, right),
         )
 
-    def lower(self, leading_shape: Sequence[int], dtype: Any, /):
+    def lower(
+        self, leading_shape: Sequence[int], dtype: Any, /
+    ) -> LoweredOperatorProgram:
         from ...discretization._lowered_operator import (
             LoweredBufferSpec,
             LoweredKernel,
@@ -270,12 +276,12 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
                 "Fractional algebra products require floating or complex lowered dtype."
             )
 
-        def jax_action(state):
+        def jax_action(state: Mapping[str, Array]) -> dict[str, Array]:
             return {"output": self(state["left"], state["right"])}
 
         terms = self.algebra.structure.terms
 
-        def numpy_action(state):
+        def numpy_action(state: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
             left = np.moveaxis(np.asarray(state["left"]), algebra_axis, -1)
             right = np.moveaxis(np.asarray(state["right"]), algebra_axis, -1)
             output_dtype = (

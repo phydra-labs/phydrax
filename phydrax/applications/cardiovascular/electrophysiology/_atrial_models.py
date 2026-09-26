@@ -22,6 +22,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from ...._fingerprint import canonical_fingerprint
@@ -70,7 +71,7 @@ def _nonnegative(value: float, name: str, /) -> float:
     return resolved
 
 
-def _exp(value: Array, /) -> Array:
+def _exp(value: ArrayLike, /) -> Array:
     return jnp.exp(jnp.clip(value, -80.0, 80.0))
 
 
@@ -395,7 +396,7 @@ class CourtemancheAtrialModel(StrictModule, NonTrainableState):
         )
 
     def initialize(
-        self, batch_shape: Sequence[int] = (), *, dtype: jnp.dtype | None = None
+        self, batch_shape: Sequence[int] = (), *, dtype: DTypeLike | None = None
     ) -> AtrialState:
         """Broadcast the published CRN resting fixture to a fixed batch shape."""
         shape = _batch_shape(batch_shape)
@@ -943,7 +944,7 @@ class CourtemancheAtrialReactionAdapter:
     def membrane_surface_to_volume_per_mm(self) -> float:
         return self.scaling.membrane_surface_to_volume_per_mm
 
-    def _parameters(self, parameters: Array | None, dtype: object) -> Array:
+    def _parameters(self, parameters: Array | None, dtype: DTypeLike) -> Array:
         if parameters is None:
             return jnp.asarray(self.default_parameters, dtype=dtype)
         return self.parameter_layout.require_shape(parameters).astype(dtype)
@@ -956,7 +957,7 @@ class CourtemancheAtrialReactionAdapter:
         self,
         batch_shape: tuple[int, ...] = (),
         *,
-        dtype: object | None = None,
+        dtype: DTypeLike | None = None,
     ) -> Array:
         return _atrial_reaction_state(
             self.cell_model.initialize(batch_shape, dtype=dtype)

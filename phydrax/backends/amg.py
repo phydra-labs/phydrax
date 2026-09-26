@@ -8,17 +8,19 @@ from collections.abc import Mapping
 from enum import IntEnum
 from math import isfinite, prod
 from threading import Lock
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.tree_util import PyTreeDef
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg._problems import LinearSystem
+from ..linalg._spaces import AbstractVectorSpace
 from ..linalg._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._availability import import_backend_module, probe_backend
 from ._types import (
@@ -27,6 +29,10 @@ from ._types import (
     BackendCapabilities,
     BackendTransferEvidence,
 )
+
+
+if TYPE_CHECKING:
+    import scipy.sparse as sp
 
 
 AMGBackendName: TypeAlias = Literal["pyamgcl", "amgx"]
@@ -271,16 +277,26 @@ class PyAMGCLBackend(AbstractExternalBackend):
             distributions=("pyamgcl",),
         )
 
-    def plan(self, problem: LinearSystem, policy: PyAMGCLPolicy | None = None, /):
+    def plan(
+        self, problem: LinearSystem, policy: PyAMGCLPolicy | None = None, /
+    ) -> PyAMGCLPlan:
         return plan_pyamgcl(problem, policy)
 
-    def prepare(self, problem: LinearSystem, plan: PyAMGCLPlan, /):
+    def prepare(self, problem: LinearSystem, plan: PyAMGCLPlan, /) -> PreparedPyAMGCL:
         return prepare_pyamgcl(problem, plan)
 
-    def solve(self, prepared: PreparedPyAMGCL, right_hand_side: PyTree[Any], /, **kwargs):
+    def solve(
+        self,
+        prepared: PreparedPyAMGCL,
+        right_hand_side: PyTree[Any],
+        /,
+        **kwargs: Any,
+    ) -> AMGSolveResult:
         return solve_pyamgcl(prepared, right_hand_side, **kwargs)
 
-    def refresh(self, prepared: PreparedPyAMGCL, problem: LinearSystem, /):
+    def refresh(
+        self, prepared: PreparedPyAMGCL, problem: LinearSystem, /
+    ) -> PreparedPyAMGCL:
         return refresh_pyamgcl(prepared, problem)
 
 
@@ -301,16 +317,24 @@ class AmgXBackend(AbstractExternalBackend):
             distributions=("pyamgx",),
         )
 
-    def plan(self, problem: LinearSystem, policy: AmgXPolicy | None = None, /):
+    def plan(
+        self, problem: LinearSystem, policy: AmgXPolicy | None = None, /
+    ) -> AmgXPlan:
         return plan_amgx(problem, policy)
 
-    def prepare(self, problem: LinearSystem, plan: AmgXPlan, /):
+    def prepare(self, problem: LinearSystem, plan: AmgXPlan, /) -> PreparedAmgX:
         return prepare_amgx(problem, plan)
 
-    def solve(self, prepared: PreparedAmgX, right_hand_side: PyTree[Any], /, **kwargs):
+    def solve(
+        self,
+        prepared: PreparedAmgX,
+        right_hand_side: PyTree[Any],
+        /,
+        **kwargs: Any,
+    ) -> AMGSolveResult:
         return solve_amgx(prepared, right_hand_side, **kwargs)
 
-    def refresh(self, prepared: PreparedAmgX, problem: LinearSystem, /):
+    def refresh(self, prepared: PreparedAmgX, problem: LinearSystem, /) -> PreparedAmgX:
         return refresh_amgx(prepared, problem)
 
     def release(self, prepared: PreparedAmgX, /) -> None:
@@ -356,31 +380,44 @@ def _pattern_id(storage: SparseStorage, /) -> str:
     )
 
 
-def _plan(problem: LinearSystem, policy: Any, backend: AMGBackendName, /):
+class _AMGPlanFields(TypedDict):
+    shape: tuple[int, int]
+    source_space_id: str
+    target_space_id: str
+    operator_id: str
+    pattern_id: str
+    coordinate_dtype: str
+    index_width: int
+    plan_id: str
+
+
+def _plan_fields(
+    problem: LinearSystem, policy_id: str, backend: AMGBackendName, /
+) -> _AMGPlanFields:
     storage = _storage(problem)
+    pattern_id = _pattern_id(storage)
+    coordinate_dtype = np.dtype(storage.values.dtype).name
     payload = {
         "kind": f"{backend}-plan",
-        "policy": policy.policy_id,
+        "policy": policy_id,
         "shape": storage.shape,
         "source": problem.operator.source.space_id,
         "target": problem.operator.target.space_id,
         "operator": problem.operator.operator_id,
-        "pattern": _pattern_id(storage),
-        "dtype": np.dtype(storage.values.dtype).name,
+        "pattern": pattern_id,
+        "dtype": coordinate_dtype,
         "index_width": storage.index_width,
     }
-    fields = dict(
-        policy=policy,
+    return _AMGPlanFields(
         shape=storage.shape,
         source_space_id=problem.operator.source.space_id,
         target_space_id=problem.operator.target.space_id,
         operator_id=problem.operator.operator_id,
-        pattern_id=payload["pattern"],
-        coordinate_dtype=payload["dtype"],
+        pattern_id=pattern_id,
+        coordinate_dtype=coordinate_dtype,
         index_width=storage.index_width,
         plan_id=canonical_fingerprint(payload),
     )
-    return PyAMGCLPlan(**fields) if backend == "pyamgcl" else AmgXPlan(**fields)
 
 
 def plan_pyamgcl(
@@ -391,7 +428,9 @@ def plan_pyamgcl(
     policy_ = PyAMGCLPolicy() if policy is None else policy
     if not isinstance(policy_, PyAMGCLPolicy):
         raise TypeError("policy must be PyAMGCLPolicy or None.")
-    return _plan(problem, policy_, "pyamgcl")
+    return PyAMGCLPlan(
+        policy=policy_, **_plan_fields(problem, policy_.policy_id, "pyamgcl")
+    )
 
 
 def plan_amgx(
@@ -402,7 +441,7 @@ def plan_amgx(
     policy_ = AmgXPolicy() if policy is None else policy
     if not isinstance(policy_, AmgXPolicy):
         raise TypeError("policy must be AmgXPolicy or None.")
-    return _plan(problem, policy_, "amgx")
+    return AmgXPlan(policy=policy_, **_plan_fields(problem, policy_.policy_id, "amgx"))
 
 
 def _validate_plan_problem(plan: Any, problem: LinearSystem, /) -> SparseStorage:
@@ -423,7 +462,7 @@ def _validate_plan_problem(plan: Any, problem: LinearSystem, /) -> SparseStorage
     return storage
 
 
-def _scipy_csr(storage: SparseStorage, /):
+def _scipy_csr(storage: SparseStorage, /) -> sp.csr_matrix:
     import scipy.sparse as sp
 
     return sp.csr_matrix(
@@ -565,7 +604,9 @@ def refresh_amgx(prepared: PreparedAmgX, problem: LinearSystem, /) -> PreparedAm
     )
 
 
-def _pack_rhs(space: Any, value: PyTree[Any], /):
+def _pack_rhs(
+    space: AbstractVectorSpace, value: PyTree[Any], /
+) -> tuple[Array, tuple[int, ...], PyTreeDef, tuple[jax.ShapeDtypeStruct, ...]]:
     leaves, treedef = jax.tree.flatten(value)
     specifications, expected_treedef = jax.tree.flatten(space.structure())
     if treedef != expected_treedef or len(leaves) != len(specifications):
@@ -593,8 +634,14 @@ def _pack_rhs(space: Any, value: PyTree[Any], /):
     return coordinates, rhs_shape or (), expected_treedef, tuple(specifications)
 
 
-def _unpack_rhs(coordinates: Array, rhs_shape, treedef, specifications, /):
-    leaves = []
+def _unpack_rhs(
+    coordinates: Array,
+    rhs_shape: tuple[int, ...],
+    treedef: PyTreeDef,
+    specifications: tuple[jax.ShapeDtypeStruct, ...],
+    /,
+) -> PyTree[Array]:
+    leaves: list[Array] = []
     offset = 0
     for specification in specifications:
         count = prod(specification.shape) if specification.shape else 1
@@ -606,7 +653,12 @@ def _unpack_rhs(coordinates: Array, rhs_shape, treedef, specifications, /):
     return jax.tree.unflatten(treedef, leaves)
 
 
-def _initial_coordinates(space, initial_guess, rhs_shape, /):
+def _initial_coordinates(
+    space: AbstractVectorSpace,
+    initial_guess: PyTree[Any] | None,
+    rhs_shape: tuple[int, ...],
+    /,
+) -> Array | None:
     if initial_guess is None:
         return None
     coordinates, guess_shape, _, _ = _pack_rhs(space, initial_guess)
@@ -615,7 +667,9 @@ def _initial_coordinates(space, initial_guess, rhs_shape, /):
     return coordinates
 
 
-def _provider_metadata(solver: Any, output: Any, /):
+def _provider_metadata(
+    solver: Any, output: Any, /
+) -> tuple[int | None, tuple[str | None, ...]]:
     iterations = None
     reasons: tuple[str | None, ...] = ()
     info = output[1] if isinstance(output, tuple) and len(output) > 1 else None
@@ -633,7 +687,13 @@ def _provider_metadata(solver: Any, output: Any, /):
     return iterations, reasons
 
 
-def _residual_diagnostics(problem, rhs, solution, rhs_shape, /):
+def _residual_diagnostics(
+    problem: LinearSystem,
+    rhs: Array,
+    solution: Array,
+    rhs_shape: tuple[int, ...],
+    /,
+) -> tuple[Array, Array]:
     count = rhs.shape[1]
     residuals = []
     relatives = []

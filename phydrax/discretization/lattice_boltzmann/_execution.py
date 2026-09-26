@@ -22,6 +22,8 @@ LatticeBoltzmannExecutionKind: TypeAlias = Literal["reference", "sharded", "fuse
 LatticeBoltzmannStep = Callable[
     [Array, Array, Array, Array, Any], "LatticeBoltzmannExecutionStep"
 ]
+_RealizationCarry: TypeAlias = tuple[Array, Array]
+_RealizationOutput: TypeAlias = tuple[Array, Array, Array, Array, Any]
 
 
 class LatticeBoltzmannExecutionStep(StrictModule):
@@ -175,7 +177,9 @@ def _realize_lattice_boltzmann(
     _validate_scalar("step_size", dt)
     _validate_scalar("t0", initial_time)
 
-    def advance(carry, step_index):
+    def advance(
+        carry: _RealizationCarry, step_index: Array
+    ) -> tuple[_RealizationCarry, _RealizationOutput]:
         state, previous_success = carry
         time = initial_time + step_index * dt
         result = step(step_index, time, state, dt, args)
@@ -374,7 +378,13 @@ class ReferenceLatticeBoltzmannExecutionPlan(StrictModule, NonTrainableState):
         if not isinstance(dynamics, PreparedLatticeBoltzmannDynamics):
             raise TypeError("dynamics must be PreparedLatticeBoltzmannDynamics.")
 
-        def step(step_index, time, populations, step_size, args):
+        def step(
+            step_index: Array,
+            time: Array,
+            populations: Array,
+            step_size: Array,
+            args: Any,
+        ) -> LatticeBoltzmannExecutionStep:
             result = dynamics.step_detailed(
                 step_index, time, populations, step_size, args
             )

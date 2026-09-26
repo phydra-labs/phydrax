@@ -260,7 +260,23 @@ line-length = 90
 exclude = [".*"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I001", "RUF100", "TID251"]
+# ANN0/ANN2 require every package function, method, and nested helper to annotate
+# all parameters and its return type.
+select = [
+  "E",
+  "F",
+  "I001",
+  "RUF100",
+  "TID251",
+  "ANN001",
+  "ANN002",
+  "ANN003",
+  "ANN201",
+  "ANN202",
+  "ANN204",
+  "ANN205",
+  "ANN206",
+]
 ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 fixable = ["F401", "F841", "I001", "RUF100"]
 
@@ -276,9 +292,12 @@ fixable = ["F401", "F841", "I001", "RUF100"]
 "phydrax/ein/__init__.py" = ["TID251"]
 "phydrax/tensor_network/_contraction.py" = ["TID251"]
 "phydrax/tensor_network/_schedule.py" = ["TID251"]
-"benchmarks/**/*.py" = ["TID251"]
-"tests/**/*.py" = ["TID251"]
-"tools/**/*.py" = ["TID251"]
+"benchmarks/**/*.py" = ["TID251", "ANN"]
+"tests/**/*.py" = ["TID251", "ANN"]
+"tools/**/*.py" = ["TID251", "ANN"]
+"examples/**/*.py" = ["ANN"]
+"docs/**/*.py" = ["ANN"]
+"mkdocstrings_setup.py" = ["ANN"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

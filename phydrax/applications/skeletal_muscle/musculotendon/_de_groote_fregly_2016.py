@@ -120,10 +120,10 @@ class DeGrooteFregly2016Parameters(StrictModule):
         tendon_c1: ArrayLike = 0.200,
         tendon_c2: ArrayLike = 0.995,
         tendon_c3: ArrayLike = 0.250,
-        active_force_length_b1: ArrayLike = (0.815, 0.433, 0.100),
-        active_force_length_b2: ArrayLike = (1.055, 0.717, 1.000),
-        active_force_length_b3: ArrayLike = (0.162, -0.030, 0.354),
-        active_force_length_b4: ArrayLike = (0.063, 0.200, 0.000),
+        active_force_length_b1: ArrayLike | Sequence[float] = (0.815, 0.433, 0.100),
+        active_force_length_b2: ArrayLike | Sequence[float] = (1.055, 0.717, 1.000),
+        active_force_length_b3: ArrayLike | Sequence[float] = (0.162, -0.030, 0.354),
+        active_force_length_b4: ArrayLike | Sequence[float] = (0.063, 0.200, 0.000),
         passive_stiffness: ArrayLike = 4.0,
         passive_strain: ArrayLike = 0.6,
         force_velocity_d1: ArrayLike = -0.318,
@@ -1170,7 +1170,7 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
         scale = self.plan.parameters.implicit_force_rate_scale_per_s
         initial = source.rates.normalized_tendon_force_per_s / scale
 
-        def residual(scaled_force_rate, runtime_args):
+        def residual(scaled_force_rate: Array, runtime_args: object) -> Array:
             del runtime_args
             return self._algebraic_residual(scaled_force_rate, state, length, velocity)
 

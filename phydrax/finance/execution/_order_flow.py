@@ -194,12 +194,19 @@ def queue_reactive_jump_process(
     if not isinstance(model, QueueReactiveModel):
         raise TypeError("model must be a QueueReactiveModel.")
 
-    def intensity(time, state, controlled_args):
+    def intensity(
+        time: ArrayLike, state: ArrayLike, controlled_args: tuple[Array, object]
+    ) -> Array:
         del time
         action, _ = controlled_args
         return model.intensities(state, action)
 
-    def jump(state, channel, mark, controlled_args):
+    def jump(
+        state: ArrayLike,
+        channel: ArrayLike,
+        mark: ArrayLike,
+        controlled_args: tuple[Array, object],
+    ) -> Array:
         del mark, controlled_args
         return model.apply_channel(state, channel)
 

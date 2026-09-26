@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from math import isfinite
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._strict import StrictModule
 from ...discretization.finite_volume._mac_scalar import (
@@ -118,7 +119,9 @@ class _MaterialArgs(StrictModule):
 class _BrinkmanForcing(StrictModule):
     external: Any
 
-    def __call__(self, time, velocity, args):
+    def __call__(
+        self, time: Array, velocity: tuple[Array, ...], args: _MaterialArgs
+    ) -> tuple[Array, ...]:
         external = (
             tuple(jnp.zeros_like(value) for value in velocity)
             if self.external is None
@@ -132,7 +135,12 @@ class _BrinkmanForcing(StrictModule):
         )
 
 
-def _heat_source(time, fields, velocity, args):
+def _heat_source(
+    time: Array,
+    fields: Mapping[str, Array],
+    velocity: tuple[Array, ...],
+    args: _MaterialArgs,
+) -> Array:
     del time, fields, velocity
     return args.heat_source_rate
 
@@ -142,7 +150,7 @@ class _ThermofluidRate(StrictModule):
     step_size: float = eqx.field(static=True)
     diffusive_resistance_rate: float = eqx.field(static=True)
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Array, state: Array, args: _MaterialArgs) -> Array:
         stage = self.dynamics.stage(time, state, args)
         restriction = self.dynamics.step_restriction(time, state, args)
         # The native coupled bound includes momentum, scalar transport,
@@ -458,7 +466,9 @@ class ThermofluidTopologyDesign(StrictModule):
             "Physical density must be finite in [0, 1] and preserve fixed regions.",
         )
 
-    def _realize(self, density, args):
+    def _realize(
+        self, density: ArrayLike, args: object
+    ) -> tuple[CompiledMACScalarBuoyancyDynamics, _MaterialArgs]:
         density = self._validate_density(density)
         grid = self.dynamics.momentum.operators.discretization.grid
         resistance = self.material.resistance(density)
@@ -482,7 +492,7 @@ class ThermofluidTopologyDesign(StrictModule):
         return dynamics, runtime_args
 
     def integrate_density(
-        self, density: ArrayLike, /, *, args=None
+        self, density: ArrayLike, /, *, args: object = None
     ) -> FixedStepRolloutResult:
         """Reanalyze physical density, without filtering or differentiating thresholding."""
         dynamics, runtime_args = self._realize(density, args)
@@ -498,10 +508,12 @@ class ThermofluidTopologyDesign(StrictModule):
         )
         return self.rollout_plan.rollout(problem)
 
-    def integrate(self, design: ArrayLike, /, *, args=None) -> FixedStepRolloutResult:
+    def integrate(
+        self, design: ArrayLike, /, *, args: object = None
+    ) -> FixedStepRolloutResult:
         return self.integrate_density(self.density(design), args=args)
 
-    def residual(self, state, design, args=None):
+    def residual(self, state: ArrayLike, design: ArrayLike, args: object = None) -> Array:
         result = self.integrate(design, args=args)
         terminal = eqx.error_if(
             result.final_state,
@@ -514,7 +526,9 @@ class ThermofluidTopologyDesign(StrictModule):
         volumes = self.dynamics.momentum.operators.discretization.cell_volumes
         return jnp.sum(volumes * density) / jnp.sum(volumes)
 
-    def objective_density(self, state, density, args=None):
+    def objective_density(
+        self, state: ArrayLike, density: ArrayLike, args: object = None
+    ) -> Array:
         dynamics, runtime_args = self._realize(density, args)
         velocity, scalars = dynamics.unpack_state(state)
         volumes = dynamics.momentum.operators.discretization.cell_volumes
@@ -529,7 +543,9 @@ class ThermofluidTopologyDesign(StrictModule):
         power = jnp.real(dynamics.momentum.operators.velocity_space.inner(velocity, drag))
         return thermal + self.resistance_weight * power
 
-    def objective(self, state, design, args=None):
+    def objective(
+        self, state: ArrayLike, design: ArrayLike, args: object = None
+    ) -> Array:
         """Heat-source weighted terminal temperature plus resistance power."""
         return self.objective_density(state, self.density(design), args)
 
@@ -557,7 +573,9 @@ class ThermofluidTopologyDesign(StrictModule):
             problem_id="thermofluid-fixed-integration-topology",
         )
 
-    def evidence(self, state, density, /, *, args=None) -> ThermofluidTopologyEvidence:
+    def evidence(
+        self, state: Array, density: Array, /, *, args: object = None
+    ) -> ThermofluidTopologyEvidence:
         dynamics, runtime_args = self._realize(density, args)
         stage = dynamics.stage(self.final_time, state, runtime_args)
         diagnostics = dynamics.diagnostics_from_stage(stage)
@@ -630,7 +648,7 @@ class ThermofluidTopologyDesign(StrictModule):
         )
 
     def binary_reanalysis(
-        self, design: ArrayLike, /, *, eta=0.5, args=None
+        self, design: ArrayLike, /, *, eta: ArrayLike = 0.5, args: object = None
     ) -> ThermofluidTopologyReanalysis:
         """Threshold once, rerun the same physics, and separately check material volume.
 
@@ -658,14 +676,22 @@ class ThermofluidTopologyDesign(StrictModule):
 class _FixedIntegrationStateSolver(AbstractStateSolver):
     workflow: ThermofluidTopologyDesign
 
-    def __init__(self, workflow, /) -> None:
+    def __init__(self, workflow: ThermofluidTopologyDesign, /) -> None:
         self.workflow = workflow
 
     @property
     def method_id(self) -> str:
         return "native-thermofluid-fixed-integration"
 
-    def solve(self, problem, design, initial_state, /, *, args):
+    def solve(
+        self,
+        problem: StateDesignProblem,
+        design: PyTree[Any],
+        initial_state: PyTree[Any],
+        /,
+        *,
+        args: Any,
+    ) -> StateEquationResult:
         del initial_state
         result = self.workflow.integrate(design, args=args)
         residual = problem.residual(result.final_state, design, args)

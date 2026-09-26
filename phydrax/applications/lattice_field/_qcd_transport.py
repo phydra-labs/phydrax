@@ -147,7 +147,7 @@ def evaluate_qcd_transport(
         table.baryon_chemical_potentials[mi + 1] - table.baryon_chemical_potentials[mi]
     )
 
-    def interpolate(values):
+    def interpolate(values: Array) -> Array:
         return (
             (1.0 - ft) * (1.0 - fm) * values[ti, mi]
             + ft * (1.0 - fm) * values[ti + 1, mi]

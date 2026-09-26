@@ -7,12 +7,15 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -31,21 +34,23 @@ from ._polarization import (
 )
 
 
-def _name(value, /) -> str:
+def _name(value: str, /) -> str:
     result = str(value).strip()
     if not result:
         raise ValueError("Term name must be non-empty.")
     return result
 
 
-def _positive(value, name, /) -> float:
+def _positive(value: float, name: str, /) -> float:
     result = float(value)
     if not np.isfinite(result) or result <= 0.0:
         raise ValueError(f"{name} must be finite and positive.")
     return result
 
 
-def _site_vector(value, name, /, *, nonnegative=False, positive=False):
+def _site_vector(
+    value: ArrayLike, name: str, /, *, nonnegative: bool = False, positive: bool = False
+) -> npt.NDArray[np.float64]:
     result = np.asarray(value, dtype=np.float64)
     if result.ndim != 1 or result.size == 0 or np.any(~np.isfinite(result)):
         raise ValueError(f"{name} must be a finite non-empty rank-one array.")
@@ -56,7 +61,7 @@ def _site_vector(value, name, /, *, nonnegative=False, positive=False):
     return result
 
 
-def _pair_scale(value, capacity, /):
+def _pair_scale(value: ArrayLike | None, capacity: int, /) -> npt.NDArray[np.float64]:
     if value is None:
         result = np.ones((capacity, capacity), dtype=np.float64) - np.eye(capacity)
     else:
@@ -75,7 +80,9 @@ def _pair_scale(value, capacity, /):
     return result
 
 
-def _routes(value, width, capacity, name, /):
+def _routes(
+    value: ArrayLike, width: int, capacity: int, name: str, /
+) -> npt.NDArray[np.int32]:
     result = np.asarray(value)
     if result.ndim != 2 or result.shape[1] != width or result.dtype.kind not in "iu":
         raise ValueError(f"{name} must be an integer array with shape (R,{width}).")
@@ -89,7 +96,7 @@ def _routes(value, width, capacity, name, /):
     return result
 
 
-def _positions(value, capacity, /):
+def _positions(value: ArrayLike, capacity: int, /) -> Array:
     positions = jnp.asarray(value)
     if positions.shape != (capacity, 3):
         raise ValueError("positions must have fixed shape (N,3).")
@@ -98,7 +105,9 @@ def _positions(value, capacity, /):
     return positions
 
 
-def _pair_geometry(positions, pair_scale, /):
+def _pair_geometry(
+    positions: Array, pair_scale: Array, /
+) -> tuple[Array, Array, Array, Array]:
     displacement = positions[:, None, :] - positions[None, :, :]
     squared = jnp.sum(displacement * displacement, axis=-1)
     upper = jnp.triu(pair_scale, k=1)
@@ -111,7 +120,7 @@ def _pair_geometry(positions, pair_scale, /):
     return distance, upper, participating, valid
 
 
-def _angle(a, b, /):
+def _angle(a: Array, b: Array, /) -> tuple[Array, Array]:
     norm_a = jnp.sqrt(jnp.sum(a * a, axis=-1))
     norm_b = jnp.sqrt(jnp.sum(b * b, axis=-1))
     valid = (norm_a > 0.0) & (norm_b > 0.0)
@@ -120,7 +129,12 @@ def _angle(a, b, /):
     return jnp.arccos(cosine), valid
 
 
-def _route_id(kind, arrays, parameters, /):
+def _route_id(
+    kind: str,
+    arrays: dict[str, npt.NDArray[np.float64] | npt.NDArray[np.int32]],
+    parameters: dict[str, str],
+    /,
+) -> str:
     return canonical_fingerprint(
         {
             "kind": kind,
@@ -169,10 +183,10 @@ class Buffered147Potential(StrictModule, NonTrainableState):
         self.term_id = _route_id(
             "buffered-14-7",
             {"radii": radius, "epsilon": depth, "scale": scale},
-            {"delta": delta_.hex(), "gamma": gamma_.hex()},
+            {"delta": float(delta_).hex(), "gamma": float(gamma_).hex()},
         )
 
-    def energy(self, positions: ArrayLike, /):
+    def energy(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         distance, scale, participating, valid = _pair_geometry(
             coordinate, self.pair_scale
@@ -232,10 +246,10 @@ class ChargePenetrationPotential(StrictModule, NonTrainableState):
         self.term_id = _route_id(
             "charge-penetration",
             {"core": core, "valence": valence, "exponents": exponent, "scale": scale},
-            {"coulomb_constant": constant.hex()},
+            {"coulomb_constant": float(constant).hex()},
         )
 
-    def energy(self, positions: ArrayLike, /):
+    def energy(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         distance, scale, participating, valid = _pair_geometry(
             coordinate, self.pair_scale
@@ -295,7 +309,7 @@ class ChargeTransferPotential(StrictModule, NonTrainableState):
             {},
         )
 
-    def energy(self, positions: ArrayLike, /):
+    def energy(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         distance, scale, participating, valid = _pair_geometry(
             coordinate, self.pair_scale
@@ -308,11 +322,11 @@ class ChargeTransferPotential(StrictModule, NonTrainableState):
         return jnp.where(successful, energy, jnp.nan)
 
 
-def _tang_toennies(order, argument, /):
+def _tang_toennies(order: int, argument: Array, /) -> Array:
     return jsp.gammainc(jnp.asarray(float(order + 1), dtype=argument.dtype), argument)
 
 
-def _damped_inverse_power(order, argument, distance, /):
+def _damped_inverse_power(order: int, argument: Array, distance: Array, /) -> Array:
     inverse_length = argument / distance
     term = jnp.ones_like(argument) / float(order + 1)
     series = term
@@ -388,7 +402,7 @@ class DampedDispersionPotential(StrictModule, NonTrainableState):
             {},
         )
 
-    def energy(self, positions: ArrayLike, /):
+    def energy(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         distance, scale, participating, valid = _pair_geometry(
             coordinate, self.pair_scale
@@ -443,7 +457,7 @@ class PauliRepulsionPotential(StrictModule, NonTrainableState):
             {},
         )
 
-    def energy(self, positions: ArrayLike, /):
+    def energy(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         distance, scale, participating, valid = _pair_geometry(
             coordinate, self.pair_scale
@@ -549,10 +563,10 @@ class ChargeFluxPotential(StrictModule, NonTrainableState):
                 "equilibrium_angles": angle_equilibrium,
                 "scale": scale,
             },
-            {"coulomb_constant": constant.hex()},
+            {"coulomb_constant": float(constant).hex()},
         )
 
-    def _charges_and_validity(self, positions, /):
+    def _charges_and_validity(self, positions: ArrayLike, /) -> tuple[Array, Array]:
         coordinate = _positions(positions, self.site_capacity)
         charges = self.reference_charges
         bond_vector = (
@@ -578,12 +592,12 @@ class ChargeFluxPotential(StrictModule, NonTrainableState):
         )
         return charges, valid
 
-    def charges(self, positions: ArrayLike, /):
+    def charges(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         charges, _ = self._charges_and_validity(coordinate)
         return charges
 
-    def energy(self, positions: ArrayLike, /):
+    def energy(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         distance, scale, participating, valid = _pair_geometry(
             coordinate, self.pair_scale
@@ -671,7 +685,7 @@ class StretchBendPotential(StrictModule, NonTrainableState):
             {},
         )
 
-    def energy(self, positions: ArrayLike, /):
+    def energy(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         left = coordinate[self.routes[:, 0]] - coordinate[self.routes[:, 1]]
         right = coordinate[self.routes[:, 2]] - coordinate[self.routes[:, 1]]
@@ -744,7 +758,7 @@ class AngleAnglePotential(StrictModule, NonTrainableState):
             {},
         )
 
-    def energy(self, positions: ArrayLike, /):
+    def energy(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         center = coordinate[self.routes[:, 1]]
         first, first_valid = _angle(
@@ -821,7 +835,7 @@ class OutOfPlaneBendPotential(StrictModule, NonTrainableState):
             {},
         )
 
-    def energy(self, positions: ArrayLike, /):
+    def energy(self, positions: ArrayLike, /) -> Array:
         coordinate = _positions(positions, self.site_capacity)
         center = coordinate[self.routes[:, 1]]
         out = coordinate[self.routes[:, 0]] - center
@@ -852,6 +866,17 @@ _POLARIZABLE_TERM_TYPES = (
     AngleAnglePotential,
     OutOfPlaneBendPotential,
 )
+PolarizableEnergyTerm: TypeAlias = (
+    Buffered147Potential
+    | ChargePenetrationPotential
+    | ChargeTransferPotential
+    | ChargeFluxPotential
+    | DampedDispersionPotential
+    | PauliRepulsionPotential
+    | StretchBendPotential
+    | AngleAnglePotential
+    | OutOfPlaneBendPotential
+)
 
 
 class PolarizableTermEvaluation(StrictModule):
@@ -864,7 +889,9 @@ class PolarizableTermEvaluation(StrictModule):
     successful: Array
 
 
-def evaluate_polarizable_term(term, positions: ArrayLike, /) -> PolarizableTermEvaluation:
+def evaluate_polarizable_term(
+    term: PolarizableEnergyTerm, positions: ArrayLike, /
+) -> PolarizableTermEvaluation:
     """Differentiate any advanced scalar term and fail closed on nonfinite output."""
     if not isinstance(term, _POLARIZABLE_TERM_TYPES):
         raise TypeError("term is not a supported polarizable force-field term.")
@@ -903,7 +930,7 @@ class PolarizableForceQualification(StrictModule):
 class PolarizableForceFieldPlan(StrictModule, NonTrainableState):
     """Composable plan for advanced scalar terms and optional polarization."""
 
-    terms: tuple
+    terms: tuple[PolarizableEnergyTerm, ...]
     polarization: PolarizationPlan | None
     force_balance_tolerance: float = eqx.field(static=True)
     site_capacity: int = eqx.field(static=True)
@@ -911,7 +938,7 @@ class PolarizableForceFieldPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        terms,
+        terms: Iterable[PolarizableEnergyTerm],
         /,
         *,
         polarization: PolarizationPlan | None = None,
@@ -936,7 +963,7 @@ class PolarizableForceFieldPlan(StrictModule, NonTrainableState):
                 "kind": "polarizable-force-field-plan",
                 "terms": [term.term_id for term in terms_],
                 "polarization": None if polarization is None else polarization.plan_id,
-                "force_balance_tolerance": tolerance.hex(),
+                "force_balance_tolerance": float(tolerance).hex(),
             }
         )
 
@@ -972,7 +999,13 @@ class PreparedPolarizableForceField(StrictModule, NonTrainableState):
     site_capacity: int = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, polarization, site_capacity, /) -> None:
+    def __init__(
+        self,
+        plan: PolarizableForceFieldPlan,
+        polarization: PreparedPolarizationSolver | None,
+        site_capacity: int,
+        /,
+    ) -> None:
         capacity = int(site_capacity)
         if capacity <= 0:
             raise ValueError("Prepared force fields require positive site capacity.")
@@ -1006,7 +1039,9 @@ class PreparedPolarizableForceField(StrictModule, NonTrainableState):
         if self.polarization is None and cell_vectors is not None:
             raise ValueError("cell_vectors require periodic polarization.")
 
-        def total_energy(value):
+        def total_energy(
+            value: Array,
+        ) -> tuple[Array, tuple[Array, Array, PolarizationSolveResult | None]]:
             term_energies = (
                 jnp.stack(tuple(term.energy(value) for term in self.plan.terms))
                 if self.plan.terms

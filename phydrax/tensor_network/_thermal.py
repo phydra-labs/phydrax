@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from ._core import LocallyPurifiedDensity, MatrixProductOperator, MatrixProductState
 from ._environments import mpo_hermiticity_residual, mps_mpo_expectation
 from ._mpo import apply_mpo, compress_mps
+from ._precision import TensorNetworkPrecisionPolicy
 
 
 class FiniteThermalStatus(IntEnum):
@@ -94,7 +95,7 @@ def infinite_temperature_purification(
     physical_dimensions: tuple[int, ...],
     /,
     *,
-    precision=None,
+    precision: TensorNetworkPrecisionPolicy | None = None,
 ) -> LocallyPurifiedDensity:
     """Return the normalized beta=0 product purification of the identity."""
     dimensions = tuple(physical_dimensions)

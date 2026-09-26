@@ -246,7 +246,7 @@ class PreparedPIV(StrictModule, NonTrainableState):
 
 def _resolved_dtypes(requested: str) -> tuple[str, str]:
     resolved = requested
-    if requested == "float64" and not bool(jax.config.jax_enable_x64):
+    if requested == "float64" and not bool(jax.config.read("jax_enable_x64")):
         resolved = "float32"
     return resolved, "complex128" if resolved == "float64" else "complex64"
 

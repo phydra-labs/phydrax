@@ -67,16 +67,16 @@ class DryGradientWindReference(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        speed=20.0,
-        shear=-10.0,
-        temperature=288.0,
-        reference_pressure=100000.0,
-        minimum_pressure=1000.0,
-        maximum_pressure=120000.0,
-        radius=6.371e6,
-        rotation_rate=7.292115e-5,
-        gas_constant=287.05,
-        heat_capacity=1004.0,
+        speed: float = 20.0,
+        shear: float = -10.0,
+        temperature: float = 288.0,
+        reference_pressure: float = 100000.0,
+        minimum_pressure: float = 1000.0,
+        maximum_pressure: float = 120000.0,
+        radius: float = 6.371e6,
+        rotation_rate: float = 7.292115e-5,
+        gas_constant: float = 287.05,
+        heat_capacity: float = 1004.0,
     ) -> None:
         parameters = dict(
             speed=float(speed),
@@ -235,7 +235,7 @@ class DryGradientWindReference(StrictModule, NonTrainableState):
         )
 
     def initialize(
-        self, model: PreparedGlobalAtmosphere, *, time=0.0
+        self, model: PreparedGlobalAtmosphere, *, time: ArrayLike = 0.0
     ) -> GlobalAtmosphereContinuation:
         """Project continuous fields onto the native owner, not a discrete fixer."""
         if not isinstance(model, PreparedGlobalAtmosphere):

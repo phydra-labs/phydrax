@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TypeAlias
+from typing import Any, SupportsFloat, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, Key
 
 from phydrax.domain import DomainFunction
 
@@ -33,6 +33,7 @@ from ..linalg import HermitianSpectrum
 from ..linalg.eigen import (
     block_rayleigh_trace,
     BlockRayleighEvaluation,
+    EigenTarget,
     ReducedRitzResult,
     solve_reduced_ritz,
 )
@@ -67,7 +68,7 @@ def _tolerance(value: float, /) -> float:
     return tolerance
 
 
-def _weight(value: ArrayLike, /, *, nonnegative: bool) -> float:
+def _weight(value: SupportsFloat, /, *, nonnegative: bool) -> float:
     weight = float(value)
     if not math.isfinite(weight):
         raise ValueError("weight must be finite.")
@@ -372,7 +373,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
         stiffness_form: FormDensity,
         objective_vars: Sequence[str],
         mass_form: FormDensity | None = None,
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         tolerance: float = 1e-10,
         label: str | None = None,
     ) -> None:
@@ -471,7 +472,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
         /,
         *,
         count: int | None = None,
-        which: str = "smallest-algebraic",
+        which: EigenTarget = "smallest-algebraic",
         key: Key[Array, ""] = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
@@ -527,7 +528,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         metric_action: EigenspaceAction | None = None,
         pairing: FormDensity | None = None,
         residual_pairing: FormDensity | None = None,
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         tolerance: float = 1e-10,
         label: str | None = None,
     ) -> None:
@@ -708,7 +709,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         /,
         *,
         count: int | None = None,
-        which: str = "smallest-algebraic",
+        which: EigenTarget = "smallest-algebraic",
         key: Key[Array, ""] = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,

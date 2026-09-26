@@ -10,7 +10,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.ein import contract
 
@@ -186,7 +186,7 @@ class HelmholtzLayerPotential2D(_AbstractTrialSpaceField):
             self.panelization.normals,
         )
 
-    def __call__(self, target: Array, /, *, key=None) -> Array:
+    def __call__(self, target: Array, /, *, key: Key[Array, ""] | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (2,):
@@ -283,7 +283,7 @@ class HelmholtzCombinedField2D(_AbstractTrialSpaceField):
             trace_policy="brakhage-werner-combined-field",
         )
 
-    def __call__(self, target: Array, /, *, key=None) -> Array:
+    def __call__(self, target: Array, /, *, key: Key[Array, ""] | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (2,):

@@ -2,9 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TYPE_CHECKING
 
 import jax.numpy as jnp
 from jaxtyping import Array
@@ -26,6 +28,10 @@ from .data import OperatorBatch, OperatorOutputSpec, OperatorPrediction
 from .protocols import OperatorModel, OperatorPredictionBuilder
 
 
+if TYPE_CHECKING:
+    from .capabilities import ConfiguredOperatorContract
+
+
 class AbstractOperatorModel(
     _AbstractStructuredInputModel,
     AxisModelEvaluator,
@@ -42,7 +48,7 @@ class AbstractOperatorModel(
     ] = None
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> ConfiguredOperatorContract:
         """Return the runtime contract declared by this concrete operator engine."""
         from .catalog import (
             _reconcile_instance_contract,

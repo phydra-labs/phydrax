@@ -121,7 +121,7 @@ class UVTrimLoop(StrictModule, NonTrainableState):
             raise ValueError("A UV trim loop requires three distinct vertices.")
         edges = np.roll(vertices_, -1, axis=0) - vertices_
         scale = max(1.0, float(np.max(np.ptp(vertices_, axis=0))))
-        tolerance = 64.0 * np.finfo(np.float64).eps * scale
+        tolerance = float(64.0 * np.finfo(np.float64).eps * scale)
         if np.any(np.linalg.norm(edges, axis=1) <= tolerance):
             raise ValueError("UV trim loops cannot contain zero-length edges.")
         count = vertices_.shape[0]
@@ -232,7 +232,7 @@ class UVTrimmedSurface(StrictModule, NonTrainableState):
         )
         scale = max(1.0, float(np.max(np.ptp(all_vertices, axis=0))))
         tolerance = (
-            64.0 * np.finfo(np.float64).eps * scale
+            float(64.0 * np.finfo(np.float64).eps * scale)
             if predicate_tolerance is None
             else float(predicate_tolerance)
         )
@@ -385,7 +385,7 @@ class ConvexTriangleBRepClassifier(AbstractImmersedBRepClassifier):
             raise ValueError("BRep triangle indices are out of bounds.")
         scale = max(1.0, float(np.max(np.ptp(vertices_, axis=0))))
         tolerance = (
-            128.0 * np.finfo(np.float64).eps * scale
+            float(128.0 * np.finfo(np.float64).eps * scale)
             if predicate_tolerance is None
             else float(predicate_tolerance)
         )

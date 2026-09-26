@@ -114,14 +114,13 @@ class KineticAerothermodynamicPlan(StrictModule, NonTrainableState):
             )
         radiation_evidence = None
         if self.radiation_ablation is not None:
-            values = (
-                radiation_energy_exchange,
-                ablated_species,
-                wall_momentum,
-                wall_energy,
-                species_charges,
-            )
-            if any(value is None for value in values):
+            if (
+                radiation_energy_exchange is None
+                or ablated_species is None
+                or wall_momentum is None
+                or wall_energy is None
+                or species_charges is None
+            ):
                 raise ValueError(
                     "Radiation/ablation coupling requires every exchange input."
                 )

@@ -11,10 +11,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_allfinite, tree_where
@@ -26,7 +28,13 @@ from .._core import (
     PreparationReport,
 )
 from ..particle import ParticleDiscretization
-from ..splatting import PreparedParticleGridSplat
+from ..spatial import SparseBlockTopologyState
+from ..splatting import (
+    ParticleGridSplatState,
+    PreparedParticleGridSplat,
+    SplatDepositResult,
+    SplatRouteScatterResult,
+)
 from ._boundary import PrescribedGridVelocityPlan, PrescribedGridVelocityResult
 from ._contact import MPMGridConstraintResult, RigidMPMContactPlan
 from ._domain import MPMParticleDomainPlan
@@ -83,7 +91,7 @@ def _grid_kinetic(mass: Array, velocity: Array, active: Array, /) -> Array:
     return compensated_sum(jnp.where(active, terms, 0.0).reshape((-1,)))
 
 
-def _route_digest(state) -> Array:
+def _route_digest(state: ParticleGridSplatState) -> Array:
     slots = jnp.arange(state.stencil.indices.shape[1], dtype=jnp.int64)[None, :]
     values = jnp.where(
         state.stencil.valid,
@@ -373,7 +381,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         return self.particles.ambient_dimension
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.splat.precision_evidence
 
     @property
@@ -384,44 +392,74 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
     def compact_storage(self) -> bool:
         return isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan)
 
-    def _build_storage(self, routes, previous=None):
+    def _build_storage(
+        self,
+        routes: ParticleGridSplatState,
+        previous: SparseBlockTopologyState | None = None,
+    ) -> SparseBlockTopologyState | None:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
             return self.nodal_storage.build(routes, previous)
         return None
 
-    def _mapped_routes(self, routes, storage_state):
+    def _mapped_routes(
+        self,
+        routes: ParticleGridSplatState,
+        storage_state: SparseBlockTopologyState | None,
+    ) -> ParticleGridSplatState:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            assert storage_state is not None
             return self.nodal_storage.mapped_routes(routes, storage_state)
         return routes
 
-    def _deposit_content(self, routes, storage_state, content):
+    def _deposit_content(
+        self,
+        routes: ParticleGridSplatState,
+        storage_state: SparseBlockTopologyState | None,
+        content: ArrayLike,
+    ) -> SplatDepositResult:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            assert storage_state is not None
             return self.nodal_storage.deposit_content(
                 self.splat, routes, storage_state, content
             )
         return self.splat.deposit_content(routes, content)
 
-    def _scatter_route_payload(self, routes, storage_state, payload):
+    def _scatter_route_payload(
+        self,
+        routes: ParticleGridSplatState,
+        storage_state: SparseBlockTopologyState | None,
+        payload: ArrayLike,
+    ) -> SplatRouteScatterResult:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            assert storage_state is not None
             return self.nodal_storage.scatter_route_payload(
                 self.splat, routes, storage_state, payload
             )
         return self.splat.scatter_route_payload(routes, payload)
 
-    def _storage_coordinates(self, storage_state):
+    def _storage_coordinates(
+        self, storage_state: SparseBlockTopologyState | None
+    ) -> Array:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            assert storage_state is not None
             return self.nodal_storage.coordinates(storage_state)
         return self.grid_coordinates
 
-    def _storage_node_valid(self, storage_state):
+    def _storage_node_valid(
+        self, storage_state: SparseBlockTopologyState | None
+    ) -> Array:
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            assert storage_state is not None
             return storage_state.node_valid.reshape((-1,))
         return jnp.ones((self.grid_count,), dtype=jnp.bool_)
 
-    def _storage_boundary_data(self, storage_state):
+    def _storage_boundary_data(
+        self, storage_state: SparseBlockTopologyState | None
+    ) -> tuple[Array, Array] | None:
         if self.boundary is None:
             return None
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+            assert storage_state is not None
             logical = storage_state.logical_node_ids.reshape((-1,))
             valid = storage_state.node_valid.reshape((-1,))
             mask = self.boundary.mask.reshape((-1, self.dimension))[logical]
@@ -587,7 +625,15 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         finite = jnp.all(jnp.where(active, jnp.isfinite(value), True))
         return jnp.where(active, value, 0.0), finite
 
-    def _apply_contact(self, velocity, mass, time, step_size, arguments, storage_state):
+    def _apply_contact(
+        self,
+        velocity: Array,
+        mass: Array,
+        time: Array,
+        step_size: Array,
+        arguments: Any,
+        storage_state: SparseBlockTopologyState | None,
+    ) -> MPMGridConstraintResult:
         if self.contact is None:
             return MPMGridConstraintResult(
                 velocity,
@@ -611,7 +657,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             arguments.external_arguments,
         )
 
-    def _empty_grid(self, dtype) -> MPMGridState:
+    def _empty_grid(self, dtype: DTypeLike) -> MPMGridState:
         scalar = jnp.zeros(
             (self.nodal_fields.field_count,) + self.nodal_shape,
             dtype=dtype,
@@ -624,7 +670,9 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             scalar, vector, vector, vector, vector, vector, scalar.astype("bool")
         )
 
-    def _empty_diagnostics(self, state: MPMRuntimeState, route_state) -> MPMDiagnostics:
+    def _empty_diagnostics(
+        self, state: MPMRuntimeState, route_state: ParticleGridSplatState
+    ) -> MPMDiagnostics:
         dtype = state.particles.position.dtype
         vector_shape = (self.dimension,) if self.dimension == 3 else ()
         zero_vector = jnp.zeros((self.dimension,), dtype=dtype)
@@ -676,7 +724,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
     def _rejected(
         self,
         state: MPMRuntimeState,
-        route_state,
+        route_state: ParticleGridSplatState,
         step_size: Array,
         reason: Any,
         status: Any,
@@ -699,11 +747,19 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             state.storage_state,
             state.lifecycle_state,
         )
+        nan = jnp.asarray(jnp.nan, dtype=dtype)
         restriction_ = (
             MPMStepRestriction(
-                *(jnp.asarray(jnp.nan, dtype=dtype) for _ in range(8)),
+                nan,
+                nan,
+                nan,
+                nan,
+                nan,
+                nan,
+                nan,
+                nan,
                 jnp.asarray(int(MPMLimitingProcess.NONE), dtype=jnp.int32),
-                jnp.asarray(jnp.nan, dtype=dtype),
+                nan,
             )
             if restriction is None
             else restriction
@@ -757,7 +813,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             )
         )
 
-        def invalid(_):
+        def invalid(_: None) -> MPMStepResult:
             reason = jnp.where(
                 ~finite,
                 int(MPMRejectionReason.NONFINITE),
@@ -784,7 +840,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 status,
             )
 
-        def execute(_):
+        def execute(_: None) -> MPMStepResult:
             if self.nodal_fields.field_count > 1:
                 return multifield_step_detailed(self, state, dt, arguments, routes)
             execution_routes = self._mapped_routes(routes, storage_state)
@@ -970,7 +1026,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 grid_active[None, ...],
             )
 
-            def unstable(_):
+            def unstable(_: None) -> MPMStepResult:
                 reason = jnp.where(
                     external_ok,
                     int(MPMRejectionReason.STABILITY),
@@ -991,7 +1047,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     restriction=restriction,
                 )
 
-            def advance(_):
+            def advance(_: None) -> MPMStepResult:
                 velocity_trial = grid_update.velocity
                 contact_result = self._apply_contact(
                     velocity_trial,
@@ -1010,6 +1066,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     )
                 else:
                     if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+                        assert storage_state is not None
                         boundary_result = self.boundary.apply_indexed(
                             contact_result.velocity,
                             grid_mass,
@@ -1119,6 +1176,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         )
                     else:
                         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
+                            assert storage_state is not None
                             second_boundary = self.boundary.apply_indexed(
                                 second_contact.velocity,
                                 second_mass.content,

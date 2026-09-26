@@ -10,8 +10,12 @@ from jaxtyping import Array, ArrayLike
 from ..._strict import StrictModule
 from ...discretization.fem._mortar import (
     FiniteElementMortarMetricData,
+    FiniteElementMortarPlan,
 )
-from ._conservation import certify_dgsem_mortar_compatibility
+from ._conservation import (
+    certify_dgsem_mortar_compatibility,
+    DGSEMMortarCompatibilityCertificate,
+)
 
 
 class EntropyStableWallEvidence(StrictModule):
@@ -75,7 +79,7 @@ def derived_mortar_entropy_defect(
 
 
 def certify_derived_dgsem_mortar(
-    mortar,
+    mortar: FiniteElementMortarPlan,
     metric: FiniteElementMortarMetricData,
     left_state: ArrayLike,
     right_state: ArrayLike,
@@ -87,7 +91,7 @@ def certify_derived_dgsem_mortar(
     /,
     *,
     tolerance: float = 1.0e-10,
-):
+) -> DGSEMMortarCompatibilityCertificate:
     defect = derived_mortar_entropy_defect(
         left_state,
         right_state,

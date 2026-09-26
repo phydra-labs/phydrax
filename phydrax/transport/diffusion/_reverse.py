@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import isfinite, prod
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -25,7 +26,11 @@ from ...stochastic._gaussian_diffusion import (
 from ...stochastic._wiener import WienerRealization
 
 
-def _sample_shape(value, /) -> tuple[int, ...]:
+if TYPE_CHECKING:
+    from ...stochastic._trajectory import StochasticTrajectory
+
+
+def _sample_shape(value: Sequence[int], /) -> tuple[int, ...]:
     shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("Reverse diffusion requires a non-empty positive sample_shape.")
@@ -148,9 +153,9 @@ class ReverseDiffusionResult(StrictModule):
         self,
         /,
         *,
-        realization_axes=None,
-        state_axes=("state",),
-    ):
+        realization_axes: Sequence[str] | None = None,
+        state_axes: Sequence[str] = ("state",),
+    ) -> StochasticTrajectory:
         return self.solution.to_stochastic_trajectory(
             initial_state=self.terminal_states,
             initial_time=0.0,
@@ -279,7 +284,7 @@ class ReverseDiffusion(StrictModule):
     def realize(
         self,
         key: Key[Array, ""],
-        sample_shape,
+        sample_shape: Sequence[int],
         /,
     ) -> ReverseDiffusionRealization:
         samples = _sample_shape(sample_shape)
@@ -423,7 +428,7 @@ class ReverseDiffusion(StrictModule):
     def sample_with_diagnostics(
         self,
         key: Key[Array, ""],
-        sample_shape,
+        sample_shape: Sequence[int],
         /,
         *,
         save_times: ArrayLike | None = None,
@@ -434,7 +439,7 @@ class ReverseDiffusion(StrictModule):
     def sample(
         self,
         key: Key[Array, ""],
-        sample_shape,
+        sample_shape: Sequence[int],
         /,
     ) -> Array:
         result = self.sample_with_diagnostics(key, sample_shape)

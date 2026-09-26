@@ -416,7 +416,7 @@ class UehlingUhlenbeckPlan(StrictModule, NonTrainableState):
         used = jnp.minimum(required, self.maximum_substeps)
         substep = jnp.where(used > 0, step / used.astype(initial.dtype), 0.0)
 
-        def body(index, current):
+        def body(index: Array, current: Array) -> Array:
             candidate = current + substep * self.collision_rate(current)
             return jnp.where(index < used, candidate, current)
 

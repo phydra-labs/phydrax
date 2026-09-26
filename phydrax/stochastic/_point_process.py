@@ -19,6 +19,7 @@ from .._strict import StrictModule
 
 HawkesTiePolicy: TypeAlias = Literal["simultaneous", "ordered"]
 HawkesLikelihoodStatus: TypeAlias = Literal[0, 1, 2, 3]
+_HawkesSimulationCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 HAWKES_SUCCESS = 0
 HAWKES_UNSTABLE = 1
@@ -274,7 +275,9 @@ def evaluate_hawkes_likelihood(
     initial_history = jnp.zeros_like(process.excitation)
     initial_pending = jnp.zeros_like(process.excitation)
 
-    def likelihood_step(carry, inputs):
+    def likelihood_step(
+        carry: tuple[Array, Array, Array], inputs: tuple[Array, Array, Array]
+    ) -> tuple[tuple[Array, Array, Array], Array]:
         history, pending, previous_time = carry
         time, channel, valid = inputs
         elapsed = jnp.maximum(time - previous_time, 0.0)
@@ -405,7 +408,7 @@ def simulate_hawkes(
     initial_channels = jnp.zeros((capacity_,), dtype=jnp.int32)
     initial_excitation = jnp.zeros_like(process.excitation)
 
-    def body(index, state):
+    def body(index: Array, state: _HawkesSimulationCarry) -> _HawkesSimulationCarry:
         (
             current_time,
             excitation_state,

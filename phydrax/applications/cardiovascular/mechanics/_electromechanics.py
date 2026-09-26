@@ -444,7 +444,12 @@ class OneWayElectromechanicsPlan(StrictModule, NonTrainableState):
         capabilities = _capabilities(self.differentiation)
         cadence = self.cadence
 
-        def ep_adapter(window, state, inputs, runtime_args):
+        def ep_adapter(
+            window: coupling.CouplingWindow,
+            state: object,
+            inputs: tuple[object, ...],
+            runtime_args: object,
+        ) -> coupling.CouplingSubsystemResult:
             del inputs
             result = electrophysiology_advance(
                 window,
@@ -465,7 +470,12 @@ class OneWayElectromechanicsPlan(StrictModule, NonTrainableState):
                 work=result.work,
             )
 
-        def mechanics_adapter(window, state, inputs, runtime_args):
+        def mechanics_adapter(
+            window: coupling.CouplingWindow,
+            state: object,
+            inputs: tuple[object, ...],
+            runtime_args: object,
+        ) -> coupling.CouplingSubsystemResult:
             result = mechanics_advance(
                 window,
                 state,
@@ -624,7 +634,12 @@ class BidirectionalElectromechanicsPlan(StrictModule, NonTrainableState):
         capabilities = _capabilities(self.differentiation)
         cadence = self.cadence
 
-        def ep_adapter(window, state, inputs, runtime_args):
+        def ep_adapter(
+            window: coupling.CouplingWindow,
+            state: object,
+            inputs: tuple[object, ...],
+            runtime_args: object,
+        ) -> coupling.CouplingSubsystemResult:
             result = electrophysiology_advance(
                 window,
                 state,
@@ -644,7 +659,12 @@ class BidirectionalElectromechanicsPlan(StrictModule, NonTrainableState):
                 work=result.work,
             )
 
-        def mechanics_adapter(window, state, inputs, runtime_args):
+        def mechanics_adapter(
+            window: coupling.CouplingWindow,
+            state: object,
+            inputs: tuple[object, ...],
+            runtime_args: object,
+        ) -> coupling.CouplingSubsystemResult:
             result = mechanics_advance(
                 window,
                 state,
@@ -805,7 +825,7 @@ def _validate_forward_contraction(port: EPToMechanicsPort, plan: ContractionPlan
 
 def _generic_port(
     port_id: str,
-    direction: str,
+    direction: coupling.CouplingDirection,
     field: DiscreteFieldSpace,
     reference_scale: float,
 ) -> coupling.CouplingPort:

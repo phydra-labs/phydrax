@@ -66,14 +66,12 @@ def _admit_implicit_specification(
         unsupported.append("mixed-cell transition policies")
     if specification.planar_embedding is not None:
         unsupported.append("planar embeddings")
-    if len(specification.size_controls) != 1 or not isinstance(
-        specification.size_controls[0], UniformSizeControl
-    ):
+    controls = specification.size_controls
+    control = controls[0] if len(controls) == 1 else None
+    if not isinstance(control, UniformSizeControl):
         unsupported.append("exactly one whole-surface uniform size control")
-    else:
-        control = specification.size_controls[0]
-        if control.scope.scope_id != specification.scope.scope_id:
-            unsupported.append("local size-control scopes")
+    elif control.scope.scope_id != specification.scope.scope_id:
+        unsupported.append("local size-control scopes")
     if specification.protected_features:
         unsupported.append("protected features")
     if specification.region_controls:
@@ -82,13 +80,13 @@ def _admit_implicit_specification(
         unsupported.append("patch/interface controls")
     if specification.periodic_constraints:
         unsupported.append("periodic constraints")
-    if unsupported:
+    if unsupported or not isinstance(control, UniformSizeControl):
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
             "Native implicit meshing does not enforce: " + ", ".join(unsupported) + ".",
             provider_code="preflight",
         )
-    return specification.size_controls[0]
+    return control
 
 
 def _bounded_implicit_policy(

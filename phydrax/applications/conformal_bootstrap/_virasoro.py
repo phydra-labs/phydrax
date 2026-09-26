@@ -43,7 +43,7 @@ def _hyp2f1_series(
         jnp.ones(points.shape, dtype=jnp.complex128),
     )
 
-    def body(index, carry):
+    def body(index: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         term, value = carry
         denominator = (c + index) * (index + 1.0)
         denominator = eqx.error_if(

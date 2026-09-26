@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,7 +17,11 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...equations import CellResidualAction, FiniteElementForm
+from ...equations import (
+    CellResidualAction,
+    FiniteElementExecutionContext,
+    FiniteElementForm,
+)
 from ...equations.fem import symmetric_gradient
 
 
@@ -275,10 +281,12 @@ class FixedHistoryNeuralBlock(StrictModule, NonTrainableState):
 class BoundedNeuralFixedHistoryController(StrictModule):
     """Map pointwise neural logits into the irreversible interval [d_n, 1]."""
 
-    network: object
+    network: Callable[[Array], Array]
     controller_id: str = eqx.field(static=True)
 
-    def __init__(self, network: object, /, *, controller_id: str) -> None:
+    def __init__(
+        self, network: Callable[[Array], Array], /, *, controller_id: str
+    ) -> None:
         if not callable(network):
             raise TypeError("network must be callable.")
         identifier = str(controller_id)
@@ -388,8 +396,14 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
         parameters = self.parameters
 
         def equilibrium(
-            values, gradients, points, weights, test_basis, test_gradients, context
-        ):
+            values: tuple[Array, ...],
+            gradients: tuple[Array, ...],
+            points: Array,
+            weights: Array,
+            test_basis: Array,
+            test_gradients: Array,
+            context: FiniteElementExecutionContext,
+        ) -> Array:
             displacement_gradient, _ = gradients
             _, damage = values
             strain = symmetric_gradient(displacement_gradient)
@@ -412,8 +426,14 @@ class PhaseFieldFractureModel(StrictModule, NonTrainableState):
             return ein.contract("cq,cqib,cqab->cia", weights, test_gradients, stress)
 
         def damage_residual(
-            values, gradients, points, weights, test_basis, test_gradients, context
-        ):
+            values: tuple[Array, ...],
+            gradients: tuple[Array, ...],
+            points: Array,
+            weights: Array,
+            test_basis: Array,
+            test_gradients: Array,
+            context: FiniteElementExecutionContext,
+        ) -> Array:
             _, damage = values
             _, damage_gradient = gradients
             if history.shape[0] != damage.shape[0] or history.shape[1] not in (

@@ -11,7 +11,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._iteration import (
     bind_iteration_scope,
@@ -76,13 +76,13 @@ class MarkovChunkIterationMetrics(StrictModule):
 
 
 def _chunk_iteration_record(
-    phase,
-    completed_draws,
-    chunk_index,
-    metrics,
+    phase: IterationPhase,
+    completed_draws: ArrayLike,
+    chunk_index: ArrayLike,
+    metrics: MarkovChunkIterationMetrics,
     /,
     *,
-    terminal=False,
+    terminal: bool = False,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(

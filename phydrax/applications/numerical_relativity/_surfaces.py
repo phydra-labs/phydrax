@@ -168,7 +168,7 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         radius: ArrayLike,
         /,
         *,
-        center: ArrayLike = (0.0, 0.0, 0.0),
+        center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> SphericalSpectralSurface:
         values = jnp.asarray(radius)
         if values.shape != self.sample_shape:
@@ -186,7 +186,7 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         radius: ArrayLike,
         /,
         *,
-        center: ArrayLike = (0.0, 0.0, 0.0),
+        center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> SphericalSpectralSurface:
         value = jnp.asarray(radius).reshape(())
         return self.from_samples(

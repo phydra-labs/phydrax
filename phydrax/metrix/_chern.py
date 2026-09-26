@@ -181,7 +181,7 @@ class HolomorphicBundleTransition(StrictModule):
     ) -> Array:
         source_metric = self.source.metric(source_coordinates)
         target_metric = self.target.metric(target_coordinates)
-        gauge = jnp.asarray(self.gauge_function(source_coordinates))
+        gauge = jnp.asarray(self.gauge_function(jnp.asarray(source_coordinates)))
         transformed = jnp.swapaxes(jnp.conj(gauge), -1, -2) @ target_metric @ gauge
         return jnp.max(jnp.abs(source_metric - transformed), axis=(-2, -1))
 

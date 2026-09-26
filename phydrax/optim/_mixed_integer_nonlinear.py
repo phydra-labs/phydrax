@@ -239,7 +239,7 @@ class ConvexMixedIntegerNonlinearProgram(StrictModule):
         if value.shape != (self.num_variables,):
             raise ValueError(f"primal must have shape ({self.num_variables},).")
 
-        def scalar(point):
+        def scalar(point: Array) -> Array:
             return jnp.asarray(self.objective(point, self.args))
 
         objective, gradient = jax.value_and_grad(scalar)(value)

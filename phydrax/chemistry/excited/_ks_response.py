@@ -76,7 +76,7 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
             for virtual in virtual_indices
         )
 
-        def rotated_density(parameters, imaginary):
+        def rotated_density(parameters: Array, imaginary: bool) -> Array:
             generator = jnp.zeros(
                 (orbital_count, orbital_count),
                 dtype=jnp.result_type(coefficients.dtype, jnp.complex64),
@@ -94,7 +94,7 @@ class KohnShamExcitedResponsePlan(StrictModule, NonTrainableState):
             occupied_coefficients = rotated[:, jnp.asarray(occupied_indices)]
             return 2.0 * occupied_coefficients @ jnp.conj(occupied_coefficients.T)
 
-        def energy(parameters, imaginary):
+        def energy(parameters: Array, imaginary: bool) -> Array:
             density = rotated_density(parameters, imaginary)
             alpha = beta = 0.5 * density
             coulomb = contract("cd,abcd->ab", density, eri)

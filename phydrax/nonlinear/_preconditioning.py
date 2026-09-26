@@ -361,12 +361,19 @@ class LeftPreconditionedSystem(AbstractNonlinearSystemTransformation):
             problem.residual_space, preconditioner.source, "residual_space"
         )
 
-        def residual(state, args):
+        def residual(
+            state: PyTree[Any], args: Any
+        ) -> tuple[PyTree[Array], _TransformationEvaluation]:
             physical, auxiliary = problem.evaluate(state, args)
             transformed = preconditioner.apply(state, physical, args)
             return transformed, _TransformationEvaluation(state, physical, auxiliary)
 
-        def valid(_, __, payload, args):
+        def valid(
+            _: PyTree[Array],
+            __: PyTree[Array],
+            payload: _TransformationEvaluation,
+            args: Any,
+        ) -> Array:
             return problem.valid(payload.state, payload.residual, payload.auxiliary, args)
 
         self.original = problem
@@ -430,12 +437,19 @@ class RightPreconditionedSystem(AbstractNonlinearSystemTransformation):
             problem.state_space, preconditioner.target, "state_space"
         )
 
-        def residual(latent, args):
+        def residual(
+            latent: PyTree[Any], args: Any
+        ) -> tuple[PyTree[Array], _TransformationEvaluation]:
             state = preconditioner.reconstruct(latent, args)
             physical, auxiliary = problem.evaluate(state, args)
             return physical, _TransformationEvaluation(state, physical, auxiliary)
 
-        def valid(_, __, payload, args):
+        def valid(
+            _: PyTree[Array],
+            __: PyTree[Array],
+            payload: _TransformationEvaluation,
+            args: Any,
+        ) -> Array:
             return problem.valid(payload.state, payload.residual, payload.auxiliary, args)
 
         self.original = problem

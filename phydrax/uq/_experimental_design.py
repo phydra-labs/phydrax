@@ -17,6 +17,7 @@ from jax.scipy.special import logsumexp
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..optim._finite import FiniteAxis, FiniteProductSpace
@@ -154,11 +155,11 @@ class ExperimentalDesignCandidate(StrictModule, NonTrainableState):
             "kind": "experimental-design-candidate",
             "candidate_id": identifier,
             "condition_id": condition,
-            "cost": candidate_cost.hex(),
+            "cost": float(candidate_cost).hex(),
             "feasibility_group": group,
             "prediction_source_id": source,
             "setup_id": setup,
-            "setup_cost": shared_cost.hex(),
+            "setup_cost": float(shared_cost).hex(),
             "diversity_group": diversity,
             "mandatory_control": mandatory_control,
         }
@@ -343,7 +344,7 @@ class ExperimentalBatchConstraints(StrictModule, NonTrainableState):
             )
         payload = {
             "kind": "experimental-batch-constraints",
-            "budget": budget_value.hex(),
+            "budget": float(budget_value).hex(),
             "minimum_batch_size": minimum_size,
             "maximum_batch_size": maximum_size,
             "required_candidate_ids": list(required),
@@ -427,8 +428,8 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
             "selected_candidate_ids": list(selected),
             "candidates": [list(record) for record in records],
             "objective_id": _identifier(objective_id, "objective_id"),
-            "budget": budget_value.hex(),
-            "planned_total_cost": total_cost.hex(),
+            "budget": float(budget_value).hex(),
+            "planned_total_cost": float(total_cost).hex(),
             "objective_value": value.hex(),
             "model_ids": list(models),
             "analysis_id": _identifier(analysis_id, "analysis_id"),
@@ -466,9 +467,9 @@ class ExperimentalBatchPlan(StrictModule, NonTrainableState):
             "candidate_ids": list(self.candidate_ids),
             "candidate_content_ids": list(self.candidate_content_ids),
             "objective_id": self.objective_id,
-            "budget": self.budget.hex(),
-            "planned_total_cost": self.planned_total_cost.hex(),
-            "objective_value": self.objective_value.hex(),
+            "budget": float(self.budget).hex(),
+            "planned_total_cost": float(self.planned_total_cost).hex(),
+            "objective_value": float(self.objective_value).hex(),
             "model_ids": list(self.model_ids),
             "analysis_id": self.analysis_id,
             "constraints_id": self.constraints_id,
@@ -675,7 +676,12 @@ def exact_finite_expected_utility(
             -jnp.inf,
         )
 
-        def channel(parameters, design, outcomes, context):
+        def channel(
+            parameters: Array,
+            design: Array,
+            outcomes: Array,
+            context: frozendict[str, Array],
+        ) -> Array:
             del context
             return log_conditional[
                 design,
@@ -1522,7 +1528,7 @@ def select_experimental_batch(
             "model_ids": list(models),
             "mandatory_control_utility_contribution": "zero",
             "pairwise_redundancy": array_tree_fingerprint(redundancy),
-            "redundancy_weight": redundancy_scale.hex(),
+            "redundancy_weight": float(redundancy_scale).hex(),
             "pairwise_diversity": array_tree_fingerprint(diversity),
             "utility_target": utility.utility_target,
             "utility_unit": utility.unit_id,
@@ -1537,7 +1543,7 @@ def select_experimental_batch(
                     utility.valid,
                 )
             ),
-            "diversity_weight": diversity_scale.hex(),
+            "diversity_weight": float(diversity_scale).hex(),
             "tie_break": "objective_then_lower_cost_then_lexicographic_candidate_ids",
         }
     )

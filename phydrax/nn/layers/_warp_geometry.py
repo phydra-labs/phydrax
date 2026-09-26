@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import Any, Literal, overload, TypeAlias
 
 import equinox as eqx
 import jax
@@ -213,6 +213,57 @@ def _broadcast_source_mask(
             f"source_mask must have shape {spatial_shape} or {expected}; got {mask.shape}."
         )
     return mask
+
+
+@overload
+def sample_rectilinear_grid(
+    values: Array,
+    coordinates: Array,
+    /,
+    *,
+    spatial_ndim: int,
+    boundary: Sequence[WarpBoundaryMode],
+    axis_nodes: Sequence[Array] | None = None,
+    source_mask: Array | None = None,
+    mask_mode: WarpMaskMode = "renormalize",
+    fill_value: float = 0.0,
+    return_support: Literal[False] = False,
+    resources: InterpolationResourcePolicy | None = None,
+) -> Array: ...
+
+
+@overload
+def sample_rectilinear_grid(
+    values: Array,
+    coordinates: Array,
+    /,
+    *,
+    spatial_ndim: int,
+    boundary: Sequence[WarpBoundaryMode],
+    axis_nodes: Sequence[Array] | None = None,
+    source_mask: Array | None = None,
+    mask_mode: WarpMaskMode = "renormalize",
+    fill_value: float = 0.0,
+    return_support: Literal[True],
+    resources: InterpolationResourcePolicy | None = None,
+) -> tuple[Array, Array]: ...
+
+
+@overload
+def sample_rectilinear_grid(
+    values: Array,
+    coordinates: Array,
+    /,
+    *,
+    spatial_ndim: int,
+    boundary: Sequence[WarpBoundaryMode],
+    axis_nodes: Sequence[Array] | None = None,
+    source_mask: Array | None = None,
+    mask_mode: WarpMaskMode = "renormalize",
+    fill_value: float = 0.0,
+    return_support: bool,
+    resources: InterpolationResourcePolicy | None = None,
+) -> Array | tuple[Array, Array]: ...
 
 
 def sample_rectilinear_grid(
@@ -492,7 +543,7 @@ def conservative_remap(
     density: Array,
     displacement: Array,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> Array | tuple[Array, RectilinearWarpDiagnostics]:
     """Conservatively pull back a density using the warp-map determinant."""
 

@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -71,11 +72,11 @@ class WeightedLeastSquaresResult(StrictModule):
     output_shape: tuple[int, ...] = eqx.field(static=True)
 
 
-def _real_dtype(dtype) -> jnp.dtype:
+def _real_dtype(dtype: DTypeLike) -> jnp.dtype:
     return jnp.empty((), dtype=dtype).real.dtype
 
 
-def _rcond(value: float | None, dtype, rows: int, columns: int, /) -> float:
+def _rcond(value: float | None, dtype: DTypeLike, rows: int, columns: int, /) -> float:
     if value is None:
         return float(max(rows, columns) * jnp.finfo(_real_dtype(dtype)).eps)
     resolved = float(value)
@@ -100,7 +101,7 @@ def _mask(value: ArrayLike | None, size: int, /) -> Array:
     return result
 
 
-def _weights(value: ArrayLike | None, size: int, dtype, /) -> Array:
+def _weights(value: ArrayLike | None, size: int, dtype: DTypeLike, /) -> Array:
     if value is None:
         return jnp.ones((size,), dtype=_real_dtype(dtype))
     result = jnp.asarray(value)

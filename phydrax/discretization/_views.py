@@ -1133,13 +1133,16 @@ def require_compatible_field_composition(
         other_port = _declared_value_port(other)
         if other_port is _CONSTANT_PORT:
             continue
-        if other_port is None:
+        if not isinstance(other_port, ValuePort):
             raise ValueError(
                 "Adding a discrete field view requires the other field to declare a "
                 "value port (units, frame, axis identity); bind a port-declaring "
                 "model or another view."
             )
-        mismatches = _port_mismatches(evaluator.value_port, other_port)
+        view_port = evaluator.value_port
+        # Zeroth-order evaluators always expose their reconstruction value port.
+        assert view_port is not None
+        mismatches = _port_mismatches(view_port, other_port)
         if mismatches:
             raise ValueError(
                 "Discrete field view and operand value ports are incompatible: "

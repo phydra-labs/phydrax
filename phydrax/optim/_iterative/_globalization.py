@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,34 @@ from ..._tree_math import (
     tree_inner as _tree_inner,
     tree_where as _tree_where,
 )
+
+
+# (iteration, rate, base, tangent, candidate, candidate_value, accepted, finite_seen)
+_ArmijoCarry: TypeAlias = tuple[
+    Array, Array, PyTree[Any], PyTree[Any], PyTree[Any], Array, Array, Array
+]
+# (iteration, rate, low_rate, high_rate, low_value, previous_rate, previous_value,
+#  bracketed, accepted_parameters, accepted_value, accepted_gradient,
+#  accepted_directional, finite_seen, accepted, armijo, curvature, accepted_rate)
+_StrongWolfeCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    PyTree[Any],
+    Array,
+    PyTree[Any],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class ArmijoLineSearch(StrictModule):
@@ -145,7 +173,7 @@ def armijo_backtracking(
         )
     )
 
-    def condition(carry):
+    def condition(carry: _ArmijoCarry) -> Array:
         iteration, rate, _, _, _, _, accepted, _ = carry
         return (
             (iteration < policy.maximum_steps)
@@ -155,7 +183,7 @@ def armijo_backtracking(
             & jnp.isfinite(rate)
         )
 
-    def body(carry):
+    def body(carry: _ArmijoCarry) -> _ArmijoCarry:
         iteration, rate, base, tangent, _, _, _, finite_seen = carry
         candidate = step(base, tangent, rate)
         candidate_value = jnp.asarray(value_function(candidate)).reshape(())
@@ -364,7 +392,7 @@ def strong_wolfe_line_search(
         )
     )
 
-    def condition(carry):
+    def condition(carry: _StrongWolfeCarry) -> Array:
         iteration, rate, *_, accepted, __, ___, ____ = carry
         return (
             (iteration < policy.maximum_steps)
@@ -375,7 +403,7 @@ def strong_wolfe_line_search(
             & (rate <= maximum_rate)
         )
 
-    def body(carry):
+    def body(carry: _StrongWolfeCarry) -> _StrongWolfeCarry:
         (
             iteration,
             rate,

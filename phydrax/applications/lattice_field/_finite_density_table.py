@@ -19,7 +19,11 @@ from ._finite_density import (
     FiniteDensitySourceKind,
     FiniteDensityStatus,
 )
-from ._finite_density_taylor import evaluate_taylor_eos, PreparedTaylorEOS
+from ._finite_density_taylor import (
+    evaluate_taylor_eos,
+    PreparedTaylorEOS,
+    TaylorEOSResult,
+)
 
 
 class EOSGridPlan(StrictModule, NonTrainableState):
@@ -121,7 +125,7 @@ def build_taylor_eos_table(
     ):
         raise ValueError("Taylor source and EoS grid convention/domain differ.")
 
-    def one_temperature(temperature):
+    def one_temperature(temperature: Array) -> TaylorEOSResult:
         return jax.vmap(
             lambda baryon: evaluate_taylor_eos(
                 prepared,
@@ -254,7 +258,7 @@ def evaluate_eos_table(
     ft = (temperature_ - temperatures[ti]) / (temperatures[ti + 1] - temperatures[ti])
     fm = (baryon - chemical[mi]) / (chemical[mi + 1] - chemical[mi])
 
-    def interpolate(values):
+    def interpolate(values: Array) -> Array:
         return (
             (1.0 - ft) * (1.0 - fm) * values[ti, mi]
             + ft * (1.0 - fm) * values[ti + 1, mi]

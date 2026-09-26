@@ -380,7 +380,12 @@ def _evaluate_execution_worksets(
             group_keys = keys[start:stop]
             group_indices = prepared.bucket_rng_indices[start:stop]
 
-            def lane_operation(item, key, semantic_index, signature=signature):
+            def lane_operation(
+                item: PyTree[Array],
+                key: Array,
+                semantic_index: Array,
+                signature: PoolExecutionSignature = signature,
+            ) -> PyTree[Array]:
                 return operation(signature, item, key, semantic_index)
 
             if mode == "filter_vmap":

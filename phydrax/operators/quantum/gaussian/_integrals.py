@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import comb
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +18,11 @@ from phydrax._strict import StrictModule
 
 from ._basis import PreparedGaussianBasis
 from ._boys import boys0, boys_values
+
+
+_PrimitiveOneBody: TypeAlias = Callable[
+    [Array, Array, Array, Array, tuple[int, int, int], tuple[int, int, int]], Array
+]
 
 
 def _hermite_coefficients(
@@ -168,7 +175,7 @@ def _coulomb_auxiliary(
     displacement: Array,
     maximum_orders: tuple[int, int, int],
     /,
-):
+) -> Callable[[int, int, int, int], Array]:
     maximum_boys = sum(maximum_orders)
     argument = exponent * jnp.sum(displacement * displacement)
     boys = boys_values(maximum_boys, argument)
@@ -287,7 +294,7 @@ def _primitive_electron_repulsion(
     reduced = power_ab * power_cd / (power_ab + power_cd)
     prefactor = 2.0 * jnp.pi**2.5 / (power_ab * power_cd * jnp.sqrt(power_ab + power_cd))
 
-    def evaluate(effective_exponent):
+    def evaluate(effective_exponent: Array) -> Array:
         auxiliary = _coulomb_auxiliary(
             effective_exponent, product_ab - product_cd, combined
         )
@@ -329,7 +336,7 @@ def _primitive_electron_repulsion(
 def _contracted_one_body(
     basis: PreparedGaussianBasis,
     positions: Array,
-    evaluator,
+    evaluator: _PrimitiveOneBody,
     /,
 ) -> Array:
     count = basis.cartesian_basis_function_count
@@ -420,7 +427,14 @@ def nuclear_attraction_matrix(
     if charges.shape != (coordinate.shape[0],):
         raise ValueError("nuclear_charges must align with positions.")
 
-    def evaluator(a, b, left, right, la, lb):
+    def evaluator(
+        a: Array,
+        b: Array,
+        left: Array,
+        right: Array,
+        la: tuple[int, int, int],
+        lb: tuple[int, int, int],
+    ) -> Array:
         value = jnp.asarray(0.0, dtype=coordinate.dtype)
         for index in range(charges.size):
             active = charges[index] != 0.0
@@ -452,7 +466,14 @@ def point_charge_potential_matrix(
     if points.ndim != 2 or points.shape[1] != 3 or charges.shape != (points.shape[0],):
         raise ValueError("Point positions and charges must have shapes (P, 3) and (P,).")
 
-    def evaluator(a, b, left, right, la, lb):
+    def evaluator(
+        a: Array,
+        b: Array,
+        left: Array,
+        right: Array,
+        la: tuple[int, int, int],
+        lb: tuple[int, int, int],
+    ) -> Array:
         value = jnp.asarray(0.0, dtype=nuclei.dtype)
         for index in range(charges.size):
             value = value + _primitive_nuclear_attraction(

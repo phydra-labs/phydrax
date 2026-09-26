@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import cast, Protocol
 
 import equinox as eqx
 import jax
@@ -360,7 +360,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         first_time = jnp.maximum(time_seconds[0], 0.0)
         first = product_molar[0] * (1.0 - jnp.exp(-first_time / tau))
 
-        def advance(previous, values):
+        def advance(previous: Array, values: tuple[Array, Array]) -> tuple[Array, Array]:
             product, delta_time = values
             reported = product + (previous - product) * jnp.exp(-delta_time / tau)
             return reported, reported
@@ -477,7 +477,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
                 )
             )
 
-            def response(parameter_vector):
+            def response(parameter_vector: Array) -> Array:
                 background, gain = parameter_vector[0], parameter_vector[1]
                 if delay_count == 0:
                     reported = product
@@ -486,7 +486,9 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
                     first_time = jnp.maximum(trace.time_seconds[0], 0.0)
                     first = product[0] * (1.0 - jnp.exp(-first_time / tau))
 
-                    def advance(previous, values):
+                    def advance(
+                        previous: Array, values: tuple[Array, Array]
+                    ) -> tuple[Array, Array]:
                         current, delta_time = values
                         result = current + (previous - current) * jnp.exp(
                             -delta_time / tau
@@ -820,9 +822,9 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
         if self.prepared.association.mode != "fixed_volume":
             reasons.append("mechanistic-concentration-scale-undefined")
         else:
-            prepared_molar = 1.0 / (
-                1000.0 * _AVOGADRO_CONSTANT_PER_MOL * self.prepared.association.volume_m3
-            )
+            # The fixed-volume association constructor always records a volume.
+            volume_m3 = cast(float, self.prepared.association.volume_m3)
+            prepared_molar = 1.0 / (1000.0 * _AVOGADRO_CONSTANT_PER_MOL * volume_m3)
             if any(
                 not math.isclose(value, prepared_molar, rel_tol=1e-12, abs_tol=0.0)
                 for value in self.supported_initial_concentrations_molar
@@ -843,7 +845,7 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
         initial = jax.nn.one_hot(self.initial_state_index, self.state_count)
         nonnegative_time = jnp.maximum(trace.time_seconds, 0.0)
 
-        def occupancy(time):
+        def occupancy(time: Array) -> Array:
             action = la.matrix_exponential_action(
                 la.DenseLinearOperator(generator.T), initial, time
             )
@@ -864,10 +866,17 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
 
 
 class StrandDisplacementForwardModel(Protocol):
-    fit: StrandDisplacementModelFit
-    model_id: str
-    fit_case_ids: tuple[str, ...]
-    uncertainty_limitations: tuple[str, ...]
+    @property
+    def fit(self) -> StrandDisplacementModelFit: ...
+
+    @property
+    def model_id(self) -> str: ...
+
+    @property
+    def fit_case_ids(self) -> tuple[str, ...]: ...
+
+    @property
+    def uncertainty_limitations(self) -> tuple[str, ...]: ...
 
     def support_reasons(self, trace: FluorescenceTimeTrace, /) -> tuple[str, ...]: ...
 
@@ -1244,7 +1253,9 @@ class PreparedEffectiveDisplacementInference(StrictModule, NonTrainableState):
                     jnp.zeros(item.epistemic_parameter_covariance.shape[0]),
                     item.epistemic_parameter_covariance,
                 )
-                result = result + item.epistemic_sensitivity @ epistemic_draw
+                # Predictions always carry sensitivity alongside covariance.
+                sensitivity = cast(Array, item.epistemic_sensitivity)
+                result = result + sensitivity @ epistemic_draw
             return result
 
         return tuple(
@@ -1484,7 +1495,7 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
         initial = jax.nn.one_hot(self.initial_state_index, self.state_count)
         time = jnp.maximum(trace.time_seconds, 0.0)
 
-        def occupancy(value):
+        def occupancy(value: Array) -> Array:
             action = la.matrix_exponential_action(
                 la.DenseLinearOperator(generator.T), initial, value
             )

@@ -289,14 +289,11 @@ def _load_products(
     power_values = jnp.asarray(arrays["power_values"])
     has_thermodynamics = bool(np.asarray(arrays["has_thermodynamics"]).item())
     thermo_values = (
-        tuple(
-            jnp.asarray(arrays[name])
-            for name in (
-                "ionization_fraction",
-                "baryon_temperature",
-                "opacity_derivative",
-                "visibility",
-            )
+        (
+            jnp.asarray(arrays["ionization_fraction"]),
+            jnp.asarray(arrays["baryon_temperature"]),
+            jnp.asarray(arrays["opacity_derivative"]),
+            jnp.asarray(arrays["visibility"]),
         )
         if has_thermodynamics
         else None

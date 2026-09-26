@@ -4,15 +4,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from enum import StrEnum
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -24,6 +24,7 @@ from ..discretization.particle import (
     ParticleConversionState,
     ParticleMorphologyEvaluation,
     ParticleRadiationEvaluation,
+    PreparedSoftSphereDEMDynamics,
     RigidSphereKinematics,
 )
 from ..equations import (
@@ -35,6 +36,10 @@ from ._particle_conversion import (
     advance_particle_conversion,
     ParticleConversionSolverPlan,
 )
+
+
+if TYPE_CHECKING:
+    from ..equations._particle_thermochemistry import ParticleTransportBoundary
 
 
 class ReactiveCouplingMode(StrEnum):
@@ -176,8 +181,8 @@ def advance_reactive_cfd_dem_window(
     state: ReactiveCFDDEMCouplingState,
     fluid_sampler: Callable[[Any], ReactiveFluidFields],
     fluid_update: Callable[[Any, Array, Array, Array, Array], Any],
-    conversion_boundaries,
-    dem_boundary_temperatures,
+    conversion_boundaries: Sequence[ParticleTransportBoundary],
+    dem_boundary_temperatures: ArrayLike,
     particle_volume: Array,
     time: Array,
     step_size: Array,
@@ -253,18 +258,18 @@ def advance_reactive_cfd_dem_window(
 
 
 def _advance_once(
-    plan,
-    schedule,
-    state,
-    fields,
-    fluid_update,
-    conversion_boundaries,
-    dem_boundary_temperatures,
-    particle_volume,
-    time,
-    step_size,
-    args,
-):
+    plan: ReactiveCFDDEMCouplingPlan,
+    schedule: ReactiveParticleCouplingSchedulePlan,
+    state: ReactiveCFDDEMCouplingState,
+    fields: ReactiveFluidFields,
+    fluid_update: Callable[[Any, Array, Array, Array, Array], Any],
+    conversion_boundaries: tuple[ParticleTransportBoundary, ...],
+    dem_boundary_temperatures: Array,
+    particle_volume: Array,
+    time: Array,
+    step_size: Array,
+    args: Any,
+) -> tuple[ReactiveCFDDEMCouplingState, ReactiveCFDDEMEvaluation]:
     batches = plan.conversion.batches
     thermodynamics = tuple(
         value.thermodynamics for value in plan.conversion.problem.materials
@@ -331,6 +336,7 @@ def _advance_once(
         dem = detail.accepted_state
         dem_successful = dem_successful & detail.successful
         if plan.hydrodynamics is not None:
+            assert first_hydro is not None
             second_hydro = evaluate_unresolved_cfd_dem(
                 plan.hydrodynamics,
                 dem,
@@ -533,15 +539,15 @@ def _advance_once(
 
 
 def _kick_conversion(
-    state,
-    energy_rates,
-    species_rates,
-    scale,
+    state: ParticleConversionState,
+    energy_rates: tuple[Array, ...],
+    species_rates: tuple[Array, ...],
+    scale: Array,
     *,
-    continuum=False,
-    contact=False,
-    radiative=False,
-):
+    continuum: bool = False,
+    contact: bool = False,
+    radiative: bool = False,
+) -> ParticleConversionState:
     batches = tuple(
         eqx.tree_at(
             lambda value: (value.internal_energy, value.species_amount),
@@ -578,7 +584,12 @@ def _kick_conversion(
     return ParticleConversionState(batches, ledger, state.state_id)
 
 
-def _hydrodynamic_kick(dynamics, state, force, scale):
+def _hydrodynamic_kick(
+    dynamics: PreparedSoftSphereDEMDynamics,
+    state: DEMRuntimeState,
+    force: Array,
+    scale: Array,
+) -> DEMRuntimeState:
     mobile = (state.body_properties.active & ~dynamics.bodies.fixed_mask)[:, None]
     velocity = state.kinematics.velocity + scale * (
         state.body_properties.inverse_masses[:, None] * force
@@ -592,7 +603,9 @@ def _hydrodynamic_kick(dynamics, state, force, scale):
     return eqx.tree_at(lambda value: value.kinematics, state, kinematics)
 
 
-def _coupling_distance(left, right):
+def _coupling_distance(
+    left: ReactiveCFDDEMCouplingState, right: ReactiveCFDDEMCouplingState
+) -> Array:
     squared = jnp.zeros((), dtype=left.dem_state.kinematics.position.dtype)
     scale = jnp.zeros_like(squared)
     for left_leaf, right_leaf in zip(
@@ -605,7 +618,11 @@ def _coupling_distance(left, right):
     return jnp.sqrt(squared / jnp.maximum(scale, 1.0))
 
 
-def _relax_state(previous, candidate, relaxation):
+def _relax_state(
+    previous: ReactiveCFDDEMCouplingState,
+    candidate: ReactiveCFDDEMCouplingState,
+    relaxation: float,
+) -> ReactiveCFDDEMCouplingState:
     return jax.tree.map(
         lambda old, new: (
             old + relaxation * (new - old) if eqx.is_inexact_array(old) else new

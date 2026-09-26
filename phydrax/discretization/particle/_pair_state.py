@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -184,7 +182,7 @@ def _validated_keys(
     return keys_, valid_, jnp.all(~valid_ | in_range)
 
 
-def _lexicographic_order(keys: Array, valid: Array, /):
+def _lexicographic_order(keys: Array, valid: Array, /) -> tuple[Array, Array, Array]:
     sentinel = jnp.asarray(np.iinfo(np.int64).max, dtype=jnp.int64)
     sortable = jnp.where(valid[:, None], keys, sentinel)
     order = jnp.lexsort(
@@ -205,8 +203,8 @@ def _lexicographic_search(sorted_keys: Array, queries: Array, /) -> Array:
         return jnp.zeros((queries.shape[0],), dtype=jnp.int32)
     iterations = max(1, capacity.bit_length())
 
-    def search(query):
-        def iteration(_, bounds):
+    def search(query: Array) -> Array:
+        def iteration(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             middle = (lower + upper) // 2
             safe_middle = jnp.minimum(middle, capacity - 1)
@@ -302,7 +300,7 @@ def remap_particle_pair_values(
     values: PyTree[Array],
     /,
     *,
-    fill_value: Any = 0,
+    fill_value: ArrayLike = 0,
 ) -> PyTree[Array]:
     """Gather edge-local values for continued routes and fill contact births."""
 
@@ -317,7 +315,7 @@ def remap_particle_pair_values(
         if leaf.shape[0] != remap.old_capacity:
             raise ValueError("Every pair-value leaf must use the old route capacity.")
 
-    def gather(leaf):
+    def gather(leaf: Array) -> Array:
         fill = jnp.asarray(fill_value, dtype=leaf.dtype)
         if remap.old_capacity == 0:
             return jnp.full(

@@ -238,14 +238,14 @@ class PreparedVertexFiltration(StrictModule, NonTrainableState):
                 target = jnp.where(valid, relation.target_indices, 0)
 
                 def reduce_one(
-                    row,
+                    row: Array,
                     *,
-                    source_=source,
-                    target_=target,
-                    valid_=valid,
-                    entity_count=entity_set.count,
-                    direction=self.direction,
-                ):
+                    source_: Array = source,
+                    target_: Array = target,
+                    valid_: Array = valid,
+                    entity_count: int = entity_set.count,
+                    direction: FiltrationDirection = self.direction,
+                ) -> Array:
                     gathered = row[source_]
                     if direction == "sublevel":
                         gathered = jnp.where(valid_, gathered, -jnp.inf)

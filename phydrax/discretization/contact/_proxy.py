@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -38,10 +40,10 @@ class PreparedContactProxy(StrictModule, NonTrainableState):
     evidence: ContactProxyEvidence
     proxy_id: str = eqx.field(static=True)
 
-    def positions(self, state, /) -> Array:
+    def positions(self, state: PyTree[Any], /) -> Array:
         return self.surface.positions(state)
 
-    def effort_pullback(self, surface_effort: ArrayLike, /):
+    def effort_pullback(self, surface_effort: ArrayLike, /) -> PyTree[Array]:
         return self.surface.effort_pullback(surface_effort)
 
 

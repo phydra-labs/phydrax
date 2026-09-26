@@ -743,7 +743,7 @@ def continuous_controllability_gramian_action(
     """Apply a finite continuous controllability Gramian using only actions."""
     value = _inexact(vector)
 
-    def source(state):
+    def source(state: Array) -> Array:
         control = _checked_action(
             adjoint_input_action, state, owner="adjoint_input_action"
         )
@@ -785,7 +785,7 @@ def continuous_observability_gramian_action(
     """Apply a finite continuous observability Gramian using only actions."""
     value = _inexact(vector)
 
-    def source(state):
+    def source(state: Array) -> Array:
         output = _checked_action(output_action, state, owner="output_action")
         return _checked_action(
             adjoint_output_action,
@@ -816,7 +816,7 @@ def _scanned_discrete_action(
     depth: int,
     /,
 ) -> Array:
-    def advance_adjoint(current, _):
+    def advance_adjoint(current: Array, _: None) -> tuple[Array, Array]:
         following = _checked_action(
             adjoint_generator,
             current,
@@ -832,7 +832,7 @@ def _scanned_discrete_action(
         length=depth,
     )
 
-    def accumulate(current, adjoint_value):
+    def accumulate(current: Array, adjoint_value: Array) -> tuple[Array, None]:
         propagated = _checked_action(
             generator,
             current,
@@ -920,7 +920,7 @@ def discrete_controllability_gramian_action(
     """Apply a finite discrete controllability Gramian using only actions."""
     value = _inexact(vector)
 
-    def source(state):
+    def source(state: Array) -> Array:
         control = _checked_action(
             adjoint_input_action, state, owner="adjoint_input_action"
         )
@@ -953,7 +953,7 @@ def discrete_observability_gramian_action(
     """Apply a finite discrete observability Gramian using only actions."""
     value = _inexact(vector)
 
-    def source(state):
+    def source(state: Array) -> Array:
         output = _checked_action(output_action, state, owner="output_action")
         return _checked_action(
             adjoint_output_action,

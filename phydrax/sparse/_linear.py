@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Any, Protocol
+from typing import Any, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -26,6 +26,10 @@ from ..linalg._spaces import _coordinate_dtype
 from ..linalg._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._ops import linear_adjoint_apply, linear_apply, linear_transpose_apply
 from ._relation import EdgeRelation, RowRelation, SparseRelation
+
+
+if TYPE_CHECKING:
+    import scipy.sparse as sp
 
 
 class LinearAction(Protocol):
@@ -152,7 +156,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
         safe_source = jnp.where(relation.valid, relation.source_indices, 0)
         safe_target = jnp.where(relation.valid, relation.target_indices, 0)
 
-        def materialize_one(values):
+        def materialize_one(values: Array) -> Array:
             values = jnp.where(
                 relation.valid,
                 values,
@@ -184,7 +188,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
     def sparse_storage(self, /) -> SparseStorage:
         return _canonical_sparse_storage(self.relation, self.coefficients)
 
-    def to_scipy(self):
+    def to_scipy(self) -> sp.csr_matrix:
         """Return a host-side CSR matrix, coalescing duplicate linear routes."""
         import scipy.sparse as sp
 
@@ -358,7 +362,7 @@ def _assemble_relation_diagonal(
     diagonal_entry = relation.valid & (relation.source_indices == relation.target_indices)
     safe_target = jnp.where(diagonal_entry, relation.target_indices, 0)
 
-    def assemble_one(values):
+    def assemble_one(values: Array) -> Array:
         values = jnp.where(
             diagonal_entry,
             values,

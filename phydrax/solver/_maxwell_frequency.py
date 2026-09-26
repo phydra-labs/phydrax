@@ -25,6 +25,7 @@ from ..linalg import (
     LinearSolvePolicy,
     LinearSystem,
     OperatorProperties,
+    PropertyEvidence,
     solve,
     TolerancePolicy,
 )
@@ -62,7 +63,7 @@ def _verified_dense_operator(
         and np.linalg.eigvalsh(0.5 * (host + host.conj().T))[0] <= tolerance
     ):
         raise ValueError(f"{name} must be positive definite.")
-    evidence = {"self_adjoint": "verified"}
+    evidence: dict[str, PropertyEvidence] = {"self_adjoint": "verified"}
     if positive_definite:
         evidence["positive_definite"] = "verified"
     return DenseLinearOperator(

@@ -497,7 +497,7 @@ def _axis_residual_marginals(
     return frozendict(marginals)
 
 
-def _replace_coordinate_blocks(old, sampled):
+def _replace_coordinate_blocks(old: GridBatch, sampled: GridBatch) -> GridBatch:
     if old.coord_axes_by_label != sampled.coord_axes_by_label:
         raise ValueError("Periodic refresh changed coordinate-separable axis metadata.")
     points = dict(old.points)
@@ -522,7 +522,7 @@ def _replace_coordinate_blocks(old, sampled):
     )
 
 
-def _sum_or_max_named(field, axis, *, maximum):
+def _sum_or_max_named(field: cx.AxisArray, axis: str, *, maximum: bool) -> cx.AxisArray:
     position = field.dims.index(axis)
     if maximum:
         data = jnp.max(field.data, axis=position)

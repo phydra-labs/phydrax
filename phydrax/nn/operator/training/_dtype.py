@@ -10,6 +10,8 @@ from typing import Any, cast, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from ...._precision import (
@@ -54,7 +56,7 @@ _ALGORITHM_COMPUTE_DTYPES = {
 }
 
 
-def _dtype(name: DTypeName):
+def _dtype(name: DTypeName) -> np.dtype:
     return jnp.dtype(real_precision_dtype_name(name))
 
 
@@ -62,7 +64,7 @@ def _complex_dtype_name(name: DTypeName, /) -> ComplexDTypeName:
     return complex_precision_dtype(name)
 
 
-def _cast_inexact(value: Any, dtype, /):
+def _cast_inexact(value: Any, dtype: DTypeLike, /) -> Array:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
         return array
@@ -72,7 +74,7 @@ def _cast_inexact(value: Any, dtype, /):
     return array.astype(dtype)
 
 
-def _cast_parameter_tree(tree: Any, dtype, /) -> Any:
+def _cast_parameter_tree(tree: Any, dtype: DTypeLike, /) -> Any:
     return jax.tree_util.tree_map(
         lambda leaf: None if leaf is None else _cast_inexact(leaf, dtype),
         tree,

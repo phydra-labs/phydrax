@@ -13,7 +13,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
-from ..._mass import ExactMass, product_mass, scale_mass, sum_mass
+from ..._mass import ExactMass, Mass, product_mass, scale_mass, sum_mass
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -168,7 +168,7 @@ class _ExtrusionKernel(GeometryKernel):
     def field_certificate(self) -> FieldCertificate:
         return _extrusion_certificate(self.profile.field_certificate)
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         height = self.height.read(state)
         local = GeometryValidityEvidence(
             finite=jnp.isfinite(height),
@@ -206,7 +206,7 @@ class _ExtrusionKernel(GeometryKernel):
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, self.ambient_dimension))
 
-        def field(point):
+        def field(point: Array) -> Array:
             return self.boundary_field(state, point[None, :])[0]
 
         gradient = jax.vmap(jax.grad(field))(flat)
@@ -233,7 +233,7 @@ class _ExtrusionKernel(GeometryKernel):
             state
         ) * self._height(state)
 
-    def interior_mass(self, state: DesignState, /):
+    def interior_mass(self, state: DesignState, /) -> Mass:
         return product_mass(
             (
                 self.profile.interior_mass(state),
@@ -241,7 +241,7 @@ class _ExtrusionKernel(GeometryKernel):
             )
         )
 
-    def boundary_mass(self, state: DesignState, /):
+    def boundary_mass(self, state: DesignState, /) -> Mass:
         return sum_mass(
             (
                 scale_mass(
@@ -397,7 +397,7 @@ class _RevolutionKernel(GeometryKernel):
     def field_certificate(self) -> FieldCertificate:
         return _revolution_certificate(self.profile.field_certificate)
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         bounds = self.profile.bounds(state)
         radial_margin = bounds[0, 0]
         local = GeometryValidityEvidence(
@@ -429,7 +429,7 @@ class _RevolutionKernel(GeometryKernel):
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
 
-        def field(point):
+        def field(point: Array) -> Array:
             return self.boundary_field(state, point[None, :])[0]
 
         gradient = jax.vmap(jax.grad(field))(flat)

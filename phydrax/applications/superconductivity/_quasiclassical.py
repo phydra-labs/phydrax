@@ -21,13 +21,13 @@ from ..._trainable import NonTrainableState
 _REDUCED_PLANCK = 1.054571817e-34
 
 
-def _a_derivative(value, delta, omega, speed):
+def _a_derivative(value: Array, delta: Array, omega: Array, speed: Array) -> Array:
     return (delta - 2.0 * omega * value - jnp.conj(delta) * value**2) / (
         _REDUCED_PLANCK * speed
     )
 
 
-def _b_derivative(value, delta, omega, speed):
+def _b_derivative(value: Array, delta: Array, omega: Array, speed: Array) -> Array:
     return -(jnp.conj(delta) - 2.0 * omega * value - delta * value**2) / (
         _REDUCED_PLANCK * speed
     )
@@ -187,7 +187,7 @@ class RiccatiTrajectoryPlan(StrictModule, NonTrainableState):
         return self.segment_lengths.shape[1]
 
     @staticmethod
-    def _bulk_coherence(gap, frequency):
+    def _bulk_coherence(gap: Array, frequency: Array) -> tuple[Array, Array]:
         omega = jnp.sqrt(frequency**2 + jnp.abs(gap) ** 2)
         denominator = frequency + omega
         return gap / denominator, jnp.conj(gap) / denominator
@@ -345,7 +345,7 @@ class QuasiclassicalSuperconductivityPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _gap(self, amplitudes):
+    def _gap(self, amplitudes: Array) -> Array:
         trajectory = contract(
             "a,ak->k",
             amplitudes,
@@ -360,7 +360,7 @@ class QuasiclassicalSuperconductivityPlan(StrictModule, NonTrainableState):
             ),
         )
 
-    def _mapping(self, amplitudes):
+    def _mapping(self, amplitudes: Array) -> tuple[Array, RiccatiTrajectoryResult]:
         gap = self._gap(amplitudes)
         propagator = self.trajectories.evaluate(self.matsubara, gap)
         segment_average = jnp.mean(propagator.anomalous_green, axis=-1)

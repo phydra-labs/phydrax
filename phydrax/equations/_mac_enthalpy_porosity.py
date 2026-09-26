@@ -458,7 +458,16 @@ class CompiledMACEnthalpyPorosityDynamics(StrictModule):
         )
         return MACEnthalpyPorosityDiagnostics(
             enthalpy,
-            *tuple(values),
+            values[0],
+            values[1],
+            values[2],
+            values[3],
+            values[4],
+            values[5],
+            values[6],
+            values[7],
+            values[8],
+            values[9],
             stage.projection_converged,
             finite,
             successful,

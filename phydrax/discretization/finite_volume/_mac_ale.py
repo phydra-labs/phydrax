@@ -120,7 +120,7 @@ def _cell_geometry(
         tetra(p100, p001, p101, p111),
         tetra(p010, p001, p111, p011),
     )
-    volume = sum(jnp.abs(part) for part in parts)
+    volume = jnp.asarray(sum(jnp.abs(part) for part in parts))
     orientation = jnp.linalg.det(
         jnp.stack(
             (
@@ -465,8 +465,8 @@ class PreparedMappedMACGeometry(StrictModule, NonTrainableState):
                 jnp.arange(prod(layout.shape), dtype=dtype) * (0.31 + 0.07 * axis)
             ).reshape(layout.shape)
             if not plan.reference.grid.structured_axes[axis].periodic:
-                lower = [slice(None)] * component.ndim
-                upper = [slice(None)] * component.ndim
+                lower: list[slice | int] = [slice(None)] * component.ndim
+                upper: list[slice | int] = [slice(None)] * component.ndim
                 lower[axis] = 0
                 upper[axis] = component.shape[axis] - 1
                 component = component.at[tuple(lower)].set(0.0)
@@ -755,9 +755,13 @@ class PreparedMappedMACGeometry(StrictModule, NonTrainableState):
 
     def kinetic_energy(self, velocity: FaceVelocity, /) -> Array:
         values = self.validate_velocity(velocity)
-        return 0.5 * sum(
-            jnp.sum(measure * component**2)
-            for measure, component in zip(self.face_dual_measures, values, strict=True)
+        return 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(measure * component**2)
+                for measure, component in zip(
+                    self.face_dual_measures, values, strict=True
+                )
+            )
         )
 
 

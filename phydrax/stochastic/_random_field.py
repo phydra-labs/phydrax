@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,6 +15,10 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ..nn.operator import OperatorCaseProvenance
 
 
 RandomFieldRole: TypeAlias = Literal[
@@ -384,7 +388,7 @@ class RandomFieldSample(StrictModule):
         """Return a case-first view accepted by operator-dataset array adapters."""
         return self.values.reshape((self.num_samples, *self.spatial_shape))
 
-    def operator_case_provenance(self):
+    def operator_case_provenance(self) -> tuple[OperatorCaseProvenance, ...]:
         """Return one leakage-safe operator provenance record per latent draw."""
         from ..nn.operator import OperatorCaseProvenance
 

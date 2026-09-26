@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import PyTree
+from jaxtyping import Array, PyTree
 
 from .._tree_math import (
     tree_allfinite as _tree_allfinite,
@@ -24,7 +25,9 @@ from ..linalg import (
     DifferentiationPolicy,
     FunctionLinearOperator,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSolveStatus,
+    LinearSolveTemplate,
     LinearSystem,
     MINRES,
     OperatorProperties,
@@ -46,10 +49,42 @@ from ._pde_constrained import (
     _default_adjoint_policy,
     _state_design_line_search,
     AbstractStateDesignMethod,
+    AdjointAcceptanceEvidence,
+    StateAcceptanceEvidence,
     StateDesignProblem,
     StateDesignResult,
+    StateEquationResult,
 )
 from ._state_design_linearization import _linearize_state_design, _response_pullback
+
+
+# (state result, design, twenty status/work/step scalars, adjoint)
+_ReducedNewtonCarry: TypeAlias = tuple[
+    StateEquationResult,
+    PyTree[Any],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    PyTree[Any],
+]
+_TreeAction: TypeAlias = Callable[[PyTree[Any]], PyTree[Array]]
 
 
 def _default_reduced_policy() -> LinearSolvePolicy:
@@ -132,7 +167,7 @@ def _prepare_linear_templates(
     design: PyTree[Any],
     residual: PyTree[Any],
     /,
-):
+) -> tuple[LinearSolveTemplate, LinearSolveTemplate, LinearSolveTemplate]:
     state_jacobian = FunctionLinearOperator(
         lambda _: jax.tree.map(jnp.zeros_like, residual),
         source=PyTreeSpace(state),
@@ -187,12 +222,19 @@ def _reduced_model(
     state: PyTree[Any],
     design: PyTree[Any],
     args: Any,
-    state_template,
-    adjoint_template,
+    state_template: LinearSolveTemplate,
+    adjoint_template: LinearSolveTemplate,
     numeric_version: Any,
-    state_acceptance,
+    state_acceptance: StateAcceptanceEvidence,
     /,
-):
+) -> tuple[
+    PyTree[Array],
+    PyTree[Array],
+    PyTree[Array],
+    LinearSolveResult,
+    AdjointAcceptanceEvidence,
+    _TreeAction,
+]:
     point = _linearize_state_design(
         problem,
         state,
@@ -228,9 +270,11 @@ def _reduced_model(
     adjoint = response.adjoint
     adjoint_result = response.linear_result
     adjoint_acceptance = response.adjoint_acceptance
+    if adjoint_acceptance is None:
+        raise RuntimeError("Objective response omitted its required adjoint evidence.")
     design_pullback = point.design_pullback
 
-    def reduced_hessian_action(design_tangent):
+    def reduced_hessian_action(design_tangent: PyTree[Any]) -> PyTree[Array]:
         residual_design_tangent = jax.jvp(
             lambda current_design: problem.residual(state, current_design, args),
             (design,),
@@ -241,7 +285,9 @@ def _reduced_model(
             jax.tree.map(lambda value: -value, residual_design_tangent),
         ).value
 
-        def state_stationarity(current_state, current_design):
+        def state_stationarity(
+            current_state: PyTree[Any], current_design: PyTree[Any]
+        ) -> PyTree[Array]:
             objective_gradient = jax.grad(
                 lambda state_value: problem.value(
                     state_value,
@@ -274,7 +320,9 @@ def _reduced_model(
             incremental_adjoint_rhs,
         ).value
 
-        def design_stationarity(current_state, current_design):
+        def design_stationarity(
+            current_state: PyTree[Any], current_design: PyTree[Any]
+        ) -> PyTree[Array]:
             objective_gradient = jax.grad(
                 lambda design_value: problem.value(
                     current_state,
@@ -382,7 +430,7 @@ def _solve_reduced_newton_krylov(
         initial_adjoint,
     )
 
-    def condition(carry):
+    def condition(carry: _ReducedNewtonCarry) -> Array:
         (
             _,
             _,
@@ -403,7 +451,7 @@ def _solve_reduced_newton_krylov(
             & within_evaluations
         )
 
-    def body(carry):
+    def body(carry: _ReducedNewtonCarry) -> _ReducedNewtonCarry:
         (
             current_state_result,
             current_design,
@@ -464,7 +512,7 @@ def _solve_reduced_newton_krylov(
             initial_optimality,
         )
 
-        def fail_model(status_code):
+        def fail_model(status_code: OptimizationStatus) -> _ReducedNewtonCarry:
             return (
                 current_state_result,
                 current_design,
@@ -491,7 +539,7 @@ def _solve_reduced_newton_krylov(
                 adjoint,
             )
 
-        def evaluate_direction(_):
+        def evaluate_direction(_: None) -> _ReducedNewtonCarry:
             design_space = PyTreeSpace(current_design)
             reduced_operator = FunctionLinearOperator(
                 reduced_hessian_action,
@@ -543,10 +591,10 @@ def _solve_reduced_newton_krylov(
                 & (newton_directional < 0.0)
             )
 
-            def use_newton(_):
+            def use_newton(_: None) -> tuple[PyTree[Array], Array]:
                 return newton_direction, newton_directional
 
-            def use_gradient(_):
+            def use_gradient(_: None) -> tuple[PyTree[Array], Array]:
                 fallback = _tree_negative(reduced_gradient)
                 if problem.design_bounds is not None:
                     fallback = _projected_displacement(
@@ -592,7 +640,7 @@ def _solve_reduced_newton_krylov(
             )
             next_hvp_evaluations = hvp_evaluations + action_count
 
-            def search(_):
+            def search(_operand: None) -> _ReducedNewtonCarry:
                 (
                     candidate_state_result,
                     candidate_design,
@@ -659,7 +707,7 @@ def _solve_reduced_newton_krylov(
                     adjoint,
                 )
 
-            def fail_direction(_):
+            def fail_direction(_: None) -> _ReducedNewtonCarry:
                 return (
                     current_state_result,
                     current_design,
@@ -696,12 +744,12 @@ def _solve_reduced_newton_krylov(
                 None,
             )
 
-        def evaluate_finite_model(_):
+        def evaluate_finite_model(_: None) -> _ReducedNewtonCarry:
             converged = optimality <= termination.optimality_threshold(
                 next_initial_optimality
             )
 
-            def finish_success(_):
+            def finish_success(_: None) -> _ReducedNewtonCarry:
                 return (
                     current_state_result,
                     current_design,

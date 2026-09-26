@@ -91,9 +91,13 @@ def compare_spectral_eigen_resolutions(
         raise TypeError("coarse and fine must be tensor spectral discretizations.")
     if not isinstance(transfer, PreparedSpectralModalTransfer):
         raise TypeError("transfer must be a PreparedSpectralModalTransfer.")
+    transfer_source = transfer.plan.source
+    transfer_target = transfer.plan.target
     if (
-        transfer.plan.source.prepared_id != coarse.prepared_id
-        or transfer.plan.target.prepared_id != fine.prepared_id
+        not isinstance(transfer_source, TensorSpectralDiscretization)
+        or not isinstance(transfer_target, TensorSpectralDiscretization)
+        or transfer_source.prepared_id != coarse.prepared_id
+        or transfer_target.prepared_id != fine.prepared_id
     ):
         raise ValueError("Spectral eigen transfer does not bind the supplied spaces.")
     if not transfer.report.lossless:
@@ -232,7 +236,7 @@ def _relative_projection_error(source: np.ndarray, target: np.ndarray, /) -> flo
         residual = vector - jnp.asarray(target) @ result.value
         numerator = float(np.sqrt(np.sum(np.abs(np.asarray(residual)) ** 2)))
         denominator = float(np.sqrt(np.sum(np.abs(source[:, column]) ** 2)))
-        errors.append(numerator / max(denominator, np.finfo(np.float64).tiny))
+        errors.append(numerator / max(denominator, float(np.finfo(np.float64).tiny)))
     return max(errors, default=0.0)
 
 

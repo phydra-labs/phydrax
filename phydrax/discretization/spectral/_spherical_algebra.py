@@ -98,7 +98,7 @@ def _stable_clebsch_gordan(
     return float(coefficients[orders.index(left_order), degrees.index(output_degree)])
 
 
-def _layout(value, name: str, /) -> SphericalModeLayout:
+def _layout(value: object, name: str, /) -> SphericalModeLayout:
     if isinstance(value, SphericalModeLayout):
         return value
     if isinstance(value, SphericalSpectralDiscretization):
@@ -185,7 +185,7 @@ class PreparedSphericalRotation(StrictModule, NonTrainableState):
         limit = self.plan.layout.bandlimit
         orders = jnp.arange(-(limit - 1), limit, dtype=angles.dtype)
 
-        def one_rotation(angle):
+        def one_rotation(angle: Array) -> Array:
             alpha, beta, gamma = angle
             plane = jnp.zeros((2 * limit - 1, 2 * limit - 1), dtype=angles.dtype)
             blocks = []

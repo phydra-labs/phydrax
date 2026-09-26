@@ -543,7 +543,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
             "unit_id": unit,
             "qualification_id": qualification,
             "sampling_exact": exact,
-            "sampling_bias_bound": bias_bound.hex(),
+            "sampling_bias_bound": float(bias_bound).hex(),
         }
         arrays = {
             "values": canonical_values,
@@ -739,7 +739,7 @@ class ThermodynamicDerivativeDataset(StrictModule, NonTrainableState):
             "unit_id": unit,
             "qualification_id": qualification,
             "sampling_exact": exact,
-            "sampling_bias_bound": bias_bound.hex(),
+            "sampling_bias_bound": float(bias_bound).hex(),
         }
         arrays = {
             "values": canonical_values,
@@ -1237,7 +1237,12 @@ class FreeEnergyResult(StrictModule, NonTrainableState):
         )
 
 
-def _dataset_observations(dataset: FreeEnergyDataset, /):
+_DatasetObservations: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, str, int
+]
+
+
+def _dataset_observations(dataset: FreeEnergyDataset, /) -> _DatasetObservations:
     if isinstance(dataset, ReducedPotentialDataset):
         safe_origin = jnp.clip(dataset.origin_state, 0, len(dataset.state_ids) - 1)
         observable = dataset.values[safe_origin, jnp.arange(dataset.values.shape[1])]

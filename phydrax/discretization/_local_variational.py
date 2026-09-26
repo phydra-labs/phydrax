@@ -7,6 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 from math import prod
+from typing import Protocol
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -22,6 +23,20 @@ from ._integration_domain import IntegrationDomain
 from ._lifecycle import AbstractPreparedDiscretization
 from ._spaces import DiscreteFieldSpace
 from ._topology import EntitySelection
+
+
+class LocalPrecisionPolicy(Protocol):
+    """Accumulation and output precision shared by prepared local discretizations."""
+
+    @property
+    def compensated_accumulation(self) -> bool: ...
+
+    @property
+    def policy_id(self) -> str: ...
+
+    def accumulation(self, value: ArrayLike, /) -> Array: ...
+
+    def output(self, value: ArrayLike, /) -> Array: ...
 
 
 class LocalVariationalRequest(StrictModule, NonTrainableState):
@@ -825,7 +840,7 @@ class AbstractPreparedLocalDiscretization(AbstractPreparedDiscretization):
     """Prepared discretization capable of method-neutral local variational work."""
 
     block_space: eqx.AbstractVar[object]
-    precision_policy: eqx.AbstractVar[object]
+    precision_policy: eqx.AbstractVar[LocalPrecisionPolicy]
 
     default_runtime: eqx.AbstractVar[object]
 

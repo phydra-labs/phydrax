@@ -168,7 +168,7 @@ class PreparedAffineEvolutionROM(StrictModule, NonTrainableState):
                 self.reduced_mass_lift_terms,
             )
 
-        def residual(time, state, state_rate, args):
+        def residual(time: Array, state: Array, state_rate: Array, args: object) -> Array:
             del time, args
             return mass @ state_rate + operator @ state - rhs
 

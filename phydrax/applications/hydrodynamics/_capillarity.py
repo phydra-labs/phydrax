@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,6 +18,9 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._free_surface_ale import PreparedGraphSurfaceALE
+
+
+_CGCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class GraphCapillarityResult(StrictModule):
@@ -91,22 +96,26 @@ class GraphCapillarityPlan(StrictModule, NonTrainableState):
         second = 0.5 * jnp.linalg.norm(jnp.cross(p11 - p00, p01 - p00), axis=-1)
         return jnp.sum(first + second)
 
-    def _surface_jacobian_actions(self, eta: Array):
-        def volume_map(value):
+    def _surface_jacobian_actions(
+        self, eta: Array
+    ) -> tuple[Callable[[Array], Array], Callable[[Array], Array]]:
+        def volume_map(value: Array) -> Array:
             return self.surface._column_volumes(value)
 
-        def jacobian(rate):
+        def jacobian(rate: Array) -> Array:
             return jax.jvp(volume_map, (eta,), (rate,))[1]
 
-        def transpose(head):
+        def transpose(head: Array) -> Array:
             return jax.linear_transpose(jacobian, jnp.zeros_like(eta))(head)[0]
 
         return jacobian, transpose
 
-    def _solve_head(self, eta: Array, covector: Array, /):
+    def _solve_head(
+        self, eta: Array, covector: Array, /
+    ) -> tuple[Array, Array, Array, Array]:
         jacobian, transpose = self._surface_jacobian_actions(eta)
 
-        def normal_action(head):
+        def normal_action(head: Array) -> Array:
             return jacobian(transpose(head))
 
         rhs = jacobian(covector)
@@ -118,7 +127,7 @@ class GraphCapillarityPlan(StrictModule, NonTrainableState):
         active = norm > threshold
         failed = jnp.asarray(False)
 
-        def body(_, state):
+        def body(_: Array, state: _CGCarry) -> _CGCarry:
             value, residual_, direction_, norm_, active_, failed_ = state
             image = normal_action(direction_)
             denominator = jnp.real(jnp.vdot(direction_, image))

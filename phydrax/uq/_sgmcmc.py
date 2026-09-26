@@ -7,8 +7,9 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, overload, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax
@@ -68,6 +69,37 @@ _APPROXIMATION = "unadjusted_fixed_step"
 _INITIALIZATION_TAG = 0
 _TRANSITION_TAG = 1
 _CHECKPOINT_KIND = "sgmcmc"
+# Full-batch gradient of the unconstrained log density at one position.
+_LegacyGradientFn: TypeAlias = Callable[[PyTree[Any], LikelihoodBatch], PyTree[Array]]
+# Keyed stochastic-gradient estimate at one position.
+_GradientEstimateFn: TypeAlias = Callable[
+    [PyTree[Any], LikelihoodBatch, Array], StochasticGradientEstimate
+]
+# (chain states, chain keys, minibatch, step size) -> (states, gradient norm, valid).
+_AdvanceFn: TypeAlias = Callable[
+    [PyTree[Array], Array, LikelihoodBatch, Array], tuple[PyTree[Array], Array, Array]
+]
+
+
+class _SGMCMCCheckpointProgress(TypedDict):
+    current_states: PyTree[Array]
+    burnin_states: PyTree[Array] | None
+    samples: PyTree[Array]
+    gradient_norm: Array
+    thermostat: Array | None
+    momentum_norm: Array | None
+    completed_updates: int
+    completed_draws: int
+    compilation_duration_seconds: float
+    burnin_duration_seconds: float
+    sampling_duration_seconds: float
+    gradient_evaluations: int
+    gradient_norm_sum: float
+    gradient_norm_count: int
+    gradient_norm_max: float
+    min_active_factors: int
+    max_active_factors: int
+    nonfinite_update_count: int
 
 
 class SGMCMCControlVariate(StrictModule):
@@ -369,7 +401,7 @@ def build_sgmcmc_control_variate(
     )
     likelihood_gradient = jax.tree_util.tree_map(jnp.zeros_like, center_position)
 
-    def batch_log_likelihood(position, batch):
+    def batch_log_likelihood(position: PyTree[Any], batch: LikelihoodBatch) -> Array:
         physical = problem.parameter_space.constrain(position)
         return jnp.sum(problem.log_likelihood_factors(physical, batch))
 
@@ -923,17 +955,35 @@ def _sample_sgmcmc(
     )
 
 
+@overload
+def _gradient_estimator(
+    problem: MinibatchPosteriorProblem,
+    control_variate: SGMCMCControlVariate | None,
+    estimator: None = None,
+) -> _LegacyGradientFn: ...
+
+
+@overload
+def _gradient_estimator(
+    problem: MinibatchPosteriorProblem,
+    control_variate: SGMCMCControlVariate | None,
+    estimator: AbstractStochasticGradientEstimator,
+) -> _GradientEstimateFn: ...
+
+
 def _gradient_estimator(
     problem: MinibatchPosteriorProblem,
     control_variate: SGMCMCControlVariate | None,
     estimator: AbstractStochasticGradientEstimator | None = None,
-):
+) -> _LegacyGradientFn | _GradientEstimateFn:
     if estimator is None:
         ordinary_gradient = jax.grad(problem.log_density_estimate)
         if control_variate is None:
             return ordinary_gradient
 
-        def legacy_control_variate_gradient(position, batch):
+        def legacy_control_variate_gradient(
+            position: PyTree[Any], batch: LikelihoodBatch
+        ) -> PyTree[Array]:
             gradient = ordinary_gradient(position, batch)
             center_gradient = ordinary_gradient(control_variate.center, batch)
             return jax.tree_util.tree_map(
@@ -945,13 +995,17 @@ def _gradient_estimator(
 
         return legacy_control_variate_gradient
 
-    def ordinary_estimate(position, batch, key):
+    def ordinary_estimate(
+        position: PyTree[Any], batch: LikelihoodBatch, key: Array
+    ) -> StochasticGradientEstimate:
         return estimator.estimate(problem, position, batch, key)
 
     if control_variate is None:
         return ordinary_estimate
 
-    def control_variate_estimate(position, batch, key):
+    def control_variate_estimate(
+        position: PyTree[Any], batch: LikelihoodBatch, key: Array
+    ) -> StochasticGradientEstimate:
         current = ordinary_estimate(position, batch, key)
         center = ordinary_estimate(control_variate.center, batch, key)
         gradient = jax.tree_util.tree_map(
@@ -996,12 +1050,17 @@ def _compile_transition(
     states: Any,
     chain_keys: Array,
     batch: LikelihoodBatch,
-):
+) -> tuple[_AdvanceFn, float]:
     gradient_fn = _gradient_estimator(problem, control_variate, estimator)
     if algorithm == "sgld":
         integrator = diffusions.overdamped_langevin()
 
-        def one_step(step_key, state, minibatch, current_step_size):
+        def one_step(
+            step_key: Array,
+            state: PyTree[Array],
+            minibatch: LikelihoodBatch,
+            current_step_size: Array,
+        ) -> tuple[PyTree[Array], Array, Array]:
             estimator_key = jr.fold_in(step_key, 0x65726164)
             estimate = gradient_fn(state, minibatch, estimator_key)
             return (
@@ -1021,7 +1080,12 @@ def _compile_transition(
             raise ValueError("diffusion is required for SGNHT transitions.")
         integrator = diffusions.sgnht(float(diffusion), 0.0)
 
-        def one_step(step_key, state, minibatch, current_step_size):
+        def one_step(
+            step_key: Array,
+            state: SGNHTState,
+            minibatch: LikelihoodBatch,
+            current_step_size: Array,
+        ) -> tuple[PyTree[Array], Array, Array]:
             estimator_key = jr.fold_in(step_key, 0x65726164)
             estimate = gradient_fn(state.position, minibatch, estimator_key)
             position, momentum, xi = integrator(
@@ -1055,7 +1119,12 @@ def _compile_transition(
             states, chain_keys, batch, jnp.asarray(step_size)
         ).compile()
 
-        def advance(current_states, keys, minibatch, current_step_size):
+        def advance(
+            current_states: PyTree[Array],
+            keys: Array,
+            minibatch: LikelihoodBatch,
+            current_step_size: Array,
+        ) -> tuple[PyTree[Array], Array, Array]:
             return compiled(current_states, keys, minibatch, current_step_size)
 
     else:
@@ -1065,7 +1134,12 @@ def _compile_transition(
             chain_keys[0], state_values[0], batch, jnp.asarray(step_size)
         ).compile()
 
-        def advance(current_states, keys, minibatch, current_step_size):
+        def advance(
+            current_states: PyTree[Array],
+            keys: Array,
+            minibatch: LikelihoodBatch,
+            current_step_size: Array,
+        ) -> tuple[PyTree[Array], Array, Array]:
             current_values = _unstack_tree(current_states, keys.shape[0])
             next_states = []
             gradient_norms = []
@@ -1094,7 +1168,7 @@ def _initialize_states(
     *,
     initial_thermostat: float | None,
     chain_method: ChainMethod,
-):
+) -> PyTree[Array]:
     if algorithm == "sgld":
         return positions
     if initial_thermostat is None:
@@ -1124,7 +1198,7 @@ def _transition_keys(chain_keys: Array, update: int, /) -> Array:
     )(chain_keys)
 
 
-def _state_position(algorithm: SGMCMCAlgorithm, states: Any, /):
+def _state_position(algorithm: SGMCMCAlgorithm, states: Any, /) -> PyTree[Array]:
     return states if algorithm == "sgld" else states.position
 
 
@@ -1191,14 +1265,16 @@ def _invalid_chain_indices(tree: PyTree[Any], num_chains: int, /) -> tuple[int, 
     return tuple(jnp.argwhere(~valid).reshape(-1))
 
 
-def _empty_sample_tree(position: PyTree[Any], chains: int, /):
+def _empty_sample_tree(position: PyTree[Any], chains: int, /) -> PyTree[Array]:
     return jax.tree_util.tree_map(
         lambda value: jnp.empty((chains, 0, *value.shape), dtype=value.dtype),
         position,
     )
 
 
-def _combine_sample_trees(stored, additions):
+def _combine_sample_trees(
+    stored: PyTree[Array], additions: Sequence[PyTree[Array]]
+) -> PyTree[Array]:
     if not additions:
         return stored
     added = jax.tree_util.tree_map(lambda *leaves: jnp.stack(leaves, axis=1), *additions)
@@ -1209,7 +1285,15 @@ def _combine_sample_trees(stored, additions):
     )
 
 
-def _combine_statistic(stored, additions):
+@overload
+def _combine_statistic(stored: Array, additions: Sequence[Array]) -> Array: ...
+
+
+@overload
+def _combine_statistic(stored: None, additions: Sequence[Array]) -> None: ...
+
+
+def _combine_statistic(stored: Array | None, additions: Sequence[Array]) -> Array | None:
     if stored is None:
         return None
     if not additions:
@@ -1217,7 +1301,9 @@ def _combine_statistic(stored, additions):
     return jnp.concatenate((stored, jnp.stack(additions, axis=1)), axis=1)
 
 
-def _evaluate_full_log_density(problem, samples):
+def _evaluate_full_log_density(
+    problem: MinibatchPosteriorProblem, samples: PyTree[Array]
+) -> Array:
     leaves = jax.tree_util.tree_leaves(samples)
     chains, draws = leaves[0].shape[0], leaves[0].shape[1]
     flattened = jax.tree_util.tree_map(
@@ -1231,7 +1317,9 @@ def _evaluate_full_log_density(problem, samples):
     return values.reshape((chains, draws))
 
 
-def _validate_problem_source(problem, source):
+def _validate_problem_source(
+    problem: MinibatchPosteriorProblem, source: MinibatchSource
+) -> tuple[str, tuple[LikelihoodBatch, ...]]:
     if not isinstance(problem, MinibatchPosteriorProblem):
         raise TypeError("problem must be a MinibatchPosteriorProblem.")
     if not isinstance(source, MinibatchSource):
@@ -1292,28 +1380,28 @@ def _problem_fingerprint(
 
 
 def _write_sgmcmc_checkpoint(
-    destination,
+    destination: Path,
     *,
-    compatibility,
-    algorithm,
-    completed_updates,
-    completed_draws,
-    current_states,
-    burnin_states,
-    samples,
-    gradient_norm,
-    thermostat,
-    momentum_norm,
-    compilation_duration_seconds,
-    burnin_duration_seconds,
-    sampling_duration_seconds,
-    gradient_evaluations,
-    gradient_norm_sum,
-    gradient_norm_count,
-    gradient_norm_max,
-    min_active_factors,
-    max_active_factors,
-    nonfinite_update_count,
+    compatibility: Mapping[str, Any],
+    algorithm: SGMCMCAlgorithm,
+    completed_updates: int,
+    completed_draws: int,
+    current_states: PyTree[Array],
+    burnin_states: PyTree[Array] | None,
+    samples: PyTree[Array],
+    gradient_norm: Array,
+    thermostat: Array | None,
+    momentum_norm: Array | None,
+    compilation_duration_seconds: float,
+    burnin_duration_seconds: float,
+    sampling_duration_seconds: float,
+    gradient_evaluations: int,
+    gradient_norm_sum: float,
+    gradient_norm_count: int,
+    gradient_norm_max: float,
+    min_active_factors: int,
+    max_active_factors: int,
+    nonfinite_update_count: int,
 ) -> None:
     arrays: dict[str, Any] = {
         "gradient_norm": gradient_norm,
@@ -1357,17 +1445,17 @@ def _write_sgmcmc_checkpoint(
 
 
 def _read_sgmcmc_checkpoint(
-    state,
-    arrays,
+    state: Mapping[str, Any],
+    arrays: Mapping[str, Array],
     *,
-    algorithm,
-    state_template,
-    position_template,
-    num_chains,
-    num_burnin,
-    num_samples,
-    steps_per_sample,
-):
+    algorithm: SGMCMCAlgorithm,
+    state_template: PyTree[Array],
+    position_template: PyTree[Array],
+    num_chains: int,
+    num_burnin: int,
+    num_samples: int,
+    steps_per_sample: int,
+) -> _SGMCMCCheckpointProgress:
     if state.get("algorithm") != algorithm:
         raise CheckpointCompatibilityError(
             "Checkpoint algorithm does not match the requested SG-MCMC method."
@@ -1470,7 +1558,9 @@ def _read_sgmcmc_checkpoint(
     }
 
 
-def _checkpoint_array(arrays, name, *, shape):
+def _checkpoint_array(
+    arrays: Mapping[str, Array], name: object, *, shape: tuple[int, ...]
+) -> Array:
     if not isinstance(name, str) or name not in arrays:
         raise CheckpointCorruptionError("Checkpoint statistic array is missing.")
     value = jnp.asarray(arrays[name])
@@ -1481,14 +1571,14 @@ def _checkpoint_array(arrays, name, *, shape):
     return value
 
 
-def _checkpoint_int(state, name, *, minimum):
+def _checkpoint_int(state: Mapping[str, Any], name: str, *, minimum: int) -> int:
     value = state.get(name)
     if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
         raise CheckpointCorruptionError(f"Checkpoint field {name!r} is invalid.")
     return int(value)
 
 
-def _checkpoint_float(state, name, *, minimum):
+def _checkpoint_float(state: Mapping[str, Any], name: str, *, minimum: float) -> float:
     value = state.get(name)
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise CheckpointCorruptionError(f"Checkpoint field {name!r} is invalid.")

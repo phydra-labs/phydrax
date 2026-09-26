@@ -183,7 +183,7 @@ class SparseReducedPotentialDataset(StrictModule, NonTrainableState):
             "reduced_convention_id": convention,
             "qualification_id": qualification,
             "sampling_exact": exact,
-            "sampling_bias_bound": bias_bound.hex(),
+            "sampling_bias_bound": float(bias_bound).hex(),
         }
         arrays = {
             "values": canonical_values,

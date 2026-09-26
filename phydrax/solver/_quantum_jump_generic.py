@@ -44,7 +44,7 @@ def quantum_jump_differential_problem(
         )
         return jnp.real(ein.contract("ki,ki->k", jnp.conj(collapsed), collapsed))
 
-    def drift(time, state, args):
+    def drift(time: Array, state: Array, args: object) -> Array:
         del time, args
         quantum_state = to_complex(state)
         channel_rates = rates(state)
@@ -54,9 +54,11 @@ def quantum_jump_differential_problem(
         normalized_result = result + 0.5 * jnp.sum(channel_rates) * quantum_state
         return to_real(normalized_result)
 
-    def jump(state, channel, mark, args):
+    def jump(
+        state: ArrayLike, channel: ArrayLike, mark: ArrayLike, args: object
+    ) -> Array:
         del mark, args
-        quantum_state = to_complex(state)
+        quantum_state = to_complex(jnp.asarray(state))
         collapsed = jnp.stack(
             [operator(quantum_state) for operator in problem.collapse_operators]
         )
@@ -90,8 +92,8 @@ def solve_quantum_jump_generic(
     key: Array,
     /,
     *,
-    t0: ArrayLike,
-    t1: ArrayLike,
+    t0: float,
+    t1: float,
     save_times: ArrayLike,
     trajectory_count: int = 1,
     maximum_events_per_channel: int = 64,

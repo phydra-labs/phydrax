@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax
@@ -75,7 +75,7 @@ class CategoricalDiffusionSchedule(StrictModule):
         *,
         beta_start: float = 1e-3,
         beta_end: float = 0.1,
-    ):
+    ) -> Self:
         steps = int(num_steps)
         classes = int(num_classes)
         if steps <= 0 or classes <= 1:
@@ -98,7 +98,7 @@ class CategoricalDiffusionSchedule(StrictModule):
         *,
         beta_start: float = 1e-3,
         beta_end: float = 0.1,
-    ):
+    ) -> Self:
         steps = int(num_steps)
         classes = int(num_classes)
         absorbing = int(absorbing_class)
@@ -166,7 +166,7 @@ class CategoricalDiffusionSchedule(StrictModule):
             raise ValueError("clean and noisy categorical states must match shapes.")
         time = self._validate_timestep(timestep)
 
-        def one(clean_value, noisy_value, step):
+        def one(clean_value: Array, noisy_value: Array, step: Array) -> Array:
             previous = jax.lax.cond(
                 step > 0,
                 lambda index: self.cumulative[index - 1, clean_value],
@@ -215,7 +215,7 @@ class CategoricalDiffusionSchedule(StrictModule):
             )
         time = self._validate_timestep(timestep)
 
-        def one(noisy_value, predicted_logits, step):
+        def one(noisy_value: Array, predicted_logits: Array, step: Array) -> Array:
             previous = jax.lax.cond(
                 step > 0,
                 lambda index: self.cumulative[index - 1],
@@ -276,9 +276,9 @@ class CategoricalReverseDiffusion(StrictModule):
 
     def __init__(
         self,
-        schedule,
-        predictor,
-        event_shape,
+        schedule: CategoricalDiffusionSchedule,
+        predictor: Callable[..., ArrayLike],
+        event_shape: Sequence[int],
         /,
         *,
         terminal_probabilities: ArrayLike | None = None,
@@ -339,7 +339,9 @@ class CategoricalReverseDiffusion(StrictModule):
             }
         )
 
-    def sample(self, key: Key[Array, ""], sample_shape: Sequence[int], /):
+    def sample(
+        self, key: Key[Array, ""], sample_shape: Sequence[int], /
+    ) -> CategoricalDiffusionSample:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
@@ -351,7 +353,9 @@ class CategoricalReverseDiffusion(StrictModule):
         initial = jr.categorical(initial_key, logits, axis=-1).astype(jnp.int32)
         timesteps = jnp.arange(self.schedule.num_steps - 1, -1, -1, dtype=jnp.int32)
 
-        def step(carry, timestep):
+        def step(
+            carry: tuple[Array, Key[Array, ""]], timestep: Array
+        ) -> tuple[tuple[Array, Key[Array, ""]], Array]:
             state, current_key = carry
             current_key, model_key, sample_key = jr.split(current_key, 3)
             batch_time = jnp.full(samples, timestep, dtype=jnp.int32)

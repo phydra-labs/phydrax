@@ -470,14 +470,14 @@ def solve_interacting_particles(
     num_steps = num_times - 1
     step_sizes = jnp.diff(grid)
 
-    def one_system(idiosyncratic_path, common_path):
+    def one_system(idiosyncratic_path: Array, common_path: Array) -> Array:
         particles = jnp.zeros(
             (num_times, problem.num_particles) + problem.state_shape,
             dtype=problem.initial_particles.dtype,
         )
         particles = particles.at[0].set(problem.initial_particles)
 
-        def step(index, buffer):
+        def step(index: Array, buffer: Array) -> Array:
             time = grid[index]
             current = buffer[index]
             snapshot = _mean_field_snapshot(

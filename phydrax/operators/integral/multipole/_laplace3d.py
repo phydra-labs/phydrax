@@ -1690,6 +1690,18 @@ class PreparedLaplaceMultipole3D(AbstractPreparedLaplaceMultipole3D):
     if TYPE_CHECKING:
         __init__ = AbstractPreparedLaplaceMultipole3D.__init__
 
+        def evaluate(
+            self,
+            source_positions: ArrayLike,
+            source_strengths: ArrayLike,
+            target_positions: ArrayLike | None = None,
+            /,
+            *,
+            source_normals: ArrayLike | None = None,
+            active_mask: ArrayLike | None = None,
+            target_source_indices: ArrayLike | None = None,
+        ) -> LaplaceMultipoleEvaluation3D: ...
+
 
 __all__ = [
     "LaplaceMultipoleEvaluation3D",

@@ -137,7 +137,7 @@ class FixedBoundaryGradShafranovPlan:
         boundary_r = []
         boundary_coefficients = []
 
-        def interior_index(j, i):
+        def interior_index(j: int, i: int) -> int:
             return (j - 1) * interior_nr + (i - 1)
 
         for j in range(1, nz - 1):

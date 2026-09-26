@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import IntEnum
 from math import prod
-from typing import Any, TYPE_CHECKING
+from typing import Any, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -36,7 +36,12 @@ from ._rod_plant import (
     ReducedRodPassiveSensorState,
     ReducedRodPlantState,
 )
-from ._rod_reduced_dynamics import ReducedRodDirectLoad, ReducedRodMaterialState
+from ._rod_reduced_dynamics import (
+    PreparedReducedRodDynamics,
+    ReducedRodDirectLoad,
+    ReducedRodInverseDynamicsResult,
+    ReducedRodMaterialState,
+)
 from ._rod_reduced_integrators import (
     _candidate_state,
     _energy_work_ledger,
@@ -276,7 +281,9 @@ class _TendonMidpointResidual(StrictModule):
     step_size: Array
     tendon_ids: tuple[str, ...] = eqx.field(static=True)
 
-    def __call__(self, state: tuple[Array, Array], _arguments: Any, /):
+    def __call__(
+        self, state: tuple[Array, Array], _arguments: Any, /
+    ) -> tuple[tuple[Array, Array], ReducedRodInverseDynamicsResult]:
         q0 = self.source.reduced_state.coefficients
         v0 = self.source.reduced_state.coefficient_velocities
         q1, v1 = state
@@ -293,7 +300,8 @@ class _TendonMidpointResidual(StrictModule):
         )
         direct_loads = tuple(
             ReducedRodDirectLoad(
-                evaluation.reduced_effort,
+                # The constructor requires every tendon route to use the plant reduction.
+                cast(Array, evaluation.reduced_effort),
                 source_id=f"tendon:{tendon_id}",
                 power_channel="tendon",
             )
@@ -587,7 +595,7 @@ class PreparedTendonDrivenRodPlant(AbstractDiscretePlant, NonTrainableState):
         self.plant_id = plant_id
 
     @property
-    def dynamics(self):
+    def dynamics(self) -> PreparedReducedRodDynamics:
         return self.base_plant.dynamics
 
     def bind_parameters(
@@ -647,7 +655,8 @@ class PreparedTendonDrivenRodPlant(AbstractDiscretePlant, NonTrainableState):
     ) -> tuple[ReducedRodDirectLoad, ...]:
         return tuple(
             ReducedRodDirectLoad(
-                value.reduced_effort,
+                # The constructor requires every tendon route to use the plant reduction.
+                cast(Array, value.reduced_effort),
                 source_id=f"tendon:{tendon_id}",
                 power_channel="tendon",
             )

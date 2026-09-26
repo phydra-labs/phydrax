@@ -6,11 +6,14 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import combinations
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jax.typing import ArrayLike
 from jaxtyping import Array
 
 from ...._fingerprint import canonical_fingerprint
@@ -48,13 +51,13 @@ from ._published import interaction_energy, radial_support
 @dataclass(frozen=True)
 class NucleotideModelPlan:
     construct: NucleicAcidConstruct
-    body_ids: object
-    site_ids: object
-    reference_sites: object
-    masses: object
-    inertia_com: object
+    body_ids: npt.ArrayLike
+    site_ids: npt.ArrayLike
+    reference_sites: npt.ArrayLike
+    masses: ArrayLike
+    inertia_com: ArrayLike
     parameters: NucleotideParameterArtifact
-    fixed_mask: object = None
+    fixed_mask: ArrayLike | None = None
     cell: PeriodicCell | None = None
 
     def prepare(self) -> PreparedNucleotideModel:
@@ -72,13 +75,13 @@ class _InteractionGroup(StrictModule):
     pairs: Array
     strengths: Array
     charge_scale: Array
-    profile: dict
+    profile: dict[str, Any]
     bonded: bool = eqx.field(static=True)
     model: str = eqx.field(static=True)
 
 
-def _profile_cutoff(profile):
-    radii = []
+def _profile_cutoff(profile: dict[str, Any]) -> float:
+    radii: list[float] = []
     for kind in ("stacking", "hydrogen-bond", "cross-stacking", "coaxial-stacking"):
         if kind in profile:
             radii.append(
@@ -312,11 +315,11 @@ class PreparedNucleotideModel(StrictModule):
             }
         )
 
-    def site_positions(self, state: RigidBodyKinematics, /):
+    def site_positions(self, state: RigidBodyKinematics, /) -> Array:
         """Physical sites and differential frame markers in stable prepared order."""
         return self.marker_map.evaluate(state).position
 
-    def _energy_sites(self, sites, com, /):
+    def _energy_sites(self, sites: Array, com: Array, /) -> Array:
         positions = sites.reshape(self.bodies.capacity, 8, 3)
         energy = jnp.asarray(0.0, dtype=sites.dtype)
         for group in self.groups:
@@ -337,10 +340,10 @@ class PreparedNucleotideModel(StrictModule):
             energy += jnp.sum(values)
         return energy
 
-    def energy(self, state, /):
+    def energy(self, state: RigidBodyKinematics, /) -> Array:
         return self._energy_sites(self.site_positions(state), state.position)
 
-    def evaluate(self, state, /) -> NucleotideForceEvaluation:
+    def evaluate(self, state: RigidBodyKinematics, /) -> NucleotideForceEvaluation:
         energy, gradient = jax.value_and_grad(self._energy_sites)(
             self.site_positions(state), state.position
         )
@@ -353,12 +356,14 @@ class PreparedNucleotideModel(StrictModule):
         )
         return NucleotideForceEvaluation(energy, forces, loads, successful)
 
-    def mechanical_load(self, state, /) -> RigidBodyLoad:
+    def mechanical_load(self, state: RigidBodyKinematics, /) -> RigidBodyLoad:
         load = self.evaluate(state).loads.load
         factor = self.units.force_to_momentum_rate
         return RigidBodyLoad(factor * load.force, factor * load.torque)
 
-    def step(self, state, time, step_size, /) -> RigidBodyStepResult:
+    def step(
+        self, state: RigidBodyKinematics, time: Array, step_size: Array, /
+    ) -> RigidBodyStepResult:
         return rigid_body_kick_drift_kick(
             self.bodies,
             state,
@@ -369,7 +374,7 @@ class PreparedNucleotideModel(StrictModule):
         )
 
     def heat_bath(
-        self, translation_friction, rotation_friction, /
+        self, translation_friction: ArrayLike, rotation_friction: ArrayLike, /
     ) -> PreparedRigidHeatBath:
         thermal_energy = (
             float(self.temperature)
@@ -380,7 +385,7 @@ class PreparedNucleotideModel(StrictModule):
             self.bodies, thermal_energy, translation_friction, rotation_friction
         )
 
-    def kinetic_energy(self, state, /):
+    def kinetic_energy(self, state: RigidBodyKinematics, /) -> Array:
         inertia, _ = rigid_body_world_inertia(self.bodies, state.orientation)
         momentum = contract("...ij,...j->...i", inertia, state.angular_velocity)
         mobile = self.bodies.particles.active_mask & ~self.bodies.fixed_mask

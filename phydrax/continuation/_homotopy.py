@@ -216,7 +216,11 @@ def linear_homotopy(
     if not identifier:
         raise ValueError("homotopy_id must be non-empty.")
 
-    def endpoint_space(start_space, target_space, name):
+    def endpoint_space(
+        start_space: AbstractVectorSpace | None,
+        target_space: AbstractVectorSpace | None,
+        name: str,
+    ) -> AbstractVectorSpace | None:
         if (
             start_space is not None
             and target_space is not None
@@ -236,7 +240,9 @@ def linear_homotopy(
         "residual",
     )
 
-    def residual(state, homotopy_parameter, args):
+    def residual(
+        state: PyTree[Any], homotopy_parameter: Array, args: Any
+    ) -> PyTree[Array]:
         start = start_problem.residual(state, args)
         target = target_problem.residual(state, args)
         if jax.tree.structure(start) != jax.tree.structure(target):
@@ -287,10 +293,12 @@ def parameter_homotopy(
     if not identifier:
         raise ValueError("homotopy_id must be non-empty.")
 
-    def physical_parameter(homotopy_parameter):
+    def physical_parameter(homotopy_parameter: Array) -> Array:
         return (1.0 - homotopy_parameter) * start + homotopy_parameter * target
 
-    def residual(state, homotopy_parameter, args):
+    def residual(
+        state: PyTree[Any], homotopy_parameter: Array, args: Any
+    ) -> PyTree[Array]:
         return problem.residual(
             state,
             physical_parameter(homotopy_parameter),

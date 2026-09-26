@@ -9,6 +9,7 @@ from math import isfinite, pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -43,11 +44,11 @@ class Puncture(StrictModule, NonTrainableState):
     def __init__(
         self,
         bare_mass: ArrayLike,
-        position: ArrayLike,
+        position: ArrayLike | tuple[float, float, float],
         /,
         *,
-        linear_momentum: ArrayLike = (0.0, 0.0, 0.0),
-        spin: ArrayLike = (0.0, 0.0, 0.0),
+        linear_momentum: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        spin: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         puncture_id: str | None = None,
     ) -> None:
         mass = float(np.asarray(bare_mass))
@@ -170,7 +171,9 @@ class TwoPunctureRestart(StrictModule, NonTrainableState):
     source_content_id: str = eqx.field(static=True)
     restart_id: str = eqx.field(static=True)
 
-    def __init__(self, correction, /, *, plan_id: str, source_content_id: str) -> None:
+    def __init__(
+        self, correction: ArrayLike, /, *, plan_id: str, source_content_id: str
+    ) -> None:
         value = jnp.asarray(correction)
         plan = str(plan_id)
         source = str(source_content_id)
@@ -301,8 +304,8 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
         coordinates = jnp.stack(mesh, axis=-1)
         boundary = jnp.zeros(shape, dtype=jnp.bool_)
         for axis in range(3):
-            lower_index = [slice(None)] * 3
-            upper_index = [slice(None)] * 3
+            lower_index: list[slice | int] = [slice(None)] * 3
+            upper_index: list[slice | int] = [slice(None)] * 3
             lower_index[axis] = 0
             upper_index[axis] = -1
             boundary = boundary.at[tuple(lower_index)].set(True)
@@ -674,7 +677,7 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
             converged_,
             physical_,
             qualified,
-            False,
+            jnp.asarray(False),
             canonical_fingerprint(
                 {
                     "kind": "two-puncture-charge-tuning-evidence",
@@ -698,7 +701,9 @@ def bowen_york_initial_data(
     return BowenYorkInitialData(punctures)(coordinates)
 
 
-def _puncture_tuple(value, /, *, minimum):
+def _puncture_tuple(
+    value: tuple[Puncture, ...], /, *, minimum: int
+) -> tuple[Puncture, ...]:
     punctures = tuple(value)
     if len(punctures) < minimum or any(
         not isinstance(item, Puncture) for item in punctures
@@ -710,25 +715,30 @@ def _puncture_tuple(value, /, *, minimum):
     return tuple(sorted(punctures, key=lambda item: item.puncture_id))
 
 
-def _triple_int(value, name, /):
+def _triple_int(value: int | tuple[int, int, int], name: str, /) -> tuple[int, int, int]:
     if isinstance(value, int):
-        return (int(value),) * 3
+        count = int(value)
+        return count, count, count
     values = tuple(value)
     if len(values) != 3:
         raise ValueError(f"{name} must be a scalar or three values.")
     return values
 
 
-def _triple_float(value, name, /):
+def _triple_float(
+    value: float | tuple[float, float, float], name: str, /
+) -> tuple[float, float, float]:
     if isinstance(value, (int, float)):
-        return (float(value),) * 3
+        extent = float(value)
+        return extent, extent, extent
     values = tuple(float(item) for item in value)
     if len(values) != 3:
         raise ValueError(f"{name} must be a scalar or three values.")
-    return values
+    first, second, third = values
+    return first, second, third
 
 
-def _clenshaw_curtis_weights(nodes):
+def _clenshaw_curtis_weights(nodes: npt.ArrayLike) -> npt.NDArray[np.float64]:
     """Polynomially exact Lobatto quadrature weights on one bounded axis."""
 
     values = np.asarray(nodes, dtype=np.float64)
@@ -750,7 +760,9 @@ def _clenshaw_curtis_weights(nodes):
     return 0.5 * (values[-1] - values[0]) * weights
 
 
-def _conformal_fields(punctures, coordinates):
+def _conformal_fields(
+    punctures: tuple[Puncture, ...], coordinates: ArrayLike
+) -> tuple[Array, Array, Array]:
     points = jnp.asarray(coordinates)
     leading = points.shape[:-1]
     dtype = points.dtype
@@ -796,14 +808,14 @@ def _conformal_fields(punctures, coordinates):
 
 
 def _puncture_initial_data(
-    punctures,
-    coordinates,
-    correction,
+    punctures: tuple[Puncture, ...],
+    coordinates: ArrayLike,
+    correction: ArrayLike,
     /,
     *,
-    include_bowen_york,
-    data_id,
-):
+    include_bowen_york: bool,
+    data_id: str,
+) -> ADMInitialData:
     points = jnp.asarray(coordinates)
     value = jnp.asarray(correction, dtype=points.dtype)
     if value.shape == ():

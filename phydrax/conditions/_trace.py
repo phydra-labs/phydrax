@@ -22,19 +22,19 @@ class AbstractJetDeclaration(StrictModule):
     def identity(self) -> tuple[Any, ...]:
         raise NotImplementedError
 
-    def __mul__(self, coefficient: Any):
+    def __mul__(self: JetDeclaration, coefficient: Any) -> LinearTraceExpression:
         return LinearTraceExpression(((coefficient, self),))
 
-    def __rmul__(self, coefficient: Any):
+    def __rmul__(self: JetDeclaration, coefficient: Any) -> LinearTraceExpression:
         return self * coefficient
 
-    def __add__(self, other: Any):
+    def __add__(self: JetDeclaration, other: Any) -> LinearTraceExpression:
         return LinearTraceExpression(((1.0, self),)) + other
 
-    def __radd__(self, other: Any):
+    def __radd__(self: JetDeclaration, other: Any) -> LinearTraceExpression:
         return self + other
 
-    def __sub__(self, other: Any):
+    def __sub__(self: JetDeclaration, other: Any) -> LinearTraceExpression:
         return LinearTraceExpression(((1.0, self),)) - other
 
 
@@ -172,25 +172,25 @@ class LinearTraceExpression(StrictModule):
             raise TypeError("Linear trace expressions require declared jet terms.")
         self.terms = values
 
-    def __add__(self, other: Any):
+    def __add__(self, other: Any) -> LinearTraceExpression:
         expression = _trace_expression(other)
         return LinearTraceExpression((*self.terms, *expression.terms))
 
-    def __radd__(self, other: Any):
+    def __radd__(self, other: Any) -> LinearTraceExpression:
         return self + other
 
-    def __sub__(self, other: Any):
+    def __sub__(self, other: Any) -> LinearTraceExpression:
         expression = _trace_expression(other)
         return LinearTraceExpression(
             (*self.terms, *((-coefficient, jet) for coefficient, jet in expression.terms))
         )
 
-    def __mul__(self, coefficient: Any):
+    def __mul__(self, coefficient: Any) -> LinearTraceExpression:
         return LinearTraceExpression(
             tuple((coefficient * value, jet) for value, jet in self.terms)
         )
 
-    def __rmul__(self, coefficient: Any):
+    def __rmul__(self, coefficient: Any) -> LinearTraceExpression:
         return self * coefficient
 
 

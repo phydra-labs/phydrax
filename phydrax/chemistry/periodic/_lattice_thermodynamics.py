@@ -11,6 +11,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -37,18 +38,18 @@ class HarmonicThermodynamicsResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        temperatures,
-        free,
-        internal,
-        entropy,
-        heat,
-        zero,
-        identity,
-        x_min,
-        x_max,
-        asymptotic_count,
-        successful,
-        unit_system_id,
+        temperatures: ArrayLike,
+        free: ArrayLike,
+        internal: ArrayLike,
+        entropy: ArrayLike,
+        heat: ArrayLike,
+        zero: ArrayLike,
+        identity: ArrayLike,
+        x_min: ArrayLike,
+        x_max: ArrayLike,
+        asymptotic_count: ArrayLike,
+        successful: ArrayLike,
+        unit_system_id: str,
         /,
     ) -> None:
         self.temperatures = jnp.asarray(temperatures)
@@ -219,16 +220,16 @@ class QuasiHarmonicResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        temperatures,
-        volumes,
-        raw_free,
-        equilibrium,
-        minimum_free,
-        curvature,
-        expansion,
-        brackets,
-        interpolation,
-        successful,
+        temperatures: npt.ArrayLike,
+        volumes: npt.ArrayLike,
+        raw_free: npt.ArrayLike,
+        equilibrium: npt.ArrayLike,
+        minimum_free: npt.ArrayLike,
+        curvature: npt.ArrayLike,
+        expansion: npt.ArrayLike,
+        brackets: npt.ArrayLike,
+        interpolation: npt.ArrayLike,
+        successful: npt.ArrayLike,
         /,
     ) -> None:
         self.temperatures = jnp.asarray(temperatures)

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -18,6 +18,10 @@ from ._geometry import (
     row_logsumexp as _geometry_row_logsumexp,
 )
 from ._problem import DiscreteTransportProblem
+
+
+# (source_marginal, target_marginal, cost_total, ratio_total, mass_total, finite)
+_MarginalCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 Direction = Literal["source_to_target", "target_to_source"]
@@ -207,13 +211,13 @@ def _blockwise_statistics(
         jnp.asarray(True),
     )
 
-    def source_body(source_block, state):
+    def source_body(source_block: Array, state: _MarginalCarry) -> _MarginalCarry:
         source_result, target_result, cost_total, ratio_total, mass_total, finite = state
         source_start = source_block * block_size
         source_indices, source_valid = _indices(source_start, block_size, source_count)
         source_block_marginal = jnp.zeros((block_size,), dtype=source_potential.dtype)
 
-        def target_body(target_block, inner):
+        def target_body(target_block: Array, inner: _MarginalCarry) -> _MarginalCarry:
             (
                 source_accumulator,
                 target_accumulator,
@@ -335,7 +339,7 @@ def _blockwise_apply(
     else:
         output = jnp.zeros((source_blocks * block_size, payload_size), dtype=values.dtype)
 
-    def source_body(source_block, result):
+    def source_body(source_block: Array, result: Array) -> Array:
         source_start = source_block * block_size
         source_indices, source_valid = _indices(source_start, block_size, source_count)
         f = jnp.take(source_potential, source_indices, axis=0)
@@ -345,7 +349,7 @@ def _blockwise_apply(
         else:
             source_output = jnp.zeros((block_size, payload_size), dtype=values.dtype)
 
-        def target_body(target_block, inner_result):
+        def target_body(target_block: Array, inner_result: Array) -> Array:
             target_start = target_block * block_size
             target_indices, target_valid = _indices(
                 target_start, block_size, target_count

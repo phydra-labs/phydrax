@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from math import isfinite
+from typing import TypedDict, Unpack
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -29,6 +30,13 @@ from ._response import (
 class SpectralInstrumentKind(StrEnum):
     LINE_PROFILE = "line-profile"
     STATIONARY_KERNEL = "stationary-kernel"
+
+
+class _SpectralInstrumentOptions(TypedDict, total=False):
+    kernel_capacity: int
+    convolution_method: ConvolutionMethod
+    area_tolerance: float
+    profile: SpectralProfilePlan | None
 
 
 class SpectralInstrumentPlan(StrictModule, NonTrainableState):
@@ -230,7 +238,7 @@ def plan_spectral_instrument(
     channel_capacity: int,
     coordinate_capacity: int,
     /,
-    **kwargs: object,
+    **kwargs: Unpack[_SpectralInstrumentOptions],
 ) -> SpectralInstrumentPlan:
     return SpectralInstrumentPlan(
         kind,

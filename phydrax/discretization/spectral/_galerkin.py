@@ -32,7 +32,9 @@ def _apply_axis_matrix(value: Array, matrix: Array, axis: int, /) -> Array:
     return jnp.moveaxis(restored, 0, axis)
 
 
-def _axis_basis_values(discretization: TensorSpectralDiscretization, axis: int, /):
+def _axis_basis_values(
+    discretization: TensorSpectralDiscretization, axis: int, /
+) -> tuple[Array, Array]:
     prepared = discretization.axes[axis]
     identity = jnp.eye(
         prepared.mode_count,
@@ -52,13 +54,19 @@ def _axis_basis_values(discretization: TensorSpectralDiscretization, axis: int, 
     else:
         from ...operators.differential._array_ops import _basis_nth_derivative
 
+        family = prepared.family
+        # Families other than sine/cosine take the polynomial derivative path.
+        derivative_basis: Literal["poly", "sine", "cosine"] = (
+            family if family in ("sine", "cosine") else "poly"
+        )
+
         derivatives = jax.vmap(
             lambda column: _basis_nth_derivative(
                 column,
                 prepared.nodes,
                 axis=0,
                 order=1,
-                basis=prepared.family,
+                basis=derivative_basis,
             ),
             in_axes=1,
             out_axes=1,

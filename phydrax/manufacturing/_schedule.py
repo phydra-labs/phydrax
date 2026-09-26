@@ -1,7 +1,9 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Self
 
 from .._fingerprint import canonical_fingerprint
 from ._path import ToolpathEvent
@@ -12,7 +14,7 @@ class ProcessSchedule:
     events: tuple[ToolpathEvent, ...]
 
     @classmethod
-    def create(cls, events):
+    def create(cls, events: Iterable[ToolpathEvent]) -> Self:
         return cls(tuple(sorted(events, key=lambda x: (x.start_time_s, x.event_id))))
 
     def __post_init__(self) -> None:
@@ -31,7 +33,7 @@ class ProcessSchedule:
             raise ValueError("Bounded schedule requires nonoverlap.")
 
     @property
-    def schedule_id(self):
+    def schedule_id(self) -> str:
         return canonical_fingerprint(
             {
                 "kind": "process-schedule",

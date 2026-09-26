@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,6 +20,10 @@ from ...linalg import (
     FunctionLinearOperator,
     LinearSolvePolicy,
 )
+
+
+if TYPE_CHECKING:
+    from .._finite_element_variational import CompiledFiniteElementProblem
 
 
 class CoordinateObservation(StrictModule, NonTrainableState):
@@ -51,10 +56,10 @@ class CoordinateObservation(StrictModule, NonTrainableState):
             raise ValueError("Observation weights must be finite and match indices.")
         target = ArraySpace((indices_.size,), dtype=weights_.dtype)
 
-        def apply(state):
+        def apply(state: PyTree[ArrayLike]) -> Array:
             return weights_ * state_space.flatten(state)[indices_]
 
-        def transpose(value):
+        def transpose(value: Array) -> PyTree[Array]:
             coordinates = (
                 jnp.zeros((state_space.size,), dtype=jnp.result_type(value, weights_))
                 .at[indices_]
@@ -90,7 +95,7 @@ class CoordinateObservation(StrictModule, NonTrainableState):
     def evaluate(self, state: object, /) -> Array:
         return self.operator.mv(state)
 
-    def transpose(self, value: ArrayLike, /):
+    def transpose(self, value: ArrayLike, /) -> PyTree[Array]:
         return self.operator.transpose_mv(value)
 
 
@@ -140,7 +145,7 @@ class FiniteElementLeastSquaresObjective(StrictModule, NonTrainableState):
         residual = self.residual(state)
         return 0.5 * jnp.sum(self.precision * jnp.abs(residual) ** 2)
 
-    def state_gradient(self, state: object, /):
+    def state_gradient(self, state: object, /) -> PyTree[Array]:
         residual = self.residual(state)
         return self.observation.transpose(self.precision * residual)
 
@@ -152,8 +157,8 @@ class FiniteElementAdjointResult(StrictModule):
 
 
 def solve_finite_element_adjoint(
-    compiled_problem,
-    solution: object,
+    compiled_problem: CompiledFiniteElementProblem,
+    solution: ArrayLike,
     objective: FiniteElementLeastSquaresObjective,
     args: object = None,
     /,
@@ -180,12 +185,12 @@ def solve_finite_element_adjoint(
 
 def finite_element_parameter_gradient(
     adjoint_result: FiniteElementAdjointResult,
-    residual_parameter_pullback: Callable,
+    residual_parameter_pullback: Callable[[Any, Any], Array],
     parameter: object,
     /,
     *,
-    direct_objective_gradient: object = None,
-):
+    direct_objective_gradient: Array | None = None,
+) -> Array:
     if not isinstance(adjoint_result, FiniteElementAdjointResult):
         raise TypeError("adjoint_result must be FiniteElementAdjointResult.")
     if not callable(residual_parameter_pullback):

@@ -451,15 +451,20 @@ class AbstractSolverObjective(StrictModule):
                 "slot or ComponentBinding; solver objectives take authority only from "
                 "slots and bindings."
             )
-        trained = tuple(
-            (path, authorities[path].value)
+        owned = tuple(
+            (path, authority)
             for path in parameters
-            if authority_admits(authorities[path], self.route, self.kind)
+            if (authority := authorities[path]) is not None
+        )
+        trained = tuple(
+            (path, authority.value)
+            for path, authority in owned
+            if authority_admits(authority, self.route, self.kind)
         )
         stopped = tuple(
-            (path, authorities[path].value)
-            for path in parameters
-            if not authority_admits(authorities[path], self.route, self.kind)
+            (path, authority.value)
+            for path, authority in owned
+            if not authority_admits(authority, self.route, self.kind)
         )
         if not trained:
             groups = sorted({authority for _, authority in stopped})

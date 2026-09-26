@@ -25,6 +25,7 @@ from ._iterative import (
 )
 from ._structured_compile import compile_structured_minimization
 from ._structured_method import AbstractStructuredNonlinearMethod
+from ._structured_nonlinear import StructuredNonlinearResult
 from ._structured_pool import (
     solve_pooled_structured_nonlinear,
     StructuredPoolEvidence,
@@ -86,7 +87,7 @@ class MultiStartResult(StrictModule):
     pool_evidence: StructuredPoolEvidence | None
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return self.best.successful
 
 
@@ -123,17 +124,16 @@ def _starts(
             (policy.count - 1, space.size),
             dtype=center.dtype,
         )
-        if problem.bounds is not None:
+        bounds = problem.bounds
+        if bounds is not None:
             generated = jax.vmap(
-                lambda value: space.flatten(
-                    problem.bounds.project(space.unflatten(value))
-                )
+                lambda value: space.flatten(bounds.project(space.unflatten(value)))
             )(generated)
     return space, jnp.concatenate([center[None, :], generated], axis=0)
 
 
 def _decode_structured_multistart(
-    result,
+    result: StructuredNonlinearResult,
     space: PyTreeSpace,
     /,
 ) -> MinimizationResult:

@@ -81,7 +81,8 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
             ),
             axis=0,
         )
-        modal_conjugates = np.ravel_multi_index(conjugate_multi, modal_shape)
+        # Array multi-indices give an index array; NumPy's stubs pick the scalar overload.
+        modal_conjugates = np.asarray(np.ravel_multi_index(conjugate_multi, modal_shape))
         component_count = prod(components) if components else 1
         modal_size = prod(modal_shape)
         if modal_size * component_count > maximum:

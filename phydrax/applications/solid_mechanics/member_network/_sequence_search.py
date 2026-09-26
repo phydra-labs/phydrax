@@ -110,7 +110,9 @@ class ConstructionSequenceSearchProblem(AbstractBranchAndBoundProblem):
             state=state,
         )
 
-    def branch(self, node: PrecedenceNode, evaluation: BranchNodeEvaluation, /):
+    def branch(
+        self, node: PrecedenceNode, evaluation: BranchNodeEvaluation, /
+    ) -> tuple[PrecedenceNode, ...]:
         del evaluation
         return self.space.branch(node)
 

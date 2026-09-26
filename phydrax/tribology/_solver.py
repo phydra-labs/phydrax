@@ -256,7 +256,7 @@ class MassConservingEHLSolver:
         gauge_pressure = pressure - self.cavitation_pressure_pa
         load = contract("q,q->", self.cell_widths_m, gauge_pressure)
         centers = jnp.cumsum(self.cell_widths_m) - 0.5 * self.cell_widths_m
-        pressure_gradient = jnp.gradient(pressure, centers)
+        pressure_gradient = jnp.asarray(jnp.gradient(pressure, centers))
         friction_density = (
             self.viscosity_pa_s * abs(self.sliding_velocity_m_s) / film
             + 0.5 * jnp.abs(pressure_gradient) * film

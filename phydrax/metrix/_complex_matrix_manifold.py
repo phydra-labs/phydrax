@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
 from typing import Any
 
@@ -36,7 +37,7 @@ def _skew_hermitian(value: Array, /) -> Array:
     return 0.5 * (value - _adjoint(value))
 
 
-def _matrix_map(function, value: Array, /) -> Array:
+def _matrix_map(function: Callable[[Array], Array], value: Array, /) -> Array:
     if value.ndim == 2:
         return function(value)
     leading = value.shape[:-2]
@@ -62,7 +63,7 @@ def _unitary_logarithm(value: Array, /, *, traceless: bool) -> Array:
     return _matrix_map(logarithm, value)
 
 
-def _hermitian_spectral_map(value: Array, function, /) -> Array:
+def _hermitian_spectral_map(value: Array, function: Callable[[Array], Array], /) -> Array:
     def apply(matrix: Array) -> Array:
         eigenvalues, eigenvectors = jnp.linalg.eigh(_hermitian(matrix))
         return _hermitian(

@@ -265,7 +265,7 @@ def _call_blockwise_cases(
             )
         return model(_prepare_input(values, model.in_size), key=key)
     array = jnp.asarray(values)
-    if _is_case_dependent(model):
+    if isinstance(model, CaseDependentModel) and bool(model.case_shape):
         if tuple(model.case_shape) != tuple(case_shape):
             raise ValueError("Model case_shape does not match the composed batch.")
         return model(_prepare_input(array, model.in_size), key=key)
@@ -554,11 +554,12 @@ def _combine_models(
     not agree with its executable, so neither would the combined contracts.
     """
     contracts = tuple(_declared_contract(model) for model in models)
-    if any(contract is None for contract in contracts):
+    declared = tuple(contract for contract in contracts if contract is not None)
+    if len(declared) != len(contracts):
         return None
     if sequential:
-        return functools.reduce(DerivativeContract.compose, contracts)
-    return contracts[0].meet(*contracts[1:])
+        return functools.reduce(DerivativeContract.compose, declared)
+    return declared[0].meet(*declared[1:])
 
 
 def _prefixed_schema(name: str, schema: FeatureSchema, /) -> FeatureSchema:
@@ -578,10 +579,16 @@ def _join_schemas(named: Sequence[tuple[str, FeatureSchema]], /) -> FeatureSchem
         for output_name in _prefixed_schema(name, schema).names
     )
     kinds = tuple(kind for _, schema in schemas for kind in schema.kinds)
+    schema_dimensions = tuple(schema.dimensions for _, schema in schemas)
     dimensions = (
         None
-        if any(schema.dimensions is None for _, schema in schemas)
-        else tuple(dimension for _, schema in schemas for dimension in schema.dimensions)
+        if any(entry is None for entry in schema_dimensions)
+        else tuple(
+            dimension
+            for entry in schema_dimensions
+            if entry is not None
+            for dimension in entry
+        )
     )
     return FeatureSchema(
         names,

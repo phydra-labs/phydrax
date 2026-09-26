@@ -235,7 +235,9 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
         condition = self.condition.reshape((cases, -1))
         keys = jr.split(key, cases)
 
-        def draw(case_key, case_condition, case_center):
+        def draw(
+            case_key: Key[Array, ""], case_condition: Array, case_center: Array
+        ) -> Array:
             residual = self.flow.sample(
                 case_key,
                 sample_shape=shape,
@@ -274,7 +276,9 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
         return jnp.asarray(values).reshape(self.case_shape)
 
 
-def _conditional_flow_operator_contract(model):
+def _conditional_flow_operator_contract(
+    model: ConditionalFlowFunctionOperator,
+) -> ConfiguredOperatorContract:
     wrapped = model.location_model.operator_contract
     supported_queries = tuple(
         geometry

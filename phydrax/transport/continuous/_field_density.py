@@ -76,7 +76,7 @@ class HybridFlowLaw(StrictModule):
         keys = jr.split(value_key, max(prod(shape), 1))
         flat_modes = modes.reshape((-1,))
 
-        def one(mode, sample_key):
+        def one(mode: Array, sample_key: Array) -> Array:
             branches = tuple(
                 lambda law=law: law.sample(sample_key) for law in self.conditional_laws
             )
@@ -98,7 +98,7 @@ class HybridFlowLaw(StrictModule):
         flat_values = values.reshape((-1,) + self.event_shape)
         flat_modes = modes.reshape((-1,))
 
-        def one(selected_mode, item):
+        def one(selected_mode: Array, item: Array) -> Array:
             branches = tuple(
                 lambda law=law: law.log_prob(item) for law in self.conditional_laws
             )

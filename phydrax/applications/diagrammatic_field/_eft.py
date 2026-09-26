@@ -514,7 +514,7 @@ class PreparedRGFlow(StrictModule, NonTrainableState):
         step_size = logarithmic_interval / self.steps
         identity = jnp.eye(self.basis.size, dtype=coefficients.dtype)
 
-        def rk4_step(_, evolution):
+        def rk4_step(_: Array, evolution: Array) -> Array:
             k1 = self.generator.mv_block(evolution)
             k2 = self.generator.mv_block(evolution + 0.5 * step_size * k1)
             k3 = self.generator.mv_block(evolution + 0.5 * step_size * k2)

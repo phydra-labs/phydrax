@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax.numpy as jnp
 
 from phydrax.applications.numerical_relativity._initial_data import (
@@ -133,6 +134,17 @@ def test_brill_lindquist_and_bowen_york_are_exchange_symmetric():
     schwarzschild = IsotropicSchwarzschildInitialData(1.0)(location)
     assert jnp.allclose(single_brill.conformal_factor, schwarzschild.conformal_factor)
     assert jnp.allclose(single_brill.spatial_metric, schwarzschild.spatial_metric)
+
+
+def test_two_puncture_tuning_derivative_predicate_is_a_dynamic_boolean_array():
+    plan = TwoPunctureHamiltonianPlan(_pair(momentum=0.025), resolution=4)
+    evidence = plan.tuning_evidence(jnp.zeros(plan.shape))
+    dynamic, _ = eqx.partition(evidence, eqx.is_array)
+
+    assert dynamic.derivative_valid is not None
+    assert evidence.derivative_valid.shape == ()
+    assert evidence.derivative_valid.dtype == jnp.bool_
+    assert not bool(evidence.derivative_valid)
 
 
 def test_matrix_free_two_puncture_newton_krylov_reduces_residual_and_restarts():

@@ -217,7 +217,13 @@ class RootLinearModelPolicy(AbstractNonlinearModelPolicy):
         self.jacobian = policy
         self.precision = precision_
 
-    def prepare(self, problem, state, args, /) -> NonlinearModel:
+    def prepare(
+        self,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> NonlinearModel:
         prepared = prepare_jacobian(problem, state, self.jacobian, args)
         self.precision.validate_trees(state, prepared.residual)
         self.precision.validate_accumulation_space(prepared.operator.target)
@@ -265,7 +271,12 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
         self.linear = policy
         self.precision = precision_
 
-    def compute(self, model, budget, /) -> DirectionResult:
+    def compute(
+        self,
+        model: NonlinearModel,
+        budget: NonlinearWorkBudget,
+        /,
+    ) -> DirectionResult:
         if not isinstance(model, NonlinearModel):
             raise TypeError("model must be NonlinearModel.")
         if not isinstance(budget, NonlinearWorkBudget):
@@ -301,7 +312,7 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
         )
         preflight = budget.permits(minimum_work)
 
-        def execute(_):
+        def execute(_: None) -> DirectionResult:
             right_hand_side = jax.tree.map(jnp.negative, model.residual)
             linear_result = solve_linear(
                 linear_problem,
@@ -369,7 +380,7 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
                 direction_id="newton",
             )
 
-        def reject(_):
+        def reject(_: None) -> DirectionResult:
             slope = jnp.asarray(jnp.nan, dtype=model.residual_norm.dtype)
             return DirectionResult(
                 direction=model.operator.source.zeros(),
@@ -435,7 +446,15 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
         self.maximum_steps = steps
         self.precision = precision_
 
-    def apply(self, problem, model, direction, args, budget, /):
+    def apply(
+        self,
+        problem: NonlinearSystemProblem,
+        model: NonlinearModel,
+        direction: DirectionResult,
+        args: Any,
+        budget: NonlinearWorkBudget,
+        /,
+    ) -> GlobalizationResult:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be NonlinearSystemProblem.")
         if not isinstance(model, NonlinearModel):
@@ -470,7 +489,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
             valid_seen=jnp.asarray(False),
         )
 
-        def condition(item):
+        def condition(item: _Search) -> Array:
             trial_work = NonlinearWork(
                 residual_evaluations=item.evaluations + 1,
                 validity_evaluations=item.evaluations + 1,
@@ -483,7 +502,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
                 & budget.permits(trial_work)
             )
 
-        def body(item):
+        def body(item: _Search) -> _Search:
             candidate = jax.tree.map(
                 lambda value, delta: jnp.asarray(
                     value + item.rate * delta,
@@ -589,13 +608,13 @@ class RootResidualCertificate(AbstractNonlinearCertificate):
 
     def certify(
         self,
-        problem,
-        state,
-        residual,
-        auxiliary,
-        termination,
-        initial_residual_norm,
-        args,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        residual: PyTree[Any],
+        auxiliary: Any,
+        termination: NonlinearTermination,
+        initial_residual_norm: Any,
+        args: Any,
         /,
     ) -> NonlinearCertificate:
         if not isinstance(problem, NonlinearSystemProblem):

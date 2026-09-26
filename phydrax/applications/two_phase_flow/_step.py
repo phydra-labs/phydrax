@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast, Self
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -76,7 +77,7 @@ class TwoPhaseMovingBodyPlan(StrictModule, NonTrainableState):
         radius: float,
         /,
         *,
-        velocity: ArrayLike = (0.0, 0.0, 0.0),
+        velocity: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         penalty: float = 1.0,
     ) -> None:
         center_ = jnp.asarray(center)
@@ -119,7 +120,7 @@ class TwoPhaseVOFLedger(StrictModule):
     total_energy_residual: Array
 
     @classmethod
-    def zeros(cls, dtype, /):
+    def zeros(cls, dtype: DTypeLike, /) -> Self:
         zero = jnp.zeros((), dtype=dtype)
         return cls(*((zero,) * 16))
 
@@ -218,7 +219,9 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod, NonTrainableState
             initial_evidence,
         )
 
-    def _phase_fluxes(self, alpha: Array, velocity: FaceTuple, dt: Array, /):
+    def _phase_fluxes(
+        self, alpha: Array, velocity: FaceTuple, dt: Array, /
+    ) -> tuple[FaceTuple, FaceTuple, Array]:
         discretization = self.two_phase.plan.discretization
         periodic = tuple(axis.periodic for axis in discretization.grid.structured_axes)
         total_fluxes = tuple(
@@ -336,9 +339,13 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod, NonTrainableState
             )
         volume = self.two_phase.cell_fluid_measure
 
-        def area(value):
+        def area(value: Array) -> Array:
+            # jnp.gradient returns a single Array for a scalar axis.
             gradients = jnp.stack(
-                tuple(jnp.gradient(value, axis=axis) for axis in range(value.ndim)),
+                tuple(
+                    cast(Array, jnp.gradient(value, axis=axis))
+                    for axis in range(value.ndim)
+                ),
                 axis=-1,
             )
             return material.surface_tension * jnp.sum(
@@ -586,32 +593,38 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod, NonTrainableState
             geometry_accepted=geometry_accepted,
             solid_interface_conflict_count=conflict_count,
         )
-        kinetic_before = 0.5 * sum(
-            jnp.sum(rho * measure * component**2)
-            for rho, measure, component in zip(
-                self.two_phase.face_density(
-                    self.two_phase.mixture_density(previous_alpha)
-                ),
-                self.two_phase.face_open_dual_measure,
-                velocity,
-                strict=True,
+        kinetic_before = 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(rho * measure * component**2)
+                for rho, measure, component in zip(
+                    self.two_phase.face_density(
+                        self.two_phase.mixture_density(previous_alpha)
+                    ),
+                    self.two_phase.face_open_dual_measure,
+                    velocity,
+                    strict=True,
+                )
             )
         )
-        kinetic_after = 0.5 * sum(
-            jnp.sum(rho * measure * component**2)
-            for rho, measure, component in zip(
-                face_density,
-                self.two_phase.face_open_dual_measure,
-                projected_velocity,
-                strict=True,
+        kinetic_after = 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(rho * measure * component**2)
+                for rho, measure, component in zip(
+                    face_density,
+                    self.two_phase.face_open_dual_measure,
+                    projected_velocity,
+                    strict=True,
+                )
             )
         )
         ledger_increment = TwoPhaseVOFLedger(
             liquid_volume_change=liquid_change,
             gas_volume_change=-liquid_change,
-            momentum_change=sum(
-                jnp.sum(new - old)
-                for new, old in zip(momentum, state.state.momentum, strict=True)
+            momentum_change=jnp.asarray(
+                sum(
+                    jnp.sum(new - old)
+                    for new, old in zip(momentum, state.state.momentum, strict=True)
+                )
             ),
             kinetic_energy_change=kinetic_after - kinetic_before,
             gravitational_energy_change=jnp.asarray(0.0, dtype=dt.dtype),

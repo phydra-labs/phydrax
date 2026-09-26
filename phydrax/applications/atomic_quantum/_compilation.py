@@ -20,6 +20,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -75,10 +76,10 @@ class CoherentDrive(StrictModule, NonTrainableState):
         lower_label: str,
         upper_label: str,
         rabi_frequency: complex,
-        polarization: ArrayLike,
+        polarization: npt.ArrayLike,
         /,
         *,
-        frame_euler_angles: ArrayLike = (0.0, 0.0, 0.0),
+        frame_euler_angles: npt.ArrayLike = (0.0, 0.0, 0.0),
     ) -> None:
         lower = _identifier(lower_label, "lower_label")
         upper = _identifier(upper_label, "upper_label")

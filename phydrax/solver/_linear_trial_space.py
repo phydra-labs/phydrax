@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -39,6 +39,10 @@ from ._functional_residual import (
     prepared_term_residual_vector,
 )
 from ._functional_run import require_empty_model_state
+
+
+if TYPE_CHECKING:
+    from ._functional_solver import FunctionalSolver
 
 
 _EVALUATION_ADDRESS = SampleAddress(
@@ -94,7 +98,7 @@ class LinearTrialSpaceResult(StrictModule):
         )
 
 
-def _validate_solver(solver) -> None:
+def _validate_solver(solver: FunctionalSolver) -> None:
     from ._functional_solver import FunctionalSolver
 
     if not isinstance(solver, FunctionalSolver):
@@ -123,7 +127,7 @@ def _validate_solver(solver) -> None:
 
 
 def solve_linear_trial_space(
-    solver,
+    solver: FunctionalSolver,
     /,
     *,
     linear: LinearSolvePolicy | None = None,
@@ -161,7 +165,7 @@ def solve_linear_trial_space(
             "Failed to materialize every linear trial-space residual term."
         )
 
-    def residual_vector(flat):
+    def residual_vector(flat: Array) -> Array:
         current = unravel(flat)
         pieces = tuple(
             prepared_term_residual_vector(

@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -77,7 +78,7 @@ class ComplexCoordinateConvention(StrictModule):
         result = result.at[..., jnp.asarray(self.real_axes)].set(jnp.real(values))
         return result.at[..., jnp.asarray(self.imaginary_axes)].set(jnp.imag(values))
 
-    def standard_matrix(self, *, dtype=jnp.float64) -> Array:
+    def standard_matrix(self, *, dtype: DTypeLike = jnp.float64) -> Array:
         matrix = jnp.zeros((self.chart.dimension, self.chart.dimension), dtype=dtype)
         for real, imaginary in self.pairs:
             matrix = matrix.at[real, imaginary].set(-1.0)

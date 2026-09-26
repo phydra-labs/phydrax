@@ -10,7 +10,9 @@ terms are evaluated on a padded spherical grid, not in independent columns.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -40,6 +42,10 @@ from ...linalg._local_blocks import (
 )
 from ..geophysics._vertical import HybridPressureCoordinate
 from ._processes import GlobalAtmosphereProcesses, GlobalHeldForcing, GlobalProcessRates
+
+
+# Pointwise phase values, simplex/spectral corrections, and projected coefficients.
+_PhaseProjectionCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class GlobalAtmosphereState(StrictModule):
@@ -174,6 +180,11 @@ def _interfaces(value: Array) -> Array:
     )
 
 
+def _phases(values: Iterable[Array]) -> tuple[Array, Array, Array]:
+    vapor, liquid, ice = values
+    return vapor, liquid, ice
+
+
 def _add(
     state: GlobalAtmosphereState, rate: GlobalAtmosphereState, scale: ArrayLike
 ) -> GlobalAtmosphereState:
@@ -221,32 +232,32 @@ class GlobalPrimitiveEquationPlan(StrictModule):
 
     def __init__(
         self,
-        space,
-        vertical,
+        space: SphericalSpectralDiscretization,
+        vertical: HybridPressureCoordinate,
         /,
         *,
-        dt=60.0,
-        rotation_rate=7.292115e-5,
-        gravity=9.80665,
-        gas_constant=287.05,
-        heat_capacity=1004.0,
-        reference_temperature=288.0,
-        reference_pressure=100000.0,
-        terrain=0.0,
-        processes=None,
-        padding_factor=1.5,
-        filter_rate=0.0,
-        filter_order=4,
-        terrain_rest_tolerance=1e-6,
-        budget_tolerance=1e-9,
-        energy_tolerance=1e-4,
-        maximum_courant=0.8,
-        water_limiter="reject",
-        maximum_water_phase_repartition_fraction=1e-4,
-        water_projection_iterations=4,
-        water_projection_tolerance=1e-12,
-        angular_momentum_projection="none",
-        maximum_angular_momentum_projection_fraction=1e-5,
+        dt: float = 60.0,
+        rotation_rate: float = 7.292115e-5,
+        gravity: float = 9.80665,
+        gas_constant: float = 287.05,
+        heat_capacity: float = 1004.0,
+        reference_temperature: float = 288.0,
+        reference_pressure: float = 100000.0,
+        terrain: ArrayLike = 0.0,
+        processes: GlobalAtmosphereProcesses | None = None,
+        padding_factor: float = 1.5,
+        filter_rate: float = 0.0,
+        filter_order: int = 4,
+        terrain_rest_tolerance: float = 1e-6,
+        budget_tolerance: float = 1e-9,
+        energy_tolerance: float = 1e-4,
+        maximum_courant: float = 0.8,
+        water_limiter: str = "reject",
+        maximum_water_phase_repartition_fraction: float = 1e-4,
+        water_projection_iterations: int = 4,
+        water_projection_tolerance: float = 1e-12,
+        angular_momentum_projection: str = "none",
+        maximum_angular_momentum_projection_fraction: float = 1e-5,
     ) -> None:
         if (
             not isinstance(space, SphericalSpectralDiscretization)
@@ -526,7 +537,7 @@ class PreparedGlobalAtmosphere(StrictModule):
         interfaces = self.plan.vertical.interfaces(ps)
         pressure = 0.5 * (interfaces[..., :-1] + interfaces[..., 1:])
         mass = jnp.diff(interfaces, axis=-1) / self.plan.gravity
-        water = tuple(self.reconstruct(q) / mass for q in state.water)
+        water = _phases(self.reconstruct(q) / mass for q in state.water)
         gas, cp = self.plan.processes.thermodynamic_coefficients(
             water, self.plan.gas_constant, self.plan.heat_capacity
         )
@@ -546,16 +557,16 @@ class PreparedGlobalAtmosphere(StrictModule):
     def initialize(
         self,
         *,
-        temperature=None,
-        surface_pressure=None,
-        east=0.0,
-        north=0.0,
-        vapor=0.0,
-        liquid=0.0,
-        ice=0.0,
-        surface_water=1000.0,
-        surface_temperature=290.0,
-        time=0.0,
+        temperature: ArrayLike | None = None,
+        surface_pressure: ArrayLike | None = None,
+        east: ArrayLike = 0.0,
+        north: ArrayLike = 0.0,
+        vapor: ArrayLike = 0.0,
+        liquid: ArrayLike = 0.0,
+        ice: ArrayLike = 0.0,
+        surface_water: ArrayLike = 1000.0,
+        surface_temperature: ArrayLike = 290.0,
+        time: ArrayLike = 0.0,
     ) -> GlobalAtmosphereContinuation:
         """Initialize physical data on the padded grid (scalars/vertical profiles broadcast)."""
         shape = self.work_space.sample_shape + (self.levels,)
@@ -583,7 +594,7 @@ class PreparedGlobalAtmosphere(StrictModule):
             jnp.broadcast_to(jnp.asarray(east), shape),
             jnp.broadcast_to(jnp.asarray(north), shape),
         )
-        water = tuple(
+        water = _phases(
             self.project(mass * jnp.broadcast_to(jnp.asarray(q), shape))
             for q in (vapor, liquid, ice)
         )
@@ -655,17 +666,18 @@ class PreparedGlobalAtmosphere(StrictModule):
             if self.plan.processes.thermodynamics is None
             else jnp.asarray(True)
         )
-        surface_admissible = (
-            jnp.asarray(True)
-            if self.plan.processes.surface_physics is None
-            else jnp.all(
-                self.plan.processes.surface_physics.admissible(
-                    state.surface_water,
-                    state.surface_energy,
-                    self.plan.processes.thermodynamics,
+        surface_physics = self.plan.processes.surface_physics
+        if surface_physics is None:
+            surface_admissible = jnp.asarray(True)
+        else:
+            thermodynamics = self.plan.processes.thermodynamics
+            # GlobalAtmosphereProcesses admits surface physics only with thermodynamics.
+            assert thermodynamics is not None
+            surface_admissible = jnp.all(
+                surface_physics.admissible(
+                    state.surface_water, state.surface_energy, thermodynamics
                 )
             )
-        )
         return (
             finite
             & composition
@@ -690,13 +702,13 @@ class PreparedGlobalAtmosphere(StrictModule):
         """
         coefficients = jnp.stack(water, axis=-1)
 
-        def reconstruct_phases(value):
+        def reconstruct_phases(value: Array) -> Array:
             flattened = value.reshape(value.shape[:2] + (-1,))
             return self.reconstruct(flattened).reshape(
                 self.work_space.sample_shape + (self.levels, 3)
             )
 
-        def project_phases(value):
+        def project_phases(value: Array) -> Array:
             flattened = value.reshape(self.work_space.sample_shape + (-1,))
             return self.project(flattened).reshape(coefficients.shape)
 
@@ -709,21 +721,23 @@ class PreparedGlobalAtmosphere(StrictModule):
         )
         active = jnp.any(physical < 0)
 
-        def project_simplex(value):
+        def project_simplex(value: Array) -> Array:
             nonnegative_total = jnp.maximum(total, 0.0)
             normalized = value / jnp.where(total[..., None] > 0, total[..., None], 1.0)
             return self.phase_simplex.apply(normalized) * nonnegative_total[..., None]
 
-        def project_affine(value):
+        def project_affine(value: Array) -> tuple[Array, Array]:
             projected = project_phases(value)
             discrepancy = total_coefficients - jnp.sum(projected, axis=-1)
             projected = projected + discrepancy[..., None] / 3.0
             return projected, reconstruct_phases(projected)
 
-        def solve(_):
+        def solve(_: None) -> _PhaseProjectionCarry:
             zeros = jnp.zeros_like(physical)
 
-            def iteration(_, carry):
+            def iteration(
+                _: Array, carry: _PhaseProjectionCarry
+            ) -> _PhaseProjectionCarry:
                 current, simplex_correction, spectral_correction, _ = carry
                 shifted = current + simplex_correction
                 simplex = project_simplex(shifted)
@@ -792,7 +806,7 @@ class PreparedGlobalAtmosphere(StrictModule):
             & jnp.all(represented >= -phase_tolerance)
             & jnp.all(jnp.abs(jnp.sum(represented, axis=-1) - total) <= total_tolerance)
         )
-        limited = tuple(projected[..., index] for index in range(3))
+        limited = _phases(projected[..., index] for index in range(3))
         return (
             limited,
             active,
@@ -850,8 +864,10 @@ class PreparedGlobalAtmosphere(StrictModule):
         total_relative = total_redistribution / water_scale
         phase_relative = phase_repartition / water_scale
 
-        def correct(_):
+        def correct(_: None) -> tuple[GlobalAtmosphereState, Array]:
             thermodynamics = self.plan.processes.thermodynamics
+            # Conservative limiting is admitted only with moist thermodynamics.
+            assert thermodynamics is not None
             before = self.view(state)
             replaced = eqx.tree_at(lambda value: value.water, state, water)
             after = self.view(replaced)
@@ -1322,7 +1338,7 @@ class PreparedGlobalAtmosphere(StrictModule):
         pe, pn = self.gradient(self.project(jnp.log(view.pressure)))
         absolute = self.reconstruct(state.vorticity) + self.coriolis
 
-        def vertical_adv(value):
+        def vertical_adv(value: Array) -> Array:
             trace = _interfaces(value)
             return (
                 -(
@@ -1347,7 +1363,7 @@ class PreparedGlobalAtmosphere(StrictModule):
             + process.north
         )
 
-        def transport_inventory(inventory, specific):
+        def transport_inventory(inventory: Array, specific: Array) -> Array:
             horizontal = self.reconstruct(
                 self.divergence(view.east * inventory, view.north * inventory)
             )
@@ -1375,7 +1391,7 @@ class PreparedGlobalAtmosphere(StrictModule):
             + pressure_heating
             + process.temperature
         )
-        waterdot = tuple(
+        waterdot = _phases(
             self.project(transport_inventory(view.layer_mass * q, q) + source)
             for q, source in zip(view.water, process.water, strict=True)
         )
@@ -1407,7 +1423,7 @@ class PreparedGlobalAtmosphere(StrictModule):
                 axis=-1,
             )
 
-            def source_adv(value):
+            def source_adv(value: Array) -> Array:
                 trace = _interfaces(value)
                 return (
                     -(
@@ -1422,7 +1438,7 @@ class PreparedGlobalAtmosphere(StrictModule):
                 + self._pressure_heating(view, -process.mass, 0.0)
                 + process.temperature
             )
-            source_water = tuple(
+            source_water = _phases(
                 self.project(
                     -jnp.diff(source_flux * _interfaces(q), axis=-1) / self.plan.gravity
                     + s

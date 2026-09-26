@@ -23,12 +23,13 @@ population, extrapolating a material, or returning an unsuccessful root.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...ein import contract
@@ -49,7 +50,9 @@ _ENERGY_PER_TEMPERATURE = derived_unit("J/K", ((JOULE, 1), (KELVIN, -1)))
 _MAXIMUM_FD_ETA = 80.0
 
 
-def _finite_scalar(value, unit, reference, name):
+def _finite_scalar(
+    value: ArrayLike, unit: UnitDefinition, reference: UnitDefinition, name: str
+) -> Array:
     array = _si(value, unit, reference)
     host = np.asarray(array)
     if host.shape != () or not np.isrealobj(host) or not np.isfinite(host):
@@ -57,7 +60,9 @@ def _finite_scalar(value, unit, reference, name):
     return array
 
 
-def _checked_finite(value, name, *, nonnegative=False, positive=False):
+def _checked_finite(
+    value: ArrayLike, name: str, *, nonnegative: bool = False, positive: bool = False
+) -> Array:
     array = jnp.asarray(value)
     array = array.astype(jnp.result_type(array, 1.0))
     if not jnp.issubdtype(array.dtype, jnp.floating):
@@ -70,15 +75,17 @@ def _checked_finite(value, name, *, nonnegative=False, positive=False):
     return eqx.error_if(array, invalid, f"{name} is outside its finite physical domain.")
 
 
-def _log_nonnegative(value):
+def _log_nonnegative(value: Array) -> Array:
     # A zero concentration is a genuinely absent species, not a density floor.
     return jnp.where(value > 0, jnp.log(jnp.where(value > 0, value, 1.0)), -jnp.inf)
 
 
-def _implicit_scalar_root(function, lower, upper):
+def _implicit_scalar_root(
+    function: Callable[[Array], Array], lower: Array, upper: Array
+) -> Array:
     """Native bracketed solve, differentiated only through its accepted equation."""
     initial = 0.5 * (lower + upper)
-    tolerance = max(2e-12, 16 * jnp.finfo(initial.dtype).eps)
+    tolerance = max(2e-12, 16 * float(jnp.finfo(initial.dtype).eps))
     termination = NonlinearTermination(
         absolute_residual=tolerance,
         relative_residual=0.0,
@@ -87,7 +94,7 @@ def _implicit_scalar_root(function, lower, upper):
         maximum_steps=160,
     )
 
-    def solve(equation, guess):
+    def solve(equation: Callable[[Array], Array], guess: Array) -> Array:
         del guess
         result = scalar_root(
             ScalarRootProblem(
@@ -166,18 +173,18 @@ class BandThermodynamics(StrictModule):
         name: str,
         /,
         *,
-        conduction_band_edge,
-        valence_band_edge,
-        conduction_density_of_states,
-        valence_density_of_states,
-        reference_temperature,
-        temperature_range,
+        conduction_band_edge: ArrayLike,
+        valence_band_edge: ArrayLike,
+        conduction_density_of_states: ArrayLike,
+        valence_density_of_states: ArrayLike,
+        reference_temperature: ArrayLike,
+        temperature_range: tuple[float, float],
         energy_reference: str,
         provenance: str,
         statistics: str = "boltzmann",
-        conduction_temperature_coefficient=0.0,
-        gap_varshni_alpha=0.0,
-        gap_varshni_beta=1.0,
+        conduction_temperature_coefficient: ArrayLike = 0.0,
+        gap_varshni_alpha: ArrayLike = 0.0,
+        gap_varshni_beta: ArrayLike = 1.0,
         energy_unit: UnitDefinition = JOULE,
         density_unit: UnitDefinition = PER_CUBIC_METER,
         temperature_unit: UnitDefinition = KELVIN,
@@ -249,7 +256,7 @@ class BandThermodynamics(StrictModule):
             self._quadrature_energy = jnp.empty((0,))
             self._density_weights = jnp.empty((0,))
 
-    def _band_gap(self, temperature):
+    def _band_gap(self, temperature: Array) -> Array:
         tref, beta = self.reference_temperature, self.gap_varshni_beta
         return (
             self.conduction_band_edge
@@ -258,7 +265,7 @@ class BandThermodynamics(StrictModule):
             * (temperature**2 / (temperature + beta) - tref**2 / (tref + beta))
         )
 
-    def temperature_valid(self, temperature):
+    def temperature_valid(self, temperature: ArrayLike) -> Array:
         """Elementwise JAX validity predicate; no host conversion or exception."""
         temperature = jnp.asarray(temperature)
         lower, upper = self.temperature_range
@@ -271,12 +278,12 @@ class BandThermodynamics(StrictModule):
             & (gap > 0)
         )
 
-    def admit_temperature(self, temperature) -> None:
+    def admit_temperature(self, temperature: ArrayLike) -> None:
         """Host-only admission of SI temperatures before topology/solver preparation."""
         if not np.all(np.asarray(self.temperature_valid(temperature))):
             raise ValueError("Temperature is outside the admitted band material domain.")
 
-    def _temperature(self, temperature):
+    def _temperature(self, temperature: ArrayLike) -> Array:
         temperature = _checked_finite(temperature, "temperature", positive=True)
         return eqx.error_if(
             temperature,
@@ -284,7 +291,7 @@ class BandThermodynamics(StrictModule):
             "Temperature is outside the admitted band material domain.",
         )
 
-    def density_of_states(self, T):
+    def density_of_states(self, T: ArrayLike) -> tuple[Array, Array]:
         """Return (Nc(T), Nv(T)) in m^-3 for the declared parabolic DOS law."""
         temperature = self._temperature(T)
         factor = (temperature / self.reference_temperature) ** 1.5
@@ -299,7 +306,7 @@ class BandThermodynamics(StrictModule):
             ),
         )
 
-    def band_edges(self, psi, T):
+    def band_edges(self, psi: ArrayLike, T: ArrayLike) -> tuple[Array, Array]:
         """Return (Ec, Ev) in J, both shifted by -q*psi relative to the reference."""
         temperature = self._temperature(T)
         potential = _checked_finite(psi, "electrostatic potential")
@@ -311,7 +318,7 @@ class BandThermodynamics(StrictModule):
         )
         return ec, ec - self._band_gap(temperature)
 
-    def material_band_temperature_derivatives(self, T):
+    def material_band_temperature_derivatives(self, T: ArrayLike) -> tuple[Array, Array]:
         """Return (dEc(0,T)/dT, dEv(0,T)/dT) in J/K, excluding electrostatics.
 
         These are the band-entropy terms needed when converting carrier
@@ -329,7 +336,7 @@ class BandThermodynamics(StrictModule):
         )
         return conduction_derivative, conduction_derivative - gap_derivative
 
-    def _eta(self, eta):
+    def _eta(self, eta: ArrayLike) -> Array:
         eta = _checked_finite(eta, "reduced Fermi energy")
         if self.statistics == "fermi-dirac":
             eta = eqx.error_if(
@@ -339,7 +346,7 @@ class BandThermodynamics(StrictModule):
             )
         return eta
 
-    def _fd_occupation(self, eta):
+    def _fd_occupation(self, eta: Array) -> tuple[Array, Array, Array]:
         argument = eta[..., None] - self._quadrature_energy
         shift = jnp.minimum(eta, 0.0)
         scaled = jnp.exp(
@@ -347,7 +354,7 @@ class BandThermodynamics(StrictModule):
         )
         return shift, scaled, argument
 
-    def _log_statistics(self, eta):
+    def _log_statistics(self, eta: Array) -> Array:
         if self.statistics == "boltzmann":
             return eta
         shift, scaled, _ = self._fd_occupation(eta)
@@ -355,12 +362,12 @@ class BandThermodynamics(StrictModule):
             contract("...q,q->...", scaled, self._density_weights, backend="jax")
         )
 
-    def statistics_value(self, eta):
+    def statistics_value(self, eta: ArrayLike) -> Array:
         """Normalized F_1/2(eta), or exp(eta) for the selected MB reduction."""
         value = jnp.exp(self._log_statistics(self._eta(eta)))
         return _checked_finite(value, "normalized carrier population", positive=True)
 
-    def statistics_derivative(self, eta):
+    def statistics_derivative(self, eta: ArrayLike) -> Array:
         """Derivative of the selected F_1/2, using its own occupation quadrature."""
         eta = self._eta(eta)
         if self.statistics == "boltzmann":
@@ -374,7 +381,7 @@ class BandThermodynamics(StrictModule):
         )
         return _checked_finite(value, "population compressibility", positive=True)
 
-    def _inverse_log_statistics(self, log_population):
+    def _inverse_log_statistics(self, log_population: Array) -> Array:
         if self.statistics == "boltzmann":
             return log_population
         maximum = self._log_statistics(jnp.asarray(_MAXIMUM_FD_ETA))
@@ -384,7 +391,7 @@ class BandThermodynamics(StrictModule):
             "Carrier density exceeds the admitted Fermi-Dirac domain.",
         )
 
-        def solve_one(target):
+        def solve_one(target: Array) -> Array:
             # F_1/2(eta) <= exp(eta); the negative lower endpoint safely brackets
             # even the most dilute representable physical density.
             lower = jnp.minimum(target - 2.0, -2.0)
@@ -396,14 +403,14 @@ class BandThermodynamics(StrictModule):
         flat = jnp.reshape(log_population, (-1,))
         return jax.vmap(solve_one)(flat).reshape(jnp.shape(log_population))
 
-    def inverse_statistics(self, population):
+    def inverse_statistics(self, population: ArrayLike) -> Array:
         """Return eta for a strictly positive normalized density, implicitly differentiated."""
         population = _checked_finite(
             population, "normalized carrier density", positive=True
         )
         return self._inverse_log_statistics(jnp.log(population))
 
-    def electron_density(self, psi, efn, T):
+    def electron_density(self, psi: ArrayLike, efn: ArrayLike, T: ArrayLike) -> Array:
         temperature = self._temperature(T)
         ec, _ = self.band_edges(psi, temperature)
         nc, _ = self.density_of_states(temperature)
@@ -416,7 +423,7 @@ class BandThermodynamics(StrictModule):
             positive=True,
         )
 
-    def hole_density(self, psi, efp, T):
+    def hole_density(self, psi: ArrayLike, efp: ArrayLike, T: ArrayLike) -> Array:
         temperature = self._temperature(T)
         _, ev = self.band_edges(psi, temperature)
         _, nv = self.density_of_states(temperature)
@@ -429,7 +436,7 @@ class BandThermodynamics(StrictModule):
             positive=True,
         )
 
-    def electron_fermi_energy(self, psi, n, T):
+    def electron_fermi_energy(self, psi: ArrayLike, n: ArrayLike, T: ArrayLike) -> Array:
         temperature = self._temperature(T)
         density = _checked_finite(n, "electron density", positive=True)
         ec, _ = self.band_edges(psi, temperature)
@@ -438,7 +445,7 @@ class BandThermodynamics(StrictModule):
             jnp.log(density) - jnp.log(nc)
         )
 
-    def hole_fermi_energy(self, psi, p, T):
+    def hole_fermi_energy(self, psi: ArrayLike, p: ArrayLike, T: ArrayLike) -> Array:
         temperature = self._temperature(T)
         density = _checked_finite(p, "hole density", positive=True)
         _, ev = self.band_edges(psi, temperature)
@@ -447,7 +454,7 @@ class BandThermodynamics(StrictModule):
             jnp.log(density) - jnp.log(nv)
         )
 
-    def _logarithmic_derivative(self, eta):
+    def _logarithmic_derivative(self, eta: Array) -> Array:
         if self.statistics == "boltzmann":
             return jnp.ones_like(eta)
         _, scaled, argument = self._fd_occupation(eta)
@@ -458,7 +465,9 @@ class BandThermodynamics(StrictModule):
             backend="jax",
         ) / contract("...q,q->...", scaled, self._density_weights, backend="jax")
 
-    def electron_compressibility(self, psi, efn, T):
+    def electron_compressibility(
+        self, psi: ArrayLike, efn: ArrayLike, T: ArrayLike
+    ) -> Array:
         """Positive dn/dEFn at fixed psi,T, in m^-3/J."""
         temperature = self._temperature(T)
         ec, _ = self.band_edges(psi, temperature)
@@ -470,7 +479,7 @@ class BandThermodynamics(StrictModule):
         )
         return _checked_finite(value, "electron compressibility", positive=True)
 
-    def hole_compressibility(self, psi, efp, T):
+    def hole_compressibility(self, psi: ArrayLike, efp: ArrayLike, T: ArrayLike) -> Array:
         """Positive -dp/dEFp at fixed psi,T, in m^-3/J (hole chemical potential is -EFp)."""
         temperature = self._temperature(T)
         _, ev = self.band_edges(psi, temperature)
@@ -482,24 +491,28 @@ class BandThermodynamics(StrictModule):
         )
         return _checked_finite(value, "hole compressibility", positive=True)
 
-    def _einstein_ratio(self, density, temperature, dos):
+    def _einstein_ratio(
+        self, density: ArrayLike, temperature: Array, dos: Array
+    ) -> Array:
         density = _checked_finite(density, "carrier density", positive=True)
         eta = self._inverse_log_statistics(jnp.log(density) - jnp.log(dos))
         return (_KB * temperature / _Q) / self._logarithmic_derivative(eta)
 
-    def electron_einstein_ratio(self, n, T):
+    def electron_einstein_ratio(self, n: ArrayLike, T: ArrayLike) -> Array:
         """Electron D/mu in V, reducing to kT/q in the MB limit."""
         temperature = self._temperature(T)
         nc, _ = self.density_of_states(temperature)
         return self._einstein_ratio(n, temperature, nc)
 
-    def hole_einstein_ratio(self, p, T):
+    def hole_einstein_ratio(self, p: ArrayLike, T: ArrayLike) -> Array:
         """Hole D/mu in V, with positive hole compressibility."""
         temperature = self._temperature(T)
         _, nv = self.density_of_states(temperature)
         return self._einstein_ratio(p, temperature, nv)
 
-    def _kinetic_energy(self, density, temperature, dos):
+    def _kinetic_energy(
+        self, density: ArrayLike, temperature: Array, dos: Array
+    ) -> Array:
         density = _checked_finite(density, "carrier density", nonnegative=True)
         if self.statistics == "boltzmann":
             return _checked_finite(
@@ -509,7 +522,9 @@ class BandThermodynamics(StrictModule):
             )
         return self._fd_kinetic_state(density, temperature, dos)[1]
 
-    def _fd_kinetic_state(self, density, temperature, dos):
+    def _fd_kinetic_state(
+        self, density: Array, temperature: Array, dos: Array
+    ) -> tuple[Array, Array]:
         """Reuse one FD inverse and occupation evaluation for eta and kinetic u."""
         # Exactly empty populations have zero energy and the dilute right
         # derivative. The dummy log-density only keeps the unselected root finite.
@@ -529,19 +544,21 @@ class BandThermodynamics(StrictModule):
         )
         return eta, energy
 
-    def electron_energy_density(self, n, T):
+    def electron_energy_density(self, n: ArrayLike, T: ArrayLike) -> Array:
         """Electron kinetic internal energy above Ec in J/m3; n=0 returns zero."""
         temperature = self._temperature(T)
         nc, _ = self.density_of_states(temperature)
         return self._kinetic_energy(n, temperature, nc)
 
-    def hole_energy_density(self, p, T):
+    def hole_energy_density(self, p: ArrayLike, T: ArrayLike) -> Array:
         """Hole kinetic internal energy below Ev in J/m3; p=0 returns zero."""
         temperature = self._temperature(T)
         _, nv = self.density_of_states(temperature)
         return self._kinetic_energy(p, temperature, nv)
 
-    def _kinetic_free_energy(self, density, temperature, dos):
+    def _kinetic_free_energy(
+        self, density: ArrayLike, temperature: Array, dos: Array
+    ) -> Array:
         density = _checked_finite(density, "carrier density", positive=True)
         if self.statistics == "boltzmann":
             eta = jnp.log(density) - jnp.log(dos)
@@ -549,7 +566,7 @@ class BandThermodynamics(StrictModule):
         eta, energy = self._fd_kinetic_state(density, temperature, dos)
         return density * (_KB * temperature * eta) - (2 / 3) * energy
 
-    def electron_material_free_energy_density(self, n, T):
+    def electron_material_free_energy_density(self, n: ArrayLike, T: ArrayLike) -> Array:
         """Electron material Helmholtz density in J/m3, excluding electrostatics.
 
         f=n*Ec(0,T)+n*kT*eta-2*u_kinetic/3. Its density derivative is
@@ -565,7 +582,7 @@ class BandThermodynamics(StrictModule):
             "electron material free energy",
         )
 
-    def hole_material_free_energy_density(self, p, T):
+    def hole_material_free_energy_density(self, p: ArrayLike, T: ArrayLike) -> Array:
         """Hole material Helmholtz density in J/m3, excluding electrostatics.
 
         f=-p*Ev(0,T)+p*kT*eta_h-2*u_kinetic/3. Its density derivative is
@@ -581,7 +598,9 @@ class BandThermodynamics(StrictModule):
             "hole material free energy",
         )
 
-    def electron_material_internal_energy_density(self, n, T):
+    def electron_material_internal_energy_density(
+        self, n: ArrayLike, T: ArrayLike
+    ) -> Array:
         """Electron u=f-T*partial_T(f)|n in J/m3, with no electrostatic energy.
 
         u=u_kinetic+n*(Ec(0,T)-T*dEc(0,T)/dT), not u_kinetic+n*Ec(psi,T).
@@ -598,7 +617,7 @@ class BandThermodynamics(StrictModule):
             "electron material internal energy",
         )
 
-    def hole_material_internal_energy_density(self, p, T):
+    def hole_material_internal_energy_density(self, p: ArrayLike, T: ArrayLike) -> Array:
         """Hole u=f-T*partial_T(f)|p in J/m3, with no electrostatic energy.
 
         u=u_kinetic+p*(-Ev(0,T)+T*dEv(0,T)/dT). The filled-valence, ionic,
@@ -616,8 +635,14 @@ class BandThermodynamics(StrictModule):
         )
 
     def equilibrium_fermi_energy(
-        self, psi, T, donors=0.0, acceptors=0.0, *, ionization=None
-    ):
+        self,
+        psi: ArrayLike,
+        T: ArrayLike,
+        donors: ArrayLike = 0.0,
+        acceptors: ArrayLike = 0.0,
+        *,
+        ionization: IncompleteIonization | None = None,
+    ) -> Array:
         """Unique neutral common EF in J; ``ionization=None`` means full ionization.
 
         Neutrality is p+Nd_plus=n+Na_minus, at one common temperature and one
@@ -634,7 +659,9 @@ class BandThermodynamics(StrictModule):
         acceptors = _checked_finite(acceptors, "acceptor concentration", nonnegative=True)
         arrays = jnp.broadcast_arrays(potential, temperature, donors, acceptors)
 
-        def solve_one(potential, temperature, nd, na):
+        def solve_one(
+            potential: Array, temperature: Array, nd: Array, na: Array
+        ) -> Array:
             ec, ev = self.band_edges(potential, temperature)
             nc, nv = self.density_of_states(temperature)
             kt = _KB * temperature
@@ -642,7 +669,7 @@ class BandThermodynamics(StrictModule):
             center = 0.5 * (ec + ev)
             log_nd, log_na = _log_nonnegative(nd), _log_nonnegative(na)
 
-            def residual(coordinate):
+            def residual(coordinate: Array) -> Array:
                 log_n = jnp.log(nc) + self._log_statistics(coordinate - half_gap)
                 log_p = jnp.log(nv) + self._log_statistics(-coordinate - half_gap)
                 if ionization is None:
@@ -701,10 +728,10 @@ class IncompleteIonization(StrictModule):
     def __init__(
         self,
         *,
-        donor_binding_energy,
-        acceptor_binding_energy,
-        donor_degeneracy,
-        acceptor_degeneracy,
+        donor_binding_energy: ArrayLike,
+        acceptor_binding_energy: ArrayLike,
+        donor_degeneracy: ArrayLike,
+        acceptor_degeneracy: ArrayLike,
         provenance: str,
         energy_unit: UnitDefinition = JOULE,
     ) -> None:
@@ -722,7 +749,7 @@ class IncompleteIonization(StrictModule):
         )
         self.provenance = _text(provenance, "ionization parameter provenance")
 
-    def admit(self, bands: BandThermodynamics) -> None:
+    def admit(self, bands: BandThermodynamics | None) -> None:
         """Host-only check that both impurity levels stay strictly inside the gap."""
         if not isinstance(bands, BandThermodynamics):
             raise TypeError("Impurity admission requires BandThermodynamics.")
@@ -735,10 +762,19 @@ class IncompleteIonization(StrictModule):
                 "Impurity binding energies must remain strictly inside the gap."
             )
 
-    def _log_fractions(self, ec, ev, ef, temperature):
+    def _log_fractions(
+        self, ec: Array, ev: Array, ef: Array, temperature: Array
+    ) -> tuple[Array, Array]:
         return self._log_fractions_split(ec, ev, ef, ef, temperature)
 
-    def _log_fractions_split(self, ec, ev, electron_fermi, hole_fermi, temperature):
+    def _log_fractions_split(
+        self,
+        ec: Array,
+        ev: Array,
+        electron_fermi: Array,
+        hole_fermi: Array,
+        temperature: Array,
+    ) -> tuple[Array, Array]:
         """Ionized donor/acceptor fractions with explicit carrier reservoirs."""
         gap = ec - ev
         electron_fermi = eqx.error_if(
@@ -757,7 +793,15 @@ class IncompleteIonization(StrictModule):
             -jax.nn.softplus(jnp.log(self.acceptor_degeneracy) + acceptor_argument),
         )
 
-    def ionized_densities(self, bands: BandThermodynamics, psi, ef, T, donors, acceptors):
+    def ionized_densities(
+        self,
+        bands: BandThermodynamics,
+        psi: ArrayLike,
+        ef: ArrayLike,
+        T: ArrayLike,
+        donors: ArrayLike,
+        acceptors: ArrayLike,
+    ) -> tuple[Array, Array]:
         """Return (Nd_plus, Na_minus), each nonnegative and bounded by its SI total."""
         temperature = bands._temperature(T)
         ec, ev = bands.band_edges(psi, temperature)
@@ -770,13 +814,13 @@ class IncompleteIonization(StrictModule):
     def ionized_densities_split(
         self,
         bands: BandThermodynamics,
-        psi,
-        electron_fermi,
-        hole_fermi,
-        T,
-        donors,
-        acceptors,
-    ):
+        psi: ArrayLike,
+        electron_fermi: ArrayLike,
+        hole_fermi: ArrayLike,
+        T: ArrayLike,
+        donors: ArrayLike,
+        acceptors: ArrayLike,
+    ) -> tuple[Array, Array]:
         """Out-of-equilibrium donor/electron and acceptor/hole reservoir closure."""
         temperature = bands._temperature(T)
         ec, ev = bands.band_edges(psi, temperature)
@@ -790,8 +834,14 @@ class IncompleteIonization(StrictModule):
         return donors * jnp.exp(log_donor), acceptors * jnp.exp(log_acceptor)
 
     def bound_energy_density(
-        self, bands: BandThermodynamics, psi, ef, T, donors, acceptors
-    ):
+        self,
+        bands: BandThermodynamics,
+        psi: ArrayLike,
+        ef: ArrayLike,
+        T: ArrayLike,
+        donors: ArrayLike,
+        acceptors: ArrayLike,
+    ) -> Array:
         """Electronic impurity energy in J/m3 relative to empty impurity levels.
 
         Occupied donors contribute Ed, occupied acceptors contribute Ea. Host ion
@@ -814,13 +864,13 @@ class IncompleteIonization(StrictModule):
     def bound_energy_density_split(
         self,
         bands: BandThermodynamics,
-        psi,
-        electron_fermi,
-        hole_fermi,
-        T,
-        donors,
-        acceptors,
-    ):
+        psi: ArrayLike,
+        electron_fermi: ArrayLike,
+        hole_fermi: ArrayLike,
+        T: ArrayLike,
+        donors: ArrayLike,
+        acceptors: ArrayLike,
+    ) -> Array:
         """Electronic bound-impurity energy using the declared split reservoirs."""
         temperature = bands._temperature(T)
         ec, ev = bands.band_edges(psi, temperature)

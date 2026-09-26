@@ -3,11 +3,14 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 import phydrax as phx
 
 
-def _discretization():
+def _discretization() -> tuple[
+    phx.equations.EulerSystem, phx.discretization.DyadicFiniteVolumeDiscretization
+]:
     grid = phx.discretization.AdaptiveDyadicGridPlan(
         phx.discretization.MortonAddressPlan((0.0, 0.0), (1.0, 1.0), 3),
         cell_capacity=32,
@@ -46,7 +49,7 @@ def test_dyadic_finite_volume_faces_close_and_split_interfaces() -> None:
     )
 
 
-def test_dyadic_finite_volume_executes_existing_conservation_runtime() -> None:
+def _constant_state_problem() -> tuple[phx.equations.CompiledConservationProblem, Array]:
     system, discretization = _discretization()
     boundaries = phx.discretization.UnstructuredFiniteVolumeBoundarySet(
         discretization.boundary_patch_names,
@@ -71,8 +74,30 @@ def test_dyadic_finite_volume_executes_existing_conservation_runtime() -> None:
         (discretization.cell_count, system.component_count),
     )
     state = system.primitive_to_conserved(primitive)
+    return compiled, state
+
+
+def test_dyadic_finite_volume_executes_existing_conservation_runtime() -> None:
+    compiled, state = _constant_state_problem()
     residual = eqx.filter_jit(compiled.dynamics)(jnp.asarray(0.0), state, None)
     np.testing.assert_allclose(residual, 0.0, atol=1.0e-12)
+
+
+def test_dyadic_finite_volume_runtime_advances_constant_state() -> None:
+    compiled, state = _constant_state_problem()
+    dynamics = compiled.dynamics
+    assert isinstance(
+        dynamics, phx.discretization.PreparedUnstructuredFiniteVolumeDynamics
+    )
+    runtime = phx.solver.PreparedFiniteVolumeRuntime(
+        dynamics, phx.discretization.FluxPositivityPlan()
+    )
+    result = runtime.advance(runtime.initialize_state(state, 0.0, 1e-3))
+    assert bool(result.accepted)
+    np.testing.assert_allclose(result.runtime_state.cell_average(), state, atol=1.0e-12)
+    np.testing.assert_allclose(
+        result.accepted_flux_integrals.source_integral, 0.0, atol=1.0e-12
+    )
 
 
 def test_dyadic_finite_volume_decomposes_coarse_fine_faces_conservatively() -> None:

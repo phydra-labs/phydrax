@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
-from ..nn.operator.data import OperatorOutputSpec, OperatorPrediction
+from ..nn.operator.data import FunctionSamples, OperatorOutputSpec, OperatorPrediction
 from ._operator import (
     _expected_output_shape,
     _output_mask,
@@ -69,7 +69,7 @@ def operator_target_values(
     target: ArrayLike | OperatorPrediction,
     /,
     *,
-    query,
+    query: FunctionSamples,
     output_spec: OperatorOutputSpec,
     case_axes: tuple[str, ...],
     case_shape: tuple[int, ...],
@@ -105,7 +105,7 @@ def operator_target_values(
 
 
 def measure_weights(
-    query,
+    query: FunctionSamples,
     output_spec: OperatorOutputSpec,
     case_shape: tuple[int, ...],
     /,
@@ -123,7 +123,7 @@ def measure_weights(
 
 
 def event_weights(
-    query,
+    query: FunctionSamples,
     output_spec: OperatorOutputSpec,
     case_shape: tuple[int, ...],
     /,

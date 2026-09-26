@@ -132,7 +132,9 @@ class SparseLevelOctreePlan(StrictModule):
         )
         near_offsets = parent_offsets
 
-        def lookup(level, candidate_coordinates):
+        def lookup(
+            level: jax.Array, candidate_coordinates: jax.Array
+        ) -> tuple[jax.Array, jax.Array]:
             candidate_prefixes = morton_encode_integer(
                 candidate_coordinates, self.address_plan.maximum_depth
             )
@@ -149,7 +151,7 @@ class SparseLevelOctreePlan(StrictModule):
             )
             return jnp.where(matches, row_slots[safe_positions], -1), matches
 
-        def far_candidates(node):
+        def far_candidates(node: jax.Array) -> tuple[jax.Array, jax.Array]:
             level = hierarchy.node_levels[node]
             prefix = hierarchy.node_prefixes[node]
             target_coordinate = morton_decode_integer(
@@ -211,7 +213,7 @@ class SparseLevelOctreePlan(StrictModule):
             far_active, far_sources_matrix.reshape((-1,))[safe_far], -1
         )
 
-        def near_candidates(node):
+        def near_candidates(node: jax.Array) -> tuple[jax.Array, jax.Array]:
             level = hierarchy.node_levels[node]
             prefix = hierarchy.node_prefixes[node]
             target_coordinate = morton_decode_integer(

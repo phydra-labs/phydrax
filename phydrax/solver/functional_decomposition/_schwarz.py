@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 import equinox as eqx
@@ -197,8 +197,8 @@ class SchwarzTraceQuantity(StrictModule):
     def __init__(
         self,
         quantity_id: str,
-        left_operator,
-        right_operator,
+        left_operator: Callable[[DomainFunction], object],
+        right_operator: Callable[[DomainFunction], object],
         /,
     ) -> None:
         if not callable(left_operator) or not callable(right_operator):
@@ -229,7 +229,7 @@ class DiscreteOperatorTracePenalty(AbstractScalarTerm):
         pairing: PairedSupport,
         points: Any,
         target: Array,
-        operator,
+        operator: Callable[[DomainFunction], object],
         /,
         *,
         side: Literal["left", "right"],

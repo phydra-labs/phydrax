@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from ..._strict import StrictModule
 from .._function import DomainFunction
@@ -33,7 +34,7 @@ class _CochainDegreeMask(StrictModule):
     def __init__(self, degree: int) -> None:
         self.degree = int(degree)
 
-    def __call__(self, cell: Mapping[str, object]):
+    def __call__(self, cell: Mapping[str, object]) -> Array:
         if not isinstance(cell, Mapping) or "cell_dim" not in cell:
             raise ValueError(
                 "Cochain fields require mapping-valued graph nodes with 'cell_dim'."

@@ -110,7 +110,7 @@ class MultivaluedCutCell2DComplex(StrictModule, NonTrainableState):
     component_areas: Array
     component_centers: Array
     component_area_fractions: Array
-    component_triangles: tuple[tuple[tuple[tuple[float, float], ...], ...], ...] = (
+    component_triangles: tuple[tuple[tuple[tuple[float, ...], ...], ...], ...] = (
         eqx.field(static=True)
     )
     face_active: Array
@@ -169,7 +169,7 @@ class MultivaluedCutCell2DComplex(StrictModule, NonTrainableState):
             "2-D cut SSPRK step must be positive and finite.",
         )
 
-        def rhs(stage_time, stage_state):
+        def rhs(stage_time: Array, stage_state: Array) -> Array:
             count = self.component_count
             owner = self.face_owner_components
             neighbor = self.face_neighbor_components
@@ -311,7 +311,9 @@ def _edge_kind(
     return _FACE_INTERNAL, -1, -1, -1
 
 
-def _leaf_cells(hierarchy: CanonicalPatchHierarchy):
+def _leaf_cells(
+    hierarchy: CanonicalPatchHierarchy,
+) -> tuple[tuple[int, tuple[int, ...], str], ...]:
     cells = []
     for level in hierarchy.levels:
         for bucket in level.buckets:

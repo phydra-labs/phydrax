@@ -235,6 +235,34 @@ def test_target_identity_mismatch_is_rejected_before_integrand_evaluation():
         phx.integration.materialize(other, mismatched)
 
 
+def test_generic_integration_rejects_non_gaussian_kernel_means():
+    _, target, _, _ = _problem()
+    interval_mean = phx.integration.IntervalKernelMean(
+        phx.domain.Interval1d(-1.0, 2.0),
+        phx.kernels.SquaredExponentialKernel(length_scale=0.8),
+        target_id=target.target_id,
+    )
+    plan = phx.integration.BayesianQuadraturePlan(
+        interval_mean, phx.domain.PointSampling(4, design="hammersley")
+    )
+
+    with pytest.raises(TypeError, match="requires a GaussianKernelMean"):
+        phx.integration.materialize(target, plan)
+
+
+def test_generic_integration_rejects_fixed_kernel_mean_designs():
+    _, target, kernel_mean, _ = _problem()
+    plan = phx.integration.BayesianQuadraturePlan(
+        kernel_mean,
+        phx.integration.FixedBayesianQuadratureDesign(
+            jnp.linspace(-1.0, 1.0, 4)[:, None]
+        ),
+    )
+
+    with pytest.raises(TypeError, match="requires a PointSampling design"):
+        phx.integration.materialize(target, plan)
+
+
 def test_unsupported_target_kernel_and_dimension_fail_closed():
     uniform = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="u")
     uniform_target = phx.integration.expectation(uniform)

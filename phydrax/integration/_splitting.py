@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, Key
 
 from .._strict import StrictModule
@@ -325,7 +326,7 @@ def _score_population(
     return jnp.max(score_paths, axis=-1), score_paths
 
 
-def _empty_round_matrix(population_size: int, /, *, dtype) -> Array:
+def _empty_round_matrix(population_size: int, /, *, dtype: DTypeLike) -> Array:
     return jnp.empty((0, population_size), dtype=dtype)
 
 

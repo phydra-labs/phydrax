@@ -13,6 +13,7 @@ uniform characteristic grid advances exactly one cell per fixed time step.
 from __future__ import annotations
 
 from enum import IntFlag
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,12 +31,18 @@ from ._optical_response import (
     CarrierOpticalResponsePlan,
     evaluate_semiconductor_optical_response,
     LinearizedCarrierOpticalResponsePlan,
+    SemiconductorOpticalResponseResult,
     TabulatedCarrierOpticalResponsePlan,
 )
 from ._quantities import ELEMENTARY_CHARGE_SI
 
 
 _REDUCED_PLANCK_CONSTANT = 1.054_571_817e-34
+# Seven running ledger totals, accumulated homogeneously in the transient scan.
+_TransientTotals: TypeAlias = tuple[Array, ...]
+_TransientCarry: TypeAlias = tuple[Array, Array, Array, _TransientTotals]
+_TransientForcing: TypeAlias = tuple[Array, Array, Array, Array]
+_TransientOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class TravelingWaveLaserStatus(IntFlag):
@@ -327,7 +334,13 @@ class TravelingWaveSemiconductorLaserPlan(StrictModule, NonTrainableState):
             }
         )
 
-        def scalar(value, name, *, positive=False, nonnegative=False):
+        def scalar(
+            value: ArrayLike,
+            name: str,
+            *,
+            positive: bool = False,
+            nonnegative: bool = False,
+        ) -> Array:
             host = np.asarray(value)
             if host.shape != () or np.iscomplexobj(host) or not np.isfinite(host):
                 raise ValueError(f"{name} must be one finite real scalar.")
@@ -892,7 +905,7 @@ def _dominant_frozen_optical_mode(
     second = second - first * contract("n,n->", jnp.conj(first), second)
     second = _normalize_mode(second, jnp.roll(first, 1))
 
-    def iteration(_, basis):
+    def iteration(_: Array, basis: tuple[Array, Array]) -> tuple[Array, Array]:
         q0, q1 = basis
         image0 = _apply_frozen_optical_map(prepared, amplitude_factor, q0)
         image1 = _apply_frozen_optical_map(prepared, amplitude_factor, q1)
@@ -918,7 +931,7 @@ def _dominant_frozen_optical_mode(
     eigenvalue = jnp.where(plus_dominant, eigenvalue_plus, eigenvalue_minus)
     secondary = jnp.where(plus_dominant, eigenvalue_minus, eigenvalue_plus)
 
-    def projected_coefficients(value, fallback):
+    def projected_coefficients(value: Array, fallback: Array) -> Array:
         candidate0 = jnp.stack((projected01, value - projected00))
         candidate1 = jnp.stack((value - projected11, projected10))
         use_first = _complex_norm(candidate0) >= _complex_norm(candidate1)
@@ -977,7 +990,7 @@ def _dominant_frozen_optical_mode(
 
 def _fabry_perot_threshold_mode(
     prepared: PreparedTravelingWaveSemiconductorLaser,
-    response,
+    response: SemiconductorOpticalResponseResult,
     /,
 ) -> tuple[Array, Array, Array, Array]:
     gain = response.modal_power_gain
@@ -1091,7 +1104,9 @@ def solve_traveling_wave_laser_threshold(
                 "Distributed-grating threshold exceeds maximum_threshold_map_applications."
             )
 
-        def mode_at(density):
+        def mode_at(
+            density: Array,
+        ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
             return _dominant_frozen_optical_mode(
                 prepared, density, temperature, mode_iterations
             )
@@ -1107,7 +1122,7 @@ def solve_traveling_wave_laser_threshold(
             & (upper_modulus >= 1.0)
         )
 
-        def body(_, state):
+        def body(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = state
             middle = 0.5 * (lower + upper)
             modulus = mode_at(middle)[0]
@@ -1163,7 +1178,7 @@ def solve_traveling_wave_laser_threshold(
         )
         safe_product = jnp.where(reflectivity_product > 0.0, reflectivity_product, 1.0)
 
-        def margin(density):
+        def margin(density: Array) -> tuple[Array, SemiconductorOpticalResponseResult]:
             response_ = evaluate_semiconductor_optical_response(
                 prepared.plan.optical_response,
                 jnp.broadcast_to(density, (prepared.section_count,)),
@@ -1186,10 +1201,10 @@ def solve_traveling_wave_laser_threshold(
             & (reflectivity_product > 0.0)
         )
 
-        def body(_, state):
+        def body(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = state
             middle = 0.5 * (lower + upper)
-            value, _ = margin(middle)
+            value = margin(middle)[0]
             return jax.lax.cond(
                 value >= 0.0,
                 lambda: (lower, middle),
@@ -1420,7 +1435,9 @@ def _simulate(
         initial_totals,
     )
 
-    def step(carry, forcing):
+    def step(
+        carry: _TransientCarry, forcing: _TransientForcing
+    ) -> tuple[_TransientCarry, _TransientOutput]:
         density, forward, backward, totals = carry
         injection, local_temperature, density_noise, amplitude_noise = forcing
         response = evaluate_semiconductor_optical_response(

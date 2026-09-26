@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jaxtyping import Array, Key
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....artifacts import ScientificArtifactEnvelope
@@ -20,8 +22,9 @@ from ....atomistic import (
     PreparedThermodynamicStateTable,
     VelocityVerletPlan,
 )
+from ....discretization import AbstractPreparedParticleNeighborhood
 from ....dynamics import StateLayout, TrajectoryData
-from ....units import conversion_factor
+from ....units import conversion_factor, UnitDefinition
 from .._binding import PreparedProteinBinding
 from .._qualification import PreparedProteinQualification, ProteinGeometryEvidence
 
@@ -63,11 +66,11 @@ class ProteinDynamicsResult:
 
 
 def prepare_protein_dynamics(
-    binding,
-    neighborhood,
-    integrator,
-    thermodynamic_state,
-):
+    binding: PreparedProteinBinding,
+    neighborhood: AbstractPreparedParticleNeighborhood,
+    integrator: VelocityVerletPlan | BAOABLangevinPlan,
+    thermodynamic_state: AtomisticThermodynamicStatePlan,
+) -> tuple[PreparedAtomisticDynamics, PreparedThermodynamicStateTable]:
     """Compose one declared native thermodynamic state without a new engine."""
     if not isinstance(binding, PreparedProteinBinding):
         raise TypeError("binding must be a PreparedProteinBinding.")
@@ -88,18 +91,18 @@ def prepare_protein_dynamics(
 
 def run_protein_dynamics(
     binding: PreparedProteinBinding,
-    neighborhood,
-    integrator,
+    neighborhood: AbstractPreparedParticleNeighborhood,
+    integrator: VelocityVerletPlan | BAOABLangevinPlan,
     qualification: PreparedProteinQualification,
     thermodynamic_state: AtomisticThermodynamicStatePlan,
     *,
-    velocity,
-    velocity_unit,
-    key,
+    velocity: npt.ArrayLike,
+    velocity_unit: UnitDefinition,
+    key: Key[Array, ""],
     step_count: int,
     sample_stride: int = 1,
-    commercial_use=False,
-    export=False,
+    commercial_use: bool = False,
+    export: bool = False,
 ) -> ProteinDynamicsResult:
     """Run one source-bound atomistic thermodynamic state.
 

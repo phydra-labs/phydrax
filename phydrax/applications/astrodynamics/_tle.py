@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal, SupportsFloat, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -247,11 +247,11 @@ class TLEPropagationPlan(StrictModule, NonTrainableState):
         *,
         maximum_minutes: float = 43_200.0,
         resonance_step_minutes: float = 720.0,
-        mu: ArrayLike = 398600.8,
-        equatorial_radius: ArrayLike = 6378.135,
-        j2: ArrayLike = 1.082616e-3,
-        j3: ArrayLike = -2.53881e-6,
-        j4: ArrayLike = -1.65597e-6,
+        mu: SupportsFloat = 398600.8,
+        equatorial_radius: SupportsFloat = 6378.135,
+        j2: SupportsFloat = 1.082616e-3,
+        j3: SupportsFloat = -2.53881e-6,
+        j4: SupportsFloat = -1.65597e-6,
     ) -> None:
         if not isinstance(record, TleRecord):
             raise TypeError("record must be a TleRecord.")

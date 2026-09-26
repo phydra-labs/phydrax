@@ -61,7 +61,7 @@ def linearize_circuit(
         raise ValueError("Linearization time must be scalar.")
     zero_rate = jnp.zeros_like(value)
 
-    def residual(current_state, current_rate):
+    def residual(current_state: Array, current_rate: Array) -> Array:
         inputs = (
             None
             if input_policy is None

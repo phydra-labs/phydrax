@@ -298,7 +298,9 @@ class FiniteParticleTransportPlan(StrictModule, NonTrainableState):
         segment = free_position - state.position
         regular = jnp.ones_like(active)
 
-        def bisect(_, carry):
+        def bisect(
+            _: Array, carry: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             lower, upper, regular_ = carry
             middle = 0.5 * (lower + upper)
             point = state.position + middle[:, None] * segment

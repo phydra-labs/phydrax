@@ -96,7 +96,7 @@ class VariablePatchALEPlan(StrictModule, NonTrainableState):
         self,
         source: VariablePatchGeometryState,
         step_size: ArrayLike,
-        args=None,
+        args: object = None,
         /,
     ) -> VariablePatchALEStepGeometry:
         if (

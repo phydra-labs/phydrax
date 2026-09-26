@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
+from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import (
@@ -19,15 +21,16 @@ from .._precision import (
     PrecisionResolution,
     PrecisionResourceAssumptions,
     real_precision_dtype_name,
+    RealPrecisionDType,
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
 
-PrecisionDType: TypeAlias = Literal["float16", "bfloat16", "float32", "float64"]
+PrecisionDType: TypeAlias = RealPrecisionDType
 
 
-def _finite_precision_dtype(value: Any, /) -> PrecisionDType:
+def _finite_precision_dtype(value: DTypeLike, /) -> PrecisionDType:
     return real_precision_dtype_name(value)
 
 
@@ -46,14 +49,14 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        storage_dtype: PrecisionDType = "float64",
+        storage_dtype: DTypeLike = "float64",
         /,
         *,
-        reconstruction_dtype: PrecisionDType | None = None,
-        flux_dtype: PrecisionDType | None = None,
-        reduction_dtype: PrecisionDType | None = None,
-        output_dtype: PrecisionDType | None = None,
-        checkpoint_dtype: PrecisionDType | None = None,
+        reconstruction_dtype: DTypeLike | None = None,
+        flux_dtype: DTypeLike | None = None,
+        reduction_dtype: DTypeLike | None = None,
+        output_dtype: DTypeLike | None = None,
+        checkpoint_dtype: DTypeLike | None = None,
         resolution: PrecisionResolution | None = None,
     ) -> None:
         storage = _finite_precision_dtype(storage_dtype)
@@ -162,28 +165,28 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
                 f"Finite-volume state dtype {observed} does not match {self.storage_dtype}."
             )
 
-    def storage(self, value: Any, /):
+    def storage(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.storage_dtype)
 
-    def reconstruction(self, value: Any, /):
+    def reconstruction(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.reconstruction_dtype)
 
-    def flux(self, value: Any, /):
+    def flux(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.flux_dtype)
 
-    def reduction(self, value: Any, /):
+    def reduction(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             return array
         return array.astype(self.reduction_dtype)
 
-    def decision(self, value: Any, /):
+    def decision(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.reduction_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.output_dtype)
 
-    def checkpoint(self, value: Any, /):
+    def checkpoint(self, value: Any, /) -> Array:
         return jnp.asarray(value, dtype=self.checkpoint_dtype)
 
     @property
@@ -197,7 +200,7 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
         /,
         *,
         wet_mask: Any | None = None,
-    ):
+    ) -> Array:
         """Round-trip through storage and reject changed admissibility/topology."""
         if not callable(admissible):
             raise TypeError("admissible must be callable.")
@@ -222,7 +225,7 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
             "Quantized finite-volume state is inadmissible or changes its wet mask.",
         )
 
-    def numpy_dtype(self, role: str, /):
+    def numpy_dtype(self, role: str, /) -> np.dtype:
         values = {
             "storage": self.storage_dtype,
             "reconstruction": self.reconstruction_dtype,

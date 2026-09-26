@@ -494,7 +494,12 @@ def solve_hydrodynamic_response_3d(
             )
         )
 
-    if modal_enabled:
+    if (
+        structural_modal_mass is not None
+        and structural_modal_stiffness is not None
+        and structural_modal_damping is not None
+        and modal_force_map is not None
+    ):
         if not isinstance(modal_force_map, WetSurfaceModalGeneralizedForceMap3D):
             raise TypeError(
                 "modal_force_map must be WetSurfaceModalGeneralizedForceMap3D."

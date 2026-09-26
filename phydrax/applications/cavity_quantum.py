@@ -1189,7 +1189,11 @@ class AdaptiveHcurlCapabilityPlan(StrictModule, NonTrainableState):
             assembly = True
             adaptation = False
             reason = "adaptive H(curl) requires an explicit finite-element topology transaction"
-        elif require_adaptation and transaction.field_transfer is None:
+        elif (
+            require_adaptation
+            and transaction is not None
+            and transaction.field_transfer is None
+        ):
             status = HcurlCapabilityStatus.HCURL_TRANSFER_REQUIRED
             assembly = True
             adaptation = False

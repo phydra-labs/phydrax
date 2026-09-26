@@ -108,7 +108,7 @@ def _fit_kmeans(
     delta = jnp.full(case_shape, jnp.inf, dtype=w.dtype)
     empty_seen = jnp.zeros(case_shape, dtype=jnp.bool_)
 
-    def step(_, state):
+    def step(_: Array, state: tuple[Array, Array, Array]) -> tuple[Array, Array, Array]:
         centers, delta, empty_seen = state
         distances = distances_to_centers(x, centers, "squared-euclidean", case_shape)
         if temperature is None:
@@ -389,7 +389,9 @@ class KMedoids(AbstractRecipe):
         changed = jnp.ones(batch.case_shape, dtype=jnp.bool_)
         empty_seen = jnp.zeros(batch.case_shape, dtype=jnp.bool_)
 
-        def step(_, state):
+        def step(
+            _: Array, state: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             medoids, changed, empty_seen = state
             distances = distances_to_centers(x, medoids, self.metric, batch.case_shape)
             labels = jnp.argmin(distances, axis=-1)
@@ -539,7 +541,9 @@ class StreamingKMeans(StrictModule):
         )
         return StreamingKMeans(centers, total_mass, self.updates + 1)
 
-    def model(self, /, *, temperature: float | None = None):
+    def model(
+        self, /, *, temperature: float | None = None
+    ) -> HardClusterModel | SoftClusterModel:
         active = self.cluster_mass > 0.0
         if temperature is None:
             return HardClusterModel(self.centers, active, method="streaming-k-means")
@@ -596,7 +600,7 @@ class MiniBatchKMeans(AbstractRecipe):
         )
         flat_w = w.reshape((case_count, batch.sample_count))
 
-        def draws(case_weights, case_keys):
+        def draws(case_weights: Array, case_keys: Array) -> Array:
             logits = jnp.where(case_weights > 0.0, jnp.log(case_weights), -jnp.inf)
             return jax.vmap(
                 lambda sample_key: jax.random.categorical(
@@ -609,7 +613,7 @@ class MiniBatchKMeans(AbstractRecipe):
         )
         mass = jnp.zeros(batch.case_shape + (self.cluster_count,), dtype=w.dtype)
 
-        def step(i, state):
+        def step(i: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             centers, mass = state
             selected = indices[..., i, :]
             batch_x = jnp.take_along_axis(x, selected[..., :, None], axis=-2)

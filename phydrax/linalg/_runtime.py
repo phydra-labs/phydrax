@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
 from typing import Any, NamedTuple, TypeVar
 
@@ -11,7 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._admissibility import guard_derivative_validity
 from .._iteration import (
@@ -25,6 +26,7 @@ from .._iteration import (
     IterationPlan,
     IterationRecord,
     IterationRuntimeState,
+    IterationScope,
 )
 from ._binding import LinearSolveTemplate
 from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
@@ -62,7 +64,7 @@ from ._results import (
     LinearSolveResult,
     LinearSolveStatus,
 )
-from ._spaces import _coordinate_dtype, RHSLayout
+from ._spaces import _coordinate_dtype, AbstractVectorSpace, RHSLayout
 from ._subspaces import KernelCertificate, LinearSubspace, NullspacePolicy
 from ._tree import _implicit_tree_value, _prepare_tree, TreeLinearOperator
 from .backends._jax_dense import (
@@ -76,7 +78,7 @@ from .backends._jax_dense import (
 from .backends._jax_sparse import HostSparseState
 from .backends._native_block_krylov import NativeBlockKrylovBackendOutput
 from .backends._native_krylov import NativeKrylovBackendOutput
-from .backends._provider import provider_for
+from .backends._provider import AbstractLinearProvider, provider_for
 
 
 _ProblemT = TypeVar("_ProblemT", bound=AbstractLinearProblem)
@@ -470,15 +472,15 @@ def _execution_rhs_layout(
 
 
 def _linear_iteration_record(
-    phase,
-    ordinal,
-    status,
-    metrics,
+    phase: IterationPhase,
+    ordinal: ArrayLike,
+    status: ArrayLike,
+    metrics: LinearIterationMetrics,
     /,
     *,
-    active=True,
-    committed=False,
-    terminal=False,
+    active: ArrayLike = True,
+    committed: ArrayLike = False,
+    terminal: ArrayLike = False,
 ) -> IterationRecord:
     accepted = jnp.asarray(ordinal, dtype=jnp.int32)
     return IterationRecord(
@@ -549,14 +551,14 @@ def _attach_terminal_linear_iteration(
 
 
 def _initial_linear_iteration(
-    prepared,
-    problem,
-    canonical_rhs,
-    canonical_guess,
-    layout,
-    iteration,
-    provider,
-):
+    prepared: PreparedLinearSolve,
+    problem: AbstractLinearProblem,
+    canonical_rhs: Array,
+    canonical_guess: Array | None,
+    layout: _PackedRHSLayout,
+    iteration: IterationPlan,
+    provider: AbstractLinearProvider,
+) -> tuple[IterationScope, IterationCapabilities, IterationRuntimeState]:
     capabilities = provider.iteration_capabilities
     if (
         iteration.granularity == "inner-iteration"
@@ -1047,7 +1049,7 @@ def _provider_initial_guess(
     target = problem.operator.target
     baseline_state = source.zeros()
 
-    def propose(column):
+    def propose(column: Array) -> Array:
         proposal = provider.propose(target.unflatten(column), baseline_state)
         return source.flatten(source.validate(proposal))
 
@@ -1680,13 +1682,13 @@ def _transformed_linear_system(
 
 def _transpose_right_subspace(
     subspace: LinearSubspace | None,
-    space,
+    space: AbstractVectorSpace,
     /,
 ) -> LinearSubspace | None:
     if subspace is None:
         return None
 
-    def transform(column):
+    def transform(column: Array) -> Array:
         vector = space.unflatten(column)
         return jnp.conj(space.flatten(space.riesz(vector)))
 
@@ -1701,13 +1703,13 @@ def _transpose_right_subspace(
 
 def _transpose_left_subspace(
     subspace: LinearSubspace | None,
-    space,
+    space: AbstractVectorSpace,
     /,
 ) -> LinearSubspace | None:
     if subspace is None:
         return None
 
-    def transform(column):
+    def transform(column: Array) -> Array:
         covector = space.unflatten(jnp.conj(column))
         return space.flatten(space.inverse_riesz(covector))
 
@@ -1748,12 +1750,12 @@ def _require_rhs_resources(
 
 
 def _pack_rhs(
-    space,
+    space: AbstractVectorSpace,
     batch_shape: tuple[int, ...],
     rhs: PyTree[Any],
     declared_layout: RHSLayout | None = None,
     /,
-):
+) -> tuple[Array, _PackedRHSLayout]:
     specifications, expected_tree = jax.tree.flatten(space.structure())
     values, actual_tree = jax.tree.flatten(rhs)
     if actual_tree != expected_tree:
@@ -1820,7 +1822,9 @@ def _pack_rhs(
     return canonical, _PackedRHSLayout(rhs_shape, batch_shape, not batched)
 
 
-def _unpack_value(space, value: Array, layout: _PackedRHSLayout, /) -> PyTree[Array]:
+def _unpack_value(
+    space: AbstractVectorSpace, value: Array, layout: _PackedRHSLayout, /
+) -> PyTree[Array]:
     specifications, tree = jax.tree.flatten(space.structure())
     leaves = []
     offset = 0
@@ -1833,7 +1837,7 @@ def _unpack_value(space, value: Array, layout: _PackedRHSLayout, /) -> PyTree[Ar
     return jax.tree.unflatten(tree, leaves)
 
 
-def _shared_rhs_layout(space, rhs: PyTree[Any], /) -> RHSLayout:
+def _shared_rhs_layout(space: AbstractVectorSpace, rhs: PyTree[Any], /) -> RHSLayout:
     specifications, expected_tree = jax.tree.flatten(space.structure())
     values, actual_tree = jax.tree.flatten(rhs)
     if actual_tree != expected_tree:
@@ -1898,20 +1902,20 @@ def _normal_residual(
     return _coordinate_norm(source, normal), _coordinate_norm(source, reference)
 
 
-def _coordinate_norm(space, coordinates: Array, /) -> Array:
+def _coordinate_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array:
     flattened, output_shape = _flatten_coordinate_columns(space, coordinates)
 
-    def norm(column):
+    def norm(column: Array) -> Array:
         vector = space.unflatten(column)
         return jnp.sqrt(jnp.maximum(jnp.real(space.inner(vector, vector)), 0.0))
 
     return jax.vmap(norm)(flattened).reshape(output_shape)
 
 
-def _dual_coordinate_norm(space, coordinates: Array, /) -> Array:
+def _dual_coordinate_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array:
     flattened, output_shape = _flatten_coordinate_columns(space, coordinates)
 
-    def norm(column):
+    def norm(column: Array) -> Array:
         covector = space.unflatten(column)
         primal = space.inverse_riesz(covector)
         return jnp.sqrt(jnp.maximum(jnp.real(space.inner(primal, primal)), 0.0))
@@ -1919,15 +1923,22 @@ def _dual_coordinate_norm(space, coordinates: Array, /) -> Array:
     return jax.vmap(norm)(flattened).reshape(output_shape)
 
 
-def _riesz_coordinates(space, coordinates: Array, /) -> Array:
+def _riesz_coordinates(space: AbstractVectorSpace, coordinates: Array, /) -> Array:
     return _map_coordinate_columns(space, coordinates, space.riesz)
 
 
-def _inverse_riesz_coordinates(space, coordinates: Array, /) -> Array:
+def _inverse_riesz_coordinates(
+    space: AbstractVectorSpace, coordinates: Array, /
+) -> Array:
     return _map_coordinate_columns(space, coordinates, space.inverse_riesz)
 
 
-def _map_coordinate_columns(space, coordinates: Array, transform, /) -> Array:
+def _map_coordinate_columns(
+    space: AbstractVectorSpace,
+    coordinates: Array,
+    transform: Callable[[PyTree[Any]], PyTree[Array]],
+    /,
+) -> Array:
     array = jnp.asarray(coordinates)
     flattened, _ = _flatten_coordinate_columns(space, array)
     mapped = jax.vmap(lambda column: space.flatten(transform(space.unflatten(column))))(
@@ -1937,7 +1948,7 @@ def _map_coordinate_columns(space, coordinates: Array, transform, /) -> Array:
     return jnp.moveaxis(mapped.reshape(moved_shape), -1, -2)
 
 
-def _project_coordinate_columns(subspace, coordinates: Array, /) -> Array:
+def _project_coordinate_columns(subspace: LinearSubspace, coordinates: Array, /) -> Array:
     array = jnp.asarray(coordinates)
     flattened, _ = _flatten_coordinate_columns(subspace.space, array)
     projected = jax.vmap(subspace.project_coordinates)(flattened)
@@ -1946,7 +1957,7 @@ def _project_coordinate_columns(subspace, coordinates: Array, /) -> Array:
 
 
 def _flatten_coordinate_columns(
-    space,
+    space: AbstractVectorSpace,
     coordinates: Array,
     /,
 ) -> tuple[Array, tuple[int, ...]]:
@@ -2058,12 +2069,12 @@ def _implicit_root_value(
     initial = jax.lax.stop_gradient(initial)
     if isinstance(problem, LinearSystem):
 
-        def residual(value):
+        def residual(value: Array) -> Array:
             return _operator_action(problem.operator, value) - rhs
 
     else:
 
-        def residual(value):
+        def residual(value: Array) -> Array:
             return _least_squares_root_residual(
                 prepared,
                 problem,
@@ -2084,7 +2095,7 @@ def _implicit_minimum_norm_value(
     operator = problem.operator
     operator_adjoint = adjoint(operator)
 
-    def dual_action(value):
+    def dual_action(value: Array) -> Array:
         return _operator_action(
             operator,
             _operator_action(operator_adjoint, value),
@@ -2096,7 +2107,7 @@ def _implicit_minimum_norm_value(
         jnp.concatenate((initial, multiplier), axis=-2)
     )
 
-    def residual(augmented):
+    def residual(augmented: Array) -> Array:
         value = augmented[..., :source_size, :]
         dual = augmented[..., source_size:, :]
         stationarity = value - _operator_action(operator_adjoint, dual)
@@ -2112,12 +2123,12 @@ def _implicit_minimum_norm_value(
 
 
 def _implicit_custom_root(
-    residual,
+    residual: Callable[[Array], Array],
     initial: Array,
     plan: LinearSolvePlan,
     /,
 ) -> Array:
-    def tangent_solve(linearized, target):
+    def tangent_solve(linearized: Callable[[Array], Array], target: Array) -> Array:
         return jax.lax.custom_linear_solve(
             linearized,
             target,
@@ -2142,7 +2153,7 @@ def _implicit_custom_root(
 
 
 def _solve_independent_columns(
-    action,
+    action: Callable[[Array], Array],
     right_hand_side: Array,
     plan: LinearSolvePlan,
     /,
@@ -2155,12 +2166,12 @@ def _solve_independent_columns(
     batch_count = prod(batch_shape) if batch_shape else 1
     flattened_rhs = right_hand_side.reshape((batch_count, dimension, rhs_count))
 
-    def solve_instance(instance_index):
+    def solve_instance(instance_index: Array) -> Array:
         batch_index = instance_index // rhs_count
         rhs_index = instance_index % rhs_count
         column = flattened_rhs[batch_index, :, rhs_index]
 
-        def vector_action(vector):
+        def vector_action(vector: Array) -> Array:
             embedded = (
                 jnp.zeros_like(flattened_rhs)
                 .at[
@@ -2181,7 +2192,7 @@ def _solve_independent_columns(
     return solved.reshape(batch_shape + (dimension, rhs_count))
 
 
-def _operator_action(operator, value: Array, /) -> Array:
+def _operator_action(operator: AbstractLinearOperator, value: Array, /) -> Array:
     return operator.mv_block(value)
 
 
@@ -2277,7 +2288,7 @@ def _checked_callable_value(
 
 
 def _callable_gmres(
-    action,
+    action: Callable[[Array], Array],
     rhs: Array,
     plan: LinearSolvePlan,
     /,
@@ -2309,7 +2320,7 @@ def _callable_gmres(
 
 
 def _callable_gmres_for_policy(
-    action,
+    action: Callable[[Array], Array],
     rhs: Array,
     policy: LinearSolvePolicy,
     /,
@@ -2336,7 +2347,7 @@ def _callable_gmres_for_policy(
 
 
 def _run_callable_gmres(
-    action,
+    action: Callable[[Array], Array],
     rhs: Array,
     /,
     *,
@@ -2348,10 +2359,10 @@ def _run_callable_gmres(
 ) -> _CallableLinearSolve:
     from .backends._native_krylov import _fgmres_raw
 
-    def inner(left, right):
+    def inner(left: Array, right: Array) -> Array:
         return jnp.vdot(left, right)
 
-    def identity(vector, _):
+    def identity(vector: Array, _: Array) -> Array:
         return vector
 
     value, auxiliary, _ = _fgmres_raw(

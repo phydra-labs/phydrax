@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -22,6 +24,7 @@ from ..linalg import (
 from ..topology import (
     CellComplexPair,
     CellSubcomplex,
+    CompactCellLayout,
     compute_betti_dimensions,
     RationalField,
     TopologyResourcePolicy,
@@ -100,7 +103,7 @@ def _analysis_complex(
     return CellComplexPair(ambient, relative)
 
 
-def _layout(value: CellSubcomplex | CellComplexPair):
+def _layout(value: CellSubcomplex | CellComplexPair) -> CompactCellLayout:
     return value.layout if isinstance(value, CellSubcomplex) else value.quotient_layout
 
 
@@ -110,10 +113,10 @@ def _compact_operator(
     boundary_policy: CochainBoundaryKind,
     compact_to_ambient: Array,
     /,
-):
+) -> Callable[[Array], Array]:
     count = complex_ir.cell_counts[int(degree)]
 
-    def apply(values):
+    def apply(values: Array) -> Array:
         ambient = jnp.zeros((count,), dtype=values.dtype)
         ambient = ambient.at[compact_to_ambient].set(values)
         image = complex_ir.discretization.laplace_de_rham(

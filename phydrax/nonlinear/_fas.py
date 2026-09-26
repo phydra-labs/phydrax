@@ -15,7 +15,7 @@ from jaxtyping import Array, PyTree
 from .._strict import StrictModule
 from .._tree_math import tree_add_scaled, tree_allfinite
 from ..linalg import AbstractVectorSpace
-from ._types import NonlinearProvenance, NonlinearStatus
+from ._types import NonlinearProvenance, NonlinearStatus, NonlinearSystemProblem
 from ._updates import (
     AbstractNonlinearUpdate,
     NonlinearUpdateCapabilities,
@@ -462,11 +462,24 @@ class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
             complete=False,
         )
 
-    def _prepare_internal(self, problem, state, args, /):
+    def _prepare_internal(
+        self,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> None:
         del problem, state, args
         return None
 
-    def _refresh_internal(self, internal_state, problem, state, args, /):
+    def _refresh_internal(
+        self,
+        internal_state: Any,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> Any:
         del problem, state, args
         return internal_state
 
@@ -485,11 +498,11 @@ class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
         args: Any,
         control: NonlinearUpdateControl,
         /,
-    ):
+    ) -> tuple[NonlinearUpdateResult, Any]:
         problem = prepared.problem
         state_ = prepared.plan.state_space.validate(state)
 
-        def skipped(_):
+        def skipped(_: None) -> tuple[NonlinearUpdateResult, Any]:
             diagnostics = NonlinearUpdateDiagnostics(
                 initial_residual_norm=jnp.asarray(jnp.nan),
                 final_residual_norm=jnp.asarray(jnp.nan),
@@ -513,8 +526,8 @@ class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
                 prepared.internal_state,
             )
 
-        def execute(_):
-            initial_residual, _ = problem.evaluate(state_, args)
+        def execute(_: None) -> tuple[NonlinearUpdateResult, Any]:
+            initial_residual = problem.evaluate(state_, args)[0]
             initial_norm = _space_norm(
                 prepared.plan.residual_space,
                 initial_residual,

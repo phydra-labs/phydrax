@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 import phydrax.ein as ein
 
@@ -37,9 +38,13 @@ from .._contracts import (
     ML_SUCCESS,
     prediction_fit_contract,
 )
-from .._numerics import effective_sample_size, run_fixed_iterations
+from .._numerics import effective_sample_size, IterationResult, run_fixed_iterations
 from .._schema import AbstractFittedModel, FeatureSchema, TargetSchema
 from ..discriminant._models import _labels_for, _reshape_for_samples
+
+
+# (block levels, block masses, block upper scores, block count)
+_PavState: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class CalibrationDiagnostics(StrictModule):
@@ -147,17 +152,19 @@ def _prepare(
 
 
 def _optimize(
-    initial: Any,
-    loss,
+    initial: PyTree[Array],
+    loss: Callable[[PyTree[Array]], Array],
     *,
     learning_rate: Array,
     max_iterations: int,
     tolerance: float,
     method: str,
-):
+) -> IterationResult:
     value_and_grad = jax.value_and_grad(loss)
 
-    def step(parameters, iteration):
+    def step(
+        parameters: PyTree[Array], iteration: Array
+    ) -> tuple[PyTree[Array], Array, Array]:
         del iteration
         objective, gradient = value_and_grad(parameters)
         residual = jnp.max(
@@ -180,7 +187,7 @@ def _optimize(
 
 
 def _diagnostics(
-    optimization, weight: Array, mass: Array, *, method: str
+    optimization: IterationResult, weight: Array, mass: Array, *, method: str
 ) -> CalibrationDiagnostics:
     absent = jnp.any(mass <= 0.0, axis=-1)
     finite = optimization.finite & jnp.all(jnp.isfinite(mass), axis=-1)
@@ -581,7 +588,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
             jnp.zeros(case_shape, dtype=logits.dtype),
         )
 
-        def loss(parameters):
+        def loss(parameters: tuple[Array, Array]) -> Array:
             slope, intercept = parameters
             calibrated = slope[..., None] * scores + intercept[..., None]
             objective = (
@@ -603,7 +610,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
         raw_initial = jnp.log(jnp.expm1(initial_temperature))
         initial = (jnp.broadcast_to(raw_initial, case_shape),)
 
-        def loss(parameters):
+        def loss(parameters: tuple[Array]) -> Array:
             (raw_temperature,) = parameters
             temperature = jax.nn.softplus(raw_temperature) + recipe.minimum_temperature
             calibrated = logits / temperature[..., None, None]
@@ -623,7 +630,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
             jnp.zeros(case_shape + (classes,), dtype=logits.dtype),
         )
 
-        def loss(parameters):
+        def loss(parameters: tuple[Array, Array]) -> Array:
             scale, bias = parameters
             calibrated = logits * scale[..., None, :] + bias[..., None, :]
             if kind == "multiclass":
@@ -651,7 +658,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
         )
         initial = (identity, jnp.zeros(case_shape + (classes,), dtype=logits.dtype))
 
-        def loss(parameters):
+        def loss(parameters: tuple[Array, Array]) -> Array:
             matrix, bias = parameters
             calibrated = (
                 ein.contract("...nf,...cf->...nc", logits, matrix) + bias[..., None, :]
@@ -678,8 +685,9 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
         method=kind,
     )
     if kind == "platt":
+        slope, intercept = optimization.value
         model: AbstractArrayModel = PlattCalibrationModel(
-            *optimization.value, labels, schema, case_shape=case_shape
+            slope, intercept, labels, schema, case_shape=case_shape
         )
     elif kind == "temperature":
         temperature = jax.nn.softplus(optimization.value[0]) + recipe.minimum_temperature
@@ -687,16 +695,17 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
             temperature, labels, schema, case_shape=case_shape
         )
     elif kind == "vector":
-        model = VectorCalibrationModel(
-            *optimization.value, labels, schema, case_shape=case_shape
-        )
+        scale, bias = optimization.value
+        model = VectorCalibrationModel(scale, bias, labels, schema, case_shape=case_shape)
     elif kind == "matrix":
+        matrix, bias = optimization.value
         model = MatrixCalibrationModel(
-            *optimization.value, labels, schema, case_shape=case_shape
+            matrix, bias, labels, schema, case_shape=case_shape
         )
     else:
+        slope, intercept = optimization.value
         model = MulticlassCalibrationModel(
-            *optimization.value, labels, schema, case_shape=case_shape
+            slope, intercept, labels, schema, case_shape=case_shape
         )
     diagnostics = _diagnostics(optimization, weight, mass, method=kind)
     return FitResult(
@@ -893,10 +902,10 @@ def _pav_one(scores: Array, targets: Array, weights: Array) -> tuple[Array, Arra
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def push(index, state):
+    def push(index: Array, state: _PavState) -> _PavState:
         levels, masses, uppers, top = state
 
-        def add(current):
+        def add(current: _PavState) -> _PavState:
             levels_, masses_, uppers_, top_ = current
             levels_ = levels_.at[top_].set(ordered_targets[index])
             masses_ = masses_.at[top_].set(ordered_weights[index])
@@ -910,7 +919,7 @@ def _pav_one(scores: Array, targets: Array, weights: Array) -> tuple[Array, Arra
             (levels, masses, uppers, top),
         )
 
-        def condition(current):
+        def condition(current: _PavState) -> Array:
             levels_, masses_, uppers_, top_ = current
             left = jnp.maximum(top_ - 2, 0)
             right = jnp.maximum(top_ - 1, 0)
@@ -919,7 +928,7 @@ def _pav_one(scores: Array, targets: Array, weights: Array) -> tuple[Array, Arra
             )
             return (top_ >= 2) & violation
 
-        def merge(current):
+        def merge(current: _PavState) -> _PavState:
             levels_, masses_, uppers_, top_ = current
             left = top_ - 2
             right = top_ - 1

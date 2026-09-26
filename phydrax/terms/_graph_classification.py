@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -32,7 +32,7 @@ from ..domain.graph._observation import (
     GraphTargetInterpolation,
     GraphTrajectoryClassificationSignal,
 )
-from ..integration import mean_over, over, per_step
+from ..integration import ComponentTarget, mean_over, over, per_step
 from ..ml._classification import ClassificationObjective, ClassificationObjectiveKind
 from ..ml._schema import TargetSchema
 from ._integral_functional import IntegralFunctional
@@ -144,7 +144,9 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         self.alpha = objective.alpha
         self.thresholds = objective.thresholds
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del args, key, kwargs
         raise TypeError("Graph classification scores require GraphBatch evaluation.")
 
@@ -153,7 +155,7 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
@@ -284,7 +286,8 @@ class _GraphClassificationIntegrand(StrictModule):
                 logits=logits,
                 target=self.target,
                 target_mask=self.target_mask,
-                classification_kind=self.target_schema.kind,
+                # _classification_configuration admitted this schema kind at construction.
+                classification_kind=cast(ClassificationKind, self.target_schema.kind),
                 objective=self.objective,
                 class_count=self.class_count,
             ),
@@ -296,7 +299,7 @@ def _integration_target(
     component: DomainComponent,
     reduction: GraphClassificationReduction,
     /,
-):
+) -> ComponentTarget:
     if reduction == "mean":
         return mean_over(component)
     if reduction == "integral":

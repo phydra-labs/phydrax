@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -81,7 +81,7 @@ class CoupledContactTransportLaw(AbstractContactTransportLaw):
         normal: NormalContactResponse,
         tangential: TangentialContactResponse,
         state: ContactRouteState,
-        driving_jump,
+        driving_jump: ArrayLike,
         /,
     ) -> ContactTransportResponse:
         del state
@@ -139,7 +139,7 @@ class ContactFluxAssembly(StrictModule):
 
 def assemble_contact_fluxes(
     response: ContactTransportResponse,
-    quadrature_weight,
+    quadrature_weight: ArrayLike,
     /,
     *,
     heat_partition: float = 0.5,

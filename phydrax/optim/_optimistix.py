@@ -113,7 +113,7 @@ class OptimistixMethod(AbstractMinimizationMethod):
                 "Optimistix does not expose a portable evaluation-budget contract."
             )
 
-        def nonfinite_input(_):
+        def nonfinite_input(_: None) -> MinimizationResult:
             value, auxiliary = problem.value(parameters, args)
             return MinimizationResult(
                 parameters,
@@ -127,7 +127,7 @@ class OptimistixMethod(AbstractMinimizationMethod):
                 provenance,
             )
 
-        def run_backend(_):
+        def run_backend(_: None) -> MinimizationResult:
             solution = optx.minimise(
                 problem.objective,
                 self.solver,

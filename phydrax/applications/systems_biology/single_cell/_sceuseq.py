@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -172,7 +173,8 @@ def import_sceu_seq_arrays(
             "scEU-seq requested use is not admitted: "
             + ";".join(prerequisites.rights_refusals)
         )
-    admitted = tuple(manifests)
+    # Admission above reports every absent channel manifest as missing.
+    admitted = cast(tuple[ReferenceArtifactManifest, ...], tuple(manifests))
     arrays = tuple(
         np.asarray(value)
         for value in (

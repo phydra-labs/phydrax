@@ -135,15 +135,15 @@ class KerrNewmanThermodynamicsPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        geometric_mass,
-        specific_angular_momentum,
-        geometric_charge,
+        geometric_mass: ArrayLike,
+        specific_angular_momentum: ArrayLike,
+        geometric_charge: ArrayLike,
         scale: RelativityScaleContract,
         /,
         *,
-        ensemble="microcanonical",
-        extremality_tolerance=1.0e-8,
-        residual_tolerance=1.0e-6,
+        ensemble: str = "microcanonical",
+        extremality_tolerance: float = 1.0e-8,
+        residual_tolerance: float = 1.0e-6,
     ) -> None:
         mass = float(np.asarray(geometric_mass))
         spin = float(np.asarray(specific_angular_momentum))
@@ -319,16 +319,16 @@ class KerrNewmanAdSThermodynamicsPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        horizon_radius,
-        specific_angular_momentum,
-        charge_parameter,
-        ads_radius,
+        horizon_radius: ArrayLike,
+        specific_angular_momentum: ArrayLike,
+        charge_parameter: ArrayLike,
+        ads_radius: ArrayLike,
         scale: RelativityScaleContract,
         /,
         *,
-        ensemble="canonical-charge",
-        extremality_tolerance=1.0e-8,
-        residual_tolerance=1.0e-6,
+        ensemble: str = "canonical-charge",
+        extremality_tolerance: float = 1.0e-8,
+        residual_tolerance: float = 1.0e-6,
     ) -> None:
         radius = float(np.asarray(horizon_radius))
         spin = float(np.asarray(specific_angular_momentum))
@@ -539,15 +539,15 @@ class ReissnerNordstromCavityPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        horizon_radius,
-        geometric_charge,
-        cavity_radius,
+        horizon_radius: ArrayLike,
+        geometric_charge: ArrayLike,
+        cavity_radius: ArrayLike,
         scale: RelativityScaleContract,
         /,
         *,
-        ensemble="canonical-charge",
-        extremality_tolerance=1.0e-8,
-        residual_tolerance=1.0e-6,
+        ensemble: str = "canonical-charge",
+        extremality_tolerance: float = 1.0e-8,
+        residual_tolerance: float = 1.0e-6,
     ) -> None:
         radius = float(np.asarray(horizon_radius))
         charge = float(np.asarray(geometric_charge))
@@ -726,7 +726,9 @@ class ReissnerNordstromCavityPlan(StrictModule, NonTrainableState):
         )
 
 
-def _ads_enthalpy_derivatives(entropy, pressure, angular_momentum, charge):
+def _ads_enthalpy_derivatives(
+    entropy: Array, pressure: Array, angular_momentum: Array, charge: Array
+) -> tuple[Array, Array, Array, Array, Array]:
     pi = jnp.pi
     enthalpy_term = entropy + pi * charge**2 + 8.0 * pressure * entropy**2 / 3.0
     rotation_term = 1.0 + 8.0 * pressure * entropy / 3.0
@@ -760,7 +762,7 @@ def _ads_enthalpy_derivatives(entropy, pressure, angular_momentum, charge):
     return mass, temperature, angular_velocity, electric_potential, volume
 
 
-def _validate_ensemble(ensemble):
+def _validate_ensemble(ensemble: str) -> str:
     value = str(ensemble).strip().lower()
     if value not in _ENSEMBLES:
         raise ValueError(
@@ -769,7 +771,7 @@ def _validate_ensemble(ensemble):
     return value
 
 
-def _validate_tolerances(extremality_tolerance, residual_tolerance) -> None:
+def _validate_tolerances(extremality_tolerance: float, residual_tolerance: float) -> None:
     if (
         not np.isfinite(extremality_tolerance)
         or extremality_tolerance <= 0.0

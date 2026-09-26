@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..integration import (
@@ -35,7 +35,7 @@ class TransportBarycenterAggregationResult(StrictModule):
     transport: BarycenterResult
 
     @property
-    def converged(self):
+    def converged(self) -> Array:
         return self.transport.converged
 
 
@@ -46,7 +46,7 @@ class FreeSupportTransportBarycenterAggregationResult(StrictModule):
     transport: FreeSupportBarycenterResult
 
     @property
-    def converged(self):
+    def converged(self) -> Array:
         return self.transport.converged
 
 

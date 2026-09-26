@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -145,7 +146,7 @@ class PeriodicUniformGridDepartureTransfer(StrictModule, NonTrainableState):
         /,
         *,
         periodic_axes: Sequence[bool] = (True, True),
-        dtype: object = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> None:
         shape = tuple(spatial_shape)
         spacing = tuple(float(value) for value in cell_spacing)
@@ -165,10 +166,8 @@ class PeriodicUniformGridDepartureTransfer(StrictModule, NonTrainableState):
             raise ValueError(
                 "Periodic multilinear departure transfer requires periodic 2-D geometry."
             )
-        integer = tuple(floor(value) for value in offset)
-        fractional = tuple(
-            value - base for value, base in zip(offset, integer, strict=True)
-        )
+        integer = (floor(offset[0]), floor(offset[1]))
+        fractional = (offset[0] - integer[0], offset[1] - integer[1])
         volume = prod(spacing)
         pairing = DiagonalPairing(
             jnp.full(shape, volume, dtype=dtype),
@@ -299,7 +298,10 @@ class PeriodicUniformGridDepartureTransfer(StrictModule, NonTrainableState):
 
     @property
     def primal_operator(self) -> FunctionLinearOperator:
-        return self.field_transfer.primal_operator
+        operator = self.field_transfer.primal_operator
+        # Construction always wraps the departure pull in a FunctionLinearOperator.
+        assert isinstance(operator, FunctionLinearOperator)
+        return operator
 
     @property
     def properties(self) -> TransferProperties:

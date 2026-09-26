@@ -4,14 +4,19 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from phydrax.domain import DomainFunction
 
 from ..._strict import StrictModule
 from ._domain_ops import directional_derivative
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
@@ -27,7 +32,7 @@ class _VectorFieldCallable(StrictModule):
         self.dimension = int(dimension)
         self.role = role
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         value = jnp.asarray(self.source.func(*args, key=key, **kwargs))
         if value.ndim != 1 or value.shape[0] != self.dimension:
             raise ValueError(

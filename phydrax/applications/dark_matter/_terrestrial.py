@@ -89,7 +89,9 @@ class TerrestrialTransportResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _ray(position_m: ArrayLike, direction: ArrayLike, distance_m: ArrayLike, /):
+def _ray(
+    position_m: ArrayLike, direction: ArrayLike, distance_m: ArrayLike, /
+) -> tuple[Array, Array, Array]:
     position = jnp.asarray(position_m, dtype=jnp.float64)
     direction_ = jnp.asarray(direction, dtype=position.dtype)
     distance = jnp.asarray(distance_m, dtype=position.dtype).reshape(())

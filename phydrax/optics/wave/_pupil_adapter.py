@@ -82,9 +82,9 @@ def _cell_determinants(coordinates: Array, /) -> Array:
 
 def _cell_to_node_average(cell_values: Array, /) -> Array:
     padding = (((0, 1), (0, 1)), ((1, 0), (0, 1)), ((0, 1), (1, 0)), ((1, 0), (1, 0)))
-    total = sum(jnp.pad(cell_values, pad) for pad in padding)
+    total = jnp.asarray(sum(jnp.pad(cell_values, pad) for pad in padding))
     ones = jnp.ones_like(cell_values)
-    count = sum(jnp.pad(ones, pad) for pad in padding)
+    count = jnp.asarray(sum(jnp.pad(ones, pad) for pad in padding))
     return total / count
 
 

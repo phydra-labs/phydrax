@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
+from jaxtyping import Array, Key
 
 import phydrax.axes as cx
 from phydrax.domain import DomainFunction
@@ -42,7 +43,9 @@ def spatial_inner_product(
     u_positions = tuple(indices[label] for label in u2.deps)
     v_positions = tuple(indices[label] for label in v2.deps)
 
-    def _inner(*args, key=None, **inner_kwargs):
+    def _inner(
+        *args: Any, key: Key[Array, ""] | None = None, **inner_kwargs: Any
+    ) -> Array:
         left = jnp.asarray(
             u2.func(*(args[index] for index in u_positions), key=key, **inner_kwargs)
         )
@@ -69,7 +72,9 @@ def spatial_lp_norm(
         raise ValueError("p must be positive.")
     exponent = float(p)
 
-    def _power(*args, key=None, **inner_kwargs):
+    def _power(
+        *args: Any, key: Key[Array, ""] | None = None, **inner_kwargs: Any
+    ) -> Array:
         value = jnp.asarray(u.func(*args, key=key, **inner_kwargs))
         return jnp.power(jnp.linalg.norm(value.reshape((-1,))), exponent)
 

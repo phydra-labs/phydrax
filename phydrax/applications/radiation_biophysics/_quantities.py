@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import cast
 
 from ...units import (
     conversion_factor,
@@ -184,9 +185,10 @@ def radiation_yield(
     elif all(
         by_history[history].dose_standard_error_gy is not None for history in histories
     ):
+        # The enclosing all(...) check guarantees every dose standard error is set.
         denominator_error = math.sqrt(
             math.fsum(
-                (by_history[history].dose_standard_error_gy * weight) ** 2
+                (cast(float, by_history[history].dose_standard_error_gy) * weight) ** 2
                 for history, weight in zip(histories, weights, strict=True)
             )
         )

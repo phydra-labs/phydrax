@@ -11,6 +11,7 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -35,7 +36,7 @@ from ...linalg import (
 FourierWeightPolicy = Literal["uniform", "explicit"]
 
 
-def _modes(mode_shape: tuple[int, ...], dtype) -> tuple[Array, ...]:
+def _modes(mode_shape: tuple[int, ...], dtype: DTypeLike) -> tuple[Array, ...]:
     return tuple(jnp.fft.fftfreq(size).astype(dtype) * size for size in mode_shape)
 
 
@@ -300,7 +301,7 @@ def fit_fourier_scattered(
             source=source,
             target=source,
             transpose_action=lambda coefficients: scale * coefficients,
-            operator_id=f"fourier-tikhonov-{plan.regularization.hex()}",
+            operator_id=f"fourier-tikhonov-{float(plan.regularization).hex()}",
         )
     problem = LeastSquaresProblem(
         operator,

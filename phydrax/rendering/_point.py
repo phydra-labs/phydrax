@@ -348,7 +348,9 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
         dtype = contributions.dtype
         image = jnp.zeros((height, width), dtype=dtype)
 
-        def deposit_one(current: Array, particle: tuple[Array, ...]):
+        def deposit_one(
+            current: Array, particle: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, None]:
             values, row, column, valid = particle
             indices = jnp.clip(row, 0, height - 1) * width + jnp.clip(
                 column, 0, width - 1

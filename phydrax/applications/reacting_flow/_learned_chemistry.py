@@ -42,6 +42,7 @@ from ..._trainable import (
     parameter_field,
 )
 from ...equations._chemical_mechanism import PreparedChemicalMechanism
+from ...equations._chemical_rates import ChemicalRateRuntime
 from ...qualification import ReferenceArtifactManifest
 
 
@@ -189,7 +190,9 @@ class _AbstractLearnedChemicalTransition(StrictModule):
     component_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def _features(self, concentrations, temperature, pressure, step):
+    def _features(
+        self, concentrations: Array, temperature: Array, pressure: Array, step: Array
+    ) -> Array:
         tiny = jnp.finfo(concentrations.dtype).tiny
         return jnp.concatenate(
             (
@@ -201,7 +204,14 @@ class _AbstractLearnedChemicalTransition(StrictModule):
             axis=-1,
         )
 
-    def _exact(self, concentrations, temperature, pressure, step, runtime):
+    def _exact(
+        self,
+        concentrations: Array,
+        temperature: Array,
+        pressure: Array,
+        step: Array,
+        runtime: ChemicalRateRuntime | None,
+    ) -> tuple[Array, Array]:
         substep = step / self.exact_subcycles
         state = concentrations
         successful = jnp.all(jnp.isfinite(state) & (state >= 0.0), axis=-1)
@@ -278,7 +288,7 @@ class _AbstractLearnedChemicalTransition(StrictModule):
         certain = uncertainty <= self.maximum_uncertainty
         use_learned = supported & certain & finite_model & positive & invariant
 
-        def exact_transition(_):
+        def exact_transition(_: None) -> tuple[Array, Array]:
             return self._exact(concentration, temperature_, pressure_, step, runtime)
 
         exact, exact_success = jax.lax.cond(

@@ -252,7 +252,7 @@ class PreparedInvariantElectricalGeometry(StrictModule, NonTrainableState):
         )
         local_mass = self.areas[:, None, None] * along[:, None, None] * reference_mass
 
-        def action(values):
+        def action(values: Array) -> Array:
             local = values[self.cells]
             result = ein.contract(
                 "cij,cj->ci", local_stiffness + wave**2 * local_mass, local
@@ -315,7 +315,7 @@ class LineCurrentDCPlan(StrictModule, NonTrainableState):
         )
         nodes = self.geometry.space.size
 
-        def kkt(values):
+        def kkt(values: Array) -> Array:
             return jnp.concatenate(
                 (
                     operator.mv(values[:nodes]) + values[-1] * self.geometry.gauge,

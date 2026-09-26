@@ -196,3 +196,49 @@ def test_zero_distance_different_spaces_and_accuracy_limits_are_explicit_failure
     assert propagated.status & int(FresnelPropagationStatus.SAMPLING_LIMIT)
     assert propagated.status & int(FresnelPropagationStatus.PARAXIAL_LIMIT)
     assert propagated.status & int(FresnelPropagationStatus.POWER_LIMIT)
+
+
+def test_axes_without_quadrature_weights_use_the_grid_point_measure():
+    nodes = jnp.asarray([-1.0, -0.5, 0.0, 0.5, 1.0])
+    trapezoid = jnp.asarray([0.25, 0.5, 0.5, 0.5, 0.25])
+
+    def space(quad_weights):
+        axis = AxisDiscretization(
+            nodes=nodes,
+            quad_weights=quad_weights,
+            basis="uniform",
+            domain=AxisDomain.interval(-1.0, 1.0),
+            lower_endpoint_included=True,
+            upper_endpoint_included=True,
+        )
+        return PlaneFieldSpace(
+            PreparedTensorGrid((axis, axis), axis_names=("u", "v")),
+            RigidFrame.identity(3),
+            "finite-window",
+        )
+
+    implicit = space(None)
+    explicit = space(trapezoid)
+    assert jnp.array_equal(implicit.area_weights, explicit.area_weights)
+    coordinates = implicit.transverse_coordinates
+    values = jnp.exp(-jnp.sum(coordinates**2, axis=-1)).astype(jnp.complex128)
+    plan_options = dict(
+        maximum_sampling_phase_step=100.0,
+        maximum_paraxial_angle=1.5,
+        maximum_power_error=1.0,
+    )
+
+    implicit_result = propagate_direct_fresnel(
+        prepare_direct_fresnel(DirectFresnelPlan(implicit, implicit, **plan_options)),
+        ScalarPlaneField(implicit, values, 9.0, 0.0),
+        1.0,
+        4.0,
+    )
+    explicit_result = propagate_direct_fresnel(
+        prepare_direct_fresnel(DirectFresnelPlan(explicit, explicit, **plan_options)),
+        ScalarPlaneField(explicit, values, 9.0, 0.0),
+        1.0,
+        4.0,
+    )
+
+    assert jnp.allclose(implicit_result.field.values, explicit_result.field.values)

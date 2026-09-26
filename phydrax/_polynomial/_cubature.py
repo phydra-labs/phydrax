@@ -11,7 +11,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jax.typing import DTypeLike
+from jaxtyping import Array
 from scipy.special import roots_jacobi
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -91,8 +93,8 @@ class CubatureRuleData(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        points: ArrayLike,
-        weights: ArrayLike,
+        points: npt.ArrayLike,
+        weights: npt.ArrayLike,
         /,
         *,
         exact_degree: int,
@@ -100,7 +102,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
         reference_domain: CubatureReference,
         backend: str,
         source_id: str,
-        dtype=jnp.float64,
+        dtype: DTypeLike = jnp.float64,
         maximum_rule_bytes: int = _DEFAULT_RULE_BYTES,
     ) -> None:
         degree = _degree(exact_degree)
@@ -151,7 +153,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
             np.all(points_host[1:] == points_host[:-1], axis=1)
         ):
             raise ValueError("Cubature points must be unique.")
-        tolerance = 512.0 * np.finfo(dtype_).eps * max(1, points_host.shape[0])
+        tolerance = float(512.0 * np.finfo(dtype_).eps * max(1, points_host.shape[0]))
         _validate_reference_points(reference_domain, points_host, tolerance)
         mass = _REFERENCE_MASS[reference_domain]
         if not np.isclose(

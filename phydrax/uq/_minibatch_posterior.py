@@ -505,12 +505,12 @@ class MinibatchPosteriorProblem(StrictModule):
             if isinstance(log_likelihood_factors, AbstractObservationFactor)
             else None
         )
-        if self.observation_factor is not None:
-            if self.observation_factor.semantics != "normalized_likelihood":
+        if isinstance(log_likelihood_factors, AbstractObservationFactor):
+            if log_likelihood_factors.semantics != "normalized_likelihood":
                 raise ValueError(
                     "Posterior minibatches require normalized_likelihood semantics."
                 )
-            self.log_likelihood_factors_fn = self.observation_factor.log_factors
+            self.log_likelihood_factors_fn = log_likelihood_factors.log_factors
         else:
             self.log_likelihood_factors_fn = log_likelihood_factors
         self.num_factors = count

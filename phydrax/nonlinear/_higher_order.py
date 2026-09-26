@@ -15,6 +15,7 @@ from phydrax._strict import StrictModule
 
 from .._tree_math import tree_allfinite
 from ..linalg import (
+    AbstractVectorSpace,
     FunctionLinearOperator,
     LinearSolveControl,
     LinearSolvePolicy,
@@ -37,7 +38,12 @@ from ._types import (
 )
 
 
-def _coordinate_norm(space, value, precision: NonlinearPrecisionPolicy, /) -> Array:
+def _coordinate_norm(
+    space: AbstractVectorSpace,
+    value: PyTree[Any],
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
     return precision.decision(
         jnp.linalg.norm(precision.accumulation(space.flatten(value)))
     )
@@ -156,7 +162,7 @@ class VectorHalley(AbstractNonlinearMethod):
             ).astype(jnp.int32),
         )
 
-        def condition(current):
+        def condition(current: _HalleyRun) -> Array:
             within_evaluations = (
                 jnp.asarray(True)
                 if termination.maximum_evaluations is None
@@ -176,8 +182,8 @@ class VectorHalley(AbstractNonlinearMethod):
                 & within_linear
             )
 
-        def body(current):
-            def residual_function(value):
+        def body(current: _HalleyRun) -> _HalleyRun:
+            def residual_function(value: PyTree[Any]) -> PyTree[Array]:
                 return problem_.residual(value, args)
 
             _, jacobian_action = jax.linearize(residual_function, current.state)
@@ -211,14 +217,14 @@ class VectorHalley(AbstractNonlinearMethod):
                 dtype=jnp.int32,
             )
 
-            def directional_jacobian(value):
+            def directional_jacobian(value: PyTree[Any]) -> PyTree[Array]:
                 return jax.jvp(
                     residual_function,
                     (value,),
                     (inverse_residual,),
                 )[1]
 
-            def modified_action(direction):
+            def modified_action(direction: PyTree[Any]) -> PyTree[Array]:
                 first_action = jacobian_action(direction)
                 second_action = jax.jvp(
                     directional_jacobian,
@@ -277,7 +283,7 @@ class VectorHalley(AbstractNonlinearMethod):
                 jnp.asarray(False),
             )
 
-            def search_condition(item):
+            def search_condition(item: _Search) -> Array:
                 within_evaluations = (
                     jnp.asarray(True)
                     if termination.maximum_evaluations is None
@@ -293,7 +299,7 @@ class VectorHalley(AbstractNonlinearMethod):
                     & within_evaluations
                 )
 
-            def search_body(item):
+            def search_body(item: _Search) -> _Search:
                 candidate = jax.tree.map(
                     lambda value, delta: jnp.asarray(
                         value + item.rate * delta,

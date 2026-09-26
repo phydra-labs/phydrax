@@ -4,8 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
@@ -13,7 +17,7 @@ from ._entropy_pair import ConvexEntropyPair
 from ._hyperbolic_systems import IdealMHDSystem, ShallowWaterSystem
 
 
-def _pointwise_gradient(function, state):
+def _pointwise_gradient(function: Callable[[Array], Array], state: ArrayLike) -> Array:
     value = jnp.asarray(state)
     flat = value.reshape((-1, value.shape[-1]))
     gradient = jax.vmap(jax.grad(function))(flat)
@@ -25,16 +29,16 @@ def ideal_mhd_entropy_pair(system: IdealMHDSystem, /) -> ConvexEntropyPair:
         raise TypeError("system must be IdealMHDSystem.")
     gamma = system.material.gamma
 
-    def entropy(state):
+    def entropy(state: Array) -> Array:
         density = state[..., 0]
         pressure = system.pressure(state)
         physical_entropy = jnp.log(pressure) - gamma * jnp.log(density)
         return -density * physical_entropy / (gamma - 1.0)
 
-    def variables(state):
+    def variables(state: Array) -> Array:
         return _pointwise_gradient(lambda point: entropy(point), state)
 
-    def entropy_flux(state, axis, args):
+    def entropy_flux(state: Array, axis: int, args: Any) -> Array:
         del args
         velocity = state[..., 1 + int(axis)] / state[..., 0]
         return entropy(state) * velocity
@@ -53,7 +57,7 @@ def shallow_water_energy_pair(system: ShallowWaterSystem, /) -> ConvexEntropyPai
     if not isinstance(system, ShallowWaterSystem):
         raise TypeError("system must be ShallowWaterSystem.")
 
-    def entropy(state):
+    def entropy(state: Array) -> Array:
         depth = state[..., 0]
         discharge = state[..., 1:]
         kinetic = (
@@ -63,10 +67,10 @@ def shallow_water_energy_pair(system: ShallowWaterSystem, /) -> ConvexEntropyPai
         )
         return kinetic + 0.5 * system.gravity * depth**2
 
-    def variables(state):
+    def variables(state: Array) -> Array:
         return _pointwise_gradient(lambda point: entropy(point), state)
 
-    def entropy_flux(state, axis, args):
+    def entropy_flux(state: Array, axis: int, args: Any) -> Array:
         del args
         depth = state[..., 0]
         velocity = state[..., 1 + int(axis)] / depth

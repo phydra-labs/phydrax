@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 import equinox as eqx
+from jaxtyping import Array, PyTree
 
 import phydrax.linalg as la
 
@@ -490,7 +491,7 @@ def operator_program_from_local_ir(
 ) -> OperatorProgram:
     if not isinstance(ir, LocalActionIR):
         raise TypeError("ir must be LocalActionIR.")
-    role_map = {
+    role_map: dict[FieldSlotRole, OperatorValueRole] = {
         "unknown": "state",
         "cell-local": "state",
         "trace": "trace",
@@ -604,11 +605,17 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
     def __call__(self, inputs: Mapping[str, Any], /) -> tuple[Any, ...]:
         return self.program.execute(inputs, dict(self.kernels))
 
-    def linearize(self, inputs: Mapping[str, Any], /):
+    def linearize(
+        self, inputs: Mapping[str, Any], /
+    ) -> tuple[
+        PyTree[Array],
+        Callable[..., PyTree[Array]],
+        Callable[[PyTree[Any]], PyTree[Array]],
+    ]:
         names = tuple(value.name for value in self.program.values)
         values = tuple(inputs[name] for name in names)
 
-        def execute(arguments):
+        def execute(arguments: tuple[Any, ...]) -> Any:
             result = self(
                 {name: value for name, value in zip(names, arguments, strict=True)}
             )
@@ -616,7 +623,7 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
 
         linearization = la.prepare_linearization(execute, values)
 
-        def pushforward(*tangents):
+        def pushforward(*tangents: Any) -> PyTree[Array]:
             return linearization.pushforward(tangents)
 
         return linearization.primal, pushforward, linearization.pullback

@@ -19,11 +19,14 @@ from ..optim import (
     implicit_minimize,
     minimize,
     NewtonKrylov,
+    OptimizationDiagnostics,
+    OptimizationProvenance,
     OptimizationStatus,
     OptimizationTermination,
 )
 from ._geometry import (
     initial_coordinates,
+    MomentGeometry,
     physical_dual,
     prepare_moment_geometry,
     weighted_covariance,
@@ -74,7 +77,7 @@ def calibrate_moments(
     geometry = _require_geometry(prepare_moment_geometry(problem, policy_))
     initial = initial_coordinates(geometry, initial_dual)
 
-    def objective(coordinates, _):
+    def objective(coordinates: Array, _: object) -> Array:
         return _dual_objective(problem, geometry, coordinates)
 
     optimization = minimize(
@@ -124,7 +127,7 @@ def implicit_calibrate_moments(
         )
     initial = initial_coordinates(geometry, initial_dual)
 
-    def objective(coordinates, _):
+    def objective(coordinates: Array, _: object) -> Array:
         return _dual_objective(problem, geometry, coordinates)
 
     coordinates = implicit_minimize(
@@ -171,7 +174,11 @@ def implicit_calibrate_moments(
     )
 
 
-def _dual_objective(problem, geometry, coordinates):
+def _dual_objective(
+    problem: MomentCalibrationProblem,
+    geometry: MomentGeometry,
+    coordinates: Array,
+) -> Array:
     dual = physical_dual(geometry, coordinates)
     scores = problem.moment_map.transpose_mv(dual)
     centered_scores = scores - jnp.vdot(geometry.prior_moments, dual).real
@@ -191,15 +198,15 @@ def _dual_objective(problem, geometry, coordinates):
 
 
 def _result(
-    problem,
-    geometry,
-    coordinates,
-    optimizer_status,
-    optimization_diagnostics,
-    optimization_provenance,
-    termination,
-    policy,
-):
+    problem: MomentCalibrationProblem,
+    geometry: MomentGeometry,
+    coordinates: Array,
+    optimizer_status: Array,
+    optimization_diagnostics: OptimizationDiagnostics,
+    optimization_provenance: OptimizationProvenance,
+    termination: OptimizationTermination,
+    policy: MomentCalibrationPolicy,
+) -> MomentCalibrationResult:
     log_weights, weights = weights_from_coordinates(
         problem,
         geometry,
@@ -341,7 +348,12 @@ def _result(
     )
 
 
-def _dual_gradient(problem, geometry, coordinates, residual):
+def _dual_gradient(
+    problem: MomentCalibrationProblem,
+    geometry: MomentGeometry,
+    coordinates: Array,
+    residual: Array,
+) -> Array:
     gradient = jnp.swapaxes(geometry.transform, -1, -2) @ residual
     if isinstance(problem.target, ExactMoments):
         return gradient + jnp.where(
@@ -355,7 +367,11 @@ def _dual_gradient(problem, geometry, coordinates, residual):
     return gradient + ein.contract("ji,j->i", geometry.transform, covariance_dual)
 
 
-def _coordinate_hessian(problem, geometry, covariance):
+def _coordinate_hessian(
+    problem: MomentCalibrationProblem,
+    geometry: MomentGeometry,
+    covariance: Array,
+) -> Array:
     physical_hessian = covariance
     if isinstance(problem.target, QuadraticMoments):
         physical_hessian = physical_hessian + problem.target.covariance._materialize()
@@ -369,7 +385,11 @@ def _coordinate_hessian(problem, geometry, covariance):
     return 0.5 * (transformed + jnp.swapaxes(transformed, -1, -2))
 
 
-def _affine_tolerance(problem, geometry, policy):
+def _affine_tolerance(
+    problem: MomentCalibrationProblem,
+    geometry: MomentGeometry,
+    policy: MomentCalibrationPolicy,
+) -> Array:
     scale = jnp.maximum(
         jnp.linalg.norm(
             (problem.target.values - geometry.prior_moments) / geometry.moment_scales
@@ -379,7 +399,10 @@ def _affine_tolerance(problem, geometry, policy):
     return policy.affine_absolute_tolerance + policy.affine_relative_tolerance * scale
 
 
-def _require_dual_compatible(problem, execution) -> None:
+def _require_dual_compatible(
+    problem: MomentCalibrationProblem,
+    execution: MomentCalibrationExecutionPolicy,
+) -> None:
     if not isinstance(execution, MomentCalibrationExecutionPolicy):
         raise TypeError("execution must be a MomentCalibrationExecutionPolicy or None.")
     if execution.route != "dual-relative-entropy":
@@ -398,7 +421,13 @@ def _require_dual_compatible(problem, execution) -> None:
         )
 
 
-def _resolve_configuration(method, termination, policy):
+def _resolve_configuration(
+    method: AbstractScalarIterativeMethod | None,
+    termination: OptimizationTermination | None,
+    policy: MomentCalibrationPolicy | None,
+) -> tuple[
+    AbstractScalarIterativeMethod, OptimizationTermination, MomentCalibrationPolicy
+]:
     method_ = NewtonKrylov() if method is None else method
     termination_ = OptimizationTermination() if termination is None else termination
     policy_ = MomentCalibrationPolicy() if policy is None else policy
@@ -411,7 +440,7 @@ def _resolve_configuration(method, termination, policy):
     return method_, termination_, policy_
 
 
-def _require_geometry(geometry):
+def _require_geometry(geometry: MomentGeometry) -> MomentGeometry:
     return _error_if_geometry(
         geometry,
         ~geometry.finite,
@@ -419,7 +448,9 @@ def _require_geometry(geometry):
     )
 
 
-def _error_if_geometry(geometry, predicate, message):
+def _error_if_geometry(
+    geometry: MomentGeometry, predicate: Array, message: str
+) -> MomentGeometry:
     if not isinstance(predicate, jax_core.Tracer):
         if bool(predicate):
             raise ValueError(message)
@@ -428,7 +459,7 @@ def _error_if_geometry(geometry, predicate, message):
     return eqx.tree_at(lambda item: item.transform, geometry, checked)
 
 
-def _error_if_array(value, predicate, message):
+def _error_if_array(value: Array, predicate: Array, message: str) -> Array:
     if not isinstance(predicate, jax_core.Tracer):
         if bool(predicate):
             raise eqx.EquinoxRuntimeError(message)

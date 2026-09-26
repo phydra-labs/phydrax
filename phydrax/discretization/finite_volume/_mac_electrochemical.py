@@ -172,14 +172,14 @@ class PreparedMACElectrochemicalFlux(StrictModule, NonTrainableState):
             )
             structured_axis = self.operators.discretization.grid.structured_axes[axis]
             if not structured_axis.periodic:
-                lower = [slice(None)] * sg.ndim
-                upper = [slice(None)] * sg.ndim
+                lower: list[slice | int] = [slice(None)] * sg.ndim
+                upper: list[slice | int] = [slice(None)] * sg.ndim
                 lower[axis] = 0
                 upper[axis] = sg.shape[axis] - 1
                 sg = sg.at[tuple(lower)].set(0.0)
                 sg = sg.at[tuple(upper)].set(0.0)
-                velocity_lower = [slice(None)] * velocity[axis].ndim
-                velocity_upper = [slice(None)] * velocity[axis].ndim
+                velocity_lower: list[slice | int] = [slice(None)] * velocity[axis].ndim
+                velocity_upper: list[slice | int] = [slice(None)] * velocity[axis].ndim
                 velocity_lower[axis] = 0
                 velocity_upper[axis] = velocity[axis].shape[axis] - 1
                 boundary_velocity_ok = (

@@ -106,7 +106,7 @@ class LinearElasticMaterial(StrictModule, NonTrainableState):
         poisson_ratio: ArrayLike,
         density: ArrayLike,
         /,
-        **kwargs,
+        **kwargs: Any,
     ) -> LinearElasticMaterial:
         young = _positive_scalar("young_modulus", young_modulus)
         poisson = jnp.asarray(poisson_ratio, dtype=young.dtype)

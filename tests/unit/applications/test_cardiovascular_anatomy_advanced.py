@@ -463,3 +463,33 @@ def test_high_order_geometry_refuses_linear_and_unsupported_volume_routes():
             boundary_profile=profile,
             prepared_epoch=cv.anatomy.HighOrderGeometryEpoch(0, 0),
         )
+
+
+class _ForeignTetrahedralCoordinateElement:
+    cell_kind = "tetrahedron"
+    conformity = "H1"
+    local_dof_count = 10
+    element_id = "foreign-p2-tetrahedral-coordinates"
+
+
+def test_high_order_geometry_refuses_non_finite_element_coordinate_elements():
+    reference = phx.discretization.fem.lagrange_element("tetrahedron", 2)
+    block = phx.discretization.CellBlock(
+        "myocardium", "tetrahedron", jnp.asarray(((0, 1, 2, 3),))
+    )
+    mesh = phx.discretization.CellMesh(reference.reference_nodes[:4], (block,))
+    coordinate_spec = phx.discretization.CellGeometrySpec(
+        {"myocardium": _ForeignTetrahedralCoordinateElement()},
+        {"myocardium": jnp.arange(10)[None, :]},
+        reference.reference_nodes,
+    )
+    with pytest.raises(ValueError, match="qualified P2 tetrahedral"):
+        cv.anatomy.HighOrderCardiacGeometryPlan(
+            mesh,
+            coordinate_spec,
+            boundary_role_id="ventricular-boundary-roles",
+            boundary_profile=cv.anatomy.CardiacBoundaryProfile(
+                "ventricular-volume", required_roles=("epicardium",)
+            ),
+            prepared_epoch=cv.anatomy.HighOrderGeometryEpoch(3, 2),
+        )

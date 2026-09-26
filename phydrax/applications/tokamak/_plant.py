@@ -10,10 +10,12 @@ from dataclasses import dataclass, field
 
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...dynamics import (
     ArrayDiscreteSystemPlant,
+    DiscreteStepContext,
     DiscreteSystem,
     DiscreteTransitionResult,
     ExecutableSignature,
@@ -108,7 +110,9 @@ class TokamakCorePlantPlan:
         transport = self.transport
         coefficients = self.coefficients
 
-        def transition(context, state, commands, args):
+        def transition(
+            context: DiscreteStepContext, state: Array, commands: Array, args: object
+        ) -> DiscreteTransitionResult:
             del args
             command_valid = jnp.all((commands >= lower) & (commands <= upper))
             sources = TokamakTransportSources(

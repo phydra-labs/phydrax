@@ -22,6 +22,7 @@ from .._trainable import NonTrainableState
 from ..combinatorial import (
     AbstractBoundableCombinatorialSpace,
     AbstractBoundableLinearCombinatorialMethod,
+    BoundedCombinatorialExecution,
     CombinatorialCertification,
     CombinatorialFeatureRestriction,
     CombinatorialStatus,
@@ -312,7 +313,7 @@ class _IntegerHullNodeState:
     fw_gap: float
 
 
-def _tree_dot(left, right, /) -> Array:
+def _tree_dot(left: PyTree[Any], right: PyTree[Any], /) -> Array:
     products = tuple(
         jnp.sum(jnp.asarray(a) * jnp.asarray(b))
         for a, b in zip(
@@ -327,11 +328,13 @@ def _tree_dot(left, right, /) -> Array:
     return total
 
 
-def _tree_subtract(left, right, /):
+def _tree_subtract(left: PyTree[Any], right: PyTree[Any], /) -> PyTree[Array]:
     return jax.tree.map(lambda a, b: a - b, left, right)
 
 
-def _tree_interpolate(current, atom, step: float, /):
+def _tree_interpolate(
+    current: PyTree[Any], atom: PyTree[Any], step: float, /
+) -> PyTree[Array]:
     return jax.tree.map(
         lambda x, v: (1.0 - step) * x + step * v,
         current,
@@ -339,7 +342,7 @@ def _tree_interpolate(current, atom, step: float, /):
     )
 
 
-def _active_combination(atoms: list[_Atom], weights: np.ndarray, /):
+def _active_combination(atoms: list[_Atom], weights: np.ndarray, /) -> PyTree[Array]:
     if not atoms or len(atoms) != len(weights):
         raise ValueError("An active set requires one weight per atom.")
     result = jax.tree.map(
@@ -357,7 +360,7 @@ def _active_combination(atoms: list[_Atom], weights: np.ndarray, /):
     return result
 
 
-def _atom(features, decision, /) -> _Atom:
+def _atom(features: PyTree[Any], decision: Any, /) -> _Atom:
     identifier = canonical_fingerprint(
         {
             "kind": "integer-hull-atom",
@@ -414,7 +417,9 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
     def node_id(self, node: _IntegerHullNode, /) -> str:
         return node.path
 
-    def _oracle(self, costs, restriction, /):
+    def _oracle(
+        self, costs: PyTree[Any], restriction: CombinatorialFeatureRestriction, /
+    ) -> BoundedCombinatorialExecution:
         linear = LinearCombinatorialProblem(
             self.problem.space,
             costs,
@@ -429,12 +434,12 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
         self.oracle_calls[0] += 1
         return execution
 
-    def _value(self, features, /) -> float:
+    def _value(self, features: PyTree[Any], /) -> float:
         value, _ = self.problem.objective.value(features, self.problem.args)
         self.objective_evaluations[0] += 1
         return float(np.asarray(value))
 
-    def _value_and_gradient(self, features, /):
+    def _value_and_gradient(self, features: PyTree[Any], /) -> tuple[float, PyTree[Any]]:
         (value, _), gradient = self.problem.objective.value_and_gradient(
             features,
             self.problem.args,
@@ -443,7 +448,7 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
         self.gradient_evaluations[0] += 1
         return float(np.asarray(value)), gradient
 
-    def _candidate(self, atom: _Atom, restriction_id: str, /):
+    def _candidate(self, atom: _Atom, restriction_id: str, /) -> BranchCandidate | None:
         objective = self._value(atom.features)
         if not np.isfinite(objective):
             return None
@@ -709,7 +714,9 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
             upper=upper_unravel(upper),
         )
 
-        def child(restriction, suffix):
+        def child(
+            restriction: CombinatorialFeatureRestriction, suffix: str
+        ) -> _IntegerHullNode:
             selected = [
                 (atom, weight)
                 for atom, weight in zip(

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import cast
 
 import equinox as eqx
 import jax
@@ -20,6 +20,8 @@ from ...discretization.finite_volume import (
     FiniteVolumeDiscretization,
     MACBoundaryPlan,
     MACOperatorPlan,
+    PreparedMACBoundaryPlan,
+    PreparedMACOperators,
 )
 from ...solver import MACVariableDensityProjectionPlan
 from ...solver._mac_sharp_interface import MACSharpInterfaceProjectionPlan
@@ -213,15 +215,21 @@ class IncompressibleTwoPhaseVOFPlan(StrictModule, NonTrainableState):
 
 class PreparedIncompressibleTwoPhaseVOF(StrictModule):
     plan: IncompressibleTwoPhaseVOFPlan
-    operators: Any
-    boundaries: Any
+    operators: PreparedMACOperators
+    boundaries: PreparedMACBoundaryPlan
     projection: MACVariableDensityProjectionPlan
     sharp_projection: MACSharpInterfaceProjectionPlan | None
     geometry: QualifiedSharpGeometry | None
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
-        self, plan, operators, boundaries, projection, sharp_projection, /
+        self,
+        plan: IncompressibleTwoPhaseVOFPlan,
+        operators: PreparedMACOperators,
+        boundaries: PreparedMACBoundaryPlan,
+        projection: MACVariableDensityProjectionPlan,
+        sharp_projection: MACSharpInterfaceProjectionPlan | None,
+        /,
     ) -> None:
         self.plan = plan
         self.operators = operators
@@ -408,7 +416,7 @@ class PreparedIncompressibleTwoPhaseVOF(StrictModule):
             if grid_axis.periodic:
                 continue
             for index, sign in ((0, -1.0), (-1, 1.0)):
-                location = [slice(None)] * mixed.ndim
+                location: list[slice | int] = [slice(None)] * mixed.ndim
                 location[axis] = index
                 boundary = output[tuple(location)]
                 boundary_mixed = mixed[tuple(location)]
@@ -438,7 +446,11 @@ class PreparedIncompressibleTwoPhaseVOF(StrictModule):
     def plic(self, alpha: ArrayLike, /) -> PLICGeometry:
         alpha_ = jnp.asarray(alpha)
         gradients = jnp.stack(
-            tuple(jnp.gradient(alpha_, axis=axis) for axis in range(alpha_.ndim)),
+            # jnp.gradient returns a single Array for a scalar axis.
+            tuple(
+                cast(Array, jnp.gradient(alpha_, axis=axis))
+                for axis in range(alpha_.ndim)
+            ),
             axis=-1,
         )
         norm = jnp.linalg.norm(gradients, axis=-1)
@@ -476,7 +488,11 @@ class PreparedIncompressibleTwoPhaseVOF(StrictModule):
     def level_set_from_alpha(self, alpha: ArrayLike, /) -> Array:
         alpha_ = jnp.asarray(alpha)
         gradients = jnp.stack(
-            tuple(jnp.gradient(alpha_, axis=axis) for axis in range(alpha_.ndim)),
+            # jnp.gradient returns a single Array for a scalar axis.
+            tuple(
+                cast(Array, jnp.gradient(alpha_, axis=axis))
+                for axis in range(alpha_.ndim)
+            ),
             axis=-1,
         )
         scale = jnp.maximum(jnp.linalg.norm(gradients, axis=-1), 1.0e-6)

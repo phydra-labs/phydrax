@@ -36,7 +36,8 @@ def _promote_arguments(alpha: ArrayLike, x: ArrayLike, /) -> tuple[Array, Array]
     real_dtype = jnp.asarray(0.0, dtype=dtype).real.dtype
     promoted_alpha = jnp.asarray(alpha_array, dtype=real_dtype)
     promoted_x = jnp.asarray(x_array, dtype=dtype)
-    return jnp.broadcast_arrays(promoted_alpha, promoted_x)
+    broadcast_alpha, broadcast_x = jnp.broadcast_arrays(promoted_alpha, promoted_x)
+    return broadcast_alpha, broadcast_x
 
 
 def _valid_alpha(alpha: Array, /) -> Array:

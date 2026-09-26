@@ -483,8 +483,27 @@ class PreparedTelegraphGeneExpression(StrictModule, NonTrainableState):
         moments = _stationary_moment_values(values)
         finite = jnp.all(jnp.isfinite(moments))
         valid = finite & jnp.all(values > 0.0)
+        (
+            promoter_mean,
+            nascent_mean,
+            mature_mean,
+            promoter_variance,
+            nascent_variance,
+            mature_variance,
+            promoter_nascent_covariance,
+            promoter_mature_covariance,
+            nascent_mature_covariance,
+        ) = moments
         return TelegraphStationaryMoments(
-            *tuple(moments),
+            promoter_mean,
+            nascent_mean,
+            mature_mean,
+            promoter_variance,
+            nascent_variance,
+            mature_variance,
+            promoter_nascent_covariance,
+            promoter_mature_covariance,
+            nascent_mature_covariance,
             finite,
             valid,
             self.model_id,

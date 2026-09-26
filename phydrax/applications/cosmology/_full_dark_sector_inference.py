@@ -20,6 +20,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -84,7 +85,9 @@ def _scalar_flag(value: ArrayLike, name: str, /) -> Array:
     return jax.lax.stop_gradient(result)
 
 
-def _real_vector(value: ArrayLike, size: int, name: str, /, *, dtype=None) -> Array:
+def _real_vector(
+    value: ArrayLike, size: int, name: str, /, *, dtype: DTypeLike | None = None
+) -> Array:
     result = jnp.asarray(value, dtype=dtype)
     if result.shape != (size,):
         raise ValueError(f"{name} must have shape {(size,)}.")

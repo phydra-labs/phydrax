@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
@@ -207,11 +207,11 @@ def _multilabel_domain_valid(batch: MLBatch, targets: Array) -> Array:
 
 
 def _composition_result(
-    model: AbstractFittedModel,
+    model: _CompositionModel,
     results: tuple[FitResult, ...],
     *,
     method: str,
-    semantic_valid: Any = None,
+    semantic_valid: ArrayLike | None = None,
 ) -> FitResult:
     component_valid = jnp.stack(tuple(result.valid for result in results), axis=-1)
     component_status = jnp.stack(tuple(result.status for result in results), axis=-1)
@@ -832,6 +832,16 @@ class SmoothClassifierChainModel(AbstractFittedModel):
         return _chain_contract(self.models, _SIGMOID_LINK)
 
 
+_CompositionModel: TypeAlias = (
+    OneVsRestModel
+    | OneVsOneModel
+    | OutputCodeModel
+    | MultilabelModel
+    | ClassifierChainModel
+    | SmoothClassifierChainModel
+)
+
+
 def _fit_chain(
     base_recipe: AbstractRecipe, batch: MLBatch, key: Any, *, smooth: bool
 ) -> FitResult:
@@ -869,7 +879,7 @@ def _fit_chain(
         )
     )
     models = tuple(result.as_trainable() for result in result_tuple)
-    model: AbstractFittedModel
+    model: _CompositionModel
     if smooth:
         model = SmoothClassifierChainModel(models, schema, in_size=batch.feature_count)
     else:

@@ -386,7 +386,8 @@ class FixedWallLumenRegion(StrictModule, NonTrainableState):
 
     @property
     def shape(self) -> tuple[int, int, int]:
-        return tuple(self.fluid_mask.shape)
+        x, y, z = self.fluid_mask.shape
+        return (x, y, z)
 
 
 class HemodynamicsEvidence(StrictModule):

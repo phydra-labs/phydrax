@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -377,6 +377,31 @@ def _compact_candidates(
     )
 
 
+# Packet branches (positions, directions, weights, media, optical depths,
+# semantic IDs, live), medium/surface/detector tallies, escape and roulette
+# weights, interaction count, and five sticky failure flags.
+_PhotonTransportState: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+
+
 def _transport_one(
     prepared: PreparedTissueTransport,
     root_key: Array,
@@ -421,7 +446,7 @@ def _transport_one(
     surface_flux = jnp.zeros((prepared.surfaces.surface_count,), dtype=dtype)
     detector = jnp.zeros((prepared.surfaces.detector_count,), dtype=dtype)
     zero = jnp.asarray(0.0, dtype=dtype)
-    initial_state = (
+    initial_state: _PhotonTransportState = (
         positions,
         directions,
         weights,
@@ -442,7 +467,9 @@ def _transport_one(
         jnp.asarray(False),
     )
 
-    def step(interaction, state):
+    def step(
+        interaction: Array, state: _PhotonTransportState
+    ) -> tuple[_PhotonTransportState, Array]:
         (
             positions_,
             directions_,
@@ -733,7 +760,9 @@ def _transport_one(
             saw_branch_capacity,
         ), failure_weight
 
-    def scan_step(state, interaction):
+    def scan_step(
+        state: _PhotonTransportState, interaction: Array
+    ) -> tuple[_PhotonTransportState, Array]:
         next_state, truncated_increment = step(interaction, state)
         return next_state, truncated_increment
 
@@ -900,7 +929,9 @@ def simulate_tissue_transport(
     if key_.shape != (2,):
         raise ValueError("key must be one JAX PRNG key with shape (2,).")
 
-    def simulate_one(inputs):
+    def simulate_one(
+        inputs: tuple[Array, Array, Array, Array, Array],
+    ) -> tuple[Array, ...]:
         photon_id, origin, direction, medium, weight = inputs
         return _transport_one(
             prepared, key_, photon_id, origin, direction, medium, weight

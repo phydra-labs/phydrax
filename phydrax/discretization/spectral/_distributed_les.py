@@ -309,9 +309,12 @@ class PreparedDistributedPeriodicLES(StrictModule, NonTrainableState):
             representation="physical",
             padded=True,
         )
-        wavenumbers = tuple(
-            execution.place_batched(values, representation="modal")
-            for values in scientific.projector.wavenumbers
+        # The plan validated a three-dimensional grid: one wavenumber array per axis.
+        wave_x, wave_y, wave_z = scientific.projector.wavenumbers
+        wavenumbers = (
+            execution.place_batched(wave_x, representation="modal"),
+            execution.place_batched(wave_y, representation="modal"),
+            execution.place_batched(wave_z, representation="modal"),
         )
         wavenumber_squared = execution.place_batched(
             scientific.projector.wavenumber_squared,

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +25,10 @@ from ...optim import (
     NewtonKrylov,
     OptimizationTermination,
 )
+
+
+# pCN scan carry: whitened state, log likelihood, PRNG key, accepted count.
+_PCNCarry: TypeAlias = tuple[Array, Array, PRNGKeyArray, Array]
 
 
 class MAPResult(StrictModule):
@@ -341,7 +346,7 @@ class PCNSampler(StrictModule, NonTrainableState):
             "pCN initial log likelihood must be finite.",
         )
 
-        def step(carry, _):
+        def step(carry: _PCNCarry, _: None) -> tuple[_PCNCarry, tuple[Array, Array]]:
             state, value, random_key, accepted = carry
             proposal_key, uniform_key, next_key = jax.random.split(random_key, 3)
             noise = jax.random.normal(proposal_key, state.shape, dtype=state.dtype)

@@ -12,14 +12,15 @@ from __future__ import annotations
 
 import csv
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from io import BytesIO, StringIO
 from math import isfinite, prod
 from pathlib import Path
-from typing import Literal
+from typing import cast, Literal, NoReturn, overload, TYPE_CHECKING
 
 import h5py
+import h5py.h5o as h5o
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
@@ -43,6 +44,13 @@ from ._synapses import (
     SynapseConnection,
     SynapseNetworkPlan,
 )
+
+
+if TYPE_CHECKING:
+    from _typeshed import ReadableBuffer
+
+    from ._network import PreparedNeuralNetwork
+    from ._synapses import EligibilitySTDPPlan, PairSTDPPlan, SynapseModel
 
 
 _DEFAULT_LIMITS = ResourceLimits(64 * 1024 * 1024, 16, 2_000_000, 100_000, 100)
@@ -74,6 +82,8 @@ _MODEL_PARAMETERS = {
 }
 _Scalar = str | int | float | bool
 _Properties = tuple[tuple[str, _Scalar], ...]
+_NumericInput = _Scalar | np.number | np.bool_
+_NeuronModel = LeakyIntegrateAndFire | AdaptiveExponentialIntegrateAndFire
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,11 +228,11 @@ class SONATAExport:
     resources: tuple[ResourceManifest, ...]
 
 
-def _unsupported(message: str) -> None:
+def _unsupported(message: str) -> NoReturn:
     raise AdapterError(AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC, message)
 
 
-def _integer(value, name: str) -> int:
+def _integer(value: _NumericInput, name: str) -> int:
     if isinstance(value, str):
         if not value.isascii() or not value.isdecimal():
             raise ValueError(f"{name} must be an unsigned integer, without narrowing.")
@@ -237,7 +247,7 @@ def _integer(value, name: str) -> int:
     return result
 
 
-def _number(value, name: str) -> float:
+def _number(value: _NumericInput, name: str) -> float:
     if isinstance(value, (bool, np.bool_)):
         raise TypeError(f"{name} must be a finite number, not bool.")
     if isinstance(value, (int, np.integer)) and abs(int(value)) > 2**53:
@@ -264,7 +274,7 @@ def _ids(value: np.ndarray, name: str) -> np.ndarray:
     return value.astype(np.uint64, copy=False)
 
 
-def _scalar(value) -> _Scalar:
+def _scalar(value: object) -> _Scalar:
     if isinstance(value, np.generic):
         value = value.item()
     if isinstance(value, bytes):
@@ -278,7 +288,7 @@ def _scalar(value) -> _Scalar:
     return value
 
 
-def _text(value, name: str) -> str:
+def _text(value: object, name: str) -> str:
     value = _scalar(value)
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a nonempty string.")
@@ -288,7 +298,9 @@ def _text(value, name: str) -> str:
 class _Reader:
     """One aggregate byte/element budget across all explicitly supplied resources."""
 
-    def __init__(self, root, limits: ResourceLimits, max_decoded_bytes: int) -> None:
+    def __init__(
+        self, root: str | Path, limits: ResourceLimits, max_decoded_bytes: int
+    ) -> None:
         self.root = root
         self.limits = limits
         self.max_decoded_bytes = _integer(max_decoded_bytes, "max_decoded_bytes")
@@ -311,7 +323,7 @@ class _Reader:
                 "limit", "SONATA aggregate decoded arrays exceed the configured limit."
             )
 
-    def load(self, path) -> BoundedResource:
+    def load(self, path: str | Path) -> BoundedResource:
         key = str(path)
         if key not in self.cache:
             resource = read_bounded_resource(
@@ -321,13 +333,17 @@ class _Reader:
             self.cache[key] = resource
         return self.cache[key]
 
-    def record(self, resource, *, depth: int, nodes: int, attributes: int = 0) -> None:
+    def record(
+        self, resource: BoundedResource, *, depth: int, nodes: int, attributes: int = 0
+    ) -> None:
         accounted = account_bounded_resource(
             resource, depth=depth, nodes=nodes, attributes=attributes, losses=0
         )
         self.resources.append(accounted.manifest)
 
-    def hdf5(self, path) -> tuple[dict[str, np.ndarray], dict[str, dict[str, _Scalar]]]:
+    def hdf5(
+        self, path: str | Path
+    ) -> tuple[dict[str, np.ndarray], dict[str, dict[str, _Scalar]]]:
         resource = self.load(path)
         self.charge(len(resource.data))
         arrays: dict[str, np.ndarray] = {}
@@ -347,7 +363,7 @@ class _Reader:
                     raise ResourceReadError(
                         "limit", "SONATA HDF5 structure exceeds its bounds."
                     )
-                address = h5py.h5o.get_info(obj.id).addr
+                address = h5o.get_info(obj.id).addr
                 if address in seen:
                     _unsupported("HDF5 hard-link aliases and cycles are unsupported.")
                 seen.add(address)
@@ -458,7 +474,7 @@ class _Reader:
         )
         return arrays, attributes
 
-    def types(self, path, kind: str) -> dict[int, dict[str, _Scalar]]:
+    def types(self, path: str | Path, kind: str) -> dict[int, dict[str, _Scalar]]:
         resource = self.load(path)
         text = resource.data.decode("ascii", errors="strict")
         self.charge(len(text))
@@ -482,7 +498,7 @@ class _Reader:
             raise ValueError(
                 "SONATA CSV property names must be nonempty HDF5 leaf names."
             )
-        result = {}
+        result: dict[int, dict[str, _Scalar]] = {}
         for row in rows:
             if not row:
                 continue
@@ -500,8 +516,8 @@ class _Reader:
         return result
 
     def parameters(self, resource: BoundedResource) -> dict[str, _Scalar]:
-        def pairs(items):
-            result = {}
+        def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
             for key, value in items:
                 if key in result:
                     raise ValueError("Duplicate component JSON parameter.")
@@ -543,7 +559,7 @@ class _Reader:
         return result
 
 
-def _populations(attributes, root: str) -> tuple[str, ...]:
+def _populations(attributes: Mapping[str, object], root: str) -> tuple[str, ...]:
     if root not in attributes:
         raise ValueError(f"Missing SONATA /{root} group.")
     if any(
@@ -559,10 +575,16 @@ def _populations(attributes, root: str) -> tuple[str, ...]:
     )
 
 
-def _records(arrays, attributes, population_path, types, kind: str):
+def _records(
+    arrays: Mapping[str, np.ndarray],
+    attributes: Mapping[str, object],
+    population_path: str,
+    types: Mapping[int, Mapping[str, _Scalar]],
+    kind: str,
+) -> Iterator[tuple[int, int, int, dict[str, _Scalar], dict[str, _Scalar]]]:
     prefix = population_path + "/"
     required = (f"{kind}_type_id", f"{kind}_group_id", f"{kind}_group_index")
-    columns = {}
+    columns: dict[str, np.ndarray] = {}
     for name in required:
         if prefix + name not in arrays:
             raise ValueError(f"Missing SONATA dataset {prefix + name}.")
@@ -590,13 +612,13 @@ def _records(arrays, attributes, population_path, types, kind: str):
             _unsupported(
                 "SONATA record properties must be in indexed property groups, not flat population columns."
             )
-    groups = {}
+    groups: dict[int, tuple[dict[str, np.ndarray], int | None]] = {}
     for group_id in set(columns[f"{kind}_group_id"].tolist()):
         group_prefix = f"{prefix}{group_id}/"
         if group_prefix[:-1] not in attributes:
             raise ValueError("SONATA record references a missing property group.")
-        group_arrays = {}
-        group_size = None
+        group_arrays: dict[str, np.ndarray] = {}
+        group_size: int | None = None
         for path, value in arrays.items():
             if not path.startswith(group_prefix):
                 continue
@@ -622,7 +644,7 @@ def _records(arrays, attributes, population_path, types, kind: str):
         if type_id not in types:
             raise ValueError(f"Missing binding for SONATA {kind} type {type_id}.")
         props = dict(types[type_id])
-        params = {}
+        params: dict[str, _Scalar] = {}
         group_id = int(columns[f"{kind}_group_id"][row])
         index = int(columns[f"{kind}_group_index"][row])
         group_arrays, group_size = groups[group_id]
@@ -638,9 +660,15 @@ def _records(arrays, attributes, population_path, types, kind: str):
         yield row, int(identifiers[row]), type_id, props, params
 
 
-def _resolve_parameters(props, overrides, components, reader, parsed_components):
+def _resolve_parameters(
+    props: dict[str, _Scalar],
+    overrides: Mapping[str, _Scalar],
+    components: Mapping[str, BoundedResource],
+    reader: _Reader,
+    parsed_components: dict[str, dict[str, _Scalar]],
+) -> dict[str, _Scalar]:
     reference = props.pop("dynamics_params", None)
-    parameters = {}
+    parameters: dict[str, _Scalar] = {}
     if reference is not None and reference != "NULL":
         reference = _text(reference, "dynamics_params resource")
         if reference not in components:
@@ -652,9 +680,26 @@ def _resolve_parameters(props, overrides, components, reader, parsed_components)
     return parameters
 
 
-def _native_model(template, parameters, *, neuron: bool):
+@overload
+def _native_model(
+    template: _Scalar | None, parameters: Mapping[str, _Scalar], *, neuron: Literal[True]
+) -> tuple[_NeuronModel, _Properties]: ...
+
+
+@overload
+def _native_model(
+    template: _Scalar | None,
+    parameters: Mapping[str, _Scalar],
+    *,
+    neuron: Literal[False],
+) -> tuple[SynapseModel, _Properties]: ...
+
+
+def _native_model(
+    template: _Scalar | None, parameters: Mapping[str, _Scalar], *, neuron: bool
+) -> tuple[_NeuronModel | SynapseModel, _Properties]:
     templates = tuple(_MODEL_PARAMETERS)[:2] if neuron else tuple(_MODEL_PARAMETERS)[2:]
-    if template not in templates:
+    if not isinstance(template, str) or template not in templates:
         _unsupported(
             f"Unsupported native model template: {template!r}; foreign mechanisms are never executed."
         )
@@ -685,7 +730,9 @@ def _native_model(template, parameters, *, neuron: bool):
     return model, tuple(sorted(values.items()))
 
 
-def _model_values(model) -> _Properties:
+def _model_values(
+    model: _NeuronModel | PreparedCableSolver | SynapseModel | None,
+) -> _Properties:
     if model is None:
         return ()
     if isinstance(model, PreparedCableSolver):
@@ -722,7 +769,7 @@ def _model_values(model) -> _Properties:
     return tuple(sorted(values.items()))
 
 
-def _site(node: SONATANode, props, prefix: str) -> int:
+def _site(node: SONATANode, props: Mapping[str, _Scalar], prefix: str) -> int:
     id_field = f"{prefix}_section_id"
     pos_field = f"{prefix}_section_pos"
     unsupported = [
@@ -744,13 +791,12 @@ def _site(node: SONATANode, props, prefix: str) -> int:
     position = _number(props[pos_field], pos_field)
     if not 0.0 <= position <= 1.0:
         raise ValueError("Synaptic section positions must lie in [0, 1].")
-    if node.cable_binding is None:
+    binding = node.cable_binding
+    if binding is None:
         _unsupported(
             "Section-based synaptic sites require an explicit cable binding, not a point or virtual node."
         )
-    mapping = {
-        (sid, pos): compartment for sid, pos, compartment in node.cable_binding.sites
-    }
+    mapping = {(sid, pos): compartment for sid, pos, compartment in binding.sites}
     if (section, position) not in mapping:
         _unsupported("Synaptic site has no exact native compartment mapping.")
     return mapping[section, position]
@@ -766,7 +812,11 @@ def _on_grid(value: float, dt: float, name: str) -> None:
         _unsupported(f"{name} is off-grid for the requested clock dt_ms.")
 
 
-def _semantic_id(nodes, edges, spikes) -> str:
+def _semantic_id(
+    nodes: Sequence[SONATANode],
+    edges: Sequence[SONATAEdge],
+    spikes: Sequence[SONATASpikes],
+) -> str:
     return canonical_fingerprint(
         {
             "kind": "sonata-native-circuit-semantics",
@@ -817,7 +867,9 @@ def _semantic_id(nodes, edges, spikes) -> str:
     )
 
 
-def _report(source, target, source_id, target_id, *, stage="adapter"):
+def _report(
+    source: str, target: str, source_id: str, target_id: str, *, stage: str = "adapter"
+) -> AdapterReport:
     return AdapterReport(
         AdapterStatus.LOSSLESS,
         source,
@@ -1153,8 +1205,8 @@ def prepare_sonata_network(
     root_subdivisions: int = 4,
     cable_detectors: Mapping[tuple[str, int], tuple[int | str, float, float]]
     | None = None,
-    learning=None,
-):
+    learning: PairSTDPPlan | EligibilitySTDPPlan | None = None,
+) -> PreparedNeuralNetwork:
     """Lower imported native models and virtual spikes into neural execution.
 
     The imported node order is preserved, matching ``circuit.synapse_plan``.
@@ -1231,33 +1283,40 @@ class _BoundedBuffer(BytesIO):
         super().__init__()
         self.limit = limit
 
-    def write(self, data):
-        if self.tell() + len(data) > self.limit:
+    def write(self, data: ReadableBuffer, /) -> int:
+        if self.tell() + memoryview(data).nbytes > self.limit:
             raise ResourceReadError("limit", "Export HDF5 exceeds its byte limit.")
         return super().write(data)
 
 
-def _dataset(group, name, values) -> None:
+def _dataset(group: h5py.Group, name: str, values: Sequence[_Scalar]) -> None:
+    # Callers group records by exact property type names, so columns are homogeneous.
     if values and isinstance(values[0], str):
-        encoded = [value.encode("utf-8") for value in values]
+        encoded = [value.encode("utf-8") for value in cast("Sequence[str]", values)]
         width = max(1, max(map(len, encoded)))
         group.create_dataset(name, data=np.asarray(encoded, dtype=f"S{width}"))
     elif values and type(values[0]) is int:
-        if min(values) < 0 and max(values) > np.iinfo(np.int64).max:
+        integers = cast("Sequence[int]", values)
+        if min(integers) < 0 and max(integers) > np.iinfo(np.int64).max:
             _unsupported(
                 "Mixed-sign integer metadata cannot be exported without narrowing."
             )
-        dtype = np.int64 if min(values) < 0 else np.uint64
-        group.create_dataset(name, data=np.asarray(values, dtype=dtype))
+        dtype = np.int64 if min(integers) < 0 else np.uint64
+        group.create_dataset(name, data=np.asarray(integers, dtype=dtype))
     else:
         group.create_dataset(name, data=np.asarray(values))
 
 
-def _write_population(group, records, kind) -> None:
+def _write_population(
+    group: h5py.Group, records: Sequence[SONATANode | SONATAEdge], kind: str
+) -> None:
     group.create_dataset(
         f"{kind}_id",
         data=np.asarray(
-            [record.node_id if kind == "node" else record.edge_id for record in records],
+            [
+                record.node_id if isinstance(record, SONATANode) else record.edge_id
+                for record in records
+            ],
             dtype=np.uint64,
         ),
     )
@@ -1265,9 +1324,13 @@ def _write_population(group, records, kind) -> None:
         f"{kind}_type_id",
         data=np.asarray([record.type_id for record in records], dtype=np.uint64),
     )
-    schemas = {}
-    schema_ids = {}
-    group_ids, group_indices = [], []
+    schemas: dict[
+        tuple[tuple[tuple[str, str], ...], tuple[str, ...]],
+        list[SONATANode | SONATAEdge],
+    ] = {}
+    schema_ids: dict[tuple[tuple[tuple[str, str], ...], tuple[str, ...]], int] = {}
+    group_ids: list[int] = []
+    group_indices: list[int] = []
     for record in records:
         signature = (
             tuple((key, type(value).__name__) for key, value in record.properties),
@@ -1296,16 +1359,17 @@ def _write_population(group, records, kind) -> None:
                     dynamics, name, [dict(record.dynamics)[name] for record in members]
                 )
     if kind == "edge":
+        edges = [record for record in records if isinstance(record, SONATAEdge)]
         sources = group.create_dataset(
             "source_node_id",
-            data=np.asarray([record.source[1] for record in records], dtype=np.uint64),
+            data=np.asarray([record.source[1] for record in edges], dtype=np.uint64),
         )
         targets = group.create_dataset(
             "target_node_id",
-            data=np.asarray([record.target[1] for record in records], dtype=np.uint64),
+            data=np.asarray([record.target[1] for record in edges], dtype=np.uint64),
         )
-        sources.attrs["node_population"] = np.bytes_(records[0].source[0].encode("utf-8"))
-        targets.attrs["node_population"] = np.bytes_(records[0].target[0].encode("utf-8"))
+        sources.attrs["node_population"] = np.bytes_(edges[0].source[0].encode("utf-8"))
+        targets.attrs["node_population"] = np.bytes_(edges[0].target[0].encode("utf-8"))
 
 
 def export_sonata(
@@ -1330,10 +1394,11 @@ def export_sonata(
         )
     target = Path(directory)
     target.mkdir(parents=True, exist_ok=False)
-    manifests = []
-    node_files, edge_files = [], []
+    manifests: list[ResourceManifest] = []
+    node_files: list[SONATAFilePair] = []
+    edge_files: list[SONATAFilePair] = []
 
-    def save(name, data):
+    def save(name: str, data: bytes) -> Path:
         resource = bounded_resource_from_bytes(
             data, limits=limits, source_path=str(target / name)
         )
@@ -1346,7 +1411,7 @@ def export_sonata(
         ("node", circuit.nodes, node_files),
         ("edge", circuit.edges, edge_files),
     ):
-        populations = {}
+        populations: dict[str, list[SONATANode | SONATAEdge]] = {}
         for record in records:
             populations.setdefault(record.population, []).append(record)
         for index, (population, members) in enumerate(sorted(populations.items())):

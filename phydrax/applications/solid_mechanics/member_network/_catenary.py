@@ -10,6 +10,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
@@ -24,6 +25,7 @@ from ....nonlinear import (
     NonlinearTermination,
 )
 from ._blocks import AbstractMemberBlock, MemberBlockEvaluation
+from ._reference import MemberKinematics, MemberNetworkDefinition
 
 
 class CatenaryRegime(IntEnum):
@@ -162,7 +164,9 @@ class ElasticCatenaryBlock(AbstractMemberBlock):
         self.policy = CatenarySolvePolicy() if policy is None else policy
         self.block_id = str(block_id or "elastic-catenary-block")
 
-    def evaluate(self, definition, kinematics, /):
+    def evaluate(
+        self, definition: MemberNetworkDefinition, kinematics: MemberKinematics, /
+    ) -> MemberBlockEvaluation:
         states = []
         for member, reference in zip(
             np.asarray(self.member_indices), self.references, strict=True
@@ -204,7 +208,7 @@ class ElasticCatenaryBlock(AbstractMemberBlock):
         )
 
 
-def _quadrature(policy: CatenarySolvePolicy, dtype) -> tuple[Array, Array]:
+def _quadrature(policy: CatenarySolvePolicy, dtype: DTypeLike) -> tuple[Array, Array]:
     points, weights = np.polynomial.legendre.leggauss(policy.quadrature_order)
     return jnp.asarray(points, dtype=dtype), jnp.asarray(weights, dtype=dtype)
 
@@ -278,7 +282,7 @@ def solve_elastic_catenary(
         elastic_force * unit_chord + 0.5 * effective_length * reference.distributed_load
     )
 
-    def residual(force, args):
+    def residual(force: Array, args: object) -> Array:
         del args
         displacement, _, _, _, _ = _integrated_geometry(force, reference, policy_)
         return displacement - chord

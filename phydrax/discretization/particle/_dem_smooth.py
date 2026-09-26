@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -18,9 +20,11 @@ from ._dem_contact import (
     _safe_vector_norm,
     AbstractDEMNormalContactPlan,
     AbstractDEMTangentialContactPlan,
+    DEMContactBatch,
     DEMNormalResponse,
     DEMTangentialResponse,
 )
+from ._dem_contact_state import DEMContactHistory
 
 
 class SmoothPenaltyNormalPlan(AbstractDEMNormalContactPlan):
@@ -85,18 +89,18 @@ class SmoothPenaltyNormalPlan(AbstractDEMNormalContactPlan):
 
     def evaluate(
         self,
-        batch,
-        previous_history,
-        left_inverse_mass,
-        right_inverse_mass,
-        left_radius,
-        right_radius,
-        left_material,
-        right_material,
-        materials,
-        step_size,
+        batch: DEMContactBatch,
+        previous_history: DEMContactHistory,
+        left_inverse_mass: Array,
+        right_inverse_mass: Array,
+        left_radius: Array,
+        right_radius: Array,
+        left_material: Array,
+        right_material: Array,
+        materials: Any,
+        step_size: Array,
         /,
-    ):
+    ) -> DEMNormalResponse:
         del left_radius, right_radius, previous_history
         dtype = batch.gap.dtype
         stiffness = _pair_parameter(
@@ -207,19 +211,19 @@ class SmoothCoulombTangentialPlan(AbstractDEMTangentialContactPlan):
 
     def evaluate(
         self,
-        batch,
-        normal,
-        transported_displacement,
-        left_inverse_mass,
-        right_inverse_mass,
-        left_radius,
-        right_radius,
-        left_material,
-        right_material,
-        materials,
-        step_size,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        transported_displacement: Array,
+        left_inverse_mass: Array,
+        right_inverse_mass: Array,
+        left_radius: Array,
+        right_radius: Array,
+        left_material: Array,
+        right_material: Array,
+        materials: Any,
+        step_size: Array,
         /,
-    ):
+    ) -> DEMTangentialResponse:
         del left_radius, right_radius
         stiffness = _pair_parameter(
             self.stiffness, left_material, right_material, materials.material_count
@@ -299,7 +303,7 @@ def surrogate_bias_certificate(
     if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
         raise ValueError("Surrogate bias tolerance must be finite and positive.")
 
-    def relative(left, right):
+    def relative(left: Array, right: Array) -> Array:
         scale = jnp.maximum(jnp.linalg.norm(left), 1.0e-30)
         return jnp.linalg.norm(right - left) / scale
 

@@ -10,7 +10,7 @@ from typing import Any, NoReturn
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, Key, PyTree
 
 import phydrax.axes as cx
 
@@ -26,9 +26,11 @@ from ..integration import (
 from ..linalg import ArraySpace, stochastic_trace
 from ..nn.neural_tangent import (
     analyze_ntk,
+    NTKDiagnostics,
     NTKDiagnosticsPolicy,
     prepare_empirical_ntk,
 )
+from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockRef, ResidualPenalty
 from ._functional_objective import (
     _ObjectiveValues,
@@ -38,11 +40,19 @@ from ._functional_objective import (
 )
 from ._functional_residual import (
     evaluate_prepared_residual_term,
+    FunctionalResidualLayout,
     prepare_functional_residual,
     PreparedFunctionalResidual,
+    PreparedResidualTerm,
     ResidualRootBlock,
 )
-from ._functional_training import FunctionalTrainingPlan, PseudoTransientPolicy
+from ._functional_training import (
+    CausalResidualPolicy,
+    FunctionalDiagnosticsPolicy,
+    FunctionalTermBalancePolicy,
+    FunctionalTrainingPlan,
+    PseudoTransientPolicy,
+)
 
 
 class _BlockScaledEvaluator(StrictModule, BatchEvaluator):
@@ -82,7 +92,7 @@ class _BlockScaledEvaluator(StrictModule, BatchEvaluator):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key=None,
+        key: Key[Array, ""] | None = None,
         **kwargs: Any,
     ) -> cx.AxisArray:
         value = self.source(batch, key=key, **kwargs)
@@ -94,7 +104,9 @@ class _BlockScaledEvaluator(StrictModule, BatchEvaluator):
             self._scale(jnp.asarray(value.data), value.dims), dims=value.dims
         )
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         value = jnp.asarray(self.source.func(*args, key=key, **kwargs))
         dims = (None,) * value.ndim
         return self._scale(value, dims)
@@ -137,7 +149,7 @@ class PseudoTransientResidualTransform(StrictModule):
         self.inverse_steps = steps
         self.enforcement = enforcement
 
-    def _policy(self, term_index: int, /):
+    def _policy(self, term_index: int, /) -> tuple[PseudoTransientPolicy, Array] | None:
         selected = tuple(
             (policy, inverse_step)
             for policy, inverse_step in zip(
@@ -149,7 +161,12 @@ class PseudoTransientResidualTransform(StrictModule):
             raise RuntimeError("Multiple pseudo-time policies target one residual term.")
         return None if not selected else selected[0]
 
-    def residual_override(self, params, residual, term):
+    def residual_override(
+        self,
+        params: PyTree[Any],
+        residual: PreparedFunctionalResidual,
+        term: PreparedResidualTerm,
+    ) -> DomainFunction:
         selected = self._policy(term.index)
         current_functions = eqx.combine(params, residual.non_trainable)
         current = (
@@ -175,7 +192,12 @@ class PseudoTransientResidualTransform(StrictModule):
             policy.relaxation.blocks,
         )
 
-    def term_blocks(self, params, residual, term):
+    def term_blocks(
+        self,
+        params: PyTree[Any],
+        residual: PreparedFunctionalResidual,
+        term: PreparedResidualTerm,
+    ) -> tuple[ResidualRootBlock, ...]:
         from ._functional_residual import evaluate_prepared_residual_term
 
         return evaluate_prepared_residual_term(
@@ -211,7 +233,14 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
         self.gates = gates_
         self.blocks = blocks
 
-    def __call_batch__(self, batch, /, *, key=None, **kwargs: Any) -> cx.AxisArray:
+    def __call_batch__(
+        self,
+        batch: PointBatch | GridBatch,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> cx.AxisArray:
         value = self.source(batch, key=key, **kwargs)
         if not isinstance(value, cx.AxisArray):
             raise TypeError(
@@ -240,7 +269,9 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
             dims=value.dims,
         )
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> NoReturn:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> NoReturn:
         raise TypeError("Causal residual transforms require a prepared batch.")
 
 
@@ -263,22 +294,33 @@ class CausalResidualTransform(StrictModule):
     policies: tuple[Any, ...]
     gates: tuple[tuple[int, tuple[cx.AxisArray, ...]], ...]
 
-    def __init__(self, inner: Any, policies: Sequence[Any], gates, /) -> None:
+    def __init__(
+        self,
+        inner: Any,
+        policies: Sequence[Any],
+        gates: Sequence[tuple[int, tuple[cx.AxisArray, ...]]],
+        /,
+    ) -> None:
         self.inner = inner
         self.policies = tuple(policies)
         self.gates = tuple(gates)
 
-    def _policy(self, term_index: int, /):
+    def _policy(self, term_index: int, /) -> Any | None:
         selected = tuple(
             policy for policy in self.policies if policy.term_index == int(term_index)
         )
         return None if not selected else selected[0]
 
-    def _gates(self, term_index: int, /):
+    def _gates(self, term_index: int, /) -> tuple[cx.AxisArray, ...] | None:
         selected = tuple(gates for index, gates in self.gates if index == int(term_index))
         return None if not selected else selected[0]
 
-    def residual_override(self, params, residual, term):
+    def residual_override(
+        self,
+        params: PyTree[Any],
+        residual: PreparedFunctionalResidual,
+        term: PreparedResidualTerm,
+    ) -> DomainFunction:
         if self.inner is None:
             current_functions = eqx.combine(params, residual.non_trainable)
             current = (
@@ -297,7 +339,12 @@ class CausalResidualTransform(StrictModule):
             raise RuntimeError("Causal residual gates were not prepared.")
         return _causal_domain_function(base, gates, term.term.blocks)
 
-    def term_blocks(self, params, residual, term):
+    def term_blocks(
+        self,
+        params: PyTree[Any],
+        residual: PreparedFunctionalResidual,
+        term: PreparedResidualTerm,
+    ) -> tuple[ResidualRootBlock, ...]:
         from ._functional_residual import evaluate_prepared_residual_term
 
         return evaluate_prepared_residual_term(
@@ -321,7 +368,13 @@ def _squared_residual_field(value: cx.AxisArray, /) -> cx.AxisArray:
     return cx.AxisArray(data, dims=dims)
 
 
-def _causal_gate_fields(score, coefficient, time, schedule, /):
+def _causal_gate_fields(
+    score: cx.AxisArray,
+    coefficient: cx.AxisArray,
+    time: cx.AxisArray,
+    schedule: CausalTimeSlabSchedule,
+    /,
+) -> cx.AxisArray:
     times = jnp.asarray(time.data)
     masks = tuple(
         cx.AxisArray(
@@ -359,7 +412,13 @@ def _causal_gate_fields(score, coefficient, time, schedule, /):
     return multiplier
 
 
-def _prepare_causal_gates(residual, params, policies, inner, /):
+def _prepare_causal_gates(
+    residual: PreparedFunctionalResidual,
+    params: PyTree[Any],
+    policies: Sequence[CausalResidualPolicy],
+    inner: PseudoTransientResidualTransform | None,
+    /,
+) -> tuple[tuple[int, tuple[cx.AxisArray, ...]], ...]:
     current_functions = eqx.combine(params, residual.non_trainable)
     current = (
         current_functions
@@ -442,7 +501,12 @@ class BalancedResidualTransform(StrictModule):
         self.references = references_
         self.multipliers = values
 
-    def term_blocks(self, params, residual, term):
+    def term_blocks(
+        self,
+        params: PyTree[Any],
+        residual: PreparedFunctionalResidual,
+        term: PreparedResidualTerm,
+    ) -> tuple[ResidualRootBlock, ...]:
         if self.inner is None:
             blocks = evaluate_prepared_residual_term(
                 params,
@@ -476,7 +540,7 @@ class BalancedResidualTransform(StrictModule):
         return tuple(scaled)
 
 
-def _tree_norm(tree, /) -> Array:
+def _tree_norm(tree: PyTree[Any], /) -> Array:
     leaves = tuple(leaf for leaf in jax.tree.leaves(tree) if eqx.is_inexact_array(leaf))
     if not leaves:
         return jnp.asarray(0.0)
@@ -488,7 +552,7 @@ def _tree_norm(tree, /) -> Array:
     )
 
 
-def _tree_inner(left, right, /) -> Array:
+def _tree_inner(left: PyTree[Any], right: PyTree[Any], /) -> Array:
     left_leaves = tuple(
         leaf for leaf in jax.tree.leaves(left) if eqx.is_inexact_array(leaf)
     )
@@ -506,7 +570,7 @@ def _tree_inner(left, right, /) -> Array:
     )
 
 
-def _gradient_alignment(gradients, /) -> Array:
+def _gradient_alignment(gradients: Sequence[PyTree[Any]], /) -> Array:
     active = []
     for gradient in gradients:
         norm = _tree_norm(gradient)
@@ -526,7 +590,7 @@ def _gradient_alignment(gradients, /) -> Array:
     return (count * _tree_inner(mean, mean) - 1.0) / (count - 1)
 
 
-def _interstep_alignment(previous, current, /) -> Array:
+def _interstep_alignment(previous: PyTree[Any] | None, current: PyTree[Any], /) -> Array:
     if previous is None:
         return jnp.asarray(jnp.nan)
     left_norm = _tree_norm(previous)
@@ -541,7 +605,9 @@ def _interstep_alignment(previous, current, /) -> Array:
     return jnp.where(valid, value, jnp.nan)
 
 
-def _residual_reference_indices(layout, reference, /) -> Array:
+def _residual_reference_indices(
+    layout: FunctionalResidualLayout, reference: ResidualBlockRef, /
+) -> Array:
     if reference.block_name is not None:
         return layout.logical_indices(reference.term_index, reference.block_name)
     pieces = tuple(
@@ -554,13 +620,18 @@ def _residual_reference_indices(layout, reference, /) -> Array:
     return pieces[0] if len(pieces) == 1 else jnp.concatenate(pieces)
 
 
-def _gradient_balance_statistics(residual, params, references, /):
+def _gradient_balance_statistics(
+    residual: PreparedFunctionalResidual,
+    params: PyTree[Any],
+    references: Sequence[ResidualBlockRef],
+    /,
+) -> tuple[tuple[PyTree[Any], ...], Array]:
     gradients = []
     norms = []
     for reference in references:
         indices = _residual_reference_indices(residual.layout, reference)
 
-        def block_loss(candidate, _indices=indices):
+        def block_loss(candidate: PyTree[Any], _indices: Array = indices) -> Array:
             roots = residual.roots(candidate)[_indices]
             return jnp.real(jnp.vdot(roots, roots))
 
@@ -570,7 +641,9 @@ def _gradient_balance_statistics(residual, params, references, /):
     return tuple(gradients), jnp.stack(tuple(norms))
 
 
-def _residual_reference_available(layout, reference, /) -> bool:
+def _residual_reference_available(
+    layout: FunctionalResidualLayout, reference: ResidualBlockRef, /
+) -> bool:
     return any(
         entry.term_index == reference.term_index
         and (reference.block_name is None or entry.block_name == reference.block_name)
@@ -579,13 +652,13 @@ def _residual_reference_available(layout, reference, /) -> bool:
 
 
 def _updated_balance_multipliers(
-    residual,
-    params,
-    policy,
-    old,
-    key,
+    residual: PreparedFunctionalResidual,
+    params: PyTree[Any],
+    policy: FunctionalTermBalancePolicy,
+    old: Array,
+    key: Key[Array, ""],
     /,
-):
+) -> tuple[Array, tuple[PyTree[Any], ...], Array]:
     if policy.method == "gradient_norm":
         gradients, statistics = _gradient_balance_statistics(
             residual, params, policy.blocks
@@ -597,7 +670,7 @@ def _updated_balance_multipliers(
         for reference in policy.blocks:
             indices = _residual_reference_indices(residual.layout, reference)
 
-            def block_roots(candidate, _indices=indices):
+            def block_roots(candidate: PyTree[Any], _indices: Array = indices) -> Array:
                 return residual.roots(candidate)[_indices]
 
             output = block_roots(params)
@@ -650,7 +723,13 @@ def _updated_balance_multipliers(
     return jax.lax.stop_gradient(updated), gradients, statistics
 
 
-def _functional_ntk_diagnostics(residual, params, policy, key, /):
+def _functional_ntk_diagnostics(
+    residual: PreparedFunctionalResidual,
+    params: PyTree[Any],
+    policy: FunctionalDiagnosticsPolicy,
+    key: Key[Array, ""],
+    /,
+) -> NTKDiagnostics:
     roots = residual.roots(params)
     ntk = prepare_empirical_ntk(
         residual.roots,
@@ -668,7 +747,9 @@ def _functional_ntk_diagnostics(residual, params, policy, key, /):
     )
 
 
-def _functional_ntk_diagnostic_values(diagnostics, /) -> dict[str, Array]:
+def _functional_ntk_diagnostic_values(
+    diagnostics: NTKDiagnostics | None, /
+) -> dict[str, Array]:
     if diagnostics is None:
         return {}
     return {
@@ -777,7 +858,9 @@ class PreparedFunctionalUpdate(StrictModule):
         )
 
 
-def _validate_pseudo_source(policy, term, /) -> None:
+def _validate_pseudo_source(
+    policy: PseudoTransientPolicy, term: PreparedResidualTerm, /
+) -> None:
     source = term.term.source
     if isinstance(source, FixedIntegration):
         if policy.freshness != "experimental_fixed":
@@ -800,7 +883,9 @@ def _validate_pseudo_source(policy, term, /) -> None:
     )
 
 
-def _block_squared_norms(blocks, names, /) -> Array:
+def _block_squared_norms(
+    blocks: Sequence[ResidualRootBlock], names: Sequence[str], /
+) -> Array:
     values = []
     for name in names:
         selected = tuple(block for block in blocks if block.block_name == name)
@@ -816,13 +901,13 @@ def _block_squared_norms(blocks, names, /) -> Array:
 
 
 def _adapt_pseudo_inverse_steps(
-    residual,
-    params,
-    previous_functions,
-    policies,
-    inverse_steps,
+    residual: PreparedFunctionalResidual,
+    params: PyTree[Any],
+    previous_functions: Mapping[str, DomainFunction],
+    policies: Sequence[PseudoTransientPolicy],
+    inverse_steps: Sequence[Array],
     /,
-):
+) -> tuple[Array, ...]:
     if not policies:
         return tuple(inverse_steps)
     current_functions = eqx.combine(params, residual.non_trainable)
@@ -994,7 +1079,7 @@ def prepare_functional_update(
                 active_causal,
                 gates,
             )
-    if transform is not None:
+    if transform is not None and residual is not None:
         residual = PreparedFunctionalResidual(
             residual.terms,
             residual.non_trainable,

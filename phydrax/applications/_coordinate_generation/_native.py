@@ -10,7 +10,9 @@ singular-support model exposes no coordinate likelihood or Boltzmann weights.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from os import PathLike
 from pathlib import Path
 
 import equinox as eqx
@@ -18,13 +20,16 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import numpy.typing as npt
 import optax
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax._strict import StrictModule
 
 from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ...domain import HyperRectangle, TimeInterval
+from ...domain import DomainFunction, HyperRectangle, TimeInterval
+from ...domain._evaluation import PointwiseEvaluator
 from ...dynamics import ContinuousSystem, StateLayout
 from ...ml.artifacts import read_ml_artifact, save_ml_artifact
 from ...nn.models import MLP
@@ -35,18 +40,23 @@ from ...transport import EndpointCouplingSample, LinearEndpointInterpolant
 from ._decoder import (
     AbstractCoordinateDecoder,
     CartesianCoordinateDecoder,
+    SupportsCoordinateDecoding,
 )
-from ._support import PreparedCoordinateSupport, qualify_coordinate_proposals
+from ._support import (
+    CoordinateProposalQualification,
+    PreparedCoordinateSupport,
+    qualify_coordinate_proposals,
+)
 
 
 def require_coordinate_rights(
-    rights,
+    rights: Sequence[ReferenceArtifactManifest],
     *,
-    training_use=False,
-    commercial_use=False,
-    redistribution=False,
-    export=False,
-):
+    training_use: bool = False,
+    commercial_use: bool = False,
+    redistribution: bool = False,
+    export: bool = False,
+) -> tuple[str, ...]:
     """Compose the native requested-use admissions without dropping parent restrictions."""
     if not rights or any(
         not isinstance(item, ReferenceArtifactManifest) for item in rights
@@ -68,11 +78,11 @@ def require_coordinate_rights(
 @dataclass(frozen=True)
 class CoordinateTrainingData:
     support: PreparedCoordinateSupport
-    raw_positions: object
-    canonical_positions: object
-    encoded_coordinates: object
+    raw_positions: Array
+    canonical_positions: Array
+    encoded_coordinates: Array
     decoder: AbstractCoordinateDecoder
-    conditions: object
+    conditions: Array
     condition_names: tuple[str, ...]
     record_ids: tuple[str, ...]
     source_manifest_ids: tuple[str, ...]
@@ -85,20 +95,20 @@ class CoordinateTrainingData:
 
 
 def prepare_coordinate_training_data(
-    support,
-    positions,
-    conditions,
+    support: PreparedCoordinateSupport,
+    positions: npt.ArrayLike,
+    conditions: npt.ArrayLike,
     *,
-    condition_names,
-    record_ids,
-    source_manifest_ids,
-    split_group_ids,
-    validation_groups,
-    rights,
-    corpus_description,
-    decoder=None,
-    commercial_use=False,
-):
+    condition_names: Iterable[str],
+    record_ids: Iterable[str],
+    source_manifest_ids: Iterable[str],
+    split_group_ids: Iterable[str],
+    validation_groups: Iterable[str],
+    rights: Iterable[ReferenceArtifactManifest],
+    corpus_description: str,
+    decoder: AbstractCoordinateDecoder | None = None,
+    commercial_use: bool = False,
+) -> CoordinateTrainingData:
     """Admit mapped conformers with a disjoint caller-defined group split.
 
     Group identifiers must encode the corpus's actual leakage policy (e.g.
@@ -241,7 +251,13 @@ class ConditionalCoordinateVelocity(StrictModule):
     representation_id: str = eqx.field(static=True)
     condition_names: tuple[str, ...] = eqx.field(static=True)
 
-    def __init__(self, support, decoder, condition_names, network) -> None:
+    def __init__(
+        self,
+        support: PreparedCoordinateSupport,
+        decoder: AbstractCoordinateDecoder,
+        condition_names: Iterable[str],
+        network: MLP,
+    ) -> None:
         if (
             not isinstance(decoder, AbstractCoordinateDecoder)
             or decoder.support_id != support.support_id
@@ -267,11 +283,11 @@ class ConditionalCoordinateVelocity(StrictModule):
         self.condition_names = names
         self.network = network
 
-    def center(self, value):
+    def center(self, value: ArrayLike) -> Array:
         """Project a one-case model state; name retained for Cartesian callers."""
         return self.decoder.project(value)
 
-    def __call__(self, state, time, condition):
+    def __call__(self, state: ArrayLike, time: ArrayLike, condition: Array) -> Array:
         features = jnp.concatenate(
             (
                 self.center(state),
@@ -283,7 +299,11 @@ class ConditionalCoordinateVelocity(StrictModule):
         return self.center(self.network(features))
 
 
-def _network_input_size(support, decoder, condition_names):
+def _network_input_size(
+    support: PreparedCoordinateSupport,
+    decoder: AbstractCoordinateDecoder,
+    condition_names: Sequence[str],
+) -> int:
     features = support.token_features
     return (
         decoder.coordinate_size
@@ -293,7 +313,7 @@ def _network_input_size(support, decoder, condition_names):
     )
 
 
-def _velocity_function(model):
+def _velocity_function(model: ConditionalCoordinateVelocity) -> DomainFunction:
     dimension = model.coordinate_size
     # Domains describe argument shapes; no clipping of coordinates or conditions.
     domain = HyperRectangle(
@@ -308,7 +328,12 @@ def _velocity_function(model):
     return domain.Function("x", "t", "condition")(model)
 
 
-def _endpoints(data, indices, key, num_pairs):
+def _endpoints(
+    data: CoordinateTrainingData,
+    indices: tuple[int, ...],
+    key: Key[Array, ""],
+    num_pairs: int,
+) -> EndpointCouplingSample:
     noise_key, index_key = jr.split(key)
     index = jnp.asarray(indices)[jr.randint(index_key, (num_pairs,), 0, len(indices))]
     # The standard Gaussian is the exact chosen flow source in representation
@@ -352,16 +377,16 @@ class CoordinateFitResult:
 
 
 def fit_coordinate_model(
-    data,
+    data: CoordinateTrainingData,
     *,
-    key,
-    steps=200,
-    pairs_per_step=32,
-    width=64,
-    depth=2,
-    learning_rate=1e-3,
-    commercial_use=False,
-):
+    key: Key[Array, ""],
+    steps: int = 200,
+    pairs_per_step: int = 32,
+    width: int = 64,
+    depth: int = 2,
+    learning_rate: float = 1e-3,
+    commercial_use: bool = False,
+) -> CoordinateFitResult:
     """Actually optimize the native flow-matching objective with FunctionalSolver."""
     support = data.support
     require_coordinate_rights(
@@ -423,7 +448,11 @@ def fit_coordinate_model(
         log_every=0,
     )
     learned_function = fitted.functions["velocity"]
-    learned = learned_function.func.function
+    learned_evaluator = learned_function.func
+    # _velocity_function binds the velocity model through a PointwiseEvaluator.
+    assert isinstance(learned_evaluator, PointwiseEvaluator)
+    learned = learned_evaluator.function
+    assert isinstance(learned, ConditionalCoordinateVelocity)
     final = float(evaluation.loss({"velocity": learned_function}, key=eval_key))
     heldout = float(validation.loss({"velocity": learned_function}, key=validation_key))
     if not np.isfinite((initial, final, heldout)).all():
@@ -460,7 +489,7 @@ def fit_coordinate_model(
 class _CoordinateField(StrictModule):
     model: ConditionalCoordinateVelocity
 
-    def __call__(self, time, state, condition):
+    def __call__(self, time: ArrayLike, state: Array, condition: Array) -> Array:
         return self.model(state, time, condition)
 
 
@@ -470,7 +499,9 @@ class PreparedCoordinateSampler(StrictModule):
     decoder: AbstractCoordinateDecoder
     max_samples: int = eqx.field(static=True)
 
-    def __call__(self, key, conditions):
+    def __call__(
+        self, key: Key[Array, ""], conditions: ArrayLike
+    ) -> tuple[Array, Array, Array]:
         """Numeric JIT/grad boundary: returns every state, valid bit and status."""
         conditions = jnp.asarray(conditions)
         if conditions.ndim != 2 or conditions.shape[1] != len(self.model.condition_names):
@@ -493,7 +524,7 @@ class PreparedCoordinateSampler(StrictModule):
         )
         initial = jax.vmap(self.model.center)(noise)
 
-        def one(state, condition):
+        def one(state: Array, condition: Array) -> tuple[Array, Array, Array]:
             result = self.evolution.advance(state, 0.0, 1.0, condition)
             return (
                 result.final_state,
@@ -508,8 +539,14 @@ class PreparedCoordinateSampler(StrictModule):
 
 
 def prepare_coordinate_sampler(
-    fit, *, rtol=1e-5, atol=1e-7, max_steps=1024, commercial_use=False, export=False
-):
+    fit: CoordinateFitResult,
+    *,
+    rtol: float = 1e-5,
+    atol: float = 1e-7,
+    max_steps: int = 1024,
+    commercial_use: bool = False,
+    export: bool = False,
+) -> PreparedCoordinateSampler:
     require_coordinate_rights(fit.rights, commercial_use=commercial_use, export=export)
     if (
         isinstance(max_steps, bool)
@@ -534,20 +571,20 @@ def prepare_coordinate_sampler(
 
 @dataclass(frozen=True)
 class CoordinateProposalBatch:
-    raw_positions: object
-    canonical_positions: object
-    conditions: object
-    solver_valid: object
-    solver_status: object
-    qualification: object
+    raw_positions: Array
+    canonical_positions: Array
+    conditions: Array
+    solver_valid: Array
+    solver_status: Array
+    qualification: CoordinateProposalQualification
     sample_ids: tuple[str, ...]
     parent_fit_id: str
     rights: tuple[ReferenceArtifactManifest, ...]
-    raw_coordinates: object
-    decoder_valid: object
-    decoder_residuals: object
+    raw_coordinates: Array
+    decoder_valid: Array
+    decoder_residuals: Array
     decoder_representation_id: str
-    decoder_evidence: object
+    decoder_evidence: SupportsCoordinateDecoding
     confidence: None = None
     confidence_semantics: str = "uncalibrated; geometry validity is not sample confidence"
     likelihood_capability: str = (
@@ -556,21 +593,23 @@ class CoordinateProposalBatch:
 
 
 @eqx.filter_jit
-def _sample_prepared_coordinate(sampler, key, context, /):
+def _sample_prepared_coordinate(
+    sampler: PreparedCoordinateSampler, key: Key[Array, ""], context: Array, /
+) -> tuple[Array, Array, Array]:
     return sampler(key, context)
 
 
 def sample_coordinate_proposals(
-    fit,
-    key,
-    conditions,
+    fit: CoordinateFitResult,
+    key: Key[Array, ""],
+    conditions: ArrayLike,
     *,
-    commercial_use=False,
-    export=False,
-    rtol=1e-5,
-    atol=1e-7,
-    max_steps=1024,
-):
+    commercial_use: bool = False,
+    export: bool = False,
+    rtol: float = 1e-5,
+    atol: float = 1e-7,
+    max_steps: int = 1024,
+) -> CoordinateProposalBatch:
     """Host all-sample materialization; raw ODE states and canonical views stay distinct."""
     sampler = prepare_coordinate_sampler(
         fit,
@@ -630,8 +669,13 @@ def sample_coordinate_proposals(
 
 
 def save_coordinate_model(
-    path, fit, *, commercial_use=False, redistribution=False, export=False
-):
+    path: str | Path,
+    fit: CoordinateFitResult,
+    *,
+    commercial_use: bool = False,
+    redistribution: bool = False,
+    export: bool = False,
+) -> Path:
     """Archive the trained network; the fixed support and decoder stay caller-owned.
 
     Uses native pickle-free ML artifacts and retains every inherited restriction.
@@ -671,14 +715,14 @@ def save_coordinate_model(
 
 
 def load_coordinate_model(
-    path,
-    support,
+    path: str | PathLike[str],
+    support: PreparedCoordinateSupport,
     *,
-    weight_rights,
-    decoder=None,
-    commercial_use=False,
-    export=False,
-):
+    weight_rights: ReferenceArtifactManifest,
+    decoder: AbstractCoordinateDecoder | None = None,
+    commercial_use: bool = False,
+    export: bool = False,
+) -> CoordinateFitResult:
     """Load admitted, checksum-bound weights; never fetch a checkpoint or provider.
 
     The archived network is rebound to the caller's prepared `support` and

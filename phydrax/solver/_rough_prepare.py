@@ -8,6 +8,7 @@ from math import isfinite
 from typing import Literal
 
 import equinox as eqx
+from jaxtyping import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -16,6 +17,7 @@ from ._rough import (
     AbstractRoughSolver,
     Davie,
     RoughDifferentialProblem,
+    RoughDifferentialSolution,
     RoughEuler,
     solve_rough_differential,
 )
@@ -147,8 +149,8 @@ def solve_prepared_rough(
     prepared: PreparedRoughEvolution,
     /,
     *,
-    save_times=None,
-):
+    save_times: ArrayLike | None = None,
+) -> RoughDifferentialSolution:
     """Execute one frozen rough route with no fallback or reselection."""
     if not isinstance(prepared, PreparedRoughEvolution):
         raise TypeError("prepared must be a PreparedRoughEvolution.")

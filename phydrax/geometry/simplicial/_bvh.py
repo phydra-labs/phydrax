@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -13,6 +15,10 @@ from jaxtyping import Array
 from ..._bvh import build_packed_bvh
 from ..._strict import StrictModule
 from ._mesh import _closest_points_on_triangles, MeshQueryResult, TriangleMesh
+
+
+# (node stack, stack top, best squared distance, best face, best point)
+_TraversalState: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class TriangleBVH(StrictModule):
@@ -58,10 +64,10 @@ class TriangleBVH(StrictModule):
             jnp.zeros((3,), dtype=point.dtype),
         )
 
-        def condition(state):
+        def condition(state: _TraversalState) -> Array:
             return state[1] > 0
 
-        def body(state):
+        def body(state: _TraversalState) -> _TraversalState:
             stack_, top, best_distance_sq, best_face, best_point = state
             top = top - 1
             node = stack_[top]
@@ -73,7 +79,7 @@ class TriangleBVH(StrictModule):
             active = lower_bound <= best_distance_sq
             leaf = self.leaf_id[node]
 
-            def visit_leaf(leaf_state):
+            def visit_leaf(leaf_state: _TraversalState) -> _TraversalState:
                 stack_l, top_l, distance_l, face_l, point_l = leaf_state
                 safe_leaf = jnp.maximum(leaf, 0)
                 items = self.leaf_items[safe_leaf]
@@ -93,7 +99,7 @@ class TriangleBVH(StrictModule):
                     jnp.where(improve, closest[local], point_l),
                 )
 
-            def visit_internal(internal_state):
+            def visit_internal(internal_state: _TraversalState) -> _TraversalState:
                 stack_i, top_i, distance_i, face_i, point_i = internal_state
                 left = self.left[node]
                 right = self.right[node]
@@ -119,7 +125,7 @@ class TriangleBVH(StrictModule):
                 stack_i = stack_i.at[top_i + 1].set(near)
                 return stack_i, top_i + 2, distance_i, face_i, point_i
 
-            def visit(active_state):
+            def visit(active_state: _TraversalState) -> _TraversalState:
                 return jax.lax.cond(
                     leaf >= 0,
                     visit_leaf,

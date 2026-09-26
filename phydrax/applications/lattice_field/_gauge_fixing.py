@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
 import jax
@@ -29,6 +29,16 @@ from ...metrix._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
 
 
 GaugeFixingCondition: TypeAlias = Literal["landau", "coulomb"]
+
+
+class _GaugeFixingOptions(TypedDict, total=False):
+    anchor_vertex: int
+    maximum_iterations: int
+    maximum_backtracks: int
+    maximum_gribov_copies: int
+    step_size: float
+    residual_tolerance: float
+    gribov_tolerance: float
 
 
 def _links(space: MatrixGaugeLinkSpace, links: ArrayLike, /) -> Array:
@@ -166,7 +176,12 @@ class LandauGaugeFixingPlan(StrictModule, NonTrainableState):
     plan: GaugeFixingPlan
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, link_space: MatrixGaugeLinkSpace, /, **kwargs) -> None:
+    def __init__(
+        self,
+        link_space: MatrixGaugeLinkSpace,
+        /,
+        **kwargs: Unpack[_GaugeFixingOptions],
+    ) -> None:
         plan = GaugeFixingPlan(link_space, condition="landau", **kwargs)
         self.plan = plan
         self.plan_id = plan.plan_id
@@ -196,7 +211,7 @@ class CoulombGaugeFixingPlan(StrictModule, NonTrainableState):
         link_space: MatrixGaugeLinkSpace,
         spatial_edges: ArrayLike,
         /,
-        **kwargs,
+        **kwargs: Unpack[_GaugeFixingOptions],
     ) -> None:
         plan = GaugeFixingPlan(
             link_space,
@@ -430,7 +445,7 @@ class PreparedGaugeFixing(StrictModule, NonTrainableState):
                 (links, transformation, functional, already_converged, already_converged),
                 jnp.arange(self.plan.maximum_backtracks + 1),
             )
-            next_links, next_transform, next_functional, _, accepted = selection
+            next_links, next_transform, next_functional, _chosen, accepted = selection
             next_finite = (
                 finite & jnp.all(jnp.isfinite(next_links)) & jnp.isfinite(next_functional)
             )

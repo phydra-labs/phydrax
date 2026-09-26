@@ -151,7 +151,9 @@ class RelaxedChemicalJumpPlan(StrictModule, NonTrainableState):
         )
         channel_indices = jnp.arange(self.process.num_channels, dtype=state.dtype)
 
-        def step(carry, event_keys):
+        def step(
+            carry: tuple[Array, Array, Array], event_keys: Array
+        ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array, Array]]:
             time, current, previous_valid = carry
             intensity, intensity_valid = self._relaxed_intensities(
                 time,

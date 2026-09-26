@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -31,7 +31,7 @@ class TensorType(StrictModule):
 
     def __init__(
         self,
-        variance: Sequence[TensorVariance] = (),
+        variance: Sequence[str] = (),
         /,
         *,
         density_weight: float = 0.0,
@@ -47,7 +47,8 @@ class TensorType(StrictModule):
         density_weight_ = float(density_weight)
         if not isfinite(density_weight_):
             raise ValueError("Tensor density weight must be finite.")
-        self.variance = variance_
+        # Every entry was validated against the TensorVariance literals above.
+        self.variance = cast(tuple[TensorVariance, ...], variance_)
         self.density_weight = density_weight_
 
     @property
@@ -300,9 +301,12 @@ def reexpress_tensor(
         inverse_transpose = jnp.swapaxes(inverse_matrix, -1, -2)
     result = array
     for axis, variance in enumerate(tensor_type.variance):
+        linear = jacobian if variance == "contravariant" else inverse_transpose
+        # inverse_transpose is computed above whenever any axis is covariant.
+        assert linear is not None
         result = _apply_linear_axis(
             result,
-            jacobian if variance == "contravariant" else inverse_transpose,
+            linear,
             axis,
             tensor_type.rank,
         )

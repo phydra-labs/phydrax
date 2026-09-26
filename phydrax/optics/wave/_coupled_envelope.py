@@ -249,7 +249,7 @@ class CoupledEnvelopeRun(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _frequency_axes(plan: CoupledEnvelopePlan, /):
+def _frequency_axes(plan: CoupledEnvelopePlan, /) -> tuple[Array, Array, Array]:
     dt = float(plan.time_points[1] - plan.time_points[0])
     frequency = 2.0 * jnp.pi * jnp.fft.fftfreq(plan.time_points.size, d=dt)
     if plan.x_points.size > 1:

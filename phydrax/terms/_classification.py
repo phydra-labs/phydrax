@@ -616,6 +616,7 @@ class SupervisedFocalClassificationTerm(_AbstractSupervisedDatasetObservationTer
 class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
     """Train fixed- or learned-cutpoint ordinal models on hard or soft targets."""
 
+    likelihood: OrdinalCumulativeLinkLikelihood
     target_schema: TargetSchema
     class_count: int = eqx.field(static=True)
     target_encoding: Literal["hard", "soft"] = eqx.field(static=True)

@@ -168,18 +168,26 @@ class TopologyReanalysisPlan(StrictModule, NonTrainableState):
         )
         if (source_uniform is None) != (reference_uniform is None):
             raise ValueError("Uniform discretization controls must be supplied together.")
-        if source_uniform is not None and (
-            source_uniform.shape != ()
-            or reference_uniform.shape != ()
-            or not jnp.issubdtype(source_uniform.dtype, jnp.floating)
-            or not jnp.issubdtype(reference_uniform.dtype, jnp.floating)
+        if (
+            source_uniform is not None
+            and reference_uniform is not None
+            and (
+                source_uniform.shape != ()
+                or reference_uniform.shape != ()
+                or not jnp.issubdtype(source_uniform.dtype, jnp.floating)
+                or not jnp.issubdtype(reference_uniform.dtype, jnp.floating)
+            )
         ):
             raise TypeError("Uniform discretization controls must be real scalar arrays.")
-        if source_uniform is not None and (
-            not isfinite(float(source_uniform))
-            or float(source_uniform) <= 0.0
-            or not isfinite(float(reference_uniform))
-            or float(reference_uniform) <= 0.0
+        if (
+            source_uniform is not None
+            and reference_uniform is not None
+            and (
+                not isfinite(float(source_uniform))
+                or float(source_uniform) <= 0.0
+                or not isfinite(float(reference_uniform))
+                or float(reference_uniform) <= 0.0
+            )
         ):
             raise ValueError(
                 "Uniform discretization controls must be finite and strictly positive."
@@ -328,7 +336,7 @@ def reanalyze_topology_design(
     )
     optimized = jnp.asarray(result.state_design.objective)
     objective_ratio = reference_objective / optimized
-    if plan.uniform_source_objective is None:
+    if plan.uniform_source_objective is None or plan.uniform_reference_objective is None:
         discretization_ratio = None
         excess = None
     else:

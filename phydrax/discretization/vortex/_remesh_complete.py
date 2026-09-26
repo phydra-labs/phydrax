@@ -60,7 +60,7 @@ class CompleteVortexRemeshPlan(StrictModule, NonTrainableState):
         degree: int = 3,
         boundary: str = "reject",
         periodic: tuple[bool, ...] | None = None,
-        obstacle_clearance=None,
+        obstacle_clearance: Callable[[Array], Array] | None = None,
         obstacle_id: str | None = None,
     ) -> None:
         lower_, upper_ = (

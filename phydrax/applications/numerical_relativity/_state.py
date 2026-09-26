@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -63,7 +64,8 @@ class Z4cState(StrictModule):
 
     @property
     def grid_shape(self) -> tuple[int, int, int]:
-        return self.values.shape[1:]
+        _, nx, ny, nz = self.values.shape
+        return nx, ny, nz
 
     @property
     def chi(self) -> Array:
@@ -198,7 +200,7 @@ def flat_z4c_state(
     /,
     *,
     grid_id: str,
-    dtype=jnp.float32,
+    dtype: DTypeLike = jnp.float32,
 ) -> Z4cState:
     """Return exact Cartesian Minkowski data in the packed Z4c representation."""
 

@@ -81,12 +81,12 @@ class PreparedConstrainedModel(StrictModule):
     ) -> ConstrainedModelEvaluation:
         coordinates, _ = ravel_pytree(parameters)
 
-        def objective_coordinates(value):
+        def objective_coordinates(value: Array) -> Array:
             return self.problem.value(self.unflatten(value), args)[0]
 
         objective, gradient = jax.value_and_grad(objective_coordinates)(coordinates)
 
-        def constraint_coordinates(value):
+        def constraint_coordinates(value: Array) -> Array:
             return _flat_constraint_values(
                 self.problem,
                 self.unflatten(value),
@@ -147,7 +147,7 @@ class PreparedConstrainedModel(StrictModule):
         lower = jnp.asarray(lower_multipliers)
         upper = jnp.asarray(upper_multipliers)
 
-        def lagrangian(value):
+        def lagrangian(value: Array) -> Array:
             point = self.unflatten(value)
             objective = self.problem.value(point, args)[0]
             constraints = _flat_constraint_values(self.problem, point, args)

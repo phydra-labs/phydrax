@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import abc
+from typing import Protocol
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ._support import PreparedCoordinateSupport
@@ -28,6 +29,22 @@ class CoordinateDecoding(StrictModule):
     valid: Array
     residuals: Array
     representation_id: str = eqx.field(static=True)
+
+
+class SupportsCoordinateDecoding(Protocol):
+    """Read-only decoded-coordinate evidence returned by any coordinate decoder."""
+
+    @property
+    def positions(self) -> Array: ...
+
+    @property
+    def valid(self) -> Array: ...
+
+    @property
+    def residuals(self) -> Array: ...
+
+    @property
+    def representation_id(self) -> str: ...
 
 
 class AbstractCoordinateDecoder(StrictModule):
@@ -51,13 +68,13 @@ class AbstractCoordinateDecoder(StrictModule):
     def representation_id(self) -> str: ...
 
     @abc.abstractmethod
-    def encode(self, positions) -> CoordinateEncoding: ...
+    def encode(self, positions: ArrayLike) -> CoordinateEncoding: ...
 
     @abc.abstractmethod
-    def decode(self, coordinates) -> CoordinateDecoding: ...
+    def decode(self, coordinates: ArrayLike) -> SupportsCoordinateDecoding: ...
 
     @abc.abstractmethod
-    def project(self, coordinates) -> Array:
+    def project(self, coordinates: ArrayLike) -> Array:
         """Apply representation identities used by both source and velocity."""
 
 
@@ -78,18 +95,18 @@ class CartesianCoordinateDecoder(AbstractCoordinateDecoder):
         self._coordinate_size = support.dimension
 
     @property
-    def coordinate_size(self):
+    def coordinate_size(self) -> int:
         return self._coordinate_size
 
     @property
-    def support_id(self):
+    def support_id(self) -> str:
         return self._support_id
 
     @property
-    def representation_id(self):
+    def representation_id(self) -> str:
         return self._representation_id
 
-    def encode(self, positions):
+    def encode(self, positions: ArrayLike) -> CoordinateEncoding:
         values = jnp.asarray(positions)
         if values.shape[-2:] != (self.support.template.atom_capacity, 3):
             raise ValueError("Cartesian encoder input must end in (atom_capacity, 3).")
@@ -106,7 +123,7 @@ class CartesianCoordinateDecoder(AbstractCoordinateDecoder):
             self.representation_id,
         )
 
-    def decode(self, coordinates):
+    def decode(self, coordinates: ArrayLike) -> CoordinateDecoding:
         values = jnp.asarray(coordinates)
         if values.shape[-1:] != (self.coordinate_size,):
             raise ValueError(
@@ -129,7 +146,7 @@ class CartesianCoordinateDecoder(AbstractCoordinateDecoder):
             self.representation_id,
         )
 
-    def project(self, coordinates):
+    def project(self, coordinates: ArrayLike) -> Array:
         values = jnp.asarray(coordinates)
         if values.shape != (self.coordinate_size,):
             raise ValueError(

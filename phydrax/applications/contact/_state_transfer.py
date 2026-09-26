@@ -103,7 +103,7 @@ def transfer_contact_route_state(
         weight_sum[:, None], jnp.finfo(weights.dtype).eps
     )
 
-    def transfer(field):
+    def transfer(field: Array) -> Array:
         gathered = field[safe]
         local_weights = normalized
         while local_weights.ndim < gathered.ndim:

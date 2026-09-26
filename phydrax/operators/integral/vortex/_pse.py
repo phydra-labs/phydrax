@@ -71,8 +71,8 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
         if box is not None:
             if not isinstance(box, ParticleBox) or box.ambient_dimension != dimension_:
                 raise ValueError("PSE ParticleBox dimension is incompatible.")
-            widths = np.asarray(box.widths)
-            periodic = np.asarray(box.periodic)
+            widths = np.asarray(box.lengths)
+            periodic = np.asarray(box.periodic_mask)
             if np.any(periodic & (cutoff * epsilon >= 0.5 * widths)):
                 raise ValueError(
                     "Periodic PSE support must be less than half each period."
@@ -81,7 +81,7 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
         self.cutoff_factor = cutoff
         self.maximum_interactions = maximum
         self.box = box
-        periodic_domain = box is not None and bool(np.any(np.asarray(box.periodic)))
+        periodic_domain = box is not None and bool(np.any(np.asarray(box.periodic_mask)))
         self.capabilities = VortexDiffusionCapabilities(
             dimension_,
             required_source_fields=(

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any, TYPE_CHECKING
+
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
@@ -42,12 +44,17 @@ from ._types import (
 from ._velocity_transfer import apply_velocity_transfer
 
 
+if TYPE_CHECKING:
+    from ..splatting import ParticleGridSplatState
+    from ._dynamics import PreparedMPMDynamics
+
+
 def _relative(left: Array, right: Array, /) -> Array:
     scale = jnp.maximum(1.0, jnp.maximum(jnp.linalg.norm(left), jnp.linalg.norm(right)))
     return jnp.linalg.norm(left - right) / scale
 
 
-def _route_digest(state) -> Array:
+def _route_digest(state: ParticleGridSplatState) -> Array:
     slots = jnp.arange(state.stencil.indices.shape[1], dtype=jnp.int64)[None, :]
     values = jnp.where(
         state.stencil.valid, state.stencil.indices.astype(jnp.int64) + 1, 0
@@ -55,7 +62,9 @@ def _route_digest(state) -> Array:
     return jnp.sum(values * (slots + 17))
 
 
-def _zero_constraint(velocity, mass, dimension):
+def _zero_constraint(
+    velocity: Array, mass: Array, dimension: int
+) -> MPMGridConstraintResult:
     return MPMGridConstraintResult(
         velocity,
         jnp.zeros((dimension,), dtype=velocity.dtype),
@@ -68,7 +77,13 @@ def _zero_constraint(velocity, mass, dimension):
     )
 
 
-def multifield_step_detailed(dynamics, state, dt, arguments, routes):
+def multifield_step_detailed(
+    dynamics: PreparedMPMDynamics,
+    state: MPMRuntimeState,
+    dt: Array,
+    arguments: Any,
+    routes: ParticleGridSplatState,
+) -> MPMStepResult:
     """USL-minus attempt for a fixed field axis; current contact supports K=2."""
     particle = state.particles
     active = (
@@ -140,7 +155,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
     density = mass / jnp.where(active, particle.reference_volume, 1.0)
     scheduled_deformation = particle.deformation_gradient
     schedule_pre_successful = jnp.asarray(True)
-    scheduled_material = None
+    scheduled_material: Any = None
     if isinstance(dynamics.method.schedule, USFMPMSchedule):
         pre_gradient = jnp.zeros_like(particle.deformation_gradient)
         pre_successful = jnp.asarray(True)
@@ -295,6 +310,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
                 )
             else:
                 if dynamics.compact_storage:
+                    assert storage_state is not None
                     result = dynamics.boundary.apply_indexed(
                         constrained[field],
                         grid_mass[field],
@@ -474,6 +490,7 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
                     second_values.append(second_constrained[field])
                 else:
                     if dynamics.compact_storage:
+                        assert storage_state is not None
                         boundary = dynamics.boundary.apply_indexed(
                             second_constrained[field],
                             second_mass_grid[field],
@@ -592,8 +609,8 @@ def multifield_step_detailed(dynamics, state, dt, arguments, routes):
         force,
         contact_limit,
         material_limit,
-        jnp.inf,
-        jnp.inf,
+        jnp.asarray(jnp.inf),
+        jnp.asarray(jnp.inf),
         selected,
         limiting,
         selected,

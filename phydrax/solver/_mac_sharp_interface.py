@@ -625,10 +625,10 @@ class MACSharpInterfaceProjectionPlan(StrictModule, NonTrainableState):
             )
         )
 
-        def action(value):
+        def action(value: Array) -> Array:
             return self._gauged_action(value, inverse, stage)
 
-        def transpose_action(value):
+        def transpose_action(value: Array) -> Array:
             return self._transpose_action(value, inverse, stage)
 
         operator = FunctionLinearOperator(

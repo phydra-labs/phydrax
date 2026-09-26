@@ -24,6 +24,7 @@ from ._analysis import (
     SemiconductorLinearEvidence,
 )
 from ._continuum import PreparedSemiconductorDevice, SemiconductorOperatingPoint
+from ._device import DevicePlan
 from ._materials import SemiconductorMaterial
 
 
@@ -73,7 +74,12 @@ class SemiconductorAdaptationIndicators(StrictModule):
     carrier_log_gradient: Array
 
 
-def _transition_routes(prepared, target, transition, source_result):
+def _transition_routes(
+    prepared: PreparedSemiconductorDevice,
+    target: PreparedSemiconductorDevice,
+    transition: CellMeshTransition,
+    source_result: CellMeshingResult,
+) -> tuple[Array, Array]:
     if not isinstance(transition, CellMeshTransition) or not isinstance(
         source_result, CellMeshingResult
     ):
@@ -147,18 +153,18 @@ def _transition_routes(prepared, target, transition, source_result):
     return jnp.asarray(routes), jnp.asarray(weights)
 
 
-def _physical_fields(prepared, coordinates):
+def _physical_fields(prepared: PreparedSemiconductorDevice, coordinates: Array) -> Array:
     n, p = prepared.densities(coordinates)
     return jnp.stack(
         (n, p, prepared.plan.donor_density, prepared.plan.acceptor_density), axis=-1
     )
 
 
-def _counts(prepared, fields):
+def _counts(prepared: PreparedSemiconductorDevice, fields: Array) -> Array:
     return jnp.sum(prepared.plan.support.volumes[:, None] * fields, axis=0)
 
 
-def _material_keys(plan):
+def _material_keys(plan: DevicePlan) -> np.ndarray:
     identities = tuple(
         f"{type(model).__name__}:{model.name}:{model.provenance}"
         for model in plan.material_models
@@ -167,7 +173,9 @@ def _material_keys(plan):
     return np.asarray([identities[int(value)] for value in index], dtype=object)
 
 
-def _stored_material_energy(prepared, coordinates):
+def _stored_material_energy(
+    prepared: PreparedSemiconductorDevice, coordinates: Array
+) -> tuple[Array, Array]:
     stored = prepared.storage(coordinates) * prepared.storage_scale
     total = jnp.asarray(0.0, dtype=jnp.asarray(coordinates).dtype)
     for name in prepared.layout.bulk_names:

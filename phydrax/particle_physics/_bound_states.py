@@ -344,7 +344,7 @@ class ThermalBoundStateBalance(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-def _constituent_rest_energies(plan: RadiativeCapturePlan):
+def _constituent_rest_energies(plan: RadiativeCapturePlan) -> tuple[float, float]:
     identifiers = np.asarray(plan.spectrum.species.pdg_ids)
     energies = np.asarray(plan.spectrum.species.rest_energies)
     active = np.asarray(plan.spectrum.species.active)
@@ -353,7 +353,8 @@ def _constituent_rest_energies(plan: RadiativeCapturePlan):
         for identifier, energy, present in zip(identifiers, energies, active, strict=True)
         if present
     }
-    return tuple(by_id[value] for value in plan.bound_level.constituent_pdg_ids)
+    first, second = plan.bound_level.constituent_pdg_ids
+    return by_id[first], by_id[second]
 
 
 def evaluate_radiative_capture_balance(

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
@@ -11,6 +13,10 @@ from jaxtyping import ArrayLike
 from ._core import ParticleDiscretization
 from ._neighborhood import ParticleNeighborhoodState
 from ._pairwise import particle_pair_geometry, ParticlePairGeometry
+
+
+if TYPE_CHECKING:
+    from ...graph import GraphIR
 
 
 def particle_graph_view(
@@ -22,7 +28,7 @@ def particle_graph_view(
     directed: bool = True,
     edge_mask: ArrayLike | None = None,
     geometry: ParticlePairGeometry | None = None,
-):
+) -> GraphIR:
     """Return the exact fixed-capacity particle relation as a GraphIR."""
 
     from ...graph import GraphIR

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,7 @@ class CoupledFieldCheckpointPlan(StrictModule, NonTrainableState):
         self,
         runtime_id: str,
         program_id: str,
-        field_names,
+        field_names: Iterable[str],
         /,
         *,
         geometry_id: str | None = None,

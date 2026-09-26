@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,6 +24,12 @@ LatticeObservableNormalization: TypeAlias = Literal[
     "pair-mean",
 ]
 LatticeObservableKind: TypeAlias = Literal["real", "complex"]
+
+
+class _CommonPlanFields(TypedDict):
+    topology_id: str
+    field_space_id: str
+    output_kind: LatticeObservableKind
 
 
 class LatticeObservablePlan(StrictModule):
@@ -115,10 +121,10 @@ def phi4_observable_plans(
     weights = action.discretization.dual_measures[0]
     volume = jnp.sum(weights)
 
-    def magnetization(field):
+    def magnetization(field: Array) -> Array:
         return jnp.sum(weights * field) / volume
 
-    common = {
+    common: _CommonPlanFields = {
         "topology_id": action.topology_id,
         "field_space_id": action.field_space_id,
         "output_kind": "real",
@@ -207,7 +213,7 @@ def phi4_pair_correlation_plan(
     if not resolved_id:
         raise ValueError("observable_id must be non-empty.")
 
-    def evaluate(field):
+    def evaluate(field: Array) -> Array:
         values = jnp.asarray(field)
         if values.shape != action.configuration_shape:
             raise ValueError("Scalar field shape does not match the phi4 action.")

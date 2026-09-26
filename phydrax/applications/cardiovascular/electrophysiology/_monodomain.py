@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from enum import IntFlag
 from math import isfinite
 from pathlib import Path
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -49,6 +50,10 @@ from ._aliev_panfilov import (
     AlievPanfilovState,
     evaluate_aliev_panfilov,
 )
+
+
+if TYPE_CHECKING:
+    from ....discretization.fem._generic import FiniteElementBlockGeometry
 
 
 _SSPRK33_NEGATIVE_REAL_STABILITY_RADIUS = 2.5127453266183286
@@ -476,7 +481,7 @@ class MonodomainReplayResult(StrictModule):
     state_id: str = eqx.field(static=True)
 
 
-def _local_mass(geometry) -> Array:
+def _local_mass(geometry: FiniteElementBlockGeometry) -> Array:
     if geometry.basis_values.ndim != 2:
         raise ValueError("Monodomain scalar P1 basis must have rank two.")
     return contract(
@@ -488,7 +493,9 @@ def _local_mass(geometry) -> Array:
     )
 
 
-def _local_anisotropic_stiffness(geometry, tensor: Array) -> Array:
+def _local_anisotropic_stiffness(
+    geometry: FiniteElementBlockGeometry, tensor: Array
+) -> Array:
     return contract(
         "cq,cqid,cde,cqje->cij",
         geometry.physical_weights,
@@ -499,7 +506,7 @@ def _local_anisotropic_stiffness(geometry, tensor: Array) -> Array:
     )
 
 
-def _local_cell_load(geometry) -> Array:
+def _local_cell_load(geometry: FiniteElementBlockGeometry) -> Array:
     return contract(
         "cq,qi->ci",
         geometry.physical_weights,
@@ -899,6 +906,9 @@ def commit_monodomain_step(
     )
 
 
+_ReplayCarry: TypeAlias = tuple[MonodomainState, Array, Array]
+
+
 def run_monodomain_steps(
     runtime: PreparedPhenomenologicalMonodomain,
     state: MonodomainState,
@@ -910,10 +920,10 @@ def run_monodomain_steps(
     if isinstance(step_count, bool) or not isinstance(step_count, int) or step_count < 0:
         raise ValueError("step_count must be a nonnegative integer.")
 
-    def advance(_, carry):
+    def advance(_: Array, carry: _ReplayCarry) -> _ReplayCarry:
         current, accepted, successful = carry
 
-        def evaluate(active_carry):
+        def evaluate(active_carry: _ReplayCarry) -> _ReplayCarry:
             active_state, accepted_count, _ = active_carry
             candidate = runtime.evaluate(active_state)
             step_successful = candidate.evidence.successful

@@ -9,7 +9,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...units import convert_value, UnitDefinition
@@ -34,12 +34,12 @@ class VanGenuchtenMualem(StrictModule):
 
     def __init__(
         self,
-        alpha_Pa_inverse,
-        n,
+        alpha_Pa_inverse: ArrayLike,
+        n: ArrayLike,
         /,
         *,
-        residual_saturation=0.0,
-        pore_connectivity=0.5,
+        residual_saturation: ArrayLike = 0.0,
+        pore_connectivity: ArrayLike = 0.5,
         alpha_unit: UnitDefinition = INVERSE_PASCAL,
     ) -> None:
         self.alpha_Pa_inverse = _finite(
@@ -58,28 +58,28 @@ class VanGenuchtenMualem(StrictModule):
         )
 
     @property
-    def m(self):
+    def m(self) -> Array:
         return 1 - 1 / self.n
 
-    def _unsaturated_log_power(self, pressure_Pa):
+    def _unsaturated_log_power(self, pressure_Pa: ArrayLike) -> Array:
         pressure = jnp.asarray(pressure_Pa)
         # The inactive saturated branch never evaluates log(0) or a fractional
         # power of zero, preserving the explicitly chosen endpoint derivative.
         suction = jnp.where(pressure < 0, -pressure, 1.0)
         return self.n * (jnp.log(self.alpha_Pa_inverse) + jnp.log(suction))
 
-    def effective_saturation(self, pressure_Pa):
+    def effective_saturation(self, pressure_Pa: ArrayLike) -> Array:
         power = self._unsaturated_log_power(pressure_Pa)
         return jnp.where(
             jnp.asarray(pressure_Pa) >= 0, 1.0, jnp.exp(-self.m * jnn.softplus(power))
         )
 
-    def saturation(self, pressure_Pa):
+    def saturation(self, pressure_Pa: ArrayLike) -> Array:
         return self.residual_saturation + (
             1 - self.residual_saturation
         ) * self.effective_saturation(pressure_Pa)
 
-    def relative_permeability(self, pressure_Pa):
+    def relative_permeability(self, pressure_Pa: ArrayLike) -> Array:
         power = self._unsaturated_log_power(pressure_Pa)
         log_se = -self.m * jnn.softplus(power)
         bracket = -jnp.expm1(-self.m * jnn.softplus(-power))

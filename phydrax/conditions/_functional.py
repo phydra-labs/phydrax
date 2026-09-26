@@ -9,11 +9,12 @@ from typing import Any, NoReturn
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
 
+from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..domain import DomainFunction, PointBatch
@@ -147,7 +148,14 @@ class PointJetAction(AbstractConditionOperator):
             }
         )
 
-    def _apply(self, values: Mapping[str, Any], /, *, key=None, **kwargs: Any) -> Array:
+    def _apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         if self.field not in values:
             raise KeyError(f"Missing point-jet field {self.field!r}.")
         function = values[self.field]
@@ -155,7 +163,8 @@ class PointJetAction(AbstractConditionOperator):
             raise TypeError("PointJetAction acts on DomainFunction values.")
         for variable, axis, order in self.derivatives:
             function = partial_n(function, var=variable, order=order, axis=axis)
-        evaluated = function(self.batch, key=key, **kwargs)
+        evaluation_key = DOC_KEY0 if key is None else key
+        evaluated = function(self.batch, key=evaluation_key, **kwargs)
         if not isinstance(evaluated, cx.AxisArray):
             raise TypeError("Point-jet evaluation must return phydrax.axes.AxisArray.")
         sample_axis, count = _point_axis(self.batch)
@@ -172,19 +181,47 @@ class PointJetAction(AbstractConditionOperator):
             data = self.event_map(data)
         return ein.contract("rn,n...->r...", self.coefficients, data)
 
-    def apply(self, values, /, *, key=None, **kwargs):
+    def apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         return self._apply(values, key=key, **kwargs)
 
-    def linear_action(self, values, /, *, key=None, **kwargs):
+    def linear_action(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         return self._apply(values, key=key, **kwargs)
 
-    def adjoint_action(self, value, /, *, key=None, **kwargs) -> NoReturn:
+    def adjoint_action(
+        self,
+        value: object,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del value, key, kwargs
         raise TypeError(
             "PointJetAction function-space adjoints require a representation provider."
         )
 
-    def linearize(self, values, /, *, key=None, **kwargs) -> NoReturn:
+    def linearize(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("A globally linear PointJetAction does not need linearization.")
 
@@ -232,13 +269,21 @@ class LinearReductionAction(AbstractConditionOperator):
             }
         )
 
-    def _apply(self, values: Mapping[str, Any], /, *, key=None, **kwargs: Any) -> Array:
+    def _apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         if self.field not in values:
             raise KeyError(f"Missing reduction field {self.field!r}.")
         function = values[self.field]
         if not isinstance(function, DomainFunction):
             raise TypeError("LinearReductionAction acts on DomainFunction values.")
-        reduced = self.reduction.apply(function, key=key, **kwargs)
+        evaluation_key = DOC_KEY0 if key is None else key
+        reduced = self.reduction.apply(function, key=evaluation_key, **kwargs)
         if isinstance(reduced, cx.AxisArray):
             if reduced.named_dims:
                 raise ValueError("Finite LinearReductionAction cannot retain named axes.")
@@ -247,17 +292,45 @@ class LinearReductionAction(AbstractConditionOperator):
             data = jnp.asarray(reduced)
         return self.coefficients.reshape((-1,) + (1,) * data.ndim) * data
 
-    def apply(self, values, /, *, key=None, **kwargs):
+    def apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         return self._apply(values, key=key, **kwargs)
 
-    def linear_action(self, values, /, *, key=None, **kwargs):
+    def linear_action(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         return self._apply(values, key=key, **kwargs)
 
-    def adjoint_action(self, value, /, *, key=None, **kwargs) -> NoReturn:
+    def adjoint_action(
+        self,
+        value: object,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del value, key, kwargs
         raise TypeError("Reduction adjoints require a representation or metric provider.")
 
-    def linearize(self, values, /, *, key=None, **kwargs) -> NoReturn:
+    def linearize(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("A globally linear reduction does not need linearization.")
 
@@ -374,15 +447,36 @@ class MatrixLinearFunctional(AbstractConditionOperator):
             raise RuntimeError("MatrixLinearFunctional lost every source block.")
         return result.reshape(self.output_shape)
 
-    def apply(self, values, /, *, key=None, **kwargs):
+    def apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         del key, kwargs
         return self._apply(values)
 
-    def linear_action(self, values, /, *, key=None, **kwargs):
+    def linear_action(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         del key, kwargs
         return self._apply(values)
 
-    def adjoint_action(self, value, /, *, key=None, **kwargs):
+    def adjoint_action(
+        self,
+        value: ArrayLike,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Array]:
         del key, kwargs
         covector = jnp.asarray(value)
         if covector.shape != self.output_shape:
@@ -395,7 +489,14 @@ class MatrixLinearFunctional(AbstractConditionOperator):
             )
         }
 
-    def linearize(self, values, /, *, key=None, **kwargs) -> NoReturn:
+    def linearize(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError(
             "A globally linear matrix functional does not need linearization."
@@ -434,7 +535,14 @@ class LinearFunctional(AbstractConditionOperator):
             {"kind": "linear-functional", "terms": term_ids}
         )
 
-    def _apply(self, values: Mapping[str, Any], /, *, key=None, **kwargs: Any) -> Any:
+    def _apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         outputs = tuple(
             term.linear_action(values, key=key, **kwargs) for term in self.terms
         )
@@ -446,19 +554,47 @@ class LinearFunctional(AbstractConditionOperator):
             result = result + jnp.asarray(output)
         return result
 
-    def apply(self, values, /, *, key=None, **kwargs):
+    def apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         return self._apply(values, key=key, **kwargs)
 
-    def linear_action(self, values, /, *, key=None, **kwargs):
+    def linear_action(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         return self._apply(values, key=key, **kwargs)
 
-    def adjoint_action(self, value, /, *, key=None, **kwargs) -> NoReturn:
+    def adjoint_action(
+        self,
+        value: object,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del value, key, kwargs
         raise TypeError(
             "LinearFunctional adjoints require a representation or metric provider."
         )
 
-    def linearize(self, values, /, *, key=None, **kwargs) -> NoReturn:
+    def linearize(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("A globally linear functional does not need linearization.")
 

@@ -55,7 +55,7 @@ class SelectiveSequenceModel(StrictModule, ParameterOwner):
         if return_mode not in ("sequence", "final"):
             raise ValueError("return_mode must be 'sequence' or 'final'.")
         keys = jr.split(key, resolved_depth)
-        block_kwargs = {
+        block_kwargs: dict[str, Any] = {
             "inner_size": inner_size,
             "convolution_size": convolution_size,
         }

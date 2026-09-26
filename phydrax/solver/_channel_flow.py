@@ -254,7 +254,7 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod, NonTrainableState):
         upper_tangential_traction: ArrayLike | None,
         /,
     ) -> tuple[Array, ...]:
-        def startup(_):
+        def startup(_: None) -> tuple[Array, ...]:
             solved = self.backward_euler.solve(
                 state.current_velocity / step + state.current_nonlinear_rhs,
                 lower_tangential_traction=lower_tangential_traction,
@@ -275,7 +275,7 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod, NonTrainableState):
                 diagnostics.failed,
             )
 
-        def multistep(_):
+        def multistep(_: None) -> tuple[Array, ...]:
             right_hand_side = (
                 (4.0 * state.current_velocity - state.previous_velocity) / (2.0 * step)
                 + 2.0 * state.current_nonlinear_rhs
@@ -336,15 +336,17 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod, NonTrainableState):
             "Channel SBDF2 step_size must exactly equal its prepared value.",
         )
         start = jnp.asarray(time, dtype=step.dtype).reshape(())
-        incoming = self.dynamics.state_diagnostics(state.current_velocity)
-        if isinstance(self.dynamics, CompiledChannelLESDynamics):
-            current_restriction = incoming.explicit_restriction
+        dynamics = self.dynamics
+        if isinstance(dynamics, CompiledChannelLESDynamics):
+            les_incoming = dynamics.state_diagnostics(state.current_velocity)
+            incoming = les_incoming
+            current_restriction = les_incoming.explicit_restriction
             history_safe = jax.lax.cond(
                 state.history_count == 0,
                 lambda _: jnp.asarray(True),
-                lambda _: self.dynamics.explicit_restriction(
-                    state.previous_velocity
-                ).permits(step),
+                lambda _: dynamics.explicit_restriction(state.previous_velocity).permits(
+                    step
+                ),
                 operand=None,
             )
             method_contract = (current_restriction.temporal_method == "channel-sbdf2") & (
@@ -358,6 +360,7 @@ class PreparedChannelSBDF2Method(AbstractFixedStepMethod, NonTrainableState):
                 current_restriction.permits(step) & history_safe & method_contract
             )
         else:
+            incoming = dynamics.state_diagnostics(state.current_velocity)
             explicit_safe = jnp.asarray(True)
         (
             velocity,
@@ -556,7 +559,7 @@ def solve_channel_sbdf2(
     def advance(
         carry: tuple[ChannelSBDF2State, Array, Array],
         data: tuple[Array, Array],
-    ):
+    ) -> tuple[tuple[ChannelSBDF2State, Array, Array], tuple[Array, ...]]:
         state, cumulative_valid, latched_status = carry
         step_index, time = data
         transition = prepared.step_with_diagnostics(

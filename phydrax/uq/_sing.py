@@ -4,16 +4,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from math import isfinite, prod
 from numbers import Integral
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._strict import StrictModule
 from ..linalg._gaussian_chain import (
@@ -35,12 +35,23 @@ from ._gaussian_factor import GaussianFactor
 from ._nonlinear_gaussian import (
     gaussian_expectation,
     GaussianExpectationMethod,
+    GaussianExpectationResult,
 )
+
+
+if TYPE_CHECKING:
+    from ._sing_transition import _ProjectedEulerTransition
 
 
 SINGExpectationMethod: TypeAlias = GaussianExpectationMethod
 SINGExecutionMethod: TypeAlias = GaussianMarkovExecutionMethod
 SINGStatus: TypeAlias = Literal[0, 1, 2, 3, 4, 5, 6]
+
+_RolloutCarry: TypeAlias = tuple[Array, Array]
+_RolloutInputs: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_RolloutOutputs: TypeAlias = tuple[Array, Array, Array, Array]
+_CaseObjectiveAux: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_SmootherCarry: TypeAlias = tuple["SINGState", Array]
 
 SING_SUCCESS: SINGStatus = 0
 SING_MAXIMUM_ITERATIONS: SINGStatus = 1
@@ -132,7 +143,9 @@ def _expectation_configuration(
     )
 
 
-def _validate_problem(problem: StateSpaceProblem, /):
+def _validate_problem(
+    problem: StateSpaceProblem, /
+) -> tuple[EulerMaruyamaTransitionKernel | _ProjectedEulerTransition, GaussianStatePrior]:
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be a StateSpaceProblem.")
     from ._sing_transition import _ProjectedEulerTransition
@@ -150,7 +163,7 @@ def _validate_problem(problem: StateSpaceProblem, /):
         raise TypeError(
             "Automatic SING initialization requires a full-rank GaussianStatePrior."
         )
-    return transition
+    return transition, prior
 
 
 class SINGGrid(StrictModule):
@@ -183,8 +196,8 @@ class SINGState(StrictModule):
     iteration: Array
     valid: Array
     status: Array
-    expectation_method: str = eqx.field(static=True)
-    execution_method: str = eqx.field(static=True)
+    expectation_method: SINGExpectationMethod = eqx.field(static=True)
+    execution_method: SINGExecutionMethod = eqx.field(static=True)
     num_samples: int = eqx.field(static=True)
     order: int = eqx.field(static=True)
     max_dimension: int = eqx.field(static=True)
@@ -214,7 +227,7 @@ class SINGELBOResult(StrictModule):
     entropy: Array
     valid: Array
     status: Array
-    expectation_method: str = eqx.field(static=True)
+    expectation_method: SINGExpectationMethod = eqx.field(static=True)
     execution_method: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     information_id: str = eqx.field(static=True)
@@ -255,7 +268,7 @@ class SINGResult(StrictModule):
     valid: Array
     status: Array
     max_iterations: int = eqx.field(static=True)
-    expectation_method: str = eqx.field(static=True)
+    expectation_method: SINGExpectationMethod = eqx.field(static=True)
     execution_method: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
@@ -326,7 +339,9 @@ def _build_sing_grid(problem: StateSpaceProblem, /) -> SINGGrid:
     times = observations.times.reshape((case_count, num_steps))
     step_valid = observations.step_valid.reshape((case_count, num_steps))
 
-    def case_grid(initial_time, observation_times, valid_steps):
+    def case_grid(
+        initial_time: Array, observation_times: Array, valid_steps: Array
+    ) -> tuple[Array, Array, Array, Array]:
         previous = jnp.concatenate((initial_time[None], observation_times[:-1]), axis=0)
         new_node = valid_steps & (observation_times > previous)
         observation_indices = jnp.cumsum(new_node, dtype=jnp.int32)
@@ -367,7 +382,7 @@ def _build_sing_grid(problem: StateSpaceProblem, /) -> SINGGrid:
 
 
 def _expectation(
-    function,
+    function: Callable[[Array], PyTree[Array]],
     mean: Array,
     factor: GaussianFactor,
     key: Array,
@@ -381,7 +396,7 @@ def _expectation(
     alpha: float,
     beta: float,
     kappa: float,
-):
+) -> GaussianExpectationResult:
     return gaussian_expectation(
         function,
         mean,
@@ -415,7 +430,7 @@ def initialize_sing(
     rank_tolerance: float = 0.0,
 ) -> SINGState:
     """Initialize SING from the Euler-discretized Gaussian SDE prior."""
-    transition = _validate_problem(problem)
+    transition, prior = _validate_problem(problem)
     (
         expectation_key,
         num_samples_,
@@ -443,7 +458,6 @@ def initialize_sing(
     num_nodes = grid.num_nodes
     state_shape = problem.model.state_shape
     state_size = prod(state_shape) if state_shape else 1
-    prior = problem.model.prior
     prior_means = prior.mean.reshape((case_count, state_size))
     prior_covariances = prior.covariance.reshape((case_count, state_size, state_size))
     grid_times = grid.times.reshape((case_count, num_nodes))
@@ -458,7 +472,9 @@ def initialize_sing(
         initial_mean = prior_means[case_index]
         initial_covariance = prior_covariances[case_index]
 
-        def rollout_step(carry, inputs):
+        def rollout_step(
+            carry: _RolloutCarry, inputs: _RolloutInputs
+        ) -> tuple[_RolloutCarry, _RolloutOutputs]:
             source_mean, source_covariance = carry
             edge_index, active, start, end, step_index = inputs
             context = problem.step_context(case_index, step_index)
@@ -469,7 +485,7 @@ def initialize_sing(
                 edge_index,
             )
 
-            def active_rollout(operands):
+            def active_rollout(operands: _RolloutCarry) -> _RolloutOutputs:
                 mean, covariance = operands
                 source_factor = GaussianFactor(
                     jnp.linalg.cholesky(covariance),
@@ -479,7 +495,7 @@ def initialize_sing(
                 )
                 interval = end - start
 
-                def deterministic_euler(value):
+                def deterministic_euler(value: Array) -> dict[str, Array]:
                     physical_state = value.reshape(state_shape)
                     drift = transition.drift(start, physical_state, context).reshape(
                         (state_size,)
@@ -537,7 +553,7 @@ def initialize_sing(
                     valid,
                 )
 
-            def inactive_rollout(operands):
+            def inactive_rollout(operands: _RolloutCarry) -> _RolloutOutputs:
                 mean, covariance = operands
                 return mean, covariance, covariance, jnp.asarray(True)
 
@@ -613,7 +629,8 @@ def initialize_sing(
         valid,
         status,
         expectation_method=expectation_method,
-        execution_method=recovered.execution_method,
+        # gaussian_markov_moments records its resolved "sequential"/"parallel" method.
+        execution_method=cast(SINGExecutionMethod, recovered.execution_method),
         num_samples=num_samples_,
         order=order_,
         max_dimension=max_dimension_,
@@ -629,8 +646,10 @@ def initialize_sing(
     )
 
 
-def _validate_state(problem: StateSpaceProblem, state: SINGState, /) -> None:
-    _validate_problem(problem)
+def _validate_state(
+    problem: StateSpaceProblem, state: SINGState, /
+) -> tuple[EulerMaruyamaTransitionKernel | _ProjectedEulerTransition, GaussianStatePrior]:
+    transition, prior = _validate_problem(problem)
     if not isinstance(state, SINGState):
         raise TypeError("state must be a SINGState.")
     if state.problem_id != problem.problem_id:
@@ -641,6 +660,7 @@ def _validate_state(problem: StateSpaceProblem, state: SINGState, /) -> None:
         raise ValueError("SINGState and observation sequence IDs do not agree.")
     if state.state_shape != problem.model.state_shape:
         raise ValueError("SINGState and model state shapes do not agree.")
+    return transition, prior
 
 
 def _covariance_moments(
@@ -700,10 +720,10 @@ def _case_entropy(
     _, initial_log_determinant, initial_valid = _spd_data(covariances[0])
     initial_entropy = 0.5 * (constant + initial_log_determinant)
 
-    def edge_entropy(edge_index):
+    def edge_entropy(edge_index: Array) -> tuple[Array, Array]:
         active = node_valid[edge_index + 1]
 
-        def active_entropy(_):
+        def active_entropy(_: object) -> tuple[Array, Array]:
             source_covariance = covariances[edge_index]
             target_covariance = covariances[edge_index + 1]
             cross_covariance = cross_covariances[edge_index]
@@ -736,6 +756,8 @@ def _case_entropy(
 
 def _case_expected_log_joint(
     problem: StateSpaceProblem,
+    transition: EulerMaruyamaTransitionKernel | _ProjectedEulerTransition,
+    prior: GaussianStatePrior,
     state: SINGState,
     case_index: int,
     case_id: str,
@@ -743,9 +765,7 @@ def _case_expected_log_joint(
     second_moments: Array,
     transition_second_moments: Array,
     /,
-):
-    transition = problem.model.transition
-    prior = problem.model.prior
+) -> tuple[Array, _CaseObjectiveAux]:
     observations = problem.observations
     state_shape = state.state_shape
     state_size = prod(state_shape) if state_shape else 1
@@ -785,7 +805,7 @@ def _case_expected_log_joint(
     )
     multiplicative = any(term.structure != "additive" for term in transition.wiener_terms)
 
-    def transition_factor(edge_index):
+    def transition_factor(edge_index: Array) -> tuple[Array, Array, Array]:
         active = node_valid[edge_index + 1]
         start = grid_times[edge_index]
         end = grid_times[edge_index + 1]
@@ -798,7 +818,7 @@ def _case_expected_log_joint(
             edge_index,
         )
 
-        def active_transition(_):
+        def active_transition(_: object) -> tuple[Array, Array, Array]:
             source_mean = means[edge_index]
             target_mean = means[edge_index + 1]
             source_covariance = covariances[edge_index]
@@ -821,7 +841,7 @@ def _case_expected_log_joint(
                     resolved_method="dense-cholesky",
                 )
 
-                def log_factor(value):
+                def log_factor(value: Array) -> Array:
                     source = value[:state_size].reshape(state_shape)
                     target = value[state_size:].reshape(state_shape)
                     return transition.log_prob(target, source, start, end, context)
@@ -864,12 +884,12 @@ def _case_expected_log_joint(
             )
             interval = end - start
 
-            def drift(value):
+            def drift(value: Array) -> Array:
                 return transition.drift(
                     start, value.reshape(state_shape), context
                 ).reshape((state_size,))
 
-            def drift_statistics(value):
+            def drift_statistics(value: Array) -> dict[str, Array]:
                 evaluated = drift(value)
                 return {
                     "first": evaluated,
@@ -891,7 +911,7 @@ def _case_expected_log_joint(
                 kappa=state.kappa,
             )
 
-            def expected_drift(shifted_mean):
+            def expected_drift(shifted_mean: Array) -> Array:
                 return _expectation(
                     drift,
                     shifted_mean,
@@ -975,7 +995,7 @@ def _case_expected_log_joint(
         jnp.arange(num_nodes - 1, dtype=jnp.int32)
     )
 
-    def observation_factor(observation_index):
+    def observation_factor(observation_index: Array) -> tuple[Array, Array]:
         node_index = observation_nodes[observation_index]
         active = observation_valid[observation_index] & jnp.any(
             observation_mask[observation_index]
@@ -989,7 +1009,7 @@ def _case_expected_log_joint(
             observation_index,
         )
 
-        def active_observation(_):
+        def active_observation(_: object) -> tuple[Array, Array]:
             mean = means[node_index]
             covariance = covariances[node_index]
             safe_covariance, _, covariance_valid = _spd_data(covariance)
@@ -1000,7 +1020,7 @@ def _case_expected_log_joint(
                 resolved_method="dense-cholesky",
             )
 
-            def log_likelihood(value):
+            def log_likelihood(value: Array) -> Array:
                 return problem.model.observation.log_prob(
                     observation_values[observation_index],
                     value.reshape(state_shape),
@@ -1099,7 +1119,7 @@ def _sing_statistics(
     SINGELBOResult,
     GaussianMarkovInformation | None,
 ]:
-    _validate_state(problem, state)
+    transition, prior = _validate_state(problem, state)
     moments = gaussian_markov_moments(
         state.information,
         method=state.execution_method,
@@ -1129,9 +1149,13 @@ def _sing_statistics(
 
     for case_index, case_id in enumerate(state.grid.case_ids):
 
-        def objective(case_means, case_second, case_transition):
+        def objective(
+            case_means: Array, case_second: Array, case_transition: Array
+        ) -> tuple[Array, _CaseObjectiveAux]:
             return _case_expected_log_joint(
                 problem,
+                transition,
+                prior,
                 state,
                 case_index,
                 case_id,
@@ -1588,7 +1612,9 @@ def sing_smoother(
         )
     initial_converged = jnp.zeros(initial_state.grid.case_shape, dtype=jnp.bool_)
 
-    def iteration_step(carry, scheduled_step):
+    def iteration_step(
+        carry: _SmootherCarry, scheduled_step: Array
+    ) -> tuple[_SmootherCarry, tuple[Array, Array, Array, Array]]:
         current_state, converged = carry
         update = sing_step(
             problem,

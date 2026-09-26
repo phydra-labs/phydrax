@@ -362,14 +362,14 @@ def debye_scattering(
     wave = plan.wave_numbers.astype(values.dtype)
     initial = jnp.zeros((frame_count, wave.size), dtype=values.dtype)
 
-    def accumulate_left(left_block, total):
+    def accumulate_left(left_block: int | Array, total: Array) -> Array:
         left_start = left_block * block
         left_positions = jax.lax.dynamic_slice(
             padded_positions, (0, left_start, 0), (frame_count, block, 3)
         )
         left_weights = jax.lax.dynamic_slice(padded_weights, (left_start,), (block,))
 
-        def accumulate_right(right_block, subtotal):
+        def accumulate_right(right_block: int | Array, subtotal: Array) -> Array:
             right_start = right_block * block
             right_positions = jax.lax.dynamic_slice(
                 padded_positions, (0, right_start, 0), (frame_count, block, 3)

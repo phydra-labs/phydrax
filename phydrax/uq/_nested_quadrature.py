@@ -85,7 +85,8 @@ def compute_nested_quadrature(
 
     order = jnp.argsort(likelihood, stable=True)
     sorted_particles = jax.tree.map(lambda value: value[order], particles)
-    info = NSInfo(sorted_particles, None)
+    # blackjax documents update_info as any PyTree; logX reads only the particles.
+    info = NSInfo(sorted_particles, None)  # ty: ignore[invalid-argument-type]
     log_volume_replicates, log_volume_elements = logX(
         key,
         info,

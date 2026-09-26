@@ -162,7 +162,7 @@ def _evaluation_integrand(
 
     function = _ensure_special_kwonly_args(integrand)
 
-    def evaluated(*args, **kwargs):
+    def evaluated(*args: object, **kwargs: object) -> Any:
         converted_args = jtu.tree_map(
             lambda value: _evaluation_value(value, policy),
             args,
@@ -247,7 +247,11 @@ def _requires_random_key(plan: Any, /) -> bool:
     if _is_domain_sampling_plan(plan):
         return True
     if isinstance(plan, BayesianQuadraturePlan):
-        return design_capabilities(plan.design.design).randomized
+        design = plan.design
+        return (
+            isinstance(design, PointSampling)
+            and design_capabilities(design.design).randomized
+        )
     if isinstance(plan, ProductIntegrationPlan):
         return any(_requires_random_key(factor) for factor in plan.plans.values())
     if isinstance(
@@ -264,7 +268,11 @@ def _requires_random_key(plan: Any, /) -> bool:
 
 def _is_deterministic_plan(plan: Any, /) -> bool:
     if isinstance(plan, BayesianQuadraturePlan):
-        return not design_capabilities(plan.design.design).randomized
+        design = plan.design
+        return (
+            not isinstance(design, PointSampling)
+            or not design_capabilities(design.design).randomized
+        )
     if isinstance(plan, ProductIntegrationPlan):
         return all(_is_deterministic_plan(factor) for factor in plan.plans.values())
     if isinstance(
@@ -513,7 +521,7 @@ def reduce(
     realization: IntegrationRealization,
     /,
     **kwargs: Any,
-):
+) -> IntegrationEstimate:
     """Reduce an integrand against a reusable typed realization."""
     if not isinstance(realization, IntegrationRealization):
         raise TypeError("reduce expects an IntegrationRealization from materialize().")
@@ -788,7 +796,7 @@ def integrate(
     key: Key[Array, ""] | object = _KEY_UNSET,
     precision: IntegrationPrecisionPolicy | None = None,
     **kwargs: Any,
-):
+) -> IntegrationEstimate:
     """Materialize and reduce an integration target in one call."""
     realization = materialize(
         target,

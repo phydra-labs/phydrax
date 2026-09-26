@@ -187,7 +187,12 @@ class TammDancoffPlan(StrictModule, NonTrainableState):
                 start = index
         clusters.append(tuple(range(start, root_count)))
 
-        def build_result(values_, vectors_, clusters_, successful_):
+        def build_result(
+            values_: Array,
+            vectors_: Array,
+            clusters_: tuple[tuple[int, ...], ...],
+            successful_: Array,
+        ) -> ElectronicManifoldResult:
             residuals_ = jnp.sqrt(
                 jnp.sum(
                     jnp.abs(self.response_matrix @ vectors_ - vectors_ * values_[None, :])

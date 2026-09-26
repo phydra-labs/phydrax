@@ -523,7 +523,9 @@ def _artificial_spike(margin: Array, family: str, /) -> Array:
 
 
 @_artificial_spike.defjvp
-def _artificial_spike_jvp(family, primals, tangents):
+def _artificial_spike_jvp(
+    family: str, primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (margin,) = primals
     (tangent,) = tangents
     slope = (

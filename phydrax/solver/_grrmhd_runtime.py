@@ -337,10 +337,13 @@ class FixedGridGRRMHDIMEXPlan(StrictModule, NonTrainableState):
             * (material_exchange[..., 1:4] + radiation_exchange[..., 1:]),
             axis=axes,
         )
-        source_energy = sum(jnp.sum(value.ledger.energy_defect) for value in sources)
-        source_momentum = sum(
-            jnp.sum(value.ledger.momentum_defect, axis=axes) for value in sources
+        first_source, second_source = sources
+        source_energy = jnp.sum(first_source.ledger.energy_defect) + jnp.sum(
+            second_source.ledger.energy_defect
         )
+        source_momentum = jnp.sum(
+            first_source.ledger.momentum_defect, axis=axes
+        ) + jnp.sum(second_source.ledger.momentum_defect, axis=axes)
         edge_integral = (
             0.5
             * step

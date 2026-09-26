@@ -199,7 +199,7 @@ class MultigroupDiffusionPlan:
         diffusion = self.material.diffusion_coefficient_m
         matrix = np.zeros((size, size), dtype=np.float64)
 
-        def index(cell, group):
+        def index(cell: int, group: int) -> int:
             return cell * groups + group
 
         for cell in range(cells):

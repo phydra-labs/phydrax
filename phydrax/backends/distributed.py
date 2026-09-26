@@ -313,7 +313,7 @@ class Mpi4JaxCollectiveProvider:
         )
         self._mpi = importlib.import_module("mpi4py.MPI")
 
-    def _modules(self):
+    def _modules(self) -> tuple[Any, Any]:
         return self._mpi4jax, self._mpi
 
     def sum(self, value: Array, /) -> Array:

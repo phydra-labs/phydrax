@@ -174,7 +174,9 @@ def rao_blackwellized_backward_simulation(
         case_times = times[case_index]
         case_initial_time = initial_times[case_index]
 
-        def draw_path(terminal_key, path_keys, initial_key):
+        def draw_path(
+            terminal_key: Array, path_keys: Array, initial_key: Array
+        ) -> tuple[Array, Array, Array, Array]:
             particle_index = jr.categorical(terminal_key, terminal_weights).astype(
                 jnp.int32
             )
@@ -346,7 +348,9 @@ def rao_blackwellized_particle_smoother(
         case_values = values[case_index]
         case_masks = masks[case_index]
 
-        def smooth_path(nonlinear_path, initial_nonlinear, supplied_valid):
+        def smooth_path(
+            nonlinear_path: Array, initial_nonlinear: Array, supplied_valid: Array
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
             mean, covariance = model.initial_linear_gaussian(
                 initial_nonlinear.reshape(nonlinear_shape), result.problem.args
             )

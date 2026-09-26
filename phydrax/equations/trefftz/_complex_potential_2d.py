@@ -11,7 +11,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic import HolomorphicPotentialProvider
@@ -118,7 +118,9 @@ class HarmonicPotential2D(_AbstractTrialSpaceField):
             representation_id=representation_id,
         )
 
-    def __call__(self, coordinates: Array, /, *, key=None) -> Array:
+    def __call__(
+        self, coordinates: Array, /, *, key: Key[Array, ""] | None = None
+    ) -> Array:
         del key
         value = self.potential(_complex_coordinate(coordinates))[self.branch]
         return jnp.real(value)
@@ -185,7 +187,9 @@ class BiharmonicPotential2D(_AbstractTrialSpaceField):
             representation_id=representation_id,
         )
 
-    def __call__(self, coordinates: Array, /, *, key=None) -> Array:
+    def __call__(
+        self, coordinates: Array, /, *, key: Key[Array, ""] | None = None
+    ) -> Array:
         del key
         z = _complex_coordinate(coordinates)
         values = self.potential(z)
@@ -325,7 +329,9 @@ class PlaneElasticityPotential2D(_AbstractTrialSpaceField):
             representation_id=representation_id,
         )
 
-    def __call__(self, coordinates: Array, /, *, key=None) -> Array:
+    def __call__(
+        self, coordinates: Array, /, *, key: Key[Array, ""] | None = None
+    ) -> Array:
         del key
         z = _complex_coordinate(coordinates)
         jet = self.potential.jet(z, 2)

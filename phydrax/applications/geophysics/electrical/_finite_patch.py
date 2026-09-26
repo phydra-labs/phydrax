@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -41,6 +43,10 @@ from .._evidence import GeophysicalCapabilityEvidence, GeophysicalResourceEstima
 from ._survey import ElectricalSurvey
 
 
+if TYPE_CHECKING:
+    from ....interchange._geospatial import GeospatialContract
+
+
 DC_CONDUCTIVITY_UNIT = derived_unit("S/m", ((SIEMENS, 1), (METER, -1)))
 
 
@@ -61,7 +67,7 @@ def _validate_connected_tetrahedra(mesh: CellMesh) -> None:
         raise ValueError("DC FEM requires manifold tetrahedral face incidence.")
     parent = np.arange(cell_faces.shape[0])
 
-    def root(index):
+    def root(index: int | np.integer) -> int | np.integer:
         while parent[index] != index:
             parent[index] = parent[parent[index]]
             index = parent[index]
@@ -82,7 +88,7 @@ def _validate_connected_tetrahedra(mesh: CellMesh) -> None:
 
 
 def _conductivity_tensor(
-    value: ArrayLike, cell_count: int, dtype, unit: UnitDefinition
+    value: ArrayLike, cell_count: int, dtype: np.dtype, unit: UnitDefinition
 ) -> Array:
     raw = jnp.asarray(value)
     if jnp.issubdtype(raw.dtype, jnp.complexfloating):
@@ -166,7 +172,7 @@ class FinitePatchDCPlan(StrictModule, NonTrainableState):
         *,
         batch_size: int = 8,
         length_unit: UnitDefinition = METER,
-        geospatial_contract=None,
+        geospatial_contract: GeospatialContract | None = None,
         relative_tolerance: float = 1e-9,
         absolute_tolerance: float = 1e-11,
         max_steps: int = 2000,
@@ -393,8 +399,11 @@ class PreparedDC(StrictModule, NonTrainableState):
         modes = la.LinearSubspace(
             operator.source, jnp.ones((operator.source.size, 1), dtype=zero.dtype)
         )
-        kernel_tolerance = max(
-            plan.absolute_tolerance, 256 * np.finfo(zero.dtype).eps * operator.source.size
+        kernel_tolerance = float(
+            max(
+                plan.absolute_tolerance,
+                256 * np.finfo(zero.dtype).eps * operator.source.size,
+            )
         )
         certificate = la.KernelCertificate(
             operator,
@@ -522,7 +531,7 @@ class PreparedDCConductivity(StrictModule, NonTrainableState):
             dc.template, la.LinearSystem(operator, nullspace_policy=dc.nullspace_policy)
         )
 
-    def _solve_current(self, current):
+    def _solve_current(self, current: Array) -> tuple[Array, la.LinearSolveCheckEvidence]:
         result, evidence = la.solve_checked(
             self.linear_solve,
             self.dc.current_load(current),
@@ -542,7 +551,7 @@ class PreparedDCConductivity(StrictModule, NonTrainableState):
         not a dense Jacobian or differentiation through Krylov iteration history.
         """
 
-        def one(current):
+        def one(current: Array) -> Array:
             potential, _ = self._solve_current(current)
             return self.dc.electrode_potentials(potential)
 
@@ -554,7 +563,9 @@ class PreparedDCConductivity(StrictModule, NonTrainableState):
     def solve(self) -> DCSolveResult:
         """Explicitly retain all nodal fields, with independently checked evidence."""
 
-        def one(current):
+        def one(
+            current: Array,
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
             potential, evidence = self._solve_current(current)
             return (
                 potential,

@@ -20,9 +20,11 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
+from ...equations._homogeneous_thermodynamics import HomogeneousHelmholtzPlan
 from ...equations._nonequilibrium_gas import (
     TwoTemperatureMixtureEulerSystem,
     TwoTemperatureMixtureNavierStokesSystem,
+    TwoTemperatureThermodynamicsPlan,
 )
 from ...equations._spalart_allmaras import SpalartAllmarasCompressibleSystem
 from ...qualification._evidence import QualificationEvidence, SupportDependency
@@ -341,7 +343,9 @@ class CompressibleFlowCaseSpec(StrictModule):
         )
 
     @property
-    def thermodynamics(self):
+    def thermodynamics(
+        self,
+    ) -> HomogeneousHelmholtzPlan | TwoTemperatureThermodynamicsPlan:
         return self.system.thermodynamics
 
     @property

@@ -11,17 +11,23 @@ conjugated charge/current observables require real-Frechet semantics.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from itertools import pairwise
+from typing import Self
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from .... import linalg as la
 from ...._strict import StrictModule
-from ....integration import adaptive_interval_callable, AdaptiveQuadraturePlan
+from ....integration import (
+    adaptive_interval_callable,
+    AdaptiveQuadraturePlan,
+    IntegrationEstimate,
+)
 from ....nonlinear import Brent, NonlinearTermination, scalar_root, ScalarRootProblem
 from ._basis import ChainHamiltonian, KB, PLANCK, Q, selected_eigenpairs, TransverseModes
 from ._leads import BoundStateOccupation, SemiInfiniteLead
@@ -60,7 +66,14 @@ class CoherentDevice(StrictModule):
     right: SemiInfiniteLead
     transverse: TransverseModes
 
-    def __init__(self, hamiltonian, left, right, *, transverse=None) -> None:
+    def __init__(
+        self,
+        hamiltonian: ChainHamiltonian,
+        left: SemiInfiniteLead,
+        right: SemiInfiniteLead,
+        *,
+        transverse: TransverseModes | None = None,
+    ) -> None:
         if (
             not isinstance(hamiltonian, ChainHamiltonian)
             or not isinstance(left, SemiInfiniteLead)
@@ -97,12 +110,12 @@ class CoherentDevice(StrictModule):
             modes,
         )
 
-    def with_potential(self, potential):
+    def with_potential(self, potential: ArrayLike) -> Self:
         return eqx.tree_at(
             lambda d: d.hamiltonian, self, self.hamiltonian.with_potential(potential)
         )
 
-    def shifted(self, energy):
+    def shifted(self, energy: ArrayLike) -> Self:
         return eqx.tree_at(
             lambda d: (d.hamiltonian, d.left, d.right),
             self,
@@ -113,7 +126,9 @@ class CoherentDevice(StrictModule):
             ),
         )
 
-    def retarded_operator(self, energy, *, eta=0.0):
+    def retarded_operator(
+        self, energy: ArrayLike, *, eta: ArrayLike = 0.0
+    ) -> tuple[la.TridiagonalLinearOperator, Array]:
         """Native scaled A=((E+i eta)I-H-Sigma)/q and two scalar embeddings."""
         h = self.hamiltonian
         sigma = jnp.stack(
@@ -130,7 +145,7 @@ class CoherentDevice(StrictModule):
             hopping, diagonal, hopping, operator_id="quantum-open-retarded-chain"
         ), sigma
 
-    def spectral(self, energy, *, eta=0.0):
+    def spectral(self, energy: ArrayLike, *, eta: ArrayLike = 0.0) -> SpectralPoint:
         """Reusable two-column native factorization; eta is numerical only."""
         energy_ = jnp.asarray(energy)
         eta_ = jnp.asarray(eta)
@@ -228,7 +243,7 @@ class BoundStates(StrictModule):
     preparation: str = eqx.field(static=True)
 
 
-def _real_pencil(device, energy):
+def _real_pencil(device: CoherentDevice, energy: ArrayLike) -> tuple[Array, Array]:
     h = device.hamiltonian
     d = (
         h.diagonal.at[0]
@@ -239,7 +254,7 @@ def _real_pencil(device, energy):
     return (d - energy) / Q, h.off_diagonal / Q
 
 
-def _inertia(device, energy):
+def _inertia(device: CoherentDevice, energy: float) -> int:
     """Sturm inertia of the real Schur complement in a lead spectral gap."""
     diagonal, off = _real_pencil(device, energy)
     d, o = np.asarray(diagonal), np.asarray(off)
@@ -255,10 +270,12 @@ def _inertia(device, energy):
     return int(negative)
 
 
-def _determinant(device, energy):
+def _determinant(device: CoherentDevice, energy: ArrayLike) -> Array:
     diagonal, off = _real_pencil(device, energy)
 
-    def step(state, row):
+    def step(
+        state: tuple[Array, Array], row: tuple[Array, Array]
+    ) -> tuple[tuple[Array, Array], None]:
         previous, current = state
         d, t = row
         following = d * current - t * t * previous
@@ -273,7 +290,7 @@ def _determinant(device, energy):
     return determinant
 
 
-def _continuum_bands(device):
+def _continuum_bands(device: CoherentDevice) -> list[tuple[np.float64, ...]]:
     bands = sorted(
         (
             tuple(np.asarray(device.left.band(), dtype=np.float64)),
@@ -285,7 +302,9 @@ def _continuum_bands(device):
     return bands
 
 
-def bound_states(device, occupation=None):
+def bound_states(
+    device: CoherentDevice, occupation: BoundStateOccupation | None = None
+) -> BoundStates:
     """Resolve real poles in all common lead gaps by Sturm counting.
 
     Root isolation and native scalar solves are bounded. The pole vector is
@@ -491,11 +510,18 @@ class CoherentResult(StrictModule):
     bond_particle_currents: Array
     bound_states: BoundStates
     evidence: CoherentEvidence
-    quadrature: tuple
+    quadrature: tuple[IntegrationEstimate, ...]
     successful: Array
 
 
-def _integral(device, *, eta, tolerance, panels, extra_breakpoints):
+def _integral(
+    device: CoherentDevice,
+    *,
+    eta: float,
+    tolerance: float,
+    panels: int,
+    extra_breakpoints: Collection[float],
+) -> tuple[Array, IntegrationEstimate, Array, float]:
     """Integrate scaled positive spectral weights and physical moment kernels."""
     h = device.hamiltonian
     n = h.size
@@ -538,7 +564,7 @@ def _integral(device, *, eta, tolerance, panels, extra_breakpoints):
         throw=False,
     )
 
-    def one(value):
+    def one(value: Array) -> Array:
         point = device.spectral((value + origin) * Q, eta=eta)
         density = point.correlation_diagonal * Q / (2 * jnp.pi)
         energy = (
@@ -560,7 +586,7 @@ def _integral(device, *, eta, tolerance, panels, extra_breakpoints):
             )
         )
 
-    def supported(value):
+    def supported(value: Array) -> Array:
         energy = (value + origin) * Q
         active = (eta > 0) | jnp.any(
             jnp.stack([(energy > lower) & (energy < upper) for lower, upper in bands])
@@ -577,16 +603,16 @@ def _integral(device, *, eta, tolerance, panels, extra_breakpoints):
 
 
 def integrate_coherent(
-    device,
+    device: CoherentDevice,
     *,
-    bound_occupation=None,
-    tolerance=1e-6,
-    spectral_tolerance=2e-4,
-    numerical_eta=0.0,
-    initial_panels=16,
-    max_refinements=3,
-    resonance_energies=(),
-):
+    bound_occupation: BoundStateOccupation | None = None,
+    tolerance: float = 1e-6,
+    spectral_tolerance: float = 2e-4,
+    numerical_eta: float = 0.0,
+    initial_panels: int = 16,
+    max_refinements: int = 3,
+    resonance_energies: Collection[float] = (),
+) -> CoherentResult:
     """Adaptive continuum + true bound charge, with independent refinement.
 
     The whole finite lead-band window is integrated: omitted continuum tails

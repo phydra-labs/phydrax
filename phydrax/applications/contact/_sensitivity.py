@@ -11,13 +11,17 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._strict import StrictModule
+from ...discretization.contact import ContactCandidateEpoch, PreparedCollisionScene
 from ...nonlinear import (
     NonlinearSystemProblem,
     root_solution_jvp,
     root_solution_vjp,
     SensitivityEvidence,
     SensitivityPolicy,
+    SolutionMapDerivative,
 )
+from ._friction import ContactFrictionState
+from ._potential import ContactPotentialEvaluation
 from ._solver import (
     FiniteElementContactDynamicsPlan,
     FiniteElementContactEquilibriumPlan,
@@ -109,7 +113,9 @@ class ContactSensitivityResult(StrictModule):
     successful: Array
 
 
-def _shifted_scene_positions(scene, state, rest_positions):
+def _shifted_scene_positions(
+    scene: PreparedCollisionScene, state: Array, rest_positions: Array
+) -> Array:
     prepared_rest = jnp.concatenate(
         tuple(surface.rest_positions for surface in scene.surfaces), axis=0
     )
@@ -118,11 +124,11 @@ def _shifted_scene_positions(scene, state, rest_positions):
 
 def _equilibrium_problem(
     plan: FiniteElementContactEquilibriumPlan,
-    epoch,
+    epoch: ContactCandidateEpoch,
     /,
 ) -> NonlinearSystemProblem:
-    def residual(state, arguments):
-        def energy(value):
+    def residual(state: Array, arguments: ContactSensitivityArguments) -> Array:
+        def energy(value: Array) -> Array:
             positions = _shifted_scene_positions(
                 plan.scene, value, arguments.rest_positions
             )
@@ -147,11 +153,11 @@ def _equilibrium_problem(
 
 def _dynamics_problem(
     plan: FiniteElementContactDynamicsPlan,
-    epoch,
-    friction_state,
+    epoch: ContactCandidateEpoch,
+    friction_state: ContactFrictionState | None,
     /,
 ) -> NonlinearSystemProblem:
-    def residual(state, arguments):
+    def residual(state: Array, arguments: ContactDynamicsSensitivityArguments) -> Array:
         context = plan.problem._execution_context(arguments.user_args)
         _, reduced_mass = plan.problem._mass_operators(
             context,
@@ -167,7 +173,7 @@ def _dynamics_problem(
         )
         acceleration_scale = plan.method.position_to_acceleration_scale(dt, state.dtype)
 
-        def energy(value):
+        def energy(value: Array) -> Array:
             delta = value - predictor
             mass_delta = plan.problem.state_space.inverse_riesz(reduced_mass.mv(delta))
             inertia = (
@@ -213,7 +219,12 @@ def _dynamics_problem(
     )
 
 
-def _wrap_derivative(derivative, contact, epoch, margin_tolerance):
+def _wrap_derivative(
+    derivative: SolutionMapDerivative,
+    contact: ContactPotentialEvaluation,
+    epoch: ContactCandidateEpoch,
+    margin_tolerance: float,
+) -> ContactSensitivityResult:
     tolerance = jnp.asarray(margin_tolerance, dtype=contact.minimum_gap.dtype)
     branch = (
         epoch.successful

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -13,7 +15,10 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...sparse import EdgeRelation
-from ..finite_volume import UnstructuredFiniteVolumePlan
+from ..finite_volume import (
+    UnstructuredFiniteVolumeDiscretization,
+    UnstructuredFiniteVolumePlan,
+)
 from ._particle_internal_mesh import (
     AbstractParticleInternalMeshPlan,
     AbstractPreparedParticleInternalMesh,
@@ -59,7 +64,7 @@ class UnstructuredParticleInternalMeshPlan(AbstractParticleInternalMeshPlan):
         triangles: ArrayLike | None = None,
         quadrilaterals: ArrayLike | None = None,
         tetrahedra: ArrayLike | None = None,
-        boundary_patches=None,
+        boundary_patches: Mapping[str, ArrayLike] | None = None,
         mesh_id: str | None = None,
     ) -> None:
         finite_volume = UnstructuredFiniteVolumePlan(
@@ -86,13 +91,13 @@ class UnstructuredParticleInternalMeshPlan(AbstractParticleInternalMeshPlan):
     def cell_capacity(self) -> int:
         return int(self.finite_volume.mesh.connectivity.cell_count)
 
-    def prepare(self):
+    def prepare(self) -> PreparedUnstructuredParticleInternalMesh:
         return PreparedUnstructuredParticleInternalMesh(self)
 
 
 class PreparedUnstructuredParticleInternalMesh(AbstractPreparedParticleInternalMesh):
     plan: UnstructuredParticleInternalMeshPlan
-    discretization: object
+    discretization: UnstructuredFiniteVolumeDiscretization
     dimension: int = eqx.field(static=True)
     cell_capacity: int = eqx.field(static=True)
     face_capacity: int = eqx.field(static=True)

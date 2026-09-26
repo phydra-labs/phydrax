@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -33,6 +34,12 @@ from ._reduced_articulation import (
 )
 from ._rigid_body import RigidBodyLoad
 from ._rigid_joints import RigidJointKind
+
+
+_EdgeSweepCarry: TypeAlias = tuple[Array, Array]
+_ArticulatedSweepCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class ReducedDynamicsStatus(IntEnum):
@@ -533,7 +540,7 @@ def _rnea_effort(
         axis=-1,
     )
 
-    def reverse_edge(index, carry):
+    def reverse_edge(index: Array, carry: _EdgeSweepCarry) -> _EdgeSweepCarry:
         body_force_, edge_effort_ = carry
         edge = child.shape[0] - 1 - index
         child_force = body_force_[child[edge]]
@@ -736,7 +743,9 @@ def _aba_acceleration(
     positive = jnp.asarray(True)
     pivot_tolerance = jnp.finfo(configuration.dtype).tiny
 
-    def reverse_edge(index, carry):
+    def reverse_edge(
+        index: Array, carry: _ArticulatedSweepCarry
+    ) -> _ArticulatedSweepCarry:
         (
             articulated_inertia_,
             articulated_bias_,
@@ -819,7 +828,7 @@ def _aba_acceleration(
         ),
     )
 
-    def forward_edge(edge, carry):
+    def forward_edge(edge: Array, carry: _EdgeSweepCarry) -> _EdgeSweepCarry:
         body_acceleration_, edge_acceleration_ = carry
         base = (
             motion_transform[edge] @ body_acceleration_[parent[edge]]

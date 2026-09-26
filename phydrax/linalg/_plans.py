@@ -52,7 +52,12 @@ from ._policies import (
     SparseQR,
     StructuredDirect,
 )
-from ._preconditioning import JacobiPreconditionerBuilder, PreconditionerPlan
+from ._preconditioner_properties import PreconditionerProperties
+from ._preconditioning import (
+    JacobiPreconditionerBuilder,
+    PreconditionerPlan,
+    PreconditioningPolicy,
+)
 from ._problems import (
     _problem_structure,
     AbstractLinearProblem,
@@ -603,7 +608,7 @@ def _preconditioner_properties(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy,
     /,
-):
+) -> PreconditionerProperties | None:
     if policy.preconditioning is None:
         return None
     return policy.preconditioning.properties_for(problem.operator)
@@ -747,7 +752,11 @@ def _projected_pcg_rejection(problem: AbstractLinearProblem, /) -> str | None:
 
 
 def _validate_structured_direct(
-    problem: AbstractLinearProblem, policy: LinearSolvePolicy, operator, preconditioner, /
+    problem: AbstractLinearProblem,
+    policy: LinearSolvePolicy,
+    operator: AbstractLinearOperator,
+    preconditioner: PreconditioningPolicy | None,
+    /,
 ) -> LinearBackend:
     if not isinstance(problem, LinearSystem) or not _is_structured_exact(operator):
         raise ValueError(
@@ -771,8 +780,8 @@ def _validate_dense_square(
     problem: AbstractLinearProblem,
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
-    operator,
-    preconditioner,
+    operator: AbstractLinearOperator,
+    preconditioner: PreconditioningPolicy | None,
     /,
 ) -> LinearBackend:
     if preconditioner is not None:
@@ -797,8 +806,8 @@ def _validate_dense_rectangular(
     problem: AbstractLinearProblem,
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
-    operator,
-    preconditioner,
+    operator: AbstractLinearOperator,
+    preconditioner: PreconditioningPolicy | None,
     /,
 ) -> LinearBackend:
     if preconditioner is not None:
@@ -826,10 +835,10 @@ def _validate_dense_rectangular(
 
 def _validate_sparse_direct(
     problem: AbstractLinearProblem,
-    method: AbstractLinearMethod,
+    method: SparseQR | SparseLU | SparseCholesky | SparseLDLT,
     policy: LinearSolvePolicy,
-    operator,
-    preconditioner,
+    operator: AbstractLinearOperator,
+    preconditioner: PreconditioningPolicy | None,
     /,
 ) -> LinearBackend:
     if not isinstance(problem, LinearSystem):
@@ -896,8 +905,8 @@ def _validate_block_krylov(
     problem: AbstractLinearProblem,
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
-    operator,
-    preconditioner_properties,
+    operator: AbstractLinearOperator,
+    preconditioner_properties: PreconditionerProperties | None,
     rhs_layout: RHSLayout | None,
     /,
 ) -> LinearBackend:
@@ -938,7 +947,7 @@ def _validate_block_krylov(
 def _validate_projected_pcg(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy,
-    preconditioner_properties,
+    preconditioner_properties: PreconditionerProperties | None,
     /,
 ) -> LinearBackend:
     rejection = _projected_pcg_rejection(problem)
@@ -957,7 +966,10 @@ def _validate_projected_pcg(
 
 
 def _validate_pcg(
-    problem: AbstractLinearProblem, operator, preconditioner_properties, /
+    problem: AbstractLinearProblem,
+    operator: AbstractLinearOperator,
+    preconditioner_properties: PreconditionerProperties | None,
+    /,
 ) -> LinearBackend:
     if not isinstance(problem, LinearSystem):
         raise TypeError("PCG requires a LinearSystem.")
@@ -976,7 +988,10 @@ def _validate_pcg(
 
 
 def _validate_minres(
-    problem: AbstractLinearProblem, operator, preconditioner_properties, /
+    problem: AbstractLinearProblem,
+    operator: AbstractLinearOperator,
+    preconditioner_properties: PreconditionerProperties | None,
+    /,
 ) -> LinearBackend:
     if not isinstance(problem, LinearSystem):
         raise TypeError("MINRES requires a LinearSystem.")
@@ -1001,7 +1016,10 @@ def _validate_fgmres(problem: AbstractLinearProblem, /) -> LinearBackend:
 
 
 def _validate_generalized_lsmr(
-    problem: AbstractLinearProblem, operator, preconditioner, /
+    problem: AbstractLinearProblem,
+    operator: AbstractLinearOperator,
+    preconditioner: PreconditioningPolicy | None,
+    /,
 ) -> LinearBackend:
     if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
         raise TypeError("GeneralizedLSMR requires least-squares semantics.")
@@ -1028,8 +1046,8 @@ def _validate_lsmr(
 def _validate_conjugate_gradient(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy,
-    operator,
-    preconditioner_properties,
+    operator: AbstractLinearOperator,
+    preconditioner_properties: PreconditionerProperties | None,
     /,
 ) -> LinearBackend:
     if not isinstance(problem, LinearSystem):
@@ -1054,7 +1072,10 @@ def _validate_conjugate_gradient(
 
 
 def _validate_gmres(
-    problem: AbstractLinearProblem, operator, preconditioner_properties, /
+    problem: AbstractLinearProblem,
+    operator: AbstractLinearOperator,
+    preconditioner_properties: PreconditionerProperties | None,
+    /,
 ) -> LinearBackend:
     if not isinstance(problem, LinearSystem):
         raise TypeError("GMRES requires a LinearSystem.")
@@ -1075,8 +1096,8 @@ def _validate_gmres(
 def _validate_bicgstab(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy,
-    operator,
-    preconditioner_properties,
+    operator: AbstractLinearOperator,
+    preconditioner_properties: PreconditionerProperties | None,
     /,
 ) -> LinearBackend:
     if not isinstance(problem, LinearSystem):
@@ -1098,7 +1119,7 @@ def _validate_iterative_problem(
     problem: AbstractLinearProblem,
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
-    operator,
+    operator: AbstractLinearOperator,
     /,
 ) -> None:
     if operator.batch_shape:

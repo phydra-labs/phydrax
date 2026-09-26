@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from queue import Empty, Full, Queue
 from threading import current_thread, Event, Thread
+from types import TracebackType
 from typing import cast, Generic, TypeVar
 
 
@@ -109,7 +110,12 @@ class BoundedPrefetchIterator(Iterator[OutputT], Generic[InputT, OutputT]):
         self._start()
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         del exc_type, exc_value, traceback
         self.close()
 

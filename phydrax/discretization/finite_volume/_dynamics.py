@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.linalg as la
 
@@ -92,7 +93,7 @@ class ConvexStateLimiterPlan(StrictModule, NonTrainableState):
         )
         direction = jnp.asarray(face) - average_
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             candidate = average_ + midpoint[..., None] * direction
@@ -311,7 +312,7 @@ def evaluate_cartesian_numerical_flux(
     face_measure: ArrayLike,
     geometry_id: str,
     active: ArrayLike | None = None,
-):
+) -> tuple[Array, Array]:
     """Evaluate the shared Cartesian numerical-flux and closure kernel.
 
     The baseline is the axis `face_flux`; a closure sees the stationary context
@@ -400,7 +401,9 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         /,
         *,
         capacity: ArrayLike | None = None,
-        bathymetry: ArrayLike | None = None,
+        bathymetry: (
+            ArrayLike | ShallowWaterBathymetryPlan | PreparedShallowWaterBathymetry | None
+        ) = None,
         source: SourceFunction | None = None,
         source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
@@ -814,6 +817,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
     ) -> tuple[Array, Array]:
         # Preparation admits only arbitrary-normal fluxes on mapped geometry.
         solver = self.method.interface_solver
+        assert isinstance(solver, AbstractArbitraryNormalNumericalFluxPlan)
         measure = self.discretization.face_measures[axis]
         left_ = self.precision.flux(left)
         right_ = self.precision.flux(right)
@@ -1460,7 +1464,11 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         state: Array,
         args: Any = None,
         /,
-    ):
+    ) -> tuple[
+        PyTree[Array],
+        Callable[[PyTree[Any]], PyTree[Array]],
+        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+    ]:
         linearization = la.prepare_linearization(
             lambda value: self(time, value, args), state
         )

@@ -364,13 +364,13 @@ class FixedAbelianChargeBasis(AbstractSectorBasis):
             state_charges[site, : len(local)] = np.asarray(local, dtype=np.int32)
             valid_local[site, : len(local)] = True
 
-        def decode(index):
+        def decode(index: int) -> tuple[np.integer, ...]:
             digits = np.unravel_index(index, tuple(widths))
             return tuple(
                 digit + minimum for digit, minimum in zip(digits, minima, strict=True)
             )
 
-        def encode(charge):
+        def encode(charge: Sequence[int | np.integer]) -> int:
             digits = []
             for value, minimum, width, modulus in zip(
                 charge, minima, widths, group.components, strict=True

@@ -21,11 +21,11 @@ from ....atomistic.sampling._collective_variable import (
 class NascentObservation(StrictModule):
     contact_similarity: Array
     contact_count: Array
-    contact_available: Array
+    contact_available: bool
     gauss_entanglement: Array
     quadrature_difference: Array
     curve_separation: Array
-    entanglement_available: Array
+    entanglement_available: bool
     successful: Array
 
 
@@ -173,7 +173,7 @@ class NascentChainObservations(StrictModule):
             endpoint_squares.append(jnp.sum((edge_r + projected[..., None] * u) ** 2, -1))
         separation = jnp.sqrt(jnp.min(jnp.stack([interior_sq, *endpoint_squares])))
 
-        def integral(nodes, weights):
+        def integral(nodes: Array, weights: Array) -> Array:
             delta = (
                 r[:, :, None, None, :]
                 + nodes[None, None, :, None, None] * u[:, :, None, None, :]

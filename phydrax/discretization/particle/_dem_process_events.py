@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -65,7 +68,7 @@ class ReactiveParticleTemplatePlan(StrictModule, NonTrainableState):
         /,
         *,
         outer_scale: float | None = None,
-        reaction_front: ArrayLike = (),
+        reaction_front: ArrayLike | Sequence[float] = (),
         template_id: str | None = None,
     ) -> None:
         radius_ = float(radius)
@@ -151,7 +154,12 @@ class ReactiveParticleTemplateDistributionPlan(StrictModule, NonTrainableState):
     probabilities: Array
     distribution_id: str = eqx.field(static=True)
 
-    def __init__(self, templates, probabilities: ArrayLike, /) -> None:
+    def __init__(
+        self,
+        templates: Iterable[ReactiveParticleTemplatePlan],
+        probabilities: ArrayLike,
+        /,
+    ) -> None:
         values = tuple(templates)
         probability = np.asarray(probabilities, dtype=np.float64)
         if not values or any(
@@ -269,7 +277,7 @@ def insert_reactive_particles(
     time: Array,
     /,
     *,
-    args=None,
+    args: Any = None,
     available_mask: ArrayLike | None = None,
 ) -> ParticleInsertionResult:
     if not isinstance(plan, ParticleInsertionPlan):
@@ -509,7 +517,7 @@ def _grow_internal_batch(
     batch: PreparedParticleInternalBatch,
     state: ParticleInternalBatchState,
     /,
-):
+) -> tuple[PreparedParticleInternalBatch, ParticleInternalBatchState]:
     old_capacity = transition.source_epoch.dynamics.bodies.capacity
     if batch.particle_count != old_capacity or not np.array_equal(
         np.asarray(batch.owner_indices), np.arange(old_capacity)
@@ -593,7 +601,7 @@ def insert_reactive_particles_with_growth(
     growth_policy: ParticleCapacityGrowthPolicy,
     /,
     *,
-    args=None,
+    args: Any = None,
 ) -> ParticleEpochInsertionResult:
     available = ~epoch.ever_occupied & ~epoch.retired
     free = int(np.count_nonzero(np.asarray(available)))
@@ -701,7 +709,7 @@ def fragment_particle_with_growth(
     growth_policy: ParticleCapacityGrowthPolicy,
     /,
     *,
-    args=None,
+    args: Any = None,
 ) -> ParticleEpochFragmentationResult:
     valid = jnp.asarray(child_valid, dtype=jnp.bool_)
     required = int(np.count_nonzero(np.asarray(valid)))
@@ -985,7 +993,7 @@ def remove_particles_in_region(
     /,
     *,
     remove_inside: bool = True,
-    args=None,
+    args: Any = None,
 ) -> ParticleRemovalResult:
     if not isinstance(region, ParticleRegionPlan):
         raise TypeError("region must be a ParticleRegionPlan.")

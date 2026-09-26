@@ -3,7 +3,7 @@
 #
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, TypeAlias
 
 import equinox as eqx
@@ -309,7 +309,7 @@ class PointBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignor
     def __getitem__(self, key: str) -> PyTree[cx.AxisArray]:
         return self.points[key]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self.points)
 
     def __len__(self) -> int:
@@ -478,7 +478,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignore
     def __getitem__(self, key: str) -> PyTree[cx.AxisArray]:
         return self.points[key]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self.points)
 
     def __len__(self) -> int:

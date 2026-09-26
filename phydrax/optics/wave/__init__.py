@@ -5,6 +5,7 @@
 """Immutable physical plane fields and scalar wave-optics actions."""
 
 from importlib import import_module
+from typing import Any
 
 from ._angular_spectrum import (
     AngularSpectrumEvidence,
@@ -164,7 +165,7 @@ from ._unidirectional import (
 _FACADE_EXPORT_MODULES = ("._atmosphere", "._imaging", "._pupil", "._statistical_ao")
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

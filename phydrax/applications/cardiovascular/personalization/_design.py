@@ -125,7 +125,7 @@ class SensitivitySVDPlan(StrictModule, NonTrainableState):
         if point.shape != self.parameter_scale.shape:
             raise ValueError("parameters must match parameter_scale shape.")
 
-        def flattened(candidate):
+        def flattened(candidate: Array) -> Array:
             output = jnp.asarray(self.forward(candidate, args))
             if jnp.issubdtype(output.dtype, jnp.complexfloating):
                 raise TypeError("Sensitivity observables must be real-valued.")
@@ -441,7 +441,7 @@ class ProfileLikelihoodPlan(StrictModule, NonTrainableState):
                 ).astype(jnp.int32)
             else:
 
-                def assemble(free_values):
+                def assemble(free_values: Array) -> Array:
                     return (
                         initial.at[free_indices]
                         .set(free_values)
@@ -528,7 +528,7 @@ def check_directional_derivative(
             "Derivative-check step and tolerances must be finite and positive."
         )
 
-    def scalar(value):
+    def scalar(value: Array) -> Array:
         result = jnp.asarray(function(value))
         if result.shape != ():
             raise ValueError("Directional derivative checks require a scalar function.")
@@ -898,7 +898,7 @@ class PreparedExperimentDesign(StrictModule, NonTrainableState):
             tuple(candidate.information for candidate in self.plan.candidates)
         )
 
-        def objective(selection, unused):
+        def objective(selection: Array, unused: object) -> Array:
             del unused
             information = self.plan.prior_information + contract(
                 "i,ijk->jk",

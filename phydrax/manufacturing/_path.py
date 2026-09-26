@@ -53,7 +53,7 @@ class ToolpathEvent:
             raise ValueError("Toolpath event data are incompatible with its kind.")
 
     @property
-    def event_fingerprint(self):
+    def event_fingerprint(self) -> str:
         return canonical_fingerprint(
             {
                 "kind": "toolpath-event",

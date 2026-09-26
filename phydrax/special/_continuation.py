@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jax.typing import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 
 _LANCZOS = (
@@ -66,7 +67,7 @@ def _jv_series_direct(order: Array, argument: Array, /) -> Array:
     half = 0.5 * z
     term = jnp.exp(v * jnp.log(half) - _loggamma_lanczos(v + 1.0))
 
-    def accumulate(index, state):
+    def accumulate(index: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         current, total_ = state
         current = current * (-(half * half)) / (index * (v + index))
         return current, total_ + current
@@ -90,7 +91,7 @@ def _negative_integer_jv_order_derivative(order: Array, argument: Array, /) -> A
         -n * log_half + _loggamma_lanczos(jnp.asarray(n, dtype=argument.dtype))
     )
 
-    def accumulate_early(index, state):
+    def accumulate_early(index: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         term, total = state
         total = total + term
         has_next = index + 1 < n_integer
@@ -117,7 +118,9 @@ def _negative_integer_jv_order_derivative(order: Array, argument: Array, /) -> A
         n * log_half - _loggamma_lanczos(jnp.asarray(n + 1.0, dtype=argument.dtype))
     )
 
-    def accumulate_late(index, state):
+    def accumulate_late(
+        index: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         current, total, harmonic = state
         total = total + current * (log_half - harmonic + 0.5772156649015329)
         current = current * (-(half * half)) / ((index + 1) * (n + index + 1.0))
@@ -157,7 +160,7 @@ def _iv_series(order: Array, argument: Array, /) -> Array:
     half = 0.5 * z
     term = jnp.exp(v * jnp.log(half) - _loggamma_lanczos(v + 1.0))
 
-    def accumulate(index, state):
+    def accumulate(index: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         current, total_ = state
         current = current * (half * half) / (index * (v + index))
         return current, total_ + current
@@ -171,7 +174,9 @@ def complex_jv(order: ArrayLike, argument: ArrayLike, /) -> Array:
     return _jv_series(order_, argument_)
 
 
-def _order_derivative(function, order: Array, argument: Array, /) -> Array:
+def _order_derivative(
+    function: Callable[[Array, Array], Array], order: Array, argument: Array, /
+) -> Array:
     return jax.jvp(
         lambda value: function(value, argument), (order,), (jnp.ones_like(order),)
     )[1]
@@ -307,7 +312,7 @@ def complex_airy(argument: ArrayLike, /) -> tuple[Array, Array, Array, Array]:
     return ai, aip, bi, bip
 
 
-def _carlson_steps(dtype) -> int:
+def _carlson_steps(dtype: DTypeLike) -> int:
     return 14 if dtype == jnp.complex64 else 24
 
 

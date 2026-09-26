@@ -19,6 +19,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState, parameter_field
 from ....dynamics import (
+    DiscreteStepContext,
     DiscreteSystem,
     DiscreteTransitionResult,
     InputLayout,
@@ -328,7 +329,12 @@ class PotvinFuglevand2017Plan(StrictModule, NonTrainableState):
         """Return the canonical one-population array-state dynamics view."""
         plan = self
 
-        def transition(context, packed_state, inputs, parameters):
+        def transition(
+            context: DiscreteStepContext,
+            packed_state: Array,
+            inputs: Array,
+            parameters: object,
+        ) -> DiscreteTransitionResult:
             if not isinstance(parameters, PotvinFuglevand2017Parameters):
                 raise TypeError(
                     "Potvin--Fuglevand DiscreteSystem args must be model parameters."

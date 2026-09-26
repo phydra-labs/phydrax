@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -26,7 +27,7 @@ class LinearPiezoelectricLaw:
     @classmethod
     def create(
         cls, stiffness: ArrayLike, piezoelectric: ArrayLike, permittivity: ArrayLike
-    ):
+    ) -> Self:
         stiffness_ = np.asarray(stiffness)
         piezoelectric_ = np.asarray(piezoelectric)
         permittivity_ = np.asarray(permittivity)

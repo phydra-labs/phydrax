@@ -23,7 +23,10 @@ from ._dynamics import (
     PreparedAtomisticDynamics,
     VelocityVerletPlan,
 )
-from ._hydrodynamic_brownian import HydrodynamicBrownianPlan
+from ._hydrodynamic_brownian import (
+    HydrodynamicBrownianPlan,
+    PreparedHydrodynamicBrownian,
+)
 from ._hydrodynamic_mobility import ConstantIsotropicMobilityPlan
 from ._thermal import stable_particle_normals
 from ._thermodynamic import PreparedThermodynamicStateTable
@@ -73,7 +76,9 @@ class OverdampedAtomisticPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, dynamics: PreparedAtomisticDynamics, /):
+    def prepare(
+        self, dynamics: PreparedAtomisticDynamics, /
+    ) -> PreparedHydrodynamicBrownian:
         return HydrodynamicBrownianPlan(
             self.step_size,
             self.temperature,

@@ -23,6 +23,7 @@ from ..discretization import (
 )
 from ..discretization.pic import (
     PICEnergyLedger,
+    PICFieldGatherResult,
     PICParticleState,
     PICRejectionReason,
     PICRunStatus,
@@ -172,7 +173,12 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _proper_velocity(self, velocity: ArrayLike, transfer, /) -> Array:
+    def _proper_velocity(
+        self,
+        velocity: ArrayLike,
+        transfer: PreparedPICParticleCochainTransfer,
+        /,
+    ) -> Array:
         value = jnp.asarray(velocity, dtype=transfer.species.particles.safe_masses.dtype)
         capacity = transfer.species.capacity
         dimension = transfer.species.spatial_dimension
@@ -201,7 +207,13 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         /,
         *,
         initial_potential: ArrayLike | None = None,
-    ):
+    ) -> tuple[
+        Array,
+        CochainElectrostaticResult,
+        tuple[PICFieldGatherResult, ...],
+        Array,
+        Array,
+    ]:
         route_states = tuple(
             transfer.build(state.position)
             for transfer, state in zip(self.transfers, particles, strict=True)

@@ -84,7 +84,7 @@ def cluster_radiation_lesions(
         molecule = molecules[molecule_id]
         parent = list(range(len(lesions)))
 
-        def root(index):
+        def root(index: int) -> int:
             while parent[index] != index:
                 parent[index] = parent[parent[index]]
                 index = parent[index]

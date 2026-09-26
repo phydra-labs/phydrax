@@ -621,7 +621,7 @@ class FunctionalTrainingState(StrictModule):
         enforcement_state: EnforcementState | None = None,
         previous_functions: PyTree[Any] | None = None,
         pseudo_inverse_steps: Sequence[ArrayLike] = (),
-        term_multipliers: ArrayLike = (),
+        term_multipliers: ArrayLike | Sequence[ArrayLike] = (),
         previous_gradient: PyTree[Any] | None = None,
         training_seconds: float = 0.0,
         resumed_from_step: int = 0,

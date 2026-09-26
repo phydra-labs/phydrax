@@ -473,6 +473,37 @@ def test_distributed_production_consumes_plan_and_artifact_restart_is_exact(
         changed.prepare(prepared.checkpoint_store)
 
 
+def test_distributed_production_run_returns_placed_completed_result(tmp_path):
+    _, _, source, dynamics, _, state = _compiled(checkpoint_count=1)
+    case = DistributedPeriodicLESProductionCase(
+        dynamics,
+        state,
+        case_id="distributed-les-case",
+    )
+    plan = DistributedPeriodicLESProductionPlan(
+        phx.equations.IncompressibleFlowProblem(3, 0.01),
+        source,
+        DistributedPeriodicLESMethodPlan("etdrk2", safety_factor=0.8),
+        case,
+        start_time=0.0,
+        end_time=2.0e-4,
+        step_size=1.0e-4,
+        checkpoint_interval=1,
+        segment_steps=1,
+        checkpoint_retention=2,
+    )
+    prepared = plan.prepare(_artifact_store(tmp_path, plan))
+    result = prepared.run(prepared.initialize(state))
+    expected = plan.dynamics.backend.execution.modal_layout.sharding(
+        plan.dynamics.backend.execution.topology
+    )
+
+    assert bool(result.successful)
+    assert result.failure is None
+    assert result.state.status == "completed"
+    assert result.state.accepted_state.sharding == expected
+
+
 def test_distributed_production_resource_refusal_precedes_runtime(tmp_path):
     _, local, zero_checkpoint_plan, dynamics, _, state = _compiled(checkpoint_count=0)
     case = DistributedPeriodicLESProductionCase(

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -28,6 +29,7 @@ from .._iteration import (
 )
 from .._sampling._adaptation import (
     adapt_proposal_scale,
+    AdaptiveProposalState,
     initialize_proposal_adaptation,
     RobbinsMonroScalePolicy,
 )
@@ -58,6 +60,17 @@ _ACCEPT_ADDRESS = SampleAddress(
     target="acceptance",
     role="transition",
 )
+
+# (position, momentum, gradient, active, used steps, nonfinite, membership failure)
+_TrajectoryCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+# (position, log target, gradient, valid, step index)
+_DrawCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_TransitionOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_DrawOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class CompactGeometricTarget(StrictModule):
@@ -276,7 +289,7 @@ def _value_and_gradient(
     dtype = jnp.real(position).dtype
     zero = jnp.zeros(kernel.target.local_coordinate_shape, dtype=dtype)
 
-    def local_log_target(local):
+    def local_log_target(local: Array) -> Array:
         point = kernel.target.geometry.retract(position, local)
         return kernel.target(point)
 
@@ -375,7 +388,7 @@ def _trajectory(
     momentum: Array,
     /,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
-    def step(carry, _):
+    def step(carry: _TrajectoryCarry, _: None) -> tuple[_TrajectoryCarry, None]:
         q, p, g, active, used, nonfinite, membership_failure = carry
         half = p + 0.5 * kernel.step_size * g
         proposed_q = kernel.target.geometry.retract(
@@ -430,7 +443,7 @@ def _one_transition(
     chain: Array,
     step_index: Array,
     /,
-):
+) -> _TransitionOutputs:
     momentum_key = derive_key(key, _MOMENTUM_ADDRESS, chain, step_index)
     accept_key = derive_key(key, _ACCEPT_ADDRESS, chain, step_index)
     momentum = _sample_momentum(kernel, momentum_key)
@@ -468,7 +481,9 @@ def _one_transition(
     )
 
 
-def _iteration_metrics(outputs, draw_index: int, /):
+def _iteration_metrics(
+    outputs: tuple[Array, ...], draw_index: int, /
+) -> CompactGroupHamiltonianIterationMetrics:
     return CompactGroupHamiltonianIterationMetrics(
         accepted=outputs[2][:, draw_index],
         acceptance_probability=outputs[3][:, draw_index],
@@ -504,7 +519,7 @@ def sample_compact_group_hamiltonian(
         raise ValueError("num_draws must be positive.")
     chain_indices = jnp.arange(state.position.shape[0], dtype=jnp.uint32)
 
-    def draw(carry, _):
+    def draw(carry: _DrawCarry, _: None) -> tuple[_DrawCarry, _DrawOutputs]:
         positions, values, gradients, valid, index = carry
         result = jax.vmap(
             lambda q, value, gradient, state_valid, chain: _one_transition(
@@ -666,7 +681,7 @@ def _adapt_compact_group_warmup(
     scale_policy: RobbinsMonroScalePolicy,
     key: Key[Array, ""],
     /,
-):
+) -> tuple[CompactGroupHamiltonianChainState, AdaptiveProposalState, Array, Array]:
     adaptive = initialize_proposal_adaptation(scale_policy, kernel.step_size)
     current = state
     sizes = []

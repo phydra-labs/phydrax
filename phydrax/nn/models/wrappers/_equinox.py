@@ -30,7 +30,9 @@ from ...activations import activation_regularity
 _Layout = Literal["value", "passthrough"]
 
 
-def _flatten_value(x: Array, /, *, in_size: int | tuple[int, ...] | Literal["scalar"]):
+def _flatten_value(
+    x: Array, /, *, in_size: int | tuple[int, ...] | Literal["scalar"]
+) -> tuple[Array, tuple[()]]:
     x_arr = jnp.asarray(x)
     if in_size == "scalar":
         if x_arr.shape == ():

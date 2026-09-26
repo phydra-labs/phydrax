@@ -191,15 +191,21 @@ class LocalLevelComponent(AbstractStructuralComponent):
         self.transition_id = "random-walk"
         self.process_noise_id = "elapsed-time-gaussian"
 
-    def transition_matrix(self, t0, t1, context, /):
+    def transition_matrix(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del t0, t1, context
         return jnp.ones((1, 1), dtype=self.initial_mean.dtype)
 
-    def process_covariance(self, t0, t1, context, /):
+    def process_covariance(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del context
         return (self.variance * _positive_interval(t0, t1)).reshape((1, 1))
 
-    def observation_loading(self, time, context, /):
+    def observation_loading(
+        self, time: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del time, context
         return jnp.ones((1,), dtype=self.initial_mean.dtype)
 
@@ -238,19 +244,25 @@ class TrendComponent(AbstractStructuralComponent):
         self.transition_id = "local-linear-trend"
         self.process_noise_id = "elapsed-time-diagonal-gaussian"
 
-    def transition_matrix(self, t0, t1, context, /):
+    def transition_matrix(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del context
         interval = _positive_interval(t0, t1)
         one = jnp.ones_like(interval)
         zero = jnp.zeros_like(interval)
         return jnp.stack((jnp.stack((one, interval)), jnp.stack((zero, one))))
 
-    def process_covariance(self, t0, t1, context, /):
+    def process_covariance(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del context
         interval = _positive_interval(t0, t1)
         return jnp.diag(jnp.stack((self.level_variance, self.slope_variance)) * interval)
 
-    def observation_loading(self, time, context, /):
+    def observation_loading(
+        self, time: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del time, context
         return jnp.asarray((1.0, 0.0), dtype=self.initial_mean.dtype)
 
@@ -299,7 +311,9 @@ class DampedTrendComponent(AbstractStructuralComponent):
         self.transition_id = "fractional-damped-trend"
         self.process_noise_id = "elapsed-time-diagonal-gaussian"
 
-    def transition_matrix(self, t0, t1, context, /):
+    def transition_matrix(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del context
         interval = _positive_interval(t0, t1)
         retention = self.damping**interval
@@ -308,12 +322,16 @@ class DampedTrendComponent(AbstractStructuralComponent):
         zero = jnp.zeros_like(interval)
         return jnp.stack((jnp.stack((one, accumulation)), jnp.stack((zero, retention))))
 
-    def process_covariance(self, t0, t1, context, /):
+    def process_covariance(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del context
         interval = _positive_interval(t0, t1)
         return jnp.diag(jnp.stack((self.level_variance, self.slope_variance)) * interval)
 
-    def observation_loading(self, time, context, /):
+    def observation_loading(
+        self, time: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del time, context
         return jnp.asarray((1.0, 0.0), dtype=self.initial_mean.dtype)
 
@@ -362,7 +380,9 @@ class SeasonalComponent(AbstractStructuralComponent):
         self.period = period_value
         self.harmonics = count
 
-    def transition_matrix(self, t0, t1, context, /):
+    def transition_matrix(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del context
         interval = _positive_interval(t0, t1)
         harmonic = jnp.arange(1, self.harmonics + 1, dtype=self.initial_mean.dtype)
@@ -380,12 +400,16 @@ class SeasonalComponent(AbstractStructuralComponent):
         matrix = jnp.zeros((self.state_size, self.state_size), dtype=blocks.dtype)
         return matrix.at[indices[:, :, None], indices[:, None, :]].set(blocks)
 
-    def process_covariance(self, t0, t1, context, /):
+    def process_covariance(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del context
         interval = _positive_interval(t0, t1)
         return self.process_variance * interval * jnp.eye(self.state_size)
 
-    def observation_loading(self, time, context, /):
+    def observation_loading(
+        self, time: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del time, context
         return jnp.tile(jnp.asarray((1.0, 0.0)), self.harmonics)
 
@@ -443,15 +467,21 @@ class RegressionComponent(AbstractStructuralComponent):
         self.transition_id = "coefficient-random-walk"
         self.process_noise_id = "elapsed-time-gaussian"
 
-    def transition_matrix(self, t0, t1, context, /):
+    def transition_matrix(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del t0, t1, context
         return jnp.eye(self.state_size, dtype=self.initial_mean.dtype)
 
-    def process_covariance(self, t0, t1, context, /):
+    def process_covariance(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del context
         return self.coefficient_covariance * _positive_interval(t0, t1)
 
-    def observation_loading(self, time, context, /):
+    def observation_loading(
+        self, time: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         loading = _resolve_observation(self.design, time, context)
         array = jnp.asarray(loading, dtype=self.initial_mean.dtype)
         if array.shape != (self.state_size,):
@@ -498,7 +528,9 @@ class AutoregressiveComponent(AbstractStructuralComponent):
         self.transition_id = "discrete-companion"
         self.process_noise_id = "leading-coordinate-gaussian"
 
-    def transition_matrix(self, t0, t1, context, /):
+    def transition_matrix(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del t0, t1, context
         matrix = jnp.zeros(
             (self.state_size, self.state_size), dtype=self.coefficients.dtype
@@ -508,14 +540,18 @@ class AutoregressiveComponent(AbstractStructuralComponent):
             matrix = matrix.at[1:, :-1].set(jnp.eye(self.state_size - 1))
         return matrix
 
-    def process_covariance(self, t0, t1, context, /):
+    def process_covariance(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del t0, t1, context
         covariance = jnp.zeros(
             (self.state_size, self.state_size), dtype=self.innovation_variance.dtype
         )
         return covariance.at[0, 0].set(self.innovation_variance)
 
-    def observation_loading(self, time, context, /):
+    def observation_loading(
+        self, time: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del time, context
         return jnp.eye(self.state_size, dtype=self.initial_mean.dtype)[0]
 
@@ -576,20 +612,26 @@ class DeterministicTransitionComponent(AbstractStructuralComponent):
         self.transition_id = _name(transition_id, owner="transition_id")
         self.process_noise_id = "none"
 
-    def transition_matrix(self, t0, t1, context, /):
+    def transition_matrix(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         matrix = _resolve_transition(self.transition, t0, t1, context)
         array = jnp.asarray(matrix, dtype=self.initial_mean.dtype)
         if array.shape != (self.state_size, self.state_size):
             raise ValueError("Transition callback returned an incompatible shape.")
         return array
 
-    def process_covariance(self, t0, t1, context, /):
+    def process_covariance(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del t0, t1, context
         return jnp.zeros(
             (self.state_size, self.state_size), dtype=self.initial_mean.dtype
         )
 
-    def observation_loading(self, time, context, /):
+    def observation_loading(
+        self, time: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         loading = _resolve_observation(self.observation, time, context)
         array = jnp.asarray(loading, dtype=self.initial_mean.dtype)
         if array.shape != (self.state_size,):
@@ -623,15 +665,21 @@ class ProcessNoiseComponent(AbstractStructuralComponent):
         self.transition_id = "independent-white-noise"
         self.process_noise_id = "white-gaussian"
 
-    def transition_matrix(self, t0, t1, context, /):
+    def transition_matrix(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del t0, t1, context
         return jnp.zeros((1, 1), dtype=self.initial_mean.dtype)
 
-    def process_covariance(self, t0, t1, context, /):
+    def process_covariance(
+        self, t0: Array, t1: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del t0, t1, context
         return self.variance.reshape((1, 1))
 
-    def observation_loading(self, time, context, /):
+    def observation_loading(
+        self, time: Array, context: StateSpaceStepContext, /
+    ) -> Array:
         del time, context
         return jnp.ones((1,), dtype=self.initial_mean.dtype)
 
@@ -650,7 +698,7 @@ class _StructuralTransitionMatrix(StrictModule):
     slices: tuple[slice, ...] = eqx.field(static=True)
     state_size: int = eqx.field(static=True)
 
-    def __call__(self, t0, t1, context, /):
+    def __call__(self, t0: Array, t1: Array, context: StateSpaceStepContext, /) -> Array:
         blocks = tuple(
             component.transition_matrix(t0, t1, context) for component in self.components
         )
@@ -666,7 +714,7 @@ class _StructuralProcessCovariance(StrictModule):
     slices: tuple[slice, ...] = eqx.field(static=True)
     state_size: int = eqx.field(static=True)
 
-    def __call__(self, t0, t1, context, /):
+    def __call__(self, t0: Array, t1: Array, context: StateSpaceStepContext, /) -> Array:
         blocks = tuple(
             component.process_covariance(t0, t1, context) for component in self.components
         )
@@ -681,7 +729,7 @@ class _StructuralObservationMatrix(StrictModule):
     components: tuple[AbstractStructuralComponent, ...]
     state_size: int = eqx.field(static=True)
 
-    def __call__(self, time, context, /):
+    def __call__(self, time: Array, context: StateSpaceStepContext, /) -> Array:
         loading = jnp.concatenate(
             tuple(
                 component.observation_loading(time, context)
@@ -695,7 +743,7 @@ class _ScalarObservationParameter(StrictModule):
     value: ObservationValue
     parameter_name: str = eqx.field(static=True)
 
-    def __call__(self, time, context, /):
+    def __call__(self, time: Array, context: StateSpaceStepContext, /) -> Array:
         resolved = _resolve_observation(self.value, time, context)
         array = jnp.asarray(resolved, dtype=jnp.float64)
         if array.ndim == 0:

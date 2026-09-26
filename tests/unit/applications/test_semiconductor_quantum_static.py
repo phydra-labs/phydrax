@@ -443,3 +443,19 @@ def test_two_dimensional_confinement_and_poisson_share_one_bounded_cell_basis():
     assert jnp.allclose(result.omitted_particle_bound, 0.0)
     assert bool(potential.successful)
     assert jnp.allclose(potential.value, 0.0)
+
+
+def test_dimensional_confinement_rejects_truncated_mode_count():
+    axes = (
+        jnp.asarray((1.0e-9, 2.0e-9)),
+        jnp.asarray((1.0e-9, 2.0e-9)),
+    )
+    basis = EffectiveMassND(
+        axes,
+        jnp.zeros((2, 2)),
+        0.19 * ME,
+        energy_reference=REFERENCE,
+        resources=QuantumResources(max_nodes=4, max_modes=4),
+    )
+    with pytest.raises(ValueError, match="complete declared finite basis"):
+        solve_schrodinger(basis.hamiltonian(jnp.zeros((2, 2))), 0.04 * Q, 100.0, count=2)

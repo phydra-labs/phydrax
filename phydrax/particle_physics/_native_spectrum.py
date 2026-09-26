@@ -405,7 +405,9 @@ def native_beta_function(
     return jnp.asarray(beta)
 
 
-def _rk45_step(plan: NativeSpectrumModelPlan, values: np.ndarray, step: float, /):
+def _rk45_step(
+    plan: NativeSpectrumModelPlan, values: np.ndarray, step: float, /
+) -> tuple[np.ndarray, np.ndarray]:
     beta = _sm_beta if plan.model == "sm-one-loop" else _mssm_beta
     k1 = beta(values)
     k2 = beta(values + step * (1.0 / 5.0) * k1)
@@ -939,7 +941,9 @@ class NativeSpectrumBVPRoots(StrictModule):
     result_id: str = eqx.field(static=True)
 
 
-def _native_bvp_residual(plan: NativeSpectrumBVPPlan, parameters: np.ndarray, /):
+def _native_bvp_residual(
+    plan: NativeSpectrumBVPPlan, parameters: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, int]:
     history = integrate_native_rge(
         plan.model,
         parameters,

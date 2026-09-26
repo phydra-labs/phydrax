@@ -200,7 +200,9 @@ def _source_problem(
     if not isinstance(source, StructuredPicardSource):
         raise TypeError("source_builder must return StructuredPicardSource.")
 
-    def generator(time, state, value, control, args):
+    def generator(
+        time: Array, state: Array, value: Array, control: Array, args: Any
+    ) -> Array:
         del value, control
         output = source(time, state, context, args)
         if output.shape != problem.output_shape:

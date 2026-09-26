@@ -535,12 +535,17 @@ class Z4cMatterCoupledRuntime(StrictModule, NonTrainableState):
         stage_values = tuple(stages)
         if len(stage_values) != _SSPRK33_STAGE_COUNT:
             raise RuntimeError("The fixed SSPRK33 stage count changed.")
-        addresses = tuple(value.address for value in stage_values)
-        geometries = tuple(value.geometry for value in stage_values)
-        stress_energy = tuple(value.stress_energy for value in stage_values)
-        z4c_proposals = tuple(value.z4c_proposal for value in stage_values)
-        matter_proposals = tuple(value.matter_proposal for value in stage_values)
-        stage_ledgers = tuple(value.ledgers for value in stage_values)
+        first, second, third = stage_values
+        addresses = (first.address, second.address, third.address)
+        geometries = (first.geometry, second.geometry, third.geometry)
+        stress_energy = (first.stress_energy, second.stress_energy, third.stress_energy)
+        z4c_proposals = (first.z4c_proposal, second.z4c_proposal, third.z4c_proposal)
+        matter_proposals = (
+            first.matter_proposal,
+            second.matter_proposal,
+            third.matter_proposal,
+        )
+        stage_ledgers = (first.ledgers, second.ledgers, third.ledgers)
         ledgers = CoupledStepLedgers.combine(stage_ledgers)
         proposed_budget = state.budget.accumulate(ledgers)
         stage_status = jnp.stack(tuple(value.status for value in stage_values))

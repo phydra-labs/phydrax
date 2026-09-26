@@ -133,8 +133,12 @@ class RadiationCrossSectionLibrary(StrictModule, NonTrainableState):
             raise ValueError(
                 "Every material/energy point requires positive total attenuation."
             )
-        source_table_ids = tuple(table.table_id for table in tables)
-        source_provenance_ids = tuple(table.provenance.provenance_id for table in tables)
+        source_table_ids = (photoelectric.table_id, compton.table_id, rayleigh.table_id)
+        source_provenance_ids = (
+            photoelectric.provenance.provenance_id,
+            compton.provenance.provenance_id,
+            rayleigh.provenance.provenance_id,
+        )
         log_interpolation = np.asarray(
             tuple(
                 table.interpolation is DiagnosticPhotonInterpolationPolicy.LOG_LOG

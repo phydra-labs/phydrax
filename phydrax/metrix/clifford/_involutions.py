@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Literal
 
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ._blades import CliffordBladeLayout
@@ -134,7 +135,7 @@ def basis_blade(
     bitmap: int,
     /,
     *,
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
 ) -> Array:
     position = layout.position(bitmap)
     return jnp.zeros((layout.blade_count,), dtype=dtype).at[position].set(1)

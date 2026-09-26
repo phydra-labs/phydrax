@@ -17,6 +17,7 @@ from ...linalg import (
     AbstractPreconditioner,
     AbstractPreconditionerBuilder,
     GalerkinHierarchyBuilder,
+    MultigridCycleKind,
     MultigridCyclePolicy,
     MultigridHierarchyBuilder,
     MultigridLevelBuilder,
@@ -106,7 +107,7 @@ class FiniteElementPMultigridPolicy(StrictModule, NonTrainableState):
     explicit_orders: tuple[PLevelOrder, ...] = eqx.field(static=True)
     pre_smoothing: int = eqx.field(static=True)
     post_smoothing: int = eqx.field(static=True)
-    cycle: str = eqx.field(static=True)
+    cycle: MultigridCycleKind = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(

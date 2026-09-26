@@ -119,7 +119,7 @@ class TriggerReplayResult(StrictModule, NonTrainableState):
     menu_id: str = eqx.field(static=True)
 
 
-def _mix_uint32(value, salt):
+def _mix_uint32(value: Array, salt: int) -> Array:
     mixed = value.astype(jnp.uint32) ^ jnp.asarray(salt, dtype=jnp.uint32)
     mixed ^= mixed >> jnp.uint32(16)
     mixed *= jnp.uint32(0x7FEB352D)

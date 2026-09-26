@@ -20,6 +20,7 @@ from ..discretization._local_variational import AbstractPreparedLocalDiscretizat
 from ..discretization.fem import FiniteElementDiscretization, IntegrationDomain
 from ._finite_element_variational import (
     _default_rule,
+    _finite_element_runtime,
     _reference_rule_data,
     FiniteElementExecutionContext,
 )
@@ -184,7 +185,7 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
             geometry = discretization.evaluate_block_geometry(
                 self.field_name,
                 block_index,
-                context.runtime.coordinates,
+                _finite_element_runtime(context).coordinates,
                 data.points,
                 data.weights,
             )

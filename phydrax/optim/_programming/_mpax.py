@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jax.experimental import sparse as jsparse
 from jaxtyping import Array
 
@@ -19,7 +21,9 @@ from ...backends import (
     mpax_availability,
     MPAXPlan,
     prepare_mpax,
+    PreparedMPAX,
 )
+from ...linalg import AbstractSparseLinearOperator
 from ._clarabel import _audit_result
 from ._cones import NonnegativeCone, ProductCone, ZeroCone
 from ._policy import ConvexSolvePolicy, MPAXr2HPDHG, MPAXraPDHG
@@ -36,6 +40,9 @@ from ._quadratic import (
     QuadraticProgram,
 )
 from ._types import ConvexWarmStart
+
+
+_ProviderData: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
 
 
 def _flat_count(batch_shape: tuple[int, ...], /) -> int:
@@ -71,7 +78,7 @@ def _provider_plan(policy: ConvexSolvePolicy, /) -> MPAXPlan:
     )
 
 
-def _flatten_provider_data(problem: QuadraticProgram, /):
+def _flatten_provider_data(problem: QuadraticProgram, /) -> _ProviderData:
     count = _flat_count(problem.batch_shape)
     quadratic = problem.quadratic.reshape(
         (count, problem.num_variables, problem.num_variables)
@@ -169,7 +176,7 @@ def _expanded_duals_and_slacks(
     return slack, inequality_dual, equality_dual
 
 
-def prepare_mpax_policy(policy: ConvexSolvePolicy, /):
+def prepare_mpax_policy(policy: ConvexSolvePolicy, /) -> PreparedMPAX:
     """Prepare the MPAX algorithm selected by one convex solve policy."""
 
     return prepare_mpax(_provider_plan(policy))
@@ -181,7 +188,7 @@ def solve_mpax_program(
     /,
     *,
     warm_start: ConvexWarmStart | None = None,
-    prepared_backend=None,
+    prepared_backend: PreparedMPAX | None = None,
 ) -> ConvexProgramResult:
     """Solve one dense/batched LP or QP through MPAX and audit original data."""
 
@@ -241,7 +248,18 @@ def solve_mpax_program(
     linear_execution = isinstance(program, LinearProgram) and policy.regularization == 0.0
     requires_lift = problem.num_equalities + problem.num_inequalities == 0
 
-    def solve_one(q, c, a, b, g, h, lo, hi, initial_x, initial_y):
+    def solve_one(
+        q: Array,
+        c: Array,
+        a: Array,
+        b: Array,
+        g: Array,
+        h: Array,
+        lo: Array,
+        hi: Array,
+        initial_x: Array,
+        initial_y: Array,
+    ) -> tuple[Array, Array, Array, Array]:
         if requires_lift:
             q = jnp.pad(q, ((0, 1), (0, 1)))
             c = jnp.pad(c, (0, 1))
@@ -350,7 +368,9 @@ def solve_mpax_program(
     )
 
 
-def _storage_bcoo(operator, selected_rows, /):
+def _storage_bcoo(
+    operator: AbstractSparseLinearOperator, selected_rows: npt.ArrayLike, /
+) -> jsparse.BCOO:
     storage = operator.sparse_storage()
     if storage.batch_shape:
         raise ValueError("Sparse MPAX ConicProgram currently requires unbatched values.")
@@ -375,16 +395,17 @@ def _storage_bcoo(operator, selected_rows, /):
     )
 
 
-def _quadratic_bcoo(program):
-    if program.quadratic is None:
+def _quadratic_bcoo(program: ConicProgram) -> jsparse.BCOO:
+    quadratic = program.quadratic
+    if quadratic is None:
         indices = jnp.empty((0, 2), dtype=jnp.int32)
         return jsparse.BCOO(
             (jnp.empty((0,), dtype=program.linear.dtype), indices),
             shape=(program.num_variables, program.num_variables),
         )
-    if program.quadratic_is_sparse:
-        return _storage_bcoo(program.quadratic, np.arange(program.num_variables))
-    return jsparse.BCOO.fromdense(program.quadratic)
+    if isinstance(quadratic, AbstractSparseLinearOperator):
+        return _storage_bcoo(quadratic, np.arange(program.num_variables))
+    return jsparse.BCOO.fromdense(quadratic)
 
 
 def solve_mpax_conic_program(
@@ -392,10 +413,13 @@ def solve_mpax_conic_program(
     policy: ConvexSolvePolicy,
     /,
     *,
-    prepared_backend=None,
+    prepared_backend: PreparedMPAX | None = None,
 ) -> ConvexProgramResult:
     """Solve an unbatched sparse LP/QP with zero/nonnegative cone rows."""
-    if program.batch_shape or not program.constraint_is_sparse:
+    constraint_matrix = program.constraint_matrix
+    if program.batch_shape or not isinstance(
+        constraint_matrix, AbstractSparseLinearOperator
+    ):
         raise ValueError("Sparse MPAX ConicProgram must be unbatched and sparse.")
     blocks = (
         program.cone.cones if isinstance(program.cone, ProductCone) else (program.cone,)
@@ -435,8 +459,8 @@ def solve_mpax_conic_program(
         mpax_availability(), "optimization.linear-program", "mpax.utils"
     )
     prepared = prepare_mpax(plan) if prepared_backend is None else prepared_backend
-    a = _storage_bcoo(program.constraint_matrix, equality_rows)
-    g = _storage_bcoo(program.constraint_matrix, inequality_rows)
+    a = _storage_bcoo(constraint_matrix, equality_rows)
+    g = _storage_bcoo(constraint_matrix, inequality_rows)
     b = program.constraint_rhs[jnp.asarray(equality_rows)]
     h = program.constraint_rhs[jnp.asarray(inequality_rows)]
     q = _quadratic_bcoo(program)

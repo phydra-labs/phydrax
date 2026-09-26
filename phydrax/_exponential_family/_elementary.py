@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from ._contracts import (
     _AbstractAnalyticExponentialFamily,
@@ -108,7 +108,7 @@ class BernoulliFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,
@@ -173,7 +173,7 @@ class PoissonFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,
@@ -229,7 +229,7 @@ class ExponentialRateFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,
@@ -308,7 +308,7 @@ class NormalFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import numpy as np
@@ -19,6 +19,7 @@ from .._array_archive import (
     write_array_archive,
 )
 from .._identity import NumericRevision, SemanticProvenance
+from .._strict import StrictModule
 from ..lifecycle import ModelManifest
 from ._affine import PreparedAffineLinearROM
 from ._basis import ReducedBasisArtifact
@@ -27,6 +28,7 @@ from ._empirical_interpolation import EmpiricalInterpolationArtifact
 
 _STRICT_KIND = "phydrax-rom-strict-model"
 _EIM_KIND = "phydrax-rom-empirical-interpolation"
+_ModelT = TypeVar("_ModelT", bound=StrictModule)
 
 
 def _manifest_record(manifest: ModelManifest, /) -> dict[str, object]:
@@ -124,7 +126,7 @@ def _write_strict_model(
 
 def _read_strict_model(
     path: str | os.PathLike[str],
-    template: Any,
+    template: _ModelT,
     /,
     *,
     model_id: str,
@@ -133,7 +135,7 @@ def _read_strict_model(
     unit_contract_id: str | None,
     association_ids: tuple[str, ...],
     model_kind: str,
-):
+) -> _ModelT:
     manifest, arrays = read_array_archive(path)
     expected = {"kind", "model_kind", "model", "model_manifest", "arrays"}
     if (

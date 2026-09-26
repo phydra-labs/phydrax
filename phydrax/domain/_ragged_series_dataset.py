@@ -588,7 +588,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         rows = self.input_rows(idx)
 
-        def _to_field(value: ArrayLike):
+        def _to_field(value: ArrayLike) -> cx.AxisArray:
             arr = jnp.asarray(value)
             if arr.ndim == 0:
                 raise ValueError(
@@ -628,7 +628,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
             key=key,
         )
 
-        def _to_field(value: ArrayLike):
+        def _to_field(value: ArrayLike) -> cx.AxisArray:
             arr = jnp.asarray(value)
             if arr.ndim == 0:
                 raise ValueError(

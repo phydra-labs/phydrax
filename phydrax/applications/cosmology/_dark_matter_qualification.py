@@ -482,7 +482,7 @@ _DEFINITIONS: dict[DarkMatterClaimName, _ClaimDefinition] = {
 SUPPORTED_DARK_MATTER_CLAIM_PROFILES = tuple(_DEFINITIONS)
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string.")
     normalized = value.strip()
@@ -682,14 +682,14 @@ def _claim_profile(
 
 
 def periodic_wave_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "periodic-wave",
@@ -703,14 +703,14 @@ def periodic_wave_claim_profile(
 
 
 def rare_equal_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "rare-sidm-equal",
@@ -724,14 +724,14 @@ def rare_equal_sidm_claim_profile(
 
 
 def mixed_wave_particle_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "mixed-root-wave-particle",
@@ -745,14 +745,14 @@ def mixed_wave_particle_claim_profile(
 
 
 def mixed_wave_particle_gas_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "mixed-root-wave-particle-gas",
@@ -766,14 +766,14 @@ def mixed_wave_particle_gas_claim_profile(
 
 
 def periodic_wave_amr_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "wave-amr-periodic",
@@ -787,14 +787,14 @@ def periodic_wave_amr_claim_profile(
 
 
 def differential_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "rare-sidm-differential",
@@ -808,14 +808,14 @@ def differential_sidm_claim_profile(
 
 
 def weighted_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "rare-sidm-weighted",
@@ -829,14 +829,14 @@ def weighted_sidm_claim_profile(
 
 
 def frequent_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "frequent-sidm-angular",
@@ -850,14 +850,14 @@ def frequent_sidm_claim_profile(
 
 
 def gravothermal_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "sidm-fluid-spherical",
@@ -871,14 +871,14 @@ def gravothermal_sidm_claim_profile(
 
 
 def inelastic_sidm_claim_profile(
-    campaign,
-    criteria,
-    condition_domain_ids,
-    runtime_support,
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
     /,
     *,
-    reference_artifacts,
-    requested_use,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: DarkMatterReferenceUse,
 ) -> ScientificClaimProfile:
     return _claim_profile(
         "sidm-inelastic-2to2",

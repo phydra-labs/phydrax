@@ -38,7 +38,7 @@ def is_qcengine_available() -> bool:
     )
 
 
-def require_qcengine():
+def require_qcengine() -> Any:
     if not is_qcengine_available():
         raise ImportError(
             "QCEngine execution requires optional dependencies 'qcengine' and 'qcelemental'."

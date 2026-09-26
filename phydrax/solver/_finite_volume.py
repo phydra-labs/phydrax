@@ -330,7 +330,7 @@ def unstructured_ssprk33_content_candidate(
         )
     )
 
-    def continue_after_stage_1(_):
+    def continue_after_stage_1(_: None) -> FiniteVolumeSSPRK3ContentCandidate:
         stage_q1 = _provided_content_at_metrics(stage_state_provider, q1, stage_2)
         high_2 = dynamics.evaluate_stage(
             stage_q1, stage_2, args, cfl=cfl, redistribution=redistribution
@@ -373,7 +373,9 @@ def unstructured_ssprk33_content_candidate(
             )
         )
 
-        def continue_after_stage_2(_):
+        def continue_after_stage_2(
+            _: None,
+        ) -> FiniteVolumeSSPRK3ContentCandidate:
             stage_q2 = _provided_content_at_metrics(stage_state_provider, q2, stage_3)
             high_3 = dynamics.evaluate_stage(
                 stage_q2, stage_3, args, cfl=cfl, redistribution=redistribution
@@ -601,9 +603,10 @@ def zero_unstructured_ssprk33_content_candidate(
         }
     )
     dt = jnp.asarray(step_size, dtype=initial.effective_cell_volumes.dtype)
-    ledgers = tuple(
-        dynamics.zero_stage_ledger(stage, redistribution=redistribution)
-        for stage in stage_metrics
+    ledgers = (
+        dynamics.zero_stage_ledger(stage_metrics[0], redistribution=redistribution),
+        dynamics.zero_stage_ledger(stage_metrics[1], redistribution=redistribution),
+        dynamics.zero_stage_ledger(stage_metrics[2], redistribution=redistribution),
     )
     accepted_flux_integrals = AcceptedConservationIntegralLedger.integrate_ssprk33(
         ledgers[0],

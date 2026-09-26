@@ -7,17 +7,24 @@ and RNA identities stay owned here. No sequence conversion or provider execution
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jaxtyping import Array
 
-from ....units import conversion_factor
+from ....artifacts import ScientificArtifactEnvelope
+from ....atomistic import AtomisticBatch
+from ....units import conversion_factor, UnitDefinition
 from ..._coordinate_generation._native import require_coordinate_rights
 from ..._coordinate_generation._providers import CoordinateProviderProvenance
 from ..._coordinate_generation._support import (
+    CoordinateGeometryPolicy,
     CoordinateResourcePolicy,
     prepare_coordinate_support,
+    PreparedCoordinateSupport,
 )
 from .._binding import NucleotideAtomMapping
 from .._hypotheses import NucleicStructureHypothesis
@@ -31,20 +38,20 @@ class NucleicProviderHypotheses:
 
 
 def import_nucleic_hypotheses(
-    mapping,
-    positions,
-    length_unit,
-    sources,
+    mapping: NucleotideAtomMapping,
+    positions: npt.ArrayLike,
+    length_unit: UnitDefinition,
+    sources: Iterable[ScientificArtifactEnvelope],
     *,
-    provenance,
-    coordinate_mask=None,
-    confidence=None,
-    resources=CoordinateResourcePolicy(),
-    commercial_use=False,
-    training_use=False,
-    redistribution=False,
-    export=False,
-):
+    provenance: CoordinateProviderProvenance,
+    coordinate_mask: npt.ArrayLike | None = None,
+    confidence: Iterable[Iterable[tuple[str, float]]] | None = None,
+    resources: CoordinateResourcePolicy = CoordinateResourcePolicy(),
+    commercial_use: bool = False,
+    training_use: bool = False,
+    redistribution: bool = False,
+    export: bool = False,
+) -> NucleicProviderHypotheses:
     """Admit all offline supplied conformers and retain provider-specific confidence."""
     rights = provenance.admit(
         commercial_use=commercial_use,
@@ -93,8 +100,13 @@ def import_nucleic_hypotheses(
 
 
 def prepare_nucleic_coordinate_support(
-    mapping, template, *, gauge_atom_ids, geometry, resources=CoordinateResourcePolicy()
-):
+    mapping: NucleotideAtomMapping,
+    template: AtomisticBatch,
+    *,
+    gauge_atom_ids: Sequence[int],
+    geometry: CoordinateGeometryPolicy,
+    resources: CoordinateResourcePolicy = CoordinateResourcePolicy(),
+) -> PreparedCoordinateSupport:
     """Compile actual base/sugar-polymer atom tokens, retaining DNA/RNA distinction."""
     if not isinstance(mapping, NucleotideAtomMapping):
         raise TypeError("Nucleic generation requires explicit NucleotideAtomMapping.")
@@ -114,8 +126,12 @@ def prepare_nucleic_coordinate_support(
     lookup = {key: index for index, key in enumerate(keys)}
     tokens, names = [], []
     for atom_id, mask in zip(ids, active, strict=True):
-        key, name = reverse[int(atom_id)] if mask else (None, "")
-        tokens.append(lookup[key] if mask else -1)
+        if mask:
+            key, name = reverse[int(atom_id)]
+            tokens.append(lookup[key])
+        else:
+            tokens.append(-1)
+            name = ""
         names.append(name)
     labels = tuple(
         polymer + ":" + base
@@ -137,8 +153,12 @@ def prepare_nucleic_coordinate_support(
 
 
 def map_nucleic_hypothesis(
-    hypothesis, support, *, training_use=False, commercial_use=False
-):
+    hypothesis: NucleicStructureHypothesis,
+    support: PreparedCoordinateSupport,
+    *,
+    training_use: bool = False,
+    commercial_use: bool = False,
+) -> Array:
     """Lossless stable-ID reorder and exact-unit conversion, not chemical completion."""
     require_coordinate_rights(
         hypothesis.rights, training_use=training_use, commercial_use=commercial_use

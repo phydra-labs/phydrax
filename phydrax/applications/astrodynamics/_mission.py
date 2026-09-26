@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.linalg as la
 
@@ -26,15 +26,24 @@ _CONJUNCTION_COVARIANCE_POLICY = la.DensePropertyVerificationPolicy(
     require_positive_semidefinite=True,
 )
 
+_Propagator: TypeAlias = Callable[[Array, Any], PyTree]
+_TerminalProjection: TypeAlias = Callable[[PyTree], Array]
+
 
 class TargetingResidualPlan(StrictModule, NonTrainableState):
-    propagator: Callable
-    terminal_projection: Callable
+    propagator: _Propagator
+    terminal_projection: _TerminalProjection
     target: Array
     plan_id: str = eqx.field(static=True)
 
     def __init__(
-        self, propagator, terminal_projection, target, /, *, plan_id="mission-targeting"
+        self,
+        propagator: _Propagator,
+        terminal_projection: _TerminalProjection,
+        target: ArrayLike,
+        /,
+        *,
+        plan_id: str = "mission-targeting",
     ) -> None:
         if not callable(propagator) or not callable(terminal_projection):
             raise TypeError("Targeting models must be callable.")

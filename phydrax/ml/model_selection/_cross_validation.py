@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jaxtyping import Array
 
 from ..._differentiation import (
     DerivativeContract,
@@ -324,7 +325,7 @@ def _aggregate_scores(folds: tuple[FoldEvaluation, ...], /) -> ScoreRecord:
         tuple(fold.scorer_result.effective_weight for fold in folds)
     )
 
-    def aggregate(value, valid_, weight):
+    def aggregate(value: Array, valid_: Array, weight: Array) -> Array:
         weight_ = jnp.asarray(weight)
         valid_ = jnp.asarray(valid_, dtype=jnp.bool_)
         usable = valid_ & jnp.isfinite(value) & jnp.isfinite(weight_) & (weight_ >= 0)

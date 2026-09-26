@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from itertools import product
 from typing import Literal, TypeAlias
 
@@ -19,6 +20,7 @@ from ..._trainable import NonTrainableState
 from ...linalg import FunctionLinearOperator, OperatorProperties
 from ...sparse import canonical_row_route_ids, EdgeRelation, RelationExecutionPlan
 from .._lagrangian_marker import LagrangianMarkerDiscretization
+from .._tensor_entities import StructuredAxis, TensorEntityLayout
 from ._incompressible import FaceVelocity, PreparedMACOperators
 
 
@@ -31,6 +33,13 @@ MACMarkerAccumulation: TypeAlias = Literal[
     "fast",
     "deterministic",
     "compensated",
+]
+# (indices, weights, derivatives, offsets, valid, source_in_domain) on one axis.
+_AxisStencil: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+# (indices, weights, gradients, offsets, valid, source_in_domain, captured,
+#  full_support, first_moment, gradient_sum) for one tensor face layout.
+_TensorRoute: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
 ]
 
 
@@ -157,7 +166,9 @@ def _kernel_basis(name: MACMarkerKernelName, coordinate: Array, /) -> tuple[Arra
     return value, derivative
 
 
-def _uniform_spacing(coordinates, bounds, periodic, /) -> float | None:
+def _uniform_spacing(
+    coordinates: ArrayLike, bounds: tuple[float, float], periodic: bool, /
+) -> float | None:
     values = np.asarray(coordinates, dtype=np.float64)
     if values.ndim != 1 or values.size < 4 or np.any(~np.isfinite(values)):
         raise ValueError("Marker assignment requires four finite axis entities.")
@@ -193,7 +204,15 @@ def _nonuniform_affine_weights(
     return weights / jnp.sum(weights)
 
 
-def _axis_stencil(coordinates, bounds, periodic, position, active, kernel, /):
+def _axis_stencil(
+    coordinates: Array,
+    bounds: tuple[float, float],
+    periodic: bool,
+    position: Array,
+    active: Array,
+    kernel: MACMarkerKernelPlan,
+    /,
+) -> _AxisStencil:
     count = coordinates.size
     width = kernel.width
     if count < width:
@@ -250,7 +269,15 @@ def _axis_stencil(coordinates, bounds, periodic, position, active, kernel, /):
     return indices, weights, derivative, offsets, valid, source_in_domain
 
 
-def _tensor_routes(layout, axes, bounds, position, active, kernel, /):
+def _tensor_routes(
+    layout: TensorEntityLayout,
+    axes: Sequence[StructuredAxis],
+    bounds: Sequence[tuple[float, float]],
+    position: Array,
+    active: Array,
+    kernel: MACMarkerKernelPlan,
+    /,
+) -> _TensorRoute:
     axis_stencils = tuple(
         _axis_stencil(
             coordinates,
@@ -692,7 +719,9 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
             )
         return jnp.stack(tuple(components), axis=-1)
 
-    def _raw_transpose(self, relation: MACMarkerRelation, values: ArrayLike, /):
+    def _raw_transpose(
+        self, relation: MACMarkerRelation, values: ArrayLike, /
+    ) -> FaceVelocity:
         active_values = self.markers.active_velocity_space.validate(jnp.asarray(values))
         output = []
         order = self.markers.stable_active_order
@@ -724,7 +753,9 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
             output.append(flat.reshape(layout.shape))
         return tuple(output)
 
-    def interpolation_operator(self, relation: MACMarkerRelation, /):
+    def interpolation_operator(
+        self, relation: MACMarkerRelation, /
+    ) -> FunctionLinearOperator:
         self._validate_relation(relation)
         return FunctionLinearOperator(
             lambda velocity: self.gather(relation, velocity),
@@ -735,7 +766,9 @@ class PreparedMACMarkerTransfer(StrictModule, NonTrainableState):
             operator_id=f"mac-marker-interpolation/{relation.relation_id}",
         )
 
-    def spread(self, relation: MACMarkerRelation, marker_force_density: ArrayLike, /):
+    def spread(
+        self, relation: MACMarkerRelation, marker_force_density: ArrayLike, /
+    ) -> FaceVelocity:
         values = self.markers.active_velocity_space.validate(
             jnp.asarray(marker_force_density)
         )

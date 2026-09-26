@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from xml.etree import ElementTree
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
 from .._external_resource import BoundedResource, read_bounded_resource, ResourceLimits
@@ -99,16 +101,16 @@ def _edi_blocks(
 
 def _mt_result(
     *,
-    frequencies,
-    impedance,
-    deviation,
-    rotation,
-    position,
-    coordinates,
-    resource,
-    profile,
-    assumptions=(),
-):
+    frequencies: npt.ArrayLike,
+    impedance: npt.ArrayLike,
+    deviation: npt.ArrayLike,
+    rotation: npt.ArrayLike,
+    position: Sequence[float],
+    coordinates: GeospatialContract,
+    resource: BoundedResource,
+    profile: str,
+    assumptions: Sequence[str] = (),
+) -> MTImpedanceData:
     frequencies = np.asarray(frequencies, dtype=np.float64)
     impedance = np.asarray(impedance, dtype=np.complex128)
     deviation = np.asarray(deviation, dtype=np.float64)
@@ -260,7 +262,7 @@ def read_edi_impedance(
     )
 
 
-def _local_name(element) -> str:
+def _local_name(element: ElementTree.Element) -> str:
     return element.tag.rsplit("}", 1)[-1]
 
 

@@ -57,7 +57,7 @@ class BatchedRootResult(StrictModule):
     precision_policy_id: str = eqx.field(static=True)
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return self.status == int(NonlinearStatus.SUCCESS)
 
 
@@ -196,11 +196,11 @@ class SmallRootKernel(StrictModule):
             jnp.zeros_like(active),
         )
 
-        def body(_, current):
+        def body(_: Array, current: _Run) -> _Run:
             automatic_matrices = jacobian(current.states, args)
             automatic_finite = jnp.all(jnp.isfinite(automatic_matrices), axis=(-2, -1))
 
-            def finite_difference(_):
+            def finite_difference(_: None) -> Array:
                 step_scale = jnp.cbrt(jnp.finfo(states.dtype).eps) * jnp.maximum(
                     jnp.abs(current.states), 1.0
                 )
@@ -349,7 +349,7 @@ class SmallRootKernel(StrictModule):
             raise ValueError("Small-root dimension exceeds maximum_dimension.")
         lanes = min(lanes, task_count)
 
-        def argument_axis(leaf):
+        def argument_axis(leaf: Any) -> int | None:
             if not eqx.is_array(leaf):
                 return None
             if leaf.ndim == 0:
@@ -362,10 +362,10 @@ class SmallRootKernel(StrictModule):
 
         argument_axes = jax.tree_util.tree_map(argument_axis, args)
 
-        def take_arguments(task_ids):
+        def take_arguments(task_ids: Array) -> Any:
             safe_ids = jnp.minimum(task_ids, task_count - 1)
 
-            def take(leaf, axis):
+            def take(leaf: Any, axis: int | None) -> Any:
                 return leaf[safe_ids] if axis == 0 else leaf
 
             return jax.tree_util.tree_map(take, args, argument_axes)
@@ -484,10 +484,10 @@ class SmallRootKernel(StrictModule):
         )
         maximum_rounds = task_count * (self.maximum_steps + 2) + 1
 
-        def condition(current):
+        def condition(current: _PoolRun) -> Array:
             return (current.completed < task_count) & (current.round < maximum_rounds)
 
-        def body(current):
+        def body(current: _PoolRun) -> _PoolRun:
             lane_active = current.task_ids < task_count
             terminal = lane_active & (current.status != int(NonlinearStatus.ITERATING))
             commit_ids = jnp.where(terminal, current.task_ids, task_count)

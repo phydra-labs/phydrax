@@ -129,11 +129,12 @@ class ShallowWaterBathymetryPlan(StrictModule, NonTrainableState):
         policy = FiniteVolumePrecisionPolicy() if precision is None else precision
         if not isinstance(policy, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be FiniteVolumePrecisionPolicy or None.")
-        values = (
-            self.cell_values
-            if self.cell_values is not None
-            else self.evaluator(discretization.cell_centers)
-        )
+        if self.cell_values is not None:
+            values = self.cell_values
+        else:
+            # Plans carry exactly one of cell values or an evaluator.
+            assert self.evaluator is not None
+            values = self.evaluator(discretization.cell_centers)
         return PreparedShallowWaterBathymetry(
             values,
             discretization.cell_shape,

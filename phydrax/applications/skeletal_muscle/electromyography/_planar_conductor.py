@@ -188,7 +188,7 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
         plus = omega_y * (p.fat_thickness_m + p.skin_thickness_m)
         minus = omega_y * (p.fat_thickness_m - p.skin_thickness_m)
 
-        def nu(value):
+        def nu(value: Array) -> Array:
             return omega_ya + value * fat_muscle_ratio * jnp.tanh(value)
 
         denominator = (1.0 + skin_fat_ratio) * jnp.cosh(plus) * nu(plus) + (

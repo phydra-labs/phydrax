@@ -12,7 +12,7 @@ from itertools import combinations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -145,10 +145,10 @@ class VariablePatchEntityBucketView(StrictModule, NonTrainableState):
         degree: int,
         orientation: Sequence[int],
         bucket: int,
-        global_indices: Array,
-        orientation_signs: Array,
-        owned: Array,
-        valid: Array,
+        global_indices: ArrayLike,
+        orientation_signs: ArrayLike,
+        owned: ArrayLike,
+        valid: ArrayLike,
         /,
     ) -> None:
         indices = jnp.asarray(global_indices, dtype=jnp.int32)

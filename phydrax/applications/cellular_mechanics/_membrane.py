@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
+from numpy.typing import ArrayLike as NumPyArrayLike
 
 from phydrax.ein import contract
 
@@ -301,7 +302,7 @@ def _closed_topology(
     if not _vertex_links_valid(faces, vertex_count):
         raise ValueError("Every membrane vertex link must be one closed cycle.")
 
-    uses: dict[tuple[int, int], list[tuple[int, int, int]]] = {}
+    uses: dict[tuple[int, int], list[tuple[int, int, int, int]]] = {}
     for face_index, face in enumerate(faces.tolist()):
         a, b, c = (int(item) for item in face)
         for start, end, opposite in ((a, b, c), (b, c, a), (c, a, b)):
@@ -558,7 +559,7 @@ def _triangles_intersect(
     )
     first = (first - origin) / edge_scale
     second = (second - origin) / edge_scale
-    predicate_tolerance = max(tolerance, 64.0 * np.finfo(np.float64).eps)
+    predicate_tolerance = max(tolerance, 64.0 * float(np.finfo(np.float64).eps))
     distance_tolerance = np.sqrt(predicate_tolerance)
     first_normal = np.cross(first[1] - first[0], first[2] - first[0])
     second_normal = np.cross(second[1] - second[0], second[2] - second[0])
@@ -733,12 +734,12 @@ class BiomembranePlan(StrictModule, NonTrainableState):
         tension: float = 0.0,
         pressure: float = 0.0,
         adhesion_strength: float = 0.0,
-        adhesion_normal: ArrayLike = (0.0, 0.0, 1.0),
+        adhesion_normal: NumPyArrayLike = (0.0, 0.0, 1.0),
         adhesion_offset: float = 0.0,
         adhesion_length: float = 1.0,
         active_traction: ArrayLike = 0.0,
         mobility: ArrayLike = 1.0,
-        species_diffusivity: ArrayLike = (),
+        species_diffusivity: NumPyArrayLike = (),
         reaction_matrix: ArrayLike | None = None,
         geometry_tolerance: float = 1.0e-12,
         plan_id: str | None = None,

@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -39,7 +40,7 @@ class LocalSpacePlan(StrictModule):
         site_id: str,
         basis_labels: Sequence[str],
         charge_labels: Sequence[str],
-        charges: ArrayLike,
+        charges: npt.ArrayLike,
         /,
         *,
         statistics: LocalStatistics = "finite",
@@ -171,7 +172,7 @@ class LocalOperatorPlan(StrictModule):
         self,
         space: LocalSpacePlan,
         label: str,
-        matrix: ArrayLike,
+        matrix: npt.ArrayLike,
         charge_delta: Sequence[int],
         /,
         *,

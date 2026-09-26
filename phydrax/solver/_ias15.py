@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -20,7 +21,24 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
 
-def _radau_coefficients(stage_count: int):
+_Acceleration: TypeAlias = Callable[[Array, Array, Array, Any], Array]
+# (time, position, velocity, step size, path valid)
+_IntervalCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+# (position, velocity, valid, accepted steps, rejected steps)
+_IntervalOutput: TypeAlias = tuple[Array, Array, Array, Array, Array]
+# (time, position, velocity, step size, accepted steps, rejected steps, active)
+_StepState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+
+
+def _radau_coefficients(
+    stage_count: int,
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
     degree = stage_count - 1
     p_degree = np.zeros((degree + 1,))
     p_next = np.zeros((degree + 2,))
@@ -114,7 +132,7 @@ class IAS15Plan(StrictModule, NonTrainableState):
 
     def _collocation_step(
         self,
-        acceleration: Callable,
+        acceleration: _Acceleration,
         time: Array,
         position: Array,
         velocity: Array,
@@ -126,7 +144,7 @@ class IAS15Plan(StrictModule, NonTrainableState):
             initial_acceleration, (self.nodes.size, *initial_acceleration.shape)
         )
 
-        def correct(_, values):
+        def correct(_: Array, values: Array) -> Array:
             stage_position = (
                 position
                 + self.nodes[:, None] * step_size * velocity
@@ -152,7 +170,15 @@ class IAS15Plan(StrictModule, NonTrainableState):
         )
         return next_position, next_velocity, accelerations
 
-    def _adaptive_step(self, acceleration, time, position, velocity, step_size, args):
+    def _adaptive_step(
+        self,
+        acceleration: _Acceleration,
+        time: Array,
+        position: Array,
+        velocity: Array,
+        step_size: Array,
+        args: Any,
+    ) -> tuple[Array, Array, Array, Array, Array]:
         full_position, full_velocity, _ = self._collocation_step(
             acceleration, time, position, velocity, step_size, args
         )
@@ -183,7 +209,7 @@ class IAS15Plan(StrictModule, NonTrainableState):
 
     def solve(
         self,
-        acceleration: Callable[[Array, Array, Array, Any], Array],
+        acceleration: _Acceleration,
         initial_position: ArrayLike,
         initial_velocity: ArrayLike,
         save_times: ArrayLike,
@@ -200,10 +226,12 @@ class IAS15Plan(StrictModule, NonTrainableState):
         if times.ndim != 1 or times.size < 2:
             raise ValueError("IAS15 save_times must be a vector with at least two nodes.")
 
-        def interval(carry, target):
+        def interval(
+            carry: _IntervalCarry, target: Array
+        ) -> tuple[_IntervalCarry, _IntervalOutput]:
             time, position, velocity, initial_step, path_valid = carry
 
-            def condition(state):
+            def condition(state: _StepState) -> Array:
                 current, _, _, _, steps, _, active = state
                 return (
                     active
@@ -211,7 +239,7 @@ class IAS15Plan(StrictModule, NonTrainableState):
                     & (steps < self.maximum_steps_per_interval)
                 )
 
-            def body(state):
+            def body(state: _StepState) -> _StepState:
                 current, q, v, step_size, steps, rejected, active = state
                 proposed = jnp.minimum(step_size, target - current)
                 next_q, next_v, accepted, factor, _ = self._adaptive_step(

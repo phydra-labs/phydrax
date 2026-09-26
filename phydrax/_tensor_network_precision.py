@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from ._precision import (
     complex_precision_dtype,
@@ -22,6 +23,8 @@ from ._precision import (
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
+
+_TreeT = TypeVar("_TreeT")
 
 _SUPPORTED_DTYPES = frozenset(("float32", "float64", "complex64", "complex128"))
 
@@ -175,7 +178,7 @@ class TensorNetworkPrecisionPolicy(StrictModule, NonTrainableState):
             )
         return observed
 
-    def _cast(self, value: Any, requested: str | None, /):
+    def _cast(self, value: _TreeT, requested: str | None, /) -> _TreeT:
         if requested is None:
             return value
         return jax.tree.map(
@@ -187,33 +190,47 @@ class TensorNetworkPrecisionPolicy(StrictModule, NonTrainableState):
             value,
         )
 
-    def storage(self, value: Any, /):
+    def storage(self, value: _TreeT, /) -> _TreeT:
         return self._cast(value, self.storage_dtype)
 
-    def contraction(self, value: Any, /):
+    def contraction(self, value: _TreeT, /) -> _TreeT:
         return self._cast(value, self.contraction_dtype)
 
-    def factorization(self, value: Any, /):
+    def factorization(self, value: _TreeT, /) -> _TreeT:
         return self._cast(value, self.factorization_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: _TreeT, /) -> _TreeT:
         return self._cast(value, self.accumulation_dtype)
 
-    def decision(self, value: Any, /):
+    def decision(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return array if self.decision_dtype is None else array.astype(self.decision_dtype)
 
-    def output(self, value: Any, /):
+    def output(self, value: _TreeT, /) -> _TreeT:
         return self._cast(value, self.output_dtype)
 
-    def sum(self, value: Any, /, *, axis: Any = None, keepdims: bool = False):
+    def sum(
+        self,
+        value: ArrayLike,
+        /,
+        *,
+        axis: int | tuple[int, ...] | None = None,
+        keepdims: bool = False,
+    ) -> Array:
         return jnp.sum(
             self.accumulation(value),
             axis=axis,
             keepdims=keepdims,
         )
 
-    def norm(self, value: Any, /, *, axis: Any = None, keepdims: bool = False):
+    def norm(
+        self,
+        value: ArrayLike,
+        /,
+        *,
+        axis: int | tuple[int, ...] | None = None,
+        keepdims: bool = False,
+    ) -> Array:
         accumulated = self.accumulation(value)
         squared = jnp.sum(
             jnp.real(jnp.conj(accumulated) * accumulated),

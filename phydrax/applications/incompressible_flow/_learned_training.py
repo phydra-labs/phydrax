@@ -303,7 +303,7 @@ class PeriodicLearnedStressRolloutTransition(
             predictor,
         )
 
-        def vector_field(time, real_state, _args):
+        def vector_field(time: Array, real_state: Array, _args: Any) -> Array:
             modal = self.coordinates.from_real_coordinates(real_state)
             stage = prepared.evaluate(modal)
             base = jnp.asarray(self.base_rate(time, modal, inputs))
@@ -316,7 +316,9 @@ class PeriodicLearnedStressRolloutTransition(
             rate = self.coordinates.project(rate)
             return self.coordinates.to_real_coordinates(rate)
 
-        def project_stage(index, time, candidate, _args):
+        def project_stage(
+            index: int, time: Array, candidate: Array, _args: Any
+        ) -> StageTransformResult:
             del index, time
             modal = self.coordinates.from_real_coordinates(candidate)
             projected = self.coordinates.project(

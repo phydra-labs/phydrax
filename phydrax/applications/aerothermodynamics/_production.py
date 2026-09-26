@@ -357,10 +357,14 @@ class AerothermodynamicProductionPlan(StrictModule):
             state.accepted_steps + 1,
             state.runtime_id,
         )
-        gas_accepted = None if gas is None else jnp.where(successful, gas, state.gas)
+        gas_accepted = (
+            None
+            if gas is None or state.gas is None
+            else jnp.where(successful, gas, state.gas)
+        )
         radiation_accepted = (
             None
-            if radiation is None
+            if radiation is None or state.radiation_energy is None
             else jnp.where(successful, radiation, state.radiation_energy)
         )
         if material is not None and state.material is not None:

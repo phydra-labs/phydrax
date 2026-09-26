@@ -147,6 +147,35 @@ def test_native_boundary_panel_adapter_and_wall_flux_close_slip():
     assert flux.evidence.slip_norm < 1e-5
 
 
+def test_native_panel_doublet_field_matches_double_layer_potential():
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    panelization = phx.operators.BoundaryPanelization2D(
+        geometry.boundary_atlas,
+        panels_per_chart=12,
+        quadrature_order=4,
+        geometry=geometry,
+    )
+    native = phx.operators.NativePanelGeometry2D.from_panelization(panelization)
+    panel_density = jnp.linspace(0.5, 1.5, native.straight.length.size)
+    targets = jnp.asarray(((3.0, 0.5), (0.0, -2.5)))
+
+    evaluation = phx.operators.NativePanelFieldPlan2D(native).evaluate(
+        targets, panel_density, kind="doublet"
+    )
+    reference = phx.operators.LaplaceLayerPotential2D(
+        panelization,
+        kind="double",
+        density=panel_density[panelization.panel_ids],
+    )
+
+    assert evaluation.potential is not None
+    np.testing.assert_allclose(evaluation.potential, jax.vmap(reference)(targets))
+    np.testing.assert_allclose(
+        evaluation.velocity, jax.vmap(jax.grad(reference))(targets)
+    )
+    assert bool(evaluation.finite)
+
+
 def test_wall_corrected_pse_reports_flux_ledger():
     source = phx.discretization.VortexSourceState(
         jnp.asarray(((0.0, 0.1), (0.3, 0.2))),

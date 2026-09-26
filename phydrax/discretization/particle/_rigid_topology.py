@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum, IntFlag
+from typing import TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
@@ -17,6 +18,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._rigid_body import PreparedRigidBodySet
 from ._rigid_joints import PreparedRigidJointGraph, RigidJointRowLayout
+
+
+_T = TypeVar("_T")
+_EventColumns: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
 
 
 class RigidTopologyEventKind(IntEnum):
@@ -936,7 +941,7 @@ def _event_columns(
         source: Array,
         activation: bool,
         /,
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+    ) -> _EventColumns:
         shape = identifiers.shape
         transaction = jnp.broadcast_to(plan.transaction_ids[:, None], shape)
         selected = valid & jnp.broadcast_to(requested[:, None], shape)
@@ -944,18 +949,15 @@ def _event_columns(
         kinds = jnp.full(shape, int(kind), dtype=jnp.int8)
         predecessor = jnp.where(activation, -1, identifiers)
         successor = jnp.where(activation, identifiers, -1)
-        return tuple(
-            value.reshape(-1)
-            for value in (
-                kinds,
-                identifiers,
-                transaction,
-                guard,
-                predecessor,
-                successor,
-                selected,
-                source,
-            )
+        return (
+            kinds.reshape(-1),
+            identifiers.reshape(-1),
+            transaction.reshape(-1),
+            guard.reshape(-1),
+            predecessor.reshape(-1),
+            successor.reshape(-1),
+            selected.reshape(-1),
+            source.reshape(-1),
         )
 
     break_columns = (
@@ -1046,13 +1048,15 @@ def _append_event_journal(
     rank = jnp.cumsum(events.valid.astype(jnp.int32)) - 1
     capacity = journal.valid.shape[0]
 
-    def append_one(index: int, current: RigidTopologyEventJournal):
+    def append_one(
+        index: Array, current: RigidTopologyEventJournal
+    ) -> RigidTopologyEventJournal:
         target = used + rank[index]
         safe_target = jnp.clip(target, 0, capacity - 1)
         event_id = first_event_id + rank[index].astype(jnp.int64)
         should_write = events.valid[index] & (target < capacity)
 
-        def write_event(value: RigidTopologyEventJournal):
+        def write_event(value: RigidTopologyEventJournal) -> RigidTopologyEventJournal:
             return RigidTopologyEventJournal(
                 event_ids=value.event_ids.at[safe_target].set(event_id),
                 event_kinds=value.event_kinds.at[safe_target].set(
@@ -1093,7 +1097,7 @@ def _event_replay_digest(
     salt = jnp.asarray(1_461_466_560_413, dtype=jnp.int64)
     positive_mask = jnp.asarray(jnp.iinfo(jnp.int64).max, dtype=jnp.int64)
 
-    def mix(index: int, digest: Array) -> Array:
+    def mix(index: Array, digest: Array) -> Array:
         event_id = first_event_id + rank[index]
         token = (
             (event_id + 1) * jnp.asarray(1_000_003, dtype=jnp.int64)
@@ -1404,7 +1408,7 @@ def apply_rigid_topology_transactions(
     )
 
 
-def _tree_where(condition: Array, proposed, current, /):
+def _tree_where(condition: Array, proposed: _T, current: _T, /) -> _T:
     return jax.tree.map(
         lambda new, old: jnp.where(condition, new, old), proposed, current
     )

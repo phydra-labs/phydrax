@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax
@@ -20,7 +20,11 @@ from ..._holomorphic import ComplexAffineNormalization, HolomorphicJet
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, ParameterOwner
 from ...continuation import ParameterContinuationProblem
-from ...optim import variable_projection, VariableProjectionProblem
+from ...optim import (
+    variable_projection,
+    VariableProjectionProblem,
+    VariableProjectionResult,
+)
 from ._holomorphic_constraints import HolomorphicAffineCoefficientMap
 from ._holomorphic_frame import HolomorphicPolynomialFrame
 
@@ -543,7 +547,7 @@ class MeromorphicVariableProjectionPlan(StrictModule, NonTrainableState):
             (jnp.real(observations_complex), jnp.imag(observations_complex))
         )
 
-        def design(parameters, args):
+        def design(parameters: Array, args: object) -> Array:
             del args
             complex_design = self._complex_design(parameters)
             real = jnp.real(complex_design)
@@ -556,7 +560,7 @@ class MeromorphicVariableProjectionPlan(StrictModule, NonTrainableState):
             problem_id=self.plan_id,
         )
 
-    def fit(self, initial_poles: ArrayLike, /, **kwargs):
+    def fit(self, initial_poles: ArrayLike, /, **kwargs: Any) -> VariableProjectionResult:
         """Fit nonlinear pole locations and the optimal linear coefficient block."""
         locations = jnp.asarray(initial_poles)
         pole_count = len(self.pole_orders)
@@ -576,11 +580,11 @@ class MeromorphicVariableProjectionPlan(StrictModule, NonTrainableState):
             raise ValueError("final_observations must match the complex fitting data.")
         initial = self.observations
 
-        def stationarity(parameters, coordinate, args):
+        def stationarity(parameters: Array, coordinate: Array, args: Any) -> Array:
             observations = (1.0 - coordinate) * initial + coordinate * final
             problem = self.problem(observations)
 
-            def objective(values):
+            def objective(values: Array) -> Array:
                 residual = problem.linear_solution(values, args)[1]
                 return 0.5 * jnp.real(jnp.vdot(residual, residual))
 

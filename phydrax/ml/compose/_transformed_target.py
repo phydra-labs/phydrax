@@ -334,7 +334,7 @@ class FittedTransformedTargetRegressor(AbstractFittedModel):
             return None
         return regressor.compose(_inverse_target_view(transform))
 
-    def __call__(self, x: Any, /, *, key: Any = None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> jax.Array:
         regressor_key, inverse_key = _split_key(key, 2)
         blockwise = self._input_binding.batch_mode == "blockwise"
         prediction = _predict_values(

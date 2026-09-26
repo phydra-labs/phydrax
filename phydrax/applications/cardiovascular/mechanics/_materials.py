@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from math import isfinite
 
 import equinox as eqx
@@ -27,7 +27,14 @@ from ....operators.mechanics import (
     HyperelasticResponse,
     VolumetricConstraint,
 )
-from ....variational import FieldJetSpec, Functional, LocalIntegralTerm
+from ....variational import (
+    FieldJetSpec,
+    Functional,
+    FunctionalContext,
+    LocalFieldJet,
+    LocalGeometry,
+    LocalIntegralTerm,
+)
 from ...solid_mechanics import (
     mixed_hyperelastic_form,
     MixedHyperelasticBlockTangent,
@@ -514,7 +521,11 @@ def cardiac_passive_functional(
     if not isinstance(material, FiniteBulkCardiacMaterial):
         raise TypeError("material must be FiniteBulkCardiacMaterial.")
 
-    def density(fields, geometry, context):
+    def density(
+        fields: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         del geometry, context
         gradient = fields[field].gradient
         if gradient is None:

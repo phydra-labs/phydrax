@@ -37,7 +37,7 @@ class AbstractRiemannianLineSearchOptimizer(AbstractRiemannianOptimizer):
         *,
         value: Array | None = None,
         value_fn: Callable[[PyTree[Any]], Array] | None = None,
-    ):
+    ) -> tuple[PyTree[Array], Any]:
         raise NotImplementedError
 
 

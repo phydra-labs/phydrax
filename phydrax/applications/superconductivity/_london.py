@@ -59,7 +59,7 @@ class ThinFilmLondonPlan(StrictModule, NonTrainableState):
     constraint_labels: tuple[str, ...] = eqx.field(static=True)
     hessian: Array
     moment_load: Array
-    factorization: object
+    factorization: la.PreparedFactorization
     softening_length: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)

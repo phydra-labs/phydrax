@@ -25,8 +25,8 @@ def _cell_to_face_fraction(value: Array, shape: tuple[int, ...], axis: int, /) -
     face_index[axis] = slice(1, shape[axis] - 1)
     cell_index[axis] = slice(0, value.shape[axis] - 1)
     result = result.at[tuple(face_index)].set(value[tuple(cell_index)])
-    lower = [slice(None)] * value.ndim
-    upper = [slice(None)] * value.ndim
+    lower: list[slice | int] = [slice(None)] * value.ndim
+    upper: list[slice | int] = [slice(None)] * value.ndim
     lower[axis] = 0
     upper[axis] = shape[axis] - 1
     return result.at[tuple(lower)].set(0.0).at[tuple(upper)].set(0.0)

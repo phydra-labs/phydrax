@@ -158,7 +158,12 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
         test_widths = np.asarray(
             test_grid_filter.filter_scale.directional_widths, dtype=np.float64
         )
-        ratio = tuple(float(value) for value in test_widths / resolved_widths)
+        ratio_values = test_widths / resolved_widths
+        ratio = (
+            float(ratio_values[0]),
+            float(ratio_values[1]),
+            float(ratio_values[2]),
+        )
 
         self.plan = plan
         self.resolved_filter = resolved_filter
@@ -561,6 +566,8 @@ class PreparedPeriodicDynamicLES(StrictModule, NonTrainableState):
         live = self.grid_filter.apply(retained)
         dealiasing = self.closure_method.dealiasing
         evaluation = dealiasing.evaluation
+        # Dealiasing keeps the tensor family of the periodic discretization.
+        assert isinstance(evaluation, TensorSpectralDiscretization)
         embedded = dealiasing.embed(live)
         physical_velocity = evaluation.reconstruct(embedded)
         resolved_gradient = jnp.stack(

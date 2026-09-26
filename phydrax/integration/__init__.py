@@ -5,6 +5,7 @@
 """Measure-aware deterministic, adaptive, and stochastic integration."""
 
 from importlib import import_module
+from typing import Any
 
 from .._axis_factorization import (
     AxisContractionPlan,
@@ -270,7 +271,7 @@ from ._vegas import __all__ as _vegas_all
 _FACADE_EXPORT_MODULES = ("._complex_weight", "._vegas")
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

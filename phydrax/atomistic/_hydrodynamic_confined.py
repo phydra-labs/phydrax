@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization.finite_volume import (
+    MACMarkerRelation,
     MACMarkerRouteState,
     PreparedMACMarkerTransfer,
 )
@@ -182,7 +183,7 @@ class PreparedConfinedFIBMobility(AbstractPreparedHydrodynamicMobility):
             }
         )
 
-    def _relation(self, positions: Array):
+    def _relation(self, positions: Array) -> MACMarkerRelation:
         markers = self.plan.transfer.markers
         full = markers.reference_position.at[markers.active_indices].set(
             positions[self.marker_from_mobility]
@@ -197,7 +198,7 @@ class PreparedConfinedFIBMobility(AbstractPreparedHydrodynamicMobility):
         value = self.coordinate_space.validate(jnp.asarray(positions))
         relation = self._relation(value)
 
-        def action(vector):
+        def action(vector: Array) -> Array:
             force = self.coordinate_space.validate(vector)
             marker_force_density = (
                 force[self.marker_from_mobility] * self.inverse_weights[:, None]

@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -41,6 +41,10 @@ from ..distribution import (
     AbstractOperatorDistribution,
     AbstractProbabilisticOperatorModel,
 )
+
+
+if TYPE_CHECKING:
+    from ....uq._predictive import PredictiveField
 
 
 OperatorDriverKind: TypeAlias = Literal["wiener", "jump"]
@@ -1034,7 +1038,7 @@ class StochasticOperatorRollout(StrictModule):
     def is_pathwise(self) -> bool:
         return self.kind != "marginal"
 
-    def to_predictive(self):
+    def to_predictive(self) -> PredictiveField:
         """Return a coordinate-aware predictive field with process sample axes."""
         return self.trajectory.to_predictive()
 

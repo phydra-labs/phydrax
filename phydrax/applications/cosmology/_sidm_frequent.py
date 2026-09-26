@@ -268,7 +268,9 @@ class FrequentSmallAngleSIDMPlan(StrictModule, NonTrainableState):
         zero_vector = jnp.zeros(relative.shape, dtype=dtype)
         zero_scalar = jnp.zeros(speed.shape, dtype=dtype)
 
-        def apply_pair(index, carry):
+        def apply_pair(
+            index: Array, carry: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array]:
             momentum_values, impulse_values, momentum_defects, energy_defects = carry
             route = order[index]
             left_index = left[route]

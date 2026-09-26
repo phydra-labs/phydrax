@@ -569,7 +569,7 @@ def _apply_control_variate(
         ),
         axis=1,
     )
-    expected = precision.accumulation(control.expectations)
+    expected = precision.accumulation(jnp.asarray(control.expectations))
     flat_values = jnp.reshape(values, (values.shape[0], -1))
     production_start = 0
     if control.coefficients is None:

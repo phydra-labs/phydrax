@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Literal
 
 import jax
@@ -53,7 +53,7 @@ def validate_derivative_coverage(
 
 def _block_jacobian_chunks(
     flat_params: Array,
-    unravel,
+    unravel: Callable[[Array], PyTree[Any]],
     non_trainable: PyTree[Any],
     enforcement: EnforcementProgram | None,
     term: PreparedResidualTerm,
@@ -69,7 +69,7 @@ def _block_jacobian_chunks(
     index_array = jnp.asarray(indices, dtype=jnp.int32)
     block_params = jnp.take(flat_params, index_array)
 
-    def residual_from_block(values):
+    def residual_from_block(values: Array) -> Array:
         candidate = unravel(flat_params.at[index_array].set(values))
         if functional_residual is not None:
             blocks = functional_residual.blocks_for(candidate, term)
@@ -90,7 +90,7 @@ def _block_jacobian_chunks(
         chunk_size
     )
 
-    def residual_chunk(values, start):
+    def residual_chunk(values: Array, start: Array) -> Array:
         residual = residual_from_block(values)
         padded = jnp.pad(residual, (0, padded_size - residual_size))
         return jax.lax.dynamic_slice_in_dim(

@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import inexact_result_type
@@ -22,6 +24,7 @@ from ...stochastic import (
     ObservationSequence,
     StateSpaceModel,
     StateSpaceProblem,
+    StateSpaceStepContext,
 )
 from ...uq import kalman_filter, rts_smoother
 from ._types import TrackResult, TrackSmoothingResult
@@ -74,15 +77,19 @@ class TrackSmoothingPlan(StrictModule, NonTrainableState):
         )
 
 
-def _transition_matrix(start, end, context, /):
+def _transition_matrix(
+    start: Array, end: Array, context: StateSpaceStepContext, /
+) -> Array:
     del context
     dt = end - start
     identity = jnp.eye(3, dtype=inexact_result_type(start, end))
     return jnp.eye(6, dtype=identity.dtype).at[:3, 3:].set(dt * identity)
 
 
-def _process_covariance(acceleration_variance: float):
-    def covariance(start, end, context, /):
+def _process_covariance(
+    acceleration_variance: float,
+) -> Callable[[Array, Array, StateSpaceStepContext], Array]:
+    def covariance(start: Array, end: Array, context: StateSpaceStepContext, /) -> Array:
         del context
         dt = end - start
         identity = jnp.eye(3, dtype=inexact_result_type(start, end))
@@ -96,8 +103,10 @@ def _process_covariance(acceleration_variance: float):
     return covariance
 
 
-def _observation_covariance(values):
-    def covariance(time, context, /):
+def _observation_covariance(
+    values: Array,
+) -> Callable[[Array, StateSpaceStepContext], Array]:
+    def covariance(time: Array, context: StateSpaceStepContext, /) -> Array:
         del time
         return values[context.step_index]
 

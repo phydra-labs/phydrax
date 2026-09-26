@@ -155,7 +155,7 @@ def variable_h_density(
 
 
 def adaptive_smoothing_state(
-    plan: AlgebraicSmoothingLengthPlan,
+    plan: AlgebraicSmoothingLengthPlan | CoupledSummationSmoothingLengthPlan,
     particles: ParticleDiscretization,
     pairs: ParticlePairRelation,
     geometry: ParticlePairGeometry,
@@ -173,7 +173,9 @@ def adaptive_smoothing_state(
             else jnp.asarray(initial_h)
         )
 
-        def body(_, carry):
+        def body(
+            _: Array, carry: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             h, _, iterations = carry
             rho = variable_h_density(particles, pairs, geometry, kernel, h, execution)
             target, _ = plan.evaluate(particles, rho)

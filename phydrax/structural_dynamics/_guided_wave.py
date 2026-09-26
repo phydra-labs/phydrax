@@ -5,12 +5,12 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
 def rod_longitudinal_wavenumber(
     angular_frequency_rad_s: ArrayLike, young_modulus_pa: float, density_kg_m3: float, /
-):
+) -> Array:
     if (
         not isfinite(young_modulus_pa)
         or young_modulus_pa <= 0

@@ -7,9 +7,9 @@ from __future__ import annotations
 from typing import Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -93,7 +93,7 @@ class ResolvedLESFilter(StrictModule, NonTrainableState):
             or any(not isinstance(axis, str) or not axis.strip() for axis in axis_names)
         ):
             raise TypeError("Resolved LES axis_names must be three non-empty strings.")
-        axes = tuple(axis.strip() for axis in axis_names)
+        axes = (axis_names[0].strip(), axis_names[1].strip(), axis_names[2].strip())
         if len(set(axes)) != 3:
             raise ValueError("Resolved LES axis names must be unique.")
         if topology not in ("tensor-product", "unstructured"):
@@ -171,7 +171,7 @@ class LESFilterScale(StrictModule):
             widths = widths.astype(inexact_result_type(widths))
         if widths.ndim < 1 or widths.shape[-1] != 3:
             raise ValueError("LES directional widths must have trailing dimension 3.")
-        if not isinstance(widths, jax.core.Tracer):
+        if not isinstance(widths, jax_core.Tracer):
             concrete = np.asarray(widths)
             if np.any(~np.isfinite(concrete)) or np.any(concrete <= 0.0):
                 raise ValueError("LES directional widths must be finite and positive.")
@@ -312,7 +312,7 @@ class PreparedAlgebraicLESModel(StrictModule, NonTrainableState):
         if not isinstance(provenance, LESParameterProvenance):
             raise TypeError("provenance must be LESParameterProvenance.")
         coefficient_array = model.coefficient
-        if isinstance(coefficient_array, jax.core.Tracer):
+        if isinstance(coefficient_array, jax_core.Tracer):
             raise TypeError("Prepared LES coefficients must have concrete values.")
         coefficient = float(np.asarray(coefficient_array))
         if not np.isfinite(coefficient) or coefficient < 0.0:
@@ -401,7 +401,7 @@ def _validated_coefficient(value: ArrayLike, name: str, /) -> Array:
         coefficient = coefficient.astype(inexact_result_type(coefficient))
     if coefficient.shape != ():
         raise ValueError(f"{name} LES coefficient must be scalar.")
-    if not isinstance(coefficient, jax.core.Tracer):
+    if not isinstance(coefficient, jax_core.Tracer):
         concrete = np.asarray(coefficient)
         if not np.isfinite(concrete) or concrete < 0.0:
             raise ValueError(f"{name} LES coefficient must be finite and nonnegative.")

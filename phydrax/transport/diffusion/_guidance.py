@@ -132,7 +132,15 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
         self.exactness = exactness
         self.guidance_id = guidance_id
 
-    def evaluate(self, state, time, context, /, *, key=None) -> GuidanceEvaluation:
+    def evaluate(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: ScoreContext,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+    ) -> GuidanceEvaluation:
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be a ScoreContext.")
         required = tuple(
@@ -146,7 +154,7 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
             raise ValueError("One guidance evaluation requires scalar time.")
         time_array = jnp.asarray(time)
 
-        def scalar(current):
+        def scalar(current: Array) -> Array:
             arguments = tuple(
                 current
                 if dep == self.state_label
@@ -244,7 +252,15 @@ class ClassifierFreeGuidance(AbstractScoreGuidance):
         self.exactness = "exact" if value == 1.0 else "heuristic"
         self.guidance_id = guidance_id
 
-    def evaluate(self, state, time, context, /, *, key=None) -> GuidanceEvaluation:
+    def evaluate(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: ScoreContext,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+    ) -> GuidanceEvaluation:
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be a ScoreContext.")
         conditional_names = tuple(
@@ -323,7 +339,15 @@ class GuidedScoreField(StrictModule):
         self.guidance = values
         self.guided_score_id = identifier
 
-    def evaluate(self, state, time, context, /, *, key=None):
+    def evaluate(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        context: ScoreContext,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+    ) -> tuple[Array, tuple[GuidanceEvaluation, ...], Array]:
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be a ScoreContext.")
         required = tuple(
@@ -345,7 +369,15 @@ class GuidedScoreField(StrictModule):
         )
         return score, evaluations, valid
 
-    def __call__(self, state, time, /, *, context, key=None):
+    def __call__(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        /,
+        *,
+        context: ScoreContext,
+        key: Key[Array, ""] | None = None,
+    ) -> Array:
         return self.evaluate(state, time, context, key=key)[0]
 
 

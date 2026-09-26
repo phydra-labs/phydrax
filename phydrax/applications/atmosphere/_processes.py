@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -16,6 +18,10 @@ from ..._strict import StrictModule
 from ._column import conservative_radiation, conservative_vertical_mixing
 from ._global_surface import GlobalSurfacePhysics
 from ._moist import MoistThermodynamicPlan
+
+
+if TYPE_CHECKING:
+    from ._global import GlobalAtmosphereView
 
 
 class GlobalHeldForcing(StrictModule):
@@ -78,17 +84,17 @@ class GlobalAtmosphereProcesses(StrictModule):
     def __init__(
         self,
         *,
-        thermodynamics=None,
-        surface_physics=None,
-        held_suarez=False,
-        equilibrium_temperature=260.0,
-        radiative_timescale=0.0,
-        mixing_rate=0.0,
-        condensation_timescale=300.0,
-        precipitation_timescale=1800.0,
-        sensible_heat_flux=0.0,
-        evaporation_flux=0.0,
-        cadence=1,
+        thermodynamics: MoistThermodynamicPlan | None = None,
+        surface_physics: GlobalSurfacePhysics | None = None,
+        held_suarez: bool = False,
+        equilibrium_temperature: float = 260.0,
+        radiative_timescale: float = 0.0,
+        mixing_rate: float = 0.0,
+        condensation_timescale: float = 300.0,
+        precipitation_timescale: float = 1800.0,
+        sensible_heat_flux: float = 0.0,
+        evaporation_flux: float = 0.0,
+        cadence: int = 1,
     ) -> None:
         if thermodynamics is not None and not isinstance(
             thermodynamics, MoistThermodynamicPlan
@@ -197,7 +203,12 @@ class GlobalAtmosphereProcesses(StrictModule):
             or self.sensible_heat_flux != 0
         )
 
-    def thermodynamic_coefficients(self, water, dry_gas_constant, dry_heat_capacity):
+    def thermodynamic_coefficients(
+        self,
+        water: tuple[Array, Array, Array],
+        dry_gas_constant: float,
+        dry_heat_capacity: float,
+    ) -> tuple[Array, Array]:
         if self.thermodynamics is None:
             return jnp.full_like(water[0], dry_gas_constant), jnp.full_like(
                 water[0], dry_heat_capacity
@@ -207,13 +218,19 @@ class GlobalAtmosphereProcesses(StrictModule):
             self.thermodynamics.heat_capacity(*water, at_constant_pressure=True),
         )
 
-    def internal_energy(self, temperature, water, dry_gas_constant, dry_heat_capacity):
+    def internal_energy(
+        self,
+        temperature: Array,
+        water: tuple[Array, Array, Array],
+        dry_gas_constant: float,
+        dry_heat_capacity: float,
+    ) -> Array:
         if self.thermodynamics is None:
             return (dry_heat_capacity - dry_gas_constant) * temperature
         # Caloric mixture energy is independent of density in this ideal mixture.
         return self.thermodynamics.energy(jnp.ones_like(temperature), temperature, *water)
 
-    def forcing(self, view, colatitude: Array) -> GlobalHeldForcing:
+    def forcing(self, view: GlobalAtmosphereView, colatitude: Array) -> GlobalHeldForcing:
         sigma = view.pressure / view.surface_pressure[..., None]
         if self.held_suarez:
             sin_lat = jnp.cos(colatitude)[:, None, None]
@@ -253,13 +270,20 @@ class GlobalAtmosphereProcesses(StrictModule):
         )
 
     def tendencies(
-        self, view, surface_water, surface_energy, held: GlobalHeldForcing
+        self,
+        view: GlobalAtmosphereView,
+        surface_water: Array,
+        surface_energy: Array,
+        held: GlobalHeldForcing,
     ) -> GlobalProcessRates:
         mass, temp, cp = view.layer_mass, view.temperature, view.heat_capacity
         boundary = None
         if self.surface_physics is not None:
+            thermodynamics = self.thermodynamics
+            # __init__ rejects surface_physics without moist thermodynamics.
+            assert thermodynamics is not None
             boundary = self.surface_physics.evaluate(
-                self.thermodynamics, view, surface_water, surface_energy, held.solar_down
+                thermodynamics, view, surface_water, surface_energy, held.solar_down
             )
         zero = jnp.zeros_like(temp)
         water_rate = (zero, zero, zero)
@@ -377,8 +401,10 @@ class GlobalAtmosphereProcesses(StrictModule):
                         for h, r in zip((hv, hl, hi), mixed_water, strict=True)
                     )
                 ) / (mass * cp)
-                water_rate = tuple(
-                    a + b for a, b in zip(water_rate, mixed_water, strict=True)
+                water_rate = (
+                    water_rate[0] + mixed_water[0],
+                    water_rate[1] + mixed_water[1],
+                    water_rate[2] + mixed_water[2],
                 )
         elif self.mixing_rate > 0:
             temperature_rate = (

@@ -132,7 +132,7 @@ class GradientLengthKnudsenPlan(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _gas_system_and_state(system: Any, state: Array, /):
+    def _gas_system_and_state(system: Any, state: Array, /) -> tuple[Any, Array]:
         if isinstance(system, SpalartAllmarasCompressibleSystem):
             return system.base, system.gas_state(state)
         return system, state

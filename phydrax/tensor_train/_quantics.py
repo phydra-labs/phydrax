@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, PRNGKeyArray
 
 import phydrax.ein as ein
@@ -101,7 +102,7 @@ class TensorizedGrid(StrictModule):
         /,
         *,
         rule: GridRule = "trapezoid",
-        dtype=jnp.float32,
+        dtype: DTypeLike = jnp.float32,
     ) -> TensorizedGrid:
         sizes = tuple(mode_sizes)
         intervals = tuple((float(lower), float(upper)) for lower, upper in bounds)

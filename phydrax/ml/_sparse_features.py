@@ -77,7 +77,9 @@ class SparseFeatures(StrictModule):
         indices = self.columns.source_indices.reshape(values.shape)
         valid = self.columns.valid.reshape(values.shape)
 
-        def materialize(case_values, case_indices, case_valid):
+        def materialize(
+            case_values: Array, case_indices: Array, case_valid: Array
+        ) -> Array:
             rows = jnp.broadcast_to(
                 jnp.arange(self.sample_count, dtype=jnp.int32)[:, None],
                 case_indices.shape,

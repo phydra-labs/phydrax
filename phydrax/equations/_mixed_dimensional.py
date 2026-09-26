@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -594,7 +595,7 @@ class PreparedMixedDimensionalTransport(StrictModule):
         if actual != expected:
             raise ValueError(f"State shapes must be {expected}; got {actual}.")
 
-    def mass_vector(self, dtype) -> Array:
+    def mass_vector(self, dtype: DTypeLike) -> Array:
         return jnp.concatenate(
             (
                 self.bulk.mass.astype(dtype),
@@ -702,7 +703,7 @@ class PreparedMixedDimensionalTransport(StrictModule):
             )
             explicit = self.flatten(advective)
 
-        def action(candidate):
+        def action(candidate: Array) -> Array:
             candidate_state = self.unflatten(candidate)
             residual, _ = self.residual(candidate_state, include_advection=not imex)
             return mass * candidate + width * self.flatten(residual)

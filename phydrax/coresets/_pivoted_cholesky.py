@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,6 +21,9 @@ from .._doc import DOC_KEY0
 from .._measure_weights import log_weights_from_normalized
 from .._strict import StrictModule
 from ._types import CoresetSelection, PivotedCholeskyDiagnostics
+
+
+_CholeskyCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class RandomizedPivotedCholesky(StrictModule):
@@ -79,7 +84,7 @@ def randomized_pivoted_cholesky(
         jnp.finfo(safe_points.dtype).eps * jnp.maximum(initial_trace, 1.0) * 32.0
     )
 
-    def body(iteration, state):
+    def body(iteration: Array, state: _CholeskyCarry) -> _CholeskyCarry:
         residual, factors, chosen, active, used = state
         eligible_residual = jnp.where(~used, jnp.maximum(residual, 0.0), 0.0)
         total = jnp.sum(eligible_residual)

@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from phydrax import ein
@@ -200,7 +202,7 @@ def _siddon_routes(
     shape: tuple[int, int, int],
     origin: np.ndarray,
     spacing: np.ndarray,
-):
+) -> tuple[npt.NDArray[np.int32], npt.NDArray[np.float64], npt.NDArray[np.bool_]]:
     origins = np.asarray(rays.origins)
     directions = np.asarray(rays.directions)
     active = np.asarray(rays.active_mask)
@@ -430,12 +432,15 @@ class BeerLambertResult(StrictModule, NonTrainableState):
     successful: Array
 
 
+_ConjugateGradientCarry: TypeAlias = tuple[Array, Array, Array, Array]
+
+
 @dataclass(frozen=True, slots=True)
 class BeerLambertPlan:
     incident_signal: np.ndarray
     dark_signal: float = 0.0
     gain: float = 1.0
-    saturation: float = np.finfo(np.float64).max
+    saturation: float = float(np.finfo(np.float64).max)
 
     def __post_init__(self) -> None:
         incident = np.array(self.incident_signal, dtype=np.float64, copy=True)
@@ -601,7 +606,9 @@ class IterativeCTPlan:
         direction = self.transform.transpose(residual) - self.l2_regularization * x
         gamma = jnp.sum(direction * direction)
 
-        def step(carry, _):
+        def step(
+            carry: _ConjugateGradientCarry, _: None
+        ) -> tuple[_ConjugateGradientCarry, Array]:
             x, residual, direction, gamma = carry
             projected = self.transform.forward(direction).values
             denominator = jnp.sum(

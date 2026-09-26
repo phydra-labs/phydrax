@@ -502,3 +502,25 @@ def test_ale_outputs_use_accepted_points_and_reject_stale_geometry(tmp_path):
     )
     vtk = meshio.read(vtk_path)
     np.testing.assert_array_equal(vtk.points[:, : moved_points.shape[1]], moved_points)
+
+
+def test_unstructured_snapshot_rejects_shallow_water_views(tmp_path):
+    pytest.importorskip("h5py")
+    _, discretization, _, state, _ = _unstructured_runtime()
+    output = phx.solver.FiniteVolumeOutputPlan(tmp_path / "solution.h5", discretization)
+    cells = discretization.cell_count
+    field = jnp.ones((cells,))
+    observables = phx.discretization.ShallowWaterObservables(
+        field,
+        field,
+        field,
+        jnp.zeros((cells, 1)),
+        jnp.zeros((cells, 1)),
+        jnp.ones((cells,), dtype=bool),
+        field,
+        "bed",
+        "precision",
+    )
+
+    with pytest.raises(ValueError, match="structured finite-volume output"):
+        output.write_snapshot(discretization, state, shallow_water=observables)

@@ -443,7 +443,7 @@ def _trajectory_evidence(
     plan = prepared.plan
     modes = states.mode_spinors
     potential = states.vector_potential
-    field = states.electric_field
+    field: Array = states.electric_field
     hamiltonian = plan.hamiltonians(potential)
     raw_current = plan.raw_current(modes)
     adiabatic_current = plan.adiabatic_current(potential)

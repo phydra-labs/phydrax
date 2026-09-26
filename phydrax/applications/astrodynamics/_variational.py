@@ -5,18 +5,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import HybridEventSensitivityResult
+
+
+_VariationalDynamics: TypeAlias = Callable[[Array, Array, Array, Any], Array]
+_VariationalState: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class VariationalResult(StrictModule):
@@ -30,7 +35,7 @@ class VariationalResult(StrictModule):
 
 
 class VariationalPropagationPlan(StrictModule, NonTrainableState):
-    dynamics: Callable
+    dynamics: _VariationalDynamics
     times: Array
     process_noise: Array
     parameter_dimension: int = eqx.field(static=True)
@@ -38,13 +43,13 @@ class VariationalPropagationPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        dynamics,
-        times,
-        process_noise,
+        dynamics: _VariationalDynamics,
+        times: npt.ArrayLike,
+        process_noise: npt.ArrayLike,
         /,
         *,
-        parameter_dimension=0,
-        dynamics_id="variational-dynamics",
+        parameter_dimension: int = 0,
+        dynamics_id: str = "variational-dynamics",
     ) -> None:
         if not callable(dynamics):
             raise TypeError("dynamics must be callable.")
@@ -104,7 +109,7 @@ class VariationalPropagationPlan(StrictModule, NonTrainableState):
             (dimension, self.parameter_dimension), dtype=state0.dtype
         )
 
-        def derivative(time, combined):
+        def derivative(time: Array, combined: _VariationalState) -> _VariationalState:
             state, phi, sensitivity, covariance = combined
             state_rate = self.dynamics(time, state, parameter_values, args)
             jacobian_state = jax.jacfwd(self.dynamics, argnums=1)(
@@ -122,10 +127,14 @@ class VariationalPropagationPlan(StrictModule, NonTrainableState):
                 + self.process_noise,
             )
 
-        def add(values, rates, factor):
+        def add(
+            values: _VariationalState, rates: _VariationalState, factor: Array
+        ) -> _VariationalState:
             return jax.tree.map(lambda value, rate: value + factor * rate, values, rates)
 
-        def step(carry, interval):
+        def step(
+            carry: _VariationalState, interval: Array
+        ) -> tuple[_VariationalState, tuple[Array, Array, Array, Array, Array]]:
             start, end = interval
             dt = end - start
             k1 = derivative(start, carry)

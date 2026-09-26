@@ -3,21 +3,21 @@
 #
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
-def structural_incidence(equation_variables: ArrayLike, /):
+def structural_incidence(equation_variables: ArrayLike, /) -> tuple[Array, int]:
     matrix = np.asarray(equation_variables, dtype=np.bool_)
     if matrix.ndim != 2:
         raise ValueError("Structural incidence must be a matrix.")
     return jnp.asarray(matrix), int(np.linalg.matrix_rank(matrix.astype("float64")))
 
 
-def maximum_structural_matching(incidence: ArrayLike, /):
+def maximum_structural_matching(incidence: ArrayLike, /) -> tuple[tuple[int, ...], int]:
     graph = np.asarray(incidence, dtype=np.bool_)
     matched = [-1] * graph.shape[1]
 
-    def augment(eq, seen):
+    def augment(eq: int, seen: list[bool]) -> bool:
         for var in np.flatnonzero(graph[eq]):
             if seen[var]:
                 continue

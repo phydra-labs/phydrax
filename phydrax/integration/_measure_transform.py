@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -21,6 +21,10 @@ from .._strict import StrictModule
 from ._batches import PointIntegrationBatch, WeightedSampleBatch
 from ._targets import DiscreteMeasureTarget, ProbabilityTarget, WeightedSampleTarget
 from ._transformations import MeasureTransformationRecord
+
+
+if TYPE_CHECKING:
+    from ._api import IntegrationRealization
 
 
 class FiniteMeasureRealization(StrictModule):
@@ -125,7 +129,7 @@ def transformed_weighted_realization(
     provenance: str,
     indices: Array | None = None,
     selection_mask: Array | None = None,
-):
+) -> IntegrationRealization:
     """Rebuild a weighted realization and append ordered transformation evidence."""
 
     from ._api import IntegrationRealization

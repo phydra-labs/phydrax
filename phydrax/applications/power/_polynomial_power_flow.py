@@ -192,7 +192,9 @@ def _fixed_injections(
     return jnp.asarray(values)
 
 
-def _add_term(equation, exponent: tuple[int, ...], coefficient: float) -> None:
+def _add_term(
+    equation: dict[tuple[int, ...], float], exponent: tuple[int, ...], coefficient: float
+) -> None:
     equation[exponent] = equation.get(exponent, 0.0) + float(coefficient)
 
 

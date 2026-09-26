@@ -6,13 +6,13 @@ import pytest
 
 from phydrax._training import TrainingIterationKind
 from phydrax.atomistic import (
+    atomistic_potential_revision,
     AtomisticBatch,
     AtomisticGraphExecutionPlan,
     AtomisticScaleContract,
     AtomisticStatus,
     AtomisticTrainingPolicy,
     AtomisticTrainingProblem,
-    atomistic_potential_revision,
     energy_and_forces,
     fit_atomistic_potential,
     load_rmd17_npz,

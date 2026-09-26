@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import prod
 from typing import Any
 
@@ -15,10 +16,14 @@ from jaxtyping import Array, ArrayLike, Key
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
-from ...dynamics._evolution import AbstractEvolution, EVOLUTION_SUCCESS
+from ...dynamics._evolution import (
+    AbstractEvolution,
+    EVOLUTION_SUCCESS,
+    EvolutionStep,
+)
 
 
-def _sample_shape(value, /) -> tuple[int, ...]:
+def _sample_shape(value: Sequence[int], /) -> tuple[int, ...]:
     shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("sample_shape dimensions must be positive.")
@@ -49,8 +54,8 @@ class ContinuousTransportSample(StrictModule):
         valid: ArrayLike,
         status: ArrayLike,
         backend_status: ArrayLike,
-        sample_shape,
-        event_shape,
+        sample_shape: Sequence[int],
+        event_shape: Sequence[int],
         density_measure_kind: str,
         system_id: str,
         evolution_id: str,
@@ -189,7 +194,7 @@ class ContinuousTransport(StrictModule):
         count = prod(samples) if samples else 1
         flat_source = source.reshape((count,) + self.event_shape)
 
-        def advance(state):
+        def advance(state: Array) -> EvolutionStep:
             return self.evolution.advance(
                 state,
                 self.source_coordinate,

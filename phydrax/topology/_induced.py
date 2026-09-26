@@ -15,7 +15,9 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._coefficients import PrimeField
+from ._complex import CompactCellLayout
 from ._homology import FiniteFieldBasis, HomologyResult
+from ._integer import ExactIntegerCOO
 from ._maps import CellularChainMap
 
 
@@ -104,7 +106,7 @@ class InducedTopologyMap(StrictModule, NonTrainableState):
 
 def _basis_vectors(
     basis: FiniteFieldBasis,
-    layout,
+    layout: CompactCellLayout,
     /,
 ) -> tuple[dict[int, int], ...]:
     vectors = [dict() for _ in range(basis.generator_count)]
@@ -187,7 +189,9 @@ def _solve_square(
     return np.asarray(augmented[:, size:], dtype=np.int64)
 
 
-def _map_vector(matrix, vector: dict[int, int], field: PrimeField, /) -> dict[int, int]:
+def _map_vector(
+    matrix: ExactIntegerCOO, vector: dict[int, int], field: PrimeField, /
+) -> dict[int, int]:
     output: dict[int, int] = {}
     columns = matrix.columns()
     for column, coefficient in vector.items():
@@ -276,9 +280,9 @@ def compute_induced_topology_map(
 
 
 def induced_homology_coordinates(
-    degree_maps,
-    source_layout,
-    target_layout,
+    degree_maps: Sequence[ExactIntegerCOO],
+    source_layout: CompactCellLayout,
+    target_layout: CompactCellLayout,
     source: HomologyResult,
     target: HomologyResult,
     /,

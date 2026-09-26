@@ -427,7 +427,7 @@ class _HigherOrderFNOBlock(StrictModule):
         return compose_regularity(mixer, feedforward)
 
 
-def _hofno_contract_configuration(model):
+def _hofno_contract_configuration(model: HOFNO) -> tuple[tuple[str, object], ...]:
     return (
         ("n_modes", model.n_modes),
         ("width", model.width),

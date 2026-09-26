@@ -63,7 +63,7 @@ def _package_identity(distribution: str, expected_version: str | None) -> dict[s
     for file in package.files or ():
         name = str(file)
         if name.endswith((".py", ".so", ".dylib", ".dll", ".pyd")) or ".so." in name:
-            implementation[name] = _digest_file(Path(package.locate_file(file)))
+            implementation[name] = _digest_file(Path(str(package.locate_file(file))))
     record = package.read_text("RECORD")
     return {
         "package": distribution,
@@ -283,7 +283,7 @@ def _worker_main(descriptor: int) -> None:
 
 class _OpenDSSWorker:
     def __init__(self) -> None:
-        self.engine = None
+        self.engine: Any = None
 
     def open(self, config: Mapping[str, Any]) -> dict[str, Any]:
         module = importlib.import_module("opendssdirect")
@@ -444,7 +444,7 @@ class _OpenDSSWorker:
 
 class _FMIWorker:
     def __init__(self) -> None:
-        self.fmu = None
+        self.fmu: Any = None
         self.instantiated = False
         self.initialized = False
         self.terminated = False
@@ -623,7 +623,7 @@ class _FMIWorker:
 
 class _HELICSWorker:
     def __init__(self) -> None:
-        self.library = None
+        self.library: Any = None
         self.broker = None
         self.federate = None
         self.info = None

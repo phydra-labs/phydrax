@@ -24,7 +24,7 @@ CaseAxisRole: TypeAlias = Literal[
 InputAlignment: TypeAlias = Literal["samples", "transitions"]
 
 
-def _identifier(value: str | None, payload, prefix: str, /) -> str:
+def _identifier(value: str | None, payload: object, prefix: str, /) -> str:
     if value is not None:
         if not isinstance(value, str) or not value:
             raise ValueError("Trajectory identifiers must be non-empty strings or None.")

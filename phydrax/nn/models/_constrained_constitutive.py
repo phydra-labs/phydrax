@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -125,8 +127,8 @@ class CoercivePolyconvexEnvelope(StrictModule, ParameterOwner):
         constraints: PolyconvexMaterialConstraints,
         /,
         *,
-        gradient_coefficients: ArrayLike = (1.0, 0.1),
-        cofactor_coefficients: ArrayLike = (0.25,),
+        gradient_coefficients: ArrayLike | Sequence[float] = (1.0, 0.1),
+        cofactor_coefficients: ArrayLike | Sequence[float] = (0.25,),
         determinant_coefficient: float = 1.0,
         barrier_coefficient: float = 0.01,
     ) -> None:

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -444,10 +444,11 @@ def assess_tensor_valuation_candidate(
         and pricing_law.factor_layout_id == expected.factor_layout_id
         and pricing_law.filtration_id == expected.filtration_id
     )
+    # TensorValuationApplicability requires a QuanticsLayout on the QTT route.
     expected_modes = (
         applicability.grid.mode_sizes
         if applicability.route == "tt"
-        else applicability.quantics_layout.digit_mode_sizes
+        else cast(QuanticsLayout, applicability.quantics_layout).digit_mode_sizes
     )
     domain_compatible = (
         tensor.mode_sizes == expected_modes

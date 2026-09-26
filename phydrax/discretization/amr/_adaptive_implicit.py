@@ -154,7 +154,7 @@ class AdaptiveImplicitSamplingPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _leaf_cells(self):
+    def _leaf_cells(self) -> tuple[tuple[int, tuple[int, ...], str], ...]:
         cells = []
         for level in self.hierarchy.levels:
             for bucket in level.buckets:

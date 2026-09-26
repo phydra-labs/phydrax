@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,10 +19,15 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization import FiniteElementDiscretization, IntegrationDomain
+from ...discretization import (
+    FiniteElementDiscretization,
+    FiniteElementRuntimeData,
+    IntegrationDomain,
+)
 from ...equations import (
     CellResidualAction,
     ConstitutiveResponse,
+    FiniteElementExecutionContext,
     FiniteElementForm,
     MaterialCheckpointPayload,
     MaterialSiteId,
@@ -49,6 +54,12 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     if not jnp.issubdtype(result.dtype, jnp.floating):
         result = result.astype("float64")
     return result
+
+
+# (first_piola, mandel, elastic, elastic_det, plastic_det, log elastic_det, ok)
+_StressEvaluation: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+# (first_piola, packed_state, converged, admissible, step_factor, dissipation)
+_PointUpdates: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 def _finite_scalar(value: ArrayLike, name: str, /) -> Array:
@@ -416,7 +427,7 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
         if state.strengths.shape != (self.slip_count,):
             raise ValueError("CPFEM committed strengths do not match slip systems.")
 
-    def _stress(self, deformation: Array, plastic: Array, /):
+    def _stress(self, deformation: Array, plastic: Array, /) -> _StressEvaluation:
         plastic_solve = inverse_small_linear(self.inverse_plan, plastic)
         elastic = ein.contract("ij,jk->ik", deformation, plastic_solve.value)
         elastic_solve = inverse_small_linear(self.inverse_plan, elastic)
@@ -521,7 +532,7 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
         )
         committed_hardening = self._hardening_energy(committed_state.accumulated_slip)
 
-        def state_from_increment(increment):
+        def state_from_increment(increment: Array) -> CrystalPlasticityState:
             total_increment = jnp.sum(jnp.abs(increment))
             plastic_generator = ein.contract("a,aij->ij", increment, rotated_schmid)
             plastic = ein.contract(
@@ -537,12 +548,14 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
             )
             return CrystalPlasticityState(plastic, strengths, accumulated)
 
-        def resolved_shear(state):
+        def resolved_shear(
+            state: CrystalPlasticityState,
+        ) -> tuple[_StressEvaluation, Array]:
             stress = self._stress(deformation, state.plastic_deformation)
             resolved = ein.contract("aij,ij->a", rotated_schmid, stress[1])
             return stress, resolved
 
-        def residual(increment, args):
+        def residual(increment: Array, args: object) -> Array:
             del args
             state = state_from_increment(increment)
             _, resolved = resolved_shear(state)
@@ -556,7 +569,7 @@ class CrystalPlasticityModel(StrictModule, NonTrainableState):
             )
             return increment - dt * rate
 
-        def response(increment, args):
+        def response(increment: Array, args: object) -> ConstitutiveResponse:
             del args
             state = state_from_increment(increment)
             stress, resolved = resolved_shear(state)
@@ -989,7 +1002,7 @@ def _point_updates(
     deformation: Array,
     committed: Array,
     /,
-):
+) -> _PointUpdates:
     if deformation.shape[:2] != committed.shape[
         :2
     ] or crystal_to_sample.shape != deformation.shape[:2] + (3, 3):
@@ -1000,7 +1013,9 @@ def _point_updates(
     flat_state = committed.reshape((-1, committed.shape[-1]))
     flat_orientation = crystal_to_sample.reshape((-1, 3, 3))
 
-    def point_update(deformation_, packed_state, orientation_):
+    def point_update(
+        deformation_: Array, packed_state: Array, orientation_: Array
+    ) -> _PointUpdates:
         state = CrystalPlasticityState.unpack(packed_state, model.slip_count)
         update = model.update(deformation_, state, orientation_, step_size)
         return (
@@ -1050,18 +1065,18 @@ def cpfem_equilibrium_form(
         committed = transaction.state(site).committed
 
         def residual(
-            values,
-            gradients,
-            points,
-            weights,
-            test_basis,
-            test_gradients,
-            context,
+            values: tuple[Array, ...],
+            gradients: tuple[Array, ...],
+            points: Array,
+            weights: Array,
+            test_basis: Array,
+            test_gradients: Array,
+            context: FiniteElementExecutionContext,
             *,
-            model_=model,
-            orientation_=orientation,
-            committed_=committed,
-        ):
+            model_: CrystalPlasticityModel = model,
+            orientation_: Array = orientation,
+            committed_: Array = committed,
+        ) -> Array:
             del values, points, test_basis, context
             deformation = jnp.eye(3, dtype=gradients[0].dtype) + gradients[0]
             outputs = _point_updates(model_, orientation_, dt, deformation, committed_)
@@ -1084,9 +1099,16 @@ def cpfem_equilibrium_form(
             )
         )
 
-    def auxiliary(state, context):
+    def auxiliary(
+        state: ArrayLike, context: FiniteElementExecutionContext | None
+    ) -> FiniteElementAuxiliaryEvaluation:
         displacement = jnp.asarray(state)
-        runtime = discretization.default_runtime if context is None else context.runtime
+        # `_execution_context` validates FE runtimes before auxiliary evaluation.
+        runtime = (
+            discretization.default_runtime
+            if context is None
+            else cast(FiniteElementRuntimeData, context.runtime)
+        )
         trial_values = []
         convergence = []
         admissibility = []

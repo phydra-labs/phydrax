@@ -293,7 +293,7 @@ def solve_frozen_law_best_response(
     snapshots = jax.vmap(problem.mean_field.snapshot)(paths.times)
     snapshot_validity = snapshots.valid
     effective_sample_sizes = snapshots.effective_sample_size
-    minimum_effective_sample_size = jnp.min(effective_sample_sizes)
+    observed_minimum_effective_sample_size = jnp.min(effective_sample_sizes)
     law_evidence_valid = (
         jnp.all(snapshot_validity)
         & jnp.all(problem.mean_field.valid)
@@ -301,7 +301,7 @@ def solve_frozen_law_best_response(
         & jnp.all(jnp.isfinite(effective_sample_sizes))
     )
     effective_sample_size_sufficient = (
-        minimum_effective_sample_size >= required_effective_sample_size
+        observed_minimum_effective_sample_size >= required_effective_sample_size
     )
     bsde_valid = jnp.all(evaluation.valid_paths)
     hamiltonian_finite = jnp.all(jnp.isfinite(selected_controls)) & jnp.all(
@@ -339,7 +339,7 @@ def solve_frozen_law_best_response(
         law_particle_validity=problem.mean_field.valid,
         law_weights=problem.mean_field.weights,
         law_effective_sample_sizes=effective_sample_sizes,
-        minimum_effective_sample_size=minimum_effective_sample_size,
+        minimum_effective_sample_size=observed_minimum_effective_sample_size,
         law_evidence_valid=law_evidence_valid,
         effective_sample_size_sufficient=effective_sample_size_sufficient,
         minimum_required_effective_sample_size=required_effective_sample_size,

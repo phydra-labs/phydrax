@@ -128,7 +128,11 @@ class EntropyFilterPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, dynamics, /) -> PreparedEntropyFilter:
+    def prepare(
+        self,
+        dynamics: PreparedDGSEMConservationDynamics | PreparedNodalDGConservationDynamics,
+        /,
+    ) -> PreparedEntropyFilter:
         from ._nodal_conservation import PreparedNodalDGConservationDynamics
 
         if isinstance(dynamics, PreparedDGSEMConservationDynamics):
@@ -459,7 +463,10 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
             axis=1,
         )
         safe = jnp.where(admissible[..., None], local, first)
-        entropy = self.dynamics.entropy_pair._entropy_unchecked(safe)
+        entropy_pair = self.dynamics.entropy_pair
+        # __init__ rejects nodal dynamics without an entropy pair.
+        assert entropy_pair is not None
+        entropy = entropy_pair._entropy_unchecked(safe)
         entropy = jnp.nan_to_num(
             entropy,
             nan=invalid_value,
@@ -515,7 +522,7 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
             mean_local = jnp.broadcast_to(mean[:, None, :], local.shape)
             block_bounds = entropy_bounds[cell_offset : cell_offset + local.shape[0]]
 
-            def admissible(candidate):
+            def admissible(candidate: Array) -> Array:
                 physical = jnp.all(self.dynamics.system.admissible(candidate), axis=1)
                 entropy = self._safe_entropy(candidate, jnp.inf)
                 entropy_ok = jnp.max(entropy, axis=1) <= (

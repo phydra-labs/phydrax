@@ -74,7 +74,7 @@ class PyTreeCheckpointedAdjointPlan(StrictModule):
         if t0.shape != () or dt.shape != ():
             raise ValueError("Adjoint time and step_size must be scalar.")
 
-        def body(state, index):
+        def body(state: object, index: Array) -> tuple[object, None]:
             next_state = self.step(t0 + index * dt, state, dt, parameters, args)
             return next_state, None
 
@@ -95,7 +95,7 @@ class PyTreeCheckpointedAdjointPlan(StrictModule):
         if not callable(loss):
             raise TypeError("loss must be callable.")
 
-        def objective(initial, parameter_values):
+        def objective(initial: object, parameter_values: object) -> tuple[Array, object]:
             final = self.evolve(
                 initial,
                 parameter_values,

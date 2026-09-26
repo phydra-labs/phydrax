@@ -25,6 +25,7 @@ from ..optim import AbstractRiskMeasure, CVaRRisk, EntropicRisk, MeanVarianceRis
 from ._dynamics import DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
 from ._problem import ControlProblem
+from ._trajectory import ControlResult
 
 
 SamplingMPCUpdate: TypeAlias = Literal["predictive", "cem"]
@@ -33,6 +34,12 @@ SamplingMPCAggregation: TypeAlias = Literal["expectation", "worst_case", "risk_m
 SamplingMPCWarmStartTerminal: TypeAlias = Literal["hold", "zero"]
 SamplingMPCRealizationPolicy: TypeAlias = Literal["fixed", "resample"]
 SamplingMPCRealizationBinding: TypeAlias = Callable[[Any, PyTree[Any]], Any]
+
+
+_SamplingCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_SamplingHistory: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class SamplingMPCRealizations(StrictModule, NonTrainableState):
@@ -742,14 +749,14 @@ def _evaluate_models(
     controls: Array,
     parameters: PyTree[Array] | None,
     /,
-):
+) -> ControlResult:
     if plan.realizations is None:
         coefficients = jnp.broadcast_to(controls, plan.model_shape + plan.parameter_shape)
         return plan.problem.evaluate(plan.parameterization, coefficients)
     if parameters is None:
         raise ValueError("Explicit realization mode requires parameter values.")
 
-    def evaluate_one(realization_parameters):
+    def evaluate_one(realization_parameters: PyTree[Array]) -> ControlResult:
         args = (
             realization_parameters
             if plan.realization_binding is None
@@ -981,7 +988,9 @@ def solve_sampling_mpc(
     initial_valid = jnp.asarray(False)
     initial_index = jnp.asarray(-1, dtype=jnp.int32)
 
-    def iteration(carry, index):
+    def iteration(
+        carry: _SamplingCarry, index: Array
+    ) -> tuple[_SamplingCarry, _SamplingHistory]:
         (
             mean,
             deviation,

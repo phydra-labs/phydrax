@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import equinox as eqx
@@ -47,7 +47,7 @@ class FixedGRWorldtubeSamplingPlan(StrictModule, NonTrainableState):
         *,
         event_shape: Sequence[int],
         source_id: str,
-        event_fingerprint: str,
+        event_fingerprint: str | Mapping[str, object],
     ) -> None:
         shape = tuple(event_shape)
         smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=jnp.bool_))

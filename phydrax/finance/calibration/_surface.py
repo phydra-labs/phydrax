@@ -346,7 +346,9 @@ class SurfaceArbitrageEvidence(StrictModule):
     valid: Array
 
 
-def _surface_values(surface, expiry, k):
+def _surface_values(
+    surface: SVISlice | SVISurface | ESSVISurface, expiry: ArrayLike, k: ArrayLike
+) -> Array:
     if isinstance(surface, SVISlice):
         return surface.total_variance(k)
     return surface.total_variance(expiry, k)
@@ -367,7 +369,7 @@ def evaluate_surface_arbitrage(
     )
     expiries = surface.expiry[None] if isinstance(surface, SVISlice) else surface.expiries
 
-    def one_slice(expiry):
+    def one_slice(expiry: Array) -> tuple[Array, Array, Array]:
         function = lambda point: _surface_values(surface, expiry, point)
         w = jax.vmap(function)(k)
         first = jax.vmap(jax.grad(function))(k)

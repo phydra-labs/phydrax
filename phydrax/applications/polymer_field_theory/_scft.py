@@ -218,7 +218,7 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         propagator: Array,
         field: Array,
         contour_step: float,
-        diffusion: float,
+        diffusion: Array,
         cell_scale: Array,
         /,
     ) -> Array:
@@ -242,7 +242,7 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         propagator: Array,
         field: Array,
         contour_step: float,
-        diffusion: float,
+        diffusion: Array,
         cell_scale: Array,
         /,
     ) -> Array:
@@ -265,7 +265,7 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         field: Array,
         contour_fraction: float,
         contour_steps: int,
-        diffusion: float,
+        diffusion: Array,
         cell_scale: Array,
         /,
     ) -> Array:
@@ -470,14 +470,14 @@ class PreparedSCFT(StrictModule, NonTrainableState):
         )
 
     def root_problem(self, /) -> NonlinearSystemProblem:
-        def residual(fields, _):
+        def residual(fields: Array, _: object) -> Array:
             evaluation = self.evaluate(fields)
             return jnp.where(evaluation.successful, evaluation.residual, jnp.nan)
 
         return NonlinearSystemProblem(residual, problem_id=f"{self.prepared_id}:root")
 
     def parameterized_root_problem(self, /) -> NonlinearSystemProblem:
-        def residual(fields, args):
+        def residual(fields: Array, args: tuple[Array, Array]) -> Array:
             interactions, scale = args
             evaluation = self.evaluate(fields, chi_n=interactions, cell_scale=scale)
             return jnp.where(evaluation.successful, evaluation.residual, jnp.nan)

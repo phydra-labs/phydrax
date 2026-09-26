@@ -699,7 +699,7 @@ class FunctionNonlinearUpdate(AbstractNonlinearUpdate):
         problem = prepared.problem
         state_ = prepared.plan.state_space.validate(state)
 
-        def skipped(_):
+        def skipped(_: None) -> tuple[NonlinearUpdateResult, Any]:
             diagnostics = NonlinearUpdateDiagnostics(
                 initial_residual_norm=jnp.asarray(jnp.nan),
                 final_residual_norm=jnp.asarray(jnp.nan),
@@ -718,7 +718,7 @@ class FunctionNonlinearUpdate(AbstractNonlinearUpdate):
                 prepared.internal_state,
             )
 
-        def execute(_):
+        def execute(_: None) -> tuple[NonlinearUpdateResult, Any]:
             initial_residual, _ = problem.evaluate(state_, args)
             initial_norm = _space_norm(
                 prepared.plan.residual_space,
@@ -895,7 +895,7 @@ class NewtonStepUpdate(AbstractNonlinearUpdate):
             eqx.is_array,
         )
 
-        def skipped(_):
+        def skipped(_: None) -> tuple[NonlinearUpdateResult, PyTree[Any]]:
             diagnostics = NonlinearUpdateDiagnostics(
                 initial_residual_norm=jnp.asarray(jnp.nan),
                 final_residual_norm=jnp.asarray(jnp.nan),
@@ -914,7 +914,7 @@ class NewtonStepUpdate(AbstractNonlinearUpdate):
                 internal_dynamic,
             )
 
-        def execute(_):
+        def execute(_: None) -> tuple[NonlinearUpdateResult, PyTree[Any]]:
             combined = eqx.combine(internal_dynamic, internal_static)
             internal = self._refresh_internal(
                 combined,

@@ -380,7 +380,7 @@ def prepared_residual_loss_and_flat_gradient(
 
     flat_params, unravel = ravel_pytree(params)
 
-    def loss_from_flat(flat):
+    def loss_from_flat(flat: Array) -> Array:
         return prepared_residual_terms_loss(
             unravel(flat),
             non_trainable,
@@ -510,7 +510,7 @@ def prepared_residual_jacobians(
     jacobians: list[Array] = []
     for term in residual.terms:
 
-        def term_roots(flat, _term=term):
+        def term_roots(flat: Array, _term: PreparedResidualTerm = term) -> Array:
             blocks = residual.blocks_for(unravel(flat), _term)
             term_entries = tuple(
                 entry

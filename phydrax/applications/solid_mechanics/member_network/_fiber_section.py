@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -95,7 +96,7 @@ class FiberMaterialHistory(StrictModule):
     damage: Array
 
     @classmethod
-    def zeros(cls, fiber_count: int, dtype) -> FiberMaterialHistory:
+    def zeros(cls, fiber_count: int, dtype: DTypeLike) -> FiberMaterialHistory:
         zeros = jnp.zeros((fiber_count,), dtype=dtype)
         return cls(zeros, zeros, zeros, zeros)
 

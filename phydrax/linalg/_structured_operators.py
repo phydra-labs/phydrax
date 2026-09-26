@@ -13,6 +13,7 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
@@ -52,7 +53,9 @@ def _same(left: AbstractVectorSpace, right: AbstractVectorSpace, /) -> None:
         raise ValueError("Operator spaces are incompatible.")
 
 
-def _space(size: int, dtype: Any, supplied: AbstractVectorSpace | None, /):
+def _space(
+    size: int, dtype: DTypeLike, supplied: AbstractVectorSpace | None, /
+) -> AbstractVectorSpace:
     result = ArraySpace((size,), dtype=dtype) if supplied is None else supplied
     if not isinstance(result, AbstractVectorSpace) or result.size != size:
         raise ValueError("space must have the operator's coordinate dimension.")
@@ -84,7 +87,7 @@ def _apply_factor_axis(
     trailing_shape = moved.shape[1:]
     columns = moved.reshape((input_space.size, -1)).T
 
-    def apply_column(coordinates):
+    def apply_column(coordinates: Array) -> Array:
         vector = input_space.unflatten(coordinates)
         return output_space.flatten(action(vector))
 
@@ -1342,7 +1345,9 @@ class KroneckerLinearOperator(AbstractLinearOperator):
             {"kind": "kronecker", "factors": [factor.operator_id for factor in factors_]},
         )
 
-    def _apply(self, vector: Any, mode: Literal["forward", "transpose", "adjoint"]):
+    def _apply(
+        self, vector: Any, mode: Literal["forward", "transpose", "adjoint"]
+    ) -> Array:
         value = (
             self.source.validate(vector)
             if mode == "forward"
@@ -1516,7 +1521,7 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
         moved = jnp.transpose(value, permutation)
         columns = moved.reshape((input_space.size, -1)).T
 
-        def apply_column(coordinates):
+        def apply_column(coordinates: Array) -> Array:
             local_vector = input_space.unflatten(coordinates)
             return output_space.flatten(action(local_vector))
 
@@ -1537,7 +1542,7 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
         coordinate_dtype = _coordinate_dtype(self.source)
         basis = jnp.eye(self.source.size, dtype=coordinate_dtype)
 
-        def apply_column(coordinates):
+        def apply_column(coordinates: Array) -> Array:
             vector = self.source.unflatten(coordinates)
             return self.target.flatten(self.mv(vector))
 
@@ -1643,7 +1648,9 @@ class KroneckerSumLinearOperator(AbstractLinearOperator):
             },
         )
 
-    def _apply(self, vector: Any, mode: Literal["forward", "transpose", "adjoint"]):
+    def _apply(
+        self, vector: Any, mode: Literal["forward", "transpose", "adjoint"]
+    ) -> Array:
         value = self.source.validate(vector)
         output = jnp.zeros_like(value)
         for axis, factor in enumerate(self.factors):

@@ -239,7 +239,7 @@ class SequentialMonitoringPlan(StrictModule, NonTrainableState):
         )
         predictor = self.predictions[index]
 
-        def predict(augmented):
+        def predict(augmented: Array) -> Array:
             parameter_count = forecast.shape[1]
             return (
                 predictor(augmented[:parameter_count], jnp.asarray(epoch.time_s))

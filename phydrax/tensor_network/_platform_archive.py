@@ -580,7 +580,7 @@ def write_tensor_network_archive(
             raise TensorNetworkArchiveMismatchError(
                 "supplied precision_policy_id differs from the tensor value"
             )
-    arrays: dict[str, object] = {}
+    arrays: dict[str, Any] = {}
     tree_record = pack_array_tree("artifact", tree, arrays)
     _check_array_bounds(arrays, limits_)
     # Encoded payloads always carry a format header; emptiness is a data property.

@@ -7,12 +7,13 @@ from __future__ import annotations
 import abc
 import math
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -25,6 +26,11 @@ from ._core import (
     DiscretizationRole,
 )
 from ._lifecycle import AbstractDiscretizationPlan
+
+
+if TYPE_CHECKING:
+    from ._tensor_index import PreparedTensorIndexSpace
+    from ._tensor_support import PreparedTensorGrid
 
 
 AxisPrimaryEntity = Literal["point", "interval"]
@@ -121,7 +127,9 @@ class AxisDiscretization(StrictModule):
                 "Interval-primary nodes are not physical boundary endpoints."
             )
 
-        def normalize_metadata(name, value, dtype):
+        def normalize_metadata(
+            name: str, value: ArrayLike | None, dtype: DTypeLike
+        ) -> Array | None:
             if value is None:
                 return None
             normalized = jnp.asarray(value, dtype=dtype).reshape((-1,))
@@ -275,13 +283,13 @@ class TensorGridPlan(AbstractDiscretizationPlan):
         self.capabilities = capabilities
         self.plan_id = identifier
 
-    def prepare(self, bounds: ArrayLike, /):
+    def prepare(self, bounds: ArrayLike, /) -> PreparedTensorGrid:
         """Materialize numerical support without selecting a calculus."""
         from ._tensor_support import PreparedTensorGrid
 
         return PreparedTensorGrid.from_plan(self, bounds)
 
-    def prepare_index_space(self, bounds: ArrayLike, /):
+    def prepare_index_space(self, bounds: ArrayLike, /) -> PreparedTensorIndexSpace:
         """Materialize tensor axes without dense tensor-product arrays."""
         from ._tensor_index import PreparedTensorIndexSpace
 

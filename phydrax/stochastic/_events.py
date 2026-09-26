@@ -41,7 +41,7 @@ def _localization(value: str, /) -> EventLocalization:
     return value
 
 
-def _call_path(function: Callable, times: Array, states: Array, /) -> Array:
+def _call_path(function: PathObservable, times: Array, states: Array, /) -> Array:
     values = jax.vmap(function)(times, states)
     result = jnp.asarray(values)
     if result.shape != times.shape:
@@ -306,12 +306,13 @@ def path_event_scores(
 
     def atomic_scores(atomic: AtomicPathEvent) -> Array:
         if isinstance(atomic, TerminalSetEvent):
-            if atomic.score is None:
+            score = atomic.score
+            if score is None:
                 occurred = jax.vmap(lambda t, x: _call_path(atomic.predicate, t, x))(
                     times, states
                 )
                 return jnp.where(occurred, 0.0, -1.0)
-            values = jax.vmap(lambda t, x: _call_path(atomic.score, t, x))(times, states)
+            values = jax.vmap(lambda t, x: _call_path(score, t, x))(times, states)
             return values.astype("float64")
         if isinstance(atomic, ThresholdCrossingEvent):
             values = (

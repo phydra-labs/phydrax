@@ -13,6 +13,7 @@ from jaxtyping import Array
 from ..._differentiation import (
     DerivativeContract,
 )
+from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import (
@@ -207,7 +208,7 @@ def _diagnostics(
 
 
 def _fit_result(
-    model,
+    model: AbstractArrayModel,
     diagnostics: PreprocessingDiagnostics,
     contract: DerivativeContract,
     /,

@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.sharding import SingleDeviceSharding
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -129,14 +130,16 @@ def _identifiers(
     return result
 
 
-def _scalar(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
+def _scalar(value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None) -> Array:
     result = jnp.asarray(value, dtype=dtype)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return result
 
 
-def _real_scalar(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
+def _real_scalar(
+    value: ArrayLike, name: str, /, *, dtype: DTypeLike | None = None
+) -> Array:
     result = _scalar(value, name, dtype=dtype)
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
@@ -717,7 +720,11 @@ class FullDarkSectorRuntimePlan(StrictModule, NonTrainableState):
             hadronization.frame.frame_id,
             bound_states.frame.frame_id,
             decay_cascade.frame.frame_id,
-            radiation.frame_id,
+            (
+                radiation.frame_id
+                if isinstance(radiation, DarkRadiationBoltzmannHierarchyPlan)
+                else quantum.frame.frame_id
+            ),
         )
         frame_realizations = (
             quantum.frame_realization_id,

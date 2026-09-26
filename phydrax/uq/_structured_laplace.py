@@ -297,11 +297,11 @@ def fit_structured_laplace(
         if key is None:
             raise ValueError("Low-rank curvature requires a PRNG key.")
 
-    def to_position(flat):
+    def to_position(flat: Array) -> PyTree[Array]:
         value = unravel(flat)
         return value if whitening is None else whitening.unwhiten(value)
 
-    def negative_log_likelihood(flat):
+    def negative_log_likelihood(flat: Array) -> Array:
         value = to_position(flat)
         return -problem.log_likelihood(problem.parameter_space.constrain(value))
 
@@ -317,7 +317,7 @@ def fit_structured_laplace(
             flat_position,
         )
 
-        def curvature_mv(vector):
+        def curvature_mv(vector: Array) -> Array:
             return residual_linearization.vjp(residual_linearization.jvp(vector))
 
     retained_rank: int | None = None
@@ -393,16 +393,16 @@ def fit_structured_laplace(
         "Structured Laplace posterior precision is not positive definite.",
     )
 
-    def apply_spectral(vector, power):
+    def apply_spectral(vector: Array, power: float) -> Array:
         projected = jnp.conj(precision_vectors.T) @ vector
         return precision_vectors @ (projected * precision_values**power)
 
-    def scale_mv(vector):
+    def scale_mv(vector: PyTree[Array]) -> PyTree[Array]:
         flat, restore = ravel_pytree(vector)
         result = restore(apply_spectral(flat, -0.5))
         return result if whitening is None else whitening.unwhiten_vector(result)
 
-    def covariance_mv(vector):
+    def covariance_mv(vector: PyTree[Array]) -> PyTree[Array]:
         base_vector = vector if whitening is None else whitening.unwhiten_vector(vector)
         flat, restore = ravel_pytree(base_vector)
         result = restore(apply_spectral(flat, -1.0))

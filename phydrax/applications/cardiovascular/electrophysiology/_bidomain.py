@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -620,7 +621,7 @@ def initialize_bidomain_state(
 
 
 def zero_bidomain_inputs(
-    prepared: PreparedBidomainFEM, /, *, dtype=None
+    prepared: PreparedBidomainFEM, /, *, dtype: DTypeLike | None = None
 ) -> BidomainStepInputs:
     resolved_dtype = prepared.heart_mass_matrix.dtype if dtype is None else dtype
     heart = jnp.zeros((prepared.heart_node_count,), dtype=resolved_dtype)

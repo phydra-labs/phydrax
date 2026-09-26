@@ -4,14 +4,14 @@
 
 from __future__ import annotations
 
-from typing import cast, Literal, NamedTuple, TypeAlias
+from typing import Any, cast, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as spla
 import scipy.sparse as sp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -1409,13 +1409,13 @@ class _MatrixFreeGalerkinOperator(AbstractLinearOperator):
             }
         )
 
-    def mv(self, vector, /):
+    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self.operator.mv(vector)
 
-    def transpose_mv(self, vector, /):
+    def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self.operator.transpose_mv(vector)
 
-    def adjoint_mv(self, vector, /):
+    def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self.operator.adjoint_mv(vector)
 
     def _materialize(self, /) -> Array:
@@ -2477,8 +2477,9 @@ def _hierarchy_limit_rejection(
     ):
         return f"Grid complexity {grid_complexity:.6g} exceeds limit {policy.maximum_grid_complexity:.6g}."
     nonzeros = tuple(_operator_nnz(operator) for operator in operators)
-    if all(value is not None for value in nonzeros) and nonzeros[0]:
-        operator_complexity = sum(int(value) for value in nonzeros) / int(nonzeros[0])
+    counts = tuple(value for value in nonzeros if value is not None)
+    if len(counts) == len(nonzeros) and counts[0]:
+        operator_complexity = sum(int(value) for value in counts) / int(counts[0])
         if (
             policy.maximum_operator_complexity is not None
             and operator_complexity > policy.maximum_operator_complexity

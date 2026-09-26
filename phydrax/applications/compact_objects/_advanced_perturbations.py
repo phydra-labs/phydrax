@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,6 +17,9 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+
+
+_NewtonCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class KerrNewmanModeParameters(StrictModule):
@@ -83,21 +88,21 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        black_hole_mass,
-        black_hole_spin,
-        black_hole_charge,
-        field_mass,
-        radial_nodes,
+        black_hole_mass: ArrayLike,
+        black_hole_spin: ArrayLike,
+        black_hole_charge: ArrayLike,
+        field_mass: ArrayLike,
+        radial_nodes: ArrayLike,
         /,
         *,
-        field_charge=0.0,
-        ell=0,
-        azimuthal=0,
-        overtone=0,
-        newton_steps=8,
-        residual_tolerance=1.0e-7,
-        finite_difference_step=2.0e-5,
-        spheroidicity_limit=0.25,
+        field_charge: ArrayLike = 0.0,
+        ell: int = 0,
+        azimuthal: int = 0,
+        overtone: int = 0,
+        newton_steps: int = 8,
+        residual_tolerance: float = 1.0e-7,
+        finite_difference_step: float = 2.0e-5,
+        spheroidicity_limit: float = 0.25,
     ) -> None:
         mass = float(np.asarray(black_hole_mass))
         spin = float(np.asarray(black_hole_spin))
@@ -285,7 +290,7 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
             jnp.asarray(0, dtype=jnp.int32),
         )
 
-        def newton_step(_, carry):
+        def newton_step(_: Array, carry: _NewtonCarry) -> _NewtonCarry:
             omega, residual, done, iterations = carry
             jacobian, determinant = self._residual_jacobian(omega)
             right_hand_side = -jnp.asarray((jnp.real(residual), jnp.imag(residual)))
@@ -362,7 +367,7 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def _horizon_quantities(self):
+    def _horizon_quantities(self) -> tuple[Array, Array, Array, Array, Array]:
         root = jnp.sqrt(
             self.black_hole_mass**2 - self.black_hole_spin**2 - self.black_hole_charge**2
         )
@@ -374,7 +379,7 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
         surface_gravity = (outer - inner) / (2.0 * area_factor)
         return inner, outer, angular_velocity, electric_potential, surface_gravity
 
-    def _separation_constant(self, frequency):
+    def _separation_constant(self, frequency: Array) -> Array:
         ell = self.ell
         azimuthal = self.azimuthal
         angular_average = (2 * ell * (ell + 1) - 2 * azimuthal**2 - 1) / (
@@ -384,7 +389,9 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
             self.field_mass**2 - frequency**2
         )
 
-    def _riccati_derivative(self, radius, log_derivative, frequency):
+    def _riccati_derivative(
+        self, radius: Array, log_derivative: Array, frequency: Array
+    ) -> Array:
         delta = (
             radius**2
             - 2.0 * self.black_hole_mass * radius
@@ -411,14 +418,14 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
             + potential / delta
         )
 
-    def _shoot(self, frequency):
+    def _shoot(self, frequency: Array) -> tuple[Array, Array]:
         parameters = self.mode_parameters(frequency)
         outer = parameters.horizon_radii[1]
         start = self.radial_nodes[0]
         initial_log_derivative = parameters.horizon_exponent / (start - outer)
         intervals = jnp.stack((self.radial_nodes[:-1], self.radial_nodes[1:]), axis=-1)
 
-        def step(log_derivative, interval):
+        def step(log_derivative: Array, interval: Array) -> tuple[Array, Array]:
             left, right = interval
             width = right - left
             midpoint = left + 0.5 * width
@@ -441,7 +448,7 @@ class MassiveFieldQuasiBoundPlan(StrictModule, NonTrainableState):
         )
         return path, terminal - target
 
-    def _residual_jacobian(self, frequency):
+    def _residual_jacobian(self, frequency: Array) -> tuple[Array, Array]:
         step = self.finite_difference_step * (1.0 + jnp.abs(frequency))
         residual_real_plus = self._shoot(frequency + step)[1]
         residual_real_minus = self._shoot(frequency - step)[1]
@@ -502,13 +509,13 @@ class ExcitationResiduePlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        pole_frequency,
-        excitation_numerator,
-        wronskian_derivative,
+        pole_frequency: ArrayLike,
+        excitation_numerator: ArrayLike,
+        wronskian_derivative: ArrayLike,
         /,
         *,
-        derivative_floor=1.0e-12,
-        pole_separation_floor=1.0e-10,
+        derivative_floor: float = 1.0e-12,
+        pole_separation_floor: float = 1.0e-10,
     ) -> None:
         poles = np.asarray(pole_frequency, dtype=np.complex128)
         numerators = np.asarray(excitation_numerator, dtype=np.complex128)
@@ -659,7 +666,7 @@ class ExcitationResiduePlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def _source_weights(self, source_weights):
+    def _source_weights(self, source_weights: ArrayLike | None) -> Array:
         if source_weights is None:
             return jnp.ones_like(self.pole_frequency)
         weights = jnp.asarray(source_weights)
@@ -701,12 +708,12 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        pole_frequency,
-        linear_amplitude,
-        coupling,
+        pole_frequency: ArrayLike,
+        linear_amplitude: ArrayLike,
+        coupling: ArrayLike,
         /,
         *,
-        resonance_tolerance=1.0e-8,
+        resonance_tolerance: float = 1.0e-8,
     ) -> None:
         poles = np.asarray(pole_frequency, dtype=np.complex128)
         amplitudes = np.asarray(linear_amplitude, dtype=np.complex128)
@@ -819,7 +826,7 @@ class QuadraticRingdownPlan(StrictModule, NonTrainableState):
         )
 
 
-def _positive_real_sqrt(value):
+def _positive_real_sqrt(value: Array) -> Array:
     root = jnp.sqrt(value)
     return jnp.where(
         (jnp.real(root) < 0.0) | ((jnp.real(root) == 0.0) & (jnp.imag(root) < 0.0)),

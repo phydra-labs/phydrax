@@ -173,7 +173,9 @@ class PassiveOceanTrajectoryPlan(StrictModule, NonTrainableState):
         particle_count = positions.shape[0]
         initial_active = jnp.all(jnp.isfinite(positions), axis=-1)
 
-        def step(carry, index):
+        def step(
+            carry: tuple[Array, Array], index: Array
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array, Array, Array]]:
             current, active = carry
             velocity, inside = self._sample(state, current)
             execute = (index < requested) & active & inside & capacity_valid

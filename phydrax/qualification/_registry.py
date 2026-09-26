@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import re
 from collections.abc import Mapping, Sequence
-from typing import Protocol
+from typing import Any, Protocol
 
 import equinox as eqx
 
@@ -48,7 +48,7 @@ def _timestamp(value: int, name: str, /) -> int:
 
 
 def _support_value(value: object, /) -> SupportValue:
-    if type(value) not in (str, int, bool):
+    if type(value) not in (str, int, bool) or not isinstance(value, (str, int)):
         raise TypeError("Support-tuple values must be strings, integers, or booleans.")
     if isinstance(value, str) and not value:
         raise ValueError("Support-tuple string values must be non-empty.")
@@ -183,7 +183,7 @@ class ReleaseGateEvidence(StrictModule, NonTrainableState):
         return {**self._content_record(), "evidence_id": self.evidence_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ReleaseGateEvidence:
+    def from_record(cls, record: Mapping[str, Any], /) -> ReleaseGateEvidence:
         """Reconstruct and content-verify serialized release evidence."""
         if not isinstance(record, Mapping):
             raise TypeError("Release-evidence record must be a mapping.")
@@ -338,7 +338,7 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         return {**self._content_record(), "profile_id": self.profile_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> CapabilityProfile:
+    def from_record(cls, record: Mapping[str, Any], /) -> CapabilityProfile:
         """Reconstruct and content-verify a serialized capability profile."""
         if not isinstance(record, Mapping):
             raise TypeError("Capability-profile record must be a mapping.")
@@ -595,7 +595,7 @@ class ReleaseIndex(StrictModule, NonTrainableState):
         }
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ReleaseIndex:
+    def from_record(cls, record: Mapping[str, Any], /) -> ReleaseIndex:
         """Reconstruct and content-verify a signed release index."""
         if not isinstance(record, Mapping):
             raise TypeError("Release-index record must be a mapping.")

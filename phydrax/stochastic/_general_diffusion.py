@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Callable
 from math import isfinite
 from typing import Any
 
@@ -65,7 +66,7 @@ class AbstractItoScoreDiffusion(StrictModule):
     def covariance_divergence(self, time: ArrayLike, state: ArrayLike, /) -> Array:
         value = _vector(state, self.dimension, owner="state")
 
-        def covariance_at(current):
+        def covariance_at(current: Array) -> Array:
             return self.covariance(time, current)
 
         derivative = jax.jacfwd(covariance_at)(value)
@@ -214,8 +215,8 @@ class StateDependentItoDiffusion(AbstractItoScoreDiffusion):
 
     def __init__(
         self,
-        drift,
-        diffusion_factor,
+        drift: Callable[[Array, Array], ArrayLike],
+        diffusion_factor: Callable[[Array, Array], ArrayLike],
         /,
         *,
         dimension: int,

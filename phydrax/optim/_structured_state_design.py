@@ -67,7 +67,7 @@ def _lower_state_design_constraint(
     constraint: StateDesignConstraint,
     /,
 ) -> NonlinearConstraint:
-    def function(values, args):
+    def function(values: tuple[PyTree[Any], PyTree[Any]], args: Any) -> PyTree[Array]:
         return constraint.value(values[0], values[1], args)
 
     return NonlinearConstraint(
@@ -110,7 +110,9 @@ def compile_structured_state_design(
     sample_residual = problem.residual(initial_state, initial_design, sample_args)
     zeros = jax.tree.map(jnp.zeros_like, sample_residual)
 
-    def objective(values, args):
+    def objective(
+        values: tuple[PyTree[Any], PyTree[Any]], args: Any
+    ) -> Array | tuple[Array, Any]:
         value, auxiliary = problem.value(values[0], values[1], args)
         return (value, auxiliary) if problem.has_aux else value
 

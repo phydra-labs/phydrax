@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.ein as ein
@@ -447,7 +448,13 @@ def _sample_su2(
     return _quaternion_su2(quaternion), success, used.astype(jnp.int32)
 
 
-def _u1_update(prepared, link, staple, key, overrelax):
+def _u1_update(
+    prepared: PreparedGaugeUpdate,
+    link: Array,
+    staple: Array,
+    key: Key[Array, ""],
+    overrelax: bool,
+) -> tuple[Array, Array, Array]:
     product = staple[0, 0]
     magnitude = jnp.abs(product)
     mean = -jnp.angle(product)
@@ -463,7 +470,13 @@ def _u1_update(prepared, link, staple, key, overrelax):
     return jnp.where(success, proposal, link), success, used
 
 
-def _su2_update(prepared, link, staple, key, overrelax):
+def _su2_update(
+    prepared: PreparedGaugeUpdate,
+    link: Array,
+    staple: Array,
+    key: Key[Array, ""],
+    overrelax: bool,
+) -> tuple[Array, Array, Array]:
     normalized, scale = _project_su2(prepared.small_su2_linalg, staple)
     if overrelax:
         relative = _matmul(link, normalized)
@@ -476,13 +489,20 @@ def _su2_update(prepared, link, staple, key, overrelax):
     return jnp.where(success, proposal, link), success, used
 
 
-def _embedded_su2(value: Array, pair: tuple[int, int], dtype, /) -> Array:
+def _embedded_su2(value: Array, pair: tuple[int, int], dtype: DTypeLike, /) -> Array:
     result = jnp.eye(3, dtype=dtype)
     indices = jnp.asarray(pair)
     return result.at[jnp.ix_(indices, indices)].set(value)
 
 
-def _su3_subgroup_update(prepared, link, staple, key, overrelax, pair):
+def _su3_subgroup_update(
+    prepared: PreparedGaugeUpdate,
+    link: Array,
+    staple: Array,
+    key: Key[Array, ""],
+    overrelax: bool,
+    pair: tuple[int, int],
+) -> tuple[Array, Array, Array]:
     local = _matmul(link, staple)
     indices = jnp.asarray(pair)
     block = local[jnp.ix_(indices, indices)]
@@ -501,7 +521,9 @@ def _su3_subgroup_update(prepared, link, staple, key, overrelax, pair):
     return jnp.where(success, proposal, link), success, used
 
 
-def _local_log_weight(group, coupling, link, staple):
+def _local_log_weight(
+    group: GaugeGroupKind, coupling: float, link: Array, staple: Array
+) -> Array:
     return (
         coupling
         * jnp.real(jnp.trace(_matmul(link, staple)))

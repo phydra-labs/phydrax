@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -15,7 +16,10 @@ from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..domain._measure import MeasureKind
-from ._gaussian_diffusion import VariancePreservingDiffusion
+from ._gaussian_diffusion import (
+    DiffusionTerminalReference,
+    VariancePreservingDiffusion,
+)
 
 
 ComplexScoreConvention: TypeAlias = Literal["real-packed", "wirtinger"]
@@ -30,7 +34,12 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
     real_law: DiagonalNormalLaw
 
     def __init__(
-        self, location: ArrayLike, variance: ArrayLike, /, *, event_shape
+        self,
+        location: ArrayLike,
+        variance: ArrayLike,
+        /,
+        *,
+        event_shape: Sequence[int],
     ) -> None:
         mean = jnp.asarray(location)
         if not jnp.iscomplexobj(mean):
@@ -67,7 +76,7 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> MeasureKind:
         return "lebesgue"
 
-    def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
         return self.layout.from_real_coordinates(self.real_law.sample(key, sample_shape))
 
     def contains(self, value: ArrayLike, /) -> Array:
@@ -81,7 +90,7 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
 
     def score(
         self, value: ArrayLike, /, *, convention: ComplexScoreConvention = "real-packed"
-    ):
+    ) -> Array:
         packed = self.real_law.score(self.layout.to_real_coordinates(value))
         if convention == "real-packed":
             return packed
@@ -99,7 +108,7 @@ class ComplexVariancePreservingDiffusion(StrictModule):
 
     def __init__(
         self,
-        event_shape,
+        event_shape: Sequence[int],
         /,
         *,
         beta_minimum: float = 0.1,
@@ -142,7 +151,7 @@ class ComplexVariancePreservingDiffusion(StrictModule):
         *,
         time: ArrayLike,
         convention: ComplexScoreConvention = "real-packed",
-    ):
+    ) -> Array:
         noisy = self.layout.to_real_coordinates(perturbed)
         source = self.layout.to_real_coordinates(clean)
         score = self.real_process.conditional_score(noisy, source, t1=time)
@@ -152,7 +161,7 @@ class ComplexVariancePreservingDiffusion(StrictModule):
             return self.layout.from_real_coordinates(score)
         raise ValueError("Unknown complex score convention.")
 
-    def real_terminal_reference(self):
+    def real_terminal_reference(self) -> DiffusionTerminalReference:
         return self.real_process.asymptotic_terminal_reference()
 
 

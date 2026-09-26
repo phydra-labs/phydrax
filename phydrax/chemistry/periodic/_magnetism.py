@@ -9,6 +9,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -165,7 +166,7 @@ class PreparedSpinOrbitOperator(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
-def _pauli_half(dtype) -> Array:
+def _pauli_half(dtype: DTypeLike) -> Array:
     return jnp.asarray(
         (
             ((0.0, 0.5), (0.5, 0.0)),

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import isfinite
 
 import equinox as eqx
@@ -38,13 +39,13 @@ class InternalCoordinateState(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        values,
-        jacobian,
-        singular_values,
-        rank,
-        condition_estimate,
-        successful,
-        plan_id,
+        values: ArrayLike,
+        jacobian: ArrayLike,
+        singular_values: ArrayLike,
+        rank: ArrayLike,
+        condition_estimate: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
         /,
     ) -> None:
         values_ = jnp.asarray(values)
@@ -91,13 +92,13 @@ class InternalCoordinateRetractionResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        positions,
-        achieved_values,
-        target_values,
-        residual,
-        iterations,
-        successful,
-        plan_id,
+        positions: ArrayLike,
+        achieved_values: ArrayLike,
+        target_values: ArrayLike,
+        residual: ArrayLike,
+        iterations: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
         /,
     ) -> None:
         positions_ = jnp.asarray(positions)
@@ -148,9 +149,9 @@ class MolecularCoordinateSystemPlan(StrictModule, NonTrainableState):
         atom_count: int,
         /,
         *,
-        bonds=(),
-        angles=(),
-        dihedrals=(),
+        bonds: Iterable[Iterable[int]] = (),
+        angles: Iterable[Iterable[int]] = (),
+        dihedrals: Iterable[Iterable[int]] = (),
         regularization: float = 1.0e-12,
         rank_tolerance: float = 1.0e-9,
     ) -> None:
@@ -261,7 +262,7 @@ class MolecularCoordinateSystemPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def _residual(self, target, current):
+    def _residual(self, target: Array, current: Array) -> Array:
         residual = target - current
         start = len(self.bonds) + len(self.angles)
         if self.dihedrals:

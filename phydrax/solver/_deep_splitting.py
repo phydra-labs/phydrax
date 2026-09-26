@@ -22,6 +22,7 @@ from ..stochastic._bsde import _predictor_value, BSDEPathBatch, BSDEProblem
 from ..terms._deep_splitting import (
     deep_splitting_labels,
     DeepSplittingLabelBatch,
+    DeepSplittingPredictor,
     DeepSplittingRegressionDiagnostics,
     DeepSplittingRegressionTerm,
 )
@@ -120,8 +121,10 @@ class DeepSplittingSolution(StrictModule):
     def _node_value(self, index: Array, state: Array, key: Array, /) -> Array:
         branches: list[Callable[[tuple[Array, Array]], Array]] = []
 
-        def learned_branch(predictor: DomainFunction, node_time: Array):
-            def branch(operand):
+        def learned_branch(
+            predictor: DomainFunction, node_time: Array
+        ) -> Callable[[tuple[Array, Array]], Array]:
+            def branch(operand: tuple[Array, Array]) -> Array:
                 state_value, branch_key = operand
                 value = _predictor_value(
                     predictor,
@@ -141,7 +144,7 @@ class DeepSplittingSolution(StrictModule):
         for node, predictor in enumerate(self.slices):
             branches.append(learned_branch(predictor, self.times[node]))
 
-        def terminal_branch(operand):
+        def terminal_branch(operand: tuple[Array, Array]) -> Array:
             state_value, branch_key = operand
             del branch_key
             return _TerminalPredictor(self.problem)(self.times[-1], state_value)
@@ -258,12 +261,12 @@ def _require_time_grid(paths: BSDEPathBatch, times: Array, /) -> None:
 
 def _label_provider(
     problem: BSDEProblem,
-    next_predictor: Callable | DomainFunction,
+    next_predictor: DeepSplittingPredictor,
     slice_index: int,
     times: Array,
     /,
-):
-    def provider(key):
+) -> Callable[[Key[Array, ""]], DeepSplittingLabelBatch]:
+    def provider(key: Key[Array, ""]) -> DeepSplittingLabelBatch:
         paths = problem.sample(key)
         _require_time_grid(paths, times)
         return deep_splitting_labels(

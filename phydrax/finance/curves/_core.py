@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import hashlib
 from enum import Enum
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -68,6 +69,7 @@ _YIELD_REPRESENTATIONS = frozenset(
 _SURVIVAL_REPRESENTATIONS = frozenset(
     {CurveRepresentation.LOG_SURVIVAL, CurveRepresentation.HAZARD_RATE}
 )
+_EnumT = TypeVar("_EnumT", bound=Enum)
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -77,7 +79,7 @@ def _identifier(value: str, name: str, /) -> str:
     return identifier
 
 
-def _enum(value: Any, enum_type: type[Enum], name: str, /):
+def _enum(value: Any, enum_type: type[_EnumT], name: str, /) -> _EnumT:
     if isinstance(value, enum_type):
         return value
     allowed_values = tuple(member.value for member in enum_type)
@@ -99,7 +101,7 @@ def _real_vector(value: ArrayLike, name: str, /) -> Array:
 
 
 def _concrete_numpy(value: Array, /) -> np.ndarray | None:
-    if isinstance(value, jax.core.Tracer):
+    if isinstance(value, jax_core.Tracer):
         return None
     return np.asarray(value)
 
@@ -680,7 +682,7 @@ class PreparedCurve(StrictModule):
     ) -> CurveSensitivity:
         query = self._query_times(times)
 
-        def evaluated(nodes):
+        def evaluated(nodes: Array) -> Array:
             refreshed = eqx.tree_at(lambda curve: curve.node_values, self, nodes)
             return refreshed.evaluate(query, quantity=quantity)
 

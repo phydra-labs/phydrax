@@ -124,7 +124,11 @@ class FiniteVolumePhaseChangeStrangMethod(StrictModule):
         return eqx.tree_at(lambda value: value.content_state, runtime_state, updated)
 
     def _half_source(
-        self, average: Array, step_size: Array, content, /
+        self,
+        average: Array,
+        step_size: Array,
+        content: FiniteVolumeConservativeContentState,
+        /,
     ) -> VOFPhaseChangeStageEvaluation:
         alpha = average[:, self.phase_change.phase_change.system.alpha_index]
         plic = self.phase_change.vof.reconstruct_stage(

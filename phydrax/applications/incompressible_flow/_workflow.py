@@ -14,9 +14,11 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import (
+    FiniteElementAcceptedState,
     FiniteElementAcceptedStepSchedule,
     FiniteElementAttemptResult,
     FiniteElementStepPolicy,
+    TimeLaw,
 )
 
 
@@ -229,7 +231,13 @@ def incompressible_flow_schedule(
     if not isinstance(selected, IncompressibleFlowPolicy):
         raise TypeError("flow_policy must be IncompressibleFlowPolicy or None.")
 
-    def attempt(accepted, start, end, time_law, args):
+    def attempt(
+        accepted: FiniteElementAcceptedState,
+        start: float,
+        end: float,
+        time_law: TimeLaw,
+        args: object,
+    ) -> FiniteElementAttemptResult:
         state = IncompressibleFlowState(
             accepted.fields[0],
             accepted.fields[1],

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -125,7 +127,7 @@ def validate_lorentzian_metric(
     metric: LorentzianMetric,
     points: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> SignedMetricValidationReport:
     """Validate a Lorentzian metric at representative points."""
     if not isinstance(metric, LorentzianMetric):

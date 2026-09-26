@@ -119,7 +119,12 @@ class Interval1d(_AbstractGeometry1D):
     ) -> Array:
         where = where or (lambda _: True)
 
-        def _sample_interior_host(num_points, sampler, where, key):
+        def _sample_interior_host(
+            num_points: int,
+            sampler: str,
+            where: Callable[[Array], ArrayLike],
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampler_fn = host_design_factory(sampler, dimension=1, seed=rng)
             sampled_points = np.empty((0, 1), dtype=np.float64)
@@ -129,11 +134,10 @@ class Interval1d(_AbstractGeometry1D):
 
                 samples = jnp.asarray(sampler_fn(remaining_points), dtype=jnp.float64)
 
-                if where:
-                    # Map samples in [0,1] to [start,end] before applying `where`.
-                    pts = samples * (self.end - self.start) + self.start
-                    inside = jax.vmap(where)(pts)
-                    samples = samples[inside]
+                # Map samples in [0,1] to [start,end] before applying `where`.
+                pts = samples * (self.end - self.start) + self.start
+                inside = jax.vmap(where)(pts)
+                samples = samples[inside]
 
                 sampled_points = np.vstack((sampled_points, np.asarray(samples)))
 
@@ -193,7 +197,12 @@ class Interval1d(_AbstractGeometry1D):
     ) -> Array:
         where = where or (lambda _: True)
 
-        def _sample_boundary_host(num_points, sampler, where, key):
+        def _sample_boundary_host(
+            num_points: int,
+            sampler: str,
+            where: Callable[[Array], ArrayLike],
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampled_points = np.empty((0, 1), dtype=np.float64)
 
@@ -204,11 +213,10 @@ class Interval1d(_AbstractGeometry1D):
 
                 sampled_points_batch = rng.choice(choices, size=(remaining_points, 1))
 
-                if where:
-                    pts = jnp.asarray(sampled_points_batch, dtype=jnp.float64)
-                    inside = jax.vmap(where)(pts)
-                    pts = pts[inside]
-                    sampled_points_batch = np.asarray(pts, dtype=np.float64)
+                pts = jnp.asarray(sampled_points_batch, dtype=jnp.float64)
+                inside = jax.vmap(where)(pts)
+                pts = pts[inside]
+                sampled_points_batch = np.asarray(pts, dtype=np.float64)
 
                 sampled_points = np.vstack((sampled_points, sampled_points_batch))
 

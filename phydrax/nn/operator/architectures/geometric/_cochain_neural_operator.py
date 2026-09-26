@@ -30,6 +30,7 @@ from phydrax.graph._cochain_ops import (
 from phydrax.graph._ir import GraphIR
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
+from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import (
     OperatorBatch,
     OperatorFieldBatch,
@@ -307,7 +308,9 @@ def _predict_cochain_operator(
     )
 
 
-def _cochain_operator_contract(model):
+def _cochain_operator_contract(
+    model: CochainNeuralOperator,
+) -> ConfiguredOperatorContract:
     from phydrax.nn.operator.catalog import operator_architecture_contract
 
     return replace(

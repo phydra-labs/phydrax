@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import IntEnum
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -46,6 +46,21 @@ from ._core import (
 EventIndicator = Callable[
     [ContinuationCurveProblem, PyTree[Any], Array, Any],
     Any,
+]
+_CorrectedCandidate: TypeAlias = tuple[
+    PyTree[Array],
+    Array,
+    PyTree[Array],
+    Array,
+    Array,
+    Array,
+    int,
+    PreparedNonlinearSolve | None,
+    int,
+    int,
+    int,
+    bool,
+    bool,
 ]
 
 
@@ -465,7 +480,7 @@ def _correct_candidate(
     prepared: PreparedNonlinearSolve | None,
     args: Any,
     /,
-):
+) -> _CorrectedCandidate:
     geometry = branch.geometry
     state_tangent, coordinate_tangent = _normalized_chord(branch, left, right)
     left_state = geometry.state_to_execution(left.state)
@@ -473,7 +488,9 @@ def _correct_candidate(
     predicted_state = _interpolate_tree(left_state, right_state, weight)
     predicted_coordinate = left.coordinate + weight * (right.coordinate - left.coordinate)
 
-    def augmented_residual(variables):
+    def augmented_residual(
+        variables: tuple[PyTree[Array], Array],
+    ) -> tuple[PyTree[Array], Array]:
         state, coordinate = variables
         residual = _execution_residual(
             problem,

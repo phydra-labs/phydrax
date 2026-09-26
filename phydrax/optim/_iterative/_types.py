@@ -301,7 +301,7 @@ class MinimizationProblem(StrictModule):
         if self.explicit_value_and_gradient is not None:
             return self._explicit_evaluation(parameters, args)
 
-        def value_with_aux(candidate):
+        def value_with_aux(candidate: PyTree[Any]) -> tuple[Array, Any]:
             return self.value(candidate, args)
 
         return eqx.filter_value_and_grad(value_with_aux, has_aux=True)(parameters)

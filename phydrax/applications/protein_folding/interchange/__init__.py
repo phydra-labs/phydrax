@@ -3,13 +3,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
+from ....artifacts import ScientificArtifactEnvelope
+from ....atomistic import AtomisticUnitSystem
 from ....atomistic.interchange import AtomisticInterchangeReport
 from ....atomistic.interchange._structure_records import PDBAtomRecord
+from ....qualification import ReferenceArtifactManifest
 from ....units import ANGSTROM
 from .._binding import bind_protein, PreparedProteinBinding
-from .._construct import ProteinAtomKey
+from .._chemical_state import ResolvedProteinChemistry
+from .._construct import ProteinAtomKey, ProteinConstruct, ResidueKey
 from .._hypotheses import ProteinSourceAtom, ProteinStructureHypothesis
 from ._megascale import (
     admit_megascale_figure_archive,
@@ -68,18 +74,18 @@ _RESIDUE_LETTERS = dict(
 
 
 def protein_hypothesis_from_pdb_records(
-    records,
-    construct,
-    residue_map,
+    records: Iterable[PDBAtomRecord],
+    construct: ProteinConstruct,
+    residue_map: Mapping[tuple[str, str, str], ResidueKey],
     *,
-    source,
-    rights,
-    canonical_atom_names=None,
-    provider="user-supplied-pdb",
-    commercial_use=False,
-    training_use=False,
-    export=False,
-):
+    source: ScientificArtifactEnvelope,
+    rights: Sequence[ReferenceArtifactManifest],
+    canonical_atom_names: Mapping[str, str] | None = None,
+    provider: str = "user-supplied-pdb",
+    commercial_use: bool = False,
+    training_use: bool = False,
+    export: bool = False,
+) -> ProteinStructureHypothesis:
     """Interpret a selected neutral PDB model using an explicit author→construct map.
 
     ``residue_map`` keys are (author chain, author residue number, insertion
@@ -164,18 +170,18 @@ class ProteinOpenMMBinding:
 
 
 def bind_protein_openmm(
-    hypothesis,
-    chemistry,
-    system,
-    units,
+    hypothesis: ProteinStructureHypothesis,
+    chemistry: ResolvedProteinChemistry,
+    system: Any,
+    units: AtomisticUnitSystem,
     *,
-    source_record_ids_by_particle,
-    parameter_rights,
-    source_id,
-    cutoff,
-    accept_bounded_no_cutoff=False,
-    commercial_use=False,
-):
+    source_record_ids_by_particle: Iterable[str],
+    parameter_rights: Sequence[ReferenceArtifactManifest],
+    source_id: str,
+    cutoff: float,
+    accept_bounded_no_cutoff: bool = False,
+    commercial_use: bool = False,
+) -> ProteinOpenMMBinding:
     """Use the existing full force-field converter with an explicit stable-row map.
 
     ``system`` is already parameterized by the caller. No force-field tables,

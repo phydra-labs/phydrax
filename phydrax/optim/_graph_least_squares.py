@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax
@@ -41,9 +41,18 @@ from ._residual_graph import (
     factor_graph_certificate,
     prepare_residual_graph,
     PreparedResidualGraph,
+    ResidualBlock,
     ResidualGraphProblem,
 )
 from ._robust_losses import robustify_residual, squared_tree_norm
+
+
+_T = TypeVar("_T")
+# (robust residual, objective, gradient, curvature, indices, robust, clipped,
+#  jacobian nonzeros, finite)
+_BlockLinearization: TypeAlias = tuple[
+    PyTree[Array], Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class ResidualGraphLinearization(StrictModule):
@@ -90,7 +99,9 @@ class _ResidualGraphIterationState(StrictModule):
     ratio: Array
 
 
-def _variable_layout(graph: ResidualGraphProblem, parameters: PyTree[Any], /):
+def _variable_layout(
+    graph: ResidualGraphProblem, parameters: PyTree[Any], /
+) -> tuple[dict[str, PyTree[Any]], dict[str, PyTreeSpace], dict[str, slice], int]:
     values = graph.parameter_values(parameters)
     spaces = {}
     slices = {}
@@ -111,10 +122,10 @@ def _tangent_steps(
     graph: ResidualGraphProblem,
     parameters: PyTree[Any],
     step: Array,
-    spaces,
-    slices,
+    spaces: dict[str, PyTreeSpace],
+    slices: dict[str, slice],
     /,
-):
+) -> dict[str, PyTree[Any]]:
     values = graph.parameter_values(parameters)
     tangents = {}
     for block in graph.parameter_blocks:
@@ -133,13 +144,13 @@ def _tangent_steps(
 def _block_linearization(
     graph: ResidualGraphProblem,
     parameters: PyTree[Any],
-    block,
-    values,
-    spaces,
-    slices,
+    block: ResidualBlock,
+    values: dict[str, PyTree[Any]],
+    spaces: dict[str, PyTreeSpace],
+    slices: dict[str, slice],
     args: Any,
     /,
-):
+) -> _BlockLinearization:
     local_ids = tuple(
         identifier for identifier in block.parameter_ids if identifier in spaces
     )
@@ -155,7 +166,7 @@ def _block_linearization(
             jnp.arange(global_slice.start, global_slice.stop, dtype=jnp.int32)
         )
 
-    def flat_weighted(local_step):
+    def flat_weighted(local_step: Array) -> tuple[Array, PyTree[Array]]:
         tangents = {
             identifier: spaces[identifier].unflatten(local_step[local_slices[identifier]])
             for identifier in local_ids
@@ -303,7 +314,7 @@ def _solve_route(
     route: LeastSquaresRoutePlan,
     schur: SchurComplementPlan | None,
     /,
-):
+) -> tuple[Array, Array, Array]:
     if route.route == "schur":
         if schur is None:
             raise ValueError("Schur route requires a SchurComplementPlan.")
@@ -327,7 +338,7 @@ def _solve_route(
     )
 
 
-def _graph_feasibility(graph: ResidualGraphProblem, parameters: PyTree[Any], /):
+def _graph_feasibility(graph: ResidualGraphProblem, parameters: PyTree[Any], /) -> Array:
     violation = jnp.asarray(0.0)
     for block in graph.parameter_blocks:
         if block.bounds is not None:
@@ -338,7 +349,9 @@ def _graph_feasibility(graph: ResidualGraphProblem, parameters: PyTree[Any], /):
     return violation
 
 
-def _graph_parameter_norm(graph: ResidualGraphProblem, parameters: PyTree[Any], /):
+def _graph_parameter_norm(
+    graph: ResidualGraphProblem, parameters: PyTree[Any], /
+) -> Array:
     squared_norm = jnp.asarray(0.0)
     for block in graph.parameter_blocks:
         if block.constant:
@@ -402,14 +415,16 @@ def solve_residual_graph(
     )
     optimality_threshold = termination_.optimality_threshold(initial_optimality)
 
-    def select_tree(predicate, candidate, current):
+    def select_tree(predicate: Array, candidate: _T, current: _T) -> _T:
         return jax.tree_util.tree_map(
             lambda new, old: jnp.where(predicate, new, old) if eqx.is_array(new) else old,
             candidate,
             current,
         )
 
-    def iteration(_, current):
+    def iteration(
+        _: Array, current: _ResidualGraphIterationState
+    ) -> _ResidualGraphIterationState:
         optimality = jnp.linalg.norm(current.model.gradient, ord=jnp.inf)
         entry_status = jnp.where(
             ~current.model.finite,
@@ -427,7 +442,7 @@ def solve_residual_graph(
         current = eqx.tree_at(lambda value: value.status, current, entry_status)
         active = entry_status == int(OptimizationStatus.ITERATING)
 
-        def attempt(value):
+        def attempt(value: _ResidualGraphIterationState) -> _ResidualGraphIterationState:
             matrix = value.model.curvature + value.damping * jnp.eye(
                 dimension,
                 dtype=value.model.curvature.dtype,
@@ -439,7 +454,9 @@ def solve_residual_graph(
                 schur,
             )
 
-            def failed_linear_solve(operand):
+            def failed_linear_solve(
+                operand: _ResidualGraphIterationState,
+            ) -> _ResidualGraphIterationState:
                 return eqx.tree_at(
                     lambda item: (
                         item.status,
@@ -457,7 +474,9 @@ def solve_residual_graph(
                     ),
                 )
 
-            def evaluate_candidate(operand):
+            def evaluate_candidate(
+                operand: _ResidualGraphIterationState,
+            ) -> _ResidualGraphIterationState:
                 tangent_steps = _tangent_steps(
                     graph,
                     operand.parameters,

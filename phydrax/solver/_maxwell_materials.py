@@ -123,9 +123,12 @@ def _metric_spectrum(
     metric_matrix = (
         jnp.diag(jnp.asarray(weight)) if weight.ndim == 1 else jnp.asarray(weight)
     )
-    metric_tolerance = np.finfo(metric_matrix.real.dtype).eps * max(
-        1.0,
-        float(jnp.max(jnp.abs(metric_matrix))),
+    metric_tolerance = float(
+        np.finfo(metric_matrix.real.dtype).eps
+        * max(
+            1.0,
+            float(jnp.max(jnp.abs(metric_matrix))),
+        )
     )
     metric_spectrum = HermitianSpectrum(
         metric_matrix,
@@ -137,9 +140,12 @@ def _metric_spectrum(
     ):
         raise ValueError(f"{name} Hodge metric must be positive definite.")
     weighted = metric_matrix @ jnp.asarray(host)
-    tolerance = np.finfo(weighted.real.dtype).eps * max(
-        1.0,
-        float(jnp.max(jnp.abs(weighted))),
+    tolerance = float(
+        np.finfo(weighted.real.dtype).eps
+        * max(
+            1.0,
+            float(jnp.max(jnp.abs(weighted))),
+        )
     )
     weighted_residual = jnp.max(jnp.abs(weighted - jnp.conj(weighted.T)))
     if not bool(weighted_residual <= 64.0 * tolerance):

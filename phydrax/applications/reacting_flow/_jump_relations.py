@@ -55,13 +55,17 @@ def _mass(plan: ChemicalEquilibriumPlan, amount: Array, /) -> Array:
     )
 
 
-def _density_and_specific_enthalpy(plan, amount, temperature, pressure):
+def _density_and_specific_enthalpy(
+    plan: ChemicalEquilibriumPlan, amount: Array, temperature: Array, pressure: Array
+) -> tuple[Array, Array]:
     state = plan.evaluate_state(amount, temperature, pressure)
     mass = _mass(plan, amount)
     return mass / state.volume, state.enthalpy / mass
 
 
-def _sound_speed(plan, equilibrium: ChemicalEquilibriumResult):
+def _sound_speed(
+    plan: ChemicalEquilibriumPlan, equilibrium: ChemicalEquilibriumResult
+) -> Array:
     amount = equilibrium.species_amount
     total = jnp.sum(amount)
     fraction = amount / total
@@ -146,7 +150,7 @@ class EquilibriumShockPlan(StrictModule, NonTrainableState):
         momentum_scale = jnp.maximum(jnp.abs(momentum_total), 1.0)
         energy_scale = jnp.maximum(jnp.abs(stagnation_enthalpy), 1.0)
 
-        def residual(log_state):
+        def residual(log_state: Array) -> Array:
             downstream_temperature = jnp.exp(log_state[0])
             downstream_pressure = jnp.exp(log_state[1])
             equilibrium = self.equilibrium.solve(
@@ -304,7 +308,7 @@ class DetonationJumpPlan(StrictModule, NonTrainableState):
         momentum_scale = jnp.maximum(jnp.abs(pressure), 1.0)
         energy_scale = jnp.maximum(jnp.abs(upstream_enthalpy), 1.0)
 
-        def residual(log_state):
+        def residual(log_state: Array) -> Array:
             downstream_temperature, downstream_pressure, wave_speed = jnp.exp(log_state)
             equilibrium = self.shock.equilibrium.solve(
                 downstream_temperature, downstream_pressure, amount

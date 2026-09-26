@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
 from typing import Literal
 
@@ -69,7 +70,12 @@ def _top_k(k: int | None, item_count: int) -> int:
     return min(count, item_count)
 
 
-def _map_cases(relevance: Array, scores: Array, weights: Array, function) -> Array:
+def _map_cases(
+    relevance: Array,
+    scores: Array,
+    weights: Array,
+    function: Callable[[Array, Array, Array], Array],
+) -> Array:
     case_shape = relevance.shape[:-1]
     item_count = relevance.shape[-1]
     case_count = prod(case_shape)
@@ -103,7 +109,7 @@ def discounted_cumulative_gain(
     )
     limit = _top_k(k, relevance_.shape[-1])
 
-    def one_case(rel, score, weight):
+    def one_case(rel: Array, score: Array, weight: Array) -> Array:
         order = jnp.argsort(-score, stable=True)
         contribution = weight[order] * _gain(rel[order], gain)
         discount = 1.0 / jnp.log2(
@@ -137,7 +143,7 @@ def ndcg_score(
     )
     limit = _top_k(k, relevance_.shape[-1])
 
-    def one_case(rel, score, weight):
+    def one_case(rel: Array, score: Array, weight: Array) -> tuple[Array, Array]:
         contribution = weight * _gain(rel, gain)
         predicted_order = jnp.argsort(-score, stable=True)
         ideal_order = jnp.argsort(-contribution, stable=True)
@@ -188,7 +194,7 @@ def precision_at_k(
     )
     limit = _top_k(k, relevance_.shape[-1])
 
-    def one_case(rel, score, weight):
+    def one_case(rel: Array, score: Array, weight: Array) -> tuple[Array, Array]:
         order = jnp.argsort(-score, stable=True)[:limit]
         selected_weight = weight[order]
         denominator = jnp.sum(selected_weight)
@@ -236,7 +242,7 @@ def recall_at_k(
     )
     limit = _top_k(k, relevance_.shape[-1])
 
-    def one_case(rel, score, weight):
+    def one_case(rel: Array, score: Array, weight: Array) -> tuple[Array, Array]:
         relevant_weight = weight * (rel > relevance_threshold)
         denominator = jnp.sum(relevant_weight)
         order = jnp.argsort(-score, stable=True)[:limit]
@@ -282,7 +288,7 @@ def reciprocal_rank(
         metric="reciprocal_rank",
     )
 
-    def one_case(rel, score, weight):
+    def one_case(rel: Array, score: Array, weight: Array) -> tuple[Array, Array]:
         active = weight > 0.0
         order = jnp.argsort(-score, stable=True)
         relevant = active[order] & (rel[order] > relevance_threshold)
@@ -329,7 +335,7 @@ def average_precision_score(
         metric="average_precision_score",
     )
 
-    def one_case(rel, score, weight):
+    def one_case(rel: Array, score: Array, weight: Array) -> tuple[Array, Array]:
         order = jnp.argsort(-score, stable=True)
         weight = weight[order]
         relevant_weight = weight * (rel[order] > relevance_threshold)

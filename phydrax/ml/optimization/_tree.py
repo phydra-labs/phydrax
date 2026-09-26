@@ -21,7 +21,7 @@ from ._types import (
 class _Leaf:
     __slots__ = ("lower", "node", "upper")
 
-    def __init__(self, node, lower, upper) -> None:
+    def __init__(self, node: int, lower: np.ndarray, upper: np.ndarray) -> None:
         self.node = int(node)
         self.lower = lower
         self.upper = upper
@@ -117,7 +117,9 @@ def _tree_leaves(
     root_upper = np.asarray(binding.decision_upper)
     leaves: list[_Leaf] = []
 
-    def visit(node, lower, upper, depth, path) -> None:
+    def visit(
+        node: int, lower: np.ndarray, upper: np.ndarray, depth: int, path: set[int]
+    ) -> None:
         if depth > model.max_steps:
             raise ValueError("Tree path exceeds the declared max_steps bound.")
         if node < 0 or node >= len(node_mask) or not node_mask[node]:

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections import deque
 from itertools import combinations
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -17,6 +18,10 @@ from .._contracts import CompiledGeometry, GeometryKind
 from ..simplicial import TriangleTopology
 from ._policy import ImplicitSurfacePolicy
 from ._projection import _field_and_gradient, ImplicitPointProjectionPlan
+
+
+if TYPE_CHECKING:
+    from ._realization import ImplicitSurfacePlan
 
 
 _DEFAULT_SURFACE_POLICY = ImplicitSurfacePolicy()
@@ -52,7 +57,9 @@ _CUBE_EDGES = (
 )
 
 
-def _edge_key(cell: tuple[int, int, int], first: int, second: int):
+def _edge_key(
+    cell: tuple[int, int, int], first: int, second: int
+) -> tuple[int, int, int, int]:
     first_offset = _CORNER_OFFSETS[first]
     second_offset = _CORNER_OFFSETS[second]
     axis = int(np.flatnonzero(first_offset != second_offset)[0])
@@ -85,7 +92,9 @@ def _inside_components(corner_inside: np.ndarray) -> tuple[tuple[int, ...], ...]
     return tuple(components)
 
 
-def _incident_cells(key: tuple[int, int, int, int]):
+def _incident_cells(
+    key: tuple[int, int, int, int],
+) -> tuple[tuple[int, int, int], ...]:
     axis, i, j, k = key
     if axis == 0:
         return (
@@ -201,7 +210,7 @@ def _oriented_triangle(
         raise ValueError("Implicit surface discovery produced a degenerate triangle.")
     centroid = np.mean(triangle, axis=0)
 
-    def field(point):
+    def field(point: jax.Array) -> jax.Array:
         return geometry.boundary_field(point)
 
     gradient = np.asarray(jax.grad(field)(jnp.asarray(centroid)))
@@ -219,7 +228,7 @@ def discover_implicit_surface(
     *,
     policy: ImplicitSurfacePolicy = _DEFAULT_SURFACE_POLICY,
     source_id: str,
-):
+) -> ImplicitSurfacePlan:
     """Discover a closed manifold dual surface and freeze its topology."""
 
     if not isinstance(geometry, CompiledGeometry):

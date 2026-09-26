@@ -19,7 +19,11 @@ class HaloMassFunctionPlan(StrictModule, NonTrainableState):
     exponent: Array
 
     def __init__(
-        self, collapse_threshold=1.686, amplitude=0.3222, exponent=0.3, /
+        self,
+        collapse_threshold: ArrayLike = 1.686,
+        amplitude: ArrayLike = 0.3222,
+        exponent: ArrayLike = 0.3,
+        /,
     ) -> None:
         self.collapse_threshold = jnp.asarray(collapse_threshold).reshape(())
         self.amplitude = jnp.asarray(amplitude).reshape(())
@@ -55,14 +59,14 @@ class HaloModelPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        mass,
-        mass_function,
-        bias,
-        profile_fourier,
-        mean_density,
+        mass: ArrayLike,
+        mass_function: ArrayLike,
+        bias: ArrayLike,
+        profile_fourier: ArrayLike,
+        mean_density: ArrayLike,
         /,
         *,
-        model_id="halo-model",
+        model_id: str = "halo-model",
     ) -> None:
         self.mass = jnp.asarray(mass)
         self.mass_function = jnp.asarray(mass_function)
@@ -116,7 +120,7 @@ class CmbLensingPlan(StrictModule, NonTrainableState):
     multipoles: Array
     deflection_variance: Array
 
-    def __init__(self, multipoles, deflection_variance, /) -> None:
+    def __init__(self, multipoles: ArrayLike, deflection_variance: ArrayLike, /) -> None:
         self.multipoles = jnp.asarray(multipoles)
         self.deflection_variance = jnp.asarray(deflection_variance).reshape(())
 
@@ -136,7 +140,7 @@ class LightConePlan(StrictModule, NonTrainableState):
     shell_radii: Array
     capacity: int = eqx.field(static=True)
 
-    def __init__(self, shell_radii, capacity: int, /) -> None:
+    def __init__(self, shell_radii: ArrayLike, capacity: int, /) -> None:
         self.shell_radii = jnp.asarray(shell_radii)
         self.capacity = int(capacity)
 
@@ -160,12 +164,12 @@ class LightConePlan(StrictModule, NonTrainableState):
 class LensingPlanePlan(StrictModule, NonTrainableState):
     pixel_scale: Array
 
-    def __init__(self, pixel_scale, /) -> None:
+    def __init__(self, pixel_scale: ArrayLike, /) -> None:
         self.pixel_scale = jnp.asarray(pixel_scale).reshape(())
 
     def convergence_and_shear(
         self, surface_density: ArrayLike, critical_density: ArrayLike, /
-    ):
+    ) -> tuple[Array, Array, Array]:
         density = jnp.asarray(surface_density)
         convergence = density / jnp.asarray(critical_density)
         ny, nx = density.shape
@@ -188,7 +192,9 @@ class BaryonicFeedbackPlan(StrictModule, NonTrainableState):
     pivot_wavenumber: Array
     slope: Array
 
-    def __init__(self, amplitude, pivot_wavenumber, slope, /) -> None:
+    def __init__(
+        self, amplitude: ArrayLike, pivot_wavenumber: ArrayLike, slope: ArrayLike, /
+    ) -> None:
         self.amplitude = jnp.asarray(amplitude).reshape(())
         self.pivot_wavenumber = jnp.asarray(pivot_wavenumber).reshape(())
         self.slope = jnp.asarray(slope).reshape(())

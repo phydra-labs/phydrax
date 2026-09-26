@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from enum import StrEnum
 
 import equinox as eqx
@@ -182,16 +183,16 @@ def make_reactive_monolithic_stage(
     particle_position: ArrayLike,
     particle_mass: ArrayLike,
     particle_active: ArrayLike,
-    conversion_boundaries,
+    conversion_boundaries: Sequence[ParticleTransportBoundary],
     time: ArrayLike,
     step_size: ArrayLike,
     /,
     *,
-    contact_energy_rate=None,
-    radiative_energy_rate=None,
-    external_fluid_momentum_rate=None,
-    external_fluid_energy_rate=None,
-    external_fluid_species_rate=None,
+    contact_energy_rate: Sequence[ArrayLike] | None = None,
+    radiative_energy_rate: Sequence[ArrayLike] | None = None,
+    external_fluid_momentum_rate: ArrayLike | None = None,
+    external_fluid_energy_rate: ArrayLike | None = None,
+    external_fluid_species_rate: ArrayLike | None = None,
 ) -> ReactiveMonolithicStage:
     position = jnp.asarray(particle_position, dtype=state.fluid.velocity.dtype)
     mass = jnp.asarray(particle_mass, dtype=state.fluid.velocity.dtype)
@@ -267,7 +268,14 @@ def make_reactive_monolithic_stage(
     )
 
 
-def _local_preconditioner(coupling, mode, stage, state, residual, args):
+def _local_preconditioner(
+    coupling: ReactiveMonolithicCouplingPlan,
+    mode: ReactiveMonolithicPreconditionerMode,
+    stage: ReactiveMonolithicStage,
+    state: object,
+    residual: ReactiveMonolithicUnknown,
+    args: object,
+) -> ReactiveMonolithicUnknown:
     del state, args
     fluid_velocity = residual.fluid_velocity / coupling.fluid.cell_mass[:, None]
     fluid_temperature = residual.fluid_temperature / coupling.fluid.cell_heat_capacity
@@ -330,10 +338,17 @@ def prepare_reactive_monolithic_step(
     guess = coupling.initial_unknown(stage) if initial_guess is None else initial_guess
     space = PyTreeSpace(guess)
 
-    def residual(unknown, stage_):
+    def residual(
+        unknown: ReactiveMonolithicUnknown, stage_: ReactiveMonolithicStage
+    ) -> ReactiveMonolithicUnknown:
         return coupling.evaluate(unknown, stage_).residual
 
-    def valid(unknown, residual_, auxiliary, stage_):
+    def valid(
+        unknown: ReactiveMonolithicUnknown,
+        residual_: object,
+        auxiliary: object,
+        stage_: ReactiveMonolithicStage,
+    ) -> Array:
         del residual_, auxiliary
         return coupling.evaluate(unknown, stage_).successful
 
@@ -345,7 +360,11 @@ def prepare_reactive_monolithic_step(
         problem_id=f"reactive-monolithic:{coupling.plan_id}",
     )
 
-    def apply(state_, residual_, stage_):
+    def apply(
+        state_: ReactiveMonolithicUnknown,
+        residual_: ReactiveMonolithicUnknown,
+        stage_: ReactiveMonolithicStage,
+    ) -> ReactiveMonolithicUnknown:
         return _local_preconditioner(
             coupling,
             solver.preconditioner_mode,
@@ -480,15 +499,15 @@ def solve_reactive_monolithic_step(
 
 
 def reactive_monolithic_vjp(
-    loss,
+    loss: Callable[[ReactiveMonolithicState], ArrayLike],
     prepared: PreparedReactiveMonolithicStep,
     previous: ReactiveMonolithicState,
     /,
-):
+) -> tuple[Array, Array]:
     if not callable(loss):
         raise TypeError("loss must be callable.")
 
-    def objective(initial_particle_velocity):
+    def objective(initial_particle_velocity: Array) -> Array:
         stage = eqx.tree_at(
             lambda value: value.previous_particle_velocity,
             prepared.stage,

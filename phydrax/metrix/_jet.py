@@ -68,7 +68,7 @@ class _MetricJetEvaluator(StrictModule):
         self.order = int(order)
         self.positive_definite = isinstance(metric, RiemannianMetric)
 
-    def __call__(self, coordinates: Array, /):
+    def __call__(self, coordinates: Array, /) -> tuple[Array, ...]:
         matrix = jnp.asarray(self.metric_function(coordinates))
         expected = (self.dimension, self.dimension)
         if matrix.shape != expected:
@@ -130,7 +130,7 @@ def _evaluate_jet(
     coordinates: Array,
     dimension: int,
     /,
-):
+) -> tuple[Array, ...]:
     if coordinates.ndim == 1:
         return evaluator(coordinates)
     leading_shape = coordinates.shape[:-1]

@@ -11,6 +11,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, Key
 
 from ..._fingerprint import canonical_fingerprint
@@ -234,7 +235,7 @@ def _zero_evaluation(plan: TPSPlan, path: PathBuffer, /) -> PathProposalEvaluati
 
 
 def _cast_evaluation(
-    evaluation: PathProposalEvaluation, dtype, /
+    evaluation: PathProposalEvaluation, dtype: DTypeLike, /
 ) -> PathProposalEvaluation:
     return PathProposalEvaluation(
         jnp.asarray(evaluation.target_log_ratio, dtype=dtype),

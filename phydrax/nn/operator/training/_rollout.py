@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
@@ -33,6 +33,10 @@ from ._physics import OperatorOutputPipeline
 from ._trained_operator import TrainedOperator
 
 
+_OperatorPredictor: TypeAlias = Callable[
+    [AbstractOperatorModel, OperatorBatch, EvalKey, OperatorDTypePolicy],
+    OperatorPrediction,
+]
 _ROLLOUT_MODEL_ADDRESS = SampleAddress("operator-rollout", "model", role="step")
 
 
@@ -247,7 +251,7 @@ def _feedback_physical_batch(
 
 
 def _operator_rollout_step(
-    predictor: Callable,
+    predictor: _OperatorPredictor,
     model: AbstractOperatorModel,
     carry: _OperatorRolloutCarry,
     route: OperatorRolloutRoute,
@@ -299,7 +303,7 @@ def _operator_rollout_step(
 
 
 def _stop_rollout_feedback(carry: _OperatorRolloutCarry, /) -> _OperatorRolloutCarry:
-    def stop(value):
+    def stop(value: object) -> object:
         return jax.lax.stop_gradient(value) if eqx.is_array(value) else value
 
     return _OperatorRolloutCarry(
@@ -310,7 +314,7 @@ def _stop_rollout_feedback(carry: _OperatorRolloutCarry, /) -> _OperatorRolloutC
 
 
 def _operator_rollout_scan(
-    predictor: Callable,
+    predictor: _OperatorPredictor,
     model: AbstractOperatorModel,
     physical_batch: OperatorBatch,
     execution_batch: OperatorBatch,
@@ -334,7 +338,9 @@ def _operator_rollout_scan(
         jnp.asarray(step_offset, dtype=jnp.int32),
     )
 
-    def scan_step(current_carry, index):
+    def scan_step(
+        current_carry: _OperatorRolloutCarry, index: int
+    ) -> tuple[_OperatorRolloutCarry, tuple[Any, ...]]:
         return _operator_rollout_step(
             predictor,
             model,

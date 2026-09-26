@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from importlib import import_module, util
 from itertools import pairwise
 from pathlib import Path
-from typing import Protocol, runtime_checkable, TYPE_CHECKING
+from types import ModuleType
+from typing import Protocol, runtime_checkable, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,13 +20,19 @@ import numpy as np
 
 
 if TYPE_CHECKING:
-    from OCP.TopoDS import TopoDS_Edge, TopoDS_Shape
+    from OCP.TopoDS import TopoDS_Edge, TopoDS_Shape, TopoDS_Solid
 
 from ..._fingerprint import canonical_fingerprint
 from ..._identity import SemanticProvenance
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization import CellBlock, CellGeometrySpec, CellMesh, lagrange_element
+from ...discretization import (
+    CellBlock,
+    CellGeometrySpec,
+    CellMesh,
+    FiniteElementSpec,
+    lagrange_element,
+)
 from ...discretization._cell_complex import (
     PolygonalConnectivity,
     PolyhedralConnectivity,
@@ -45,9 +52,11 @@ from ...geometry.simplicial import TriangleMesh
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...logging import emit
 from .._association import GeometryAssociation, GeometryAssociationKind
-from .._audit import audit_cell_mesh
+from .._audit import audit_cell_mesh, CellMeshAuditReport
 from .._canonical import canonicalize_cell_mesh
 from .._contracts import (
+    CellFamilyPolicy,
+    CellMeshingTarget,
     MeshingCapability,
     MeshingDerivativeMode,
     MeshingExecutionMode,
@@ -62,7 +71,7 @@ from .._contracts import (
     VolumeFillStrategy,
     VolumeMeshingSpec,
 )
-from .._controls import SweptLayerControl
+from .._controls import PeriodicConstraint, SweptLayerControl
 from .._organization import (
     MeshAttribute,
     MeshAttributeRole,
@@ -71,7 +80,7 @@ from .._organization import (
     MeshZoneRole,
     RegionRole,
 )
-from .._planar_bands import PlanarBandResult
+from .._planar_bands import _PlanarBandLayer, PlanarBandResult
 from .._quality import evaluate_cell_quality, evaluate_swept_layer_quality
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
 from .._scope import MeshingEntityKind, MeshingScope
@@ -95,6 +104,7 @@ from .._trace import (
 
 _GMSH_LOCK = threading.Lock()
 _BRepMeshingSource = BRepModel | BRepSource | BRepPartitionResult | PlanarBandResult
+_PeriodicRecord: TypeAlias = tuple[PeriodicConstraint, tuple[int, ...], tuple[int, ...]]
 
 
 def _brep_model(source: _BRepMeshingSource, /) -> BRepModel:
@@ -517,14 +527,14 @@ class GmshSession(AbstractMeshingSession):
 
 
 def _validate_gmsh_semantics(
-    source,
-    specification,
-    model,
-    descriptor,
-    target,
-    scope,
+    source: _BRepMeshingSource,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    model: BRepModel,
+    descriptor: MeshingSourceDescriptor,
+    target: CellMeshingTarget,
+    scope: MeshingScope,
     requested: set[str],
-    layers,
+    layers: tuple[SweptLayerControl, ...],
     unsupported: list[str],
     /,
 ) -> bool:
@@ -683,7 +693,12 @@ def _validate_gmsh_semantics(
     return semantic_volume
 
 
-def _validate_gmsh_periodicity(specification, model, unsupported: list[str], /) -> None:
+def _validate_gmsh_periodicity(
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    model: BRepModel,
+    unsupported: list[str],
+    /,
+) -> None:
     for constraint in specification.periodic_constraints:
         scopes = (constraint.source_scope, constraint.target_scope)
         if any(
@@ -707,9 +722,9 @@ def _validate_gmsh_periodicity(specification, model, unsupported: list[str], /) 
 
 
 def _validate_gmsh_size_controls(
-    specification,
-    model,
-    scope,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    model: BRepModel,
+    scope: MeshingScope,
     semantic_volume: bool,
     unsupported: list[str],
     /,
@@ -824,30 +839,30 @@ def _validate_gmsh_size_controls(
 
 
 def _audit_gmsh_mesh(
-    specification,
-    mesh,
-    geometry,
-    boundary,
-    attributes,
-    associations,
-    zones,
-    patches,
-    region_zones,
-    cell_solid_ids,
-    family_policy,
-    requested_kinds,
-    minimum_jacobian,
-    semantic_surface,
-    semantic_volume,
-    periodic_requested,
-    periodic_achieved,
-    layer_audit,
-    layer_interface_achieved,
-    band_requested,
-    band_achieved,
-    size_field_ids,
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec,
+    mesh: CellMesh,
+    geometry: CellGeometrySpec,
+    boundary: SurfaceModel | None,
+    attributes: tuple[MeshAttribute, ...],
+    associations: tuple[GeometryAssociation, ...],
+    zones: tuple[MeshZone, ...],
+    patches: tuple[MeshPatch, ...],
+    region_zones: tuple[MeshZone, ...],
+    cell_solid_ids: np.ndarray | None,
+    family_policy: CellFamilyPolicy,
+    requested_kinds: set[str],
+    minimum_jacobian: float,
+    semantic_surface: bool,
+    semantic_volume: bool,
+    periodic_requested: tuple[tuple[str, float], ...],
+    periodic_achieved: tuple[tuple[str, float], ...],
+    layer_audit: _LayerAudit,
+    layer_interface_achieved: tuple[tuple[str, float], ...],
+    band_requested: tuple[tuple[str, float], ...],
+    band_achieved: tuple[tuple[str, float], ...],
+    size_field_ids: tuple[int, ...],
     /,
-):
+) -> tuple[CellMeshAuditReport, MeshingComplianceReport]:
     quality_evaluation = evaluate_cell_quality(mesh, mesh.coordinates)
     audit = audit_cell_mesh(
         mesh,
@@ -937,6 +952,8 @@ def _audit_gmsh_mesh(
             )
         )
     if semantic_volume:
+        # Semantic volume execution always resolves canonical solid ownership.
+        assert isinstance(specification, VolumeMeshingSpec) and cell_solid_ids is not None
         size_issues, local_requested, local_achieved = _semantic_size_compliance(
             mesh, specification, cell_solid_ids
         )
@@ -1325,7 +1342,7 @@ class _ElementRows:
 
 
 def _element_rows(
-    gmsh, dimension: int, geometry_order: int, /
+    gmsh: ModuleType, dimension: int, geometry_order: int, /
 ) -> tuple[_ElementRows, ...]:
     kinds = {
         "Triangle": "triangle",
@@ -1399,7 +1416,9 @@ def _local_connectivity(node_tags: np.ndarray, values: np.ndarray, /) -> np.ndar
     return locations.astype(np.int32, copy=False)
 
 
-def _geometry_permutation(gmsh, rows: _ElementRows, element, /) -> np.ndarray:
+def _geometry_permutation(
+    gmsh: ModuleType, rows: _ElementRows, element: FiniteElementSpec, /
+) -> np.ndarray:
     """Map actual Gmsh reference nodes, not meshio's distinct wedge/hex ordering."""
     _, dimension, _, count, coordinates, _ = gmsh.model.mesh.getElementProperties(
         rows.element_type
@@ -1422,7 +1441,7 @@ def _geometry_permutation(gmsh, rows: _ElementRows, element, /) -> np.ndarray:
     return np.argmax(matches, axis=1).astype(np.int32)
 
 
-def _audit_jacobians(gmsh, rows: tuple[_ElementRows, ...], /) -> float:
+def _audit_jacobians(gmsh: ModuleType, rows: tuple[_ElementRows, ...], /) -> float:
     """Audit the curved map with Gmsh's adaptive determinant extrema, not corners."""
     minimum = np.inf
     for block in rows:
@@ -1450,7 +1469,7 @@ class _TopoDSEdgeCaster(Protocol):
 
 
 def _scope_samples(
-    source: BRepModel, shape, scope: MeshingScope, /
+    source: BRepModel, shape: TopoDS_Shape, scope: MeshingScope, /
 ) -> tuple[np.ndarray, ...]:
     """Sample stable source entities independently of Gmsh's import tag numbering."""
     ids = np.asarray(scope.entity_ids, dtype=np.int64)
@@ -1495,7 +1514,7 @@ def _scope_samples(
     from ...geometry.brep._occt import _explore_unique
 
     if scope.entity_dimension == 0:
-        vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex_s)
+        vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
         result = []
         for vertex in ids:
             point = BRep_Tool.Pnt_s(vertices[int(vertex)])
@@ -1517,7 +1536,12 @@ def _scope_samples(
 
 
 def _match_entities(
-    gmsh, dimension: int, samples, candidates, tolerance: float, /
+    gmsh: ModuleType,
+    dimension: int,
+    samples: Sequence[np.ndarray],
+    candidates: Sequence[int],
+    tolerance: float,
+    /,
 ) -> tuple[int, ...]:
     result = []
     for points in samples:
@@ -1546,7 +1570,9 @@ def _match_entities(
     return tuple(result)
 
 
-def _resolve_entities(gmsh, source, shape, scope, /) -> tuple[int, ...]:
+def _resolve_entities(
+    gmsh: ModuleType, source: BRepModel, shape: TopoDS_Shape, scope: MeshingScope, /
+) -> tuple[int, ...]:
     samples = _scope_samples(source, shape, scope)
     scale = max(float(np.ptp(np.asarray(source.mesh_vertices), axis=0).max()), 1.0)
     return _match_entities(
@@ -1565,7 +1591,9 @@ class _CadEntityMap:
     edge_to_curve: tuple[int, ...] = ()
 
 
-def _validate_source_solids(source: BRepModel, shape, /) -> tuple:
+def _validate_source_solids(
+    source: BRepModel, shape: TopoDS_Shape, /
+) -> list[TopoDS_Solid]:
     from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
     from OCP.BRepCheck import BRepCheck_Analyzer
     from OCP.BRepExtrema import BRepExtrema_DistShapeShape
@@ -1597,7 +1625,7 @@ def _validate_source_solids(source: BRepModel, shape, /) -> tuple:
             "Source solids require nonempty manifold boundaries with opposite shared-face orientations.",
             stage=MeshingStageKind.SOURCE_INSPECTION.value,
         )
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
+    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     if len(solids) != topology.num_solids or any(
         not BRepCheck_Analyzer(solid).IsValid() for solid in solids
     ):
@@ -1648,7 +1676,9 @@ def _validate_source_solids(source: BRepModel, shape, /) -> tuple:
     return solids
 
 
-def _resolve_planar_cad_entity_map(gmsh, source: BRepModel, shape, /) -> _CadEntityMap:
+def _resolve_planar_cad_entity_map(
+    gmsh: ModuleType, source: BRepModel, shape: TopoDS_Shape, /
+) -> _CadEntityMap:
     if source.topology.num_solids:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SOURCE,
@@ -1710,7 +1740,9 @@ def _resolve_planar_cad_entity_map(gmsh, source: BRepModel, shape, /) -> _CadEnt
     return _CadEntityMap(tuple(face_tags), (), tuple(edge_tags))
 
 
-def _resolve_cad_entity_map(gmsh, source: BRepModel, shape, /) -> _CadEntityMap:
+def _resolve_cad_entity_map(
+    gmsh: ModuleType, source: BRepModel, shape: TopoDS_Shape, /
+) -> _CadEntityMap:
     _validate_source_solids(source, shape)
     face_scope = MeshingScope(
         source.report.source_id,
@@ -1814,7 +1846,7 @@ def _resolve_cad_entity_map(gmsh, source: BRepModel, shape, /) -> _CadEntityMap:
 
 @dataclass(frozen=True, slots=True)
 class _PlanarBandFront:
-    layer: object
+    layer: _PlanarBandLayer
     curves: tuple[int, ...]
 
 
@@ -1825,7 +1857,7 @@ class _PlanarBandGeneration:
 
 
 def _straight_surface_curves(
-    gmsh,
+    gmsh: ModuleType,
     surface: int,
     embedding: PlanarEmbedding,
     /,
@@ -1875,7 +1907,7 @@ def _straight_surface_curves(
 
 
 def _configure_full_quad_band_closure(
-    gmsh,
+    gmsh: ModuleType,
     embedding: PlanarEmbedding,
     constrained_curves: dict[int, int],
     target_size: float | None,
@@ -1916,8 +1948,8 @@ def _configure_full_quad_band_closure(
     neighbors: dict[int, set[int]] = {
         curve: set() for curves, _ in boundaries.values() for curve in curves
     }
-    for pairs in parallel_pairs.values():
-        for first, second in pairs:
+    for surface_pairs in parallel_pairs.values():
+        for first, second in surface_pairs:
             neighbors[first].add(second)
             neighbors[second].add(first)
     unresolved = set(neighbors)
@@ -1969,7 +2001,7 @@ def _configure_full_quad_band_closure(
 
 
 def _apply_planar_band_constraints(
-    gmsh,
+    gmsh: ModuleType,
     bands: PlanarBandResult | None,
     cad_entities: _CadEntityMap | None,
     requested_kinds: set[str],
@@ -2070,7 +2102,7 @@ def _apply_planar_band_constraints(
 
 
 def _audit_planar_band_fronts(
-    gmsh, generation: _PlanarBandGeneration | None, /
+    gmsh: ModuleType, generation: _PlanarBandGeneration | None, /
 ) -> tuple[tuple[tuple[str, float], ...], tuple[tuple[str, float], ...]]:
     if generation is None:
         return (), ()
@@ -2144,8 +2176,10 @@ def _audit_planar_band_fronts(
     return tuple(requested), tuple(achieved)
 
 
-def _set_periodic(gmsh, plan, shape, /):
-    records = []
+def _set_periodic(
+    gmsh: ModuleType, plan: GmshMeshingPlan, shape: TopoDS_Shape, /
+) -> tuple[_PeriodicRecord, ...]:
+    records: list[_PeriodicRecord] = []
     slaves_used = set()
     for constraint in plan.specification.periodic_constraints:
         dimension = constraint.source_scope.entity_dimension
@@ -2174,7 +2208,13 @@ def _set_periodic(gmsh, plan, shape, /):
     return tuple(records)
 
 
-def _audit_periodic(gmsh, records, node_tags, points, /):
+def _audit_periodic(
+    gmsh: ModuleType,
+    records: tuple[_PeriodicRecord, ...],
+    node_tags: np.ndarray,
+    points: np.ndarray,
+    /,
+) -> tuple[tuple[tuple[str, float], ...], tuple[tuple[str, float], ...]]:
     requested = []
     achieved = []
     for constraint, masters, slaves in records:
@@ -2269,7 +2309,13 @@ class _LayerAudit:
     layer_by_element_tag: dict[int, int]
 
 
-def _cad_symmetric_difference(gmsh, dimension: int, left, right, /) -> float:
+def _cad_symmetric_difference(
+    gmsh: ModuleType,
+    dimension: int,
+    left: tuple[int, int],
+    right: tuple[int, int],
+    /,
+) -> float:
     baseline = set(gmsh.model.getEntities())
     measure = 0.0
     for first, second in ((left, right), (right, left)):
@@ -2289,7 +2335,7 @@ def _cad_symmetric_difference(gmsh, dimension: int, left, right, /) -> float:
 
 
 def _certify_swept_volume(
-    gmsh,
+    gmsh: ModuleType,
     volume: tuple[int, int],
     source_surface: int,
     target_surface: int,
@@ -2322,11 +2368,16 @@ def _certify_swept_volume(
     return face_difference, volume_difference
 
 
-def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
-    controls = plan.specification.layer_controls
+def _prepare_swept_geometry(
+    gmsh: ModuleType,
+    source: BRepModel,
+    controls: tuple[SweptLayerControl, ...],
+    shape: TopoDS_Shape,
+    cad_entities: _CadEntityMap | None,
+    /,
+) -> _SweepGeneration | None:
     if not controls:
         return None
-    source = _brep_model(plan.source)
     scale = max(float(np.ptp(np.asarray(source.mesh_vertices), axis=0).max()), 1.0)
     if cad_entities is None:
         volume_entities = tuple(gmsh.model.getEntities(3))
@@ -2461,7 +2512,8 @@ def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
                     direction,
                     unit,
                     levels,
-                    volume_difference / max(volume_measure, np.finfo(np.float64).tiny),
+                    volume_difference
+                    / max(volume_measure, float(np.finfo(np.float64).tiny)),
                 )
             )
     by_solid = {value.solid_index: value for value in prepared}
@@ -2496,7 +2548,7 @@ def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
     return _SweepGeneration(tuple(prepared))
 
 
-def _entity_linear_triangles(gmsh, surface: int, /) -> np.ndarray:
+def _entity_linear_triangles(gmsh: ModuleType, surface: int, /) -> np.ndarray:
     blocks = []
     element_types, _, node_blocks = gmsh.model.mesh.getElements(2, surface)
     for element_type, node_values in zip(element_types, node_blocks, strict=True):
@@ -2520,7 +2572,11 @@ def _entity_linear_triangles(gmsh, surface: int, /) -> np.ndarray:
 
 
 def _matching_lateral_surface(
-    gmsh, candidates: tuple[int, ...], point: np.ndarray, tolerance: float, /
+    gmsh: ModuleType,
+    candidates: tuple[int, ...],
+    point: np.ndarray,
+    tolerance: float,
+    /,
 ) -> int:
     matches = []
     for surface in candidates:
@@ -2541,7 +2597,7 @@ def _matching_lateral_surface(
     return matches[0]
 
 
-def _install_swept_cells(gmsh, sweep: _SweepGeneration, /) -> None:
+def _install_swept_cells(gmsh: ModuleType, sweep: _SweepGeneration, /) -> None:
     for value in sweep.volumes:
         gmsh.model.mesh.removeElements(3, value.volume_tag)
     for surface in sorted(
@@ -2692,7 +2748,13 @@ def _install_swept_cells(gmsh, sweep: _SweepGeneration, /) -> None:
         )
 
 
-def _audit_layers(sweep, rows, node_tags, points, /) -> _LayerAudit:
+def _audit_layers(
+    sweep: _SweepGeneration | None,
+    rows: tuple[_ElementRows, ...],
+    node_tags: np.ndarray,
+    points: np.ndarray,
+    /,
+) -> _LayerAudit:
     if sweep is None:
         return _LayerAudit((), (), {}, {})
     volume_map = {value.volume_tag: value for value in sweep.volumes}
@@ -2902,7 +2964,9 @@ def _layer_attributes(
     )
 
 
-def _size_values(specification: SurfaceMeshingSpec | VolumeMeshingSpec, /):
+def _size_values(
+    specification: SurfaceMeshingSpec | VolumeMeshingSpec, /
+) -> tuple[float | None, float | None, float | None, int]:
     top_scope = (
         specification.scope
         if isinstance(specification, SurfaceMeshingSpec)
@@ -2958,9 +3022,9 @@ def _size_values(specification: SurfaceMeshingSpec | VolumeMeshingSpec, /):
 
 
 def _apply_uniform_size_fields(
-    gmsh,
+    gmsh: ModuleType,
     source: BRepModel,
-    shape,
+    shape: TopoDS_Shape,
     specification: SurfaceMeshingSpec | VolumeMeshingSpec,
     cad_entities: _CadEntityMap | None,
     outside_size: float,
@@ -2992,17 +3056,17 @@ def _apply_uniform_size_fields(
             combination=specification.size_combination,
         )
         values = np.asarray(resolved.values, dtype=np.float64)
-        groups = tuple(
+        grouped = tuple(
             (
                 float(value),
                 tuple(
                     cad_entities.solid_to_volume[int(index)]
                     for index in np.flatnonzero(values == value)
                 ),
+                3,
             )
             for value in np.unique(values)
         )
-        dimension = 3
     else:
         top_scope = (
             specification.scope
@@ -3010,7 +3074,7 @@ def _apply_uniform_size_fields(
             else specification.boundary_scope
         )
         if specification.size_combination is SizeCombinationPolicy.EXPLICIT_PRIORITY:
-            groups = [
+            groups: list[tuple[float, tuple[int, ...], int]] = [
                 (
                     outside_size,
                     tuple(
@@ -3030,6 +3094,7 @@ def _apply_uniform_size_fields(
                     else _resolve_entities(gmsh, source, shape, control.scope)
                 )
                 groups.append((control.target_size, tags, dimension))
+        grouped = tuple(groups)
     fields = []
     list_names = {
         0: "PointsList",
@@ -3037,10 +3102,6 @@ def _apply_uniform_size_fields(
         2: "SurfacesList",
         3: "VolumesList",
     }
-    if semantic_volume:
-        grouped = tuple((value, tags, dimension) for value, tags in groups)
-    else:
-        grouped = tuple(groups)
     for value, tags, entity_dimension in grouped:
         field = gmsh.model.mesh.field.add("Constant")
         gmsh.model.mesh.field.setNumber(field, "VIn", value)
@@ -3145,7 +3206,9 @@ class _PlanarSurfaceEvidence:
     mesh_edge_source: np.ndarray
 
 
-def _curve_corner_rows(gmsh, geometry_order: int, /) -> tuple[np.ndarray, np.ndarray]:
+def _curve_corner_rows(
+    gmsh: ModuleType, geometry_order: int, /
+) -> tuple[np.ndarray, np.ndarray]:
     node_chunks = []
     entity_chunks = []
     for _, curve in sorted(gmsh.model.getEntities(1)):
@@ -3216,7 +3279,7 @@ def _planar_edge_patch_connected(
 
 
 def _planar_surface_evidence(
-    gmsh,
+    gmsh: ModuleType,
     source: BRepModel,
     mesh: CellMesh,
     specification: SurfaceMeshingSpec,
@@ -3596,7 +3659,7 @@ def _connectivity_face_edge_rows(
 
 
 def _semantic_surface_evidence(
-    gmsh,
+    gmsh: ModuleType,
     source: BRepModel,
     mesh: CellMesh,
     rows: tuple[_ElementRows, ...],
@@ -4085,7 +4148,13 @@ def _semantic_size_compliance(
     issues = []
     requested = []
     achieved = []
-    for control in specification.size_controls:
+    # Support validation admits only UniformSizeControl values for semantic volumes.
+    uniform = tuple(
+        control
+        for control in specification.size_controls
+        if isinstance(control, UniformSizeControl)
+    )
+    for control in uniform:
         selected_edges = []
         cursor = 0
         solid_ids = np.asarray(control.scope.entity_ids, dtype=np.int64)
@@ -4116,7 +4185,9 @@ def _semantic_size_compliance(
     return issues, tuple(requested), tuple(achieved)
 
 
-def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingResult:
+def _execute_gmsh(
+    gmsh: ModuleType, plan: GmshMeshingPlan, version: str, /
+) -> CellMeshingResult:
     source = plan.source
     specification = plan.specification
     options = plan.options
@@ -4202,7 +4273,9 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
         outside_size,
     )
     sweep = (
-        _prepare_swept_geometry(gmsh, plan, shape, cad_entities)
+        _prepare_swept_geometry(
+            gmsh, source, specification.layer_controls, shape, cad_entities
+        )
         if isinstance(specification, VolumeMeshingSpec)
         else None
     )
@@ -4396,6 +4469,8 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
     layer_attributes = _layer_attributes(mesh, top, row_orders, layer_audit)
     planar_evidence = None
     layer_interface_achieved: tuple[tuple[str, float], ...] = ()
+    region_zones: tuple[MeshZone, ...] = ()
+    cell_solid_ids: np.ndarray | None = None
     if semantic_volume:
         if cad_entities is None:
             raise MeshingFailure(
@@ -4470,15 +4545,19 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
         associations = planar_evidence.associations
         attributes = (*planar_evidence.attributes, *layer_attributes)
     else:
-        if dimension == 3 and boundary is None:
+        if dimension == 2:
+            association_mesh = mesh
+        elif boundary is None:
             raise MeshingFailure(
                 MeshingFailureCategory.CONVERSION_FAILED,
                 "Volume execution lost its generated boundary mesh.",
                 stage=MeshingStageKind.CANONICALIZATION.value,
             )
+        else:
+            association_mesh = boundary.mesh
         association, boundary_zones, provider_attribute = _boundary_association(
             source,
-            mesh if dimension == 2 else boundary.mesh,
+            association_mesh,
             options.association_tolerance_factor,
         )
         zones = boundary_zones if dimension == 2 else ()
@@ -4597,6 +4676,7 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
                     input_ids=(
                         tuple(value.control_id for value in specification.layer_controls)
                         if sweep is not None
+                        and isinstance(specification, VolumeMeshingSpec)
                         else band_control_ids
                     ),
                     output_ids=(mesh.mesh_id,),

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from ...._fingerprint import canonical_fingerprint
@@ -34,9 +35,9 @@ def import_processed_rdat(
     payload: bytes,
     source: ReferenceArtifactManifest,
     *,
-    requested_use,
+    requested_use: Mapping[str, bool],
     error_semantics: str,
-    replicate_ids=None,
+    replicate_ids: Sequence[str] | None = None,
 ) -> ProcessedRDAT:
     """Read one supported version with exact source checksum and explicit SD law.
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,6 +13,10 @@ from ..sparse import linear_apply, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._typed import edge_type_ids, node_type_indices
+
+
+if TYPE_CHECKING:
+    from ..domain.graph import EdgeType, NodeType
 
 
 def _as_int_vector(name: str, value: Any, /) -> jnp.ndarray:
@@ -132,22 +136,22 @@ class HypergraphBipartiteGraph(StrictModule):
         self.incidence_edge_type = int(incidence_edge_type)
         self.reverse_incidence_edge_type = int(reverse_incidence_edge_type)
 
-    def original_nodes_component(self):
+    def original_nodes_component(self) -> NodeType:
         from ..domain.graph import NodeType
 
         return NodeType(self.original_node_type)
 
-    def hyperedge_nodes_component(self):
+    def hyperedge_nodes_component(self) -> NodeType:
         from ..domain.graph import NodeType
 
         return NodeType(self.hyperedge_node_type)
 
-    def incidence_edges_component(self):
+    def incidence_edges_component(self) -> EdgeType:
         from ..domain.graph import EdgeType
 
         return EdgeType(self.incidence_edge_type)
 
-    def reverse_incidence_edges_component(self):
+    def reverse_incidence_edges_component(self) -> EdgeType:
         from ..domain.graph import EdgeType
 
         return EdgeType(self.reverse_incidence_edge_type)

@@ -385,7 +385,7 @@ class PlanarCylinderRouteWrapPlan(StrictModule, NonTrainableState):
                 "sample_count": self.sample_count,
                 "sense": self.sense,
                 "mandatory": self.mandatory,
-                "event_tolerance": self.event_tolerance.hex(),
+                "event_tolerance": float(self.event_tolerance).hex(),
             }
         )
 

@@ -570,7 +570,9 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
         self.plant_id = _identifier(plant_id, "plant_id")
         self.problem_id = _identifier(problem_id, "problem_id")
 
-    def training_residual(self, latent: PyTree[Any], args: Any = None, /):
+    def training_residual(
+        self, latent: PyTree[Any], args: Any = None, /
+    ) -> tuple[PyTree[Array], ...]:
         return self.graph.residual(latent, args)
 
     def split_evidence(
@@ -660,7 +662,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
         if flat_latent.size < 1:
             raise ValueError("Calibration requires at least one latent coordinate.")
 
-        def residual_vector(coordinates):
+        def residual_vector(coordinates: Array) -> Array:
             return ravel_pytree(self.training_residual(unravel(coordinates), args))[0]
 
         residuals = residual_vector(flat_latent)
@@ -702,7 +704,7 @@ class ReducedRodCalibrationProblem(StrictModule, NonTrainableState):
             jnp.full_like(latent_covariance_candidate, jnp.nan),
         )
 
-        def physical_vector(coordinates):
+        def physical_vector(coordinates: Array) -> Array:
             return ravel_pytree(self.parameterization.to_physical(unravel(coordinates)))[
                 0
             ]
@@ -1207,7 +1209,7 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
         }
         source_physical = parameterization.to_physical(source_latent)
 
-        def physical(values):
+        def physical(values: Mapping[str, Any]) -> dict[str, Array]:
             return parameterization.to_physical(values)
 
         state_design_constraints = tuple(
@@ -1316,7 +1318,9 @@ class SoftRobotCoDesignProblem(StrictModule, NonTrainableState):
                 initial_design
             )
 
-        def objective(values, args):
+        def objective(
+            values: tuple[PyTree[Any], PyTree[Any]], args: Any
+        ) -> tuple[Array, Any] | Array:
             value, auxiliary = self.state_design.value(values[0], values[1], args)
             return (value, auxiliary) if self.state_design.has_aux else value
 

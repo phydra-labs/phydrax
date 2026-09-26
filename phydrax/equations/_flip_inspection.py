@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import numpy as np
 
 from ..discretization.flip import FLIPRuntimeState, FLIPStepResult
@@ -23,7 +25,7 @@ def _flip_inspection_frame(
     result: FLIPStepResult,
     /,
     *,
-    state_kind: str,
+    state_kind: Literal["candidate", "accepted"],
     attempt_id: str,
     result_id: str,
 ) -> HostInspectionConversion:

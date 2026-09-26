@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
 def surface_species_rate(
@@ -11,7 +11,7 @@ def surface_species_rate(
     surface_divergence_s_inv: ArrayLike,
     bulk_exchange_mol_m2_s: ArrayLike = 0.0,
     /,
-):
+) -> Array:
     gamma = jnp.asarray(surface_concentration)
     return (
         -jnp.asarray(tangential_flux_divergence)

@@ -644,7 +644,7 @@ def prepare_deflation(
         orthogonality_error,
         residual_norms,
         finite,
-        tuple(operator.source.shape),
+        (operator.site_count, operator.spin_components, operator.color_components),
         operator.operator_id,
         prepared_id,
     )

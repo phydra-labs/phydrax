@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -17,6 +17,10 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree, validate_real_inexact_tree
 from ._geometry import ContinuationRepresentationPolicy
+
+
+if TYPE_CHECKING:
+    from ..linalg import AbstractVectorSpace
 
 
 def _parameter_paths(tree: PyTree[Any], /) -> tuple[str, ...]:
@@ -614,7 +618,9 @@ class AbstractContinuationAdapter(StrictModule):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def declared_spaces(self, /):
+    def declared_spaces(
+        self, /
+    ) -> tuple[AbstractVectorSpace | None, AbstractVectorSpace | None]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -622,11 +628,13 @@ class AbstractContinuationAdapter(StrictModule):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def residual(self, state: PyTree[Any], coordinate: Any, args: Any = None, /):
+    def residual(
+        self, state: PyTree[Any], coordinate: Any, args: Any = None, /
+    ) -> PyTree[Array]:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def parameters(self, coordinate: Any, args: Any = None, /):
+    def parameters(self, coordinate: Any, args: Any = None, /) -> PyTree[Array]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -637,7 +645,7 @@ class AbstractContinuationAdapter(StrictModule):
         tangent: PyTree[Any],
         args: Any = None,
         /,
-    ):
+    ) -> PyTree[Array]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -647,7 +655,7 @@ class AbstractContinuationAdapter(StrictModule):
         coordinate: Any,
         args: Any = None,
         /,
-    ):
+    ) -> PyTree[Array]:
         raise NotImplementedError
 
 
@@ -821,16 +829,20 @@ class CallableContinuationAdapter(AbstractContinuationAdapter):
             return None
         return self.restore_function(data, args)
 
-    def declared_spaces(self, /):
+    def declared_spaces(
+        self, /
+    ) -> tuple[AbstractVectorSpace | None, AbstractVectorSpace | None]:
         return self.continuation_problem.declared_spaces()
 
     def representation_policy(self, /) -> ContinuationRepresentationPolicy:
         return self.continuation_problem.representation_policy()
 
-    def residual(self, state: PyTree[Any], coordinate: Any, args: Any = None, /):
+    def residual(
+        self, state: PyTree[Any], coordinate: Any, args: Any = None, /
+    ) -> PyTree[Array]:
         return self.continuation_problem.residual(state, coordinate, args)
 
-    def parameters(self, coordinate: Any, args: Any = None, /):
+    def parameters(self, coordinate: Any, args: Any = None, /) -> PyTree[Array]:
         return self.continuation_problem.parameters(coordinate, args)
 
     def state_jacobian_action(
@@ -840,7 +852,7 @@ class CallableContinuationAdapter(AbstractContinuationAdapter):
         tangent: PyTree[Any],
         args: Any = None,
         /,
-    ):
+    ) -> PyTree[Array]:
         return self.continuation_problem.state_jacobian_action(
             state, coordinate, tangent, args
         )
@@ -851,7 +863,7 @@ class CallableContinuationAdapter(AbstractContinuationAdapter):
         coordinate: Any,
         args: Any = None,
         /,
-    ):
+    ) -> PyTree[Array]:
         return self.continuation_problem.coordinate_derivative(state, coordinate, args)
 
 

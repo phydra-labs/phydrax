@@ -18,6 +18,7 @@ import numpy as np
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ._grading import PolynomialVariableGroup
 from ._system import SparsePolynomialSupport
 
 
@@ -194,7 +195,7 @@ class ExactSparsePolynomialSystem(StrictModule):
         coefficients: Sequence[object],
         domain: ExactCoefficientDomain = QQ,
         *,
-        groups: Sequence[object] = (),
+        groups: Sequence[PolynomialVariableGroup] = (),
     ) -> ExactSparsePolynomialSystem:
         """Jointly canonicalize COO terms and their exact host coefficients."""
         support = SparsePolynomialSupport(

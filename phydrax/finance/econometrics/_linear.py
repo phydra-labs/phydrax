@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 import equinox as eqx
@@ -131,7 +132,7 @@ class CointegrationDefinition(StrictModule):
         *,
         lag_differences: int = 0,
         deterministic: Literal["constant", "none"] = "constant",
-        critical_values: ArrayLike = (),
+        critical_values: ArrayLike | Sequence[float] = (),
     ) -> None:
         lags = int(lag_differences)
         if lags < 0:

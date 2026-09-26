@@ -102,8 +102,10 @@ class ImplicitStageResidual(StrictModule):
         self.system = system
         self.input_policy = input_policy
 
-    def trial_valid(self, increment, arguments, /):
-        def active(_):
+    def trial_valid(
+        self, increment: Array, arguments: ImplicitStageArguments, /
+    ) -> Array:
+        def active(_: None) -> Array:
             state = arguments.physical_state(increment)
             inputs = (
                 None
@@ -133,7 +135,7 @@ class ImplicitStageResidual(StrictModule):
         if not isinstance(arguments, ImplicitStageArguments):
             raise TypeError("arguments must be ImplicitStageArguments.")
 
-        def active(_):
+        def active(_: None) -> Array:
             state = arguments.physical_state(increment)
             state_rate = arguments.state_rate(increment)
             inputs = (

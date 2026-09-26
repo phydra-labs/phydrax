@@ -5,10 +5,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -66,15 +68,15 @@ class PreparedAtmosphericBalance(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        system,
-        discretization,
-        reference,
-        face_reference,
+        system: HomogeneousMixtureEulerSystem,
+        discretization: FiniteVolumeDiscretization,
+        reference: ArrayLike,
+        face_reference: Sequence[ArrayLike],
         *,
-        gravity,
-        boundaries,
-        prescribed,
-        order=2,
+        gravity: float,
+        boundaries: tuple[tuple[str, str], ...],
+        prescribed: tuple[tuple[Array | None, Array | None], ...],
+        order: int = 2,
     ) -> None:
         if not isinstance(system, HomogeneousMixtureEulerSystem):
             raise TypeError("Atmospheric balance requires HomogeneousMixtureEulerSystem.")
@@ -140,14 +142,18 @@ class PreparedAtmosphericBalance(StrictModule, NonTrainableState):
         else:
             ghost_lower, ghost_upper = delta[0], delta[-1]
             normal = self.system.species_count + axis
+            prescribed_lower, prescribed_upper = self.prescribed[axis]
             if lower == "closed":
                 ghost_lower = ghost_lower.at[..., normal].multiply(-1.0)
             else:
-                ghost_lower = self.prescribed[axis][0] - reference[0]
+                # Prescribed sides always carry exterior data by construction.
+                assert prescribed_lower is not None
+                ghost_lower = prescribed_lower - reference[0]
             if upper == "closed":
                 ghost_upper = ghost_upper.at[..., normal].multiply(-1.0)
             else:
-                ghost_upper = self.prescribed[axis][1] - reference[-1]
+                assert prescribed_upper is not None
+                ghost_upper = prescribed_upper - reference[-1]
         padded = jnp.concatenate((ghost_lower[None], delta, ghost_upper[None]), axis=0)
         slope = jnp.zeros_like(padded)
         if self.order == 2:

@@ -26,6 +26,7 @@ from ._buckling import LocalMemberBucklingResult
 from ._construction import ConstructionSequenceResult
 from ._equilibrium import MemberNetworkResult
 from ._prestress import PrestressRealizabilityResult, StructuralEvidenceVerdict
+from ._reference import MemberNetworkDefinition
 
 
 class MemberSizingEvaluation(StrictModule):
@@ -143,7 +144,7 @@ class StructuralVerificationResult(StrictModule):
 
 
 def evaluate_member_sizing(
-    definition,
+    definition: MemberNetworkDefinition,
     result: MemberNetworkResult,
     /,
     *,
@@ -208,7 +209,7 @@ def solve_continuous_member_sizing(
 ) -> ContinuousMemberSizingResult:
     """Solve one continuous sizing problem through ordinary PhydraX optimization."""
 
-    def objective(design, arguments):
+    def objective(design: PyTree[Any], arguments: Any) -> Array:
         evaluation = problem.evaluate_design(design, arguments)
         if not isinstance(evaluation, MemberSizingEvaluation):
             raise TypeError("evaluate_design must return MemberSizingEvaluation.")
@@ -217,7 +218,11 @@ def solve_continuous_member_sizing(
     constraints = []
     for constraint in problem.constraints:
 
-        def value(design, arguments, constraint=constraint):
+        def value(
+            design: PyTree[Any],
+            arguments: Any,
+            constraint: MemberSizingConstraint = constraint,
+        ) -> PyTree[Any]:
             evaluation = problem.evaluate_design(design, arguments)
             return constraint.function(evaluation, design, arguments)
 

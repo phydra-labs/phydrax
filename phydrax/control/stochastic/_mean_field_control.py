@@ -33,6 +33,7 @@ from ...stochastic import (
     EmpiricalMeanField,
     evaluate_bsde,
     evaluate_mean_field_bsde_control,
+    MeanFieldBSDEControlAdapter,
     MeanFieldBSDEProblem,
     MeanFieldSnapshot,
 )
@@ -265,7 +266,7 @@ class MeanFieldControlProblem(StrictModule):
         return self.base_problem.mean_field
 
     @property
-    def adapter(self):
+    def adapter(self) -> MeanFieldBSDEControlAdapter:
         adapter = self.base_problem.control_adapter
         if adapter is None:  # Constructor makes this unreachable after valid creation.
             raise RuntimeError("Planner control adapter is unavailable.")
@@ -489,7 +490,9 @@ def evaluate_mean_field_control_planner(
         time = paths.times[step]
         snapshot = problem.mean_field.snapshot(time)
 
-        def stationarity_at_path(state, value, bsde_control, action):
+        def stationarity_at_path(
+            state: Array, value: Array, bsde_control: Array, action: Array
+        ) -> Array:
             output = jnp.asarray(
                 problem.hamiltonian_stationarity(
                     time,
@@ -507,7 +510,9 @@ def evaluate_mean_field_control_planner(
                 )
             return output
 
-        def externality_at_path(state, value, bsde_control, action):
+        def externality_at_path(
+            state: Array, value: Array, bsde_control: Array, action: Array
+        ) -> Array:
             output = jnp.asarray(
                 problem.externality.running(
                     time,
@@ -523,7 +528,7 @@ def evaluate_mean_field_control_planner(
                 raise ValueError("running externality returned an incompatible shape.")
             return output
 
-        def welfare_at_path(state, action):
+        def welfare_at_path(state: Array, action: Array) -> Array:
             output = jnp.asarray(
                 problem.welfare_running(time, state, snapshot, action, base.args)
             )
@@ -548,7 +553,7 @@ def evaluate_mean_field_control_planner(
     flat_running_welfare = jnp.stack(welfare_steps, axis=1)
     terminal_snapshot = problem.mean_field.snapshot(paths.times[-1])
 
-    def terminal_externality_at_path(state):
+    def terminal_externality_at_path(state: Array) -> Array:
         output = jnp.asarray(
             problem.externality.terminal(state, terminal_snapshot, base.args)
         )
@@ -556,7 +561,7 @@ def evaluate_mean_field_control_planner(
             raise ValueError("terminal externality returned an incompatible shape.")
         return output
 
-    def terminal_welfare_at_path(state):
+    def terminal_welfare_at_path(state: Array) -> Array:
         output = jnp.asarray(
             problem.welfare_terminal(state, terminal_snapshot, base.args)
         )

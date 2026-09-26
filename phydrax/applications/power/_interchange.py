@@ -20,10 +20,10 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from math import inf, isfinite, pi
-from typing import Any, NoReturn
+from typing import cast, NoReturn, Protocol, TypeAlias
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -440,7 +440,9 @@ def parse_matpower(
         ctx.fail("/function", "Expected a numeric function mpc = case_name declaration.")
     ctx.token(header.group(1), "/function")
     cursor = header.end()
-    fields = {}
+    matrices: dict[str, list[list[float]]] = {}
+    numbers: dict[str, float] = {}
+    assigned: set[str] = set()
     assignment = re.compile(r"\s*mpc\.([A-Za-z][A-Za-z0-9_]*)\s*=\s*")
     while source[cursor:].strip():
         if re.fullmatch(r"\s*end\s*;?\s*", source[cursor:]):
@@ -456,7 +458,7 @@ def parse_matpower(
         path = f"/mpc/{name}"
         if name not in {"version", "baseMVA", "bus", "gen", "branch", "gencost"}:
             ctx.fail(path, "Unknown MATPOWER field semantics.", unsupported=True)
-        if name in fields:
+        if name in assigned:
             ctx.fail(path, "Duplicate assignment.")
         cursor = match.end()
         if name in {"bus", "gen", "branch", "gencost"}:
@@ -465,7 +467,8 @@ def parse_matpower(
             end = source.find("]", cursor + 1)
             if end < 0:
                 ctx.fail(path, "Unterminated matrix.")
-            fields[name] = _numeric_rows(ctx, source[cursor + 1 : end], path)
+            matrices[name] = _numeric_rows(ctx, source[cursor + 1 : end], path)
+            assigned.add(name)
             cursor = end + 1
         else:
             end = source.find(";", cursor)
@@ -477,22 +480,23 @@ def parse_matpower(
                     ctx.fail(
                         path, "Only MATPOWER version '2' is supported.", unsupported=True
                     )
-                fields[name] = token
+                assigned.add(name)
             else:
-                fields[name] = ctx.number(token, path)
+                numbers[name] = ctx.number(token, path)
+                assigned.add(name)
             cursor = end
         terminator = re.match(r"[ \t\r\n]*;", source[cursor:])
         if terminator is None:
             ctx.fail(path, "Assignment requires a semicolon.")
         cursor += terminator.end()
-    if not {"version", "baseMVA", "bus", "gen", "branch"}.issubset(fields):
+    if not {"version", "baseMVA", "bus", "gen", "branch"}.issubset(assigned):
         ctx.fail("/mpc", "Missing required case fields.")
-    base = fields["baseMVA"]
+    base = numbers["baseMVA"]
     if base <= 0:
         ctx.fail("/mpc/baseMVA", "Base MVA must be positive.")
     buses, branches, generators, loads, shunts = [], [], [], [], []
     controls: dict[str, BusControl] = {}
-    for row in fields["bus"]:
+    for row in matrices["bus"]:
         if len(row) != 13:
             ctx.fail(
                 "/mpc/bus", "Exactly 13 unsolved canonical bus columns are supported."
@@ -518,16 +522,16 @@ def parse_matpower(
             )
         if row[4] or row[5]:
             shunts.append(Shunt(bus=bid, g=row[4] / base, b=row[5] / base))
-    gen_rows = fields["gen"]
+    gen_rows = matrices["gen"]
     costs = [(0.0, 0.0, 0.0)] * len(gen_rows)
-    if "gencost" in fields:
-        if len(fields["gencost"]) != len(gen_rows):
+    if "gencost" in matrices:
+        if len(matrices["gencost"]) != len(gen_rows):
             ctx.fail(
                 "/mpc/gencost",
                 "Exactly one real-power cost row per generator is supported.",
                 unsupported=True,
             )
-        for index, row in enumerate(fields["gencost"]):
+        for index, row in enumerate(matrices["gencost"]):
             path = f"/mpc/gencost/{index}"
             if len(row) < 5:
                 ctx.fail(path, "Incomplete polynomial cost.")
@@ -583,7 +587,7 @@ def parse_matpower(
                 in_service=active,
             )
         )
-    for index, row in enumerate(fields["branch"]):
+    for index, row in enumerate(matrices["branch"]):
         path = f"/mpc/branch/{index}"
         if len(row) != 13:
             ctx.fail(path, "Exactly 13 unsolved canonical branch columns are supported.")
@@ -663,7 +667,7 @@ def _psse_fields(ctx: _Import, text: str, path: str) -> list[str]:
     return fields
 
 
-def _parse_psse_sections(lines: list[str], ctx: Any, /) -> list[list[list[str]]]:
+def _parse_psse_sections(lines: list[str], ctx: _Import, /) -> list[list[list[str]]]:
     sections: list[list[list[str]]] = [[]]
     terminated = False
     for index, line in enumerate(lines[3:], 4):
@@ -699,10 +703,10 @@ def _parse_psse_sections(lines: list[str], ctx: Any, /) -> list[list[list[str]]]
 
 def _parse_psse_network_sections(
     sections: list[list[list[str]]],
-    ctx: Any,
+    ctx: _Import,
     base: float,
     /,
-):
+) -> _PsseNetwork:
     for index, rows in enumerate(sections[6:], 6):
         if rows and index not in (6, 12, 14):
             ctx.fail(
@@ -812,7 +816,7 @@ def _parse_psse_network_sections(
                 f"{path}/{identifier}:{row[1]}",
                 "Out-of-service fixed shunt omitted from admittance.",
             )
-    machine_data: dict[tuple[str, str], tuple[str, bool, float, float, float]] = {}
+    machine_data: _PsseMachineData = {}
     active_generator_buses: set[str] = set()
     for row in sections[3]:
         path = "/RAW/generator"
@@ -957,14 +961,14 @@ def _parse_psse_network_sections(
 
 
 def _parse_psse_dynamics(
-    dyr_text: str | None,
-    machine_data: dict[Any, Any],
-    ctx: Any,
-    num,
-    bid,
+    dyr_text: str,
+    machine_data: _PsseMachineData,
+    ctx: _Import,
+    num: Callable[[list[str], int, str], float],
+    bid: Callable[[str, str], str],
     /,
-):
-    dynamics = []
+) -> list[ClassicalMachine]:
+    dynamics: list[ClassicalMachine] = []
     seen: set[tuple[str, str]] = set()
     # Slash terminates DYR records, including multiline records. Quoted strings
     # may not contain slash in this closed grammar (model and machine IDs only).
@@ -1084,6 +1088,44 @@ def parse_psse(
     )
 
 
+_CgmesResources: TypeAlias = dict[str, tuple[str, dict[str, str]]]
+_CgmesTerminals: TypeAlias = dict[str, list[tuple[int, str, str, bool]]]
+_PsseMachineData: TypeAlias = dict[tuple[str, str], tuple[str, bool, float, float, float]]
+_PsseNetwork: TypeAlias = tuple[
+    list[Bus],
+    list[Branch],
+    list[Generator],
+    list[Load],
+    list[Shunt],
+    _PsseMachineData,
+    dict[str, BusControl],
+    Callable[[list[str], int, str], float],
+    Callable[[str, str], str],
+]
+
+
+class _CgmesProps(Protocol):
+    def __call__(self, identifier: str, kind: str | None = None, /) -> dict[str, str]: ...
+
+
+class _CgmesValue(Protocol):
+    def __call__(
+        self, identifier: str, name: str, default: str | None = None, /
+    ) -> str: ...
+
+
+class _CgmesNumber(Protocol):
+    def __call__(
+        self, identifier: str, name: str, default: str | None = None, /
+    ) -> float: ...
+
+
+class _CgmesFlag(Protocol):
+    def __call__(
+        self, identifier: str, name: str, default: str | None = None, /
+    ) -> bool: ...
+
+
 _CIM = "http://iec.ch/TC57/2013/CIM-schema-cim16#"
 _RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 _MD = "http://iec.ch/TC57/61970-552/ModelDescription/1#"
@@ -1182,8 +1224,8 @@ def _rdf_id(value: str) -> str:
 def _parse_cgmes_document(
     document: int,
     text: str,
-    ctx: Any,
-    resources: dict[str, Any],
+    ctx: _Import,
+    resources: _CgmesResources,
     profiles: set[str],
     /,
 ) -> None:
@@ -1200,11 +1242,13 @@ def _parse_cgmes_document(
         )
     parser = ET.XMLPullParser(events=("start", "end"))
     depth = 0
-    root = None
+    root: ET.Element | None = None
     try:
         for start in range(0, len(text), 4096):
             parser.feed(text[start : start + 4096])
-            for event, element in parser.read_events():
+            # Only start/end events are requested, and both always carry an Element.
+            events = cast(Iterator[tuple[str, ET.Element]], parser.read_events())
+            for event, element in events:
                 if event == "start":
                     depth += 1
                     ctx.row(path)
@@ -1344,10 +1388,8 @@ def _parse_cgmes_document(
         resources[identifier] = (kind, properties)
 
 
-def _cgmes_resources(
-    ctx: _Import, texts: Sequence[str]
-) -> dict[str, tuple[str, dict[str, str]]]:
-    resources: dict[str, tuple[str, dict[str, str]]] = {}
+def _cgmes_resources(ctx: _Import, texts: Sequence[str]) -> _CgmesResources:
+    resources: _CgmesResources = {}
     profiles: set[str] = set()
     for document, text in enumerate(texts):
         _parse_cgmes_document(document, text, ctx, resources, profiles)
@@ -1365,8 +1407,16 @@ def _cgmes_resources(
     return resources
 
 
-def _build_cgmes_topology(resources, ctx, props, value, number, flag, /):
-    terminals: dict[str, list[tuple[int, str, str, bool]]] = {}
+def _build_cgmes_topology(
+    resources: _CgmesResources,
+    ctx: _Import,
+    props: _CgmesProps,
+    value: _CgmesValue,
+    number: _CgmesNumber,
+    flag: _CgmesFlag,
+    /,
+) -> tuple[_CgmesTerminals, dict[str, tuple[float, float]], dict[str, float]]:
+    terminals: _CgmesTerminals = {}
     bus_base: dict[str, float] = {}
     voltages: dict[str, tuple[float, float]] = {}
     for identifier, (kind, properties) in resources.items():
@@ -1418,19 +1468,31 @@ def _build_cgmes_topology(resources, ctx, props, value, number, flag, /):
 
 
 def _build_cgmes_equipment(
-    resources,
-    ctx,
-    props,
-    value,
-    number,
-    flag,
-    ends,
-    terminals,
-    bus_base,
-    base_mva,
+    resources: _CgmesResources,
+    ctx: _Import,
+    props: _CgmesProps,
+    value: _CgmesValue,
+    number: _CgmesNumber,
+    flag: _CgmesFlag,
+    ends: Callable[[str, int], list[tuple[int, str, str, bool]]],
+    terminals: _CgmesTerminals,
+    bus_base: dict[str, float],
+    base_mva: float,
     /,
-):
-    branches, generators, loads, shunts = [], [], [], []
+) -> tuple[
+    list[Branch],
+    list[Generator],
+    list[Load],
+    list[Shunt],
+    dict[str, str],
+    dict[str, float],
+    set[str],
+    set[str],
+]:
+    branches: list[Branch] = []
+    generators: list[Generator] = []
+    loads: list[Load] = []
+    shunts: list[Shunt] = []
     modes = {identifier: "pq" for identifier in bus_base}
     setpoints: dict[str, float] = {}
     used_controls: set[str] = set()
@@ -1633,22 +1695,22 @@ def _build_cgmes_equipment(
 
 
 def _finalize_cgmes_study(
-    resources,
-    ctx,
-    base_mva,
-    frequency,
-    bus_base,
-    voltages,
-    branches,
-    generators,
-    loads,
-    shunts,
-    modes,
-    setpoints,
-    used_controls,
-    used_units,
+    resources: _CgmesResources,
+    ctx: _Import,
+    base_mva: float,
+    frequency: float,
+    bus_base: dict[str, float],
+    voltages: dict[str, tuple[float, float]],
+    branches: Sequence[Branch],
+    generators: Sequence[Generator],
+    loads: Sequence[Load],
+    shunts: Sequence[Shunt],
+    modes: dict[str, str],
+    setpoints: dict[str, float],
+    used_controls: set[str],
+    used_units: set[str],
     /,
-) -> PowerStudy:
+) -> PowerCaseAdaptation:
     for identifier, (kind, _) in resources.items():
         if kind == "RegulatingControl" and identifier not in used_controls:
             ctx.fail(

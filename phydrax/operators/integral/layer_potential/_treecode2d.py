@@ -67,7 +67,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
             raise ValueError("Laplace treecode opening_angle must lie in (0, 1).")
         points = np.asarray(potential.panelization.points, dtype=np.float64)
         centers: list[np.ndarray] = []
-        radii: list[float] = []
+        radii: list[float | np.floating] = []
         children: list[list[int]] = []
         index_sets: list[np.ndarray] = []
 

@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable, Iterable
 from enum import StrEnum
+from typing import Any, Self
 
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.ein import contract
 
@@ -25,6 +27,7 @@ from ..discretization import (
     RigidBodyLoad,
 )
 from ._sites import AtomisticInteractionSiteState
+from ._units import AtomisticUnitSystem
 
 
 class SplittingOperatorKind(StrEnum):
@@ -42,7 +45,12 @@ class AtomisticSplittingPlan(StrictModule, NonTrainableState):
     coefficients: tuple[float, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, operators, coefficients, /) -> None:
+    def __init__(
+        self,
+        operators: Iterable[SplittingOperatorKind],
+        coefficients: Iterable[float],
+        /,
+    ) -> None:
         ops = tuple(operators)
         coeff = tuple(float(value) for value in coefficients)
         if (
@@ -63,7 +71,7 @@ class AtomisticSplittingPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def velocity_verlet(cls, /, *, constrained: bool = False):
+    def velocity_verlet(cls, /, *, constrained: bool = False) -> Self:
         operators = [SplittingOperatorKind.FORCE_KICK, SplittingOperatorKind.DRIFT]
         coefficients = [0.5, 1.0]
         if constrained:
@@ -77,7 +85,7 @@ class AtomisticSplittingPlan(StrictModule, NonTrainableState):
         return cls(operators, coefficients)
 
     @classmethod
-    def baoab(cls, /, *, constrained: bool = False):
+    def baoab(cls, /, *, constrained: bool = False) -> Self:
         operators = [
             SplittingOperatorKind.FORCE_KICK,
             SplittingOperatorKind.DRIFT,
@@ -108,7 +116,17 @@ class AbstractThermostatPlan(StrictModule, NonTrainableState):
 
     @abc.abstractmethod
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: Key[Array, ""],
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
     ) -> ThermostatResult:
         raise NotImplementedError
 
@@ -131,8 +149,18 @@ class BussiThermostatPlan(AbstractThermostatPlan):
         )
 
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
-    ):
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: Key[Array, ""],
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
+    ) -> ThermostatResult:
         del auxiliary
         p = jnp.asarray(momenta)
         mobile = jnp.asarray(mobile_mask)
@@ -193,8 +221,18 @@ class NoseHooverChainPlan(AbstractThermostatPlan):
         )
 
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
-    ):
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: Key[Array, ""],
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
+    ) -> ThermostatResult:
         del key, step
         p = jnp.asarray(momenta)
         mobile = jnp.asarray(mobile_mask)
@@ -278,8 +316,18 @@ class GeneralizedLangevinPlan(AbstractThermostatPlan):
         )
 
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
-    ):
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: Key[Array, ""],
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
+    ) -> ThermostatResult:
         p = jnp.asarray(momenta)
         auxiliary_count = self.drift_matrix.shape[0] - 1
         expected = p.shape + (auxiliary_count,)
@@ -348,8 +396,18 @@ class NoisyForceLangevinPlan(AbstractThermostatPlan):
         )
 
     def apply(
-        self, momenta, masses, mobile_mask, key, step, dt, units, /, *, auxiliary=None
-    ):
+        self,
+        momenta: ArrayLike,
+        masses: Array,
+        mobile_mask: ArrayLike,
+        key: Key[Array, ""],
+        step: ArrayLike,
+        dt: float | Array,
+        units: AtomisticUnitSystem,
+        /,
+        *,
+        auxiliary: ArrayLike | None = None,
+    ) -> ThermostatResult:
         return self.base.apply(
             momenta,
             masses,
@@ -409,7 +467,9 @@ class AnisotropicPressurePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def update_cell(self, cell_vectors, observed_pressure, dt, /):
+    def update_cell(
+        self, cell_vectors: ArrayLike, observed_pressure: ArrayLike, dt: ArrayLike, /
+    ) -> Array:
         cell = jnp.asarray(cell_vectors)
         observed_value = jnp.asarray(observed_pressure, dtype=cell.dtype)
         if cell.shape != (3, 3) or observed_value.shape not in ((), (3,), (3, 3)):
@@ -512,9 +572,9 @@ def rotational_velocity_verlet(
     bodies: PreparedRigidBodySet,
     state: RotationalAtomisticState,
     step_size: ArrayLike,
-    load_function,
+    load_function: Callable[[Array, RigidBodyKinematics, Any], RigidBodyLoad],
     /,
-):
+) -> RotationalAtomisticState:
     result = rigid_body_kick_drift_kick(
         bodies,
         state.kinematics,
@@ -545,7 +605,15 @@ class BrownianDynamicsPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def step(self, positions, forces, dt, key, units, /):
+    def step(
+        self,
+        positions: Array,
+        forces: Array,
+        dt: float | Array,
+        key: Key[Array, ""],
+        units: AtomisticUnitSystem,
+        /,
+    ) -> Array:
         noise = jr.normal(key, jnp.asarray(positions).shape)
         diffusion = self.mobility * units.boltzmann_constant * self.temperature
         return (

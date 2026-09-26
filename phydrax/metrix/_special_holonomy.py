@@ -627,7 +627,7 @@ class G2DerivationInvarianceReport(StrictModule):
 
 def validate_g2_derivations(
     bridge: OctonionG2Bridge,
-    derivations,
+    derivations: object,
     /,
     *,
     tolerance: float = 1e-9,

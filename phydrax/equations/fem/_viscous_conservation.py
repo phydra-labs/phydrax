@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -26,8 +26,13 @@ from ...discretization.finite_volume._physical_boundaries import (
 )
 from .._gas_dynamics import HomogeneousMixtureCompressibleNavierStokesSystem
 from .._hyperbolic_systems import (
+    AbstractConservationSystem,
     AbstractEntropyDiffusionSystem,
 )
+
+
+if TYPE_CHECKING:
+    from .._conservation import _ConservationLinearization
 
 
 class EntropyDiffusionEvidence(StrictModule, NonTrainableState):
@@ -38,7 +43,7 @@ class EntropyDiffusionEvidence(StrictModule, NonTrainableState):
 
 
 def entropy_diffusion_evidence(
-    system: AbstractEntropyDiffusionSystem,
+    system: AbstractConservationSystem,
     state: ArrayLike,
     conserved_gradient: ArrayLike,
     args: Any = None,
@@ -78,8 +83,8 @@ class ViscousBoundaryClosure(StrictModule, NonTrainableState):
         boundary_id: str,
         /,
         *,
-        gradient_provider=None,
-        normal_flux_provider=None,
+        gradient_provider: ArrayLike | None = None,
+        normal_flux_provider: ArrayLike | None = None,
     ) -> None:
         identifier = str(boundary_id)
         gradient = lambda time, state, gradient, points, normal, args: (
@@ -601,7 +606,9 @@ class PreparedViscousDGOperator(StrictModule):
     def weak_residual(self, time: Array, state: ArrayLike, args: Any = None, /) -> Array:
         return -self.dynamics.mass_operator.mv(self.rate(time, state, args))
 
-    def linearize(self, time: Array, state: ArrayLike, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: ArrayLike, args: Any = None, /
+    ) -> _ConservationLinearization:
         value = self.dynamics._state(state)
         linearization = la.prepare_linearization(
             lambda candidate: self.rate(time, candidate, args), value

@@ -19,6 +19,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._kinetic_entropy import (
     KineticEntropyRootPlan,
+    KineticEntropyRootStrategy,
     solve_kinetic_entropy_root,
 )
 from ._lattice import LatticeBoltzmannVelocitySet
@@ -35,6 +36,9 @@ from ._moments import (
     RelaxationSpectrumPlan,
 )
 from ._precision import LatticeBoltzmannPrecisionPolicy
+
+
+_KBCRootCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class LatticeBoltzmannCollisionDiagnostics(StrictModule):
@@ -260,7 +264,7 @@ class EntropicCollisionPlan(StrictModule, NonTrainableState):
         *,
         iterations: int = 24,
         tolerance: float = 1.0e-11,
-        strategy: str = "exact",
+        strategy: KineticEntropyRootStrategy = "exact",
     ) -> None:
         selected = (
             KineticEntropyRootPlan(
@@ -670,7 +674,7 @@ def _kbc_candidate(
         current = jnp.minimum(jnp.maximum(quadratic_gamma, lower), upper)
         counts = jnp.zeros(current.shape, dtype=jnp.int32)
 
-        def iteration(_, state):
+        def iteration(_: int, state: _KBCRootCarry) -> _KBCRootCarry:
             value, lo, hi, current_active, step_counts = state
             function = derivative_at(value)
             candidate_populations = base + value[..., None] * direction
@@ -864,6 +868,7 @@ def collide_detailed(
             stress_norm,
             coefficient_active,
             support_satisfied,
+            plan.coefficient,
         )
     elif isinstance(plan, CentralMomentCollisionPlan):
         basis = prepared.basis
@@ -991,6 +996,7 @@ def collide_detailed(
             stress_norm,
             coefficient_active,
             support_satisfied,
+            smagorinsky_coefficient,
         ) = smagorinsky_values
         evidence_finite = finite & jnp.all(
             jnp.isfinite(tau_eff)
@@ -1012,7 +1018,7 @@ def collide_detailed(
             finite=evidence_finite,
             successful=successful,
             support_satisfied=support_satisfied,
-            coefficient=plan.coefficient,
+            coefficient=smagorinsky_coefficient,
             coefficient_lower_bound=0.0,
             coefficient_requires_finite=True,
             base_relaxation_rate_bounds=(0.0, 2.0),

@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 from numbers import Integral
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._strict import StrictModule
 from ..optim import (
@@ -28,6 +29,9 @@ from ._gp_multioutput import (
     MultiOutputGaussianProcessLikelihoodState,
 )
 from ._posterior import ParameterSpace
+
+
+_StateT = TypeVar("_StateT")
 
 
 class GaussianProcessKernelFitPolicy(StrictModule):
@@ -158,7 +162,7 @@ def fit_gaussian_process_kernel(
     ):
         raise TypeError("Kernel fitting requires real floating-point data.")
 
-    def objective(position, _):
+    def objective(position: PyTree[Any], _: object) -> Array:
         state = policy.parameter_space.constrain(position)
         likelihood = _negative_log_marginal_likelihood(design, observations, state)
         return likelihood - policy.parameter_space.unconstrained_log_prior(position)
@@ -217,7 +221,7 @@ def fit_multioutput_gaussian_process_kernel(
         )
     )
 
-    def objective(position, _):
+    def objective(position: PyTree[Any], _: object) -> Array:
         state = policy.parameter_space.constrain(position)
         likelihood = -discrepancy.log_marginal_likelihood(mean, state=state)
         return likelihood - policy.parameter_space.unconstrained_log_prior(position)
@@ -258,7 +262,9 @@ def fit_multioutput_gaussian_process_kernel(
     )
 
 
-def _select_fit_state(proposed, previous, accepted, /):
+def _select_fit_state(
+    proposed: _StateT, previous: _StateT, accepted: Array, /
+) -> _StateT:
     return jax.tree_util.tree_map(
         lambda proposed_leaf, previous_leaf: jnp.where(
             accepted,

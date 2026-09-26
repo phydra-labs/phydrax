@@ -268,7 +268,7 @@ def particle_pair_geometry(
     left = value[pairs.left_indices]
     right = value[pairs.right_indices]
     displacement = left - right
-    if cell_vectors is not None:
+    if cell_vectors is not None and isinstance(box, PeriodicCell):
         displacement = box.minimum_image_with_vectors(displacement, cell_vectors)
     elif box is not None:
         displacement = box.minimum_image(displacement)

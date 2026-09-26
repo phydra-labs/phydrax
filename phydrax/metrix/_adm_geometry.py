@@ -9,6 +9,7 @@ from math import pi
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -279,7 +280,7 @@ def _momentum_source(
     value: ArrayLike | None,
     leading_shape: tuple[int, ...],
     spatial_dimension: int,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> Array:
     expected = leading_shape + (spatial_dimension,)

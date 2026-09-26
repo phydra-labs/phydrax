@@ -93,7 +93,7 @@ class MACRigidImmersedContactMethod(StrictModule, NonTrainableState):
         self,
         time: ArrayLike,
         fluid_state: ArrayLike,
-        body_kinematics,
+        body_kinematics: RigidBodyKinematics,
         contact_state: HardContactState,
         geometry: RigidContactGeometryProvider,
         /,

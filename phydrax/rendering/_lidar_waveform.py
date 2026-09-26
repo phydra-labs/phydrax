@@ -291,7 +291,7 @@ class LidarReturnExtractionPlan:
         candidates = jnp.where(peaks, matched, -jnp.inf)
         bin_indices = jnp.arange(matched.shape[1])
 
-        def select_one(scores):
+        def select_one(scores: Array) -> tuple[Array, Array, Array, Array]:
             initial = (
                 scores,
                 jnp.full((self.return_capacity,), -1, dtype=jnp.int32),
@@ -299,7 +299,9 @@ class LidarReturnExtractionPlan:
                 jnp.zeros((self.return_capacity,), dtype=jnp.bool_),
             )
 
-            def choose(index, state):
+            def choose(
+                index: Array, state: tuple[Array, Array, Array, Array]
+            ) -> tuple[Array, Array, Array, Array]:
                 remaining, selected, amplitudes, valid = state
                 peak = jnp.argmax(remaining).astype(jnp.int32)
                 amplitude = remaining[peak]
@@ -452,7 +454,7 @@ class AtmosphericLidarPlan(StrictModule, NonTrainableState):
         evidence = LidarWaveformEvidence(
             jnp.sum(beta * self.segment_lengths),
             received,
-            0.0,
+            jnp.zeros((), dtype=received.dtype),
             finite,
             jnp.asarray(True),
             finite,
@@ -684,7 +686,7 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
             LidarWaveformEvidence(
                 jnp.asarray(ray_count, dtype=waveform.dtype),
                 received,
-                0.0,
+                jnp.zeros((), dtype=received.dtype),
                 finite,
                 jnp.asarray(True),
                 finite,

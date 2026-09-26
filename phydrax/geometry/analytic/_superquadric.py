@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, Key
 
 from phydrax.ein import contract
 
@@ -35,6 +35,7 @@ from .._sampling import (
     bounded_rejection_sample,
     complete_sampling_result,
     RejectionSamplingPlan,
+    SamplingResult,
 )
 from .._validity import GeometryValidityEvidence
 from ..design._schema import (
@@ -171,13 +172,13 @@ class _SuperquadricKernel(GeometryKernel):
 
     def __init__(
         self,
-        center,
-        semi_axes,
-        orientation,
-        first_blockiness,
-        second_blockiness,
+        center: ParameterBinding,
+        semi_axes: ParameterBinding,
+        orientation: ParameterBinding,
+        first_blockiness: ParameterBinding,
+        second_blockiness: ParameterBinding,
         *,
-        source_id,
+        source_id: str,
     ) -> None:
         self.center = center
         self.semi_axes = semi_axes
@@ -206,7 +207,7 @@ class _SuperquadricKernel(GeometryKernel):
     def field_certificate(self) -> FieldCertificate:
         return _SUPERQUADRIC_CERTIFICATE
 
-    def _parameters(self, state):
+    def _parameters(self, state: DesignState) -> tuple[Array, Array, Array, Array, Array]:
         orientation = self.orientation.read(state)
         orientation = orientation / jnp.maximum(
             jnp.linalg.norm(orientation), jnp.finfo(orientation.dtype).eps
@@ -219,7 +220,7 @@ class _SuperquadricKernel(GeometryKernel):
             self.second_blockiness.read(state),
         )
 
-    def geometry_validity(self, state, /) -> GeometryValidityEvidence:
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         axes = self.semi_axes.read(state)
         orientation = self.orientation.read(state)
         first = self.first_blockiness.read(state)
@@ -256,24 +257,26 @@ class _SuperquadricKernel(GeometryKernel):
         value = superquadric_norm(local, axes, first, second) - 1.0
         return value * jnp.min(axes)
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.boundary_field(state, points) <= 0.0
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, 3)
 
-        def field(point):
+        def field(point: Array) -> Array:
             return self.boundary_field(state, point[None, :])[0]
 
         gradient = jax.vmap(jax.grad(field))(points_)
         norm = jnp.linalg.norm(gradient, axis=-1, keepdims=True)
         return gradient / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
 
-    def contact_curvature(self, state, points, /):
+    def contact_curvature(
+        self, state: DesignState, points: Array, /
+    ) -> ContactCurvatureResult:
         points_ = _check_points(points, 3)
         _, axes, _, _, _ = self._parameters(state)
 
-        def field(point):
+        def field(point: Array) -> Array:
             return self.boundary_field(state, point[None, :])[0]
 
         gradient_function = jax.grad(field)
@@ -281,7 +284,7 @@ class _SuperquadricKernel(GeometryKernel):
         step = jnp.sqrt(jnp.finfo(points_.dtype).eps) * jnp.minimum(jnp.min(axes), 1.0)
         offsets = step * jnp.eye(3, dtype=points_.dtype)
 
-        def point_hessian(point):
+        def point_hessian(point: Array) -> Array:
             plus = jax.vmap(gradient_function)(point[None, :] + offsets)
             minus = jax.vmap(gradient_function)(point[None, :] - offsets)
             value = ((plus - minus) / (2.0 * step)).T
@@ -306,13 +309,13 @@ class _SuperquadricKernel(GeometryKernel):
             ambient_dimension=3,
         )
 
-    def support_map(self, state, directions: Array, /) -> Array:
+    def support_map(self, state: DesignState, directions: Array, /) -> Array:
         direction = _check_points(directions, 3)
         center, axes, orientation, first, second = self._parameters(state)
         rotation = quaternion_rotation_matrix(orientation)
         local_direction = direction @ rotation
 
-        def dual_norm(value):
+        def dual_norm(value: Array) -> Array:
             first_dual = first / (first - 1.0)
             second_dual = second / (second - 1.0)
             scaled = axes * value
@@ -324,13 +327,13 @@ class _SuperquadricKernel(GeometryKernel):
         local_support = jax.vmap(jax.grad(dual_norm))(local_direction)
         return center + local_support @ rotation.T
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         center, axes, orientation, _, _ = self._parameters(state)
         rotation = quaternion_rotation_matrix(orientation)
         extent = jnp.abs(rotation) @ axes
         return jnp.stack((center - extent, center + extent))
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         _, axes, _, first, second = self._parameters(state)
         log_area_factor = (
             jnp.log(4.0)
@@ -344,17 +347,25 @@ class _SuperquadricKernel(GeometryKernel):
         )
         return 2.0 * jnp.prod(axes) * jnp.exp(log_area_factor + log_integral)
 
-    def boundary_measure(self, state, /) -> NoReturn:
+    def boundary_measure(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError(
             "Superquadric boundary measure requires an explicit cubature plan."
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         bounds = self.bounds(state)
         selected = RejectionSamplingPlan() if plan is None else plan
 
-        def proposal(proposal_key, count):
+        def proposal(proposal_key: Key[Array, ""], count: int) -> Array:
             return jr.uniform(
                 proposal_key,
                 shape=(count, 3),
@@ -373,7 +384,9 @@ class _SuperquadricKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> SamplingResult:
         center, axes, orientation, first, second = self._parameters(state)
         count = int(num_points)
         direction = jr.normal(key, (count, 3), dtype=center.dtype)
@@ -387,14 +400,16 @@ class _SuperquadricKernel(GeometryKernel):
             center + (scale[:, None] * direction) @ rotation.T
         )
 
-    def boundary_atlas(self, state, /) -> BoundaryAtlas:
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         del state
         raise NotImplementedError(
             "Superquadric boundary atlas requires a dedicated chart plan."
         )
 
 
-def superquadric_norm(local, semi_axes, first_blockiness, second_blockiness):
+def superquadric_norm(
+    local: Array, semi_axes: Array, first_blockiness: Array, second_blockiness: Array
+) -> Array:
     scaled = local / semi_axes
     planar = (
         _even_power(scaled[..., 0], first_blockiness)
@@ -405,11 +420,11 @@ def superquadric_norm(local, semi_axes, first_blockiness, second_blockiness):
     )
 
 
-def _even_power(value, exponent):
+def _even_power(value: Array, exponent: Array) -> Array:
     return jnp.square(value) ** (0.5 * exponent)
 
 
-def quaternion_rotation_matrix(quaternion):
+def quaternion_rotation_matrix(quaternion: Array) -> Array:
     q = quaternion / jnp.maximum(jnp.linalg.norm(quaternion), 1.0e-30)
     w, x, y, z = q
     return jnp.asarray(

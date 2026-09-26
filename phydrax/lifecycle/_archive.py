@@ -818,6 +818,7 @@ def _export_npz(query_: LifecycleQuery, destination: Path, /) -> Path:
     buffer = io.BytesIO()
     np.savez(
         buffer,
+        allow_pickle=True,
         metadata=np.asarray(json.dumps(metadata, sort_keys=True)),
         **arrays,
     )

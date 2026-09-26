@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -266,7 +267,7 @@ class ChemistryWorkSchedulePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, dtype=jnp.float64) -> ChemistryWorkScheduleState:
+    def initialize(self, dtype: DTypeLike = jnp.float64) -> ChemistryWorkScheduleState:
         costs = jnp.ones((self.block_count,), dtype=dtype)
         assignment, _ = self._assign(costs)
         return ChemistryWorkScheduleState(
@@ -278,7 +279,7 @@ class ChemistryWorkSchedulePlan(StrictModule, NonTrainableState):
         assignment = -jnp.ones((self.block_count,), dtype=jnp.int32)
         loads = jnp.zeros((self.worker_count,), dtype=cost.dtype)
 
-        def body(index, carry):
+        def body(index: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             assigned, worker_load = carry
             block = order[index]
             worker = jnp.argmin(worker_load).astype(jnp.int32)

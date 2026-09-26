@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax import ein
@@ -100,7 +101,7 @@ class LieAlgebraCoordinateMetric(StrictModule, NonTrainableState):
         leading_shape: Sequence[int],
         /,
         *,
-        dtype: object = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
     ) -> Array:
         """Sample covector momentum with covariance equal to the Gram matrix."""
         leading = tuple(leading_shape)

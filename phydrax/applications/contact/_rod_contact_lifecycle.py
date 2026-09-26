@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import IntEnum
 from math import isfinite
 from typing import Any
@@ -2370,7 +2370,7 @@ def build_rod_contact_velocity_operator(
     )
     safe_indices = jnp.clip(local_indices, 0, participant.surface_plan.vertex_count - 1)
 
-    def action(rate):
+    def action(rate: PyTree[Array]) -> Array:
         surface_velocity = participant.velocities(configuration_, rate)
         gathered = jnp.where(inside[..., None], surface_velocity[safe_indices], 0.0)
         relative = jnp.sum(witnesses.coefficients[..., None] * gathered, axis=1)
@@ -2381,7 +2381,7 @@ def build_rod_contact_velocity_operator(
         local = jnp.concatenate((normal_velocity, tangent_velocity), axis=-1)
         return jnp.where(witnesses.valid[:, None], local, 0.0)
 
-    def transpose_action(local_impulse):
+    def transpose_action(local_impulse: Array) -> PyTree[Array]:
         local = jnp.where(witnesses.valid[:, None], local_impulse, 0.0)
         world = witnesses.normal * local[:, :1] + jnp.sum(
             witnesses.tangent_basis * local[:, None, 1:], axis=-1
@@ -2442,7 +2442,7 @@ def build_capsule_contact_velocity_operator(
     centerline = participant.positions(configuration_)
     segment_nodes = participant.geometry.rod.plan.segment_node_ids
 
-    def radial_fallback(indices, radii):
+    def radial_fallback(indices: Array, radii: Array) -> Array:
         nodes = segment_nodes[indices]
         axes = centerline[nodes[:, 1]] - centerline[nodes[:, 0]]
         axes = axes / jnp.linalg.norm(axes, axis=-1, keepdims=True)
@@ -2474,7 +2474,7 @@ def build_capsule_contact_velocity_operator(
         right_fallback,
     )
 
-    def action(rate):
+    def action(rate: PyTree[Array]) -> Array:
         left_velocity = participant.surface_velocity(
             configuration_,
             rate,
@@ -2497,7 +2497,7 @@ def build_capsule_contact_velocity_operator(
         local = jnp.concatenate((normal_velocity, tangent_velocity), axis=-1)
         return jnp.where(witnesses.valid[:, None], local, 0.0)
 
-    def transpose_action(local_impulse):
+    def transpose_action(local_impulse: Array) -> PyTree[Array]:
         local = jnp.where(witnesses.valid[:, None], local_impulse, 0.0)
         world = witnesses.normal * local[:, :1] + jnp.sum(
             witnesses.tangent_basis * local[:, None, 1:], axis=-1
@@ -2686,7 +2686,7 @@ class CompositeContactResponse(StrictModule, NonTrainableState):
         if not isinstance(solver_, ContactConeSolverPlan):
             raise TypeError("solver must be ContactConeSolverPlan or None.")
 
-        def delassus_action(local_impulse):
+        def delassus_action(local_impulse: Array) -> Array:
             total = contact_space.zeros()
             for block in values:
                 effort = dual_transpose(block.velocity_operator).mv(local_impulse)
@@ -2794,7 +2794,7 @@ def _local_values(
 
 
 def _matrix_free_contact_solve(
-    action,
+    action: Callable[[Array], Array],
     free: Array,
     compliance: Array,
     friction: Array,
@@ -2805,7 +2805,7 @@ def _matrix_free_contact_solve(
 ) -> tuple[Array, Array, Array]:
     mask = valid[:, None]
 
-    def law_action(value):
+    def law_action(value: Array) -> Array:
         active = jnp.where(mask, value, 0.0)
         return jnp.where(mask, action(active) + compliance * active, 0.0)
 
@@ -2833,7 +2833,9 @@ def _matrix_free_contact_solve(
     first_converged = jnp.asarray(solver.maximum_iterations, dtype=jnp.int32)
     residual_norm = jnp.asarray(jnp.inf, dtype=free.dtype)
 
-    def iteration_body(iteration, state):
+    def iteration_body(
+        iteration: Array, state: tuple[Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         value_, converged_, first_converged_, residual_norm_ = state
         gradient = law_action(value_) + free
         projected = project_signorini_coulomb_product(

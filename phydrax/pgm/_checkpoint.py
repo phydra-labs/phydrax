@@ -43,8 +43,12 @@ class FactorGraphCheckpoint(StrictModule):
     path: str
 
 
-def _selection_manifest(group_index, selections, arrays):
-    output = []
+def _selection_manifest(
+    group_index: int,
+    selections: tuple[VariableSelection, ...],
+    arrays: dict[str, Any],
+) -> list[dict[str, object]]:
+    output: list[dict[str, object]] = []
     for position, selection in enumerate(selections):
         name = f"factor_{group_index}_selection_{position}"
         arrays[name] = selection.indices

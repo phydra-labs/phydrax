@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -29,7 +29,7 @@ class StateTimeScoreField(StrictModule):
         *,
         state_label: str,
         time_label: str,
-        context_labels=(),
+        context_labels: Iterable[str] = (),
     ) -> None:
         if not isinstance(function, DomainFunction):
             raise TypeError("score field must be a DomainFunction.")
@@ -101,7 +101,7 @@ def require_score_field(
     *,
     state_label: str,
     time_label: str,
-    context_labels=(),
+    context_labels: Iterable[str] = (),
 ) -> StateTimeScoreField:
     if name not in functions:
         raise KeyError(f"Missing score field {name!r}.")

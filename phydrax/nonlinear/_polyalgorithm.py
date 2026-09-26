@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import PyTree
+from jaxtyping import Array, PyTree
 
 from ..linalg import PyTreeSpace
 from ._newton import (
@@ -183,14 +183,15 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
                 break
             current_newton_internal = None
             if isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
-                prepared_start = (
-                    None
-                    if best_newton_internal is None
-                    or not _newton_handoff_compatible(
-                        best_newton_internal[2],
-                        method,
-                    )
-                    else _root_attempt_handoff(
+                if best_newton_internal is None or not _newton_handoff_compatible(
+                    best_newton_internal[2],
+                    method,
+                ):
+                    prepared_start = None
+                else:
+                    # best_newton_internal is only recorded together with best.
+                    assert best is not None
+                    prepared_start = _root_attempt_handoff(
                         method,
                         problem_,
                         state,
@@ -200,7 +201,6 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
                         best_newton_internal[1],
                         args,
                     )
-                )
                 if prepared_start is not None:
                     prepared_handoffs += 1
                     residual_reuses += 1
@@ -288,7 +288,7 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
             raise ValueError("The root attempt graph had no executable budget.")
         aggregate = work_sum(tuple(work_values))
 
-        def diagnostic_sum(name: str):
+        def diagnostic_sum(name: str) -> Array:
             values = [vars(value)[name] for value in diagnostic_values]
             return sum(values[1:], values[0])
 
@@ -388,12 +388,12 @@ class FastRoot(AbstractNonlinearMethod):
 
     def solve(
         self,
-        problem,
-        initial_state,
+        problem: NonlinearSystemProblem,
+        initial_state: PyTree[Any],
         /,
         *,
-        termination,
-        args=None,
+        termination: NonlinearTermination,
+        args: Any = None,
     ) -> NonlinearResult:
         state = problem.validate_state(initial_state)
         method = (
@@ -461,12 +461,12 @@ class RobustRoot(AbstractNonlinearMethod):
 
     def solve(
         self,
-        problem,
-        initial_state,
+        problem: NonlinearSystemProblem,
+        initial_state: PyTree[Any],
         /,
         *,
-        termination,
-        args=None,
+        termination: NonlinearTermination,
+        args: Any = None,
     ) -> NonlinearResult:
         return self.algorithm.solve(
             problem,

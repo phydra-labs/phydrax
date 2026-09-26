@@ -391,7 +391,7 @@ class KineticVelocityPartitionPlan(StrictModule, NonTrainableState):
             value @ feature_values[start:stop]
             for value, (start, stop) in zip(values, self.shard_slices, strict=True)
         )
-        return sum(partials)
+        return sum(partials[1:], start=partials[0])
 
 
 __all__ = [

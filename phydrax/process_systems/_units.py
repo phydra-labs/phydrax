@@ -5,12 +5,12 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
 def counterflow_heat_exchanger_effectiveness(
     ntu: ArrayLike, capacity_ratio: ArrayLike, /
-):
+) -> Array:
     n = jnp.asarray(ntu)
     c = jnp.asarray(capacity_ratio)
     if n.shape != c.shape and n.shape != () and c.shape != ():
@@ -33,7 +33,7 @@ def cstr_concentration_rate(
     residence_time_s: float,
     reaction_rate: ArrayLike,
     /,
-):
+) -> Array:
     if not isfinite(residence_time_s) or residence_time_s <= 0:
         raise ValueError("CSTR residence time must be finite and positive.")
     concentration_ = jnp.asarray(concentration)

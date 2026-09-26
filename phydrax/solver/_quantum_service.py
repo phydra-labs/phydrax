@@ -20,6 +20,7 @@ from ..operators.quantum._operations import (
     LocalKrausChannelOperation,
     LocalUnitaryOperation,
     QuantumProgram,
+    QuantumStateKind,
 )
 from ..operators.quantum._register import HilbertRegisterLayout
 from ._quantum_compilation import HardwareTopology
@@ -38,7 +39,7 @@ class QuantumProgramInterchange(StrictModule, NonTrainableState):
     valid: Array
     wire_ids: tuple[str, ...] = eqx.field(static=True)
     local_dimensions: tuple[int, ...] = eqx.field(static=True)
-    state_kind: str = eqx.field(static=True)
+    state_kind: QuantumStateKind = eqx.field(static=True)
     operation_kinds: tuple[str, ...] = eqx.field(static=True)
     operation_targets: tuple[tuple[str, ...], ...] = eqx.field(static=True)
     payload_id: str = eqx.field(static=True)

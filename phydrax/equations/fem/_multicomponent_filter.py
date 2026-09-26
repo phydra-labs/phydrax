@@ -75,7 +75,7 @@ class MulticomponentAdmissibilityFilterPlan(StrictModule, NonTrainableState):
         lower = jnp.zeros(mean.shape[:-1], dtype=value.dtype)
         upper = jnp.ones_like(lower)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             midpoint = 0.5 * (low + high)
             candidate = mean[..., None, :] + midpoint[..., None, None] * (

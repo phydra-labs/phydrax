@@ -15,13 +15,15 @@ Numerical error is a qualification bound, not another fitted noise source.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._array_archive import array_collection_digest, write_array_archive
 from ..._fingerprint import canonical_fingerprint
@@ -29,7 +31,7 @@ from ..._strict import StrictModule
 from ...artifacts import ScientificArtifactEnvelope
 from ...ein import contract
 from ...linalg import DenseLinearOperator
-from ...linalg.svd import svd, SVDProblem, SVDSolvePolicy
+from ...linalg.svd import svd, SVDProblem, SVDSolvePolicy, SVDSolveResult
 from ...qualification import (
     QualificationCoverageReport,
     QualificationEvidence,
@@ -57,7 +59,12 @@ def _names(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(_text(value, "calibration identity") for value in values)
 
 
-def _array(value, shape=None, *, positive=False):
+def _array(
+    value: ArrayLike | Sequence[float],
+    shape: tuple[int, ...] | None = None,
+    *,
+    positive: bool = False,
+) -> Array:
     result = jnp.asarray(value, dtype=jnp.float64)
     if (shape is not None and result.shape != shape) or not bool(
         jnp.all(jnp.isfinite(result) & ((result > 0) if positive else True))
@@ -68,7 +75,9 @@ def _array(value, shape=None, *, positive=False):
     return result
 
 
-def _quantities(values):
+def _quantities(
+    values: tuple[SemiconductorQuantitySpec, ...],
+) -> tuple[SemiconductorQuantitySpec, ...]:
     if not isinstance(values, tuple) or not values:
         raise ValueError("Declare immutable native quantity specifications.")
     _names(tuple(value.name for value in values))
@@ -82,7 +91,7 @@ def _quantities(values):
     return values
 
 
-def _quantity_record(quantity):
+def _quantity_record(quantity: SemiconductorQuantitySpec) -> dict[str, object]:
     return dict(
         name=quantity.name,
         quantity_kind=quantity.quantity_kind,
@@ -109,7 +118,13 @@ class SemiconductorCalibrationDomain(StrictModule):
     domain_id: str = eqx.field(static=True)
 
     def __init__(
-        self, process_revision, population, geometry_ids, controls, lower, upper
+        self,
+        process_revision: str,
+        population: str,
+        geometry_ids: tuple[str, ...],
+        controls: tuple[SemiconductorQuantitySpec, ...],
+        lower: ArrayLike | Sequence[float],
+        upper: ArrayLike | Sequence[float],
     ) -> None:
         self.process_revision = _text(process_revision, "calibration identity")
         self.population = _text(population, "calibration identity")
@@ -121,7 +136,7 @@ class SemiconductorCalibrationDomain(StrictModule):
             raise ValueError("Control-domain upper bounds must not precede lower bounds.")
         self.domain_id = canonical_fingerprint(self.to_record())
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return dict(
             process_revision=self.process_revision,
             population=self.population,
@@ -173,31 +188,31 @@ class SemiconductorMeasurementCase(StrictModule):
     def __init__(
         self,
         *,
-        case_id,
-        observation_ids,
-        process_revision,
-        geometry_id,
-        lot,
-        wafer,
-        die,
-        structure,
-        condition_group,
-        correlation_group,
-        source_kind,
-        source_uri,
-        instrument_record,
-        deembedding_record,
-        uncertainty_assumptions,
-        terminal_definitions,
-        observables,
-        reference,
-        controls,
-        observed,
-        control_scale,
-        observation_scale,
-        control_covariance,
-        measurement_covariance,
-        deembedding_covariance,
+        case_id: str,
+        observation_ids: tuple[str, ...],
+        process_revision: str,
+        geometry_id: str,
+        lot: str,
+        wafer: str,
+        die: str,
+        structure: str,
+        condition_group: str,
+        correlation_group: str,
+        source_kind: str,
+        source_uri: str,
+        instrument_record: str,
+        deembedding_record: str,
+        uncertainty_assumptions: str,
+        terminal_definitions: tuple[str, ...],
+        observables: tuple[SemiconductorQuantitySpec, ...],
+        reference: ReferenceArtifactManifest,
+        controls: ArrayLike,
+        observed: ArrayLike,
+        control_scale: ArrayLike,
+        observation_scale: ArrayLike,
+        control_covariance: ArrayLike,
+        measurement_covariance: ArrayLike,
+        deembedding_covariance: ArrayLike,
     ) -> None:
         self.case_id = _text(case_id, "calibration identity")
         self.observation_ids = _names(observation_ids)
@@ -262,7 +277,7 @@ class SemiconductorMeasurementCase(StrictModule):
                 / (self.observation_scale[:, None] * self.observation_scale[None, :])
             )
 
-    def group_key(self, axis):
+    def group_key(self, axis: str) -> tuple[str, ...]:
         if axis == "lot":
             return (self.lot,)
         if axis == "wafer":
@@ -275,7 +290,7 @@ class SemiconductorMeasurementCase(StrictModule):
             return (self.condition_group,)
         raise ValueError(f"Unknown held-out grouping axis {axis!r}.")
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return dict(
             case_id=self.case_id,
             observation_ids=self.observation_ids,
@@ -298,7 +313,7 @@ class SemiconductorMeasurementCase(StrictModule):
             arrays_digest=array_collection_digest(self.arrays()),
         )
 
-    def arrays(self):
+    def arrays(self) -> dict[str, Array]:
         return dict(
             controls=self.controls,
             observed=self.observed,
@@ -334,7 +349,7 @@ class SemiconductorCalibrationCriteria(StrictModule):
                 "Require positive coverage and independent held-out group count."
             )
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return dict(
             maximum_predictive_rms=self.maximum_predictive_rms,
             minimum_marginal_coverage=self.minimum_marginal_coverage,
@@ -363,18 +378,18 @@ class SemiconductorCalibrationCampaign(StrictModule):
     def __init__(
         self,
         *,
-        campaign_name,
-        model_id,
-        source_revision,
-        numerical_configuration,
-        split_lock_record,
-        training_ids,
-        heldout_ids,
-        holdout_axes,
-        domain,
-        cases,
-        criteria,
-        physical_references=(),
+        campaign_name: str,
+        model_id: str,
+        source_revision: str,
+        numerical_configuration: str,
+        split_lock_record: str,
+        training_ids: tuple[str, ...],
+        heldout_ids: tuple[str, ...],
+        holdout_axes: tuple[str, ...],
+        domain: SemiconductorCalibrationDomain,
+        cases: tuple[SemiconductorMeasurementCase, ...],
+        criteria: SemiconductorCalibrationCriteria,
+        physical_references: tuple[tuple[str, ReferenceArtifactManifest], ...] = (),
     ) -> None:
         self.campaign_name, self.model_id = (
             _text(campaign_name, "calibration identity"),
@@ -443,16 +458,16 @@ class SemiconductorCalibrationCampaign(StrictModule):
         self.campaign_id = canonical_fingerprint(self.to_record())
 
     @property
-    def training(self):
+    def training(self) -> tuple[SemiconductorMeasurementCase, ...]:
         by_id = {case.case_id: case for case in self.cases}
         return tuple(by_id[name] for name in self.training_ids)
 
     @property
-    def heldout(self):
+    def heldout(self) -> tuple[SemiconductorMeasurementCase, ...]:
         by_id = {case.case_id: case for case in self.cases}
         return tuple(by_id[name] for name in self.heldout_ids)
 
-    def to_record(self):
+    def to_record(self) -> dict[str, object]:
         return dict(
             campaign_name=self.campaign_name,
             model_id=self.model_id,
@@ -483,11 +498,17 @@ class SemiconductorParameterBinding(StrictModule):
     quantities: tuple[SemiconductorQuantitySpec, ...] = eqx.field(static=True)
     sensitivity_scale: Array
     prior_record: str = eqx.field(static=True)
-    admissible: Callable = eqx.field(static=True)
+    admissible: Callable[[Array], ArrayLike] = eqx.field(static=True)
     binding_id: str = eqx.field(static=True)
 
     def __init__(
-        self, space, quantities, sensitivity_scale, *, prior_record, admissible
+        self,
+        space: ParameterSpace,
+        quantities: tuple[SemiconductorQuantitySpec, ...],
+        sensitivity_scale: ArrayLike,
+        *,
+        prior_record: str,
+        admissible: Callable[[Array], ArrayLike],
     ) -> None:
         self.space, self.quantities = space, _quantities(quantities)
         self.sensitivity_scale = _array(
@@ -518,7 +539,7 @@ class SemiconductorParameterBinding(StrictModule):
             )
         )
 
-    def physically_admissible(self, physical):
+    def physically_admissible(self, physical: ArrayLike) -> Array:
         value = jnp.asarray(physical)
         if value.shape != self.sensitivity_scale.shape:
             raise ValueError("Physical parameter shape changed.")
@@ -542,6 +563,11 @@ class SemiconductorForwardResult(StrictModule):
     evidence_id: str = eqx.field(static=True)
 
 
+SemiconductorForward: TypeAlias = Callable[
+    [Array, SemiconductorMeasurementCase], SemiconductorForwardResult
+]
+
+
 class SemiconductorForwardEvaluation(StrictModule):
     physical_parameters: Array
     cases: tuple[SemiconductorForwardResult, ...]
@@ -549,7 +575,7 @@ class SemiconductorForwardEvaluation(StrictModule):
     status: str = eqx.field(static=True)
 
     @property
-    def predictions(self):
+    def predictions(self) -> tuple[Array, ...]:
         if self.status != "valid":
             raise RuntimeError(f"No qualified predictions: {self.status}.")
         return tuple(case.prediction for case in self.cases)
@@ -558,14 +584,18 @@ class SemiconductorForwardEvaluation(StrictModule):
 class SemiconductorForwardUnresolved(RuntimeError):
     """Host failure retaining the actual physical point and rejected solver evidence."""
 
-    def __init__(self, evaluation) -> None:
+    def __init__(self, evaluation: SemiconductorForwardEvaluation) -> None:
         self.evaluation = evaluation
         super().__init__(
             f"Semiconductor forward evaluation is {evaluation.status}; inference must stop."
         )
 
 
-def _forward_valid(result, case, criteria):
+def _forward_valid(
+    result: SemiconductorForwardResult,
+    case: SemiconductorMeasurementCase,
+    criteria: SemiconductorCalibrationCriteria,
+) -> Array:
     if (
         result.prediction.shape != case.observed.shape
         or result.numerical_error.shape != case.observed.shape
@@ -587,7 +617,12 @@ def _forward_valid(result, case, criteria):
     )
 
 
-def evaluate_semiconductor_forward(prepared, physical, *, heldout=False):
+def evaluate_semiconductor_forward(
+    prepared: PreparedSemiconductorCalibration,
+    physical: ArrayLike,
+    *,
+    heldout: bool = False,
+) -> SemiconductorForwardEvaluation:
     """Host audit: physical exclusion and unresolved numerics have different statuses."""
     cases = prepared.campaign.heldout if heldout else prepared.campaign.training
     physical = jnp.asarray(physical)
@@ -611,12 +646,17 @@ def evaluate_semiconductor_forward(prepared, physical, *, heldout=False):
 class PreparedSemiconductorCalibration(StrictModule):
     campaign: SemiconductorCalibrationCampaign
     binding: SemiconductorParameterBinding
-    forward: Callable = eqx.field(static=True)
+    forward: SemiconductorForward = eqx.field(static=True)
     likelihoods: tuple[LinearizedGaussianMeasurementLikelihood, ...]
     posterior: PosteriorProblem
 
 
-def _prediction(forward, campaign, physical, case):
+def _prediction(
+    forward: SemiconductorForward,
+    campaign: SemiconductorCalibrationCampaign,
+    physical: Array,
+    case: SemiconductorMeasurementCase,
+) -> Array:
     result = forward(physical, case)
     return eqx.error_if(
         result.prediction,
@@ -625,7 +665,13 @@ def _prediction(forward, campaign, physical, case):
     )
 
 
-def _normalized_prediction(forward, campaign, physical, case, controls):
+def _normalized_prediction(
+    forward: SemiconductorForward,
+    campaign: SemiconductorCalibrationCampaign,
+    physical: Array,
+    case: SemiconductorMeasurementCase,
+    controls: Array,
+) -> Array:
     physical_case = eqx.tree_at(lambda c: c.controls, case, controls * case.control_scale)
     return (
         _prediction(forward, campaign, physical, physical_case) / case.observation_scale
@@ -633,8 +679,12 @@ def _normalized_prediction(forward, campaign, physical, case, controls):
 
 
 def prepare_semiconductor_calibration(
-    campaign, binding, forward, *, commercial_use=False
-):
+    campaign: SemiconductorCalibrationCampaign,
+    binding: SemiconductorParameterBinding,
+    forward: SemiconductorForward,
+    *,
+    commercial_use: bool = False,
+) -> PreparedSemiconductorCalibration:
     """Prepare normalized native likelihoods using training data only.
 
     The complete event preserves bias/frequency/time correlations. Invalid native
@@ -673,8 +723,8 @@ def prepare_semiconductor_calibration(
             terms.append(term)
     likelihoods = tuple(terms)
 
-    def log_likelihood(physical):
-        def admitted(p):
+    def log_likelihood(physical: Array) -> Array:
+        def admitted(p: Array) -> Array:
             value = sum(
                 (jnp.sum(term.per_case_log_prob(p)) for term in likelihoods),
                 jnp.zeros(()),
@@ -692,7 +742,7 @@ def prepare_semiconductor_calibration(
             physical,
         )
 
-    def predict(physical, case):
+    def predict(physical: Array, case: SemiconductorMeasurementCase) -> Array:
         physical = eqx.error_if(
             physical,
             ~binding.physically_admissible(physical),
@@ -712,7 +762,11 @@ def prepare_semiconductor_calibration(
     return prepared
 
 
-def _effective_covariance(prepared, physical, case):
+def _effective_covariance(
+    prepared: PreparedSemiconductorCalibration,
+    physical: Array,
+    case: SemiconductorMeasurementCase,
+) -> Array:
     """SI covariance, including the same linearized measured-control errors as UQ."""
     derivative = jax.jacfwd(
         lambda x: _prediction(
@@ -728,7 +782,7 @@ def _effective_covariance(prepared, physical, case):
     return case.measurement_covariance + case.deembedding_covariance + pushed
 
 
-def _spectrum(matrix):
+def _spectrum(matrix: Array) -> SVDSolveResult:
     result = svd(
         SVDProblem(DenseLinearOperator(matrix)),
         policy=SVDSolvePolicy(count=min(matrix.shape)),
@@ -740,7 +794,7 @@ def _spectrum(matrix):
     return result
 
 
-def _whiten(covariance, values):
+def _whiten(covariance: Array, values: Array) -> Array:
     spectrum = _spectrum(covariance)
     if not bool(jnp.all(spectrum.singular_values > 0)):
         raise ValueError("Qualification covariance must be positive definite.")
@@ -757,11 +811,13 @@ class SemiconductorIdentifiability(StrictModule):
     parameter_count: int = eqx.field(static=True)
 
     @property
-    def locally_identifiable(self):
+    def locally_identifiable(self) -> bool:
         return self.rank == self.parameter_count
 
 
-def semiconductor_identifiability(prepared, physical):
+def semiconductor_identifiability(
+    prepared: PreparedSemiconductorCalibration, physical: Array
+) -> SemiconductorIdentifiability:
     """Likelihood-only local mean sensitivity, not global identifiability.
 
     Whitening uses the full covariance frozen at the reported point. Prior
@@ -819,7 +875,12 @@ class SemiconductorCalibrationResult(StrictModule):
     heldout: tuple[SemiconductorPredictiveCheck, ...]
 
 
-def calibrate_semiconductor(prepared, *, max_steps=500, gradient_tolerance=1e-6):
+def calibrate_semiconductor(
+    prepared: PreparedSemiconductorCalibration,
+    *,
+    max_steps: int = 500,
+    gradient_tolerance: float = 1e-6,
+) -> SemiconductorCalibrationResult:
     """Native MAP, undamped exact Laplace and untouched held-out prediction.
 
     This is a local Gaussian posterior approximation, not a global or MCMC
@@ -892,15 +953,20 @@ class SemiconductorCalibrationQualification(StrictModule):
     campaign_id: str = eqx.field(static=True)
 
     @property
-    def numerically_qualified(self):
+    def numerically_qualified(self) -> bool:
         return self.numerical.passed
 
     @property
-    def empirically_calibrated(self):
+    def empirically_calibrated(self) -> bool:
         return self.numerically_qualified and not self.empirical_gates
 
 
-def qualify_semiconductor_calibration(result, evidence, *, at_time):
+def qualify_semiconductor_calibration(
+    result: SemiconductorCalibrationResult,
+    evidence: Sequence[QualificationEvidence],
+    *,
+    at_time: int,
+) -> SemiconductorCalibrationQualification:
     """Fail-closed, exact-domain numerical and named-process empirical claims.
 
     Numerical proof requires independently reviewed conservation, refinement and
@@ -1020,15 +1086,15 @@ def qualify_semiconductor_calibration(result, evidence, *, at_time):
 
 
 def archive_semiconductor_calibration(
-    path,
-    result,
-    qualification,
+    path: str | os.PathLike[str],
+    result: SemiconductorCalibrationResult,
+    qualification: SemiconductorCalibrationQualification,
     *,
-    producer_version,
-    license_id,
-    redistribution=False,
-    export=False,
-):
+    producer_version: str,
+    license_id: str,
+    redistribution: bool = False,
+    export: bool = False,
+) -> tuple[Path, ScientificArtifactEnvelope]:
     """Write native checksum-verified array archive and artifact provenance.
 
     Raw numerical candidates/statuses, observations, covariance sources, prior,
@@ -1122,8 +1188,13 @@ def archive_semiconductor_calibration(
 
 
 def archive_semiconductor_forward_evaluation(
-    path, campaign, evaluation, *, producer_version, license_id
-):
+    path: str | os.PathLike[str],
+    campaign: SemiconductorCalibrationCampaign,
+    evaluation: SemiconductorForwardEvaluation,
+    *,
+    producer_version: str,
+    license_id: str,
+) -> tuple[Path, ScientificArtifactEnvelope]:
     """Retain a rejected native solve without assigning it a physical likelihood.
 
     This local audit archive does not grant redistribution/export rights and

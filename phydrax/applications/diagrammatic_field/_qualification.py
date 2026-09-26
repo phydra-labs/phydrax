@@ -4,10 +4,16 @@
 
 """Unreleased fermionic diagrammatic-field profiles."""
 
+from __future__ import annotations
+
+from collections.abc import Mapping
+
 from ...qualification import CapabilityProfile, SupportTuple
 
 
-def _candidate(name, attributes, gates):
+def _candidate(
+    name: str, attributes: Mapping[str, str], gates: tuple[str, ...]
+) -> tuple[SupportTuple, CapabilityProfile]:
     support = SupportTuple(name, attributes)
     profile = CapabilityProfile(
         f"{name}.candidate",

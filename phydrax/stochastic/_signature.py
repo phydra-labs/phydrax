@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -70,7 +71,7 @@ def _signature_identity(
     batch_shape: tuple[int, ...],
     dimension: int,
     depth: int,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> tuple[Array, ...]:
     return tuple(
@@ -196,7 +197,9 @@ def piecewise_linear_signature(
 
     if stream:
 
-        def combine_stream(carry, increment):
+        def combine_stream(
+            carry: tuple[Array, ...], increment: Array
+        ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
             updated = _chen_multiply_increment(carry, increment)
             return updated, updated
 
@@ -204,7 +207,9 @@ def piecewise_linear_signature(
         sequence_axis = len(batch_shape)
         return tuple(jnp.moveaxis(level, 0, sequence_axis) for level in history)
 
-    def combine_terminal(carry, increment):
+    def combine_terminal(
+        carry: tuple[Array, ...], increment: Array
+    ) -> tuple[tuple[Array, ...], None]:
         return _chen_multiply_increment(carry, increment), None
 
     return jax.lax.scan(combine_terminal, initial, scan_values)[0]
@@ -627,7 +632,9 @@ class LogSignatureControl(AbstractRoughControl):
             for degree in range(1, self.depth + 1)
         )
 
-        def combine(carry, segment):
+        def combine(
+            carry: tuple[Array, ...], segment: tuple[Array, ...]
+        ) -> tuple[tuple[Array, ...], None]:
             return chen_multiply(carry, segment), None
 
         scan_values = tuple(

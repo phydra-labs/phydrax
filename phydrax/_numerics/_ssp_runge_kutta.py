@@ -126,9 +126,9 @@ def _step_result(
 
 def ssprk33_step_with_evidence(
     vector_field: Callable[[Array, Array, Any], ArrayLike],
-    time: Array,
-    state: Array,
-    step_size: Array,
+    time: ArrayLike,
+    state: ArrayLike,
+    step_size: ArrayLike,
     args: Any = None,
     /,
     *,
@@ -145,10 +145,10 @@ def ssprk33_step_with_evidence(
         h_ = h
         y0_ = y0
 
-        def stage_value(value):
+        def stage_value(value: ArrayLike) -> Array:
             return jnp.asarray(value)
 
-        def accumulation(value):
+        def accumulation(value: ArrayLike) -> Array:
             return jnp.asarray(value)
 
     else:
@@ -194,9 +194,9 @@ def ssprk33_step_with_evidence(
 
 def ssprk33_step(
     vector_field: Callable[[Array, Array, Any], ArrayLike],
-    time: Array,
-    state: Array,
-    step_size: Array,
+    time: ArrayLike,
+    state: ArrayLike,
+    step_size: ArrayLike,
     args: Any = None,
     /,
     *,
@@ -217,9 +217,9 @@ def ssprk33_step(
 
 def ssprk54_step_with_evidence(
     vector_field: Callable[[Array, Array, Any], ArrayLike],
-    time: Array,
-    state: Array,
-    step_size: Array,
+    time: ArrayLike,
+    state: ArrayLike,
+    step_size: ArrayLike,
     args: Any = None,
     /,
     *,
@@ -236,10 +236,10 @@ def ssprk54_step_with_evidence(
         h_ = h
         y0_ = y0
 
-        def stage_value(value):
+        def stage_value(value: ArrayLike) -> Array:
             return jnp.asarray(value)
 
-        def accumulation(value):
+        def accumulation(value: ArrayLike) -> Array:
             return jnp.asarray(value)
 
     else:
@@ -344,9 +344,9 @@ def ssprk54_step_with_evidence(
 
 def ssprk54_step(
     vector_field: Callable[[Array, Array, Any], ArrayLike],
-    time: Array,
-    state: Array,
-    step_size: Array,
+    time: ArrayLike,
+    state: ArrayLike,
+    step_size: ArrayLike,
     args: Any = None,
     /,
     *,

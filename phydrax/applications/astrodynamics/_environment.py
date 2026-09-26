@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from phydrax._interpolation import linear_interpolate
@@ -21,6 +22,9 @@ from ._context import AstrodynamicsContext
 from ._data import AstrodynamicsDataProvenance
 from ._forces import AbstractAstrodynamicsForce, AstrodynamicsForceEvaluation
 from ._status import AstrodynamicsStatus
+
+
+_PositionProvider: TypeAlias = Callable[[ArrayLike, Any], ArrayLike]
 
 
 def _norm(value: Array, /) -> Array:
@@ -35,7 +39,15 @@ class SpaceWeatherTable(StrictModule, NonTrainableState):
     provenance: AstrodynamicsDataProvenance
     product_id: str = eqx.field(static=True)
 
-    def __init__(self, times, f107, f107_average, ap, provenance, /) -> None:
+    def __init__(
+        self,
+        times: npt.ArrayLike,
+        f107: npt.ArrayLike,
+        f107_average: npt.ArrayLike,
+        ap: npt.ArrayLike,
+        provenance: AstrodynamicsDataProvenance,
+        /,
+    ) -> None:
         values = tuple(
             np.asarray(value, dtype=np.float64)
             for value in (times, f107, f107_average, ap)
@@ -79,7 +91,12 @@ class ExponentialAtmosphere(StrictModule, NonTrainableState):
     atmosphere_id: str = eqx.field(static=True)
 
     def __init__(
-        self, reference_radius, reference_density, reference_altitude, scale_height, /
+        self,
+        reference_radius: ArrayLike,
+        reference_density: ArrayLike,
+        reference_altitude: ArrayLike,
+        scale_height: ArrayLike,
+        /,
     ) -> None:
         self.reference_radius = jnp.asarray(reference_radius).reshape(())
         self.reference_density = jnp.asarray(reference_density).reshape(())
@@ -122,13 +139,13 @@ class AtmosphericDrag(AbstractAstrodynamicsForce):
 
     def __init__(
         self,
-        atmosphere,
-        context,
+        atmosphere: ExponentialAtmosphere,
+        context: AstrodynamicsContext,
         /,
         *,
-        drag_coefficient,
-        area_to_mass,
-        angular_velocity=(0.0, 0.0, 7.292115146706979e-5),
+        drag_coefficient: npt.ArrayLike,
+        area_to_mass: npt.ArrayLike,
+        angular_velocity: npt.ArrayLike = (0.0, 0.0, 7.292115146706979e-5),
     ) -> None:
         if not isinstance(atmosphere, ExponentialAtmosphere):
             raise TypeError("atmosphere must be an ExponentialAtmosphere.")
@@ -172,7 +189,9 @@ class AtmosphericDrag(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args: Any = None, /):
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):
@@ -248,8 +267,8 @@ class EclipseGeometry(StrictModule, NonTrainableState):
 
 
 class SolarRadiationPressure(AbstractAstrodynamicsForce):
-    source_position: Callable
-    occulting_position: Callable
+    source_position: _PositionProvider
+    occulting_position: _PositionProvider
     eclipse: EclipseGeometry
     context: AstrodynamicsContext
     reference_pressure: Array
@@ -262,19 +281,19 @@ class SolarRadiationPressure(AbstractAstrodynamicsForce):
 
     def __init__(
         self,
-        source_position,
-        occulting_position,
-        eclipse,
-        context,
+        source_position: _PositionProvider,
+        occulting_position: _PositionProvider,
+        eclipse: EclipseGeometry,
+        context: AstrodynamicsContext,
         /,
         *,
-        reference_pressure=4.56e-6,
-        reference_distance=149597870700.0,
-        reflectivity=1.0,
-        area_to_mass=0.01,
-        force_id="solar-radiation-pressure",
-        source_provider_id,
-        occulting_provider_id,
+        reference_pressure: npt.ArrayLike = 4.56e-6,
+        reference_distance: npt.ArrayLike = 149597870700.0,
+        reflectivity: npt.ArrayLike = 1.0,
+        area_to_mass: npt.ArrayLike = 0.01,
+        force_id: str = "solar-radiation-pressure",
+        source_provider_id: str,
+        occulting_provider_id: str,
     ) -> None:
         if not callable(source_position) or not callable(occulting_position):
             raise TypeError("Radiation ephemeris providers must be callable.")
@@ -326,7 +345,9 @@ class SolarRadiationPressure(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args=None, /):
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         packed = jnp.asarray(state)
         source = jnp.asarray(self.source_position(time, args))
         occulter = jnp.asarray(self.occulting_position(time, args))
@@ -392,7 +413,9 @@ class ThermalRadiationPressure(AbstractAstrodynamicsForce):
         self.context = radiation.context
         self.force_id = str(force_id)
 
-    def evaluate(self, time, state, args=None, /):
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         result = self.radiation.evaluate(time, state, args)
         return AstrodynamicsForceEvaluation(
             result.acceleration,

@@ -328,7 +328,9 @@ class FiniteElementRestartManifest(StrictModule, NonTrainableState):
         if not isinstance(state, FiniteElementAcceptedState):
             raise TypeError("state must be FiniteElementAcceptedState.")
 
-        def named(values):
+        def named(
+            values: Sequence[tuple[str, ArrayLike]],
+        ) -> tuple[tuple[str, Array], ...]:
             result = tuple((str(name), jnp.asarray(value)) for name, value in values)
             names = tuple(name for name, _ in result)
             if len(set(names)) != len(names) or any(not name for name in names):

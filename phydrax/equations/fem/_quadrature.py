@@ -86,7 +86,10 @@ class QuadratureAccuracyPolicy(StrictModule, NonTrainableState):
         if min(trial, test, coordinate) < 0:
             raise ValueError("Quadrature polynomial orders must be nonnegative.")
         if self.kind == "explicit-rule":
-            return int(self.explicit_degree)
+            degree = self.explicit_degree
+            # __init__ requires a nonnegative explicit_degree for explicit-rule policies.
+            assert degree is not None
+            return int(degree)
         if self.kind == "collocated":
             return max(trial, test)
         if coefficient_order is None or kernel_polynomial_degree is None:

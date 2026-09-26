@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 import phydrax.linalg as la
 
@@ -269,6 +269,8 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
     def make_fallback_dynamics(
         self, fallback_flux: AbstractNumericalFluxPlan, /
     ) -> "PreparedTriangleFiniteVolumeDynamics":
+        if not isinstance(fallback_flux, AbstractArbitraryNormalNumericalFluxPlan):
+            raise TypeError("Triangle FV requires an arbitrary-normal numerical flux.")
         method = TriangleFiniteVolumeMethodPlan(
             PiecewiseConstantReconstruction(), fallback_flux
         )
@@ -464,7 +466,13 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         ).selected_step
         return self.precision.decision(jnp.minimum(hyperbolic, viscous))
 
-    def linearize(self, time: Array, state: Array, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: Array, args: Any = None, /
+    ) -> tuple[
+        PyTree[Array],
+        Callable[[PyTree[Any]], PyTree[Array]],
+        Callable[[PyTree[Any]], tuple[PyTree[Array]]],
+    ]:
         linearization = la.prepare_linearization(
             lambda value: self(time, value, args), state
         )

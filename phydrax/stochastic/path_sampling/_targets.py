@@ -592,16 +592,18 @@ def make_incremental_path_target(
     ):
         raise TypeError("ensemble and action must implement path target contracts.")
 
-    def evaluate(path):
+    def evaluate(path: PathBuffer) -> tuple[Array, Array]:
         value = path_log_target(ensemble, action, path)
         return value, value
 
-    def propose(current, cache, candidate, payload):
+    def propose(
+        current: PathBuffer, cache: Array, candidate: PathBuffer, payload: object
+    ) -> tuple[Array, Array, Array]:
         del current, payload
         value = path_log_target(ensemble, action, candidate)
         return value - cache, value, jnp.isfinite(value)
 
-    def select(current, candidate, accepted):
+    def select(current: PathBuffer, candidate: PathBuffer, accepted: Array) -> PathBuffer:
         return jax.tree_util.tree_map(
             lambda old, new: jnp.where(accepted, new, old), current, candidate
         )

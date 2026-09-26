@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from jaxtyping import Array
+
 from .._strict import StrictModule
 from .._trainable import (
     ArrayRole,
@@ -46,10 +48,10 @@ class FrozenModel(AbstractArrayModel, ExplicitFreeze):
         self.in_size = model.in_size
         self.out_size = model.out_size
 
-    def __call__(self, x: Any, /, *, key: Any = None):
+    def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return self.model(x, key=key)
 
-    def __getattr__(self, name: str, /):
+    def __getattr__(self, name: str, /) -> Any:
         if name not in self._delegated_methods:
             raise AttributeError(name)
         model = object.__getattribute__(self, "model")

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -165,8 +167,10 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         result = jnp.zeros((self.global_dof_count, points.shape[1]), dtype=points.dtype)
         if self.family == "ConformingH1":
             result = result.at[: self.vertex_dof_count].set(points)
+        # Edge DOFs exist only for the PolygonalConnectivity mesh this map was built on.
+        connectivity = cast(PolygonalConnectivity, mesh.connectivity)
         edge_width = (
-            self.edge_dof_count // mesh.connectivity.edges.shape[0]
+            self.edge_dof_count // connectivity.edges.shape[0]
             if self.edge_dof_count
             else 0
         )
@@ -181,7 +185,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
                 nodes = 0.5 * (jnp.asarray(data.nodes)[1:-1] + 1.0)
             else:
                 nodes = jnp.full((edge_width,), 0.5, dtype=points.dtype)
-            edges = jnp.asarray(mesh.connectivity.edges, dtype=jnp.int32)
+            edges = jnp.asarray(connectivity.edges, dtype=jnp.int32)
             start = points[edges[:, 0]]
             stop = points[edges[:, 1]]
             edge_points = (1.0 - nodes[None, :, None]) * start[:, None, :] + nodes[

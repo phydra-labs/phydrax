@@ -16,7 +16,7 @@ from jaxtyping import Array
 from phydrax._doc import DOC_KEY0
 from phydrax.graph._ir import GraphIR
 from phydrax.nn._keys import EvalKey
-from phydrax.nn.operator.data import OperatorBatch
+from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.nn.operator.topology import (
     gather_operator_graph_entities,
@@ -67,7 +67,7 @@ class NativeGraphOperator(AbstractOperatorModel):
         self.input_key = str(input_key)
         self.output_key = None if output_key is None else str(output_key)
 
-    def _source(self, batch: OperatorBatch, /):
+    def _source(self, batch: OperatorBatch, /) -> FunctionSamples:
         if self.source_name is not None:
             return batch.input(self.source_name)
         candidates = tuple(

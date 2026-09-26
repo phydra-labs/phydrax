@@ -361,7 +361,7 @@ def solve_heom(
     if count < 0 or not bool(jnp.isfinite(step) & (step > 0.0)):
         raise ValueError("HEOM steps must be nonnegative and step_size positive.")
 
-    def advance(state, _):
+    def advance(state: Array, _: None) -> tuple[Array, Array]:
         k1 = temporal_.stage(problem.rhs(state, precision=temporal_))
         k2 = temporal_.stage(
             problem.rhs(

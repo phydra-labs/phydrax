@@ -53,7 +53,7 @@ class _OversetPolicy:
 class _OversetRoutes:
     donor_mesh_ids: np.ndarray
     receptor_mesh_ids: np.ndarray
-    receptor_positions: np.ndarray
+    receptor_positions: dict[int, int]
     receptors: np.ndarray
     offsets: np.ndarray
     donors_raw: np.ndarray
@@ -77,14 +77,14 @@ class _OversetMasks:
 
 @dataclass(frozen=True, slots=True)
 class _OversetCoverage:
-    routes: tuple[np.ndarray, ...]
+    routes: np.ndarray
     receptor_coverage: np.ndarray
     receptor_volumes: np.ndarray
     defect: np.ndarray
     coverage_status_mask: np.ndarray
     donor_coverage: np.ndarray
-    union_certificate: float
-    union_defect: float
+    union_certificate: np.ndarray
+    union_defect: np.ndarray
     covered_fraction: np.ndarray
     coverage_status: str
     donor_route_ids: np.ndarray

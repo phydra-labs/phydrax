@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TYPE_CHECKING
 
 import diffrax as dfx
 import equinox as eqx
@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from phydrax._strict import StrictModule
 
@@ -59,6 +59,7 @@ from ._diffrax_delay_backend import (
     _delay_discontinuity_times,
     _DelayValidation,
     _DelayVectorField,
+    _diffrax_time,
     _RetardedSolver,
     _RetardedSolverState,
 )
@@ -73,6 +74,10 @@ from ._geometric import (
 )
 from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
+
+
+if TYPE_CHECKING:
+    from diffrax._custom_types import Args, BoolScalarLike, DenseInfo, RealScalarLike, Y
 
 
 class _OrdinaryStochasticContract(StrictModule):
@@ -298,17 +303,17 @@ class _PathConsistentInterpolationFactory(StrictModule):
     def __call__(
         self,
         *,
-        t0,
-        t1,
-        y0,
-        drift,
-        diffusion,
-        path_t0,
-        path_t1,
-        path_tolerance,
-        path_key_bits,
-        y1=None,
-    ):
+        t0: Array,
+        t1: Array,
+        y0: Array,
+        drift: Array,
+        diffusion: _FrozenDelayDiffusion,
+        path_t0: Array,
+        path_t1: Array,
+        path_tolerance: Array,
+        path_key_bits: Array,
+        y1: Array | None = None,
+    ) -> _PathConsistentDelayInterpolation:
         key_data = jax.lax.bitcast_convert_type(path_key_bits, jnp.uint32)
         path_key = jr.wrap_key_data(key_data, impl=self.path_key_impl)
         brownian = dfx.VirtualBrownianTree(
@@ -377,7 +382,7 @@ class _VectorizedDelayDenseInterpolation(StrictModule):
         sample_ndim = len(samples)
         sample_count = prod(samples)
 
-        def flatten(value):
+        def flatten(value: PyTree) -> PyTree:
             if eqx.is_array(value):
                 return value.reshape((sample_count,) + value.shape[sample_ndim:])
             return value
@@ -440,7 +445,7 @@ class _VectorizedDelayDenseInterpolation(StrictModule):
             "Dense delay query times must lie within every solution interval.",
         )
 
-        def evaluate_one(solver_state):
+        def evaluate_one(solver_state: _RetardedSolverState) -> Array:
             history = DelayHistoryView(
                 initial_history=self.initial_history,
                 initial_derivative=self.initial_derivative,
@@ -504,7 +509,9 @@ class _StochasticRetardedSolver(_RetardedSolver):
     geometry: Any
 
     @property
-    def interpolation_cls(self):  # ty: ignore[invalid-attribute-override]
+    def interpolation_cls(  # ty: ignore[invalid-attribute-override]
+        self,
+    ) -> _PathConsistentInterpolationFactory:
         return _PathConsistentInterpolationFactory(
             path_shape=self.path_shape,
             path_levy_area=self.path_levy_area,
@@ -515,14 +522,14 @@ class _StochasticRetardedSolver(_RetardedSolver):
 
     def _step_with_extension(
         self,
-        terms,
-        t0,
-        t1,
-        y0,
-        args,
-        inner_state,
-        made_jump,
-    ):
+        terms: dfx.MultiTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        inner_state: PyTree,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Y, Y | None, DenseInfo, PyTree, dfx.RESULTS]:
         y1, y_error, _, next_state, result = self.solver.step(
             terms,
             t0,
@@ -537,17 +544,25 @@ class _StochasticRetardedSolver(_RetardedSolver):
         vector_field = control_term.vector_field
         if not isinstance(vector_field, _DelayDiffusionVectorField):
             raise TypeError("Certified stochastic delay terms require delayed diffusion.")
+        start = _diffrax_time(t0)
         dense_info = {
             "y0": y0,
-            "drift": jnp.asarray(_term_vector_field(drift_term, t0, y0, args)),
-            "diffusion": vector_field.freeze(t0, y0, args),
+            "drift": jnp.asarray(_term_vector_field(drift_term, start, y0, args)),
+            "diffusion": vector_field.freeze(start, y0, args),
             **_brownian_dense_info(control_term.control, self.path_key),
         }
         if self.geometry is not None:
             dense_info["y1"] = y1
         return y1, y_error, dense_info, next_state, result
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> _RetardedSolverState:
         provisional_state = self.solver.init(terms, t0, t1, y0, args)
         _, _, dense_info_structure, _, _ = eqx.filter_eval_shape(
             self._step_with_extension,
@@ -561,7 +576,7 @@ class _StochasticRetardedSolver(_RetardedSolver):
         )
         if self.history_mode == "full":
             history: DenseDelayHistory | RollingDelayHistory = DenseDelayHistory.allocate(
-                time=t0,
+                time=_diffrax_time(t0),
                 dense_info_structure=dense_info_structure,
                 capacity=self.history_capacity,
                 interpolation_cls=self.interpolation_cls,
@@ -570,7 +585,7 @@ class _StochasticRetardedSolver(_RetardedSolver):
             if self.maximum_lag is None:
                 raise ValueError("Rolling history requires a finite maximum delay.")
             history = RollingDelayHistory.allocate(
-                time=t0,
+                time=_diffrax_time(t0),
                 dense_info_structure=dense_info_structure,
                 capacity=self.history_capacity,
                 interpolation_cls=self.interpolation_cls,
@@ -580,7 +595,16 @@ class _StochasticRetardedSolver(_RetardedSolver):
         inner_state = self.solver.init(bound_terms, t0, t1, y0, args)
         return _RetardedSolverState(inner_state=inner_state, history=history)
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: _RetardedSolverState,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Y, Y | None, DenseInfo, _RetardedSolverState, dfx.RESULTS]:
         bound_terms = _bind_delay_history(terms, solver_state.history)
         y1, y_error, dense_info, inner_state, result = self._step_with_extension(
             bound_terms,
@@ -591,7 +615,9 @@ class _StochasticRetardedSolver(_RetardedSolver):
             solver_state.inner_state,
             made_jump,
         )
-        history = solver_state.history.append(t0, t1, dense_info)
+        history = solver_state.history.append(
+            _diffrax_time(t0), _diffrax_time(t1), dense_info
+        )
         if isinstance(history, RollingDelayHistory):
             result = dfx.RESULTS.where(
                 history.overflowed,
@@ -729,7 +755,7 @@ def _native_stochastic_delay_solution(
     max_steps: int | None,
     throw: bool,
     state_adapter: _PreparedDiffraxStateAdapter,
-):
+) -> dfx.Solution:
     real_dtype = jnp.asarray(problem.initial_state).real.dtype
     brownian, signed_path = _realized_wiener_path(
         realization,
@@ -938,7 +964,7 @@ def _solve_diffrax_delay_stochastic(
                 initial_time=problem.t0,
             )
 
-    def one(path_key: Array, path_sign: Array):
+    def one(path_key: Array, path_sign: Array) -> dfx.Solution:
         return _native_stochastic_delay_solution(
             problem,
             times,
@@ -987,7 +1013,7 @@ def _solve_diffrax_delay_stochastic(
         if realization.sample_shape:
             sample_ndim = len(realization.sample_shape)
 
-            def first_sample(value):
+            def first_sample(value: PyTree) -> PyTree:
                 if eqx.is_array(value):
                     return value[(0,) * sample_ndim]
                 return value
@@ -997,8 +1023,11 @@ def _solve_diffrax_delay_stochastic(
             history_bytes = rolling_history.allocated_bytes
     else:
         history_bytes = None
+    native_times = native.ts
+    native_values = native.ys
+    assert native_times is not None and native_values is not None
     native_states = state_adapter.unpack_values(
-        native.ys["requested"],
+        native_values["requested"],
         len(realization.sample_shape) + 1,
     )
     if rolling_history is not None and throw:
@@ -1014,7 +1043,7 @@ def _solve_diffrax_delay_stochastic(
         if realization.sample_shape:
             interpolation = _VectorizedDelayDenseInterpolation(
                 solver_state,
-                jnp.asarray(native.ts["final"])[..., 0],
+                jnp.asarray(native_times["final"])[..., 0],
                 problem,
                 realization.sample_shape,
                 state_adapter,
@@ -1025,7 +1054,7 @@ def _solve_diffrax_delay_stochastic(
                 problem.tangent_shape,
                 owner="Initial stochastic delay derivative",
             )
-            final_time = jnp.asarray(native.ts["final"])[0]
+            final_time = jnp.asarray(native_times["final"])[0]
             history = DelayHistoryView(
                 initial_history=_CoordinateDelayHistory(problem.history, state_adapter),
                 initial_derivative=(

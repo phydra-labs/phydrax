@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -14,7 +16,14 @@ from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....equations import finite_element_form_from_functional, FiniteElementForm
-from ....variational import FieldJetSpec, Functional, LocalIntegralTerm
+from ....variational import (
+    FieldJetSpec,
+    Functional,
+    FunctionalContext,
+    LocalFieldJet,
+    LocalGeometry,
+    LocalIntegralTerm,
+)
 
 
 def _nonnegative_stiffness(value: ArrayLike, name: str, /) -> Array:
@@ -334,9 +343,16 @@ def cardiac_support_functional(
         raise ValueError("field_name, region, and functional_id must be non-empty.")
     law = _support_law(support)
 
-    def density(fields, geometry, context):
+    def density(
+        fields: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         del geometry, context
-        return law.energy_density(fields[field].value)
+        value = fields[field].value
+        if value is None:
+            raise ValueError("Cardiac support energy requires a displacement value.")
+        return law.energy_density(value)
 
     return Functional(
         identifier,
@@ -344,7 +360,7 @@ def cardiac_support_functional(
             LocalIntegralTerm(
                 f"{law.support_kind}-support-energy",
                 region=region_,
-                fields=(FieldJetSpec(field),),
+                fields=(FieldJetSpec(field, value=True),),
                 density=density,
                 density_id=canonical_fingerprint(
                     {

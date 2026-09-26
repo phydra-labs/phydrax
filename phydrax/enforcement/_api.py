@@ -11,6 +11,7 @@ import equinox as eqx
 import numpy as np
 from jaxtyping import Array, Key
 
+from phydrax.conditions._ir import Condition
 from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
@@ -117,7 +118,10 @@ def compile(
         raise KeyError(f"Unknown enforcement dependencies {missing_dependencies!r}.")
     for spec in resolved_specs:
         if spec.realization is not None:
-            declared_sources = spec.condition.fields.sources
+            condition = spec.condition
+            # EnforcementSpec admits a realization only for typed Condition values.
+            assert isinstance(condition, Condition)
+            declared_sources = condition.fields.sources
             missing = tuple(
                 source for source in declared_sources if source not in resolved_functions
             )

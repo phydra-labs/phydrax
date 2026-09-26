@@ -25,6 +25,7 @@ from ..core import Currency
 CloseoutValueSource: TypeAlias = Literal["risk_free", "replacement"]
 CloseoutObservation: TypeAlias = Literal["default_time", "mpor_end"]
 SimultaneousDefaultRule: TypeAlias = Literal["counterparty", "own", "zero"]
+_CollateralCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -499,7 +500,9 @@ def evolve_collateral(
     pending = jnp.zeros((path_count, time_count), dtype=values.dtype)
     unsettled = jnp.zeros((path_count,), dtype=values.dtype)
 
-    def collateral_step(carry, index):
+    def collateral_step(
+        carry: _CollateralCarry, index: Array
+    ) -> tuple[_CollateralCarry, tuple[Array, Array, Array]]:
         current_, pending_, outstanding_, unsettled_ = carry
         previous = jnp.maximum(index - 1, 0)
         duration = jnp.where(index > 0, nodes[index] - nodes[previous], 0.0)

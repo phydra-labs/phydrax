@@ -121,11 +121,11 @@ class SpectralSelection(StrictModule):
         self.selection_id = identifier
 
     @classmethod
-    def real_below(cls, threshold: float = 0.0, /, **kwargs) -> "SpectralSelection":
+    def real_below(cls, threshold: float = 0.0, /, **kwargs: Any) -> "SpectralSelection":
         return cls("real-below", threshold=threshold, **kwargs)
 
     @classmethod
-    def real_above(cls, threshold: float = 0.0, /, **kwargs) -> "SpectralSelection":
+    def real_above(cls, threshold: float = 0.0, /, **kwargs: Any) -> "SpectralSelection":
         return cls("real-above", threshold=threshold, **kwargs)
 
     @classmethod
@@ -134,7 +134,7 @@ class SpectralSelection(StrictModule):
         center: complex,
         radius: float,
         /,
-        **kwargs,
+        **kwargs: Any,
     ) -> "SpectralSelection":
         return cls("disk", center=center, radius=radius, **kwargs)
 
@@ -144,7 +144,7 @@ class SpectralSelection(StrictModule):
         center: complex,
         radius: float,
         /,
-        **kwargs,
+        **kwargs: Any,
     ) -> "SpectralSelection":
         return cls("exterior-disk", center=center, radius=radius, **kwargs)
 
@@ -649,7 +649,9 @@ def _prepare_numeric(
 ) -> PreparedSpectralSubspace:
     matrix = jnp.asarray(materialize(problem.operator, plan.policy.materialization))
     matrix_numpy = np.asarray(matrix)
-    schur_form_numpy, schur_vectors_numpy, selected_count = scipy_linalg.schur(
+    # scipy-stubs types `sort` as (real, imag) -> bool, but complex output calls it
+    # with one complex eigenvalue (documented SciPy behavior).
+    schur_form_numpy, schur_vectors_numpy, selected_count = scipy_linalg.schur(  # ty: ignore[no-matching-overload]
         matrix_numpy,
         output="complex",
         sort=plan.selection._matches_scalar,
@@ -677,7 +679,8 @@ def _prepare_numeric(
     selected_form_numpy = schur_form_numpy[:selected_count, :selected_count]
     complement_form_numpy = schur_form_numpy[selected_count:, selected_count:]
     coupling_numpy = schur_form_numpy[:selected_count, selected_count:]
-    coupling_solution_numpy = scipy_linalg.solve_sylvester(
+    # ty selects scipy-stubs' deprecated bool/float16 overload for complex input.
+    coupling_solution_numpy = scipy_linalg.solve_sylvester(  # ty: ignore[deprecated]
         selected_form_numpy,
         -complement_form_numpy,
         coupling_numpy,
@@ -875,7 +878,7 @@ def _solve_triangular_sylvester(
     identity = jnp.eye(left.shape[0], dtype=left.dtype)
     indices = jnp.arange(columns)
 
-    def body(index, solution):
+    def body(index: Array, solution: Array) -> Array:
         previous = jnp.where(indices < index, right[:, index], 0)
         right_hand_side = forcing[:, index] + solution @ previous
         column = jsp.linalg.solve_triangular(

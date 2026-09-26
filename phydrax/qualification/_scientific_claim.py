@@ -8,7 +8,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from numbers import Real
-from typing import Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 
@@ -121,11 +121,16 @@ class ScientificMetricCriterion:
 
     def passes(self, value: float, /) -> bool:
         """Return whether one finite value satisfies this criterion."""
+        # __post_init__ guarantees the bounds required by each direction.
+        lower, upper = self.lower, self.upper
         if self.direction == "at_most":
-            return value <= self.upper
+            assert upper is not None
+            return value <= upper
         if self.direction == "at_least":
-            return value >= self.lower
-        return self.lower <= value <= self.upper
+            assert lower is not None
+            return value >= lower
+        assert lower is not None and upper is not None
+        return lower <= value <= upper
 
     def _content_record(self) -> dict[str, object]:
         return {
@@ -143,7 +148,7 @@ class ScientificMetricCriterion:
         return {**self._content_record(), "criterion_id": self.criterion_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ScientificMetricCriterion:
+    def from_record(cls, record: Mapping[str, Any], /) -> ScientificMetricCriterion:
         """Reconstruct a scientific metric criterion."""
         if not isinstance(record, Mapping):
             raise TypeError("Scientific-metric criterion record must be a mapping.")
@@ -151,11 +156,12 @@ class ScientificMetricCriterion:
         upper = record["upper"]
         value = cls(
             str(record["metric_id"]),
-            str(record["direction"]),
+            # __post_init__ rejects directions and aggregations outside the literals.
+            cast(MetricDirection, str(record["direction"])),
             None if lower is None else float(lower),
             None if upper is None else float(upper),
             str(record["unit_id"]),
-            str(record["aggregation"]),
+            cast(MetricAggregation, str(record["aggregation"])),
         )
         recorded_id = record.get("criterion_id")
         if recorded_id is not None and str(recorded_id) != value.criterion_id:
@@ -271,7 +277,7 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
         return {**self._content_record(), "claim_id": self.claim_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ScientificClaimProfile:
+    def from_record(cls, record: Mapping[str, Any], /) -> ScientificClaimProfile:
         """Reconstruct and content-verify a serialized scientific claim."""
         if not isinstance(record, Mapping):
             raise TypeError("Scientific-claim profile record must be a mapping.")

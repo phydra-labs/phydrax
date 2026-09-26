@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import jax.numpy as jnp
 import numpy as np
@@ -113,6 +113,7 @@ class OperatorDataset:
         if index.ndim != 1:
             raise ValueError("Dataset indices must be one-dimensional.")
         assert self.provenance is not None
+        assert self.case_log_weights is not None and self.case_mask is not None
         return OperatorDataset(
             slice_operator_batch(self.batch, index, axis=0),
             self.targets.take(index, axis=0),
@@ -462,8 +463,9 @@ def operator_dataset_from_cases(
         stacked_batch,
         stacked_targets,
         None if provenance is None else tuple(provenance),
-        case_log_weights=case_log_weights,
-        case_mask=case_mask,
+        # OperatorDataset.__post_init__ canonicalizes sequences with jnp.asarray.
+        case_log_weights=cast(Array | None, case_log_weights),
+        case_mask=cast(Array | None, case_mask),
     )
 
 

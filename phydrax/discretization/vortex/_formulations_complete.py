@@ -16,7 +16,11 @@ from phydrax.ein import contract
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._advanced import PedrizzettiRelaxationPlan3D, ReformulatedVPMPlan3D
+from ._advanced import (
+    PedrizzettiRelaxationPlan3D,
+    ReformulatedVPMPlan3D,
+    VortexRelaxationResult3D,
+)
 from ._source import VortexSourceState
 
 
@@ -177,7 +181,7 @@ class VortexRelaxationSchedule(StrictModule, NonTrainableState):
         strength: ArrayLike,
         represented_vorticity: ArrayLike,
         /,
-    ):
+    ) -> tuple[Array, Array, VortexRelaxationResult3D]:
         index = jnp.asarray(step_index)
         candidate = self.relaxation.apply(strength, represented_vorticity)
         selected = (index % self.every_steps) == 0

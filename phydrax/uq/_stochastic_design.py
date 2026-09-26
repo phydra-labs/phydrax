@@ -139,11 +139,13 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _flat_action(self, operator, vector):
+    def _flat_action(self, operator: AbstractLinearOperator, vector: Array) -> Array:
         structured = operator.source.unflatten(vector)
         return operator.target.flatten(operator.mv(structured))
 
-    def _a_value(self, operator, probe):
+    def _a_value(
+        self, operator: AbstractLinearOperator, probe: Array
+    ) -> tuple[Array, Array]:
         if self.linear_policy is None:
             raise RuntimeError("A-optimal design lost its required linear solve policy.")
         result = solve(
@@ -154,7 +156,9 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
         solution = operator.source.flatten(result.value)
         return jnp.real(jnp.vdot(probe, solution)), result.successful
 
-    def _lanczos(self, operator, probe):
+    def _lanczos(
+        self, operator: AbstractLinearOperator, probe: Array
+    ) -> tuple[Array, Array, Array, Array]:
         dtype = inexact_result_type(probe.dtype)
         q = probe.astype(dtype) / jnp.sqrt(jnp.asarray(self.dimension, dtype=dtype))
         previous = jnp.zeros_like(q)

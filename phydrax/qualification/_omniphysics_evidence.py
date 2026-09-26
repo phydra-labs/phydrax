@@ -54,7 +54,7 @@ class NumericalControlEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-numerical-control",
             "family": self.family,
@@ -121,7 +121,7 @@ class RefinementCampaignEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-refinement-campaign",
             "campaign": self.campaign,
@@ -173,7 +173,7 @@ class HardwareProviderEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-hardware-provider",
             "provider_id": self.provider_id,
@@ -225,7 +225,7 @@ class ApplicationValidationEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-application-validation",
             "application": self.application,
@@ -257,7 +257,7 @@ class OmniphysicsQualificationEvidence:
     def evidence_id(self) -> str:
         return canonical_fingerprint(self.to_record(include_id=False))
 
-    def to_record(self, *, include_id=True):
+    def to_record(self, *, include_id: bool = True) -> dict[str, object]:
         record = {
             "kind": "omniphysics-qualification-evidence",
             "controls": [value.to_record() for value in self.controls],

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ...._strict import StrictModule
 from ....ein import contract
@@ -58,7 +58,9 @@ class GeometricContactEvaluation(StrictModule):
 
 
 def geometric_contacts(
-    positions, descriptor: NucleotideGDescriptor, criteria: GeometricContactCriteria
+    positions: ArrayLike,
+    descriptor: NucleotideGDescriptor,
+    criteria: GeometricContactCriteria,
 ) -> GeometricContactEvaluation:
     frames = base_frames(
         positions, descriptor.binding, image_policy=descriptor.image_policy
@@ -91,7 +93,11 @@ def geometric_contacts(
 
 
 def contact_interaction_graph(
-    result, descriptor, criteria, *, source_id: str
+    result: GeometricContactEvaluation,
+    descriptor: NucleotideGDescriptor,
+    criteria: GeometricContactCriteria,
+    *,
+    source_id: str,
 ) -> BaseInteractionGraph:
     """Host annotation retaining directed contact support, not canonical pairing."""
     keys = descriptor.binding.construct.nucleotide_keys

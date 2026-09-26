@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from itertools import product
 from math import prod
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -154,7 +154,11 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
             raise ValueError("FoF cell and Morton occupancies must be positive.")
         if morton_depth < 1 or morton_depth > 21:
             raise ValueError("morton_maximum_depth must lie in [1, 21].")
-        shape = tuple(max(int(np.floor(length / linking)), 1) for length in lengths)
+        # len(lengths) == 3 is validated above.
+        shape = cast(
+            tuple[int, int, int],
+            tuple(max(int(np.floor(length / linking)), 1) for length in lengths),
+        )
         strides = tuple(prod(shape[axis + 1 :]) for axis in range(3))
         offsets = np.asarray(tuple(product((-1, 0, 1), repeat=3)), dtype=np.int32)
         self.box_size = lengths
@@ -411,7 +415,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
 
         labels = jnp.where(active, ids, maximum_id)
 
-        def propagate(_, current):
+        def propagate(_: int | Array, current: Array) -> Array:
             left = relation.source_indices
             right = relation.target_indices
             valid = relation.valid
@@ -594,7 +598,7 @@ class DirectHaloUnbindingPlan(StrictModule, NonTrainableState):
         mass = jnp.asarray(masses, dtype=position.dtype)
         initial = jnp.asarray(candidate_mask, dtype=jnp.bool_)
 
-        def update(_, state):
+        def update(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             mask, iteration = state
             total_mass = jnp.sum(jnp.where(mask, mass, 0.0))
             bulk = jnp.sum(

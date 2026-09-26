@@ -8,6 +8,7 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -16,7 +17,9 @@ from .._strict import StrictModule
 from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
 
 
-def canonical_commutation_matrix(mode_count: int, /, *, dtype=jnp.float64) -> Array:
+def canonical_commutation_matrix(
+    mode_count: int, /, *, dtype: DTypeLike = jnp.float64
+) -> Array:
     modes = int(mode_count)
     if modes < 1:
         raise ValueError("mode_count must be positive.")

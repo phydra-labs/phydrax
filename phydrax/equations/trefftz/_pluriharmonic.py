@@ -9,12 +9,13 @@ from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from ..._differentiation import AbstractConstructionCertificate
 from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic_linear import (
     HolomorphicMultiIndexSet,
+    HolomorphicMultiJet,
     MultivariableHolomorphicPotentialProvider,
 )
 from ..._model import TRIAL_SPACE_CERTIFICATE_KEY
@@ -133,13 +134,15 @@ class PluriharmonicPotential(_AbstractTrialSpaceField):
         dimension = self.complex_dimension
         return values[:dimension] + 1j * values[dimension:]
 
-    def _jet(self, coordinates: ArrayLike, /):
+    def _jet(self, coordinates: ArrayLike, /) -> HolomorphicMultiJet:
         return self.provider.multi_jet(
             self._complex_coordinates(coordinates),
             self.index_set,
         )
 
-    def __call__(self, coordinates: ArrayLike, /, *, key=None) -> Array:
+    def __call__(
+        self, coordinates: ArrayLike, /, *, key: Key[Array, ""] | None = None
+    ) -> Array:
         del key
         return jnp.real(self._jet(coordinates).value[self.branch])
 

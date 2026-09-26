@@ -359,7 +359,7 @@ class ThermalKernelArtifact(StrictModule, NonTrainableState):
         nonnegative_widths = bool(np.all(widths_ >= 0.0) and np.all(masses >= 0.0))
         nonnegative_spectral = bool(np.all(spectral >= 0.0))
         nonnegative_rates = bool(np.all(rates_ >= 0.0))
-        numerical_floor = np.finfo(np.float64).tiny
+        numerical_floor = float(np.finfo(np.float64).tiny)
         covariance_scale = max(float(np.max(np.abs(covariance))), numerical_floor)
         covariance_symmetry_residual = float(
             np.max(np.abs(covariance - covariance.T)) / covariance_scale
@@ -967,7 +967,7 @@ class ThermalDarkRatePlan(StrictModule, NonTrainableState):
         right = left + 1
         fraction = (query - axis[left]) / (axis[right] - axis[left])
 
-        def interpolate(values):
+        def interpolate(values: Array) -> Array:
             return values[..., left] + fraction * (values[..., right] - values[..., left])
 
         rates = interpolate(self.artifact.rates)

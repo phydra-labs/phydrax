@@ -196,7 +196,7 @@ def _extent(points_a: np.ndarray, points_b: np.ndarray | None = None) -> float:
     )
     extent = np.max(values, axis=0) - np.min(values, axis=0)
     scale = float(np.max(extent))
-    return max(scale, np.finfo(np.float64).tiny)
+    return max(scale, float(np.finfo(np.float64).tiny))
 
 
 def _cross(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.longdouble:

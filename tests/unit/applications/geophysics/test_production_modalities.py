@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.applications import geophysics as geo
@@ -221,3 +222,28 @@ def test_layered_frequency_and_time_domain_em_are_passive():
     )
     assert time.successful
     assert jnp.all(time.dissipated_energy_J >= 0)
+
+
+def test_gpr_rejects_runtime_with_envelope_free_pic_current_source():
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(3),
+            phx.discretization.UniformCellAxisSpec(3),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    source = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
+        [0], [1.0], envelope=geo.GaussianDerivativeWaveform(10.0, 0.1)
+    )
+    runtime = phx.solver.CompatibleMaxwellPlan(
+        phx.discretization.StructuredCochainBridge(grid),
+        polarization="tez",
+        constitutive=phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
+            [1.0], [0.1], [0.5]
+        ),
+        pml=phx.solver.maxwell.MaxwellCPMLPlan(1),
+        sources=(source, phx.solver.PICMaxwellCurrentSourcePlan()),
+        observers=(phx.solver.maxwell.FieldProbePlan("electric", [0]),),
+    ).prepare()
+    with pytest.raises(ValueError, match="explicit real transient envelopes"):
+        geo.DispersiveFullWaveGPRPlan(runtime, 0.05 * runtime.stable_dt, 3)

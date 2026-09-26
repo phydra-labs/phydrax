@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import ceil, prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -172,7 +172,8 @@ class MicroscalingFormat:
             int(value["block_size"]),
             str(value["scale_format"]),
             int(value["axis"]),
-            str(value["packing"]),
+            # The constructor rejects packing values other than "packed"/"byte".
+            cast('Literal["packed", "byte"]', str(value["packing"])),
         )
 
 

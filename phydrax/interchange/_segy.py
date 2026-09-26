@@ -248,10 +248,10 @@ def decode_segy_resource(
     endian = ">" if profile.byte_order == "big" else "<"
     binary = memoryview(data)[3200:3600]
 
-    def u16(offset):
+    def u16(offset: int) -> int:
         return struct.unpack_from(endian + "H", binary, offset)[0]
 
-    def i16(offset):
+    def i16(offset: int) -> int:
         return struct.unpack_from(endian + "h", binary, offset)[0]
 
     if u16(300) != 0x0100:
@@ -324,10 +324,10 @@ def decode_segy_resource(
         start = 3600 + trace * record_size
         header = memoryview(data)[start : start + 240]
 
-        def h(offset, current_header=header):
+        def h(offset: int, current_header: memoryview = header) -> int:
             return struct.unpack_from(endian + "h", current_header, offset)[0]
 
-        def i(offset, current_header=header):
+        def i(offset: int, current_header: memoryview = header) -> int:
             return struct.unpack_from(endian + "i", current_header, offset)[0]
 
         trace_samples, trace_interval = struct.unpack_from(endian + "HH", header, 114)

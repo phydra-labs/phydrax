@@ -25,6 +25,7 @@ from ._variational import (
     fit_variational,
     MeanFieldGaussianFamily,
     VariationalConfig,
+    VariationalDiagnostics,
     VariationalResult,
 )
 
@@ -225,7 +226,7 @@ class FlowVariationalResult(StrictModule):
         return self.variational.log_variational
 
     @property
-    def diagnostics(self):
+    def diagnostics(self) -> VariationalDiagnostics:
         return self.variational.diagnostics
 
     @property

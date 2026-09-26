@@ -26,7 +26,7 @@ class WindTurbineStep:
     aerodynamic_force_n: Array
     wave_force_n: Array
     generator_power_w: Array
-    available_wind_power_w: Array
+    available_wind_power_w: float
     mechanical_residual_norm: Array
     successful: Array
 

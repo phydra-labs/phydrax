@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -184,12 +184,12 @@ class PrescribedWallMotion(StrictModule, NonTrainableState):
     motion_id: str = eqx.field(static=True)
 
     @classmethod
-    def stationary(cls) -> "PrescribedWallMotion":
-        def position(time, reference, args):
+    def stationary(cls) -> Self:
+        def position(time: Array, reference: Array, args: Any) -> Array:
             del time, args
             return reference
 
-        def zero(time, reference, args):
+        def zero(time: Array, reference: Array, args: Any) -> Array:
             del time, args
             return jnp.zeros_like(reference)
 

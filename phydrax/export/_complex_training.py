@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -13,7 +14,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._array_archive import (
     array_collection_digest,
@@ -421,7 +422,7 @@ def _import_optimizer(
     state: ComplexOptimizerInterchangeState,
     policy: ComplexImportPolicy,
     /,
-):
+) -> PyTree:
     layout = prepared.optimizer_layout
     if state.layout_id != layout.layout_id:
         raise ValueError("Complex optimizer layout identity mismatch.")
@@ -465,12 +466,12 @@ def _import_optimizer(
 
 
 def _rebuild_rng_tree(
-    template: Any,
-    key_data: tuple[Array, ...],
+    template: PyTree,
+    key_data: tuple[ArrayLike, ...],
     key_impls: tuple[str, ...],
     paths: tuple[str, ...],
     /,
-):
+) -> PyTree:
     path_leaves, treedef = jax.tree_util.tree_flatten_with_path(template)
     expected_paths = tuple(
         jax.tree_util.keystr(path) or "<root>" for path, _ in path_leaves
@@ -486,11 +487,11 @@ def _rebuild_rng_tree(
     ):
         if str(jr.key_impl(target)) != implementation:
             raise ValueError("RNG implementation changed across interchange.")
-        keys.append(jr.wrap_key_data(data, impl=implementation))
+        keys.append(jr.wrap_key_data(jnp.asarray(data), impl=implementation))
     return jax.tree.unflatten(treedef, keys)
 
 
-def _import_rng(template: Any, state: RNGInterchangeState, /):
+def _import_rng(template: PyTree, state: RNGInterchangeState, /) -> PyTree:
     return _rebuild_rng_tree(
         template,
         state.key_data,
@@ -543,7 +544,7 @@ def write_complex_training_checkpoint(
     path: str,
     state: ComplexTrainingInterchangeState,
     /,
-):
+) -> Path:
     """Atomically write one checksum-protected, pickle-free full-state archive."""
     if not isinstance(state, ComplexTrainingInterchangeState):
         raise TypeError("state must be ComplexTrainingInterchangeState.")

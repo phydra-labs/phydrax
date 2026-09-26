@@ -9,6 +9,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -23,6 +24,9 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...geometry.simplicial import AffineSimplexMap
+
+
+_GradedRayCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class AbstractRefractiveIndexField(StrictModule):
@@ -411,7 +415,7 @@ class PreparedGradedIndexRay(StrictModule):
         valid = direction_valid & field_valid & (n0 > 0.0)
         step = jnp.asarray(self.step_size, dtype=positions_.dtype)
 
-        def one_step(vector):
+        def one_step(vector: Array) -> Array:
             x, p = vector[:3], vector[3:]
             n, gradient, _, _ = self.field.sample(x[None, :])
             p_half = p + 0.5 * step * n[0] * gradient[0]
@@ -420,7 +424,9 @@ class PreparedGradedIndexRay(StrictModule):
             p_new = p_half + 0.5 * step * n_new[0] * gradient_new[0]
             return jnp.concatenate((x_new, p_new))
 
-        def advance(carry, _):
+        def advance(
+            carry: _GradedRayCarry, _x: None
+        ) -> tuple[_GradedRayCarry, tuple[Array, Array, Array]]:
             x, p, mapping, length, optical_path, active, maximum_h = carry
             vector = jnp.concatenate((x, p), axis=-1)
             next_vector = jax.vmap(one_step)(vector)

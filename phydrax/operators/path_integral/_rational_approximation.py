@@ -370,9 +370,10 @@ def generate_minimax_rational_approximation(
         bounds=[(None, None)] * (plan.num_poles + 1) + [(0.0, None)],
         method="highs",
     )
-    if not solution.success:
+    solution_x = solution.x
+    if not solution.success or solution_x is None:
         raise RuntimeError(f"Rational minimax exchange solve failed: {solution.message}")
-    coefficients = np.asarray(solution.x[:-1], dtype=np.float64)
+    coefficients = np.asarray(solution_x[:-1], dtype=np.float64)
     coefficient_dtype = spectral_interval.lower.dtype
     function = PartialFractionRationalFunction(
         jnp.asarray(-shifts, dtype=coefficient_dtype),

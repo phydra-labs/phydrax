@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -265,7 +266,10 @@ class ImpurityEnvironment(StrictModule):
         self.hybridization = hybridization
         self.bath = bath
         self.environment_id = (
-            hybridization.environment_id if hybridization is not None else bath.bath_id
+            hybridization.environment_id
+            if hybridization is not None
+            # Exactly one of hybridization/bath was validated above.
+            else cast(AndersonBath, bath).bath_id
         )
 
 

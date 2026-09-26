@@ -317,7 +317,7 @@ class CausalProcessTomographyProblem(StrictModule):
             (jnp.real(value).reshape(-1), jnp.imag(value).reshape(-1))
         )
 
-        def probabilities(parameters):
+        def probabilities(parameters: Array) -> Array:
             candidate = parameters[:size].reshape(value.shape) + 1j * parameters[
                 size:
             ].reshape(value.shape)
@@ -381,7 +381,7 @@ def fit_causal_process_initial_state(
     if factor.shape != expected:
         raise ValueError("Initial process-density factor shape is invalid.")
 
-    def model(candidate):
+    def model(candidate: Array) -> CausalProcessTensor:
         density = faithful_density_from_cholesky(candidate)
         return CausalProcessTensor(
             problem.process.spec,
@@ -390,7 +390,7 @@ def fit_causal_process_initial_state(
             process_id=problem.process.process_id,
         )
 
-    def loss(candidate):
+    def loss(candidate: Array) -> Array:
         return problem.negative_log_likelihood(model(candidate))
 
     value_and_grad = jax.value_and_grad(loss)

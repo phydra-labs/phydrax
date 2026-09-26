@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 import equinox as eqx
 import jax
@@ -21,7 +21,7 @@ from .._trainable import NonTrainableState
 from ..conditions import Observation
 from ..domain import DomainComponent, PointBatch
 from ..domain._observation import indexed_field
-from ..fidelity import FidelityDataset
+from ..fidelity import FidelityCaseSpec, FidelityDataset, FidelityEvaluation
 from ..integration import fixed, from_samples, mean_over
 from ._residual import ResidualPenalty
 
@@ -157,7 +157,9 @@ def prepare_fidelity_observation_penalty(
     )
 
 
-def _stack_case_coordinates(cases, component: DomainComponent, /):
+def _stack_case_coordinates(
+    cases: Sequence[FidelityCaseSpec], component: DomainComponent, /
+) -> dict[str, Array] | Array:
     first = cases[0].inputs
     if isinstance(first, Mapping):
         labels = tuple(label for label in component.domain.labels if label in first)
@@ -184,7 +186,7 @@ def _stack_case_coordinates(cases, component: DomainComponent, /):
     return jnp.stack(tuple(jnp.asarray(case.inputs, dtype=jnp.float64) for case in cases))
 
 
-def _stack_observables(rows) -> Array:
+def _stack_observables(rows: Sequence[FidelityEvaluation]) -> Array:
     leaves = []
     for row in rows:
         observable_leaves = tuple(jax.tree_util.tree_leaves(row.observable))

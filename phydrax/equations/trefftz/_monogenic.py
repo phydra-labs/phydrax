@@ -135,7 +135,7 @@ def _dirac_block(
     residual = 0.0 if product.size == 0 else float(np.max(np.abs(product)))
     operator_scale = 1.0 if matrix.size == 0 else float(np.max(np.abs(matrix)))
     basis_scale = max(float(np.max(np.abs(nullspace))), 1.0)
-    tolerance = (
+    tolerance = float(
         256.0
         * np.finfo(np.float64).eps
         * operator_scale

@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict
@@ -95,7 +95,7 @@ class AdaptedMechanicsOperatorResult(StrictModule):
         return self.base_operator.artifact_id
 
     @property
-    def adapted_context(self):
+    def adapted_context(self) -> Array:
         return self.adaptation.context
 
 

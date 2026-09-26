@@ -10,6 +10,8 @@ from collections.abc import Sequence
 import equinox as eqx
 
 from ..._strict import StrictModule
+from .._domain import Domain
+from .._function import DomainFunction
 from ._fields import LocalFieldFamily, partition_of_unity_field
 
 
@@ -40,7 +42,7 @@ class SubdomainLevel(StrictModule):
         self.family = family
         self.coefficient = coefficient_
 
-    def field(self):
+    def field(self) -> DomainFunction:
         return self.coefficient * partition_of_unity_field(self.family)
 
 
@@ -76,7 +78,7 @@ class SubdomainHierarchy(StrictModule):
         self.hierarchy_id = identifier
 
     @property
-    def ambient(self):
+    def ambient(self) -> Domain:
         return self.levels[0].family.cover.ambient
 
     def level(self, level_id: str, /) -> SubdomainLevel:
@@ -85,7 +87,7 @@ class SubdomainHierarchy(StrictModule):
                 return level
         raise KeyError(f"Unknown subdomain hierarchy level {level_id!r}.")
 
-    def correction(self):
+    def correction(self) -> DomainFunction:
         result = self.levels[0].field()
         for level in self.levels[1:]:
             result = result + level.field()

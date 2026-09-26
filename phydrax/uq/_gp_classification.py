@@ -187,7 +187,7 @@ def condition_bernoulli_gaussian_process(
     identity = jnp.eye(points.shape[0], dtype=kernel_matrix.dtype)
     latent0 = jnp.zeros_like(labels)
 
-    def newton_step(_, latent):
+    def newton_step(_: int | Array, latent: Array) -> Array:
         probabilities = jax.nn.sigmoid(latent)
         curvature = jnp.where(
             weight > 0,

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from math import comb, factorial, sqrt
 from numbers import Integral
 from typing import Literal
@@ -562,7 +563,7 @@ _EQUILATERAL_VERTICES = {
 
 
 def _simplex_node_tuples(order: int, dimension: int, /) -> tuple[tuple[int, ...], ...]:
-    def generate(maximum: int, length: int):
+    def generate(maximum: int, length: int) -> Iterator[tuple[int, ...]]:
         if length == 0:
             yield ()
             return

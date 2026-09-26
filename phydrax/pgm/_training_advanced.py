@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._strict import StrictModule
@@ -23,6 +24,7 @@ from .._training_kernel import (
     run_training_attempt,
     TrainingKernelSpec,
     TrainingKernelState,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
@@ -139,7 +141,13 @@ def bethe_negative_log_likelihood(
     )
 
 
-def _contrastive_divergence_objective(parameters, model_state, fixed, payload, keys):
+def _contrastive_divergence_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[Array, Array],
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], FactorGraphTrainingDiagnostics]:
     """Persistent-CD surrogate; the payload is packed `(positives, negatives)`."""
     del keys
     positive, negative = payload

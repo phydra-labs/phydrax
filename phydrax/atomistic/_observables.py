@@ -9,6 +9,7 @@ import math
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -33,7 +34,7 @@ class ThermodynamicAccumulator(StrictModule):
     successful: Array
 
     @classmethod
-    def empty(cls, dtype) -> "ThermodynamicAccumulator":
+    def empty(cls, dtype: DTypeLike) -> "ThermodynamicAccumulator":
         zero = jnp.zeros((), dtype=dtype)
         return cls(
             jnp.zeros((), dtype=jnp.int32),
@@ -126,7 +127,9 @@ class RadialDistributionState(StrictModule):
     samples: Array
 
     @classmethod
-    def empty(cls, plan: RadialDistributionPlan, dtype) -> "RadialDistributionState":
+    def empty(
+        cls, plan: RadialDistributionPlan, dtype: DTypeLike
+    ) -> "RadialDistributionState":
         return cls(
             jnp.zeros((plan.bin_count,), dtype=dtype), jnp.zeros((), dtype=jnp.int32)
         )

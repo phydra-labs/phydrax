@@ -8,7 +8,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import ArrayLike
+from jaxtyping import ArrayLike, PRNGKeyArray
 
 from phydrax._interpolation import linear_interpolate
 
@@ -94,7 +94,7 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
         electron_particles: PICParticleState,
         ion_indices: ArrayLike,
         electron_indices: ArrayLike,
-        key,
+        key: PRNGKeyArray,
         step_size: ArrayLike,
         step_index: ArrayLike,
         /,

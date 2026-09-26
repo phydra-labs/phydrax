@@ -48,7 +48,7 @@ def _finite_array(value: ArrayLike, owner: str, /) -> Array:
 
 
 def _boundary_slice(value: Array, axis: int, index: int, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value[tuple(location)]
 
@@ -93,7 +93,7 @@ class MACScalarLayout(StrictModule, NonTrainableState):
         return self.operators.discretization.cell_shape
 
     @property
-    def dtype(self):
+    def dtype(self) -> np.dtype:
         return self.operators.pressure_space.dtype
 
     def _field_index(self, name: str, /) -> int:
@@ -310,12 +310,13 @@ class MACScalarBoundarySet(StrictModule, NonTrainableState):
                         raise ValueError(
                             "Each MAC scalar wall axis requires lower and upper data."
                         )
-                    pair = tuple(
+                    lower_condition, upper_condition = (
                         value
                         if isinstance(value, MACScalarBoundaryCondition)
                         else MACScalarBoundaryCondition(value)
                         for value in raw_pair
                     )
+                    pair = (lower_condition, upper_condition)
                     if any(value.kind == "periodic" for value in pair):
                         raise ValueError(
                             "Static MAC walls cannot use periodic scalar data."
@@ -997,7 +998,7 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                     coordinates,
                     args,
                 )
-                location = [slice(None)] * output[axis].ndim
+                location: list[slice | int] = [slice(None)] * output[axis].ndim
                 location[axis] = index
                 output[axis] = (
                     output[axis].at[tuple(location)].set(orientation * outward_loss)
@@ -1268,8 +1269,8 @@ class PreparedMACScalarTransport(StrictModule, NonTrainableState):
                 2.0 * jnp.sum(volumes * centered * piece) / total_volume
                 for piece in pieces
             )
-            diffusive_content_rate = sum(content_rates[1:4])
-            diffusive_variance_rate = sum(variance_rates[1:4])
+            diffusive_content_rate = jnp.asarray(sum(content_rates[1:4]))
+            diffusive_variance_rate = jnp.asarray(sum(variance_rates[1:4]))
             content_rate = jnp.sum(volumes * result.rate)
             variance_rate = 2.0 * jnp.sum(volumes * centered * result.rate) / total_volume
             content_defect = content_rate - sum(content_rates)

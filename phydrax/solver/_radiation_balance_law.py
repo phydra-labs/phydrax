@@ -119,7 +119,7 @@ class MultigroupRadiationMatterProcessPlan(StrictModule, NonTrainableState):
         )
         substep = step / self.subcycles
 
-        def body(_, carry):
+        def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             gas_value, radiation_value = carry
             recovered = system.recover_thermodynamics(gas_value)
             species_molar = gas_value[

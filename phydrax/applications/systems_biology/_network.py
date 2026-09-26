@@ -10,13 +10,14 @@ from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from enum import Enum, IntEnum
 from math import factorial, isfinite
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.ein import contract
@@ -740,7 +741,7 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
     def default_runtime(self) -> StoichiometricRuntime:
         return StoichiometricRuntime(self.propensity_parameters)
 
-    def initial_state(self, values: ArrayLike, /) -> Array:
+    def initial_state(self, values: npt.ArrayLike, /) -> Array:
         raw = jnp.asarray(values)
         if raw.dtype == jnp.bool_:
             raise TypeError("Initial state must not be boolean.")
@@ -1351,19 +1352,31 @@ class CompartmentalJumpProcess(AbstractJumpProcess):
             {"kind": "systems-biology-exact-jump", "network": network.network_id}
         )
 
-    def intensities(self, time, state, args=None, /):
+    def intensities(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> Array:
         del time
         runtime = self.network.default_runtime() if args is None else args
         return self.network.evaluate(state, runtime, mode="ssa").propensities
 
-    def jump(self, state, channel, mark, args=None, /):
+    def jump(
+        self, state: ArrayLike, channel: ArrayLike, mark: ArrayLike, args: Any = None, /
+    ) -> Array:
         del mark, args
         return (
             jnp.asarray(state)
             + self.network.dynamic_stoichiometry[jnp.asarray(channel, dtype=jnp.int32)]
         )
 
-    def sample_mark(self, key, time, state, channel, args=None, /):
+    def sample_mark(
+        self,
+        key: Key[Array, ""],
+        time: ArrayLike,
+        state: ArrayLike,
+        channel: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
         del key, time, channel, args
         return jnp.asarray(0, dtype=jnp.asarray(state).dtype)
 

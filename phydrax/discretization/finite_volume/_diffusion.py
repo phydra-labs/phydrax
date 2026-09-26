@@ -85,7 +85,9 @@ class ConservativeBoundaryCondition(StrictModule, NonTrainableState):
         )
 
 
-def _condition(value: ConservativeBoundaryCondition | ConservativeBoundaryKind, /):
+def _condition(
+    value: ConservativeBoundaryCondition | ConservativeBoundaryKind, /
+) -> ConservativeBoundaryCondition:
     return (
         value
         if isinstance(value, ConservativeBoundaryCondition)
@@ -896,7 +898,9 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, velocity: ArrayLike | Sequence[ArrayLike], /):
+    def prepare(
+        self, velocity: ArrayLike | Sequence[ArrayLike], /
+    ) -> PreparedConservativeAdvection:
         return PreparedConservativeAdvection(self, velocity)
 
 

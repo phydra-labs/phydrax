@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..linalg import orthonormal_frame
@@ -50,7 +51,7 @@ class TrimDomain(StrictModule):
     outer: Array
     holes: tuple[Array, ...]
 
-    def __init__(self, outer: Array, holes: Sequence[Array] = ()) -> None:
+    def __init__(self, outer: npt.ArrayLike, holes: Sequence[npt.ArrayLike] = ()) -> None:
         outer_host = np.asarray(outer, dtype=np.float64)
         hole_hosts = tuple(np.asarray(hole, dtype=np.float64) for hole in holes)
         if outer_host.ndim != 2 or outer_host.shape[1] != 2 or outer_host.shape[0] < 3:
@@ -210,7 +211,9 @@ class BoundaryAtlas(StrictModule):
     def ambient_dimension(self) -> int:
         return self.mapping.ambient_dimension
 
-    def _validate_inputs(self, chart_indices: Array, reference: Array):
+    def _validate_inputs(
+        self, chart_indices: ArrayLike, reference: ArrayLike
+    ) -> tuple[Array, Array]:
         indices = jnp.asarray(chart_indices, dtype=jnp.int32)
         reference_ = jnp.asarray(reference, dtype=jnp.float64)
         if reference_.shape[:-1] != indices.shape:

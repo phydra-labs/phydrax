@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -294,6 +295,22 @@ def test_particle_checkpoint_resumes_exactly_and_rejects_wrong_settings(tmp_path
         phx.uq.read_particle_filter_checkpoint(
             path, problem, num_particles=32, resampling_policy="never"
         )
+
+
+def test_particle_checkpoint_restores_state_identical_to_saved_state(tmp_path):
+    problem = _problem()
+    state = phx.uq.initialize_particle_filter(
+        jr.key(17), problem, num_particles=16, resampling_policy="always"
+    )
+    state, _ = phx.uq.particle_filter_step(problem, state)
+    path = tmp_path / "particle-filter.zip"
+    phx.uq.write_particle_filter_checkpoint(path, problem, state)
+    restored = phx.uq.read_particle_filter_checkpoint(
+        path, problem, num_particles=16, resampling_policy="always"
+    )
+
+    assert eqx.tree_equal(state, restored)
+    assert restored.step_index.dtype == state.step_index.dtype
 
 
 def test_particle_filter_reports_all_invalid_likelihoods():

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite, pi
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -25,6 +26,9 @@ from ...linalg import (
 )
 from ...metrix._adm_exchange import ADMGridGeometry
 from ._status import NumericalRelativityStatus, ScientificStatus
+
+
+_PointFields: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 _SMALL_3 = SmallLinearSolvePlan(3, refinement_iterations=1)
@@ -184,7 +188,7 @@ class IsotropicSchwarzschildInitialData(StrictModule, NonTrainableState):
         mass: ArrayLike,
         /,
         *,
-        center: ArrayLike = (0.0, 0.0, 0.0),
+        center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         excision_radius: float = 0.0,
     ) -> None:
         mass_host = float(np.asarray(mass))
@@ -256,7 +260,7 @@ class KerrSchildInitialData(StrictModule, NonTrainableState):
         spin: ArrayLike = 0.0,
         /,
         *,
-        center: ArrayLike = (0.0, 0.0, 0.0),
+        center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         excision_radius: float = 0.0,
     ) -> None:
         mass_host = float(np.asarray(mass))
@@ -299,7 +303,7 @@ class KerrSchildInitialData(StrictModule, NonTrainableState):
         spin = self.spin.astype(points.dtype)
         center = self.center.astype(points.dtype)
 
-        def evaluate(point):
+        def evaluate(point: Array) -> _PointFields:
             lapse, shift, metric, extrinsic, radius = _kerr_schild_point(
                 point, mass, spin, center
             )
@@ -333,7 +337,7 @@ def isotropic_schwarzschild_initial_data(
     mass: ArrayLike,
     /,
     *,
-    center: ArrayLike = (0.0, 0.0, 0.0),
+    center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     excision_radius: float = 0.0,
 ) -> ADMInitialData:
     return IsotropicSchwarzschildInitialData(
@@ -347,7 +351,7 @@ def kerr_schild_initial_data(
     spin: ArrayLike = 0.0,
     /,
     *,
-    center: ArrayLike = (0.0, 0.0, 0.0),
+    center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     excision_radius: float = 0.0,
 ) -> ADMInitialData:
     return KerrSchildInitialData(
@@ -370,13 +374,13 @@ def adm_constraint_diagnostics(
     points = _coordinates(coordinates)
     flat = points.reshape((-1, 3))
 
-    def at_point(point):
+    def at_point(point: Array) -> tuple[Array, Array, Array, Array]:
         data = field(point)
 
-        def metric_map(query):
+        def metric_map(query: Array) -> Array:
             return field(query).spatial_metric
 
-        def extrinsic_map(query):
+        def extrinsic_map(query: Array) -> Array:
             return field(query).extrinsic_curvature
 
         metric = data.spatial_metric
@@ -402,7 +406,7 @@ def adm_constraint_diagnostics(
         raised = ein.contract("ik,jl,kl->ij", inverse, inverse, extrinsic)
         hamiltonian = scalar + trace**2 - ein.contract("ij,ij->", extrinsic, raised)
 
-        def trace_reversed(query):
+        def trace_reversed(query: Array) -> Array:
             metric_q = metric_map(query)
             inverse_q = inverse_small_linear(_SMALL_3, metric_q).value
             extrinsic_q = extrinsic_map(query)
@@ -451,7 +455,7 @@ def adm_charge_diagnostics(
     area_weights: ArrayLike,
     /,
     *,
-    angular_origin: ArrayLike = (0.0, 0.0, 0.0),
+    angular_origin: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     surface_id: str = "adm-charge-surface",
     quadrature_converged: bool = True,
     surface_tolerance: float = 1.0e-6,
@@ -476,10 +480,10 @@ def adm_charge_diagnostics(
     if not isfinite(tolerance) or tolerance < 0.0:
         raise ValueError("surface_tolerance must be finite and non-negative.")
 
-    def integrands(point, normal):
+    def integrands(point: Array, normal: Array) -> _PointFields:
         data = field(point)
 
-        def metric_map(query):
+        def metric_map(query: Array) -> Array:
             return field(query).spatial_metric
 
         metric = data.spatial_metric
@@ -573,15 +577,15 @@ def _coordinates(value: ArrayLike, /) -> Array:
 
 
 def _package_initial_data(
-    coordinates,
-    lapse,
-    shift,
-    metric,
-    extrinsic,
-    conformal_factor,
-    domain_valid,
-    data_id,
-):
+    coordinates: Array,
+    lapse: Array,
+    shift: Array,
+    metric: Array,
+    extrinsic: Array,
+    conformal_factor: Array,
+    domain_valid: Array,
+    data_id: str,
+) -> ADMInitialData:
     determinant = determinant_small_linear(_SMALL_3, metric)
     finite = (
         jnp.all(jnp.isfinite(coordinates))
@@ -642,7 +646,9 @@ def _christoffel(inverse: Array, metric_derivative: Array, /) -> Array:
     return 0.5 * ein.contract("kl,lij->kij", inverse, lowered)
 
 
-def _kerr_spatial_fields(point, mass, spin, center):
+def _kerr_spatial_fields(
+    point: Array, mass: Array, spin: Array, center: Array
+) -> _PointFields:
     position = point - center
     radius_squared_cartesian = ein.contract("i,i->", position, position)
     spin_squared = ein.contract("i,i->", spin, spin)
@@ -674,7 +680,9 @@ def _kerr_spatial_fields(point, mass, spin, center):
     return lapse, shift, metric, shift_covector, radius
 
 
-def _kerr_schild_point(point, mass, spin, center):
+def _kerr_schild_point(
+    point: Array, mass: Array, spin: Array, center: Array
+) -> _PointFields:
     lapse, shift, metric, shift_covector, radius = _kerr_spatial_fields(
         point, mass, spin, center
     )

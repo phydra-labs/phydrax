@@ -158,7 +158,7 @@ class PVSNetworkFlowPlan:
             .set(jnp.asarray(self.boundary_pressures))
         )
 
-        def balance_action(pressure):
+        def balance_action(pressure: Array) -> Array:
             volume_flow = conductance * (pressure[senders] - pressure[receivers])
             balance = jnp.zeros((node_count,), dtype=pressure.dtype)
             balance = balance.at[senders].add(volume_flow)
@@ -167,7 +167,7 @@ class PVSNetworkFlowPlan:
         if free.size:
             free_indices = jnp.asarray(free, dtype=jnp.int32)
 
-            def free_action(free_pressure):
+            def free_action(free_pressure: Array) -> Array:
                 pressure = (
                     jnp.zeros_like(boundary_pressure).at[free_indices].set(free_pressure)
                 )

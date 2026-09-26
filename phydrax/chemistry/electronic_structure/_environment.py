@@ -122,7 +122,7 @@ class ContinuumSolvationPlan(StrictModule, NonTrainableState):
         charges_ = jnp.asarray(charges, dtype=coordinate.dtype)
         radii_ = jnp.asarray(radii, dtype=coordinate.dtype)
 
-        def energy(value):
+        def energy(value: Array) -> Array:
             return substrate.energy(value, charges_, radii_, float(coulomb_constant))
 
         energy_, gradient = jax.value_and_grad(energy)(coordinate)

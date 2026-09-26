@@ -55,10 +55,10 @@ def enumerated_factor_messages(
         state_ids = group.configurations[:, target]
 
         def one_factor(
-            values,
-            state_ids=state_ids,
-            cardinality=cardinality,
-        ):
+            values: Array,
+            state_ids: Array = state_ids,
+            cardinality: int = cardinality,
+        ) -> Array:
             if mode == "sum":
                 return segment_logsumexp(values, state_ids, cardinality)
             return jax.ops.segment_max(values, state_ids, cardinality)

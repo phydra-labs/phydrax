@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, Key, PyTree
 
 from ..._differentiation import CapabilityEvidenceKind, DerivativeRegularity
 from ..._fingerprint import canonical_fingerprint
@@ -37,7 +37,7 @@ from .._contracts import (
     GeometryKind,
     GeometrySource,
 )
-from .._sampling import bounded_rejection_sample, RejectionSamplingPlan
+from .._sampling import bounded_rejection_sample, RejectionSamplingPlan, SamplingResult
 from .._validity import GeometryValidityEvidence
 from ..analytic._primitives import _check_points, _feature_id
 from ..design._schema import (
@@ -225,7 +225,9 @@ def _field_regularity(regularity: DerivativeRegularity | None, /) -> FieldRegula
     return FieldRegularity.NONSMOOTH
 
 
-def _network_parts(network: AbstractArrayModel, /):
+def _network_parts(
+    network: AbstractArrayModel, /
+) -> tuple[tuple[str, ...], tuple[Array, ...], jax.tree_util.PyTreeDef, PyTree, PyTree]:
     """Split `network` by array role into design parameters and fixed data.
 
     Returns the PARAMETER lane as `(names, leaves, treedef)`, the FIXED lane's
@@ -256,7 +258,9 @@ def _network_values(network: AbstractArrayModel, points: Array, /) -> Array:
     return jax.vmap(network)(points)
 
 
-def _evaluate_network(network: AbstractArrayModel, points: Array, dimension: int, /):
+def _evaluate_network(
+    network: AbstractArrayModel, points: Array, dimension: int, /
+) -> Array:
     points_ = _check_points(points, dimension)
     values = _network_values(network, points_.reshape((-1, dimension)))
     return values.reshape(points_.shape[:-1])
@@ -357,6 +361,8 @@ class _NeuralImplicitKernel(GeometryKernel):
         dimension = self.ambient_dimension
         error = self.certificate.evaluation_error
         lipschitz = self.certificate.lipschitz_upper_bound
+        # The neural certifier always records both bounds on the kernel certificate.
+        assert error is not None and lipschitz is not None
         interior = _evaluate_network(network, self.interior_points, dimension)
         exterior = _evaluate_network(network, self.exterior_points, dimension)
         clearance = _evaluate_network(network, self.clearance_points, dimension)
@@ -457,11 +463,19 @@ class _NeuralImplicitKernel(GeometryKernel):
             "Neural implicit regions have no evidenced boundary measure route."
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         bounds = self.region_bounds
         dimension = self.ambient_dimension
 
-        def proposal(proposal_key, count):
+        def proposal(proposal_key: Key[Array, ""], count: int) -> Array:
             return jr.uniform(
                 proposal_key,
                 shape=(count, dimension),
@@ -480,7 +494,9 @@ class _NeuralImplicitKernel(GeometryKernel):
             dtype=bounds.dtype,
         )
 
-    def sample_boundary(self, state, num_points, /, *, key) -> NoReturn:
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError(
             "Neural implicit regions do not provide boundary sampling."
@@ -602,7 +618,11 @@ def _square_arcs(inside: tuple[bool, ...], /) -> tuple[tuple[int, int], ...]:
     crossing = tuple(k for k in range(4) if inside[k] != inside[(k + 1) % 4])
     if len(crossing) == 4:
         return tuple(((k - 1) % 4, k) for k in range(4) if inside[k])
-    return (crossing,) if crossing else ()
+    if not crossing:
+        return ()
+    # A cyclic square changes sign an even number of times: here exactly twice.
+    first, second = crossing
+    return ((first, second),)
 
 
 @functools.cache
@@ -777,7 +797,9 @@ def _bounds_nodes(nodes: np.ndarray, /) -> np.ndarray:
     return nodes[on_bounds]
 
 
-def _network_contract(network: AbstractArrayModel, dimension: int, /):
+def _network_contract(
+    network: AbstractArrayModel, dimension: int, /
+) -> DerivativeRegularity | None:
     if not isinstance(network, AbstractArrayModel):
         raise TypeError("network must be an AbstractArrayModel.")
     if network.in_size != dimension or network.out_size != "scalar":
@@ -903,7 +925,12 @@ def _certify(
         {GeometryCapability.REGION_QUERY, GeometryCapability.INTERIOR_SAMPLING}
     )
 
-    def compiled(certificate, capabilities, boundary_points, margin):
+    def compiled(
+        certificate: FieldCertificate,
+        capabilities: frozenset[GeometryCapability],
+        boundary_points: Array,
+        margin: float | None,
+    ) -> CompiledGeometry:
         context = _ParameterCollector()
         kernel = _compile_kernel(
             context,

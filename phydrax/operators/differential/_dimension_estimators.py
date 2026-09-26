@@ -245,7 +245,7 @@ def coordinate_divergence_samples(
         raise ValueError("vector_field must preserve the state shape.")
     linearization = la.prepare_linearization(vector_field, state_array)
 
-    def contribution(index):
+    def contribution(index: Array) -> Array:
         direction = jax.nn.one_hot(
             index,
             state_size,
@@ -275,7 +275,7 @@ def coordinate_second_derivative_samples(
         )
     hessian_action = _prepare_hessian_action(function, state_array)
 
-    def contribution(index):
+    def contribution(index: Array) -> Array:
         direction = jax.nn.one_hot(
             index,
             state_size,

@@ -289,10 +289,10 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
         )
         matrix = self.projection.matrix
 
-        def map_controls(value):
+        def map_controls(value: Array) -> Array:
             return ein.contract("vc,cd->vd", matrix.astype(value.dtype), value)
 
-        def pull_proxy(value):
+        def pull_proxy(value: Array) -> Array:
             return ein.contract("vc,vd->cd", matrix.astype(value.dtype), value)
 
         operator = FunctionLinearOperator(

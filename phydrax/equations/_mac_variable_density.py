@@ -782,22 +782,26 @@ class CompiledMACVariableDensityDynamics(StrictModule):
                 )
             )
         )
-        kinetic_before = 0.5 * sum(
-            jnp.sum(measure * momentum * velocity)
-            for measure, momentum, velocity in zip(
-                measures,
-                physical_before.face_momentum,
-                physical_before.velocity,
-                strict=True,
+        kinetic_before = 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(measure * momentum * velocity)
+                for measure, momentum, velocity in zip(
+                    measures,
+                    physical_before.face_momentum,
+                    physical_before.velocity,
+                    strict=True,
+                )
             )
         )
-        kinetic_after = 0.5 * sum(
-            jnp.sum(measure * momentum * velocity)
-            for measure, momentum, velocity in zip(
-                measures,
-                physical_after.face_momentum,
-                physical_after.velocity,
-                strict=True,
+        kinetic_after = 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(measure * momentum * velocity)
+                for measure, momentum, velocity in zip(
+                    measures,
+                    physical_after.face_momentum,
+                    physical_after.velocity,
+                    strict=True,
+                )
             )
         )
         volumes = self.variable_density.operators.discretization.cell_volumes

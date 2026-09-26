@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,6 +25,10 @@ from ...linalg import (
     OperatorProperties,
     PreparedFactorization,
 )
+
+
+if TYPE_CHECKING:
+    from ...integration._rules import ReferenceRule
 
 
 DiscontinuousMassStrategy = Literal[
@@ -62,7 +66,7 @@ class PreparedDiscontinuousMassInverse(StrictModule):
         self,
         discretization: FiniteElementDiscretization,
         field_name: str,
-        volume_rules,
+        volume_rules: ReferenceRule | Mapping[str, ReferenceRule],
         /,
         *,
         strategy: DiscontinuousMassStrategy = "auto",
@@ -357,7 +361,10 @@ def _apply_discontinuous_mass(
 
 
 @_apply_discontinuous_mass.def_jvp
-def _apply_discontinuous_mass_jvp(primals, tangents):
+def _apply_discontinuous_mass_jvp(
+    primals: tuple[PreparedDiscontinuousMassInverse, Array],
+    tangents: tuple[object, Array | None],
+) -> tuple[Array, Array]:
     operator, residual = primals
     _operator_tangent, residual_tangent = tangents
     residual_tangent = (

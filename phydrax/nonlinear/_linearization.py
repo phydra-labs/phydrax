@@ -271,14 +271,15 @@ def prepare_jacobian(
         )
 
     if policy.mode == "sparse":
-        assert policy.sparse_plan is not None
+        sparse_plan = policy.sparse_plan
+        assert sparse_plan is not None
         sparse = (
-            prepare_sparse_linearization(policy.sparse_plan, state, args)
+            prepare_sparse_linearization(sparse_plan, state, args)
             if problem.trial_validity_function is None
             else _guarded_call(
                 problem.trial_valid(state, args),
                 lambda candidate, arguments: prepare_sparse_linearization(
-                    policy.sparse_plan, candidate, arguments
+                    sparse_plan, candidate, arguments
                 ),
                 state,
                 args,
@@ -303,7 +304,7 @@ def prepare_jacobian(
             sparse.operator,
             auxiliary=auxiliary,
             sparse_derivative=sparse,
-            derivative_id=f"sparse:{policy.sparse_plan.plan_id}",
+            derivative_id=f"sparse:{sparse_plan.plan_id}",
             residual_evaluations=1 + int(problem.has_aux),
         )
 
@@ -344,7 +345,7 @@ def prepare_jacobian(
         policy.finite_difference_step, dtype=source.flatten(state).real.dtype
     )
 
-    def action(tangent):
+    def action(tangent: PyTree[Array]) -> PyTree[Array]:
         candidate = jax.tree.map(
             lambda value, delta: value + step * delta, state, tangent
         )

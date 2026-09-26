@@ -2,8 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from __future__ import annotations
+
 from collections.abc import Callable, Mapping
-from typing import Any, cast, overload
+from typing import Any, cast, overload, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -68,6 +70,10 @@ from ._structure import (
 )
 
 
+if TYPE_CHECKING:
+    from .graph._batch import GraphBatch
+
+
 def _as_field(x: Array, *, dims: tuple[str | None, ...]) -> cx.AxisArray:
     return cx.AxisArray(x, dims=dims)
 
@@ -78,7 +84,9 @@ class _NormalCallable(StrictModule):
     def __init__(self, geom: AbstractGeometry) -> None:
         self.geom = geom
 
-    def __call__(self, x: Array, /, *, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, x: Array, /, *, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del key, kwargs
         pts_in = jnp.asarray(x, dtype=jnp.float64)
         d = int(self.geom.spatial_dim)
@@ -113,7 +121,9 @@ class _SdfCallable(StrictModule):
     def __init__(self, geom: AbstractGeometry) -> None:
         self.geom = geom
 
-    def __call__(self, x: Any, /, *, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, x: Any, /, *, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del key, kwargs
         d = int(self.geom.spatial_dim)
 
@@ -164,7 +174,9 @@ class _EnforcementGateCallable(StrictModule):
         )
         self.dim = int(geom.spatial_dim)
 
-    def __call__(self, x: Any, /, *, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, x: Any, /, *, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del key, kwargs
         if isinstance(x, tuple):
             coords = tuple(jnp.asarray(c, dtype=jnp.float64).reshape((-1,)) for c in x)
@@ -499,7 +511,7 @@ class DomainComponent(StrictModule):
         structure: SampleLayout,
         sampler: str,
         key: Key[Array, ""],
-    ):
+    ) -> GraphBatch | None:
         from .graph._batch import GraphBatch
         from .graph._dataset import GraphDatasetDomain
         from .graph._domain import GraphDomain
@@ -639,7 +651,7 @@ class DomainComponent(StrictModule):
             if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 samples = factor.sample(n, sampler=sampler, key=k)
 
-                def _to_field(v):
+                def _to_field(v: ArrayLike) -> cx.AxisArray:
                     arr = jnp.asarray(v)
                     if arr.ndim == 0:
                         raise ValueError(
@@ -763,7 +775,7 @@ class DomainComponent(StrictModule):
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointBatch: ...
+    ) -> PointBatch | GraphBatch: ...
 
     @overload
     def sample(
@@ -780,7 +792,7 @@ class DomainComponent(StrictModule):
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointBatch | GridBatch:
+    ) -> PointBatch | GridBatch | GraphBatch:
         """Materialize a typed sampling request."""
         if isinstance(sampling, PointSampling):
             return self._sample_points(sampling, key=key)
@@ -794,7 +806,7 @@ class DomainComponent(StrictModule):
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointBatch:
+    ) -> PointBatch | GraphBatch:
         from ._irregular_trajectory_dataset import (
             IrregularTrajectoryDatasetDomain,
             sample_irregular_trajectory_component,
@@ -1008,7 +1020,7 @@ class DomainComponent(StrictModule):
                     continue
                 if isinstance(factor, DatasetDomain):
 
-                    def _transported_field(value):
+                    def _transported_field(value: ArrayLike) -> cx.AxisArray:
                         arr = jnp.asarray(value)
                         return _as_field(
                             arr,
@@ -1041,7 +1053,7 @@ class DomainComponent(StrictModule):
                 k = jr.fold_in(keys_for_blocks[bi], label_to_idx[lbl])
                 samples = factor.sample(n, sampler=sampler_name, key=k)
 
-                def _to_field(v):
+                def _to_field(v: ArrayLike) -> cx.AxisArray:
                     arr = jnp.asarray(v)
                     if arr.ndim == 0:
                         raise ValueError(
@@ -1062,13 +1074,13 @@ class DomainComponent(StrictModule):
         *,
         coord_separable: Any,
         sampler: str,
-        fixed_labels: tuple[str, ...],
-        coord_label_set: set[str],
+        fixed_labels: frozenset[str],
+        coord_label_set: frozenset[str],
         dense_structure_out: Any,
         label_to_block_index: dict[str, int],
         label_to_idx: dict[str, int],
         coord_key_by_label: dict[str, Any],
-        dense_keys_for_blocks: tuple[Any, ...],
+        dense_keys_for_blocks: Array,
         coord_axes_by_label: dict[str, Any],
         coord_mask_by_label: dict[str, Any],
         coord_geometry_weight_by_label: dict[str, Any],
@@ -1315,7 +1327,7 @@ class DomainComponent(StrictModule):
             k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
             samples = factor.sample(n, sampler=dense_sampler, key=k)
 
-            def _to_field(v):
+            def _to_field(v: ArrayLike) -> cx.AxisArray:
                 arr = jnp.asarray(v)
                 if arr.ndim == 0:
                     raise ValueError("Dataset samples must have a leading sample axis.")
@@ -1697,7 +1709,7 @@ class ComponentSum(StrictModule):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         min_points_per_term: int = 1,
-    ) -> tuple[PointBatch, ...]:
+    ) -> tuple[PointBatch | GraphBatch, ...]:
         """Sample every additive term with explicit per-term point requests."""
         num_terms = len(self.terms)
         if min_points_per_term < 1:

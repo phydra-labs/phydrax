@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....discretization._cell_complex import PolygonalConnectivity
 from ....geometry import MeshRegion, TriangleMesh
 from ....geometry.surface import SurfaceModel, SurfaceRealization
 from ....linalg import (
@@ -280,8 +281,11 @@ def _support_arrays(
     if isinstance(support, SurfaceModel):
         mesh = support.mesh
         vertices = np.asarray(mesh.coordinates, dtype=np.float64)
-        faces = np.asarray(mesh.connectivity.cell_vertices, dtype=np.int32)
-        kinds = np.asarray(mesh.connectivity.cell_kinds, dtype=np.int32)
+        connectivity = mesh.connectivity
+        # SurfaceModel requires a two-dimensional CellMesh, which carries polygonal connectivity.
+        assert isinstance(connectivity, PolygonalConnectivity)
+        faces = np.asarray(connectivity.cell_vertices, dtype=np.int32)
+        kinds = np.asarray(connectivity.cell_kinds, dtype=np.int32)
         if faces.ndim != 2 or kinds.shape != (faces.shape[0],) or np.any(kinds != 3):
             raise ValueError("Scalar screens require affine triangle cells only.")
         return vertices, faces[:, :3], support.model_id
@@ -747,7 +751,7 @@ def prepare_scalar_screen_single_layer_dp0_3d(
 
 
 def prepare_scalar_screen_hypersingular_dp0_3d(
-    support: ScalarScreenSupport3D, /, **kwargs
+    support: ScalarScreenSupport3D, /, **kwargs: object
 ) -> NoReturn:
     """Reject W before any screen geometry or quadrature preparation."""
 
@@ -758,7 +762,7 @@ def prepare_scalar_screen_hypersingular_dp0_3d(
 
 
 def prepare_scalar_screen_calderon_dp0_3d(
-    support: ScalarScreenSupport3D, /, **kwargs
+    support: ScalarScreenSupport3D, /, **kwargs: object
 ) -> NoReturn:
     """Reject closed Calderón semantics on a two-sided open screen."""
 
@@ -769,7 +773,7 @@ def prepare_scalar_screen_calderon_dp0_3d(
 
 
 def prepare_scalar_screen_junction_solve_3d(
-    support: ScalarScreenSupport3D, /, **kwargs
+    support: ScalarScreenSupport3D, /, **kwargs: object
 ) -> NoReturn:
     """Retain junction incidence and reject before operator preparation."""
 

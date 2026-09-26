@@ -14,7 +14,7 @@ class Component:
             raise ValueError("Component hierarchy invalid.")
 
 
-def flatten_component(component: Component, prefix: str = ""):
+def flatten_component(component: Component, prefix: str = "") -> tuple[str, ...]:
     path = f"{prefix}.{component.name}" if prefix else component.name
     result = [path]
     for child in component.children:

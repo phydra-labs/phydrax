@@ -628,8 +628,14 @@ def _report(
 def _same_identity_context(loaded: Sequence[_LoadedDICOM], /) -> tuple[str, str, str]:
     studies = {item.identity.study_instance_uid for item in loaded}
     series = {item.identity.series_instance_uid for item in loaded}
-    frames = {item.identity.frame_of_reference_uid for item in loaded}
-    if len(studies) != 1 or len(series) != 1 or len(frames) != 1 or None in frames:
+    frame_values = {item.identity.frame_of_reference_uid for item in loaded}
+    frames = {frame for frame in frame_values if frame is not None}
+    if (
+        len(studies) != 1
+        or len(series) != 1
+        or len(frame_values) != 1
+        or len(frames) != 1
+    ):
         raise DICOMProfileError(
             "DICOM image instances must share study, series, and frame-of-reference identity."
         )
@@ -637,6 +643,7 @@ def _same_identity_context(loaded: Sequence[_LoadedDICOM], /) -> tuple[str, str,
 
 
 __all__ = [
+    "_Geometry",
     "_LoadedDICOM",
     "_decode_stored_pixels",
     "_float",

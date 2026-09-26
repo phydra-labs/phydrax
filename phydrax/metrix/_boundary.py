@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ._chart import CoordinateChart
 from ._density import metric_volume_density, VolumeDensity
 from ._map import Immersion
 from ._metric import pullback_metric, RiemannianMetric
@@ -39,7 +40,7 @@ class RiemannianHypersurface(StrictModule):
         self.conormal_function = conormal
 
     @property
-    def chart(self):
+    def chart(self) -> CoordinateChart:
         return self.metric.chart
 
     def _conormal_point(self, coordinates: Array, /) -> Array:

@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -26,6 +26,10 @@ from ._components import (
     graph_component_kind,
     GraphComponentKind,
 )
+
+
+if TYPE_CHECKING:
+    from .._function import DomainFunction
 
 
 GraphMeasureMode = Literal["probability", "count"]
@@ -276,7 +280,7 @@ class GraphDomain(JointFactor):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap a `GraphIR -> GraphIR` model as a graph `DomainFunction`.
 
         The wrapped model receives the sampled batch topology and can return node,
@@ -317,7 +321,7 @@ class GraphDomain(JointFactor):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap an autoregressive graph rollout as a graph `DomainFunction`.
 
         The stepper is applied for `steps` transitions on the sampled graph state,

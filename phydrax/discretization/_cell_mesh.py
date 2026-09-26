@@ -960,6 +960,12 @@ class CellMesh(StrictModule, NonTrainableState):
             raise ValueError(
                 "Fixed-topology coordinate refresh must preserve coordinate shape."
             )
+        polyhedral_connectivity: PolyhedralConnectivity | None = None
+        if any(isinstance(block, PolyhedralBlock) for block in self.blocks):
+            connectivity = self.connectivity
+            # Polyhedron blocks are only accepted with an explicit PolyhedralConnectivity.
+            assert isinstance(connectivity, PolyhedralConnectivity)
+            polyhedral_connectivity = connectivity
         return CellMesh(
             points,
             self.blocks,
@@ -967,11 +973,7 @@ class CellMesh(StrictModule, NonTrainableState):
                 entities.intrinsic_dimension: entities.entity_ids
                 for entities in self.topology.entity_sets
             },
-            polyhedral_connectivity=(
-                self.connectivity
-                if any(isinstance(block, PolyhedralBlock) for block in self.blocks)
-                else None
-            ),
+            polyhedral_connectivity=polyhedral_connectivity,
             numeric_version=numeric_version,
         )
 

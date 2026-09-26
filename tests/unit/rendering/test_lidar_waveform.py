@@ -146,3 +146,32 @@ def test_waveform_plans_refuse_incompatible_units_and_invalid_capacities():
             wave_speed_unit=_speed_unit(),
             path_capacity=0,
         )
+
+
+def test_lossless_waveform_plans_report_dropped_energy_as_array():
+    _, rays, _ = _surface_and_rays()
+    support = _waveform_support(rays)
+    atmosphere = phx.rendering.AtmosphericLidarPlan(
+        support,
+        _pulse(),
+        np.asarray(((1.0, 2.0, 3.0),)),
+        np.ones((1, 3)),
+        wave_speed=2.0,
+        range_unit=phx.units.METER,
+        wave_speed_unit=_speed_unit(),
+    ).evaluate(np.zeros((1, 3)), np.ones((1, 3)))
+    scattered = phx.rendering.TimeResolvedMultipleScatteringPlan(
+        support,
+        packet_count=16,
+        event_count=2,
+        extinction=1.0,
+        scattering_albedo=0.8,
+        wave_speed=2.0,
+        distance_unit=phx.units.METER,
+        wave_speed_unit=_speed_unit(),
+    ).evaluate(jr.key(0))
+
+    for evidence in (atmosphere.evidence, scattered.evidence):
+        assert evidence.dropped_energy.shape == ()
+        assert evidence.dropped_energy.dtype == evidence.received_energy.dtype
+        assert float(evidence.dropped_energy) == 0.0

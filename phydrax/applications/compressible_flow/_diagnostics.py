@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -530,7 +531,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule):
         velocity_gradient: ArrayLike | None = None,
         thermal_conductivity: ArrayLike | None = None,
         temperature_gradient: ArrayLike | None = None,
-        args=None,
+        args: Any = None,
     ) -> CompressiblePlaneStatistics:
         state = jnp.asarray(conserved)
         if (
@@ -722,7 +723,10 @@ class CompressiblePlaneStatisticsPlan(StrictModule):
             friction_velocity = jnp.stack(friction_values)
             viscous_length = jnp.stack(length_values)
             wall_units_available = jnp.stack(availability_values)
-            coordinates = self.wall_normal_coordinates.astype(state.dtype)
+            wall_coordinates = self.wall_normal_coordinates
+            # The constructor requires wall-normal coordinates whenever a wall axis is set.
+            assert wall_coordinates is not None
+            coordinates = wall_coordinates.astype(state.dtype)
             lower_distance = coordinates - coordinates[0]
             upper_distance = coordinates[-1] - coordinates
             wall_y_plus = jnp.stack(

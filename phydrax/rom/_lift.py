@@ -111,7 +111,7 @@ class ReducedLiftArtifact(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, coefficients: ArrayLike, /):
+    def evaluate(self, coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(coefficients)
         if values.shape[-1:] != (len(self.term_ids),):
             raise ValueError("Lift coefficients must end in the lift-term axis.")

@@ -1047,7 +1047,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             (self.graph.bodies.capacity, 6), dtype=configuration_array.dtype
         )
 
-        def action(generalized_velocity):
+        def action(generalized_velocity: Array) -> Array:
             return self._body_velocity_from_poses(
                 generalized_velocity, position, orientation
             )
@@ -1082,7 +1082,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         source = ArraySpace((self.nv,), dtype=configuration_array.dtype)
         target = ArraySpace((6,), dtype=configuration_array.dtype)
 
-        def action(generalized_velocity):
+        def action(generalized_velocity: Array) -> Array:
             body_velocity = self._body_velocity_from_poses(
                 generalized_velocity, position, orientation
             )[index]
@@ -1117,7 +1117,7 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         wrench = jnp.concatenate((force, torque), axis=-1)
         position, orientation = self._poses(configuration_array)
 
-        def velocity_action(value):
+        def velocity_action(value: Array) -> Array:
             return self._body_velocity_from_poses(value, position, orientation)
 
         body_velocity = velocity_action(velocity_array)

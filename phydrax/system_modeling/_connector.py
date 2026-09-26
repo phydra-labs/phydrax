@@ -1,9 +1,10 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import Literal, Self, TypeAlias
 
 
 VariableKind: TypeAlias = Literal["across", "through"]
@@ -26,7 +27,7 @@ class ConnectorType:
     variables: tuple[ConnectorVariable, ...]
 
     @classmethod
-    def create(cls, identifier, variables):
+    def create(cls, identifier: str, variables: Iterable[ConnectorVariable]) -> Self:
         return cls(str(identifier), tuple(variables))
 
     def __post_init__(self) -> None:

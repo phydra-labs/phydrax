@@ -316,7 +316,13 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
             self.plan_id,
         )
 
-    def _electronic_step(self, coefficients, evaluation, velocity, /):
+    def _electronic_step(
+        self,
+        coefficients: Array,
+        evaluation: NonadiabaticSurfaceEvaluation,
+        velocity: Array,
+        /,
+    ) -> tuple[Array, Array, Array, Array]:
         coupling_rate = contract("nx,ijnx->ij", velocity, evaluation.derivative_couplings)
         hamiltonian = (
             jnp.diag(evaluation.energies.astype(evaluation.spin_orbit_couplings.dtype))
@@ -470,7 +476,9 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
             successful,
         )
 
-    def run(self, initial: SurfaceHoppingState, step_count: int, /):
+    def run(
+        self, initial: SurfaceHoppingState, step_count: int, /
+    ) -> tuple[tuple[SurfaceHoppingState, ...], tuple[SurfaceHopEvent, ...]]:
         count = int(step_count)
         if count < 0:
             raise ValueError("step_count must be non-negative.")

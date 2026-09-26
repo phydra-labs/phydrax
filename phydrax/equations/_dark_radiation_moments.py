@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -354,7 +356,7 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
     def primitive_to_conserved(self, primitive: Array, /) -> Array:
         return self.transport_system.primitive_to_conserved(primitive)
 
-    def physical_flux(self, state: Array, axis: int, args=None, /) -> Array:
+    def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         del args
         axis_ = int(axis)
         if not 0 <= axis_ < self.dimension:
@@ -370,11 +372,13 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
         )
         return output.reshape(jnp.asarray(state).shape)
 
-    def max_wave_speed(self, left: Array, right: Array, axis: int, args=None, /) -> Array:
+    def max_wave_speed(
+        self, left: Array, right: Array, axis: int, args: Any = None, /
+    ) -> Array:
         return self.transport_system.max_wave_speed(left, right, axis, args)
 
     def signal_bounds(
-        self, left: Array, right: Array, axis: int, args=None, /
+        self, left: Array, right: Array, axis: int, args: Any = None, /
     ) -> tuple[Array, Array]:
         return self.transport_system.signal_bounds(left, right, axis, args)
 
@@ -383,7 +387,7 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
         left: Array,
         right: Array,
         unit_normal: Array,
-        args=None,
+        args: Any = None,
         /,
     ) -> tuple[Array, Array]:
         return self.transport_system.normal_signal_bounds(left, right, unit_normal, args)
@@ -1242,7 +1246,7 @@ class DarkRadiationVETPlan(StrictModule, NonTrainableState):
             1.0 - attenuation[..., None]
         )
 
-        def iteration(_, carry):
+        def iteration(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             current, residuals = carry
             updated = 0.5 * (current + target)
             residual = jnp.max(jnp.abs(updated - current), axis=-1)

@@ -13,6 +13,7 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
@@ -230,7 +231,9 @@ def initialize_cable_state(
     )
 
 
-def zero_cable_inputs(runtime: PreparedCableSolver, /, *, dtype=None) -> CableStepInputs:
+def zero_cable_inputs(
+    runtime: PreparedCableSolver, /, *, dtype: DTypeLike | None = None
+) -> CableStepInputs:
     """Return neutral fixed-shape cable inputs."""
     count = runtime.morphology.plan.compartment_count
     resolved_dtype = runtime.morphology.capacitance_nF.dtype if dtype is None else dtype
@@ -299,7 +302,12 @@ def assemble_cable_system(
     return operator, right, physical_operator, offset
 
 
-def _cable_elapsed(runtime, state, elapsed_ms, /) -> Array:
+def _cable_elapsed(
+    runtime: PreparedCableSolver,
+    state: CableState,
+    elapsed_ms: Array | None,
+    /,
+) -> Array:
     elapsed = jnp.asarray(
         runtime.plan.dt_ms if elapsed_ms is None else elapsed_ms,
         dtype=state.voltage_mV.dtype,

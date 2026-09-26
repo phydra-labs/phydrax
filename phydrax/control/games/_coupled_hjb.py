@@ -585,7 +585,7 @@ def _best_response(
     minimum = np.min(own_hamiltonians, axis=-1, keepdims=True)
     ties = own_hamiltonians == minimum
     selectors = np.argmax(ties, axis=-1).astype(np.int32)
-    tie_counts = np.sum(ties, axis=-1, dtype=np.int32)
+    tie_counts = ties.sum(axis=-1, dtype=np.int32)
     return selectors, tie_counts
 
 

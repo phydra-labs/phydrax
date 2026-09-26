@@ -11,6 +11,8 @@ from typing import Any
 import equinox as eqx
 from jaxtyping import Array, Key
 
+import phydrax.axes as cx
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -45,12 +47,14 @@ class _FrozenFieldEvaluator(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
-    ):
+    ) -> cx.AxisArray:
         return self.field(batch, key=key, **kwargs)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Any:
         return self.field.func(*args, key=key, **kwargs)
 
     def derivative_rule_for(self, function: DomainFunction, /) -> DerivativeRule:
@@ -219,6 +223,7 @@ def prepare_functional_correction(
             data_accuracy_eps=term.data_accuracy_eps,
         )
         for term in solver.terms
+        if isinstance(term, ResidualPenalty)
     ]
     training_solver = FunctionalSolver(
         functions=composed,

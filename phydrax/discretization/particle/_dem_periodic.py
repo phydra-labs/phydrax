@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -19,6 +20,10 @@ from ..._trainable import NonTrainableState
 from ...linalg import inverse_small_linear, SmallLinearSolvePlan
 from .._periodic_cell import PeriodicCell
 from ._pairwise import particle_pair_geometry
+
+
+if TYPE_CHECKING:
+    from ._dem import DEMEvaluation, DEMRuntimeState, PreparedSoftSphereDEMDynamics
 
 
 class DEMPeriodicCellState(StrictModule):
@@ -424,7 +429,7 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
     def ambient_dimension(self) -> int:
         return self.prescribed_strain_rate.shape[0]
 
-    def initialize(self, cell: PeriodicCell, dtype, /) -> DEMPeriodicCellState:
+    def initialize(self, cell: PeriodicCell, dtype: DTypeLike, /) -> DEMPeriodicCellState:
         if not isinstance(cell, PeriodicCell) or not cell.fully_periodic:
             raise ValueError(
                 "Periodic DEM cell control requires a fully periodic PeriodicCell."
@@ -544,7 +549,12 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
         )
 
 
-def dem_bulk_stress(dynamics, state, evaluation, /) -> DEMBulkStress:
+def dem_bulk_stress(
+    dynamics: PreparedSoftSphereDEMDynamics,
+    state: DEMRuntimeState,
+    evaluation: DEMEvaluation,
+    /,
+) -> DEMBulkStress:
     cell_state = state.periodic_cell
     if cell_state is None:
         raise ValueError("DEM state has no deforming periodic cell.")

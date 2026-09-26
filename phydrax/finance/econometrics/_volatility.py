@@ -13,6 +13,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...stochastic._state_space import StateSpaceProblem
 from ...uq._conditional_volatility import (
+    ConditionalVolatilityKind,
     fit_garch as fit_garch_arrays,
     fit_har as fit_har_arrays,
     GARCHFit as GenericGARCHFit,
@@ -182,7 +183,7 @@ def _fit_conditional(
     definition: GARCHDefinition | GJRDefinition | EGARCHDefinition,
     law: PhysicalLaw,
     series_index: int,
-    kind: str,
+    kind: ConditionalVolatilityKind,
 ) -> GARCHFit:
     _physical(law)
     if not isinstance(returns, ReturnResult):

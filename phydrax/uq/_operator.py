@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 import phydrax.axes as cx
 
@@ -20,6 +20,7 @@ from .._strict import StrictModule
 from ..nn.operator.data import (
     FunctionSamples,
     OperatorBatch,
+    OperatorFieldBatch,
     OperatorOutputSpec,
     OperatorPrediction,
 )
@@ -175,7 +176,7 @@ def _select_prediction_field(
     prediction: OperatorPrediction,
     field_name: str,
     /,
-):
+) -> tuple[str, OperatorFieldBatch, FunctionSamples]:
     name = str(field_name)
     if not name:
         raise ValueError("field_name must be non-empty.")
@@ -860,11 +861,11 @@ def propagate_operator_linearized(
         dims=dims,
     )
 
-    def pushforward(tangent):
+    def pushforward(tangent: PyTree[Array]) -> cx.AxisArray:
         values = linearization.pushforward(tangent)
         return cx.AxisArray(jnp.where(mask, values, 0.0), dims=dims)
 
-    def pullback(cotangent):
+    def pullback(cotangent: PyTree[Array]) -> Array:
         if not isinstance(cotangent, cx.AxisArray):
             raise TypeError(
                 "Operator covariance cotangents must be phydrax.axes.AxisArray."

@@ -32,6 +32,7 @@ from ..linalg import (
 from ..sparse import SparseLinearMap
 from ._network import (
     _compile_topology,
+    _CompiledTopology,
     _flatten_definition,
     _Flattened,
     ScatteringNetworkDiagnostics,
@@ -170,7 +171,9 @@ class _ScatteringSystemAction(StrictModule):
         return value - self.connection.mv(self.scattering.mv(value))
 
 
-def _connection_structure(compiled) -> tuple[list[int], list[int]]:
+def _connection_structure(
+    compiled: _CompiledTopology,
+) -> tuple[list[int], list[int]]:
     sources: list[int] = []
     targets: list[int] = []
     flat, connection_blocks = compiled[0], compiled[5]

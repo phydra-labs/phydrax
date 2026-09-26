@@ -319,7 +319,7 @@ class MACDFIBProjectionPlan(StrictModule, NonTrainableState):
         target = regular.markers.active_values(marker_state.velocity)
         marker_space = regular.markers.active_velocity_space
 
-        def mobility_action(multiplier):
+        def mobility_action(multiplier: Array) -> Array:
             spread = self.transfer.spread(relation, multiplier, boundary_stage=stage)
             inverse = stage_inverse.apply_inverse(spread)
             return self.transfer.gather(relation, inverse, boundary_stage=stage)

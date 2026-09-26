@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax
@@ -39,6 +39,7 @@ from ...solver._etdrk import (
 from ...solver._fixed_step import (
     AbstractFixedStepMethod,
     FixedStepResult,
+    RetriedFixedStepResult,
     RobustRetryPolicy,
 )
 from ...solver._production_runtime import (
@@ -1382,6 +1383,8 @@ class _MACStatisticsEvaluator(StrictModule):
 
 
 class _PreparedProductionRoute:
+    _prepared_kind: ClassVar[str]
+
     def _bind_runtime(
         self,
         plan: Any,
@@ -1441,7 +1444,9 @@ class _PreparedProductionRoute:
     def resume(self, template: ProductionRunState, /) -> ProductionRunState:
         return self.runtime.resume(template)
 
-    def step(self, state: ProductionRunState, /):
+    def step(
+        self, state: ProductionRunState, /
+    ) -> tuple[ProductionRunState, RetriedFixedStepResult]:
         return self.runtime.step(state)
 
     def checkpoint(self, state: ProductionRunState, /) -> ProductionRunState:

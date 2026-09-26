@@ -72,7 +72,7 @@ class OperatorDistributionNLL(AbstractOperatorLossTerm):
 
     def __call__(
         self,
-        model,
+        model: object,
         prediction: OperatorPrediction,
         batch: OperatorBatch,
         targets: OperatorTargetBatch,

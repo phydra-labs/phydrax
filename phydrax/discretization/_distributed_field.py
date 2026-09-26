@@ -332,7 +332,7 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         packed = jax.device_put(packed, NamedSharding(mesh, packed_spec))
         parts = jax.device_put(parts, NamedSharding(mesh, part_spec))
 
-        def action(local, part):
+        def action(local: Array, part: Array) -> Array:
             part_index = part[0]
             exchanged = self.halo.exchange(
                 local[0],
@@ -405,7 +405,7 @@ class DistributedLocalOperator(StrictModule, NonTrainableState):
         packed = jax.device_put(packed, NamedSharding(mesh, packed_spec))
         parts = jax.device_put(parts, NamedSharding(mesh, part_spec))
 
-        def action(local, part):
+        def action(local: Array, part: Array) -> Array:
             part_index = part[0]
             local_result = self.local_transpose(
                 part_index,

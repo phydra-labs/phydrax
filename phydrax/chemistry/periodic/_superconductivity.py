@@ -396,7 +396,7 @@ def solve_superconducting_mean_field(
     factors = plan.channels.form_factors
     minus = plan.channels.minus_k_indices
 
-    def mapping(state, args):
+    def mapping(state: Array, args: object) -> Array:
         del args
         amplitudes, chemical = _decode_state(plan, state)
         pairing = ein.contract("a,akij->kij", amplitudes, factors)
@@ -426,7 +426,7 @@ def solve_superconducting_mean_field(
         return encoded
 
     encoded_initial = np.concatenate((initial.real, initial.imag))
-    if plan.ensemble == "fixed-filling":
+    if plan.ensemble == "fixed-filling" and initial_chemical_potential is not None:
         encoded_initial = np.concatenate(
             (encoded_initial, np.asarray((float(initial_chemical_potential),)))
         )

@@ -16,10 +16,18 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
-from ...units import derived_unit, JOULE, KELVIN, KILOGRAM, METER, SECOND
+from ...units import (
+    derived_unit,
+    JOULE,
+    KELVIN,
+    KILOGRAM,
+    METER,
+    SECOND,
+    UnitDefinition,
+)
 from ._high_field import (
     _admitted,
     _finite_scalar,
@@ -114,24 +122,24 @@ class DynamicTrap(StrictModule):
 
     def __init__(
         self,
-        density,
-        electron_capture_coefficient,
-        hole_capture_coefficient,
-        electron_emission_rate,
-        hole_emission_rate,
-        trap_energy,
+        density: ArrayLike,
+        electron_capture_coefficient: ArrayLike,
+        hole_capture_coefficient: ArrayLike,
+        electron_emission_rate: ArrayLike,
+        hole_emission_rate: ArrayLike,
+        trap_energy: ArrayLike,
         /,
         *,
-        empty_charge_number,
-        population_kind,
-        temperature_range,
-        energy_reference,
-        provenance,
-        density_unit=None,
-        capture_unit=CAPTURE_COEFFICIENT_UNIT,
-        rate_unit=RATE_UNIT,
-        energy_unit=JOULE,
-        temperature_unit=KELVIN,
+        empty_charge_number: int,
+        population_kind: str,
+        temperature_range: ArrayLike,
+        energy_reference: str,
+        provenance: str,
+        density_unit: UnitDefinition | None = None,
+        capture_unit: UnitDefinition = CAPTURE_COEFFICIENT_UNIT,
+        rate_unit: UnitDefinition = RATE_UNIT,
+        energy_unit: UnitDefinition = JOULE,
+        temperature_unit: UnitDefinition = KELVIN,
     ) -> None:
         if population_kind not in ("bulk", "surface"):
             raise ValueError("population_kind must be 'bulk' or 'surface'.")
@@ -184,11 +192,11 @@ class DynamicTrap(StrictModule):
         self.provenance = _text(provenance, "trap kinetics provenance")
 
     @staticmethod
-    def occupancy_from_logit(logit):
+    def occupancy_from_logit(logit: ArrayLike) -> Array:
         """Optional solver chart only; stored inventory remains Nt*f."""
         return jax.nn.sigmoid(jnp.asarray(logit))
 
-    def storage(self, occupancy):
+    def storage(self, occupancy: ArrayLike) -> TrapStorage:
         occupancy = jnp.asarray(occupancy)
         valid = jnp.isfinite(occupancy) & (occupancy >= 0) & (occupancy <= 1)
         population = self.density * occupancy
@@ -204,13 +212,13 @@ class DynamicTrap(StrictModule):
 
     def evaluate(
         self,
-        occupancy,
-        electron_density,
-        hole_density,
-        temperature,
-        electron_exchange_energy,
-        hole_exchange_energy,
-    ):
+        occupancy: ArrayLike,
+        electron_density: ArrayLike,
+        hole_density: ArrayLike,
+        temperature: ArrayLike,
+        electron_exchange_energy: ArrayLike,
+        hole_exchange_energy: ArrayLike,
+    ) -> TrapExchangeEvaluation:
         """Evaluate SI densities, T(K), and exchanged TOTAL carrier energies J.
 
         Electron exchange energy is Ec plus its selected kinetic energy;
@@ -277,14 +285,14 @@ class DynamicTrap(StrictModule):
 
     def advance(
         self,
-        occupancy,
-        electron_density,
-        hole_density,
-        temperature,
-        electron_exchange_energy,
-        hole_exchange_energy,
-        time_step,
-    ):
+        occupancy: ArrayLike,
+        electron_density: ArrayLike,
+        hole_density: ArrayLike,
+        temperature: ArrayLike,
+        electron_exchange_energy: ArrayLike,
+        hole_exchange_energy: ArrayLike,
+        time_step: ArrayLike,
+    ) -> TrapStepEvaluation:
         """Exact bounded step for FROZEN reservoirs, not an explicit Euler clip.
 
         The time-averaged capture/emission ledger exactly matches the change
@@ -368,17 +376,17 @@ class WKBBarrierPath(StrictModule):
 
     def __init__(
         self,
-        positions,
-        barrier_energies,
-        effective_masses,
+        positions: ArrayLike,
+        barrier_energies: ArrayLike,
+        effective_masses: ArrayLike,
         /,
         *,
-        minimum_action,
-        energy_reference,
-        provenance,
-        length_unit=METER,
-        energy_unit=JOULE,
-        mass_unit=KILOGRAM,
+        minimum_action: ArrayLike,
+        energy_reference: str,
+        provenance: str,
+        length_unit: UnitDefinition = METER,
+        energy_unit: UnitDefinition = JOULE,
+        mass_unit: UnitDefinition = KILOGRAM,
     ) -> None:
         x = _si(positions, length_unit, METER)
         u = _si(barrier_energies, energy_unit, JOULE)
@@ -412,7 +420,7 @@ class WKBBarrierPath(StrictModule):
         self.energy_reference = _text(energy_reference, "WKB energy reference")
         self.provenance = _text(provenance, "WKB path provenance")
 
-    def evaluate(self, energy):
+    def evaluate(self, energy: ArrayLike) -> WKBTransmissionEvaluation:
         """One energy J or a batch; geometry and mass are fixed during AD."""
         energy = jnp.asarray(energy)
         excess = self.barrier_energies - energy[..., None]
@@ -510,7 +518,15 @@ class NonlocalTunnelingPath(StrictModule):
     node_count: int = eqx.field(static=True)
     provenance: str = eqx.field(static=True)
 
-    def __init__(self, barrier, node_count, path_nodes, /, *, provenance) -> None:
+    def __init__(
+        self,
+        barrier: WKBBarrierPath,
+        node_count: int,
+        path_nodes: ArrayLike,
+        /,
+        *,
+        provenance: str,
+    ) -> None:
         if not isinstance(barrier, WKBBarrierPath):
             raise TypeError("barrier must be a WKBBarrierPath.")
         if (
@@ -545,13 +561,13 @@ class NonlocalTunnelingPath(StrictModule):
 
     def evaluate(
         self,
-        energy,
-        source_occupation,
-        destination_occupation,
-        attempt_rate,
-        source_valence_edge,
-        destination_conduction_edge,
-    ):
+        energy: ArrayLike,
+        source_occupation: ArrayLike,
+        destination_occupation: ArrayLike,
+        attempt_rate: ArrayLike,
+        source_valence_edge: ArrayLike,
+        destination_conduction_edge: ArrayLike,
+    ) -> NonlocalTunnelingEvaluation:
         """One scalar spectral channel, all energies J in barrier's reference."""
         energy, fs, fd, attempt, ev, ec = map(
             jnp.asarray,

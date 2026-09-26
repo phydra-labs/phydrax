@@ -203,7 +203,7 @@ def reconstruct_gaussian_beamlets(
     )
     normalized_amplitude = amplitudes * initial_square_root / safe_square_root
 
-    def evaluate_tile(_: None, inputs: tuple[Array, Array]):
+    def evaluate_tile(_: None, inputs: tuple[Array, Array]) -> tuple[None, Array]:
         points, active = inputs
         displacement = points[None, :, :] - origins[:, None, :]
         transverse = contract("bpc,bca->bpa", displacement, basis)

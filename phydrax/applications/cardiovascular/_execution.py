@@ -16,7 +16,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Generic, TypeAlias, TypeVar
+from typing import Any, cast, Generic, TypeAlias, TypedDict, TypeVar
 
 import equinox as eqx
 import jax
@@ -1115,6 +1115,20 @@ def prepare_cardiovascular_cohort(
 # and the stable case ID, never on cohort membership, order, or lane placement.
 _COHORT_CASE_ADDRESS = SampleAddress("cardiovascular", "cohort", role="case")
 
+# Operator/transposed actions, reconstructed guess/rhs, owned solution, residual,
+# success flag and iteration count from one collective shard.
+_CollectiveLocalResult: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
+
+
+class _CapabilityArguments(TypedDict):
+    backend: str
+    requested_device_count: int
+    available_device_count: int
+    requested_process_count: int
+    available_process_count: int
+
 
 def execute_cardiovascular_cohort(
     prepared: PreparedCardiovascularCohort,
@@ -1437,7 +1451,7 @@ def prepare_cardiovascular_distributed_execution(
     available_devices = (
         len(local_devices) if requested_processes == 1 else len(backend_devices)
     )
-    capability_arguments = {
+    capability_arguments: _CapabilityArguments = {
         "backend": execution.backend,
         "requested_device_count": route.partition_count,
         "available_device_count": available_devices,
@@ -1975,8 +1989,8 @@ def execute_cardiovascular_distributed_collective(
             phase="distributed-collective",
             entity_ids=(contract.contract_id, capability.capability_id),
         )
-    _validate_finite_element_operator(dof_map, finite_element_operator)
-    mesh = _cardiovascular_device_mesh(contract)
+    source, target = _validate_finite_element_operator(dof_map, finite_element_operator)
+    mesh = _cardiovascular_device_mesh(contract, contract.route)
     owners, owned_ids, owned_valid, halo_ids, halo_valid = _distributed_dof_layout(
         contract, dof_map
     )
@@ -2057,15 +2071,15 @@ def execute_cardiovascular_distributed_collective(
     owned_spec = PartitionSpec(axis_name, *(None for _ in range(owned_guess.ndim - 1)))
     collective = JaxCollectiveBackend(axis_name)
 
-    def execute_local(local_guess, local_rhs):
+    def execute_local(local_guess: Array, local_rhs: Array) -> _CollectiveLocalResult:
         part = jax.lax.axis_index(axis_name)
         ids = owned_ids_array[part]
         valid = owned_valid_array[part]
         reconstructed_guess = collective.sum(
-            _scatter_owned(local_guess[0], ids, valid, finite_element_operator.source)
+            _scatter_owned(local_guess[0], ids, valid, source)
         )
         reconstructed_rhs = collective.sum(
-            _scatter_owned(local_rhs[0], ids, valid, finite_element_operator.target)
+            _scatter_owned(local_rhs[0], ids, valid, target)
         )
         operator_action = distributed_operator.mv(reconstructed_guess)
         transpose_action = distributed_operator.transpose_mv(reconstructed_rhs)
@@ -2125,13 +2139,13 @@ def execute_cardiovascular_distributed_collective(
         owned_solution,
         owned_ids,
         owned_valid,
-        finite_element_operator.source,
+        source,
     )
     original_guess = _unpack_owned_values(
         owned_guess,
         owned_ids,
         owned_valid,
-        finite_element_operator.source,
+        source,
     )
     solver_state = CardiovascularDistributedSolverState(
         owned_solution,
@@ -2249,7 +2263,8 @@ def read_cardiovascular_distributed_solver_checkpoint(
         "solver/iteration_count",
         "solver/successful",
     )
-    manifest = record.archive.manifest
+    # CardiovascularCheckpointRecord only admits complete CheckpointManifest archives.
+    manifest = cast(CheckpointManifest, record.archive.manifest)
     shards = {shard.shard_id: shard for shard in manifest.shards}
     if (
         set(record.arrays) != set(names)
@@ -2271,8 +2286,10 @@ def read_cardiovascular_distributed_solver_checkpoint(
             phase="distributed-checkpoint-read",
             entity_ids=(contract.contract_id, record.checkpoint_id),
         )
-    mesh = _cardiovascular_device_mesh(contract)
-    axis_name = contract.route.axis_name
+    # Solver states bind their contract, and only collective routes produce them.
+    route = cast(CardiovascularDistributedCollectiveExecution, contract.route)
+    mesh = _cardiovascular_device_mesh(contract, route)
+    axis_name = route.axis_name
     solution = np.asarray(record.arrays["solver/owned_solution"])
     right_hand_side = np.asarray(record.arrays["solver/owned_right_hand_side"])
     sharding = NamedSharding(
@@ -2303,7 +2320,11 @@ def read_cardiovascular_distributed_solver_checkpoint(
     )
 
 
-def _cardiovascular_device_mesh(contract: CardiovascularDistributedContract, /) -> Mesh:
+def _cardiovascular_device_mesh(
+    contract: CardiovascularDistributedContract,
+    route: CardiovascularDistributedCollectiveExecution,
+    /,
+) -> Mesh:
     capability = contract.capability
     devices = {
         (int(device.process_index), int(device.id)): device
@@ -2317,9 +2338,7 @@ def _cardiovascular_device_mesh(contract: CardiovascularDistributedContract, /) 
             strict=True,
         )
     )
-    if len(keys) != contract.route.partition_count or any(
-        key not in devices for key in keys
-    ):
+    if len(keys) != route.partition_count or any(key not in devices for key in keys):
         raise CardiovascularRuntimeError(
             CardiovascularRuntimeStatus.DISTRIBUTED_INELIGIBLE,
             phase="distributed-device-mesh",
@@ -2327,7 +2346,7 @@ def _cardiovascular_device_mesh(contract: CardiovascularDistributedContract, /) 
         )
     return Mesh(
         np.asarray(tuple(devices[key] for key in keys), dtype=object),
-        (contract.route.axis_name,),
+        (route.axis_name,),
     )
 
 
@@ -2335,7 +2354,7 @@ def _validate_finite_element_operator(
     dof_map: FiniteElementDofMap,
     operator: AbstractLinearOperator,
     /,
-) -> None:
+) -> tuple[ArraySpace, ArraySpace]:
     expected = (dof_map.global_dof_count,) + dof_map.component_shape
     if (
         not isinstance(operator.source, ArraySpace)
@@ -2349,6 +2368,7 @@ def _validate_finite_element_operator(
             "Distributed FEM execution requires one unbatched square ArraySpace "
             "operator matching the supplied finite-element DOF map with transpose."
         )
+    return operator.source, operator.target
 
 
 def _distributed_dof_layout(

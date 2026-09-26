@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import equinox as eqx
 
@@ -131,7 +132,7 @@ class SupportDependency(StrictModule, NonTrainableState):
         return {**self._content_record(), "dependency_id": self.dependency_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> SupportDependency:
+    def from_record(cls, record: Mapping[str, Any], /) -> SupportDependency:
         """Reconstruct and content-verify an exact support dependency."""
         if not isinstance(record, Mapping):
             raise TypeError("Support-dependency record must be a mapping.")
@@ -200,7 +201,7 @@ class ObservedResourceRecord(StrictModule, NonTrainableState):
         return {**self._content_record(), "record_id": self.record_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ObservedResourceRecord:
+    def from_record(cls, record: Mapping[str, Any], /) -> ObservedResourceRecord:
         """Reconstruct and content-verify observed resource use."""
         if not isinstance(record, Mapping):
             raise TypeError("Observed-resource record must be a mapping.")
@@ -343,7 +344,7 @@ class ForecastResourceRecord(StrictModule, NonTrainableState):
         return {**self._content_record(), "record_id": self.record_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ForecastResourceRecord:
+    def from_record(cls, record: Mapping[str, Any], /) -> ForecastResourceRecord:
         """Reconstruct and content-verify a resource forecast."""
         if not isinstance(record, Mapping):
             raise TypeError("Forecast-resource record must be a mapping.")
@@ -546,7 +547,7 @@ class QualificationEvidence(StrictModule, NonTrainableState):
         return {**self._content_record(), "evidence_id": self.evidence_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> QualificationEvidence:
+    def from_record(cls, record: Mapping[str, Any], /) -> QualificationEvidence:
         """Reconstruct and content-verify serialized qualification evidence."""
         if not isinstance(record, Mapping):
             raise TypeError("Qualification-evidence record must be a mapping.")
@@ -785,7 +786,7 @@ class QualificationCoverageReport(StrictModule, NonTrainableState):
         return {**self._content_record(), "report_id": self.report_id}
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> QualificationCoverageReport:
+    def from_record(cls, record: Mapping[str, Any], /) -> QualificationCoverageReport:
         """Reconstruct and content-verify a qualification coverage report."""
         if not isinstance(record, Mapping):
             raise TypeError("Qualification-coverage report must be a mapping.")

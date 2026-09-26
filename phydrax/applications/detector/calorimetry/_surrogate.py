@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import equinox as eqx
 import jax
@@ -12,11 +14,12 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax._strict import StrictModule
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ....domain import HyperRectangle, TimeInterval
+from ....domain import DomainFunction, HyperRectangle, PointwiseEvaluator, TimeInterval
 from ....dynamics import ContinuousSystem, StateLayout
 from ....nn.models import MLP
 from ....solver import DiffraxEvolution, FunctionalSolver
@@ -38,12 +41,12 @@ class ConditionalCalorimeterVelocity(StrictModule):
     def __init__(
         self,
         geometry: CalorimeterGeometry,
-        condition_names,
+        condition_names: Iterable[str],
         /,
         *,
         width: int,
         depth: int,
-        key,
+        key: Key[Array, ""],
     ) -> None:
         if not isinstance(geometry, CalorimeterGeometry):
             raise TypeError("geometry must be CalorimeterGeometry.")
@@ -67,7 +70,7 @@ class ConditionalCalorimeterVelocity(StrictModule):
         self.geometry_id = geometry.geometry_id
         self.cell_count = geometry.cell_count
 
-    def __call__(self, state, time, condition):
+    def __call__(self, state: ArrayLike, time: ArrayLike, condition: ArrayLike) -> Array:
         state_ = jnp.asarray(state)
         condition_ = jnp.asarray(condition)
         if state_.shape != (self.cell_count,) or condition_.shape != (
@@ -95,7 +98,7 @@ class ConditionalCalorimeterVelocity(StrictModule):
         return jnp.where(self.geometry.active & ~self.geometry.dead, velocity, 0.0)
 
 
-def _velocity_function(model):
+def _velocity_function(model: ConditionalCalorimeterVelocity) -> DomainFunction:
     state_domain = HyperRectangle(
         jnp.full((model.cell_count,), -1.0e12),
         jnp.full((model.cell_count,), 1.0e12),
@@ -110,7 +113,13 @@ def _velocity_function(model):
     return domain.Function("x", "t", "condition")(model)
 
 
-def _endpoints(corpus, indices, key, count, energy_scale):
+def _endpoints(
+    corpus: CalorimeterCorpus,
+    indices: Sequence[int],
+    key: Key[Array, ""],
+    count: int,
+    energy_scale: float,
+) -> EndpointCouplingSample:
     noise_key, index_key = jr.split(key)
     index = jnp.asarray(indices)[jr.randint(index_key, (count,), 0, len(indices))]
     target = jnp.sqrt(corpus.cell_energies[index] / energy_scale)
@@ -133,8 +142,8 @@ class CalorimeterFitResult:
     model: ConditionalCalorimeterVelocity
     corpus: CalorimeterCorpus
     energy_scale: float
-    condition_minimum: object
-    condition_maximum: object
+    condition_minimum: Array
+    condition_maximum: Array
     initial_training_loss: float
     final_training_loss: float
     validation_loss: float
@@ -149,7 +158,7 @@ def fit_calorimeter_flow(
     corpus: CalorimeterCorpus,
     /,
     *,
-    key,
+    key: Key[Array, ""],
     steps: int = 200,
     pairs_per_step: int = 32,
     width: int = 64,
@@ -228,7 +237,9 @@ def fit_calorimeter_flow(
         log_every=0,
     )
     learned_function = solved.functions["velocity"]
-    learned = learned_function.func.function
+    # _velocity_function wraps the model in a PointwiseEvaluator; solving preserves it.
+    evaluator = cast(PointwiseEvaluator, learned_function.func)
+    learned = cast(ConditionalCalorimeterVelocity, evaluator.function)
     final = float(evaluation.loss({"velocity": learned_function}, key=evaluation_key))
     heldout = float(validation.loss({"velocity": learned_function}, key=validation_key))
     if not np.all(np.isfinite((initial, final, heldout))):
@@ -268,7 +279,7 @@ def fit_calorimeter_flow(
 class _CalorimeterField(StrictModule):
     model: ConditionalCalorimeterVelocity
 
-    def __call__(self, time, state, condition):
+    def __call__(self, time: ArrayLike, state: ArrayLike, condition: ArrayLike) -> Array:
         return self.model(state, time, condition)
 
 
@@ -276,8 +287,8 @@ class PreparedCalorimeterSampler(StrictModule):
     evolution: DiffraxEvolution
     model: ConditionalCalorimeterVelocity
     energy_scale: float = eqx.field(static=True)
-    condition_minimum: object
-    condition_maximum: object
+    condition_minimum: Array
+    condition_maximum: Array
     fit_id: str = eqx.field(static=True)
     maximum_samples: int = eqx.field(static=True)
 
@@ -332,8 +343,8 @@ def prepare_calorimeter_sampler(
 
 def sample_calorimeter_showers(
     sampler: PreparedCalorimeterSampler,
-    key,
-    conditions,
+    key: Key[Array, ""],
+    conditions: ArrayLike,
     /,
 ) -> CalorimeterFastSimulation:
     if not isinstance(sampler, PreparedCalorimeterSampler):
@@ -350,7 +361,7 @@ def sample_calorimeter_showers(
     )
     noise = jr.normal(key, (count, sampler.model.cell_count), dtype=context.dtype)
 
-    def one(state, condition):
+    def one(state: Array, condition: Array) -> tuple[Array, Array, Array]:
         result = sampler.evolution.advance(state, 0.0, 1.0, condition)
         return result.final_state, result.valid, result.status
 

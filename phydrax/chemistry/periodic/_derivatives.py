@@ -467,7 +467,7 @@ class PeriodicStationaryDerivativePlan(StrictModule, NonTrainableState):
         position_direction_ = position_direction_ / position_norm
         strain_symmetric = strain_symmetric / strain_norm
 
-        def total_energy(current_positions, current_cell):
+        def total_energy(current_positions: Array, current_cell: Array) -> Array:
             value = jnp.asarray(0.0, dtype=current_positions.dtype)
             for component in self.components:
                 value = value + jnp.asarray(
@@ -479,7 +479,7 @@ class PeriodicStationaryDerivativePlan(StrictModule, NonTrainableState):
             coordinate, cell
         )
 
-        def strained_total(strain):
+        def strained_total(strain: Array) -> Array:
             deformation = jnp.eye(3, dtype=cell.dtype) + strain
             return total_energy(
                 coordinate @ deformation.T,
@@ -498,7 +498,9 @@ class PeriodicStationaryDerivativePlan(StrictModule, NonTrainableState):
                 component.energy_function, argnums=0
             )(coordinate, cell)
 
-            def strained_component(strain, component=component):
+            def strained_component(
+                strain: Array, component: PeriodicStationaryEnergyComponent = component
+            ) -> Array:
                 deformation = jnp.eye(3, dtype=cell.dtype) + strain
                 return component.energy_function(
                     coordinate @ deformation.T,
@@ -534,7 +536,7 @@ class PeriodicStationaryDerivativePlan(StrictModule, NonTrainableState):
             jnp.maximum(jnp.abs(finite_position), jnp.abs(predicted_position)), 1.0
         )
 
-        def deformed_energy(scale):
+        def deformed_energy(scale: ArrayLike) -> Array:
             deformation = jnp.eye(3, dtype=cell.dtype) + scale * strain_symmetric
             return total_energy(
                 coordinate @ deformation.T,

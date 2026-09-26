@@ -463,7 +463,7 @@ class PreparedHybridModel(StrictModule, NonTrainableState):
             - rigid_sites[self.nucleotide_site_indices]
         )
 
-        def pair_energy(delta):
+        def pair_energy(delta: Array) -> tuple[Array, Array]:
             components = self.cross.components(delta)
             return jnp.sum(components), components
 
@@ -483,7 +483,7 @@ class PreparedHybridModel(StrictModule, NonTrainableState):
             state.nucleotide, rigid_site_forces
         )
 
-        def add_load(left, right):
+        def add_load(left: RigidBodyLoad, right: RigidBodyLoad) -> RigidBodyLoad:
             return RigidBodyLoad(left.force + right.force, left.torque + right.torque)
 
         load = add_load(nucleotide.loads.load, cross_loads.load)

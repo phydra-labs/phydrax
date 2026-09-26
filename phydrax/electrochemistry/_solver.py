@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,6 +18,10 @@ from jaxtyping import Array, ArrayLike
 from ..ein import contract
 from ..linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
 from ._core import FARADAY_C_MOL, GAS_CONSTANT_J_MOL_K
+
+
+# Potential, converged, failed, completed-iteration count.
+_NonlinearCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,7 +214,9 @@ class PorousElectrodeSystem:
             "Porous-electrode state/current must be finite with nonnegative concentrations.",
         )
 
-        def nonlinear_step(iteration, loop_state):
+        def nonlinear_step(
+            iteration: Array, loop_state: _NonlinearCarry
+        ) -> _NonlinearCarry:
             potential, converged, failed, completed = loop_state
             faradaic, derivative = self._faradaic(potential)
             residual = self.potential_operator_s @ potential + faradaic - applied

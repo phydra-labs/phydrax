@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import numpy as np
+from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -769,7 +770,7 @@ def _cost_estimate(
     )
 
 
-def _array_structure(value, /) -> dict[str, object] | None:
+def _array_structure(value: Array | None, /) -> dict[str, object] | None:
     if value is None:
         return None
     return {"shape": list(value.shape), "dtype": str(value.dtype)}

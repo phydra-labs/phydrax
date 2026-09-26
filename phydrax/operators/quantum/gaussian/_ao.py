@@ -71,7 +71,7 @@ def ao_gradients(
     positions = jnp.asarray(nuclear_positions)
     points_ = jnp.asarray(points, dtype=positions.dtype)
 
-    def at_point(point):
+    def at_point(point: Array) -> Array:
         return ao_values(basis, positions, point[None, :])[0]
 
     return jax.vmap(jax.jacfwd(at_point))(points_)
@@ -86,7 +86,7 @@ def ao_hessians(
     positions = jnp.asarray(nuclear_positions)
     points_ = jnp.asarray(points, dtype=positions.dtype)
 
-    def at_point(point):
+    def at_point(point: Array) -> Array:
         return ao_values(basis, positions, point[None, :])[0]
 
     return jax.vmap(jax.jacfwd(jax.jacfwd(at_point)))(points_)

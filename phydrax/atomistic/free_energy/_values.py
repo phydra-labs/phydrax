@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import abc
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -23,6 +23,19 @@ from .._thermodynamic import PreparedThermodynamicStateTable
 
 
 DESTINATION_MINUS_SOURCE = "destination-minus-source"
+
+_AuthenticatedMetadata: TypeAlias = tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str | None, ...],
+    tuple[float, ...],
+    str | None,
+    str | None,
+    str,
+    bool,
+    float,
+]
 
 
 class FreeEnergyCorrectionKind(StrEnum):
@@ -253,7 +266,7 @@ class FreeEnergyProtocolLegResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
 
-def _authenticated_metadata(result: Any, dataset: Any, /):
+def _authenticated_metadata(result: object, dataset: object, /) -> _AuthenticatedMetadata:
     from ...uq._free_energy import (
         FreeEnergyResult,
         FreeEnergyStatus,
@@ -307,12 +320,12 @@ def _authenticated_metadata(result: Any, dataset: Any, /):
 
 def _validate_state_metadata(
     plan: FreeEnergyStatePlan,
-    state_ids,
-    potential_ids,
-    measure_ids,
-    bias_ids,
-    unit_system_id,
-    inverse_temperatures,
+    state_ids: tuple[str, ...],
+    potential_ids: tuple[str, ...],
+    measure_ids: tuple[str, ...],
+    bias_ids: tuple[str | None, ...],
+    unit_system_id: str | None,
+    inverse_temperatures: tuple[float, ...],
     /,
 ) -> int:
     if plan.state_id not in state_ids:
@@ -495,7 +508,9 @@ class FreeEnergyCorrectionPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-def _correction_fields(kind, name: str, convention: str, /):
+def _correction_fields(
+    kind: FreeEnergyCorrectionKind, name: str, convention: str, /
+) -> tuple[FreeEnergyCorrectionKind, str, str, str]:
     name_ = _identity(name, "correction_name")
     convention_ = _identity(convention, "convention")
     plan_id = canonical_fingerprint(
@@ -510,7 +525,14 @@ def _correction_fields(kind, name: str, convention: str, /):
     return kind, name_, convention_, plan_id
 
 
-def _correction_result(plan, value, variance, evidence_id, successful, /):
+def _correction_result(
+    plan: FreeEnergyCorrectionPlan,
+    value: ArrayLike,
+    variance: ArrayLike,
+    evidence_id: str,
+    successful: bool,
+    /,
+) -> FreeEnergyCorrectionResult:
     estimate, uncertainty = _estimate(value, variance)
     evidence = _identity(evidence_id, "evidence_id")
     accepted = bool(successful)
@@ -554,7 +576,15 @@ class RestraintCorrectionPlan(FreeEnergyCorrectionPlan):
             convention,
         )
 
-    def result(self, value, variance=0.0, /, *, evidence_id, successful=True):
+    def result(
+        self,
+        value: ArrayLike,
+        variance: ArrayLike = 0.0,
+        /,
+        *,
+        evidence_id: str,
+        successful: bool = True,
+    ) -> FreeEnergyCorrectionResult:
         return _correction_result(self, value, variance, evidence_id, successful)
 
 
@@ -576,7 +606,15 @@ class StandardStateCorrectionPlan(FreeEnergyCorrectionPlan):
             convention,
         )
 
-    def result(self, value, variance=0.0, /, *, evidence_id, successful=True):
+    def result(
+        self,
+        value: ArrayLike,
+        variance: ArrayLike = 0.0,
+        /,
+        *,
+        evidence_id: str,
+        successful: bool = True,
+    ) -> FreeEnergyCorrectionResult:
         return _correction_result(self, value, variance, evidence_id, successful)
 
 
@@ -603,7 +641,15 @@ class SymmetryCorrectionPlan(FreeEnergyCorrectionPlan):
         )
         self.symmetry_number = number
 
-    def result(self, value, variance=0.0, /, *, evidence_id, successful=True):
+    def result(
+        self,
+        value: ArrayLike,
+        variance: ArrayLike = 0.0,
+        /,
+        *,
+        evidence_id: str,
+        successful: bool = True,
+    ) -> FreeEnergyCorrectionResult:
         return _correction_result(self, value, variance, evidence_id, successful)
 
     def analytic_result(self, /, *, evidence_id: str) -> FreeEnergyCorrectionResult:

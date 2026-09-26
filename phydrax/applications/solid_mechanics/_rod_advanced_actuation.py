@@ -441,7 +441,7 @@ class PreparedReducedTubeChamber(StrictModule, NonTrainableState):
         node_count = self.reduction.rod.plan.node_count
         segment_count = self.reduction.rod.plan.segment_count
 
-        def station_velocity(velocity):
+        def station_velocity(velocity: tuple[Array, Array]) -> Array:
             linear, angular = velocity
             centers = (1.0 - xis)[:, None] * linear[start_ids] + xis[:, None] * linear[
                 end_ids
@@ -450,12 +450,12 @@ class PreparedReducedTubeChamber(StrictModule, NonTrainableState):
             angular_world = ein.contract("sij,sj->si", frames, angular[segment_ids])
             return centers + jnp.cross(angular_world, offsets_world)
 
-        def action(velocity):
+        def action(velocity: tuple[Array, Array]) -> Array:
             velocities = station_velocity(velocity)
             span_rates = jnp.sum(directions * (velocities[1:] - velocities[:-1]), axis=-1)
             return jnp.sum(areas * span_rates)
 
-        def transpose_action(covector):
+        def transpose_action(covector: Array) -> tuple[Array, Array]:
             pressure = jnp.asarray(covector)
             span_efforts = pressure * areas[:, None] * directions
             station_efforts = jnp.zeros_like(points)
@@ -489,10 +489,10 @@ class PreparedReducedTubeChamber(StrictModule, NonTrainableState):
         native_operator = self.native_volume_rate_operator(state)
         lift = self.reduction.lift_velocity_operator(state.coefficients)
 
-        def action(rate):
+        def action(rate: Array) -> Array:
             return native_operator.mv(lift.mv(rate))
 
-        def transpose_action(covector):
+        def transpose_action(covector: Array) -> Array:
             return lift.transpose_mv(native_operator.transpose_mv(covector))
 
         return FunctionLinearOperator(

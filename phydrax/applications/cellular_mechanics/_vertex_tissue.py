@@ -13,7 +13,7 @@ atomic commit or rollback.
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -150,7 +150,8 @@ def _validate_edge_rows(
             or not np.all(vertex_active[endpoints])
         ):
             raise ValueError("Active edges must join two distinct active vertices.")
-        undirected = tuple(sorted((int(endpoints[0]), int(endpoints[1]))))
+        first, second = int(endpoints[0]), int(endpoints[1])
+        undirected = (min(first, second), max(first, second))
         if undirected in undirected_edges:
             raise ValueError("Active edges must represent distinct undirected edges.")
         undirected_edges.add(undirected)
@@ -314,7 +315,7 @@ def _validate_polyhedral_topology(
             raise ValueError("Active faces must represent distinct polygonal interfaces.")
         canonical_faces.add(canonical)
         for directed in _face_edges(vertices):
-            edge = tuple(sorted(directed))
+            edge = (min(directed), max(directed))
             if edge not in declared_edges:
                 raise ValueError(
                     "Every face edge must be present in edge_vertex_indices."
@@ -351,7 +352,7 @@ def _validate_polyhedral_topology(
             if orientation < 0:
                 vertices = vertices[::-1]
             for start, end in _face_edges(vertices):
-                undirected = tuple(sorted((start, end)))
+                undirected = (min(start, end), max(start, end))
                 sign = 1 if start < end else -1
                 balance[undirected] = balance.get(undirected, 0) + sign
                 occurrences[undirected] = occurrences.get(undirected, 0) + 1
@@ -782,7 +783,7 @@ def polygonal_vertex_tissue_plan(
     target_cell_perimeter: ArrayLike,
     perimeter_stiffness: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> VertexTissuePlan:
     """Construct a validated 2D confluent polygonal vertex-tissue plan."""
 
@@ -818,7 +819,7 @@ def polyhedral_vertex_tissue_plan(
     target_cell_surface_area: ArrayLike,
     surface_stiffness: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> VertexTissuePlan:
     """Construct a validated 3D confluent polyhedral vertex-tissue plan."""
 

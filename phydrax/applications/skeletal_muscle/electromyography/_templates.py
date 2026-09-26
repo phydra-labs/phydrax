@@ -136,7 +136,9 @@ class PreparedMotorUnitActionPotentialTemplates(StrictModule):
         sample_count = template.shape[-1]
         active_event_times = jnp.where(topology_mask, topology_events, 0.0)
 
-        def one_template(values, unit_event_times, unit_mask):
+        def one_template(
+            values: Array, unit_event_times: Array, unit_mask: Array
+        ) -> Array:
             coordinate = (times[None, :] - unit_event_times[:, None]) / period + origin
             lower = jax.lax.stop_gradient(jnp.floor(coordinate).astype(jnp.int32))
             fraction = coordinate - lower
@@ -150,8 +152,8 @@ class PreparedMotorUnitActionPotentialTemplates(StrictModule):
             ]
             return jnp.sum(jnp.where(valid, interpolated, 0.0), axis=0)
 
-        def one_unit(unit_index):
-            def one_channel(channel_index):
+        def one_unit(unit_index: Array) -> Array:
+            def one_channel(channel_index: Array) -> Array:
                 return one_template(
                     template[unit_index, channel_index],
                     active_event_times[unit_index],

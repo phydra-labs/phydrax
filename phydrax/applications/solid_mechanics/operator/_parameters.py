@@ -458,7 +458,7 @@ class MechanicsParameterDistribution(StrictModule, NonTrainableState):
             raise ValueError("Distribution case IDs must be unique.")
         if len(set(realization_ids)) != len(realization_ids):
             raise ValueError("Distribution realization IDs must be unique.")
-        kinds = {
+        kinds: set[MechanicsParameterWeightKind] = {
             "probability"
             if item.probability_weight is not None
             else "importance"

@@ -335,7 +335,7 @@ class PreparedPointElectrodeDC(StrictModule, NonTrainableState):
         bulk = _primal_operator(compiled)
         node_count = self.gauge.size
 
-        def kkt_action(value):
+        def kkt_action(value: Array) -> Array:
             potential, multiplier = value[:node_count], value[-1]
             return jnp.concatenate(
                 (
@@ -362,7 +362,9 @@ class PreparedPointElectrodeDC(StrictModule, NonTrainableState):
         coordinates = self.plan.mesh.coordinates
         electrode_positions = self.plan.survey.positions_m
 
-        def solve_current(current):
+        def solve_current(
+            current: Array,
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
             primary_nodes = self._primary(coordinates, current)
             load = self._point_load(current)
             correction_load = load - bulk.mv(primary_nodes)

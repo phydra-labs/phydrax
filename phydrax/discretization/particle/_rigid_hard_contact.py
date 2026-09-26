@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -73,7 +74,9 @@ class FrictionBallProjection(StrictModule):
     successful: Array
 
 
-def _broadcast_contact_parameter(value, shape, dtype, /):
+def _broadcast_contact_parameter(
+    value: ArrayLike, shape: tuple[int, ...], dtype: DTypeLike, /
+) -> Array:
     array = jnp.asarray(value, dtype=dtype)
     if array.ndim == 0:
         return jnp.broadcast_to(array, shape)
@@ -905,7 +908,13 @@ class PreparedHardContact(StrictModule, NonTrainableState):
             successful,
         )
 
-    def _validate_inputs(self, state, kinematics, geometry, /) -> None:
+    def _validate_inputs(
+        self,
+        state: HardContactState,
+        kinematics: RigidBodyKinematics,
+        geometry: RigidContactGeometry,
+        /,
+    ) -> None:
         if not isinstance(state, HardContactState):
             raise TypeError("state must be HardContactState.")
         if not isinstance(kinematics, RigidBodyKinematics):
@@ -1002,20 +1011,35 @@ class PreparedHardContact(StrictModule, NonTrainableState):
         flat_rows = contacts[:, None] * self.ambient_dimension + components[None, :]
         return mapping.at[flat_rows, contacts[:, None]].set(normal)
 
-    def _vector_delassus(self, kinematics, left_arm, right_arm, valid, /):
+    def _vector_delassus(
+        self,
+        kinematics: RigidBodyKinematics,
+        left_arm: Array,
+        right_arm: Array,
+        valid: Array,
+        /,
+    ) -> Array:
         size = self.capacity * self.ambient_dimension
         basis = jnp.eye(size, dtype=kinematics.position.dtype).reshape(
             (size, self.capacity, self.ambient_dimension)
         )
 
-        def response(impulse):
+        def response(impulse: Array) -> Array:
             return self._impulse_response(
                 kinematics, impulse, left_arm, right_arm, valid
             ).relative_velocity.reshape((-1,))
 
         return jax.vmap(response)(basis).T
 
-    def _impulse_response(self, kinematics, impulse, left_arm, right_arm, valid, /):
+    def _impulse_response(
+        self,
+        kinematics: RigidBodyKinematics,
+        impulse: Array,
+        left_arm: Array,
+        right_arm: Array,
+        valid: Array,
+        /,
+    ) -> _ImpulseResponse:
         left_mask = valid & self.left_present
         right_mask = valid & self.right_present
         linear_impulse = jnp.zeros_like(kinematics.velocity)
@@ -1059,13 +1083,13 @@ class PreparedHardContact(StrictModule, NonTrainableState):
 
     def _tangent_trial(
         self,
-        vector_delassus,
-        normal,
-        tangent_velocity,
-        warm_tangent,
-        active,
+        vector_delassus: Array,
+        normal: Array,
+        tangent_velocity: Array,
+        warm_tangent: Array,
+        active: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         dimension = self.ambient_dimension
         contact_identity = jnp.eye(self.capacity, dtype=normal.dtype)
         space_identity = jnp.eye(dimension, dtype=normal.dtype)
@@ -1099,16 +1123,16 @@ class PreparedHardContact(StrictModule, NonTrainableState):
 
     def _certificate(
         self,
-        gap,
-        normal_impulse,
-        tangent_impulse,
-        normal,
-        normal_velocity_after,
-        target_velocity,
-        active,
-        geometry_valid,
+        gap: Array,
+        normal_impulse: Array,
+        tangent_impulse: Array,
+        normal: Array,
+        normal_velocity_after: Array,
+        target_velocity: Array,
+        active: Array,
+        geometry_valid: Array,
         /,
-    ):
+    ) -> HardContactCertificate:
         tolerance = jnp.asarray(
             self.plan.normal_rows.complementarity_tolerance,
             dtype=normal_impulse.dtype,
@@ -1176,7 +1200,7 @@ class PreparedHardContact(StrictModule, NonTrainableState):
             position_certified & velocity_certified & friction_certified,
         )
 
-    def _kinetic_energy(self, kinematics, /):
+    def _kinetic_energy(self, kinematics: RigidBodyKinematics, /) -> Array:
         mobile = self.bodies.particles.active_mask & ~self.bodies.fixed_mask
         translational = 0.5 * jnp.sum(
             jnp.where(
@@ -1205,17 +1229,17 @@ class PreparedHardContact(StrictModule, NonTrainableState):
 
     def _energy(
         self,
-        before,
-        after,
-        normal_impulse,
-        normal_velocity_before,
-        normal_velocity_after_normal,
-        tangent_impulse,
-        tangent_velocity_before,
-        tangent_velocity_after,
-        stabilization_target,
+        before: RigidBodyKinematics,
+        after: RigidBodyKinematics,
+        normal_impulse: Array,
+        normal_velocity_before: Array,
+        normal_velocity_after_normal: Array,
+        tangent_impulse: Array,
+        tangent_velocity_before: Array,
+        tangent_velocity_after: Array,
+        stabilization_target: Array,
         /,
-    ):
+    ) -> HardContactEnergy:
         kinetic_before = self._kinetic_energy(before)
         kinetic_after = self._kinetic_energy(after)
         kinetic_change = kinetic_after - kinetic_before

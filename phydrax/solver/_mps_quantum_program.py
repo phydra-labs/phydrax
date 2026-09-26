@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite, prod
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,7 +16,11 @@ import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..operators.quantum._operations import LocalUnitaryOperation, QuantumProgram
+from ..operators.quantum._operations import (
+    LocalUnitaryOperation,
+    QuantumOperation,
+    QuantumProgram,
+)
 from ..operators.quantum._propagation import unitarity_residual
 from ..tensor_network import MatrixProductState
 from ..tensor_network._split import TensorTruncationEvidence, truncated_svd
@@ -147,7 +152,9 @@ class MPSQuantumProgramResult(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
-def _route(program: QuantumProgram, operation: LocalUnitaryOperation, /):
+def _route(
+    program: QuantumProgram, operation: QuantumOperation, /
+) -> MPSQuantumProgramRoute:
     indices = program.layout.target_indices(operation.target_wire_ids)
     start = min(indices)
     stop = max(indices)
@@ -162,6 +169,11 @@ def _route(program: QuantumProgram, operation: LocalUnitaryOperation, /):
         }
     )
     return MPSQuantumProgramRoute(indices, start, stop, positions, identifier)
+
+
+def _unitary(operation: QuantumOperation, /) -> Array:
+    # MPS plans require state-vector programs, whose construction rejects Kraus channels.
+    return cast(LocalUnitaryOperation, operation).unitary
 
 
 def plan_mps_quantum_program(
@@ -221,7 +233,7 @@ def plan_mps_quantum_program(
         split_count += span - 1
     if maximum_window > policy.maximum_workspace_elements:
         raise MemoryError("MPS operation exceeds maximum_workspace_elements.")
-    operation_elements = sum(operation.unitary.size for operation in program.operations)
+    operation_elements = sum(_unitary(operation).size for operation in program.operations)
     cost = MPSQuantumProgramCostEstimate(operation_elements, maximum_window, split_count)
     plan_id = canonical_fingerprint(
         {
@@ -254,11 +266,14 @@ def _validate_schema(program: QuantumProgram, plan: MPSQuantumProgramPlan, /) ->
         raise ValueError("Quantum-program routes changed; replan is required.")
 
 
-def _operation_evidence(program, policy):
+def _operation_evidence(
+    program: QuantumProgram, policy: MPSQuantumProgramPolicy
+) -> tuple[MPSQuantumOperationEvidence, ...]:
     records = []
     for operation in program.operations:
-        finite = jnp.all(jnp.isfinite(operation.unitary))
-        residual = unitarity_residual(operation.unitary)
+        unitary = _unitary(operation)
+        finite = jnp.all(jnp.isfinite(unitary))
+        residual = unitarity_residual(unitary)
         records.append(
             MPSQuantumOperationEvidence(
                 finite,
@@ -321,7 +336,7 @@ def refresh_mps_quantum_program(
     )
 
 
-def _contract_window(state, route):
+def _contract_window(state: MatrixProductState, route: MPSQuantumProgramRoute) -> Array:
     tensors = state.precision.contraction(
         state.tensors[route.window_start : route.window_stop + 1]
     )
@@ -331,7 +346,12 @@ def _contract_window(state, route):
     return window
 
 
-def _apply_unitary(window, route, physical_dimensions, unitary):
+def _apply_unitary(
+    window: Array,
+    route: MPSQuantumProgramRoute,
+    physical_dimensions: tuple[int, ...],
+    unitary: Array,
+) -> Array:
     span = route.window_stop - route.window_start + 1
     physical_labels = list(range(1, span + 1))
     output_labels = list(range(span + 2, span + 2 + len(route.target_positions)))
@@ -361,7 +381,12 @@ def _apply_unitary(window, route, physical_dimensions, unitary):
     )
 
 
-def _split_window(state, route, window, policy):
+def _split_window(
+    state: MatrixProductState,
+    route: MPSQuantumProgramRoute,
+    window: Array,
+    policy: MPSQuantumProgramPolicy,
+) -> tuple[tuple[Array, ...], tuple[TensorTruncationEvidence, ...]]:
     precision = state.precision
     dimensions = state.physical_dimensions[route.window_start : route.window_stop + 1]
     current = window
@@ -421,7 +446,7 @@ def execute_mps_quantum_program(
     ):
         window = _contract_window(current, route)
         transformed = _apply_unitary(
-            window, route, current.physical_dimensions, operation.unitary
+            window, route, current.physical_dimensions, _unitary(operation)
         )
         replacement, records = _split_window(
             current, route, transformed, prepared.plan.policy

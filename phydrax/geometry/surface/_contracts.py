@@ -226,7 +226,7 @@ class SurfaceAuditPolicy(StrictModule, NonTrainableState):
         self,
         *,
         minimum_face_area: float = 0.0,
-        relative_degeneracy_tolerance: float = 64.0 * np.finfo(np.float64).eps,
+        relative_degeneracy_tolerance: float = float(64.0 * np.finfo(np.float64).eps),
         minimum_closed_volume: float = 0.0,
         require_closed: bool = False,
         require_outward_orientation: bool = False,

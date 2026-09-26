@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, cast, Literal, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume._hydrostatic_grid import (
+    _BoundaryValues,
     HydrostaticMetricEpoch,
     PreparedHydrostaticGrid,
 )
@@ -471,6 +472,23 @@ class HydrostaticStageResult(StrictModule):
     successful: Array
 
 
+class _HydrostaticPlanOptions(TypedDict, total=False):
+    """Keyword options accepted by ``HydrostaticPrimitiveEquationPlan``."""
+
+    eos: Any | None
+    mixing: HydrostaticMixingPlan | None
+    freshwater: FreshwaterVolumeFluxPlan | None
+    boundaries: Sequence[HydrostaticOpenBoundary]
+    gravity: float
+    reference_density: float
+    coriolis_f0: float
+    coriolis_beta: float
+    external_mode: ExternalMode
+    wetting_and_drying: bool
+    wet_depth: float
+    subcycle_policy: ExternalModeSubcyclePolicy | None
+
+
 class HydrostaticPrimitiveEquationPlan(StrictModule, NonTrainableState):
     """Hydrostatic primitive equations over prepared tensor-z/spherical metrics."""
 
@@ -747,7 +765,7 @@ class PreparedHydrostaticOcean(StrictModule):
         transports: tuple[Array, Array],
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> tuple[Array, Array]:
         face_values = [
             _face_upwind(concentration, transports[0], 0, self.geometry.periodic[0]),
@@ -811,8 +829,8 @@ class PreparedHydrostaticOcean(StrictModule):
         epoch: HydrostaticMetricEpoch,
         /,
         *,
-        concentration_boundary=None,
-        density_boundary=None,
+        concentration_boundary: _BoundaryValues | None = None,
+        density_boundary: _BoundaryValues | None = None,
     ) -> tuple[tuple[Array, Array], Array]:
         gradient_x, gradient_y = self.geometry.layer_gradient(
             concentration, boundary_values=concentration_boundary
@@ -833,8 +851,9 @@ class PreparedHydrostaticOcean(StrictModule):
         density_x, density_y = self.geometry.layer_gradient(
             view.density, boundary_values=density_boundary
         )
-        density_vertical = jnp.gradient(view.density, axis=-1)
-        concentration_vertical = jnp.gradient(concentration, axis=-1)
+        # jnp.gradient returns a single Array for a scalar axis.
+        density_vertical = cast(Array, jnp.gradient(view.density, axis=-1))
+        concentration_vertical = cast(Array, jnp.gradient(concentration, axis=-1))
         x_vertical = self.geometry.face_average(density_vertical, 0)
         y_vertical = self.geometry.face_average(density_vertical, 1)
         slope_x = -_safe_divide(density_x, x_vertical)
@@ -883,7 +902,7 @@ class PreparedHydrostaticOcean(StrictModule):
         boundary_traces: HydrostaticBoundaryTraces | None = None,
     ) -> dict[str, Array]:
         tendency = {}
-        top = [slice(None)] * 3
+        top: list[slice | int] = [slice(None)] * 3
         top[-1] = -1
         for name, inventory in state.tracer_inventory.items():
             concentration = _safe_divide(inventory, epoch.cell_volume)
@@ -1023,7 +1042,8 @@ class PreparedHydrostaticOcean(StrictModule):
                     None if boundary_traces is None else boundary_traces.density
                 ),
             )
-            density_vertical = jnp.gradient(view.density, axis=-1)
+            # jnp.gradient returns a single Array for a scalar axis.
+            density_vertical = cast(Array, jnp.gradient(view.density, axis=-1))
             slope_x = -_safe_divide(
                 density_x,
                 self.geometry.face_average(density_vertical, 0),

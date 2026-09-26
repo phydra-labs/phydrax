@@ -7,50 +7,52 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import numpy as np
-from OCP.BRep import BRep_Tool  # ty: ignore[unresolved-import]
+from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import (
-    BRepAdaptor_Curve2d,  # ty: ignore[unresolved-import]
-    BRepAdaptor_Surface,  # ty: ignore[unresolved-import]
+    BRepAdaptor_Curve2d,
+    BRepAdaptor_Surface,
 )
-from OCP.BRepMesh import BRepMesh_IncrementalMesh  # ty: ignore[unresolved-import]
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.BRepTools import (
-    BRepTools,  # ty: ignore[unresolved-import]
-    BRepTools_WireExplorer,  # ty: ignore[unresolved-import]
+    BRepTools,
+    BRepTools_WireExplorer,
 )
-from OCP.Geom import Geom_RectangularTrimmedSurface  # ty: ignore[unresolved-import]
+from OCP.Geom import Geom_RectangularTrimmedSurface
 from OCP.GeomAbs import (
-    GeomAbs_BSplineSurface,  # ty: ignore[unresolved-import]
-    GeomAbs_Cone,  # ty: ignore[unresolved-import]
-    GeomAbs_Cylinder,  # ty: ignore[unresolved-import]
-    GeomAbs_Plane,  # ty: ignore[unresolved-import]
-    GeomAbs_Sphere,  # ty: ignore[unresolved-import]
-    GeomAbs_Torus,  # ty: ignore[unresolved-import]
+    GeomAbs_BSplineSurface,
+    GeomAbs_Cone,
+    GeomAbs_Cylinder,
+    GeomAbs_Plane,
+    GeomAbs_Sphere,
+    GeomAbs_Torus,
 )
-from OCP.GeomConvert import GeomConvert  # ty: ignore[unresolved-import]
-from OCP.IFSelect import IFSelect_RetDone  # ty: ignore[unresolved-import]
-from OCP.IGESControl import IGESControl_Reader  # ty: ignore[unresolved-import]
-from OCP.STEPControl import STEPControl_Reader  # ty: ignore[unresolved-import]
+from OCP.GeomConvert import GeomConvert
+from OCP.IFSelect import IFSelect_RetDone
+from OCP.IGESControl import IGESControl_Reader
+from OCP.STEPControl import STEPControl_Reader
 from OCP.TopAbs import (
-    TopAbs_EDGE,  # ty: ignore[unresolved-import]
-    TopAbs_FACE,  # ty: ignore[unresolved-import]
-    TopAbs_REVERSED,  # ty: ignore[unresolved-import]
-    TopAbs_SOLID,  # ty: ignore[unresolved-import]
-    TopAbs_VERTEX,  # ty: ignore[unresolved-import]
-    TopAbs_WIRE,  # ty: ignore[unresolved-import]
+    TopAbs_EDGE,
+    TopAbs_FACE,
+    TopAbs_REVERSED,
+    TopAbs_SOLID,
+    TopAbs_VERTEX,
+    TopAbs_WIRE,
 )
-from OCP.TopExp import TopExp_Explorer  # ty: ignore[unresolved-import]
-from OCP.TopLoc import TopLoc_Location  # ty: ignore[unresolved-import]
-from OCP.TopoDS import TopoDS, TopoDS_Shape  # ty: ignore[unresolved-import]
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopLoc import TopLoc_Location
+from OCP.TopoDS import TopoDS, TopoDS_Shape
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
 from .._atlas import TrimDomain
 from ._model import BRepImportReport, BRepModel, BRepTopology
 from ._patches import (
+    AbstractSurfacePatch,
     BSplineSurfacePatch,
     ConePatch,
     CylinderPatch,
@@ -58,6 +60,9 @@ from ._patches import (
     SpherePatch,
     TorusPatch,
 )
+
+
+_ShapeT = TypeVar("_ShapeT", bound=TopoDS_Shape)
 
 
 def _xyz(value: Any) -> np.ndarray:
@@ -77,17 +82,21 @@ def _frame(position: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     )
 
 
-def _explore(shape: TopoDS_Shape, kind: Any, caster) -> list[Any]:
+def _explore(
+    shape: TopoDS_Shape, kind: Any, caster: Callable[[TopoDS_Shape], _ShapeT]
+) -> list[_ShapeT]:
     explorer = TopExp_Explorer(shape, kind)
-    entities: list[Any] = []
+    entities: list[_ShapeT] = []
     while explorer.More():
         entities.append(caster(explorer.Current()))
         explorer.Next()
     return entities
 
 
-def _explore_unique(shape: TopoDS_Shape, kind: Any, caster) -> list[Any]:
-    entities: list[Any] = []
+def _explore_unique(
+    shape: TopoDS_Shape, kind: Any, caster: Callable[[TopoDS_Shape], _ShapeT]
+) -> list[_ShapeT]:
+    entities: list[_ShapeT] = []
     for candidate in _explore(shape, kind, caster):
         if not any(entity.IsSame(candidate) for entity in entities):
             entities.append(candidate)
@@ -134,7 +143,9 @@ def _bspline_patch(surface: Any) -> BSplineSurfacePatch:
     )
 
 
-def _surface_patch(face: Any, bounds: np.ndarray):
+def _surface_patch(
+    face: Any, bounds: np.ndarray
+) -> tuple[AbstractSurfacePatch, str, bool]:
     adaptor = BRepAdaptor_Surface(face, True)
     surface_type = adaptor.GetType()
     if surface_type == GeomAbs_Plane:
@@ -205,14 +216,14 @@ def _surface_patch(face: Any, bounds: np.ndarray):
 
 
 def _ordered_wires(face: Any) -> list[Any]:
-    return _explore(face, TopAbs_WIRE, TopoDS.Wire_s)
+    return _explore(face, TopAbs_WIRE, TopoDS.Wire)
 
 
 def _wire_edge_indices(wire: Any, face: Any, edges: list[Any]) -> tuple[int, ...]:
     explorer = BRepTools_WireExplorer(wire, face)
     result: list[int] = []
     while explorer.More():
-        edge = TopoDS.Edge_s(explorer.Current())
+        edge = TopoDS.Edge(explorer.Current())
         index = _shape_index(edges, edge)
         sign = -1 if edge.Orientation() == TopAbs_REVERSED else 1
         result.append(sign * (index + 1))
@@ -224,7 +235,7 @@ def _sample_wire(wire: Any, face: Any, samples_per_edge: int) -> np.ndarray | No
     explorer = BRepTools_WireExplorer(wire, face)
     segments: list[np.ndarray] = []
     while explorer.More():
-        edge = TopoDS.Edge_s(explorer.Current())
+        edge = TopoDS.Edge(explorer.Current())
         curve = BRepAdaptor_Curve2d(edge, face)
         start = float(curve.FirstParameter())
         end = float(curve.LastParameter())
@@ -270,9 +281,9 @@ def _normalized_trim_domain(
 
 
 def _extract_topology(shape: Any, faces: list[Any]) -> tuple[BRepTopology, list[Any]]:
-    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge_s)
-    vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex_s)
-    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid_s)
+    edges = _explore_unique(shape, TopAbs_EDGE, TopoDS.Edge)
+    vertices = _explore_unique(shape, TopAbs_VERTEX, TopoDS.Vertex)
+    solids = _explore_unique(shape, TopAbs_SOLID, TopoDS.Solid)
     face_edges: list[tuple[int, ...]] = []
     face_wires: list[tuple[tuple[int, ...], ...]] = []
     edge_faces: list[list[int]] = [[] for _ in edges]
@@ -292,7 +303,7 @@ def _extract_topology(shape: Any, faces: list[Any]) -> tuple[BRepTopology, list[
     for solid in solids:
         indices: list[int] = []
         relative_orientations: list[int] = []
-        for solid_face in _explore_unique(solid, TopAbs_FACE, TopoDS.Face_s):
+        for solid_face in _explore_unique(solid, TopAbs_FACE, TopoDS.Face):
             face_index = _shape_index(faces, solid_face)
             indices.append(face_index)
             relative_orientations.append(
@@ -451,7 +462,7 @@ def read_occt_shape(path: str | Path) -> tuple[Any, str, str]:
         shape = reader.OneShape()
         source_format = "iges"
     elif suffix in {".brep", ".brp"}:
-        from OCP.BRep import BRep_Builder  # ty: ignore[unresolved-import]
+        from OCP.BRep import BRep_Builder
 
         shape = TopoDS_Shape()
         if not BRepTools.Read_s(shape, str(source), BRep_Builder()):
@@ -485,7 +496,7 @@ def model_from_occt_shape(
         raise ValueError("Meshing deflections must be positive.")
     if trim_samples_per_edge < 3:
         raise ValueError("trim_samples_per_edge must be at least three.")
-    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face_s)
+    faces = _explore_unique(shape, TopAbs_FACE, TopoDS.Face)
     if not faces:
         raise ValueError("The OCCT shape contains no faces.")
     topology, edges = _extract_topology(shape, faces)

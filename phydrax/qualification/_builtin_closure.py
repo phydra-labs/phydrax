@@ -182,7 +182,15 @@ _REDUCED_FAMILIES = frozenset(
 )
 
 
-def _requirement(family, fields, carriers, source_ids, symbols, name, depth):
+def _requirement(
+    family: str,
+    fields: tuple[PhysicsField, ...],
+    carriers: tuple[CarrierRepresentation, ...],
+    source_ids: tuple[str, ...],
+    symbols: tuple[str, ...],
+    name: str,
+    depth: CapabilityDepth,
+) -> CapabilityClosureRequirement:
     return CapabilityClosureRequirement.create(
         f"{family}-{name}",
         minimum_depth=depth,
@@ -257,7 +265,9 @@ def builtin_omniphysics_closure_matrices(
         implemented = bool(capabilities)
         actual_depth = implementation_depth
 
-        def resolution(requirement):
+        def resolution(
+            requirement: CapabilityClosureRequirement,
+        ) -> CapabilityGapResolution:
             return CapabilityGapResolution.create(
                 requirement.requirement_id,
                 ClosureDisposition.IMPLEMENTED

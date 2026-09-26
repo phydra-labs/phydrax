@@ -62,11 +62,12 @@ class FixedGridGeometry(StrictModule, NonTrainableState):
 
     @property
     def upper(self) -> tuple[float, float, float]:
-        return tuple(
+        x, y, z = (
             self.lower[i]
             + self.spacing[i] * (self.shape[i] - (1 if self.periodic else 1))
             for i in range(3)
         )
+        return x, y, z
 
     @property
     def coordinates(self) -> Array:
@@ -109,7 +110,7 @@ class FixedGridGeometry(StrictModule, NonTrainableState):
         return ~self.boundary_mask(width)
 
     def radial_geometry(
-        self, center: ArrayLike = (0.0, 0.0, 0.0), /
+        self, center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0), /
     ) -> tuple[Array, Array]:
         """Return radius and outward radial unit vectors on the full grid."""
 

@@ -367,7 +367,7 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
         origin = self.chart.origin(field_values)
         source_arguments = dict(ready.values)
 
-        def physical_residual(coordinates, _args):
+        def physical_residual(coordinates: PyTree[Array], _args: object) -> PyTree[Array]:
             candidate = self.chart.retract(field_values, coordinates)
             bound = self._bound(context.condition, candidate)
             value = bound.apply(key=context.prng_key, **source_arguments)
@@ -390,7 +390,9 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
         else:
             multiplier_origin = jax.tree.map(jnp.zeros_like, initial_residual)
 
-            def kkt_residual(kkt_state, _args):
+            def kkt_residual(
+                kkt_state: tuple[PyTree[Array], PyTree[Array]], _args: object
+            ) -> tuple[PyTree[Array], PyTree[Array]]:
                 coordinates_, multipliers_ = kkt_state
                 residual_, pullback = jax.vjp(
                     lambda value: physical_residual(value, None), coordinates_

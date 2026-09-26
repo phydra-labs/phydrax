@@ -140,7 +140,7 @@ def integrate_stormer_verlet(
     precision_.validate_state(initial[0])
     precision_.validate_state(initial[1])
 
-    def advance(_, state: tuple[Array, Array]) -> tuple[Array, Array]:
+    def advance(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         return stormer_verlet_step(
             state[0],
             state[1],

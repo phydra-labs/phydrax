@@ -119,7 +119,7 @@ class SINGSparseGPDrift(StrictModule):
             self.cholesky_factors, cross
         )
 
-    def __call__(self, state: ArrayLike, /, *, key=None) -> Array:
+    def __call__(self, state: ArrayLike, /, *, key: Array | None = None) -> Array:
         del key
         value = jnp.asarray(state).reshape((-1,))
         if value.shape != (self.inducing_points.shape[1],):

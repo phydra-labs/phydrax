@@ -36,6 +36,7 @@ from ._initial_conditions import (
     LagrangianInitialConditionResult,
     LagrangianPerturbationInitialConditionPlan,
 )
+from ._particles import CosmologicalParticleState
 from ._products import (
     CosmologyProductProvenance,
     LagrangianGrowthHistory,
@@ -949,7 +950,7 @@ class ParticleInitialConditionProjection(StrictModule):
     )
 
     @property
-    def state(self):
+    def state(self) -> CosmologicalParticleState:
         return self.initial_conditions.state
 
 
@@ -1763,7 +1764,8 @@ class VortexSeedPlan(StrictModule, NonTrainableState):
         elif axis_ < 0 or axis_ >= dimension:
             raise ValueError("Vortex axis is outside the spatial dimension.")
         else:
-            transverse = tuple(index for index in range(dimension) if index != axis_)[:2]
+            remaining = tuple(index for index in range(dimension) if index != axis_)
+            transverse = (remaining[0], remaining[1])
         center_ = tuple(float(value) for value in center)
         if antivortex_center is None and len(center_) == dimension:
             partner_values = list(center_)

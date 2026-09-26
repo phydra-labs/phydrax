@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from itertools import product
 from operator import index
+from typing import SupportsIndex, TypeVar
 
 import equinox as eqx
 import jax
@@ -24,6 +25,8 @@ _COMMON_INFORMATION_METHOD_ID = "finite-pure-common-information-backward-inducti
 _COMMON_INFORMATION_RESULT_LABEL = "COMMON_INFORMATION_MARKOV_PERFECT_CANDIDATE"
 _DEFAULT_MAXIMUM_PRESCRIPTION_PROFILES = 65_536
 
+_T = TypeVar("_T")
+
 
 def _name(value: str, *, owner: str) -> str:
     if not isinstance(value, str) or not value:
@@ -31,7 +34,7 @@ def _name(value: str, *, owner: str) -> str:
     return value
 
 
-def _count(value, *, owner: str) -> int:
+def _count(value: SupportsIndex, *, owner: str) -> int:
     if isinstance(value, bool):
         raise TypeError(f"{owner} must be a positive integer, not a boolean.")
     result = index(value)
@@ -40,7 +43,7 @@ def _count(value, *, owner: str) -> int:
     return result
 
 
-def _tolerance(value, *, owner: str) -> float:
+def _tolerance(value: float, *, owner: str) -> float:
     result = float(value)
     if not np.isfinite(result) or result < 0.0:
         raise ValueError(f"{owner} must be finite and nonnegative.")
@@ -93,7 +96,7 @@ class FullStateInformation(StrictModule):
         self.information_id = _name(information_id, owner="information_id")
         self.timing = _name(timing, owner="timing")
 
-    def policy_input(self, state, /):
+    def policy_input(self, state: _T, /) -> _T:
         """Return the declared full state without copying or transforming it."""
         return state
 
@@ -113,7 +116,7 @@ class CentralizedObservationInformation(StrictModule):
         self.information_id = _name(information_id, owner="information_id")
         self.timing = _name(timing, owner="timing")
 
-    def policy_input(self, observation, /):
+    def policy_input(self, observation: _T, /) -> _T:
         """Return only the observation explicitly supplied to the policy."""
         return observation
 
@@ -455,7 +458,7 @@ class CommonInformationPolicy(StrictModule):
         return self.player_ids.index(player_id)
 
     @staticmethod
-    def _bounded_index(value, bound: int, *, owner: str) -> int:
+    def _bounded_index(value: SupportsIndex, bound: int, *, owner: str) -> int:
         if isinstance(value, bool):
             raise TypeError(f"{owner} must be an integer, not a boolean.")
         result = index(value)

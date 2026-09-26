@@ -22,6 +22,7 @@ from .._driven_stress import (
     AtomisticDrivenStressResult,
 )
 from .._dynamics import PreparedAtomisticDynamics
+from .._potential_program import AtomisticHamiltonianEvaluation
 from ._cell import EvolvingFlowCellPlan, EvolvingFlowCellState, EvolvingFlowCellStepResult
 
 
@@ -148,7 +149,9 @@ class PreparedSLLODIntegrator(StrictModule, NonTrainableState):
             }
         )
 
-    def _evaluate(self, positions: Array, image_counts: Array, cell_vectors: Array, /):
+    def _evaluate(
+        self, positions: Array, image_counts: Array, cell_vectors: Array, /
+    ) -> tuple[AtomisticHamiltonianEvaluation, Array]:
         neighborhood = self.dynamics.neighborhood.build(positions)
         unwrapped = positions + contract(
             "ni,ij->nj", image_counts.astype(positions.dtype), cell_vectors

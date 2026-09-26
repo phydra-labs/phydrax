@@ -103,14 +103,19 @@ class ThermodynamicsRateTable(StrictModule, NonTrainableState):
         )
 
     def evaluate(self, scale_factor: Array, /) -> tuple[Array, Array, Array, Array]:
-        return tuple(
-            linear_interpolate(self.scale_factors, value, scale_factor).values
-            for value in (
-                self.recombination_rate,
-                self.ionization_rate,
-                self.compton_rate,
-                self.photon_temperature,
-            )
+        return (
+            linear_interpolate(
+                self.scale_factors, self.recombination_rate, scale_factor
+            ).values,
+            linear_interpolate(
+                self.scale_factors, self.ionization_rate, scale_factor
+            ).values,
+            linear_interpolate(
+                self.scale_factors, self.compton_rate, scale_factor
+            ).values,
+            linear_interpolate(
+                self.scale_factors, self.photon_temperature, scale_factor
+            ).values,
         )
 
 
@@ -177,7 +182,7 @@ class NativeThermodynamicsPlan(StrictModule, NonTrainableState):
             )
         )
 
-        def step(state, interval):
+        def step(state: Array, interval: Array) -> tuple[Array, Array]:
             start, end = interval
             midpoint = 0.5 * (start + end)
             delta = end - start
@@ -186,7 +191,7 @@ class NativeThermodynamicsPlan(StrictModule, NonTrainableState):
                 self.rate_table.evaluate(midpoint)
             )
 
-            def rate(value):
+            def rate(value: Array) -> Array:
                 electron, temperature = value
                 density = self.hydrogen_number_density_today / midpoint**3
                 electron_rate = (
@@ -438,7 +443,7 @@ class RestrictedScalarTransferPlan(StrictModule, NonTrainableState):
         matrix = self.operators.matrices
         source = self.operators.source_vectors
 
-        def step(state, index):
+        def step(state: Array, index: Array) -> tuple[Array, Array]:
             delta = scale[index + 1] - scale[index]
             matrix_mid = 0.5 * (matrix[index] + matrix[index + 1])
             source_mid = 0.5 * (source[index] + source[index + 1])
@@ -697,7 +702,7 @@ class PreparedScalarEinsteinBoltzmann(StrictModule):
             plan.background.hubble_constant * jnp.sqrt(radiation)
         )
 
-        def one_mode(k):
+        def one_mode(k: Array) -> Array:
             x = k * conformal
             h = x * x
             state = jnp.zeros((plan.layout.state_size,), dtype=k.dtype)
@@ -732,7 +737,7 @@ class PreparedScalarEinsteinBoltzmann(StrictModule):
             scale_factor,
         ).values
 
-        def one_mode(k, state):
+        def one_mode(k: Array, state: Array) -> Array:
             rate = jnp.zeros_like(state)
             cold_baryon = (1.0 - plan.baryon_matter_fraction) * state[
                 2
@@ -868,7 +873,7 @@ class PreparedScalarEinsteinBoltzmann(StrictModule):
             )
         initial = self._initial_states()
 
-        def step(state, index):
+        def step(state: Array, index: Array) -> tuple[Array, Array]:
             start = scale[index]
             end = scale[index + 1]
             delta = end - start

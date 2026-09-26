@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite, prod
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -32,7 +32,10 @@ from .._trajectory import (
     CONTROL_SUCCESS,
     ControlTrajectory,
 )
-from ._linear_quadratic import finite_horizon_lq_feedback_nash
+from ._linear_quadratic import (
+    finite_horizon_lq_feedback_nash,
+    FiniteHorizonLQFeedbackNashResult,
+)
 from ._local_lq import (
     LocalAffineGamePolicy,
     LocalAffineGameSuggestion,
@@ -55,6 +58,73 @@ _CERTIFICATE = "LOCAL_NOMINAL_NASH_STATIONARY"
 _METHOD = "residual-globalized-iterative-local-quadratic-feedback-game"
 _ACCEPTANCE_METHOD = "original-unregularized-dimensionless-residual-armijo"
 _DIFFERENTIATION_METHOD = "fixed-capacity-unrolled-no-implicit-differentiation"
+
+_EvaluationCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_EvaluationRecord: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_HistoryArrays: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_IterationCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, *_HistoryArrays
+]
+_SearchCarry: TypeAlias = tuple[
+    Array,
+    GamePolicyEvaluation,
+    NominalNashResidual,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class ILQFeedbackGameStatus(IntEnum):
@@ -846,7 +916,9 @@ def _evaluate_affine_profile(
     initial_failed_step = jnp.where(initial_valid, -1, 0).astype(jnp.int32)
     initial_failed_player = jnp.full((count,), -1, dtype=jnp.int32)
 
-    def scan_step(carry, step_index):
+    def scan_step(
+        carry: _EvaluationCarry, step_index: Array
+    ) -> tuple[_EvaluationCarry, _EvaluationRecord]:
         state, trajectory_active, status, failed_step, failed_player = carry
         context = DiscreteStepContext(
             problem.time_grid.times[step_index],
@@ -876,7 +948,9 @@ def _evaluate_affine_profile(
             attempted[:, None], raw_control, jnp.zeros_like(raw_control)
         )
 
-        def evaluate_stage(case_state, case_control, active):
+        def evaluate_stage(
+            case_state: Array, case_control: Array, active: Array
+        ) -> Array:
             return jax.lax.cond(
                 active,
                 lambda _: _stage_cost_vector(problem, context, case_state, case_control),
@@ -892,8 +966,10 @@ def _evaluate_affine_profile(
         )
         stage_finite = attempted[:, None] & jnp.isfinite(raw_stage)
 
-        def transition(case_state, case_control, active):
-            def run(_):
+        def transition(
+            case_state: Array, case_control: Array, active: Array
+        ) -> tuple[Array, Array, Array, Array]:
+            def run(_: None) -> tuple[Array, Array, Array, Array]:
                 result = problem.dynamics.system.evaluate_result(
                     context,
                     case_state,
@@ -1011,7 +1087,7 @@ def _evaluate_affine_profile(
         transition_status_time,
     ) = output
 
-    def terminal_cost(case_state, active):
+    def terminal_cost(case_state: Array, active: Array) -> Array:
         return jax.lax.cond(
             active,
             lambda _: _terminal_cost_vector(problem, case_state),
@@ -1133,7 +1209,7 @@ def _case_where(mask: Array, on_true: Array, on_false: Array, /) -> Array:
 def _select_case_tree(
     mask: Array, on_true: Any, on_false: Any, cases: tuple[int, ...], /
 ) -> Any:
-    def select(new, old):
+    def select(new: Any, old: Any) -> Any:
         if not eqx.is_array(new):
             return new
         if not cases or tuple(new.shape[: len(cases)]) == cases:
@@ -1183,7 +1259,7 @@ def _regularized_direction(
     regularization: Array,
     policy_id: str,
     /,
-):
+) -> FiniteHorizonLQFeedbackNashResult:
     model = suggestion.model
     owner = jnp.asarray(problem.partition.control_owner, dtype=jnp.int32)
     ownership = jax.nn.one_hot(owner, problem.num_players, dtype=model.R.dtype).T
@@ -1291,9 +1367,9 @@ def _stationary(
 def _history_arrays(
     problem: DeterministicFeedbackGameProblem,
     plan: ILQFeedbackGamePlan,
-    dtype,
+    dtype: np.dtype,
     /,
-) -> tuple[Array, ...]:
+) -> _HistoryArrays:
     iteration_shape = problem.case_shape + (plan.maximum_iterations,)
     trial_shape = iteration_shape + (plan.maximum_line_search_steps,)
     nan_iteration = jnp.full(iteration_shape, jnp.nan, dtype=dtype)
@@ -1419,7 +1495,7 @@ def solve_prepared_ilq_feedback_game(
         *histories,
     )
 
-    def iteration(iteration_index, loop):
+    def iteration(iteration_index: Array, loop: _IterationCarry) -> _IterationCarry:
         (
             current_states,
             current_controls,
@@ -1561,7 +1637,7 @@ def solve_prepared_ilq_feedback_game(
             ),
         )
 
-        def search(search_index, search_loop):
+        def search(search_index: Array, search_loop: _SearchCarry) -> _SearchCarry:
             (
                 found,
                 best_evaluation,
@@ -1893,7 +1969,9 @@ def solve_prepared_ilq_feedback_game(
             trial_player_cost_history.at[..., iteration_index, :, :].set(row_costs),
         )
 
-    final_loop = jax.lax.fori_loop(0, plan.maximum_iterations, iteration, carry)
+    final_loop: _IterationCarry = jax.lax.fori_loop(
+        0, plan.maximum_iterations, iteration, carry
+    )
     (
         final_states,
         final_controls,
@@ -1903,8 +1981,8 @@ def solve_prepared_ilq_feedback_game(
         _,
         iterations,
         accepted_iterations,
-        *final_histories,
-    ) = final_loop
+    ) = final_loop[:8]
+    final_histories = final_loop[8:]
     final_evaluation = _evaluate_affine_profile(
         problem,
         law_kind="local",
@@ -2030,7 +2108,7 @@ def solve_ilq_feedback_game(
     *,
     policy_id: str | None = None,
     result_id: str | None = None,
-    **plan_options,
+    **plan_options: Any,
 ) -> LocalNominalNashResult:
     """Plan, prepare, and solve one residual-globalized nonlinear game."""
 
@@ -2043,6 +2121,10 @@ def solve_ilq_feedback_game(
     else:
         raise TypeError("direct solve requires one ILQGameScaling and one policy.")
     plan = plan_ilq_feedback_game(problem, game_scaling, **plan_options)
+    if isinstance(game_policy, ILQGameScaling):
+        raise TypeError(
+            "initial_policy must be LocalAffineGamePolicy or AffineFeedbackPolicy."
+        )
     prepared = prepare_ilq_feedback_game(plan, problem, game_policy)
     return solve_prepared_ilq_feedback_game(
         prepared, policy_id=policy_id, result_id=result_id

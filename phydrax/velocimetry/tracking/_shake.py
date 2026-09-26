@@ -196,7 +196,7 @@ def shake_particles(
     valid = valid & rig.camera_valid[:, None, None]
     safe_observed = jnp.where(valid, observed, 0.0)
 
-    def objective(position_value: Array, amplitude_value: Array):
+    def objective(position_value: Array, amplitude_value: Array) -> Array:
         rendered = render_camera_stack(
             formation,
             rig,
@@ -216,7 +216,9 @@ def shake_particles(
     )
     initial_positions = positions
 
-    def refine_one(carry: tuple[Array, Array, Array], unused):
+    def refine_one(
+        carry: tuple[Array, Array, Array], unused: None
+    ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array]]:
         current_positions, current_amplitudes, current_loss = carry
         loss_value, gradients = jax.value_and_grad(objective, argnums=(0, 1))(
             current_positions, current_amplitudes

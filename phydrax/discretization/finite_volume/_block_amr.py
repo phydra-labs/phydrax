@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
 from typing import Any
 
@@ -34,6 +35,7 @@ from ._dynamics import (
     FiniteVolumeMethodPlan,
     reconstruct_cartesian_ghosted_axis,
 )
+from ._halo import reconstruction_ghost_width
 from ._precision import FiniteVolumePrecisionPolicy
 from ._riemann import AbstractNumericalFluxPlan
 
@@ -137,7 +139,7 @@ class BlockAMRFiniteVolumePlan(StrictModule):
                 raise ValueError(
                     "Periodic axes use no physical pair; bounded axes require one."
                 )
-        required_halo = int(method.reconstruction.ghost_width)
+        required_halo = reconstruction_ghost_width(method.reconstruction)
         if any(
             width < required_halo
             for level in hierarchy_plan.levels
@@ -425,8 +427,10 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule):
                     sign: int,
                     *,
                     buckets: dict[str, dict[str, list[Any]]] = buckets,
-                    cell=cell,
-                    coordinate=coordinate,
+                    cell: Callable[[int, tuple[int, ...]], int] = cell,
+                    coordinate: Callable[
+                        [int, tuple[int, ...], int], np.ndarray
+                    ] = coordinate,
                     axis: int = axis,
                 ) -> None:
                     bucket = buckets[kind]

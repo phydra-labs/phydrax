@@ -408,7 +408,14 @@ class PLSModel(AbstractFittedModel):
     case_shape: tuple[int, ...] = eqx.field(static=True)
     _input_binding = ModelBinding.blockwise("flat", pass_key=False)
 
-    def __init__(self, x_mean, y_mean, x_weights, x_decoder, y_loadings) -> None:
+    def __init__(
+        self,
+        x_mean: ArrayLike,
+        y_mean: ArrayLike,
+        x_weights: ArrayLike,
+        x_decoder: ArrayLike,
+        y_loadings: ArrayLike,
+    ) -> None:
         self.x_mean = jnp.asarray(x_mean)
         self.y_mean = jnp.asarray(y_mean)
         self.x_weights = jnp.asarray(x_weights)

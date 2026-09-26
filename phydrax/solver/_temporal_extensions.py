@@ -50,7 +50,9 @@ class RKCMethod:
             method_id=self.method_id,
         )
 
-    def step(self, rhs: RHS, time: Array, state: Array, step: Array, args=None) -> Array:
+    def step(
+        self, rhs: RHS, time: Array, state: Array, step: Array, args: object = None
+    ) -> Array:
         stages = self.stages
         scaled = step / float(stages * stages)
         previous = state
@@ -97,14 +99,16 @@ class AdamsBashforthMoultonMethod:
         )
 
     @staticmethod
-    def _rk4(rhs: RHS, time: Array, state: Array, step: Array, args) -> Array:
+    def _rk4(rhs: RHS, time: Array, state: Array, step: Array, args: object) -> Array:
         first = rhs(time, state, args)
         second = rhs(time + 0.5 * step, state + 0.5 * step * first, args)
         third = rhs(time + 0.5 * step, state + 0.5 * step * second, args)
         fourth = rhs(time + step, state + step * third, args)
         return state + step * (first + 2.0 * second + 2.0 * third + fourth) / 6.0
 
-    def integrate(self, rhs: RHS, times: ArrayLike, initial: ArrayLike, /, *, args=None):
+    def integrate(
+        self, rhs: RHS, times: ArrayLike, initial: ArrayLike, /, *, args: object = None
+    ) -> FixedStepTemporalResult:
         times_ = jnp.asarray(times)
         state = jnp.asarray(initial)
         _uniform_times(times_)
@@ -152,7 +156,9 @@ class ExponentialRosenbrockEulerMethod:
             method_id=self.method_id,
         )
 
-    def step(self, rhs: RHS, time: Array, state: Array, step: Array, args=None) -> Array:
+    def step(
+        self, rhs: RHS, time: Array, state: Array, step: Array, args: object = None
+    ) -> Array:
         value = jnp.asarray(rhs(time, state, args))
         jacobian = jax.jacfwd(lambda current: rhs(time, current, args))(state)
         space = ArraySpace(state.shape, dtype=state.dtype)
@@ -195,12 +201,14 @@ class RadauIIAIntegrator:
             method_id=self.method_id,
         )
 
-    def step(self, rhs: RHS, time: Array, state: Array, step: Array, args=None):
+    def step(
+        self, rhs: RHS, time: Array, state: Array, step: Array, args: object = None
+    ) -> tuple[Array, Array, Array]:
         stages = self.tableau.stage_count
         initial_derivative = jnp.asarray(rhs(time, state, args))
         stage_values = jnp.broadcast_to(initial_derivative, (stages, *state.shape))
 
-        def residual(values):
+        def residual(values: Array) -> Array:
             states = state + step * jnp.tensordot(self.tableau.matrix, values, axes=1)
             evaluated = jax.vmap(
                 lambda node, value: rhs(time + step * node, value, args)
@@ -260,8 +268,8 @@ class IMEXBDF2Integrator:
         previous: Array,
         current: Array,
         step: Array,
-        args=None,
-    ):
+        args: object = None,
+    ) -> tuple[Array, Array, Array]:
         explicit_current = explicit_rhs(time, current, args)
         explicit_previous = explicit_rhs(time - step, previous, args)
         base = (
@@ -271,7 +279,7 @@ class IMEXBDF2Integrator:
         )
         candidate = base + 2.0 * step * implicit_rhs(time + step, current, args) / 3.0
 
-        def residual(value):
+        def residual(value: Array) -> Array:
             return (
                 value - base - 2.0 * step * implicit_rhs(time + step, value, args) / 3.0
             )
@@ -295,7 +303,7 @@ def parareal(
     iterations: int,
     /,
     *,
-    args=None,
+    args: object = None,
 ) -> FixedStepTemporalResult:
     """Deterministic Parareal iteration over a fixed coarse time partition."""
 

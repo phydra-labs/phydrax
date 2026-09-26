@@ -11,7 +11,7 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, BinaryIO, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -28,6 +28,10 @@ from .._array_archive import (
 from .._frozendict import frozendict
 from .._strict import mark_strict_initialized, Strict
 from ._artifacts import artifact_value, artifact_value_id
+
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 
 def _is_prng_key(value: Any, /) -> bool:
@@ -92,7 +96,7 @@ def _recipe_contains_array(recipe: Mapping[str, Any], /) -> bool:
     return False
 
 
-def serialize_model_leaf(file, value: Any, /) -> None:
+def serialize_model_leaf(file: BinaryIO, value: Any, /) -> None:
     """Serialize one model leaf with canonical, pickle-free NPY encoding."""
     if _is_prng_key(value):
         np.save(file, np.asarray(jr.key_data(value)), allow_pickle=False)
@@ -111,7 +115,7 @@ def serialize_model_leaf(file, value: Any, /) -> None:
     eqx.default_serialise_filter_spec(file, value)
 
 
-def deserialize_model_leaf(file, value: Any, /) -> Any:
+def deserialize_model_leaf(file: BinaryIO, value: Any, /) -> Any:
     """Deserialize one model leaf after bounded NPY metadata admission."""
     if isinstance(value, _RecipeArrayDescriptor):
         _preflight_serialized_leaf(file, value.shape, value.dtype)
@@ -582,7 +586,7 @@ def validate_model_structure_recipe(
 
 
 def _restore_dataclass(
-    cls: type,
+    cls: type[DataclassInstance],
     fields: Mapping[str, Any],
     array_factory: Any,
     /,

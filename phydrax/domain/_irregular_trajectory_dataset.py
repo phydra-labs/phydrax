@@ -34,6 +34,7 @@ from ._trajectory_dataset import (
 
 
 if TYPE_CHECKING:
+    from ._components import DomainComponent
     from ._function import DomainFunction
 
 
@@ -490,7 +491,7 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
 
         data_samples = self.input_rows(case_idx)
 
-        def _to_field(v: ArrayLike):
+        def _to_field(v: ArrayLike) -> cx.AxisArray:
             arr = jnp.asarray(v)
             if arr.ndim == 0:
                 raise ValueError(
@@ -557,7 +558,7 @@ def _sample_valid_cases(
 
 def _component_times(
     domain: IrregularTrajectoryDatasetDomain,
-    component,
+    component: DomainComponent,
     case_indices: Array,
     n: int,
     key: Key[Array, ""],
@@ -598,7 +599,7 @@ def _component_times(
 
 
 def sample_irregular_trajectory_component(
-    component,
+    component: DomainComponent,
     num_points: NumPoints,
     *,
     structure: SampleLayout,
@@ -667,7 +668,7 @@ def sample_irregular_trajectory_component(
 
 
 def irregular_trajectory_default_quadrature_total_weight(
-    component, batch: PointBatch, /
+    component: DomainComponent, batch: PointBatch, /
 ) -> cx.AxisArray | None:
     domain = component.domain
     if not isinstance(domain, IrregularTrajectoryDatasetDomain):
@@ -723,7 +724,7 @@ def irregular_trajectory_default_quadrature_total_weight(
 
 
 def irregular_trajectory_quadrature_weights_by_axis(
-    component, batch: PointBatch, /
+    component: DomainComponent, batch: PointBatch, /
 ) -> dict[str, cx.AxisArray] | None:
     domain = component.domain
     if not isinstance(domain, IrregularTrajectoryDatasetDomain):

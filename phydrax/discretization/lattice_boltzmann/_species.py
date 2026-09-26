@@ -368,7 +368,7 @@ def species_element_amount(
     return contract("es,...s->...e", composition, amount)
 
 
-def _validate_lattice_precision(lattice, precision) -> None:
+def _validate_lattice_precision(lattice: object, precision: object) -> None:
     if not isinstance(lattice, LatticeBoltzmannVelocitySet):
         raise TypeError("lattice must be a LatticeBoltzmannVelocitySet.")
     if not isinstance(precision, LatticeBoltzmannPrecisionPolicy):

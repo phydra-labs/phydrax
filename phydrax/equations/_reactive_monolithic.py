@@ -14,9 +14,15 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_allfinite
 from ..discretization.particle import ParticleConversionState
-from ._particle_conversion import PreparedParticleConversionDynamics
+from ._particle_conversion import (
+    ParticleConversionEvaluation,
+    PreparedParticleConversionDynamics,
+)
 from ._particle_thermochemistry import ParticleTransportBoundary
-from ._reactive_cfd_dem import ParticleContinuumExchangePlan
+from ._reactive_cfd_dem import (
+    ParticleContinuumExchangeEvaluation,
+    ParticleContinuumExchangePlan,
+)
 
 
 class ReactiveFluidImplicitState(StrictModule):
@@ -135,8 +141,8 @@ class ReactiveMonolithicStage(StrictModule):
 class ReactiveMonolithicResidualEvaluation(StrictModule):
     residual: ReactiveMonolithicUnknown
     conversion_state: ParticleConversionState
-    exchange: object
-    conversion: object
+    exchange: ParticleContinuumExchangeEvaluation
+    conversion: ParticleConversionEvaluation
     particle_force: Array
     fluid_momentum_source: Array
     route: ReactiveMonolithicRouteCertificate
@@ -190,7 +196,9 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_unknown(self, stage: ReactiveMonolithicStage, /):
+    def initial_unknown(
+        self, stage: ReactiveMonolithicStage, /
+    ) -> ReactiveMonolithicUnknown:
         return ReactiveMonolithicUnknown(
             stage.previous_fluid.velocity,
             stage.previous_fluid.temperature,

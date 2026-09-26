@@ -9,7 +9,7 @@ from math import isfinite
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
@@ -93,7 +93,9 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _temperature(self, species_density: Array, enthalpy_density: Array, /):
+    def _temperature(
+        self, species_density: Array, enthalpy_density: Array, /
+    ) -> tuple[Array, Array]:
         masses = self.mechanism.schema.molar_masses.astype(species_density.dtype)
         concentration = species_density / masses
         lower = jnp.full_like(
@@ -103,7 +105,7 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
             enthalpy_density, self.mechanism.thermodynamics.maximum_temperature
         )
 
-        def enthalpy(temperature):
+        def enthalpy(temperature: Array) -> Array:
             species = self.mechanism.thermodynamics.evaluate(temperature)
             return contract(
                 "...s,...s->...",
@@ -112,7 +114,7 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
                 backend="jax",
             )
 
-        def iteration(_, bounds):
+        def iteration(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             midpoint = 0.5 * (low + high)
             below = enthalpy(midpoint) < enthalpy_density
@@ -129,9 +131,9 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
         self,
         level: int,
         hierarchy: BlockHierarchyState,
-        time: Array,
-        step_size: Array,
-        args=None,
+        time: ArrayLike,
+        step_size: ArrayLike,
+        args: object = None,
         /,
     ) -> tuple[BlockHierarchyState, Array, ReactingAMRSynchronizationEvidence]:
         del time, args
@@ -157,7 +159,7 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
         safe_species = jnp.where(active[..., None], species_initial, 1.0)
         safe_enthalpy = jnp.where(active, enthalpy, 1.0)
 
-        def mass_rate(species_density):
+        def mass_rate(species_density: Array) -> tuple[Array, Array]:
             temperature, _ = self._temperature(species_density, safe_enthalpy)
             concentration = species_density / self.mechanism.schema.molar_masses.astype(
                 species_density.dtype
@@ -245,7 +247,14 @@ class ReactingAMRSynchronizationPlan(StrictModule, NonTrainableState):
         )
         return updated, successful, evidence
 
-    def __call__(self, level, hierarchy, end_time, interval_dt, args=None):
+    def __call__(
+        self,
+        level: int,
+        hierarchy: BlockHierarchyState,
+        end_time: ArrayLike,
+        interval_dt: ArrayLike,
+        args: object = None,
+    ) -> tuple[BlockHierarchyState, Array]:
         updated, successful, _ = self.synchronize(
             level, hierarchy, end_time, interval_dt, args
         )

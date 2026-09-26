@@ -106,6 +106,49 @@ def test_time_derivative_and_state_capacity_guards():
         )
 
 
+def test_spatial_train_and_query_designs_match_dense_separable_gp():
+    temporal = phx.kernels.Matern32Kernel(length_scale=0.7)
+    spatial = phx.kernels.SquaredExponentialKernel(length_scale=0.6)
+    train_times = jnp.asarray([0.0, 0.3, 0.9])
+    query_times = jnp.asarray([0.5, 1.2])
+    train_points = jnp.asarray([[0.1], [0.4], [0.8]])
+    query_points = jnp.asarray([[0.3], [0.7]])
+
+    def spatial_design(points, name):
+        return phx.uq.FunctionalDesign(
+            (
+                phx.uq.FunctionalObservationBlock(
+                    points, phx.uq.value_functional(1), name=name
+                ),
+            )
+        )
+
+    design = phx.uq.StateSpaceGaussianProcessDesign(
+        train_times,
+        query_times,
+        train_spatial=spatial_design(train_points, "train"),
+        query_spatial=spatial_design(query_points, "query"),
+    )
+    plan = phx.uq.compile_state_space_kernel(temporal, design, spatial_kernel=spatial)
+    values = jnp.asarray([0.4, -0.2, 0.3])
+    noise = jnp.asarray(0.05)
+    result = phx.uq.fit_state_space_gaussian_process(plan, values, noise_scale=noise)
+
+    def joint(left_times, left_points, right_times, right_points):
+        return temporal.matrix(
+            left_times[:, None], right_times[:, None]
+        ) * spatial.matrix(left_points, right_points)
+
+    observation = joint(train_times, train_points, train_times, train_points)
+    observation = observation + noise**2 * jnp.eye(train_times.size)
+    cross = joint(query_times, query_points, train_times, train_points)
+    query = joint(query_times, query_points, query_times, query_points)
+    expected_mean = cross @ jnp.linalg.solve(observation, values)
+    expected_variance = jnp.diag(query - cross @ jnp.linalg.solve(observation, cross.T))
+    assert jnp.allclose(result.posterior_mean, expected_mean, atol=2e-4)
+    assert jnp.allclose(result.posterior_variance, expected_variance, atol=2e-4)
+
+
 def test_carma_stability_and_supported_algebra_fail_closed():
     stable = phx.kernels.CARMAKernel([2.0, 1.0], [1.0], 0.5)
     assert jnp.all(

@@ -36,7 +36,7 @@ def _take_batch_rows(batch: PointBatch, indices: Array, /) -> PointBatch:
 
     axis, _ = _single_axis_and_size(batch)
 
-    def take(value):
+    def take(value: object) -> object:
         if not isinstance(value, cx.AxisArray) or axis not in value.named_dims:
             return value
         position = value.dims.index(axis)

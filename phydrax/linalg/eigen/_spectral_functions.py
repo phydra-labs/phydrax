@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 import math
 from enum import IntEnum
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from .._policies import FailurePolicy
+from ._problems import EigenproblemLike
 from ._self_adjoint_spectrum import (
     prepare_self_adjoint_spectrum,
     PreparedSelfAdjointSpectrum,
@@ -388,7 +389,7 @@ class SelfAdjointSpectralOperator(StrictModule):
 
 
 def self_adjoint_spectral_operator(
-    spectrum_or_problem,
+    spectrum_or_problem: PreparedSelfAdjointSpectrum | EigenproblemLike,
     function: AbstractSpectralFunction,
     /,
     *,
@@ -477,14 +478,14 @@ def self_adjoint_spectral_operator(
 
 @eqx.filter_custom_jvp
 def _attach_spectral_operator_derivative(
-    problem,
-    function,
-    operator,
-    eigenvalues,
-    eigenvectors,
-    inverse_basis,
-    derivative_valid,
-):
+    problem: EigenproblemLike,
+    function: AbstractSpectralFunction,
+    operator: Array,
+    eigenvalues: Array,
+    eigenvectors: Array,
+    inverse_basis: Array,
+    derivative_valid: Array,
+) -> Array:
     del (
         problem,
         function,
@@ -497,7 +498,26 @@ def _attach_spectral_operator_derivative(
 
 
 @_attach_spectral_operator_derivative.def_jvp
-def _spectral_operator_jvp(primals, tangents):
+def _spectral_operator_jvp(
+    primals: tuple[
+        EigenproblemLike,
+        AbstractSpectralFunction,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+    ],
+    tangents: tuple[
+        Any,
+        Any,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+    ],
+) -> tuple[Array, Array]:
     (
         problem,
         function,
@@ -523,16 +543,16 @@ def _spectral_operator_jvp(primals, tangents):
 
 @eqx.filter_custom_jvp
 def _attach_spectral_density_derivative(
-    problem,
-    function,
-    density,
-    operator,
-    paired_metric,
-    eigenvalues,
-    eigenvectors,
-    inverse_basis,
-    derivative_valid,
-):
+    problem: EigenproblemLike,
+    function: AbstractSpectralFunction,
+    density: Array,
+    operator: Array,
+    paired_metric: Array,
+    eigenvalues: Array,
+    eigenvectors: Array,
+    inverse_basis: Array,
+    derivative_valid: Array,
+) -> Array:
     del (
         problem,
         function,
@@ -547,7 +567,30 @@ def _attach_spectral_density_derivative(
 
 
 @_attach_spectral_density_derivative.def_jvp
-def _spectral_density_jvp(primals, tangents):
+def _spectral_density_jvp(
+    primals: tuple[
+        EigenproblemLike,
+        AbstractSpectralFunction,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+    ],
+    tangents: tuple[
+        Any,
+        Any,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+        Array | None,
+    ],
+) -> tuple[Array, Array]:
     (
         problem,
         function,
@@ -583,14 +626,14 @@ def _spectral_density_jvp(primals, tangents):
 
 
 def _spectral_operator_tangent(
-    problem,
-    problem_tangent,
-    function,
-    function_tangent,
-    eigenvalues,
-    eigenvectors,
-    inverse_basis,
-):
+    problem: EigenproblemLike,
+    problem_tangent: Any,
+    function: AbstractSpectralFunction,
+    function_tangent: Any,
+    eigenvalues: Array,
+    eigenvectors: Array,
+    inverse_basis: Array,
+) -> tuple[Array, Array, Array]:
     perturbation, paired_metric_tangent = perturbation_in_eigenbasis(
         problem,
         problem_tangent,
@@ -615,14 +658,14 @@ def _spectral_operator_tangent(
 
 
 def _spectral_operator_evidence(
-    spectrum,
-    function_values,
-    uncertainty,
-    domain_valid,
-    operator,
-    density,
-    policy,
-):
+    spectrum: PreparedSelfAdjointSpectrum,
+    function_values: Array,
+    uncertainty: Array,
+    domain_valid: Array,
+    operator: Array,
+    density: Array,
+    policy: SelfAdjointSpectralOperatorPolicy,
+) -> tuple[SelfAdjointSpectralOperatorDiagnostics, Array]:
     expected_images = (
         spectrum.eigenvectors
         * function_values.astype(spectrum.eigenvectors.dtype)[..., None, :]
@@ -685,7 +728,7 @@ def _spectral_operator_evidence(
     return diagnostics, status
 
 
-def _eigenvalue_uncertainty(spectrum):
+def _eigenvalue_uncertainty(spectrum: PreparedSelfAdjointSpectrum) -> Array:
     scale = jnp.maximum(jnp.abs(spectrum.eigenvalues), 1)
     return 4 * jnp.maximum(
         spectrum.source_diagnostics.residual_norms,
@@ -693,7 +736,9 @@ def _eigenvalue_uncertainty(spectrum):
     )
 
 
-def _stable_divided_difference(function, left, right):
+def _stable_divided_difference(
+    function: AbstractSpectralFunction, left: ArrayLike, right: ArrayLike
+) -> Array:
     x = jnp.asarray(left)
     y = jnp.asarray(right)
     difference = x - y
@@ -705,7 +750,7 @@ def _stable_divided_difference(function, left, right):
     return jnp.where(close, midpoint_derivative, quotient)
 
 
-def _real_scalar(value, name):
+def _real_scalar(value: ArrayLike, name: str) -> Array:
     array = jnp.asarray(value)
     if array.shape != ():
         raise ValueError(f"{name} must be scalar.")

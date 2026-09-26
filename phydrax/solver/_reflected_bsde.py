@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite, prod
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -108,7 +109,7 @@ def _path_features(
     histories: Array,
     /,
 ) -> Array:
-    def evaluate(history):
+    def evaluate(history: Array) -> Array:
         features = jnp.asarray(problem.path_features(prefix_times, history, problem.args))
         if features.shape != problem.regression_state_shape:
             raise ValueError(
@@ -120,7 +121,7 @@ def _path_features(
 
 
 def _path_values(
-    function: Callable,
+    function: Callable[[Array, Array, Array, Any], Array],
     problem: ReflectedPathDependentBSDEProblem,
     time: Array,
     prefix_times: Array,
@@ -129,7 +130,7 @@ def _path_values(
     *,
     owner: str,
 ) -> Array:
-    def evaluate(history):
+    def evaluate(history: Array) -> Array:
         value = jnp.asarray(function(time, prefix_times, history, problem.args))
         if value.shape != problem.output_shape:
             raise ValueError(f"{owner} returned an incompatible output shape.")
@@ -144,7 +145,7 @@ def _terminal_values(
     histories: Array,
     /,
 ) -> Array:
-    def evaluate(history):
+    def evaluate(history: Array) -> Array:
         value = jnp.asarray(problem.terminal(times, history, problem.args))
         if value.shape != problem.output_shape:
             raise ValueError("terminal returned an incompatible output shape.")
@@ -162,7 +163,7 @@ def _generator_values(
     controls: Array,
     /,
 ) -> Array:
-    def evaluate(history, value, control):
+    def evaluate(history: Array, value: Array, control: Array) -> Array:
         output = jnp.asarray(
             problem.generator(
                 time,

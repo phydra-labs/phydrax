@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
@@ -293,7 +294,7 @@ def evaluate_battery_identifiability(
         plan.calibration.plan.parameter_space.initial if position is None else position
     )
     if any(
-        isinstance(leaf, jax.core.Tracer) for leaf in jax.tree_util.tree_leaves(point)
+        isinstance(leaf, jax_core.Tracer) for leaf in jax.tree_util.tree_leaves(point)
     ):
         raise TypeError(
             "Report identity requires a concrete position; use BatteryIdentifiabilityPlan.evaluate_numerics inside JIT."

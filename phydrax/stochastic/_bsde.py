@@ -363,7 +363,7 @@ def autodiff_bsde_control(
     if state_value.shape != problem.state_shape:
         raise ValueError("state must have exactly problem.state_shape.")
 
-    def value(state_argument):
+    def value(state_argument: Array) -> Array:
         return _predictor_value(
             value_predictor,
             time_value,
@@ -493,7 +493,7 @@ def evaluate_bsde(
     output_size = prod(problem.output_shape)
     noise_size = prod(problem.noise_shape)
 
-    def generator_value(time, state, value, control):
+    def generator_value(time: Array, state: Array, value: Array, control: Array) -> Array:
         output = jnp.asarray(problem.generator(time, state, value, control, problem.args))
         if output.shape != problem.output_shape:
             raise ValueError("BSDE generator returned an incompatible output shape.")
@@ -747,12 +747,12 @@ def semilinear_pde_residual(
     if time_value.shape != () or state_value.shape != problem.state_shape:
         raise ValueError("time must be scalar and state must equal problem.state_shape.")
 
-    def value_at_time(time_argument):
+    def value_at_time(time_argument: Array) -> Array:
         return _predictor_value(
             value_predictor, time_argument, state_value, problem, key=key
         )
 
-    def value_at_state(state_argument):
+    def value_at_state(state_argument: Array) -> Array:
         return _predictor_value(
             value_predictor, time_value, state_argument, problem, key=key
         )

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,6 +16,15 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._core import DSMCParticleState, DSMCSpeciesPlan
+
+
+# first index, second index, valid event, uniforms, majorant sigma speed
+_CollisionEvent: TypeAlias = tuple[Array, Array, Array, Array, Array]
+# accepted, acceptance probability, sigma speed, momentum defect, energy defect,
+# majorant violation, finite
+_CollisionEventDiagnostics: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class DSMCPairCollisionParameters(StrictModule, NonTrainableState):
@@ -493,7 +502,9 @@ def _collide_many(
         raise ValueError("DSMC collision event arrays are incompatible.")
     majorant = jnp.broadcast_to(majorant, (event_count,))
 
-    def body(particles, event):
+    def body(
+        particles: DSMCParticleState, event: _CollisionEvent
+    ) -> tuple[DSMCParticleState, _CollisionEventDiagnostics]:
         first_, second_, valid_, random_, majorant_ = event
         result = plan.collide_one(
             particles,

@@ -280,7 +280,9 @@ def _so3_log_coordinates(rotation: Array, /) -> Array:
 
 
 @_so3_log_coordinates.defjvp
-def _so3_log_coordinates_jvp(primals, tangents):
+def _so3_log_coordinates_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (rotation,), (rotation_tangent,) = primals, tangents
     coordinates = _so3_log_coordinates(rotation)
     body_tangent_matrix = jnp.swapaxes(rotation, -1, -2) @ rotation_tangent
@@ -385,7 +387,7 @@ class _LocalFrameIKResidual(StrictModule):
     plan: "FrameInverseKinematicsPlan"
     reference_configuration: Array
 
-    def __call__(self, candidate: Array, args=None, /) -> Array:
+    def __call__(self, candidate: Array, args: object = None, /) -> Array:
         del args
         configuration = self.plan.canonical_configuration(
             self.reference_configuration, candidate
@@ -588,7 +590,7 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
             jnp.concatenate(residual_parts),
         )
 
-    def residual(self, configuration: ArrayLike, args=None, /) -> Array:
+    def residual(self, configuration: ArrayLike, args: object = None, /) -> Array:
         """Evaluate the fixed-capacity weighted IK residual; compatible with JIT/AD."""
 
         del args

@@ -101,6 +101,8 @@ class _TrajectorySignalDerivativeRule(DerivativeRule):
     ) -> DomainFunction | None:
         del mode, basis, periodic
         signal = self.function.func
+        # `derivative_rule_for` binds this rule only to functions evaluated by the signal.
+        assert isinstance(signal, _SeriesTrajectorySignal)
         domain = signal.domain
         reconstruction = signal.reconstruction
         if reconstruction.interpolation == "nearest":
@@ -151,7 +153,9 @@ class _SeriesTrajectorySignal(
         self.reconstruction = reconstruction
         self.derivative_order = int(derivative_order)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         del args, key, kwargs
         raise TypeError("TrajectorySignal requires PointBatch evaluation.")
 
@@ -160,7 +164,7 @@ class _SeriesTrajectorySignal(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs

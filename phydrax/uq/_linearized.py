@@ -387,7 +387,7 @@ class LinearizedPropagationResult(StrictModule):
         )
 
     def _factor_directions(self) -> tuple[PyTree[Array], int]:
-        def input_dtype(directions):
+        def input_dtype(directions: PyTree[Array]) -> PyTree[Array]:
             return jax.tree_util.tree_map(
                 lambda value, template: value.astype(template.dtype),
                 directions,
@@ -501,11 +501,19 @@ def _validate_like(
     )
 
 
-def _real_pullback(transpose: Callable[..., Any], cotangent: PyTree[Array], /):
+def _real_pullback(
+    transpose: Callable[[PyTree[Array]], tuple[PyTree[Array]]],
+    cotangent: PyTree[Array],
+    /,
+) -> PyTree[Array]:
     return transpose(cotangent)[0]
 
 
-def _complex_pullback(transpose: Callable[..., Any], cotangent: PyTree[Array], /):
+def _complex_pullback(
+    transpose: Callable[[PyTree[Array]], tuple[PyTree[Array]]],
+    cotangent: PyTree[Array],
+    /,
+) -> PyTree[Array]:
     return _conjugate_tree(transpose(_conjugate_tree(cotangent))[0])
 
 

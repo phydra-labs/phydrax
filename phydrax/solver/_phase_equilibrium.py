@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from typing import cast
 
 import equinox as eqx
 import jax
@@ -14,12 +15,21 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..equations._homogeneous_thermodynamics import HomogeneousHelmholtzPlan
+from ..equations._homogeneous_thermodynamics import (
+    HomogeneousChemicalEvaluation,
+    HomogeneousHelmholtzPlan,
+)
 from ..equations._peng_robinson import (
     peng_robinson_roots,
     PengRobinsonResidualHelmholtzTerm,
 )
-from ..optim import Bounds, minimize, OptimizationTermination, ProjectedLBFGS
+from ..optim import (
+    Bounds,
+    MinimizationResult,
+    minimize,
+    OptimizationTermination,
+    ProjectedLBFGS,
+)
 
 
 class PhaseEquilibriumStatus(IntEnum):
@@ -115,7 +125,7 @@ class TPDSearchPlan(StrictModule):
             reference.log_fugacity_coefficient
         )
         starts = _tpd_starts(
-            self.thermodynamics.residual,
+            _peng_robinson_residual(self.thermodynamics),
             temperature_value,
             pressure_value,
             feed,
@@ -128,7 +138,7 @@ class TPDSearchPlan(StrictModule):
         start_array = jnp.stack(starts)
         for dense in (True, False):
 
-            def objective(logits, _, dense=dense):
+            def objective(logits: Array, _: object, dense: bool = dense) -> Array:
                 composition = jax.nn.softmax(logits)
                 root_set = peng_robinson_roots(
                     self.thermodynamics,
@@ -176,7 +186,7 @@ class TPDSearchPlan(StrictModule):
                 direct_select, jnp.asarray(jnp.inf, dtype=feed.dtype), best_stationarity
             )
 
-            def solve_start(start):
+            def solve_start(start: Array) -> MinimizationResult:
                 return minimize(
                     objective,
                     start,
@@ -344,7 +354,7 @@ class FixedTwoPhaseTPFlashPlan(StrictModule):
 
         log_k = jnp.log(
             _wilson_k(
-                self.thermodynamics.residual,
+                _peng_robinson_residual(self.thermodynamics),
                 temperature_value,
                 pressure_value,
             )
@@ -469,7 +479,12 @@ class FixedTwoPhaseTPFlashPlan(StrictModule):
             self.plan_id,
         )
 
-    def _failure(self, feed, stability, status):
+    def _failure(
+        self,
+        feed: Array,
+        stability: TPDStabilityResult,
+        status: PhaseEquilibriumStatus,
+    ) -> FixedTwoPhaseTPFlashResult:
         count = feed.shape[0]
         nan = jnp.asarray(jnp.nan, dtype=feed.dtype)
         return FixedTwoPhaseTPFlashResult(
@@ -489,19 +504,34 @@ class FixedTwoPhaseTPFlashPlan(StrictModule):
         )
 
 
-def _chemical_at_root(thermodynamics, temperature, pressure, composition, root_index):
+def _peng_robinson_residual(
+    thermodynamics: HomogeneousHelmholtzPlan, /
+) -> PengRobinsonResidualHelmholtzTerm:
+    # TPDSearchPlan and FixedTwoPhaseTPFlashPlan validate a Peng-Robinson residual.
+    return cast(PengRobinsonResidualHelmholtzTerm, thermodynamics.residual)
+
+
+def _chemical_at_root(
+    thermodynamics: HomogeneousHelmholtzPlan,
+    temperature: Array,
+    pressure: Array,
+    composition: Array,
+    root_index: Array,
+) -> HomogeneousChemicalEvaluation:
     roots = peng_robinson_roots(thermodynamics, temperature, pressure, composition)
     density = roots.molar_density[root_index]
     return thermodynamics.evaluate_chemical(temperature, density, composition)
 
 
-def _root_index(stable, *, dense: bool):
+def _root_index(stable: Array, *, dense: bool) -> Array:
     if dense:
         return jnp.argmax(stable).astype(jnp.int32)
     return (stable.shape[0] - 1 - jnp.argmax(stable[::-1])).astype(jnp.int32)
 
 
-def _wilson_k(residual, temperature, pressure):
+def _wilson_k(
+    residual: PengRobinsonResidualHelmholtzTerm, temperature: Array, pressure: Array
+) -> Array:
     parameters = residual.parameters
     return (
         parameters.critical_pressure.astype(temperature.dtype)
@@ -517,7 +547,12 @@ def _wilson_k(residual, temperature, pressure):
     )
 
 
-def _tpd_starts(residual, temperature, pressure, feed):
+def _tpd_starts(
+    residual: PengRobinsonResidualHelmholtzTerm,
+    temperature: Array,
+    pressure: Array,
+    feed: Array,
+) -> tuple[Array, ...]:
     tiny = jnp.finfo(feed.dtype).tiny
     wilson = _wilson_k(residual, temperature, pressure)
     starts = [jnp.log(jnp.maximum(feed, tiny))]
@@ -530,13 +565,13 @@ def _tpd_starts(residual, temperature, pressure, feed):
     return tuple(starts)
 
 
-def _rachford_rice(feed, equilibrium_ratio):
-    def residual(beta):
+def _rachford_rice(feed: Array, equilibrium_ratio: Array) -> Array:
+    def residual(beta: Array) -> Array:
         return jnp.sum(
             feed * (equilibrium_ratio - 1.0) / (1.0 + beta * (equilibrium_ratio - 1.0))
         )
 
-    def body(_, bounds):
+    def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         lower, upper = bounds
         midpoint = 0.5 * (lower + upper)
         value = residual(midpoint)

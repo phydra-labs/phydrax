@@ -36,7 +36,13 @@ class _ExecutionCurve:
         self.args = args
         self.problem_id = problem.problem_id
 
-    def residual(self, state, parameter, args=None, /):
+    def residual(
+        self,
+        state: PyTree[Any],
+        parameter: Array,
+        args: object = None,
+        /,
+    ) -> PyTree[Array]:
         del args
         return _execution_residual(
             self.problem,
@@ -409,7 +415,7 @@ def _complex_norm(space: AbstractVectorSpace, vector: PyTree[Any], /) -> Array:
 
 
 def _linear_action(
-    problem: ContinuationCurveProblem,
+    problem: _ExecutionCurve,
     state: PyTree[Any],
     parameter: Array,
     direction: PyTree[Any],
@@ -425,7 +431,7 @@ def _linear_action(
 
 
 def _adjoint_action_real(
-    problem: ContinuationCurveProblem,
+    problem: _ExecutionCurve,
     state: PyTree[Any],
     parameter: Array,
     state_space: AbstractVectorSpace,
@@ -441,7 +447,7 @@ def _adjoint_action_real(
 
 
 def _bilinear_real(
-    problem: ContinuationCurveProblem,
+    problem: _ExecutionCurve,
     state: PyTree[Any],
     parameter: Array,
     left: PyTree[Any],
@@ -449,7 +455,7 @@ def _bilinear_real(
     args: Any,
     /,
 ) -> PyTree[Array]:
-    def first(value):
+    def first(value: PyTree[Array]) -> PyTree[Array]:
         return jax.jvp(
             lambda inner: problem.residual(inner, parameter, args),
             (value,),
@@ -460,7 +466,7 @@ def _bilinear_real(
 
 
 def _bilinear(
-    problem: ContinuationCurveProblem,
+    problem: _ExecutionCurve,
     state: PyTree[Any],
     parameter: Array,
     left: PyTree[Any],
@@ -494,7 +500,7 @@ def _bilinear(
 
 
 def _trilinear_real(
-    problem: ContinuationCurveProblem,
+    problem: _ExecutionCurve,
     state: PyTree[Any],
     parameter: Array,
     first_direction: PyTree[Any],
@@ -503,8 +509,8 @@ def _trilinear_real(
     args: Any,
     /,
 ) -> PyTree[Array]:
-    def first(value):
-        def second(inner):
+    def first(value: PyTree[Array]) -> PyTree[Array]:
+        def second(inner: PyTree[Array]) -> PyTree[Array]:
             return jax.jvp(
                 lambda deepest: problem.residual(deepest, parameter, args),
                 (inner,),
@@ -517,7 +523,7 @@ def _trilinear_real(
 
 
 def _trilinear(
-    problem: ContinuationCurveProblem,
+    problem: _ExecutionCurve,
     state: PyTree[Any],
     parameter: Array,
     first: PyTree[Any],
@@ -902,7 +908,7 @@ def transcritical_normal_form(
         quadratic_vector,
     )
 
-    def critical_action(parameter_value):
+    def critical_action(parameter_value: Array) -> PyTree[Array]:
         return _tree_real(
             _linear_action(
                 execution_problem,
@@ -1039,7 +1045,6 @@ def hopf_first_lyapunov(
     policy_ = NormalFormPolicy() if policy is None else policy
     if not isinstance(policy_, NormalFormPolicy):
         raise TypeError("policy must be NormalFormPolicy or None.")
-    public_problem = problem
     public_state = candidate.physical_state
     state_space = geometry.execution_state_space
     state = geometry.state_to_execution(public_state)
@@ -1053,7 +1058,7 @@ def hopf_first_lyapunov(
         public_state,
         candidate.mode_imaginary,
     )
-    problem = _ExecutionCurve(public_problem, geometry, args)
+    execution_problem = _ExecutionCurve(problem, geometry, args)
     args = None
     mode = _tree_complex(mode_real, mode_imaginary)
     adjoint = _tree_complex(adjoint_real, adjoint_imaginary)
@@ -1064,7 +1069,7 @@ def hopf_first_lyapunov(
     eigenvalue_condition = mode_norm * adjoint_norm
     conjugate_mode = _tree_conjugate(mode)
     b_qq = _bilinear(
-        problem,
+        execution_problem,
         state,
         candidate.parameter,
         mode,
@@ -1072,7 +1077,7 @@ def hopf_first_lyapunov(
         args,
     )
     b_q_conjugate = _bilinear(
-        problem,
+        execution_problem,
         state,
         candidate.parameter,
         mode,
@@ -1080,13 +1085,15 @@ def hopf_first_lyapunov(
         args,
     )
     jacobian_action = lambda direction: _linear_action(
-        problem,
+        execution_problem,
         state,
         candidate.parameter,
         direction,
         args,
     )
-    equilibrium_residual = tree_norm(problem.residual(state, candidate.parameter, args))
+    equilibrium_residual = tree_norm(
+        execution_problem.residual(state, candidate.parameter, args)
+    )
     mode_residual = tree_norm(
         _tree_add(
             jacobian_action(mode),
@@ -1096,7 +1103,7 @@ def hopf_first_lyapunov(
     normalized_adjoint_real = _tree_real(normalized_adjoint)
     normalized_adjoint_imaginary = _tree_imaginary(normalized_adjoint)
     adjoint_action_real = _adjoint_action_real(
-        problem,
+        execution_problem,
         state,
         candidate.parameter,
         state_space,
@@ -1104,7 +1111,7 @@ def hopf_first_lyapunov(
         args,
     )
     adjoint_action_imaginary = _adjoint_action_real(
-        problem,
+        execution_problem,
         state,
         candidate.parameter,
         state_space,
@@ -1155,7 +1162,7 @@ def hopf_first_lyapunov(
     zero_residual = jnp.maximum(zero_result.residual_norm, zero_actual)
     second_residual = jnp.maximum(second_result.residual_norm, second_actual)
     cubic = _trilinear(
-        problem,
+        execution_problem,
         state,
         candidate.parameter,
         mode,
@@ -1164,7 +1171,7 @@ def hopf_first_lyapunov(
         args,
     )
     b_conjugate_h20 = _bilinear(
-        problem,
+        execution_problem,
         state,
         candidate.parameter,
         conjugate_mode,
@@ -1172,7 +1179,7 @@ def hopf_first_lyapunov(
         args,
     )
     b_q_h11 = _bilinear(
-        problem,
+        execution_problem,
         state,
         candidate.parameter,
         mode,

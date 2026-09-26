@@ -65,7 +65,7 @@ def _partition(
     keys = construct.nucleotide_keys
     parent = list(range(len(strands)))
 
-    def root(i):
+    def root(i: int) -> int:
         while parent[i] != i:
             i = parent[i]
         return i
@@ -117,7 +117,11 @@ class SecondaryStructureState:
             raise ValueError("Every pair must bind two keys from this construct.")
         numeric = tuple(
             sorted(
-                tuple(sorted((index[first], index[second]))) for first, second in pairs
+                (
+                    min(index[first], index[second]),
+                    max(index[first], index[second]),
+                )
+                for first, second in pairs
             )
         )
         used = tuple(i for pair in numeric for i in pair)

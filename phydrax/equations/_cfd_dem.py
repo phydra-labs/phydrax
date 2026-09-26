@@ -82,12 +82,12 @@ class StokesDragPlan(AbstractHydrodynamicClosurePlan):
 
     def evaluate(
         self,
-        sample,
-        particle_velocity,
-        particle_radius,
-        particle_volume,
+        sample: FluidParticleSample,
+        particle_velocity: Array,
+        particle_radius: Array,
+        particle_volume: Array,
         /,
-    ):
+    ) -> HydrodynamicClosureResult:
         slip = sample.velocity - particle_velocity
         speed = jnp.linalg.norm(slip, axis=-1)
         diameter = 2.0 * particle_radius

@@ -310,14 +310,21 @@ class RootDeflation(StrictModule):
         return tree_scale(self.factor(state), residual)
 
     def as_problem(self, /) -> NonlinearSystemProblem:
-        def residual(state, args):
+        def residual(
+            state: PyTree[Any], args: Any
+        ) -> tuple[PyTree[Array], tuple[PyTree[Array], Any]]:
             original_residual, original_auxiliary = self.problem.evaluate(state, args)
             return (
                 tree_scale(self.factor(state), original_residual),
                 (original_residual, original_auxiliary),
             )
 
-        def validity(state, transformed_residual, auxiliary, args):
+        def validity(
+            state: PyTree[Any],
+            transformed_residual: PyTree[Array],
+            auxiliary: tuple[PyTree[Array], Any],
+            args: Any,
+        ) -> Array:
             del transformed_residual
             original_residual, original_auxiliary = auxiliary
             return self.problem.valid(

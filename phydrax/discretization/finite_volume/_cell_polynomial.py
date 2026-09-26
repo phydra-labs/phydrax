@@ -38,8 +38,10 @@ def _jax_monomials(values: Array, exponents: Array, /) -> Array:
     return jnp.prod(values[..., None, :] ** exponents, axis=-1)
 
 
-def _adjacency(discretization: UnstructuredFiniteVolumeDiscretization, /):
-    adjacency = [set() for _ in range(discretization.cell_count)]
+def _adjacency(
+    discretization: UnstructuredFiniteVolumeDiscretization, /
+) -> list[set[int]]:
+    adjacency: list[set[int]] = [set() for _ in range(discretization.cell_count)]
     owner = np.asarray(discretization.owner_cells, dtype=np.int32)
     neighbor = np.asarray(discretization.neighbor_cells, dtype=np.int32)
     for left, right in zip(owner, neighbor, strict=True):
@@ -49,13 +51,13 @@ def _adjacency(discretization: UnstructuredFiniteVolumeDiscretization, /):
     return adjacency
 
 
-def _bfs_order(adjacency, cell: int, /):
+def _bfs_order(adjacency: list[set[int]], cell: int, /) -> list[tuple[int, int]]:
     visited = {cell}
     frontier = sorted(adjacency[cell])
-    ordered = []
+    ordered: list[tuple[int, int]] = []
     depth = 1
     while frontier:
-        next_frontier = []
+        next_frontier: list[int] = []
         for candidate in frontier:
             if candidate in visited:
                 continue
@@ -71,7 +73,7 @@ def _cell_moments(
     discretization: UnstructuredFiniteVolumeDiscretization,
     basis: "CellPolynomialBasis",
     /,
-):
+) -> tuple[np.ndarray, np.ndarray]:
     centers = np.asarray(discretization.cell_centers)
     volumes = np.asarray(discretization.cell_volumes)
     lengths = volumes ** (1.0 / discretization.cell_dimension)
@@ -91,7 +93,7 @@ def _design_rows(
     cell: int,
     stencil: list[int],
     /,
-):
+) -> np.ndarray:
     centers = np.asarray(discretization.cell_centers)
     volumes = np.asarray(discretization.cell_volumes)
     points = np.asarray(discretization.cell_quadrature_points)[stencil]
@@ -110,7 +112,7 @@ def _selected_stencils(
     oversampling: int,
     direction: np.ndarray | None,
     /,
-):
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     adjacency = _adjacency(discretization)
     centers = np.asarray(discretization.cell_centers)
     stencils: list[tuple[int, ...]] = []
@@ -175,7 +177,7 @@ def _smoothness_gram(
     basis: "CellPolynomialBasis",
     lengths: np.ndarray,
     /,
-):
+) -> np.ndarray:
     centers = np.asarray(discretization.cell_centers)
     volumes = np.asarray(discretization.cell_volumes)
     points = np.asarray(discretization.cell_quadrature_points)

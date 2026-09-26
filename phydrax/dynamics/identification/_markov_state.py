@@ -156,7 +156,7 @@ def _stationary_distribution(matrix: Array, active: Array, /) -> Array:
     initial = active.astype(matrix.dtype)
     initial = initial / jnp.maximum(jnp.sum(initial), 1.0)
 
-    def body(_, carry):
+    def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         current, average = carry
         following = current @ matrix
         return following, average + following

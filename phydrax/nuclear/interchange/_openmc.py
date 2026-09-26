@@ -123,7 +123,7 @@ class OpenMCFluxImportResult:
     openmc_version: str
 
 
-def _scalar_integer(handle, name: str, /) -> int:
+def _scalar_integer(handle: h5py.File, name: str, /) -> int:
     if name in handle:
         value = np.asarray(handle[name][()])
     elif name in handle.attrs:
@@ -138,7 +138,7 @@ def _scalar_integer(handle, name: str, /) -> int:
     return int(result)
 
 
-def _text_attribute(handle, name: str, /) -> str:
+def _text_attribute(handle: h5py.File, name: str, /) -> str:
     if name not in handle.attrs:
         raise ValueError(f"OpenMC statepoint is missing attribute {name}.")
     value = handle.attrs[name]

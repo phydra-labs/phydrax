@@ -319,7 +319,7 @@ class PorousAblatingMaterialPlan(StrictModule, NonTrainableState):
             raise ValueError("Material step and subcycles are invalid.")
         initial = state
 
-        def body(_, current):
+        def body(_: Array, current: AblatingMaterialState) -> AblatingMaterialState:
             evaluation = self.evaluate(current)
             fraction = step / count
             return AblatingMaterialState(

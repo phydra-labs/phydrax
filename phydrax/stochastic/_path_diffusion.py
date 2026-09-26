@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import Literal, Self, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -35,7 +36,7 @@ class TrajectoryEventLayout(StrictModule):
     def __init__(
         self,
         times: ArrayLike,
-        state_shape,
+        state_shape: Sequence[int],
         basis: ArrayLike,
         /,
         *,
@@ -108,7 +109,7 @@ class TrajectoryEventLayout(StrictModule):
         self.layout_id = identifier
 
     @classmethod
-    def from_increments(cls, times: ArrayLike, state_shape, /):
+    def from_increments(cls, times: ArrayLike, state_shape: Sequence[int], /) -> Self:
         grid = jnp.asarray(times, dtype=jnp.float64)
         if grid.ndim != 1 or grid.size < 2 or bool(jnp.any(jnp.diff(grid) <= 0.0)):
             raise ValueError("Trajectory times must be a strictly increasing vector.")
@@ -120,10 +121,10 @@ class TrajectoryEventLayout(StrictModule):
         basis = jnp.kron(temporal, jnp.eye(size))
         return cls(grid, state_shape, basis)
 
-    def coefficients(self, trajectory: ArrayLike, /):
+    def coefficients(self, trajectory: ArrayLike, /) -> tuple[Array, Array]:
         return self.coefficient_layout.project(trajectory)
 
-    def synthesize(self, coefficients: ArrayLike, /):
+    def synthesize(self, coefficients: ArrayLike, /) -> Array:
         return self.coefficient_layout.synthesize(coefficients)
 
 
@@ -180,10 +181,14 @@ class PathCoefficientDiffusion(StrictModule):
         self.score_dependency = score_dependency
         self.process_id = identifier
 
-    def perturb(self, key: Key[Array, ""], trajectory: ArrayLike, /, *, time):
+    def perturb(
+        self, key: Key[Array, ""], trajectory: ArrayLike, /, *, time: ArrayLike
+    ) -> Array:
         return self.subspace_process.perturb(key, trajectory, time=time)
 
-    def conditional_coefficient_score(self, perturbed, clean, /, *, time):
+    def conditional_coefficient_score(
+        self, perturbed: ArrayLike, clean: ArrayLike, /, *, time: ArrayLike
+    ) -> Array:
         return self.subspace_process.conditional_coefficient_score(
             perturbed,
             clean,

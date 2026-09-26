@@ -355,7 +355,9 @@ class _RCField(StrictModule):
     matrix: Array
     boundary: Array
 
-    def __call__(self, time, temperature, inputs, args):
+    def __call__(
+        self, time: Array, temperature: Array, inputs: Array, args: object
+    ) -> Array:
         del time, args
         count = self.boundary.shape[1]
         return (
@@ -370,7 +372,9 @@ class _RCResidual(StrictModule):
     matrix: Array
     boundary: Array
 
-    def __call__(self, time, temperature, rate, inputs, args):
+    def __call__(
+        self, time: Array, temperature: Array, rate: Array, inputs: Array, args: object
+    ) -> Array:
         del time, args
         count = self.boundary.shape[1]
         return (
@@ -441,7 +445,7 @@ class BuildingCompilation(StrictModule):
             + q
         )
 
-    def reduced_affine(self, forcing: Array):
+    def reduced_affine(self, forcing: Array) -> tuple[Array, Array]:
         d, a = (
             jnp.asarray(self.dynamic_indices),
             jnp.asarray(self.algebraic_indices, dtype=jnp.int64),

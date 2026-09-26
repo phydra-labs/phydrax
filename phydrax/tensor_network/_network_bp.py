@@ -279,8 +279,8 @@ def run_network_belief_propagation(
             jnp.ones((cardinality[name],), dtype=dtype) / cardinality[name]
             for name in network.variable_names
         )
-        log_partition = sum(
-            jnp.log(jnp.abs(factor.values)) for factor in network.factors
+        log_partition = jnp.asarray(
+            sum(jnp.log(jnp.abs(factor.values)) for factor in network.factors)
         ) + sum(jnp.log(cardinality[name]) for name in network.variable_names)
         residuals = jnp.zeros(
             (policy.maximum_iterations,), dtype=jnp.real(network.factors[0].values).dtype
@@ -418,7 +418,9 @@ def run_network_belief_propagation(
             factor_to_variable, variable_to_factor, strict=True
         )
     )
-    log_partition = sum(jnp.log(jnp.abs(value)) for value in factor_normalizers)
+    log_partition = jnp.asarray(
+        sum(jnp.log(jnp.abs(value)) for value in factor_normalizers)
+    )
     log_partition = log_partition + sum(
         jnp.log(jnp.abs(value)) for value in variable_normalizers
     )

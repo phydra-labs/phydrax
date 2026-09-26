@@ -282,7 +282,9 @@ def evolve_flrw_modes(
     initial_mode = jnp.asarray(initial.modes)
     initial_derivative = jnp.asarray(initial.derivatives)
 
-    def verlet_step(carry, interval_data):
+    def verlet_step(
+        carry: tuple[Array, Array], interval_data: tuple[Array, Array, Array]
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         current_mode, current_derivative = carry
         width, current_frequency_squared, next_frequency_squared = interval_data
         half = current_derivative - 0.5 * width * current_frequency_squared * current_mode

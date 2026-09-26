@@ -76,7 +76,9 @@ class DenseHamiltonianND(StrictModule):
             self.matrix + value * jnp.eye(self.size, dtype=self.matrix.dtype),
         )
 
-    def operator(self, *, scale=Q, shift=0.0):
+    def operator(
+        self, *, scale: ArrayLike = Q, shift: ArrayLike = 0.0
+    ) -> la.DenseLinearOperator:
         matrix = (
             self.matrix - shift * jnp.eye(self.size, dtype=self.matrix.dtype)
         ) / scale

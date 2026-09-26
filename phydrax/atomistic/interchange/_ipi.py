@@ -9,10 +9,13 @@ import socket
 import struct
 from enum import IntEnum
 from pathlib import Path
+from types import TracebackType
+from typing import Self, TypedDict, Unpack
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -22,6 +25,12 @@ from .._system import PreparedAtomisticSystem
 
 
 _HEADER = 12
+
+
+class _IPITransportOptions(TypedDict, total=False):
+    timeout: float
+    maximum_atoms: int
+    maximum_extra_bytes: int
 
 
 class IPITransportStatus(IntEnum):
@@ -86,11 +95,11 @@ class IPITransportPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def unix(cls, path: str, /, **kwargs):
+    def unix(cls, path: str, /, **kwargs: Unpack[_IPITransportOptions]) -> Self:
         return cls("unix", path, **kwargs)
 
     @classmethod
-    def tcp(cls, host: str, port: int, /, **kwargs):
+    def tcp(cls, host: str, port: int, /, **kwargs: Unpack[_IPITransportOptions]) -> Self:
         return cls("tcp", host, port=port, **kwargs)
 
     def connect(self) -> "IPISession":
@@ -219,10 +228,15 @@ class IPISession:
         self.status = IPITransportStatus.CLOSED
         self.connection.close()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
 
@@ -241,10 +255,15 @@ class IPIListener:
         if self.plan.mode == "unix":
             Path(self.plan.address).unlink(missing_ok=True)
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
 
@@ -263,7 +282,11 @@ class TransportedExternalAtomisticProvider(AbstractExternalAtomisticProvider):
         self.differentiable = False
 
     def evaluate(
-        self, system: PreparedAtomisticSystem, positions, cell_vectors, /
+        self,
+        system: PreparedAtomisticSystem,
+        positions: ArrayLike,
+        cell_vectors: ArrayLike | None,
+        /,
     ) -> ExternalAtomisticEvaluation:
         session = self.session
         if not isinstance(session, IPISession):

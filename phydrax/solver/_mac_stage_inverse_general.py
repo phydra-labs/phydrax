@@ -121,9 +121,9 @@ class MACOperatorStageInverseMomentum(StrictModule, NonTrainableState):
     boundaries: PreparedMACBoundaryPlan
     boundary_stage: MACBoundaryStageData
     momentum_operator: AbstractLinearOperator
-    rhs_scale: object
+    rhs_scale: Array
     boundary_affine_action: FaceVelocity
-    stage_coefficient: object
+    stage_coefficient: Array
     linear_policy: LinearSolvePolicy
     prepared: PreparedLinearSolve
     stage_id: str = eqx.field(static=True)
@@ -315,9 +315,9 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
     frozen_viscosity_action: FrozenMACVariationalViscosityAction
     face_density: FaceVelocity
     face_resistance: FaceVelocity
-    cell_viscosity: object
-    stage_coefficient: object
-    rhs_scale: object
+    cell_viscosity: Array
+    stage_coefficient: Array
+    rhs_scale: Array
     momentum_operator: FunctionLinearOperator
     stage_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -386,7 +386,7 @@ class MACVariableViscosityStagePlan(StrictModule, NonTrainableState):
         )
         viscosity = frozen_viscosity.cell_viscosity
 
-        def action(values):
+        def action(values: FaceVelocity) -> FaceVelocity:
             values_ = operators.validate_velocity(values)
             bounded = momentum.boundaries.homogeneous_rate(values_)
             essential = tuple(

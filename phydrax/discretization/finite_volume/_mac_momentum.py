@@ -81,13 +81,13 @@ def _center_interpolate(value: Array, axis: int, periodic: bool, /) -> Array:
 
 
 def _set_axis_boundary(value: Array, axis: int, index: int, target: Array, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value.at[tuple(location)].set(target)
 
 
 def _axis_boundary(value: Array, axis: int, index: int, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value[tuple(location)]
 
@@ -398,7 +398,7 @@ class PreparedMACMomentumOperators(StrictModule, NonTrainableState):
         transport_ = self.boundaries.enforce(transport, stage_)
         advected_ = self.boundaries.homogeneous_rate(advected)
 
-        def action(value):
+        def action(value: FaceVelocity) -> FaceVelocity:
             return self.conservative_transport(transport_, value, stage=stage_)
 
         conservative = action(advected_)

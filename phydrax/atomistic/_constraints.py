@@ -118,7 +118,7 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
         left = indices[:, 0]
         right = indices[:, 1]
 
-        def iteration(_, carry):
+        def iteration(_: int | Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             position, multipliers = carry
             displacement = position[left] - position[right]
             squared = jnp.sum(displacement * displacement, axis=-1)
@@ -172,7 +172,7 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
         left = indices[:, 0]
         right = indices[:, 1]
 
-        def iteration(_, value):
+        def iteration(_: int | Array, value: Array) -> Array:
             displacement = position[left] - position[right]
             relative_velocity = (
                 value[left] * inverse_mass[left, None]

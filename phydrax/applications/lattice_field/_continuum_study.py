@@ -28,6 +28,7 @@ from ...linalg import (
     FailurePolicy,
     MaterializationPolicy,
     OperatorProperties,
+    PreparedFactorization,
 )
 
 
@@ -395,7 +396,9 @@ def _factorization_policy(plan: ContinuumStudyPlan, /) -> FactorizationPolicy:
     )
 
 
-def _positive_factor(matrix: Array, plan: ContinuumStudyPlan, /):
+def _positive_factor(
+    matrix: Array, plan: ContinuumStudyPlan, /
+) -> tuple[PreparedFactorization | None, bool]:
     symmetric = 0.5 * (matrix + matrix.T)
     self_adjoint = OperatorProperties(
         self_adjoint=True,
@@ -444,7 +447,7 @@ def _fit_once(
     /,
 ) -> tuple[Array, Array, Array, bool]:
     covariance_factor, covariance_valid = _positive_factor(covariance, plan)
-    if not covariance_valid:
+    if covariance_factor is None or not covariance_valid:
         zeros = jnp.zeros((design.shape[1],), dtype=observable.dtype)
         square = jnp.zeros((design.shape[1], design.shape[1]), dtype=observable.dtype)
         return zeros, square, jnp.asarray(jnp.inf), False
@@ -461,7 +464,7 @@ def _fit_once(
     normal = 0.5 * (normal + normal.T)
     right_hand_side = contract("ni,n->i", design, precision_observable.value)
     normal_factor, normal_valid = _positive_factor(normal, plan)
-    if not normal_valid:
+    if normal_factor is None or not normal_valid:
         zeros = jnp.zeros((design.shape[1],), dtype=observable.dtype)
         square = jnp.zeros((design.shape[1], design.shape[1]), dtype=observable.dtype)
         return zeros, square, jnp.asarray(jnp.inf), False

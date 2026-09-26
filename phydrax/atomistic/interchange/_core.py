@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 import equinox as eqx
 import jax
@@ -38,9 +38,9 @@ class AtomisticInterchangeReport(StrictModule, NonTrainableState):
         self,
         source_kind: str,
         units: AtomisticUnitSystem,
-        supported_terms=(),
-        unsupported_terms=(),
-        warnings=(),
+        supported_terms: Iterable[str] = (),
+        unsupported_terms: Iterable[str] = (),
+        warnings: Iterable[str] = (),
         /,
         *,
         source_energy_unit: UnitDefinition | None = None,
@@ -135,8 +135,8 @@ def require_mapping_fields(value: Mapping, fields: tuple[str, ...], /) -> None:
         raise ValueError("Missing interchange fields: " + ", ".join(missing))
 
 
-def canonical_source_digest(value: Mapping, /) -> str:
-    def normalize(content):
+def canonical_source_digest(value: Mapping[str, object], /) -> str:
+    def normalize(content: object) -> object:
         if isinstance(content, (np.ndarray, jax.Array)):
             array = np.asarray(content)
             return {

@@ -218,6 +218,8 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
         initial_guess = normalized.velocity
         if dynamics.boundary is not None:
             if dynamics.compact_storage:
+                # Compact storage is block-sparse, whose build always returns a state.
+                assert storage_state is not None
                 initial_guess = dynamics.boundary.apply_indexed(
                     initial_guess,
                     grid_mass,
@@ -231,7 +233,7 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
                 ).velocity
         density = mass / jnp.where(active_particles, particle.reference_volume, 1.0)
 
-        def residual(grid_velocity, _):
+        def residual(grid_velocity: Array, _: object) -> tuple[Array, Array]:
             gathered = gather_apic(
                 execution_routes,
                 grid_velocity.reshape((dynamics.grid_count, dimension)),
@@ -272,6 +274,8 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             value = jnp.where(normalized.active[..., None], value, grid_velocity)
             if dynamics.boundary is not None:
                 if dynamics.compact_storage:
+                    # Compact storage is block-sparse, whose build always returns a state.
+                    assert storage_state is not None
                     logical = storage_state.logical_node_ids.reshape((-1,))
                     valid_nodes = storage_state.node_valid.reshape((-1,))
                     mask = (

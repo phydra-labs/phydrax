@@ -80,7 +80,7 @@ def _guard_nonwood_modes(
         policy.wood_tolerance,
         128.0 * np.finfo(stored_reciprocal.dtype).eps,
     )
-    tolerance = relative_tolerance * scale
+    tolerance = float(relative_tolerance * scale)
     singular_value = float(np.linalg.svd(reciprocal, compute_uv=False)[-1])
     outside_lower = max(
         0.0,

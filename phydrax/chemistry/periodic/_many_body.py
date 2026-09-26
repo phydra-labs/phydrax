@@ -264,7 +264,9 @@ class DiagonalGWPlan(StrictModule, NonTrainableState):
         for index in range(self.mean_field_energies.size):
             state_index = index
 
-            def equation(energy, _, state_index=state_index):
+            def equation(
+                energy: Array, _: object, state_index: int = state_index
+            ) -> Array:
                 return (
                     energy
                     - self.mean_field_energies[state_index]

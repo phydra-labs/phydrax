@@ -10,6 +10,7 @@ import os
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 
@@ -203,7 +204,7 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
         return self.manifest_id
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> ReferenceArtifactManifest:
+    def from_record(cls, record: Mapping[str, Any], /) -> ReferenceArtifactManifest:
         """Reconstruct and content-verify an offline reference manifest."""
         if not isinstance(record, Mapping):
             raise TypeError("Reference-artifact manifest record must be a mapping.")

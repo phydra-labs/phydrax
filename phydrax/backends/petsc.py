@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from math import prod
 from typing import Any, Literal, TypeAlias
 
@@ -13,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -297,16 +297,16 @@ class PreparedPETScLinearSolve(StrictModule):
 
     def __init__(
         self,
-        plan,
-        setup_transfer,
+        plan: PETScLinearPlan,
+        setup_transfer: BackendTransferEvidence,
         /,
         *,
-        petsc,
-        operator_matrix,
-        preconditioner_matrix,
-        solver,
-        prepared_id,
-        numeric_version=0,
+        petsc: Any,
+        operator_matrix: Any,
+        preconditioner_matrix: Any,
+        solver: Any,
+        prepared_id: str,
+        numeric_version: int = 0,
     ) -> None:
         self.plan, self.setup_transfer, self.petsc = plan, setup_transfer, petsc
         self.operator_matrix, self.preconditioner_matrix, self.solver = (
@@ -332,17 +332,17 @@ class PreparedPETScNonlinearSolve(StrictModule):
 
     def __init__(
         self,
-        plan,
-        setup_transfer,
+        plan: PETScNonlinearPlan,
+        setup_transfer: BackendTransferEvidence,
         /,
         *,
-        petsc,
-        solver,
-        residual_vector,
-        jacobian,
-        callbacks,
-        prepared_id,
-        numeric_version=0,
+        petsc: Any,
+        solver: Any,
+        residual_vector: Any,
+        jacobian: Any,
+        callbacks: Iterable[Any],
+        prepared_id: str,
+        numeric_version: int = 0,
     ) -> None:
         self.plan, self.setup_transfer, self.petsc, self.solver = (
             plan,
@@ -370,11 +370,11 @@ class PETScLinearDiagnostics(StrictModule):
     def __init__(
         self,
         *,
-        residual_norm,
-        relative_residual,
-        iterations,
-        convergence_reason,
-        converged,
+        residual_norm: ArrayLike,
+        relative_residual: ArrayLike,
+        iterations: ArrayLike,
+        convergence_reason: ArrayLike,
+        converged: ArrayLike,
     ) -> None:
         self.residual_norm, self.relative_residual = (
             jnp.asarray(residual_norm),
@@ -399,13 +399,13 @@ class PETScNonlinearDiagnostics(StrictModule):
     def __init__(
         self,
         *,
-        initial_residual_norm,
-        final_residual_norm,
-        iterations,
-        function_evaluations,
-        linear_iterations,
-        convergence_reason,
-        converged,
+        initial_residual_norm: ArrayLike,
+        final_residual_norm: ArrayLike,
+        iterations: ArrayLike,
+        function_evaluations: ArrayLike,
+        linear_iterations: ArrayLike,
+        convergence_reason: ArrayLike,
+        converged: ArrayLike,
     ) -> None:
         self.initial_residual_norm, self.final_residual_norm = (
             jnp.asarray(initial_residual_norm),
@@ -441,17 +441,17 @@ class PETScProvenance(StrictModule):
     def __init__(
         self,
         *,
-        method,
-        preconditioner,
-        operator_id,
-        preconditioner_operator_id,
-        plan_id,
-        prepared_id,
-        problem_id,
-        numeric_version,
-        reused_preconditioner,
-        setup_transfer,
-        solve_transfer,
+        method: str,
+        preconditioner: str,
+        operator_id: str,
+        preconditioner_operator_id: str,
+        plan_id: str,
+        prepared_id: str,
+        problem_id: str,
+        numeric_version: int,
+        reused_preconditioner: bool,
+        setup_transfer: BackendTransferEvidence,
+        solve_transfer: BackendTransferEvidence,
     ) -> None:
         values = tuple(
             str(value)
@@ -491,7 +491,14 @@ class PETScLinearResult(StrictModule):
     diagnostics: PETScLinearDiagnostics
     provenance: PETScProvenance
 
-    def __init__(self, value, status, diagnostics, provenance, /) -> None:
+    def __init__(
+        self,
+        value: PyTree[Array],
+        status: ArrayLike,
+        diagnostics: PETScLinearDiagnostics,
+        provenance: PETScProvenance,
+        /,
+    ) -> None:
         self.value, self.status, self.diagnostics, self.provenance = (
             value,
             jnp.asarray(status, dtype=jnp.int32),
@@ -513,7 +520,14 @@ class PETScNonlinearResult(StrictModule):
     provenance: PETScProvenance
 
     def __init__(
-        self, *, state, residual, auxiliary, status, diagnostics, provenance
+        self,
+        *,
+        state: PyTree[Array],
+        residual: PyTree[Array],
+        auxiliary: Any,
+        status: ArrayLike,
+        diagnostics: PETScNonlinearDiagnostics,
+        provenance: PETScProvenance,
     ) -> None:
         self.state, self.residual, self.auxiliary = state, residual, auxiliary
         self.status, self.diagnostics, self.provenance = (
@@ -559,7 +573,7 @@ class PETScBackend(AbstractExternalBackend):
     ) -> PETScLinearPlan:
         if not isinstance(problem, LinearSystem):
             raise TypeError("PETSc KSP requires a LinearSystem.")
-        operator = problem.operator
+        operator = _sparse_operator(problem.operator, role="system operator")
         _canonical_storage(operator, role="system operator")
         pmat = operator if preconditioner_operator is None else preconditioner_operator
         return PETScLinearPlan(
@@ -691,7 +705,7 @@ class PETScBackend(AbstractExternalBackend):
                 "PETSc KSP refresh must preserve problem and Amat identities."
             )
         pmat_operator = (
-            problem.operator
+            _sparse_operator(problem.operator, role="system operator")
             if preconditioner_operator is None
             and prepared.plan.preconditioner_operator.operator_id
             == prepared.plan.problem.operator.operator_id
@@ -919,14 +933,21 @@ class PETScBackend(AbstractExternalBackend):
         )
 
 
-def _canonical_storage(
+def _sparse_operator(
     operator: AbstractLinearOperator, /, *, role: str
-) -> SparseStorage:
+) -> AbstractSparseLinearOperator:
     if not isinstance(operator, AbstractSparseLinearOperator):
         raise ValueError(
             f"PETSc {role} must be backed strictly by canonical CSR; no dense "
             "materialization or matrix-free fallback is permitted."
         )
+    return operator
+
+
+def _canonical_storage(
+    operator: AbstractLinearOperator, /, *, role: str
+) -> SparseStorage:
+    operator = _sparse_operator(operator, role=role)
     if not operator.source.compatible(operator.target):
         raise ValueError(f"PETSc {role} must be a square endomorphism.")
     storage = operator.sparse_storage()
@@ -950,7 +971,9 @@ def _storage_bytes(storage: SparseStorage, /) -> int:
     return storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes
 
 
-def _host_csr(storage: SparseStorage, petsc: Any, /):
+def _host_csr(
+    storage: SparseStorage, petsc: Any, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     values = np.asarray(jax.device_get(storage.values))
     scalar_dtype = np.dtype(petsc.ScalarType)
     if values.dtype != scalar_dtype:
@@ -965,7 +988,7 @@ def _host_csr(storage: SparseStorage, petsc: Any, /):
     )
 
 
-def _create_matrix(petsc: Any, storage: SparseStorage, /):
+def _create_matrix(petsc: Any, storage: SparseStorage, /) -> Any:
     matrix = petsc.Mat().createAIJ(
         size=storage.shape, csr=_host_csr(storage, petsc), comm=petsc.COMM_SELF
     )
@@ -982,7 +1005,7 @@ def _update_matrix(petsc: Any, matrix: Any, storage: SparseStorage, /) -> None:
 
 def _prepare_ksp(
     petsc: Any, amat: Any, pmat: Any, policy: PETScKSPPolicy, /, *, prefix: str
-):
+) -> Any:
     solver = petsc.KSP().create(comm=petsc.COMM_SELF)
     solver.setOperators(amat, pmat)
     solver.setType(policy.ksp_type)
@@ -1028,7 +1051,7 @@ def _configure_snes(
 ) -> tuple[Any, tuple[Any, ...]]:
     dtype = jax.tree.leaves(plan.space.structure())[0].dtype
 
-    def residual_callback(snes, value, residual) -> None:
+    def residual_callback(snes: Any, value: Any, residual: Any) -> None:
         del snes
         state = plan.space.unflatten(
             jnp.asarray(value.getArray(readonly=True), dtype=dtype)
@@ -1051,7 +1074,7 @@ def _configure_snes(
         jacobian_.setUp()
         indices = np.arange(dimension, dtype=petsc.IntType)
 
-        def coordinate_residual(coordinates):
+        def coordinate_residual(coordinates: Array) -> Array:
             residual, _ = plan.problem.evaluate(
                 plan.space.unflatten(coordinates), plan.args
             )
@@ -1059,7 +1082,9 @@ def _configure_snes(
 
         dense_jacobian = jax.jacfwd(coordinate_residual)
 
-        def jacobian_callback(snes, value, operator, preconditioner) -> None:
+        def jacobian_callback(
+            snes: Any, value: Any, operator: Any, preconditioner: Any
+        ) -> None:
             del snes
             dense = np.asarray(
                 jax.device_get(
@@ -1159,9 +1184,10 @@ def _pack_vectors(
 
 def _unpack_vectors(
     space: AbstractVectorSpace, coordinates: Array, rhs_shape: tuple[int, ...], /
-):
+) -> PyTree[Array]:
     specs, treedef = jax.tree.flatten(space.structure())
-    leaves, offset = [], 0
+    leaves: list[Array] = []
+    offset = 0
     for spec in specs:
         size = prod(spec.shape)
         leaves.append(
@@ -1171,15 +1197,22 @@ def _unpack_vectors(
     return jax.tree.unflatten(treedef, leaves)
 
 
-def _column(vectors, index: int, rhs_shape: tuple[int, ...]):
+def _column(vectors: PyTree[Any], index: int, rhs_shape: tuple[int, ...]) -> PyTree[Any]:
     if not rhs_shape:
         return vectors
     location = np.unravel_index(index, rhs_shape)
     return jax.tree.map(lambda value: value[(..., *location)], vectors)
 
 
-def _linear_residuals(problem: LinearSystem, value, rhs, rhs_shape):
-    norms, relatives, rhs_norms = [], [], []
+def _linear_residuals(
+    problem: LinearSystem,
+    value: PyTree[Array],
+    rhs: PyTree[Any],
+    rhs_shape: tuple[int, ...],
+) -> tuple[Array, Array, Array]:
+    norms: list[Array] = []
+    relatives: list[Array] = []
+    rhs_norms: list[Array] = []
     for index in range(prod(rhs_shape or (1,))):
         solution, target = (
             _column(value, index, rhs_shape),
@@ -1256,39 +1289,71 @@ def petsc_availability() -> BackendAvailability:
     return PETScBackend().availability()
 
 
-def plan_petsc_linear(problem, policy=None, /, *, preconditioner_operator=None):
+def plan_petsc_linear(
+    problem: LinearSystem,
+    policy: PETScKSPPolicy | None = None,
+    /,
+    *,
+    preconditioner_operator: AbstractSparseLinearOperator | None = None,
+) -> PETScLinearPlan:
     return PETScBackend().plan_linear(
         problem, policy, preconditioner_operator=preconditioner_operator
     )
 
 
-def prepare_petsc_linear(plan, /):
+def prepare_petsc_linear(plan: PETScLinearPlan, /) -> PreparedPETScLinearSolve:
     return PETScBackend().prepare_linear(plan)
 
 
-def solve_petsc_linear(prepared, rhs, /):
+def solve_petsc_linear(
+    prepared: PreparedPETScLinearSolve, rhs: PyTree[Any], /
+) -> PETScLinearResult:
     return PETScBackend().solve_linear(prepared, rhs)
 
 
-def refresh_petsc_linear(prepared, problem, /, *, preconditioner_operator=None):
+def refresh_petsc_linear(
+    prepared: PreparedPETScLinearSolve,
+    problem: LinearSystem,
+    /,
+    *,
+    preconditioner_operator: AbstractSparseLinearOperator | None = None,
+) -> PreparedPETScLinearSolve:
     return PETScBackend().refresh_linear(
         prepared, problem, preconditioner_operator=preconditioner_operator
     )
 
 
-def plan_petsc_nonlinear(problem, initial_state, policy=None, /, *, args=None):
+def plan_petsc_nonlinear(
+    problem: NonlinearSystemProblem,
+    initial_state: PyTree[Any],
+    policy: PETScSNESPolicy | None = None,
+    /,
+    *,
+    args: Any = None,
+) -> PETScNonlinearPlan:
     return PETScBackend().plan_nonlinear(problem, initial_state, policy, args=args)
 
 
-def prepare_petsc_nonlinear(plan, /):
+def prepare_petsc_nonlinear(plan: PETScNonlinearPlan, /) -> PreparedPETScNonlinearSolve:
     return PETScBackend().prepare_nonlinear(plan)
 
 
-def solve_petsc_nonlinear(prepared, initial_state=None, /):
+def solve_petsc_nonlinear(
+    prepared: PreparedPETScNonlinearSolve,
+    initial_state: PyTree[Any] | None = None,
+    /,
+) -> PETScNonlinearResult:
     return PETScBackend().solve_nonlinear(prepared, initial_state)
 
 
-def refresh_petsc_nonlinear(prepared, problem, initial_state=None, /, *, args=None):
+def refresh_petsc_nonlinear(
+    prepared: PreparedPETScNonlinearSolve,
+    problem: NonlinearSystemProblem,
+    initial_state: PyTree[Any] | None = None,
+    /,
+    *,
+    args: Any = None,
+) -> PreparedPETScNonlinearSolve:
     return PETScBackend().refresh_nonlinear(prepared, problem, initial_state, args=args)
 
 

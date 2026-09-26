@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import IntEnum
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax
@@ -31,6 +31,7 @@ from ..discretization.finite_volume import (
     AbstractWavePropagationPlan,
     ConservativeSmallCellRedistributionPlan,
     ConservativeSmallCellRedistributionReport,
+    DyadicFiniteVolumeDiscretization,
     FiniteVolumeAdmissibilityReport,
     FiniteVolumeMethodPlan,
     FiniteVolumePrecisionPolicy,
@@ -54,6 +55,7 @@ from ..discretization.finite_volume._geometry_protocol import (
 )
 from ..discretization.finite_volume._positivity import (
     BalancedPositivityBlendResult,
+    PositivityBlendResult,
 )
 from ..discretization.finite_volume._shallow_water import (
     PreparedShallowWaterBathymetry,
@@ -80,6 +82,9 @@ from ._finite_volume_topology_events import (
     TopologyEventKind,
     TopologyEventStatus,
 )
+
+
+_TreeT = TypeVar("_TreeT")
 
 
 class FiniteVolumeRunStatus(IntEnum):
@@ -997,7 +1002,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         active = active_cell_mask.reshape((-1,))
         first_active = jnp.argmax(active.astype(jnp.int32))
 
-        def evaluate(_):
+        def evaluate(_: None) -> Array:
             seed = average[first_active]
             safe_average = jnp.where(active[:, None], average, seed[None, :])
             return jnp.all(
@@ -1069,7 +1074,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             absolute_tolerance = motion.consistency_policy.absolute_tolerance
             relative_tolerance = motion.consistency_policy.relative_tolerance
 
-            def matches_base_geometry(evaluated, compiled, /):
+            def matches_base_geometry(evaluated: Array, compiled: Array, /) -> bool:
                 evaluated_array = np.asarray(evaluated)
                 compiled_array = np.asarray(compiled)
                 if evaluated_array.shape != compiled_array.shape:
@@ -1153,6 +1158,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             (
                 TriangleFiniteVolumeDiscretization,
                 UnstructuredFiniteVolumeDiscretization,
+                DyadicFiniteVolumeDiscretization,
             ),
         ):
             return (discretization.face_measures,)
@@ -1212,6 +1218,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
             (
                 TriangleFiniteVolumeDiscretization,
                 UnstructuredFiniteVolumeDiscretization,
+                DyadicFiniteVolumeDiscretization,
             ),
         ):
             return (
@@ -1298,11 +1305,12 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                     (
                         TriangleFiniteVolumeDiscretization,
                         UnstructuredFiniteVolumeDiscretization,
+                        DyadicFiniteVolumeDiscretization,
                     ),
                 )
                 and not discretization.grid.structured_axes[axis].periodic
             ):
-                lower_face = [slice(None)] * integral.ndim
+                lower_face: list[slice | int] = [slice(None)] * integral.ndim
                 lower_face[axis] = 0
                 integral = integral.at[tuple(lower_face)].multiply(-1)
             blocks.append(
@@ -1363,7 +1371,10 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         step_size: Array,
         args: Any,
         /,
-    ):
+    ) -> tuple[
+        PositivityBlendResult | BalancedPositivityBlendResult,
+        FiniteVolumeStageFlux | None,
+    ]:
         if isinstance(
             self.dynamics,
             PreparedFiniteVolumeDynamics,
@@ -1467,7 +1478,10 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         step_size: Array,
         args: Any,
         /,
-    ):
+    ) -> tuple[
+        PositivityBlendResult | BalancedPositivityBlendResult,
+        FiniteVolumeStageFluxTrace | None,
+    ]:
         stage_initial = self._provide_stage_state(time, state)
         first, first_stage_flux = self._limited_euler(
             0, time, stage_initial, stage_initial, step_size, args
@@ -1615,7 +1629,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         step_size: Array,
         args: Any,
         /,
-    ):
+    ) -> PositivityBlendResult | BalancedPositivityBlendResult:
         candidate, _ = self._candidate_with_stage_flux_trace(time, state, step_size, args)
         return candidate
 
@@ -1900,10 +1914,10 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         self.precision.validate_state(stage_average)
         valid = jnp.all(self.dynamics.system.admissible(stage_average))
 
-        def valid_branch(_):
+        def valid_branch(_: None) -> FiniteVolumeAdvanceResult:
             return self._advance_valid(runtime_state, average, args)
 
-        def invalid_branch(_):
+        def invalid_branch(_: None) -> FiniteVolumeAdvanceResult:
             state = FiniteVolumeRuntimeState(
                 content_state,
                 runtime_state.topology_journal,
@@ -2159,7 +2173,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
                 ),
             )
 
-        def select_tree(condition: Array, new: Any, old: Any, /):
+        def select_tree(condition: Array, new: _TreeT, old: _TreeT, /) -> _TreeT:
             return jax.tree.map(
                 lambda new_value, old_value: jnp.where(condition, new_value, old_value),
                 new,
@@ -2379,7 +2393,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         recorded_maximum_rate = zero
         recorded_cfl_step = jnp.asarray(jnp.inf, dtype=zero.dtype)
 
-        def select_tree(condition: Array, new: Any, old: Any, /):
+        def select_tree(condition: Array, new: _TreeT, old: _TreeT, /) -> _TreeT:
             return jax.tree.map(
                 lambda new_value, old_value: jnp.where(
                     condition,
@@ -2654,7 +2668,7 @@ class PreparedFiniteVolumeRuntime(StrictModule):
         recorded_geometry_reduction = jnp.asarray(1.0, dtype=zero.dtype)
         minimum_geometry_reduction = jnp.asarray(1.0, dtype=zero.dtype)
 
-        def select_tree(condition: Array, new: Any, old: Any, /):
+        def select_tree(condition: Array, new: _TreeT, old: _TreeT, /) -> _TreeT:
             return jax.tree.map(
                 lambda new_value, old_value: jnp.where(
                     condition,

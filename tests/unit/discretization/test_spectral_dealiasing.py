@@ -60,6 +60,14 @@ def test_oversampling_dealiasing_validates_resource_and_spectral_family():
         ).prepare(object(), required_polynomial_degree=None)
 
 
+def test_polynomial_closure_dealiasing_rejects_spherical_discretization():
+    spherical = phx.discretization.SphericalSpectralPlan(4).prepare()
+    with pytest.raises(TypeError, match="tensor spectral discretization"):
+        phx.discretization.PolynomialClosureDealiasingPlan(2).prepare(
+            spherical, required_polynomial_degree=2
+        )
+
+
 def test_prepared_oversampling_transfers_shapes_constants_and_retained_modes():
     retained = _fourier()
     prepared = phx.discretization.OversamplingDealiasingPlan(

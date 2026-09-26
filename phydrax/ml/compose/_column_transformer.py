@@ -264,7 +264,10 @@ class FittedColumnTransformer(AbstractFittedModel):
             else _with_remainder(branches, self.remainder_indices)
         )
 
-    def __call__(self, x: Any, /, *, key: Any = None):
+    # Sparse inputs pass through as SparseFeatures; the base model contract declares Array.
+    def __call__(  # ty: ignore[invalid-method-override]
+        self, x: Any, /, *, key: Any = None
+    ) -> FeatureArray:
         keys = _split_key(key, len(self.transformers))
         blockwise = self._input_binding.batch_mode == "blockwise"
         outputs: list[tuple[str, FeatureArray]] = []

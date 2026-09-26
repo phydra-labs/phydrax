@@ -238,6 +238,7 @@ def evaluate_layer_potential(
         elif not (
             plan.method == "adaptive"
             and target_side == "boundary"
+            and not isinstance(potential, HelmholtzCombinedField2D)
             and potential.kind == "single"
             and bool(jnp.all(jnp.any(node_collision, axis=1)))
         ):

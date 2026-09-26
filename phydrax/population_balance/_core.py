@@ -193,7 +193,7 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
         )
         return daughters @ (rate_ * density) - rate_ * density
 
-    def realizable(self, number_density: ArrayLike, /) -> Array:
+    def realizable(self, number_density: ArrayLike, /) -> Array | bool:
         density = jnp.asarray(number_density)
         return density.shape == self.centers.shape and jnp.all(
             jnp.isfinite(density)

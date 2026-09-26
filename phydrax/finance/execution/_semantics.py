@@ -560,7 +560,9 @@ def _order_index(ledger: ExecutionLedger, order_id: str, /) -> int:
     raise ValueError(f"Unknown order_id {order_id!r}.")
 
 
-def _replace_tuple(values: tuple, index: int, value, /) -> tuple:
+def _replace_tuple(
+    values: tuple[OrderStatus, ...], index: int, value: OrderStatus, /
+) -> tuple[OrderStatus, ...]:
     return values[:index] + (value,) + values[index + 1 :]
 
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import StrEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -18,6 +19,11 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...particle_physics import HEPProviderBinding
+
+
+_FuzzyEvent: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class JetAlgorithm(StrEnum):
@@ -172,7 +178,7 @@ class JetProviderPlan(StrictModule, NonTrainableState):
         )
 
 
-def _rapidity_phi(momentum):
+def _rapidity_phi(momentum: Array) -> tuple[Array, Array, Array]:
     energy = momentum[..., 0]
     px = momentum[..., 1]
     py = momentum[..., 2]
@@ -186,17 +192,21 @@ def _rapidity_phi(momentum):
     return rapidity, phi, transverse_momentum
 
 
-def _delta_phi(first, second):
+def _delta_phi(first: Array, second: Array) -> Array:
     return jnp.arctan2(jnp.sin(first - second), jnp.cos(first - second))
 
 
-def _cluster_one(definition: JetDefinition, momenta, active):
+def _cluster_one(
+    definition: JetDefinition, momenta: Array, active: Array
+) -> tuple[Array, Array, Array]:
     capacity = momenta.shape[0]
     constituents = jnp.eye(capacity, dtype=momenta.dtype)
     jets = jnp.zeros_like(momenta)
     jet_constituents = jnp.zeros((capacity, capacity), dtype=momenta.dtype)
 
-    def iteration(state, _):
+    def iteration(
+        state: tuple[Array, Array, Array, Array, Array, Array], _: None
+    ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], None]:
         (
             work,
             work_constituents,
@@ -378,7 +388,7 @@ class FuzzyJetResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
 
-def _fuzzy_one(plan: FuzzyJetPlan, momenta, active):
+def _fuzzy_one(plan: FuzzyJetPlan, momenta: Array, active: Array) -> _FuzzyEvent:
     rapidity, phi, transverse_momentum = _rapidity_phi(momenta)
     capacity = momenta.shape[0]
     order = jnp.argsort(jnp.where(active, transverse_momentum, -jnp.inf))[::-1]
@@ -390,7 +400,9 @@ def _fuzzy_one(plan: FuzzyJetPlan, momenta, active):
     responsibilities = jnp.zeros((capacity, plan.component_count), dtype=momenta.dtype)
     likelihood = jnp.asarray(-jnp.inf, dtype=momenta.dtype)
 
-    def iteration(state, _):
+    def iteration(
+        state: tuple[Array, Array, Array, Array], _: None
+    ) -> tuple[tuple[Array, Array, Array, Array], None]:
         means_, weights_, _previous_responsibilities, _previous_likelihood = state
         delta_y = rapidity[:, None] - means_[None, :, 0]
         delta_phi = _delta_phi(phi[:, None], means_[None, :, 1])

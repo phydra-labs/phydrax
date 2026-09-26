@@ -201,7 +201,7 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
             {"kind": "spectral-ip-plan", "finite_patch": finite_patch.plan_id}
         )
 
-    def _operator(self, conductivity: Array):
+    def _operator(self, conductivity: Array) -> la.FunctionLinearOperator:
         cell_count = self.cells.shape[0]
         values = jnp.broadcast_to(jnp.asarray(conductivity), (cell_count,))
         values = eqx.error_if(
@@ -218,7 +218,7 @@ class SpectralIPPlan(StrictModule, NonTrainableState):
         )
         nodes = self.gauge.size
 
-        def action(unknown):
+        def action(unknown: Array) -> Array:
             potential, multiplier = unknown[:nodes], unknown[-1]
             cell_values = potential[self.cells]
             residual = ein.contract("cij,cj->ci", local, cell_values)

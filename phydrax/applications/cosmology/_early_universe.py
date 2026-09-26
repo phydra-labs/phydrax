@@ -15,9 +15,12 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._closure import CosmologyRealizationSignature
 from ._products import (
+    CosmologyProductProvenance,
     ThermodynamicsHistory,
 )
+from ._scales import CosmologyScaleContract
 
 
 class RelicBackgroundResult(StrictModule):
@@ -36,9 +39,9 @@ class RelicBackgroundPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        photon_density_today,
-        effective_neutrinos=3.046,
-        neutrino_temperature_ratio=(4.0 / 11.0) ** (1.0 / 3.0),
+        photon_density_today: ArrayLike,
+        effective_neutrinos: ArrayLike = 3.046,
+        neutrino_temperature_ratio: ArrayLike = (4.0 / 11.0) ** (1.0 / 3.0),
         /,
     ) -> None:
         self.photon_density_today = jnp.asarray(photon_density_today).reshape(())
@@ -73,19 +76,19 @@ class BbnResult(StrictModule):
 class BbnReactionNetworkPlan(StrictModule, NonTrainableState):
     stoichiometry: Array
     baryon_numbers: Array
-    rate_model: Callable
+    rate_model: Callable[[Array, Array, Any], ArrayLike]
     times: Array
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        stoichiometry,
-        baryon_numbers,
-        rate_model,
-        times,
+        stoichiometry: ArrayLike,
+        baryon_numbers: ArrayLike,
+        rate_model: Callable[[Array, Array, Any], ArrayLike],
+        times: ArrayLike,
         /,
         *,
-        network_id="bbn-network",
+        network_id: str = "bbn-network",
     ) -> None:
         self.stoichiometry = jnp.asarray(stoichiometry)
         self.baryon_numbers = jnp.asarray(baryon_numbers)
@@ -110,11 +113,11 @@ class BbnReactionNetworkPlan(StrictModule, NonTrainableState):
         initial = jnp.asarray(initial_abundances)
         baryons0 = jnp.sum(self.baryon_numbers * initial)
 
-        def derivative(time, abundance):
+        def derivative(time: Array, abundance: Array) -> Array:
             rates = jnp.asarray(self.rate_model(time, abundance, args))
             return self.stoichiometry @ rates
 
-        def step(abundance, interval):
+        def step(abundance: Array, interval: Array) -> tuple[Array, tuple[Array, Array]]:
             start, end = interval
             dt = end - start
             k1 = derivative(start, abundance)
@@ -147,13 +150,13 @@ class RecombinationPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        scale_factors,
+        scale_factors: ArrayLike,
         /,
         *,
-        cmb_temperature_today=2.7255,
-        residual_ionization=2.0e-4,
-        recombination_redshift=1089.0,
-        width=0.08,
+        cmb_temperature_today: ArrayLike = 2.7255,
+        residual_ionization: ArrayLike = 2.0e-4,
+        recombination_redshift: float = 1089.0,
+        width: ArrayLike = 0.08,
     ) -> None:
         self.scale_factors = jnp.asarray(scale_factors)
         self.cmb_temperature_today = jnp.asarray(cmb_temperature_today).reshape(())
@@ -170,7 +173,13 @@ class RecombinationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def build(self, scale, provenance, realization, /) -> ThermodynamicsHistory:
+    def build(
+        self,
+        scale: CosmologyScaleContract,
+        provenance: CosmologyProductProvenance,
+        realization: CosmologyRealizationSignature,
+        /,
+    ) -> ThermodynamicsHistory:
         a = self.scale_factors
         log_ratio = jnp.log(a / self.recombination_scale_factor)
         ionization = self.residual_ionization + (1.0 - self.residual_ionization) * 0.5 * (

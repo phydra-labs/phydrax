@@ -260,7 +260,7 @@ class AbstractEntropyDiffusionSystem(abc.ABC):
         raise NotImplementedError
 
 
-def _orthonormal_normal_frame(normal: Array, dimension: int, /) -> Array:
+def _orthonormal_normal_frame(normal: ArrayLike, dimension: int, /) -> Array:
     value = jnp.asarray(normal)
     if value.shape[-1] != dimension:
         raise ValueError("Normal frame dimension is incompatible with the system.")

@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jaxtyping import Array
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....qualification import ReferenceArtifactManifest
@@ -17,10 +20,10 @@ from ._geometry import CalorimeterGeometry
 @dataclass(frozen=True)
 class CalorimeterCorpus:
     geometry: CalorimeterGeometry
-    cell_energies: object
-    conditions: object
+    cell_energies: Array
+    conditions: Array
     condition_names: tuple[str, ...]
-    ledger: object
+    ledger: Array
     record_ids: tuple[str, ...]
     source_manifest_ids: tuple[str, ...]
     split_group_ids: tuple[str, ...]
@@ -33,18 +36,18 @@ class CalorimeterCorpus:
 
 def prepare_calorimeter_corpus(
     geometry: CalorimeterGeometry,
-    cell_energies,
-    conditions,
+    cell_energies: npt.ArrayLike,
+    conditions: npt.ArrayLike,
     /,
     *,
-    condition_names,
-    ledger,
-    record_ids,
-    source_manifest_ids,
-    split_group_ids,
-    validation_groups,
-    test_groups,
-    rights,
+    condition_names: Iterable[str],
+    ledger: npt.ArrayLike,
+    record_ids: Iterable[str],
+    source_manifest_ids: Iterable[str],
+    split_group_ids: Iterable[str],
+    validation_groups: Iterable[str],
+    test_groups: Iterable[str],
+    rights: Iterable[ReferenceArtifactManifest],
     commercial_use: bool = False,
     maximum_records: int = 10_000_000,
 ) -> CalorimeterCorpus:

@@ -220,7 +220,9 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule):
         else:
             source_plan = self.source
 
-            def evaluate_source(time, state, coordinates, args):
+            def evaluate_source(
+                time: Array, state: Array, coordinates: Array, args: Any
+            ) -> Array:
                 return source_plan(time, state, coordinates, args)
 
             source_function = evaluate_source

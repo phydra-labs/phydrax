@@ -20,7 +20,11 @@ from ..linalg import (
     LocalEliminationResult,
     OperatorProperties,
 )
-from ._execution import RelationExecutionPlan, RelationExecutionState
+from ._execution import (
+    RelationAccumulation,
+    RelationExecutionPlan,
+    RelationExecutionState,
+)
 from ._linear import _properties_payload, SparseCoordinateOperator
 from ._relation import EdgeRelation
 
@@ -29,7 +33,7 @@ def scatter_local(
     residual: Array,
     dofs: Array,
     local: Array,
-    accumulation: str = "fast",
+    accumulation: RelationAccumulation = "fast",
     /,
 ) -> Array:
     """Scatter local rows with an explicit reduction-order policy."""
@@ -66,7 +70,7 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
     output_execution: RelationExecutionState
     source_size: int = eqx.field(static=True)
     target_size: int = eqx.field(static=True)
-    accumulation: str = eqx.field(static=True)
+    accumulation: RelationAccumulation = eqx.field(static=True)
     properties: OperatorProperties
     operator_id: str = eqx.field(static=True)
 
@@ -80,7 +84,7 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
         /,
         *,
         valid: ArrayLike | None = None,
-        accumulation: str = "fast",
+        accumulation: RelationAccumulation = "fast",
         properties: OperatorProperties | None = None,
     ) -> None:
         matrices = jnp.asarray(local_matrices)

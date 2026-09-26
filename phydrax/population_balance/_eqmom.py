@@ -15,7 +15,7 @@ class GaussianEQMOM:
     realizable: Array
 
 
-def gaussian_eqmom_one_node(moments: ArrayLike, /):
+def gaussian_eqmom_one_node(moments: ArrayLike, /) -> GaussianEQMOM:
     m = jnp.asarray(moments)
     if m.shape != (3,):
         raise ValueError("One-node Gaussian EQMOM requires m0,m1,m2.")

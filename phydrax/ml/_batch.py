@@ -8,6 +8,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -18,7 +19,13 @@ from ._sparse_features import FeatureArray, SparseFeatures
 WeightPolicy: TypeAlias = Literal["none", "statistical", "measure", "product"]
 
 
-def _broadcast(value: ArrayLike | None, shape: tuple[int, ...], *, dtype, fill) -> Array:
+def _broadcast(
+    value: ArrayLike | None,
+    shape: tuple[int, ...],
+    *,
+    dtype: DTypeLike,
+    fill: ArrayLike,
+) -> Array:
     if value is None:
         return jnp.full(shape, fill, dtype=dtype)
     return jnp.broadcast_to(jnp.asarray(value, dtype=dtype), shape)

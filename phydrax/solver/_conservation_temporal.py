@@ -118,7 +118,7 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
             )
         )
 
-        def solver_shape(candidate):
+        def solver_shape(candidate: Array) -> Array:
             result = self.implicit_solver(
                 candidate, time_, step * self.tableau.implicit_matrix[0, 0], args
             )
@@ -148,7 +148,7 @@ class ConservationIMEXMethod(StrictModule, NonTrainableState):
             diagonal = self.tableau.implicit_matrix[stage, stage]
             coefficient = step * diagonal
 
-            def solve_stage(provisional):
+            def solve_stage(provisional: Array) -> ImplicitConservationStageResult:
                 result = self.implicit_solver(provisional, stage_time, coefficient, args)
                 if not isinstance(result, ImplicitConservationStageResult):
                     raise TypeError(

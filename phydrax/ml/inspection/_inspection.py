@@ -235,7 +235,7 @@ def individual_conditional_expectation(
     values = values.astype(common_dtype)
     grid_indices = jnp.arange(values.shape[0], dtype=jnp.uint32)
 
-    def evaluate_grid(grid_index, grid_values):
+    def evaluate_grid(grid_index: Array, grid_values: Array) -> Array:
         modified = x.at[..., jnp.asarray(indices_tuple)].set(grid_values)
         member_key = None if key is None else jr.fold_in(key, grid_index)
         return jnp.asarray(model(modified, key=member_key))
@@ -327,7 +327,7 @@ def permutation_importance(
     evaluation_count = int(repeats) * batch.feature_count
     streams = jnp.arange(evaluation_count, dtype=jnp.int32)
 
-    def evaluate_permutation(flat_index):
+    def evaluate_permutation(flat_index: Array) -> Array:
         repeat = flat_index // batch.feature_count
         feature = flat_index % batch.feature_count
         stream = 1 + repeat * batch.feature_count + feature
@@ -579,7 +579,9 @@ def leverage_and_cooks_distance(
         else float(rcond)
     )
 
-    def one_case(case_design: Array, case_weight: Array, case_residual: Array):
+    def one_case(
+        case_design: Array, case_weight: Array, case_residual: Array
+    ) -> tuple[Array, Array, Array, Array, Array]:
         sqrt_weight = jnp.sqrt(case_weight)
         weighted_design = sqrt_weight[:, None] * case_design
         left, singular, _ = jnp.linalg.svd(weighted_design, full_matrices=False)
@@ -728,7 +730,7 @@ def influence_functions(
         prediction_flat = prediction.reshape((-1,) + output_shape)
         target_flat = targets.reshape((-1,) + output_shape)
 
-        def weighted_loss(predicted: Array, target: Array, sample_weight: Array):
+        def weighted_loss(predicted: Array, target: Array, sample_weight: Array) -> Array:
             value = jnp.asarray(loss_function(predicted, target))
             if value.ndim != 0 or jnp.issubdtype(value.dtype, jnp.complexfloating):
                 raise ValueError("loss must return one real scalar per sample.")

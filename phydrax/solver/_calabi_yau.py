@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, final
+from typing import Any, ClassVar, final, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
@@ -25,6 +25,7 @@ from .._training_kernel import (
     run_training_attempt,
     TrainingAttemptOutcome,
     TrainingKernelSpec,
+    TrainingKeys,
 )
 from .._training_objective import _ObjectiveContribution
 from ..geometry.complex import (
@@ -249,7 +250,14 @@ def _calabi_yau_terms(
     )
 
 
-def _calabi_yau_objective(parameters, model_state, fixed, payload, keys, /):
+def _calabi_yau_objective(
+    parameters: PyTree,
+    model_state: PyTree,
+    fixed: PyTree,
+    payload: _CalabiYauPayload,
+    keys: TrainingKeys,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree, _CalabiYauDiagnostics]:
     """Kernel objective: squared Monge-Ampere residual plus the potential gauge."""
     del keys
     objective, diagnostics = _calabi_yau_terms(
@@ -271,12 +279,17 @@ class _CalabiYauStepState(StrictModule):
     margin: Array
 
 
-def _step_state(value: Array, diagnostics: _CalabiYauDiagnostics, /):
+def _step_state(
+    value: Array, diagnostics: _CalabiYauDiagnostics, /
+) -> _CalabiYauStepState:
     return _CalabiYauStepState(
         jnp.asarray(value, jnp.float64),
         jnp.asarray(diagnostics.residual, jnp.float64),
         jnp.asarray(diagnostics.margin, jnp.float64),
     )
+
+
+_BacktrackCarry: TypeAlias = tuple[Array, Array, Array, _CalabiYauStepState]
 
 
 @final
@@ -342,11 +355,11 @@ class _CalabiYauBacktrackingRule(AbstractKernelUpdateRule):
                 gradients,
             )
 
-        def search(carry):
+        def search(carry: _BacktrackCarry) -> Array:
             index, _, accepted, _ = carry
             return (index <= self.maximum_backtracks) & ~accepted
 
-        def trial(carry):
+        def trial(carry: _BacktrackCarry) -> _BacktrackCarry:
             index, step, _, _ = carry
             candidate = descend(step)
             trial_value = context.objective_value(candidate)

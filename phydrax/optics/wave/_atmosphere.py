@@ -85,9 +85,9 @@ class VonKarmanPhaseScreenPlan(StrictModule, NonTrainableState):
         )
         shape_array = jnp.asarray(self.space.shape, dtype=lengths.dtype)
         spacings = lengths / shape_array
-        frequency_axes = tuple(
-            jnp.fft.fftfreq(count, d=spacing)
-            for count, spacing in zip(self.space.shape, spacings, strict=True)
+        frequency_axes = (
+            jnp.fft.fftfreq(self.space.shape[0], d=spacings[0]),
+            jnp.fft.fftfreq(self.space.shape[1], d=spacings[1]),
         )
         frequency_mesh = jnp.meshgrid(*frequency_axes, indexing="ij")
         spatial_frequencies = jnp.stack(frequency_mesh, axis=-1)

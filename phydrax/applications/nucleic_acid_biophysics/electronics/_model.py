@@ -10,6 +10,7 @@ import hashlib
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 from ...._fingerprint import canonical_fingerprint
 from ....artifacts import ScientificArtifactEnvelope
@@ -32,7 +33,7 @@ def _site_id(value: int) -> None:
         raise ValueError("Electronic site IDs must be nonnegative signed-int64 integers.")
 
 
-def _basis_key(value: BasisKey) -> None:
+def _basis_key(value: object) -> None:
     if not isinstance(value, tuple) or len(value) not in (1, 2):
         raise ValueError("A carrier basis key has one site ID or an electron/hole pair.")
     for site in value:
@@ -172,7 +173,9 @@ class ElectronicChannel:
             raise ValueError("Unknown electronic channel kind.")
         if self.kind == "bath":
             _basis_key(self.target)
-            if self.target == self.source or len(self.target) != len(self.source):
+            # _basis_key rejected every non-tuple target above.
+            target = cast(BasisKey, self.target)
+            if target == self.source or len(target) != len(self.source):
                 raise ValueError("Bath transfer requires a distinct same-sector target.")
         elif self.target is not None:
             raise ValueError("Dephasing/recombination channels do not take a target.")
@@ -292,10 +295,12 @@ class ElectronicParameterArtifact:
                 "kind": "declared-electronic-parameters",
                 "sites": sorted(zip(self.basis_keys, self.site_energies, strict=True)),
                 "couplings": sorted(edges),
-                "channels": sorted(
-                    (channel.record() for channel in self.channels),
-                    key=lambda record: record["id"],
-                ),
+                "channels": [
+                    channel.record()
+                    for channel in sorted(
+                        self.channels, key=lambda channel: channel.channel_id
+                    )
+                ],
                 "energy_unit": self.energy_unit.unit_id,
                 "scope": self.scope,
                 "gauge": self.orbital_gauge,

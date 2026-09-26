@@ -69,8 +69,8 @@ def _perplexity_probabilities_one(
     log_weights = jnp.log(jnp.maximum(weights, tiny))
     target_entropy = jnp.log(float(perplexity))
 
-    def row_probabilities(distance_row, eligible_row):
-        def entropy(beta):
+    def row_probabilities(distance_row: Array, eligible_row: Array) -> Array:
+        def entropy(beta: Array) -> tuple[Array, Array]:
             logits = -beta * distance_row + log_weights
             logits = jnp.where(
                 eligible_row,
@@ -82,7 +82,9 @@ def _perplexity_probabilities_one(
             value = -jnp.sum(probabilities * jnp.log(jnp.maximum(probabilities, tiny)))
             return value, probabilities
 
-        def search(_iteration, bounds):
+        def search(
+            _iteration: int | Array, bounds: tuple[Array, Array]
+        ) -> tuple[Array, Array]:
             lower, upper = bounds
             beta = 0.5 * (lower + upper)
             value, _probabilities = entropy(beta)
@@ -139,7 +141,7 @@ def _optimize_tsne_one(
     initial = 1e-4 * jax.random.normal(key, (active.shape[0], dimensions), dtype=dtype)
     initial = jnp.where(active[:, None], initial, 0.0)
 
-    def step(_iteration, state):
+    def step(_iteration: int | Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         embedding, velocity = state
         _value, gradient = jax.value_and_grad(_tsne_loss)(
             embedding, probabilities, active
@@ -340,8 +342,10 @@ def _fuzzy_graph_one(
     shifted = jnp.maximum(distances - rho[:, None], 0.0)
     target = jnp.log2(float(n_neighbors))
 
-    def solve_sigma(values, valid):
-        def search(_iteration, bounds):
+    def solve_sigma(values: Array, valid: Array) -> Array:
+        def search(
+            _iteration: int | Array, bounds: tuple[Array, Array]
+        ) -> tuple[Array, Array]:
             lower, upper = bounds
             sigma = 0.5 * (lower + upper)
             mass = jnp.sum(jnp.where(valid, jnp.exp(-values / sigma), 0.0))
@@ -410,7 +414,7 @@ def _optimize_umap_one(
     )
     initial = jnp.where(active[:, None], initial, 0.0)
 
-    def step(iteration, embedding):
+    def step(iteration: int | Array, embedding: Array) -> Array:
         _value, gradient = jax.value_and_grad(_umap_loss)(
             embedding, fuzzy, active, min_dist, repulsion
         )
@@ -474,7 +478,9 @@ class FuzzyGraphEmbeddingModel(AbstractFittedModel):
         embedding = self.embedding.reshape((cases,) + self.embedding.shape[-2:])
         active = self.active.reshape((cases, self.active.shape[-1]))
 
-        def transform_one(query, train_, embedding_, active_):
+        def transform_one(
+            query: Array, train_: Array, embedding_: Array, active_: Array
+        ) -> Array:
             distances = _euclidean_distances(query, train_)
             ranked = jnp.where(active_[None, :], distances, jnp.inf)
             _negative, indices = jax.lax.top_k(-ranked, self.n_neighbors)

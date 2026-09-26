@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, TypeAlias
+from collections.abc import Callable
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -603,7 +604,8 @@ class PreparedDistributedLineSolve(StrictModule, NonTrainableState):
             reduced_lower,
             reduced_diagonal,
             reduced_upper,
-            topology.algorithm,
+            # The plan requires split-line topology, which rejects "local".
+            cast(SplitLineAlgorithm, topology.algorithm),
             topology.tolerance,
         )
         schur_residual = jnp.asarray(0.0, dtype=jnp.real(diagonal).dtype)
@@ -1457,7 +1459,11 @@ def _tree_inner(left: Array, right: Array) -> Array:
 
 
 def _preconditioned_conjugate_gradient(
-    apply, precondition, rhs: Array, iterations: int, tolerance: float
+    apply: Callable[[Array], Array],
+    precondition: Callable[[Array], Array],
+    rhs: Array,
+    iterations: int,
+    tolerance: float,
 ) -> tuple[Array, Array]:
     value = jnp.zeros_like(rhs)
     residual = rhs - apply(value)

@@ -10,7 +10,11 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from ._closure import CosmologyPhysicalState, PhysicalDependencyProjection
+from ._closure import (
+    CosmologyPhysicalState,
+    CosmologyRealizationSignature,
+    PhysicalDependencyProjection,
+)
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
 
@@ -117,7 +121,7 @@ class FLRWBackground(StrictModule):
         )
 
     @property
-    def realization(self):
+    def realization(self) -> CosmologyRealizationSignature:
         return PhysicalDependencyProjection(self.physical_state.names).project(
             self.physical_state
         )

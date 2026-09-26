@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 import equinox as eqx
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -60,7 +59,7 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        order: Literal[6, 8],
+        order: int,
         /,
         *,
         cutoff: float = 1e-6,
@@ -333,7 +332,7 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
             case BranchDifferentiationPolicy.SMOOTH_SURROGATE:
                 sensor_ = jax.nn.sigmoid(sensor_)
             case BranchDifferentiationPolicy.UNSUPPORTED:
-                if isinstance(value, jax.core.Tracer):
+                if isinstance(value, jax_core.Tracer):
                     raise ValueError(
                         "ExplicitStabilizationPlan with UNSUPPORTED differentiability "
                         "rejects traced values."

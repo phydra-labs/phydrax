@@ -162,7 +162,7 @@ class HelmholtzPlaneWaveBasis(AbstractTrefftzBasis):
                 "finite plane-wave subspace",
             ),
             construction_residual=direction_residual,
-            construction_tolerance=(256.0 * np.finfo(np.float64).eps * dimension_),
+            construction_tolerance=float(256.0 * np.finfo(np.float64).eps * dimension_),
         )
         self.normalization = normalization_
         self.physical_wavenumber = jnp.asarray(wavenumber_, dtype=jnp.float64).reshape(())

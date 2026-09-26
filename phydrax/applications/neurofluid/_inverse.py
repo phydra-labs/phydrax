@@ -243,10 +243,10 @@ class NeurofluidInverseProblem(StrictModule):
     def state_design_problem(self) -> StateDesignProblem:
         initial = jnp.asarray(self.schema.initial)
 
-        def residual(state, design, args=None):
+        def residual(state: Array, design: Array, args: object = None) -> Array:
             return state - self.forward(design)
 
-        def objective(state, design, args=None):
+        def objective(state: Array, design: Array, args: object = None) -> Array:
             likelihood = self.observation.evaluate(state).negative_log_likelihood
             difference = design - initial
             return (
@@ -272,7 +272,7 @@ class NeurofluidInverseProblem(StrictModule):
         if not np.isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("rank_tolerance must be finite and positive.")
 
-        def prediction(value):
+        def prediction(value: Array) -> Array:
             return self.observation.operator.apply(self.forward(value)).values.reshape(
                 (-1,)
             )

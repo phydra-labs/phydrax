@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -175,7 +176,7 @@ class DistributedCovarianceLayout(StrictModule, NonTrainableState):
         *,
         storage: CovarianceStorage = "dense",
         factor_rank: int | None = None,
-        dtype: Any = jnp.float64,
+        dtype: DTypeLike = jnp.float64,
         maximum_local_bytes: int = 512 * 1024 * 1024,
     ) -> None:
         dimension = _positive_integer(covariance_dimension, "covariance_dimension")
@@ -191,7 +192,7 @@ class DistributedCovarianceLayout(StrictModule, NonTrainableState):
             raise ValueError("factor_rank is only valid for factor storage.")
         if storage == "factor" and (rank is None or rank < 0 or rank > dimension):
             raise ValueError("Factor storage requires rank in [0, covariance_dimension].")
-        columns = dimension if storage == "dense" else int(rank)
+        columns = dimension if rank is None else rank
         semantic_id = canonical_fingerprint(
             {
                 "kind": "statistical-dynamics-covariance-layout",
@@ -233,11 +234,8 @@ class DistributedCovarianceLayout(StrictModule, NonTrainableState):
 
     @property
     def global_shape(self) -> tuple[int, int]:
-        columns = (
-            self.covariance_dimension
-            if self.storage == "dense"
-            else int(self.factor_rank)
-        )
+        rank = self.factor_rank
+        columns = self.covariance_dimension if rank is None else rank
         return self.covariance_dimension, columns
 
     def shard(self, covariance: ArrayLike, /) -> tuple[Array, ...]:

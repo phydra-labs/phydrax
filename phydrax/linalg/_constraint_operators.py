@@ -751,6 +751,9 @@ def _bind_prepared_constraint(
         if factorization.capabilities.singular_values
         else jnp.empty((0,), dtype=matrix.real.dtype)
     )
+    factorization_kind = factorization.policy.kind
+    # Constraint factorizations are only built with an explicit "svd" or "qr" kind.
+    assert factorization_kind == "svd" or factorization_kind == "qr"
     evidence = ConstraintOperatorEvidence(
         singular_values=singular_values,
         generalized_right_inverse_residual_norm=generalized_norm,
@@ -767,7 +770,7 @@ def _bind_prepared_constraint(
         full_row_rank=full_row_rank,
         full_column_rank=rank == columns,
         operator_kind=operator_kind,
-        factorization_kind=factorization.policy.kind,
+        factorization_kind=factorization_kind,
         operator_matrix_bytes=matrix.nbytes,
         factorization_bytes=_array_tree_storage_bytes(factorization.prepared_solve.state),
         right_inverse_bytes=right_matrix.nbytes,

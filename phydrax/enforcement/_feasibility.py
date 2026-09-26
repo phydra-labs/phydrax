@@ -584,12 +584,16 @@ class FeasibleParameterization(AbstractFeasibilityMap):
         return self.transform(value)
 
     def _margin(self, result: Array, /) -> tuple[Array, Array]:
+        transform = self.transform
+        # __init__ pairs each parameterization with its transform class.
         if self.parameterization == "positive":
-            minimum = jnp.asarray(self.transform.minimum, dtype=result.dtype)
+            assert isinstance(transform, PositiveTransform)
+            minimum = jnp.asarray(transform.minimum, dtype=result.dtype)
             return jnp.min(result - minimum), jnp.max(jnp.maximum(minimum - result, 0.0))
         if self.parameterization == "interval":
-            lower = jnp.asarray(self.transform.lower, dtype=result.dtype)
-            upper = jnp.asarray(self.transform.upper, dtype=result.dtype)
+            assert isinstance(transform, IntervalTransform)
+            lower = jnp.asarray(transform.lower, dtype=result.dtype)
+            upper = jnp.asarray(transform.upper, dtype=result.dtype)
             margin = jnp.min(jnp.minimum(result - lower, upper - result))
             violation = jnp.max(
                 jnp.maximum(jnp.maximum(lower - result, result - upper), 0.0)

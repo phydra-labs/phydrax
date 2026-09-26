@@ -6,9 +6,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from math import isfinite
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -41,6 +41,7 @@ from ._problem import _identifier
 from ._qp_compiler import (
     _rebind_dense_control_program,
     LinearControlCompilationPolicy,
+    LinearControlQPCompilation,
     LinearControlQPSolution,
     LinearQuadraticControlProblem,
     prepare_linear_quadratic_control,
@@ -390,7 +391,7 @@ class RecedingHorizonMPC(StrictModule):
         self,
         previous: LinearControlQPSolution,
         problem: LinearQuadraticControlProblem,
-        compilation,
+        compilation: LinearControlQPCompilation,
         /,
     ) -> ConvexWarmStart:
         policy = self.warm_start_policy
@@ -421,7 +422,8 @@ class RecedingHorizonMPC(StrictModule):
             jnp.stack(tuple(states), axis=-2),
             controls,
         )
-        qp = compilation.program
+        # Warm-start-capable methods admit only dense QuadraticProgram windows.
+        qp = cast(QuadraticProgram, compilation.program)
         margin = jnp.asarray(policy.interior_margin, dtype=dtype)
         lower_finite = jnp.isfinite(qp.lower_bounds)
         upper_finite = jnp.isfinite(qp.upper_bounds)
@@ -519,7 +521,7 @@ class RecedingHorizonMPC(StrictModule):
             margin,
         )
 
-        def shift_bound_dual(values):
+        def shift_bound_dual(values: Array) -> Array:
             old_states, old_controls = old_compilation.decision_layout.decode(values)
             state_values = [
                 old_states[..., stage, :]
@@ -585,7 +587,9 @@ class RecedingHorizonMPC(StrictModule):
         fields = _window_fields(
             specification, stage, local_horizon, apply_terminal, initial_state
         )
-        positional = tuple(fields.pop(name) for name in _WINDOW_POSITIONAL_FIELDS)
+        positional = tuple(
+            _required_window_field(fields.pop(name)) for name in _WINDOW_POSITIONAL_FIELDS
+        )
         return LinearQuadraticControlProblem(
             *positional,
             **fields,
@@ -643,9 +647,15 @@ def _numeric_fields(problem: LinearQuadraticControlProblem, /) -> dict[str, Arra
     }
 
 
+def _required_window_field(value: Array | None, /) -> Array:
+    # Windows slice the problem's required fields, which are never None.
+    assert value is not None
+    return value
+
+
 def _with_fields(
     problem: LinearQuadraticControlProblem,
-    fields: dict[str, Array | None],
+    fields: Mapping[str, Array | None],
     /,
 ) -> LinearQuadraticControlProblem:
     """Rebind numeric leaves without reconstructing (and re-admitting) a problem.
@@ -982,7 +992,9 @@ def _stored_window_solution(
         return primal
 
     @solution.defjvp
-    def solution_jvp(primals, tangents):
+    def solution_jvp(
+        primals: tuple[QuadraticProgram], tangents: tuple[QuadraticProgram]
+    ) -> tuple[Array, Array]:
         del primals
         (tangent,) = tangents
         return primal, sensitivity.jvp(tangent)
@@ -1093,7 +1105,8 @@ def prepare_receding_horizon_mpc_sensitivity(
     result = controller.solve()
     sensitivities = tuple(
         prepare_qp_sensitivity(
-            solution.compilation.program,
+            # Dense-only sensitivity admission guarantees QuadraticProgram windows.
+            cast(QuadraticProgram, solution.compilation.program),
             policy=controller.qp_policy,
             differentiation=derivative,
         )

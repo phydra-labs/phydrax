@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,7 +19,10 @@ from ..._differentiation import BranchDifferentiationPolicy
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState
-from ...discretization._conservation_boundary import evaluate_conservation_boundary
+from ...discretization._conservation_boundary import (
+    AbstractConservationBoundary,
+    evaluate_conservation_boundary,
+)
 from ...discretization.fem._boundary import (
     FiniteElementBoundarySet,
     tensor_local_face,
@@ -60,6 +63,15 @@ from ._viscous_conservation import (
     PreparedViscousDGOperator,
     ViscousDGPlan,
 )
+
+
+if TYPE_CHECKING:
+    from ...integration._rules import (
+        ReferenceHexahedronRule,
+        ReferenceIntervalRule,
+        ReferenceQuadrilateralRule,
+    )
+    from .._conservation import _ConservationLinearization
 
 
 class DGSEMSampledFluxCompatibilityEvidence(StrictModule, NonTrainableState):
@@ -959,7 +971,12 @@ def _tensor_mass_weights(sbp: ElementLocalSBPData, dimension: int, /) -> Array:
     return result
 
 
-def _rules(cell_kind: str, node_count: int, /):
+def _rules(
+    cell_kind: str, node_count: int, /
+) -> (
+    tuple[ReferenceQuadrilateralRule, ReferenceIntervalRule]
+    | tuple[ReferenceHexahedronRule, ReferenceQuadrilateralRule]
+):
     from ...integration._rules import (
         GaussLobattoLegendreRule,
         ReferenceHexahedronRule,
@@ -1122,7 +1139,13 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         )
         volume_rule, facet_rule = _rules(block.cell_kind, sbp.node_count)
 
-        def volume_kernel(left, right, x_left, x_right, context):
+        def volume_kernel(
+            left: Array,
+            right: Array,
+            x_left: Array,
+            x_right: Array,
+            context: FiniteElementExecutionContext,
+        ) -> Array:
             del x_left, x_right
             return jnp.stack(
                 tuple(
@@ -1138,7 +1161,14 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 axis=-1,
             )
 
-        def interface_kernel(plus_values, minus_values, points, weights, normal, context):
+        def interface_kernel(
+            plus_values: tuple[Array, ...],
+            minus_values: tuple[Array, ...],
+            points: Array,
+            weights: Array,
+            normal: Array,
+            context: FiniteElementExecutionContext,
+        ) -> tuple[Array, Array]:
             del points, weights
             plus = plus_values[0]
             minus = minus_values[0]
@@ -1175,8 +1205,19 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             )
         if boundaries is not None:
 
-            def physical_boundary_kernel(boundary, axis):
-                def kernel(plus_values, points, weights, normal, context):
+            def physical_boundary_kernel(
+                boundary: AbstractConservationBoundary, axis: int
+            ) -> Callable[
+                [tuple[Array, ...], Array, Array, Array, FiniteElementExecutionContext],
+                Array,
+            ]:
+                def kernel(
+                    plus_values: tuple[Array, ...],
+                    points: Array,
+                    weights: Array,
+                    normal: Array,
+                    context: FiniteElementExecutionContext,
+                ) -> Array:
                     del weights
                     plus = plus_values[0]
                     plus_physical = system.physical_normal_flux(
@@ -1253,14 +1294,14 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         if source is not None:
 
             def source_kernel(
-                values,
-                gradients,
-                points,
-                physical_weights,
-                test_basis,
-                test_gradients,
-                context,
-            ):
+                values: tuple[Array, ...],
+                gradients: tuple[Array, ...],
+                points: Array,
+                physical_weights: Array,
+                test_basis: Array,
+                test_gradients: Array,
+                context: FiniteElementExecutionContext,
+            ) -> Array:
                 del gradients, test_gradients
                 source_values = jnp.asarray(
                     source(
@@ -1423,11 +1464,11 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         self.dynamics_id = identifier
 
     @property
-    def state_space(self):
+    def state_space(self) -> la.AbstractVectorSpace:
         return self.compiled_finite_element_problem.state_space
 
     @property
-    def residual_space(self):
+    def residual_space(self) -> la.AbstractVectorSpace:
         return self.compiled_finite_element_problem.residual_space
 
     @property
@@ -1911,7 +1952,9 @@ class PreparedDGSEMConservationDynamics(StrictModule):
     ) -> Array:
         return self.stable_step_evidence(state, args, cfl=cfl).step
 
-    def linearize(self, time: Array, state: ArrayLike, args: Any = None, /):
+    def linearize(
+        self, time: Array, state: ArrayLike, args: Any = None, /
+    ) -> _ConservationLinearization:
         value = self._state(state)
         linearization = la.prepare_linearization(
             lambda candidate: self(time, candidate, args), value
@@ -1922,7 +1965,9 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             lambda cotangent: (linearization.pullback(cotangent),),
         )
 
-    def linearize_weak_residual(self, time: Array, state: ArrayLike, args: Any = None, /):
+    def linearize_weak_residual(
+        self, time: Array, state: ArrayLike, args: Any = None, /
+    ) -> _ConservationLinearization:
         value = self._state(state)
         linearization = la.prepare_linearization(
             lambda candidate: self.weak_residual(time, candidate, args), value

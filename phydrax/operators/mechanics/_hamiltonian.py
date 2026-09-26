@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
+from jaxtyping import Array
 
 import phydrax.ein as ein
-from phydrax.domain import DomainFunction
+from phydrax.domain import Domain, DomainFunction
 
 from ..._strict import StrictModule
 from ...metrix import (
@@ -23,6 +24,10 @@ from ..linalg._ops import einsum
 from ._lagrangian import _require_factor
 
 
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
+
+
 _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
 
 
@@ -32,7 +37,7 @@ class _VectorValueCallable(StrictModule):
     def __init__(self, function: DomainFunction) -> None:
         self.function = function
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         return jnp.atleast_1d(self.function.func(*args, key=key, **kwargs))
 
 
@@ -54,7 +59,7 @@ class _StackPairCallable(StrictModule):
         self.first_positions = first_positions
         self.second_positions = second_positions
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         first_args = tuple(args[position] for position in self.first_positions)
         second_args = tuple(args[position] for position in self.second_positions)
         first_value = jnp.atleast_1d(self.first.func(*first_args, key=key, **kwargs))
@@ -62,7 +67,7 @@ class _StackPairCallable(StrictModule):
         return jnp.concatenate((first_value, second_value), axis=-1)
 
 
-def _compatible_domain(a: DomainFunction, b: DomainFunction, /):
+def _compatible_domain(a: DomainFunction, b: DomainFunction, /) -> Domain:
     if a.domain.labels != b.domain.labels:
         return a.domain.join(b.domain)
     for label in a.domain.labels:
@@ -228,7 +233,7 @@ class _PoissonBracketCallable(StrictModule):
         )
         self.coordinate_positions = tuple(positions[label] for label in variables)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         left = jnp.concatenate(
             tuple(
                 jnp.atleast_1d(
@@ -296,7 +301,7 @@ class _PoissonHamiltonianCallable(StrictModule):
         )
         self.coordinate_positions = tuple(positions[label] for label in variables)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         differential = jnp.concatenate(
             tuple(
                 jnp.atleast_1d(

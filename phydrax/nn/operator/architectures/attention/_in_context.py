@@ -26,6 +26,7 @@ from phydrax.nn.layers._measure_attention import (
     MeasureAwareAttention,
 )
 from phydrax.nn.operator.architectures.attention._upt import (
+    _ChanneledAttentionOptions,
     _feature_norm,
     _flatten_function_values,
     _flatten_geometry,
@@ -203,17 +204,17 @@ class InContextOperator(AbstractEncodedOperatorModel):
         self.role_embeddings = jr.normal(keys[3], (3, self.width)) / jnp.sqrt(
             float(self.width)
         )
-        attention_kwargs = dict(
-            source_channels=self.width,
-            query_channels=self.width,
-            out_channels=self.width,
-            num_heads=int(num_heads),
-            head_dim=resolved_head_dim,
-            kernel=attention_kernel,
-            execution=attention_execution,
-            block_size=attention_block_size,
-            accumulation_dtype=accumulation_dtype,
-        )
+        attention_kwargs: _ChanneledAttentionOptions = {
+            "source_channels": self.width,
+            "query_channels": self.width,
+            "out_channels": self.width,
+            "num_heads": int(num_heads),
+            "head_dim": resolved_head_dim,
+            "kernel": attention_kernel,
+            "execution": attention_execution,
+            "block_size": attention_block_size,
+            "accumulation_dtype": accumulation_dtype,
+        }
         self.prompt_source_attention = MeasureAwareAttention(
             key=keys[4], **attention_kwargs
         )

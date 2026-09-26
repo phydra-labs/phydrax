@@ -231,7 +231,7 @@ def evaluate_jump_execution(
     ):
         raise ValueError("Policy state/action dimensions do not match the jump problem.")
 
-    def feedback(time, state, args):
+    def feedback(time: Array, state: Array, args: object) -> Array:
         del args
         return policy.action(time, state).reshape(
             prepared.definition.problem.action_shape

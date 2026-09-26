@@ -5,15 +5,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from .._tensor_index import PreparedTensorIndexSpace
+from .._tensor_index import PreparedTensorIndexSpace, TensorIndexLayout
 from ..particle import ParticleDiscretization, ParticlePrecisionPolicy
 from ..spatial import SparseBlockTopologyPlan, SparseBlockTopologyState
 from ..splatting import (
@@ -26,6 +28,10 @@ from ..splatting import (
     TensorBSplineSplatAssignment,
 )
 from ._types import FLIPGridToParticleResult, FLIPParticleToGridResult
+
+
+if TYPE_CHECKING:
+    from ..._interpolation import GatherStencil
 
 
 class SparseFLIPTransferState(StrictModule):
@@ -133,7 +139,7 @@ class PreparedSparseFLIPParticleTransfer(StrictModule, NonTrainableState):
         if particles.ambient_dimension != len(plan.index_space.axis_names):
             raise ValueError("FLIP particles and tensor index dimensions must match.")
 
-        def prepared_for(layout):
+        def prepared_for(layout: TensorIndexLayout) -> PreparedParticleGridSplat:
             return ParticleGridSplatPlan(
                 plan.index_space,
                 location=plan.index_space.location(layout.offsets),
@@ -439,7 +445,7 @@ class PreparedSparseFLIPParticleTransfer(StrictModule, NonTrainableState):
     def _measure(
         plan: SparseBlockTopologyPlan,
         topology: SparseBlockTopologyState,
-        dtype,
+        dtype: DTypeLike,
     ) -> Array:
         logical = topology.logical_node_ids.reshape((-1,))
         valid = topology.node_valid.reshape((-1,))
@@ -451,7 +457,7 @@ class PreparedSparseFLIPParticleTransfer(StrictModule, NonTrainableState):
         transfer: PreparedParticleGridSplat,
         routes: ParticleGridSplatState,
         topology: SparseBlockTopologyState,
-    ):
+    ) -> GatherStencil:
         lookup = topology.lookup(routes.stencil.indices, routes.stencil.valid)
         from ..._interpolation import GatherStencil
 

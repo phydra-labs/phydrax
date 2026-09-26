@@ -273,12 +273,12 @@ class TDAPropertyDerivativeResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        excitation_energy_derivatives,
-        transition_dipole_derivatives,
-        oscillator_strength_derivatives,
-        eigenvector_derivative_residuals,
-        successful,
-        representation_id,
+        excitation_energy_derivatives: ArrayLike,
+        transition_dipole_derivatives: ArrayLike,
+        oscillator_strength_derivatives: ArrayLike,
+        eigenvector_derivative_residuals: ArrayLike,
+        successful: ArrayLike,
+        representation_id: str,
         /,
     ) -> None:
         energy = jnp.asarray(excitation_energy_derivatives)

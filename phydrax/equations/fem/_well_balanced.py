@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -24,12 +25,14 @@ class WellBalancedEquilibriumPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        state_provider,
+        state_provider: Callable[[Array, Array, Any], ArrayLike],
         /,
         *,
         equilibrium_id: str,
-        time_derivative_provider=None,
-        entropy_supply_provider=None,
+        time_derivative_provider: Callable[[Array, Array, Array, Any], ArrayLike]
+        | None = None,
+        entropy_supply_provider: Callable[[Array, Array, Array, Any], ArrayLike]
+        | None = None,
     ) -> None:
         identifier = str(equilibrium_id)
         if not callable(state_provider) or not identifier:

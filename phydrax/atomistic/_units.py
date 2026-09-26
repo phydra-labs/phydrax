@@ -20,6 +20,7 @@ from ..units import (
     CHARGE,
     DALTON,
     derived_unit,
+    DimensionSignature,
     ELECTRONVOLT,
     ELEMENTARY_CHARGE,
     ENERGY,
@@ -51,7 +52,10 @@ _PHYSICAL_CONSTANTS_BY_SET = {
 
 
 def _require_unit(
-    value: UnitDefinition, dimension, name: str, reference_system_id: str
+    value: UnitDefinition,
+    dimension: DimensionSignature,
+    name: str,
+    reference_system_id: str,
 ) -> None:
     if not isinstance(value, UnitDefinition):
         raise TypeError(f"{name} must be a UnitDefinition.")

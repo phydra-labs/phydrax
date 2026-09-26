@@ -6,17 +6,22 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dem_contact_state import DEMCohesionHistory, DEMContactEvaluationContext
+
+
+if TYPE_CHECKING:
+    from ._dem_contact import DEMContactBatch, DEMNormalResponse
 
 
 class DEMCohesionComponentHistory(StrictModule):
@@ -52,14 +57,14 @@ class AbstractDEMCohesionPlan(StrictModule, NonTrainableState):
     maximum_interaction_range: eqx.AbstractVar[float | None]
 
     @abc.abstractmethod
-    def initialize_history(self, capacity: int, dtype: Any, /) -> Any:
+    def initialize_history(self, capacity: int, dtype: DTypeLike, /) -> Any:
         raise NotImplementedError
 
     @abc.abstractmethod
     def evaluate(
         self,
-        batch: Any,
-        normal: Any,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
         history: Any,
         context: DEMContactEvaluationContext,
         materials: Any,
@@ -122,22 +127,32 @@ class DMTContactCohesionPlan(AbstractDEMCohesionPlan):
         self.maximum_interaction_range = float(np.max(cutoff_))
         self.cohesion_law_id = identifier
 
-    def initialize_history(self, capacity: int, dtype: Any, /):
+    def initialize_history(
+        self, capacity: int, dtype: DTypeLike, /
+    ) -> DEMCohesionComponentHistory:
         return _empty_component_history(capacity, dtype)
 
     def interaction_range_for_radii(
-        self, radii, material_ids, material_count: int, /
+        self, radii: ArrayLike, material_ids: ArrayLike, material_count: int, /
     ) -> float:
         del radii, material_ids, material_count
         return self.maximum_interaction_range
 
     def interaction_extents_for_radii(
-        self, radii, material_ids, material_count: int, /
+        self, radii: ArrayLike, material_ids: ArrayLike, material_count: int, /
     ) -> np.ndarray:
         del material_ids, material_count
         return _static_interaction_extents(radii, self.maximum_interaction_range)
 
-    def evaluate(self, batch, normal, history, context, materials, /):
+    def evaluate(
+        self,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        history: DEMCohesionComponentHistory,
+        context: DEMContactEvaluationContext,
+        materials: Any,
+        /,
+    ) -> tuple[DEMCohesionResponse, DEMCohesionComponentHistory]:
         del normal
         energy = _pair_value(
             self.surface_energy,
@@ -254,22 +269,32 @@ class LinearCapillaryBridgePlan(AbstractDEMCohesionPlan):
         self.maximum_interaction_range = float(np.max(rupture))
         self.cohesion_law_id = identifier
 
-    def initialize_history(self, capacity: int, dtype: Any, /):
+    def initialize_history(
+        self, capacity: int, dtype: DTypeLike, /
+    ) -> DEMCohesionComponentHistory:
         return _empty_component_history(capacity, dtype)
 
     def interaction_range_for_radii(
-        self, radii, material_ids, material_count: int, /
+        self, radii: ArrayLike, material_ids: ArrayLike, material_count: int, /
     ) -> float:
         del radii, material_ids, material_count
         return self.maximum_interaction_range
 
     def interaction_extents_for_radii(
-        self, radii, material_ids, material_count: int, /
+        self, radii: ArrayLike, material_ids: ArrayLike, material_count: int, /
     ) -> np.ndarray:
         del material_ids, material_count
         return _static_interaction_extents(radii, self.maximum_interaction_range)
 
-    def evaluate(self, batch, normal, history, context, materials, /):
+    def evaluate(
+        self,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        history: DEMCohesionComponentHistory,
+        context: DEMContactEvaluationContext,
+        materials: Any,
+        /,
+    ) -> tuple[DEMCohesionResponse, DEMCohesionComponentHistory]:
         del normal
         tension = _pair_value(
             self.surface_tension,
@@ -413,7 +438,9 @@ class BagheriCapillaryBridgePlan(AbstractDEMCohesionPlan):
         self.maximum_interaction_range = None
         self.cohesion_law_id = identifier
 
-    def initialize_history(self, capacity: int, dtype: Any, /):
+    def initialize_history(
+        self, capacity: int, dtype: DTypeLike, /
+    ) -> DEMCohesionComponentHistory:
         return _empty_component_history(capacity, dtype)
 
     def pair_bridge_volume(
@@ -488,7 +515,15 @@ class BagheriCapillaryBridgePlan(AbstractDEMCohesionPlan):
         extent = self.interaction_extents_for_radii(radius, material_ids, material_count)
         return 2.0 * float(np.max(extent - radius))
 
-    def evaluate(self, batch, normal, history, context, materials, /):
+    def evaluate(
+        self,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        history: DEMCohesionComponentHistory,
+        context: DEMContactEvaluationContext,
+        materials: Any,
+        /,
+    ) -> tuple[DEMCohesionResponse, DEMCohesionComponentHistory]:
         del normal
         tension = _pair_value(
             self.surface_tension,
@@ -601,7 +636,7 @@ class BagheriCapillaryBridgePlan(AbstractDEMCohesionPlan):
         safe_discriminant = jnp.maximum(discriminant, jnp.finfo(batch.gap.dtype).tiny)
         root = jnp.sqrt(safe_discriminant)
 
-        def primitive(value):
+        def primitive(value: Array) -> Array:
             polynomial = 1.0 + a_separation * q * value + q * value**2
             return a_separation / (2.0 * q) * jnp.log(polynomial) + 2.0 * (
                 1.0 - 0.5 * a_separation**2
@@ -738,22 +773,32 @@ class NearContactLubricationPlan(AbstractDEMCohesionPlan):
         self.maximum_interaction_range = float(np.max(cutoff_))
         self.cohesion_law_id = identifier
 
-    def initialize_history(self, capacity: int, dtype: Any, /):
+    def initialize_history(
+        self, capacity: int, dtype: DTypeLike, /
+    ) -> DEMCohesionComponentHistory:
         return _empty_component_history(capacity, dtype)
 
     def interaction_range_for_radii(
-        self, radii, material_ids, material_count: int, /
+        self, radii: ArrayLike, material_ids: ArrayLike, material_count: int, /
     ) -> float:
         del radii, material_ids, material_count
         return self.maximum_interaction_range
 
     def interaction_extents_for_radii(
-        self, radii, material_ids, material_count: int, /
+        self, radii: ArrayLike, material_ids: ArrayLike, material_count: int, /
     ) -> np.ndarray:
         del material_ids, material_count
         return _static_interaction_extents(radii, self.maximum_interaction_range)
 
-    def evaluate(self, batch, normal, history, context, materials, /):
+    def evaluate(
+        self,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        history: DEMCohesionComponentHistory,
+        context: DEMContactEvaluationContext,
+        materials: Any,
+        /,
+    ) -> tuple[DEMCohesionResponse, DEMCohesionComponentHistory]:
         del normal
         viscosity = _pair_value(
             self.dynamic_viscosity,
@@ -853,7 +898,9 @@ class CompositeDEMCohesionPlan(AbstractDEMCohesionPlan):
         )
         self.cohesion_law_id = identifier
 
-    def initialize_history(self, capacity: int, dtype: Any, /):
+    def initialize_history(
+        self, capacity: int, dtype: DTypeLike, /
+    ) -> DEMCohesionHistory:
         return DEMCohesionHistory(
             tuple(value.initialize_history(capacity, dtype) for value in self.components)
         )
@@ -883,7 +930,15 @@ class CompositeDEMCohesionPlan(AbstractDEMCohesionPlan):
         )
         return np.maximum.reduce(extents)
 
-    def evaluate(self, batch, normal, history, context, materials, /):
+    def evaluate(
+        self,
+        batch: DEMContactBatch,
+        normal: DEMNormalResponse,
+        history: DEMCohesionHistory,
+        context: DEMContactEvaluationContext,
+        materials: Any,
+        /,
+    ) -> tuple[DEMCohesionResponse, DEMCohesionHistory]:
         if not isinstance(history, DEMCohesionHistory) or len(history.components) != len(
             self.components
         ):
@@ -958,8 +1013,8 @@ class CompositeDEMCohesionPlan(AbstractDEMCohesionPlan):
 
 def evaluate_dem_cohesion(
     plan: AbstractDEMCohesionPlan,
-    batch: Any,
-    normal: Any,
+    batch: DEMContactBatch,
+    normal: DEMNormalResponse,
     history: DEMCohesionHistory,
     context: DEMContactEvaluationContext,
     materials: Any,
@@ -982,7 +1037,7 @@ def evaluate_dem_cohesion(
 
 
 def zero_cohesion_response(
-    shape: tuple[int, ...], dtype: Any, history: DEMCohesionHistory, /
+    shape: tuple[int, ...], dtype: DTypeLike, history: DEMCohesionHistory, /
 ) -> DEMCohesionResponse:
     scalar = jnp.zeros(shape, dtype=dtype)
     mask = jnp.zeros(shape, dtype=jnp.bool_)
@@ -1008,7 +1063,9 @@ def zero_cohesion_response(
     )
 
 
-def _empty_component_history(capacity: int, dtype: Any):
+def _empty_component_history(
+    capacity: int, dtype: DTypeLike
+) -> DEMCohesionComponentHistory:
     count = int(capacity)
     if count < 0:
         raise ValueError("Cohesion history capacity must be nonnegative.")
@@ -1029,7 +1086,9 @@ def _static_interaction_extents(radii: ArrayLike, maximum_range: float, /) -> np
     return radius + 0.5 * float(maximum_range)
 
 
-def _pair_value(parameter, left, right, material_count: int):
+def _pair_value(
+    parameter: Array, left: Array, right: Array, material_count: int
+) -> Array:
     if parameter.ndim == 0:
         return jnp.broadcast_to(parameter, left.shape)
     if parameter.shape != (material_count, material_count):

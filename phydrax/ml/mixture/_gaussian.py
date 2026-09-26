@@ -177,7 +177,7 @@ def _initial_means(
             )
         keys = jax.random.split(key, case_count)
 
-        def choose(values, weights, case_key):
+        def choose(values: Array, weights: Array, case_key: Array) -> Array:
             logits = jnp.where(weights > 0.0, jnp.log(weights), -jnp.inf)
             indices = jax.random.categorical(case_key, logits, shape=(component_count,))
             return values[indices]
@@ -239,7 +239,7 @@ def _fit_gaussian_mixture(
     singular_seen = jnp.zeros(batch.case_shape, dtype=jnp.bool_)
     concentration_ = 0.0 if concentration is None else concentration
 
-    def em_step(_, state):
+    def em_step(_: Array, state: _EMState) -> _EMState:
         (
             mixing,
             means,
@@ -403,6 +403,9 @@ def _fit_gaussian_mixture(
         status,
         effective_samples,
     )
+
+
+_EMState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
 
 
 class MixtureDiagnostics(StrictModule):

@@ -37,7 +37,7 @@ def _weighted_kernel_sum(
     padded_left_weights = jnp.pad(left_weights, (0, left_padding))
     padded_right_weights = jnp.pad(right_weights, (0, right_padding))
 
-    def left_body(left_index, total):
+    def left_body(left_index: Array, total: Array) -> Array:
         left_start = left_index * block
         left_points = jax.lax.dynamic_slice(
             padded_left,
@@ -50,7 +50,7 @@ def _weighted_kernel_sum(
             (block,),
         )
 
-        def right_body(right_index, subtotal):
+        def right_body(right_index: Array, subtotal: Array) -> Array:
             right_start = right_index * block
             right_points = jax.lax.dynamic_slice(
                 padded_right,
@@ -98,7 +98,7 @@ def _weighted_kernel_mean(
     padded_weights = jnp.pad(weights, (0, padding))
     output = jnp.zeros((blocks * block,), dtype=points.dtype)
 
-    def outer_body(outer_index, means):
+    def outer_body(outer_index: Array, means: Array) -> Array:
         outer_start = outer_index * block
         outer_points = jax.lax.dynamic_slice(
             padded_points,
@@ -106,7 +106,7 @@ def _weighted_kernel_mean(
             (block,) + input_shape,
         )
 
-        def inner_body(inner_index, subtotal):
+        def inner_body(inner_index: Array, subtotal: Array) -> Array:
             inner_start = inner_index * block
             inner_points = jax.lax.dynamic_slice(
                 padded_points,

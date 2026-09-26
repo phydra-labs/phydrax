@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -258,6 +258,12 @@ def _usable_linear_status(status: Any, /) -> Array:
     )
 
 
+# (trial, damping, found, direction, iterations, matvecs, status, refresh state)
+_TrialCarry: TypeAlias = tuple[
+    Array, Array, Array, PyTree[Array], Array, Array, Array, PyTree[Any]
+]
+
+
 def _curvature_system(
     parameters: PyTree[Any],
     action: Callable[[PyTree[Any]], PyTree[Any]],
@@ -420,7 +426,7 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
             <= termination.optimality_threshold(initial_optimality)
         )
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> tuple[PyTree[Any], PyTree[Any], Array]:
             status = jnp.where(
                 finite_model,
                 int(OptimizationStatus.SUCCESS),
@@ -458,17 +464,17 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
             dynamic_updated, _ = eqx.partition(updated, eqx.is_array)
             return parameters, dynamic_updated, model.objective
 
-        def composite_step(_):
+        def composite_step(_: None) -> tuple[PyTree[Any], PyTree[Any], Array]:
             dynamic_refresh_state, static_refresh_state = eqx.partition(
                 state.linear_refresh_state,
                 eqx.is_array,
             )
 
-            def trial_condition(carry):
+            def trial_condition(carry: _TrialCarry) -> Array:
                 trial, _, found, *_ = carry
                 return (trial < self.maximum_trials) & (~found)
 
-            def trial_body(carry):
+            def trial_body(carry: _TrialCarry) -> _TrialCarry:
                 (
                     trial,
                     damping,
@@ -485,7 +491,7 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
                     static_refresh_state,
                 )
 
-                def curvature_action(vector):
+                def curvature_action(vector: PyTree[Any]) -> PyTree[Array]:
                     return model.curvature_action(vector, damping)
 
                 current_prepared, current_refresh_state = refresh_state_for_trial.refresh(
@@ -683,7 +689,7 @@ class GeneralizedGaussNewton(AbstractCompositeLeastSquaresMethod):
 
 
 def _solve_composite(
-    method: AbstractCompositeLeastSquaresMethod,
+    method: GeneralizedGaussNewton,
     problem: CompositeLeastSquaresProblem,
     initial_parameters: PyTree[Any],
     /,
@@ -707,7 +713,7 @@ def _solve_composite(
         int(OptimizationStatus.NONFINITE_INPUT),
     ).astype(jnp.int32)
 
-    def condition(carry):
+    def condition(carry: tuple[PyTree[Any], PyTree[Any], Array]) -> Array:
         _, current_state, status = carry
         evaluations = jnp.maximum(
             current_state.residual_evaluations,
@@ -724,7 +730,9 @@ def _solve_composite(
             & within_evaluations
         )
 
-    def body(carry):
+    def body(
+        carry: tuple[PyTree[Any], PyTree[Any], Array],
+    ) -> tuple[PyTree[Any], PyTree[Any], Array]:
         parameters, dynamic_state, _ = carry
         current_state = eqx.combine(dynamic_state, static_state)
         parameters, next_state, _ = method.step(

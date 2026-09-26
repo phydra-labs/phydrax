@@ -83,7 +83,7 @@ class ForceDensityDesignConstraint(StrictModule, NonTrainableState):
         design: PyTree[Any],
         args: Any,
         /,
-    ):
+    ) -> object:
         return self.function(state, design, args)
 
 
@@ -290,13 +290,15 @@ class ForceDensityDesignProblem(StrictModule, NonTrainableState):
         return state
 
     def as_state_design_problem(self, /) -> StateDesignProblem:
-        def residual(reduced_state, design, args):
+        def residual(reduced_state: PyTree[Any], design: PyTree[Any], args: Any) -> Array:
             state = self.physical_state(reduced_state, design, args)
             return self.equilibrium_problem.structure.reduce(
                 state.internal_nodal_forces - state.applied_nodal_loads
             )
 
-        def objective(reduced_state, design, args):
+        def objective(
+            reduced_state: PyTree[Any], design: PyTree[Any], args: Any
+        ) -> Array | tuple[Array, PyTree[Any]]:
             state = self.physical_state(reduced_state, design, args)
             output = self.objective(state, design, args)
             if self.has_aux:
@@ -311,7 +313,9 @@ class ForceDensityDesignProblem(StrictModule, NonTrainableState):
         def lower_constraint(
             constraint: ForceDensityDesignConstraint,
         ) -> StateDesignConstraint:
-            def function(reduced_state, design, args):
+            def function(
+                reduced_state: PyTree[Any], design: PyTree[Any], args: Any
+            ) -> object:
                 state = self.physical_state(reduced_state, design, args)
                 return constraint.value(state, design, args)
 

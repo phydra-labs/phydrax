@@ -174,7 +174,7 @@ class VortexWakeIntegratorPlan(StrictModule, NonTrainableState):
         if time_.shape != () or dt.shape != ():
             raise ValueError("Wake time and step must be scalar.")
 
-        def field(vertices, evaluation_time):
+        def field(vertices: Array, evaluation_time: Array) -> Array:
             value = jnp.asarray(
                 velocity(VortexTargetState(vertices), evaluation_time, args),
                 dtype=vertices.dtype,

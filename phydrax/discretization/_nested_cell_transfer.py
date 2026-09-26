@@ -54,7 +54,9 @@ def nested_cell_transfer(
     ):
         raise ValueError("Child volumes must partition every parent volume.")
 
-    def cell_points(discretization):
+    def cell_points(
+        discretization: UnstructuredFiniteVolumeDiscretization,
+    ) -> list[np.ndarray]:
         coordinates = np.asarray(discretization.vertices)
         return [
             coordinates[row[mask]]

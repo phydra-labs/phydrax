@@ -573,7 +573,7 @@ class _FNOResidualStep(StrictModule):
         return sum_regularity((AFFINE, hidden)) if self.residual else hidden
 
 
-def _fno_contract_configuration(model):
+def _fno_contract_configuration(model: _AbstractFNO) -> tuple[tuple[str, object], ...]:
     return (
         ("n_modes", model.n_modes),
         ("width", model.width),

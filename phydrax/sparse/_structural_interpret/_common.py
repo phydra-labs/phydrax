@@ -418,7 +418,9 @@ def _flat_to_coords(flat: int, strides: tuple[int, ...]) -> list[int]:
 # Const value propagation
 
 
-def _seed_const_vals(state_consts: StateConsts, constvars, consts) -> None:
+def _seed_const_vals(
+    state_consts: StateConsts, constvars: Sequence[Var], consts: Sequence[object]
+) -> None:
     """Populate state_consts for the captured constants of a ClosedJaxpr.
 
     Without this, gather/scatter inside nested jaxprs (cond branches,
@@ -430,7 +432,7 @@ def _seed_const_vals(state_consts: StateConsts, constvars, consts) -> None:
 
 
 def _forward_value_bounds(
-    state_bounds: StateBounds, outer_atoms: Sequence[Atom], inner_vars
+    state_bounds: StateBounds, outer_atoms: Sequence[Atom], inner_vars: Sequence[Var]
 ) -> None:
     """Transfer known value bounds from outer-scope atoms to inner jaxpr variables.
 
@@ -442,7 +444,7 @@ def _forward_value_bounds(
 
 
 def _forward_const_vals(
-    state_consts: StateConsts, outer_atoms: Sequence[Atom], inner_vars
+    state_consts: StateConsts, outer_atoms: Sequence[Atom], inner_vars: Sequence[Var]
 ) -> None:
     """Transfer known state_consts from outer-scope atoms to inner jaxpr variables.
 

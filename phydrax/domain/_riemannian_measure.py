@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
+from jaxtyping import Array, Key
 
 from .._strict import StrictModule
 from ..metrix import (
@@ -27,7 +28,14 @@ class _VolumeDensityCallable(StrictModule):
     def __init__(self, density: VolumeDensity, /) -> None:
         self.density = density
 
-    def __call__(self, coordinates: Any, /, *, key=None, **kwargs: Any):
+    def __call__(
+        self,
+        coordinates: Any,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Array:
         del key, kwargs
         if isinstance(coordinates, tuple):
             axes = tuple(jnp.asarray(axis).reshape((-1,)) for axis in coordinates)

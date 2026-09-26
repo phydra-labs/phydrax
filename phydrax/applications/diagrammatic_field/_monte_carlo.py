@@ -405,7 +405,9 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
         initial = self.initialize(initial_index)
         keys = jr.split(key, self.steps)
 
-        def advance(state, step_key):
+        def advance(
+            state: DiagramMonteCarloState, step_key: Key[Array, ""]
+        ) -> tuple[DiagramMonteCarloState, None]:
             return self.transition(state, step_key), None
 
         state, _ = jax.lax.scan(advance, initial, keys)

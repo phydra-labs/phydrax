@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,6 +15,11 @@ from ..._strict import StrictModule
 from ._context import AstrodynamicsContext
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
+
+
+_OrbitGeometry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 def _norm(value: Array, /) -> Array:
@@ -98,7 +104,7 @@ class ClassicalConversionResult(StrictModule):
     equatorial: Array
 
 
-def _orbit_geometry(state: CartesianOrbitState, mu: ArrayLike, /):
+def _orbit_geometry(state: CartesianOrbitState, mu: ArrayLike, /) -> _OrbitGeometry:
     coupling = jnp.asarray(mu, dtype=state.position.dtype).reshape(())
     radius = _norm(state.position)
     speed_squared = jnp.sum(state.velocity * state.velocity)

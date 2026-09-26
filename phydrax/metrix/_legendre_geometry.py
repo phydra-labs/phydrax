@@ -18,7 +18,7 @@ from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ._atlas_cover import ChartSupport
-from ._chart import ChartTransition
+from ._chart import ChartTransition, CoordinateChart
 from ._hessian_geometry import HessianGeometry
 from ._information_operator import InformationMetricOperator
 from ._metric import RiemannianMetric
@@ -103,11 +103,11 @@ class LegendreGeometry(StrictModule):
         self.geometry_id = identifier
 
     @property
-    def primal_chart(self):
+    def primal_chart(self) -> CoordinateChart:
         return self.hessian_geometry.chart
 
     @property
-    def dual_chart(self):
+    def dual_chart(self) -> CoordinateChart:
         return self.dual_support.chart
 
     @property

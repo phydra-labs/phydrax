@@ -123,7 +123,7 @@ class ElementLocalSBPData(StrictModule, NonTrainableState):
         expected_restriction = np.eye(order_ + 1, dtype=nodes.dtype)[[0, -1]]
         extraction_defect = restriction - expected_restriction
         tolerance_ = (
-            128.0 * np.finfo(nodes.dtype).eps * max(1, order_) ** 2
+            float(128.0 * np.finfo(nodes.dtype).eps * max(1, order_) ** 2)
             if tolerance is None
             else float(tolerance)
         )

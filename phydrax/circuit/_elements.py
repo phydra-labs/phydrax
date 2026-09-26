@@ -307,13 +307,13 @@ class TwoTerminalConductanceLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, state, state_rate, inputs, args
@@ -338,13 +338,13 @@ class TwoTerminalCapacitanceLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltages, state, state_rate, inputs, args
@@ -370,13 +370,13 @@ class TwoTerminalInductanceLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, inputs, args
@@ -416,13 +416,13 @@ class IndependentCurrentSourceLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltages, terminal_voltage_rates, state, state_rate, args
@@ -459,13 +459,13 @@ class IndependentVoltageSourceLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, state_rate, args
@@ -511,13 +511,13 @@ class ExponentialDiodeLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, state, state_rate, inputs, args
@@ -567,13 +567,13 @@ class SmoothSwitchLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, state, state_rate, args
@@ -605,13 +605,13 @@ class VoltageControlledCurrentLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, state, state_rate, inputs, args
@@ -640,13 +640,13 @@ class VoltageControlledVoltageLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, state_rate, inputs, args
@@ -679,13 +679,13 @@ class IdealTransformerLaw(AbstractImplicitCircuitLaw):
 
     def evaluate(
         self,
-        time,
-        terminal_voltages,
-        terminal_voltage_rates,
-        state,
-        state_rate,
-        inputs,
-        args,
+        time: Array,
+        terminal_voltages: Array,
+        terminal_voltage_rates: Array,
+        state: Array,
+        state_rate: Array,
+        inputs: Array,
+        args: Any,
         /,
     ) -> CircuitElementEvaluation:
         del time, terminal_voltage_rates, state_rate, inputs, args

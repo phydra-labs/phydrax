@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
+from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -77,10 +80,10 @@ class CompiledFramePath(StrictModule, NonTrainableState):
     def apply(
         self,
         state: CartesianOrbitState,
-        relative_seconds,
+        relative_seconds: ArrayLike,
         /,
         *,
-        args=None,
+        args: Any = None,
     ) -> tuple[CartesianOrbitState, tuple[KinematicTransformEvaluation, ...]]:
         current = state
         evidence = []

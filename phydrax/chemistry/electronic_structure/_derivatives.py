@@ -11,7 +11,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -19,7 +19,10 @@ from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticSystemPlan, AtomisticUnitSystem
 from ...execution import HostTaskExecutor, InlineTaskExecutor
 from .._optimization import _require_structure_matches_system
-from .._surface import AbstractPreparedPotentialEnergySurface
+from .._surface import (
+    AbstractPreparedPotentialEnergySurface,
+    PotentialEnergySurfaceEvaluation,
+)
 from .._units import hessian_unit
 
 
@@ -38,11 +41,11 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        raw_hessian,
-        hessian,
-        antisymmetry_residual,
+        raw_hessian: ArrayLike,
+        hessian: ArrayLike,
+        antisymmetry_residual: ArrayLike,
         evaluation_count: int,
-        successful,
+        successful: ArrayLike,
         units: AtomisticUnitSystem,
         system_id: str,
         geometry_id: str,
@@ -179,7 +182,9 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
                 InlineTaskExecutor() if executor is None else executor
             )
 
-            def displaced(atom: int, component: int, direction: int):
+            def displaced(
+                atom: int, component: int, direction: int
+            ) -> PotentialEnergySurfaceEvaluation:
                 candidate = positions.copy()
                 candidate[atom, component] += direction * self.displacement
                 return self.surface.evaluate(candidate, cell)

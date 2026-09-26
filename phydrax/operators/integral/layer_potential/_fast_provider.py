@@ -310,21 +310,18 @@ class FusedBlockedBEMAction3D(StrictModule, NonTrainableState):
         operator = (
             prepared.weak_operator if formulation == "weak" else prepared.strong_operator
         )
-        if formulation == "weak" and not isinstance(operator, _LaplaceDP0WeakOperator3D):
-            raise TypeError(
-                "Prepared weak operator is not the supported blocked DP0 route."
-            )
-        if formulation == "strong" and not isinstance(
-            operator, _LaplaceDP0StrongOperator3D
-        ):
-            raise TypeError(
-                "Prepared strong operator is not the supported blocked DP0 route."
-            )
-        pair_data = (
-            operator.pair_data
-            if isinstance(operator, _LaplaceDP0WeakOperator3D)
-            else operator.weak.pair_data
-        )
+        if formulation == "weak":
+            if not isinstance(operator, _LaplaceDP0WeakOperator3D):
+                raise TypeError(
+                    "Prepared weak operator is not the supported blocked DP0 route."
+                )
+            pair_data = operator.pair_data
+        else:
+            if not isinstance(operator, _LaplaceDP0StrongOperator3D):
+                raise TypeError(
+                    "Prepared strong operator is not the supported blocked DP0 route."
+                )
+            pair_data = operator.weak.pair_data
         precision = np.dtype(pair_data.regular_points.dtype).name
         action_cost = estimate_operator_action_cost(operator)
         workspace = action_cost.apply_workspace_bytes_per_rhs * columns

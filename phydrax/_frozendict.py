@@ -4,7 +4,7 @@
 
 from collections.abc import Hashable, Iterable, Iterator, Mapping
 from math import isfinite
-from typing import Any, NoReturn, TypeVar
+from typing import Any, cast, NoReturn, Self, TypeVar
 
 import equinox as eqx
 import jax
@@ -71,12 +71,12 @@ class _KeyedValues(tuple):
 
     mapping_keys: tuple[Any, ...]
 
-    def __new__(cls, keys: tuple[Any, ...], values: Iterable[Any], /):
+    def __new__(cls, keys: tuple[Any, ...], values: Iterable[Any], /) -> Self:
         instance = super().__new__(cls, values)
         instance.mapping_keys = keys
         return instance
 
-    def __reduce__(self):
+    def __reduce__(self) -> tuple[type[Self], tuple[tuple[Any, ...], tuple[Any, ...]]]:
         return (type(self), (self.mapping_keys, tuple(self)))
 
 
@@ -102,11 +102,16 @@ class frozendict(StrictModule, Mapping[_KT, _VT]):
     # `_KeyedValues` would not survive a structural update.
     _values: tuple[_VT, ...]
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(
+        self,
+        *args: Mapping[_KT, _VT] | Iterable[tuple[_KT, _VT]],
+        **kwargs: _VT,
+    ) -> None:
         supplied = dict(*args, **kwargs)
         mapping = {_canonical_key(key): value for key, value in supplied.items()}
         keys = tuple(sorted(mapping, key=_canonical_key_token))
-        self._keys = keys
+        # Canonical keys compare and hash equal to the supplied `_KT` keys.
+        self._keys = cast("tuple[_KT, ...]", keys)
         self._values = _KeyedValues(keys, (mapping[key] for key in keys)) if keys else ()
 
     def __len__(self) -> int:

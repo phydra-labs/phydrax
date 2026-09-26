@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
-from typing import Any, cast, Literal
+from typing import Any, cast, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,6 +24,10 @@ from ..._keys import (
 )
 from ..data import OperatorBatch
 from ..distribution import AbstractProbabilisticOperatorModel
+
+
+if TYPE_CHECKING:
+    from ....uq._operator import OperatorPredictiveField
 
 
 SemigroupReduction = Literal["mean", "sum"]
@@ -260,7 +264,7 @@ def _distributional_predictives(
     key_mode: SemigroupKeyMode,
     key: EvalKey,
     owner: str,
-):
+) -> tuple[OperatorPredictiveField, OperatorPredictiveField]:
     if not isinstance(model, AbstractProbabilisticOperatorModel):
         raise TypeError(f"{owner} requires a probabilistic operator.")
     if key is None:

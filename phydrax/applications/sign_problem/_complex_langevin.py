@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from math import prod
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -27,6 +28,11 @@ from ..._trainable import NonTrainableState
 _NOISE_ADDRESS = SampleAddress(
     "sign-problem", "complex-langevin", target="real-noise", role="transition"
 )
+
+
+_LangevinStepOutput: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class ComplexLangevinStatus(IntEnum):
@@ -335,7 +341,9 @@ def _cool_state(
     if initial_norm.shape != () or jnp.iscomplexobj(initial_norm):
         raise TypeError("unitarity_norm must return one real scalar.")
 
-    def iteration(carry, _):
+    def iteration(
+        carry: tuple[Array, Array, Array, Array, Array], _: None
+    ) -> tuple[tuple[Array, Array, Array, Array, Array], None]:
         current, current_norm, accepted_count, rejected_count, valid = carry
         gradient = jnp.asarray(cooling.gauge_gradient(current))
         if gradient.shape != cooling.configuration_shape:
@@ -414,7 +422,9 @@ def sample_complex_langevin(
         & (jnp.linalg.norm(state.reshape((-1,))) <= runtime.plan.maximum_state_norm)
     )
 
-    def step(carry, step_index):
+    def step(
+        carry: tuple[Array, Array, Array], step_index: Array
+    ) -> tuple[tuple[Array, Array, Array], _LangevinStepOutput]:
         current, active, first_invalid = carry
         drift = _action_drift(runtime, current)
         drift_norm = jnp.linalg.norm(drift.reshape((-1,)))

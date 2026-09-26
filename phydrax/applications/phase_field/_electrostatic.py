@@ -129,7 +129,7 @@ class PhaseElectrostaticCouplingPlan(StrictModule, NonTrainableState):
         sign = 1.0 if self.ensemble == "fixed-charge" else -1.0
         field_energy = 0.5 * sign * permittivity * electric_norm
 
-        def one_energy(local_logits, local_electric):
+        def one_energy(local_logits: Array, local_electric: Array) -> Array:
             epsilon = self.permittivity.evaluate(local_logits)
             return 0.5 * sign * epsilon * jnp.dot(local_electric, local_electric)
 

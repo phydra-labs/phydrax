@@ -234,17 +234,21 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         context_values = tuple(batch.context[name] for name in context_names)
         node_keys = jr.split(batch.evaluation_key, count)
 
-        def step(carry, depth):
+        def step(
+            carry: tuple[Array, Array], depth: Array
+        ) -> tuple[tuple[Array, Array], None]:
             state, time = carry
             enabled = depth < active_steps
             keys = jax.vmap(lambda value: jr.fold_in(value, depth))(node_keys)
 
-            def velocity_at(key, point, coordinate, *contexts):
+            def velocity_at(
+                key: Key[Array, ""], point: Array, coordinate: Array, *contexts: Array
+            ) -> Array:
                 values = {
                     name: context
                     for name, context in zip(context_names, contexts, strict=True)
                 }
-                arguments = []
+                arguments: list[Array] = []
                 for dependency in velocity.deps:
                     if dependency == self.flow.state_label:
                         arguments.append(point)
@@ -305,7 +309,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         context_names = tuple(batch.context)
         context_values = tuple(batch.context[name] for name in context_names)
 
-        def evaluate_endpoint(state, *contexts):
+        def evaluate_endpoint(state: Array, *contexts: Array) -> Array:
             values = {
                 name: context
                 for name, context in zip(context_names, contexts, strict=True)

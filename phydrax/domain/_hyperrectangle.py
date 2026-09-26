@@ -12,6 +12,7 @@ from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from .._doc import DOC_KEY0
 from .._sampling import (
+    DesignLike,
     HammersleyDesign,
     host_design_factory,
     resolve_design,
@@ -22,7 +23,9 @@ from ._base import AbstractGeometry, EnforcementGateMethod, GeometryTransitionKi
 from ._structure import _validate_label
 
 
-def _validate_rejection_design(where: Callable | None, sampler, /) -> None:
+def _validate_rejection_design(
+    where: Callable[..., object] | None, sampler: DesignLike, /
+) -> None:
     if where is not None and isinstance(resolve_design(sampler), HammersleyDesign):
         raise ValueError(
             "Hammersley is count-dependent and cannot be used with a rejection "
@@ -177,7 +180,12 @@ class HyperRectangle(AbstractGeometry):
         dim = int(self.spatial_dim)
         where_fn = where or (lambda _: True)
 
-        def _sample_interior_host(num_points, sampler, where_fn, key):
+        def _sample_interior_host(
+            num_points: int,
+            sampler: str,
+            where_fn: Callable[..., object],
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampler_fn = host_design_factory(sampler, dimension=dim, seed=rng)
             sampled = np.empty((0, dim), dtype=np.float64)
@@ -229,7 +237,12 @@ class HyperRectangle(AbstractGeometry):
             face_probs = np.repeat(face_measures, 2)
             face_probs = face_probs / np.sum(face_probs)
 
-        def _sample_boundary_host(num_points, sampler, where_fn, key):
+        def _sample_boundary_host(
+            num_points: int,
+            sampler: str,
+            where_fn: Callable[..., object],
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampler_dim = max(dim - 1, 1)
             sampler_fn = host_design_factory(sampler, dimension=sampler_dim, seed=rng)
@@ -299,7 +312,9 @@ class HyperRectangle(AbstractGeometry):
         lower = np.asarray(self.lower, dtype=np.float64)
         upper = np.asarray(self.upper, dtype=np.float64)
 
-        def _sample_axes_host(counts, sampler, key):
+        def _sample_axes_host(
+            counts: tuple[int, ...], sampler: str, key: ArrayLike
+        ) -> tuple[np.ndarray, ...]:
             rng = np.random.default_rng(seed_from_key(key))
             axes = []
             for i, n in enumerate(counts):

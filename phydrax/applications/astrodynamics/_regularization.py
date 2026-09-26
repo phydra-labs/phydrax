@@ -228,7 +228,8 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
         pair_values = np.asarray(encounter.pair, dtype=np.int64)
         if pair_values.shape != (2,):
             raise ValueError("Encounter pair must contain two particle indices.")
-        pair = tuple(sorted((int(pair_values[0]), int(pair_values[1]))))
+        low, high = sorted((int(pair_values[0]), int(pair_values[1])))
+        pair = (low, high)
         if pair[0] < 0 or pair[1] >= mass.size or pair[0] == pair[1]:
             raise ValueError("Encounter pair is outside particle capacity.")
         displacement = position[:, None, :] - position[None, :, :]
@@ -299,7 +300,9 @@ class PreparedCloseEncounterSegment(StrictModule, NonTrainableState):
             root_mu * duration / radius0,
         )
 
-        def newton_step(carry, _):
+        def newton_step(
+            carry: tuple[Array, Array], _: None
+        ) -> tuple[tuple[Array, Array], Array]:
             chi, converged = carry
             z = alpha * chi * chi
             c, s = _stumpff(z)

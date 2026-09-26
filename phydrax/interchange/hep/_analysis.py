@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import numpy as np
+import numpy.typing as npt
 
 
 if TYPE_CHECKING:
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
 def binned_likelihood_to_pyhf_workspace(
     plan: BinnedLikelihoodPlan,
-    observations,
+    observations: npt.ArrayLike,
     /,
     *,
     channel_name: str = "channel",

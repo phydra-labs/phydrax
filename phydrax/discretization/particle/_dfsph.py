@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,8 +17,11 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._core import ParticleDiscretization
 from ._free_surface import detect_free_surface, FreeSurfaceDetectionPlan
-from ._neighborhood import AbstractPreparedParticleNeighborhood
-from ._pairwise import particle_pair_geometry, scatter_pair_sum
+from ._neighborhood import (
+    AbstractPreparedParticleNeighborhood,
+    ParticleNeighborhoodState,
+)
+from ._pairwise import particle_pair_geometry, ParticlePairGeometry, scatter_pair_sum
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._qualification import (
     particle_constraint_residuals,
@@ -31,6 +34,10 @@ from ._sph_operators import (
     sph_summation_density,
     sph_symmetric_pressure_gradient,
 )
+
+
+# (velocity, multiplier, maximum residual)
+_ProjectionCarry: TypeAlias = tuple[Array, Array, Array]
 
 
 class DFSPHStateLayout(StrictModule, NonTrainableState):
@@ -215,7 +222,9 @@ class PreparedDFSPH(StrictModule, NonTrainableState):
             zeros if divergence_multiplier is None else divergence_multiplier,
         )
 
-    def _geometry(self, position):
+    def _geometry(
+        self, position: Array
+    ) -> tuple[ParticleNeighborhoodState, ParticlePairGeometry, Array, Array]:
         neighborhood = self.neighborhood.build(position)
         position = neighborhood.require_success(position)
         geometry = particle_pair_geometry(
@@ -279,13 +288,13 @@ class PreparedDFSPH(StrictModule, NonTrainableState):
 
     def _correct_velocity(
         self,
-        position,
-        velocity,
-        residual,
-        factor,
-        step_size,
-        surface_mask,
-    ):
+        position: Array,
+        velocity: Array,
+        residual: Array,
+        factor: DFSPHFactorState,
+        step_size: Array,
+        surface_mask: Array,
+    ) -> tuple[Array, Array]:
         neighborhood, geometry, valid, density = self._geometry(position)
         multiplier = jnp.where(
             surface_mask,
@@ -337,7 +346,7 @@ class PreparedDFSPH(StrictModule, NonTrainableState):
                 self.execution,
             ).hard_mask
 
-        def divergence_body(_, carry):
+        def divergence_body(_: Array, carry: _ProjectionCarry) -> _ProjectionCarry:
             current_velocity, multiplier, _ = carry
             divergence = sph_continuity_density_rate(
                 self.particles.safe_masses,
@@ -380,7 +389,7 @@ class PreparedDFSPH(StrictModule, NonTrainableState):
         )
         predicted_velocity = divergence_velocity + step_size * external
 
-        def density_body(_, carry):
+        def density_body(_: Array, carry: _ProjectionCarry) -> _ProjectionCarry:
             current_velocity, multiplier, _ = carry
             density_rate = sph_continuity_density_rate(
                 self.particles.safe_masses,

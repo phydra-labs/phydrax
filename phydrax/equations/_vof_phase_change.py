@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Iterable
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -71,7 +72,9 @@ class AbstractVOFMassTransferPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-def _positive_material_parameters(values, owner):
+def _positive_material_parameters(
+    values: Iterable[float], owner: str
+) -> tuple[float, ...]:
     result = tuple(float(value) for value in values)
     if any(not np.isfinite(value) or value <= 0.0 for value in result):
         raise ValueError(f"{owner} parameters must be positive and finite.")
@@ -85,10 +88,10 @@ class MerkleCavitationPlan(AbstractVOFMassTransferPlan):
 
     def __init__(
         self,
-        saturation_pressure,
-        vaporization_coefficient,
-        condensation_coefficient,
-        latent_heat,
+        saturation_pressure: float,
+        vaporization_coefficient: float,
+        condensation_coefficient: float,
+        latent_heat: float,
         /,
     ) -> None:
         p_sat, vaporization, condensation, latent = _positive_material_parameters(
@@ -116,16 +119,16 @@ class MerkleCavitationPlan(AbstractVOFMassTransferPlan):
 
     def raw_rate(
         self,
-        pressure,
-        temperature,
-        alpha0,
-        density0,
-        density1,
-        interface_area_density,
-        heat_flux0,
-        heat_flux1,
+        pressure: Array,
+        temperature: Array,
+        alpha0: Array,
+        density0: Array,
+        density1: Array,
+        interface_area_density: Array,
+        heat_flux0: Array,
+        heat_flux1: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         del temperature, interface_area_density, heat_flux0, heat_flux1
         deficit = jnp.maximum(self.saturation_pressure - pressure, 0.0)
         excess = jnp.maximum(pressure - self.saturation_pressure, 0.0)
@@ -142,11 +145,11 @@ class KunzCavitationPlan(AbstractVOFMassTransferPlan):
 
     def __init__(
         self,
-        saturation_pressure,
-        vaporization_time,
-        condensation_time,
-        reference_dynamic_pressure,
-        latent_heat,
+        saturation_pressure: float,
+        vaporization_time: float,
+        condensation_time: float,
+        reference_dynamic_pressure: float,
+        latent_heat: float,
         /,
     ) -> None:
         p_sat, vaporization, condensation, dynamic, latent = (
@@ -179,16 +182,16 @@ class KunzCavitationPlan(AbstractVOFMassTransferPlan):
 
     def raw_rate(
         self,
-        pressure,
-        temperature,
-        alpha0,
-        density0,
-        density1,
-        interface_area_density,
-        heat_flux0,
-        heat_flux1,
+        pressure: Array,
+        temperature: Array,
+        alpha0: Array,
+        density0: Array,
+        density1: Array,
+        interface_area_density: Array,
+        heat_flux0: Array,
+        heat_flux1: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         del temperature, interface_area_density, heat_flux0, heat_flux1
         deficit = jnp.maximum(self.saturation_pressure - pressure, 0.0)
         excess = jnp.maximum(pressure - self.saturation_pressure, 0.0)
@@ -217,15 +220,15 @@ class SchnerrSauerCavitationPlan(AbstractVOFMassTransferPlan):
 
     def __init__(
         self,
-        saturation_pressure,
-        nuclei_number_density,
-        nuclei_diameter,
-        vaporization_coefficient,
-        condensation_coefficient,
-        latent_heat,
+        saturation_pressure: float,
+        nuclei_number_density: float,
+        nuclei_diameter: float,
+        vaporization_coefficient: float,
+        condensation_coefficient: float,
+        latent_heat: float,
         /,
         *,
-        radius_floor=1.0e-12,
+        radius_floor: float = 1.0e-12,
     ) -> None:
         values = _positive_material_parameters(
             (
@@ -264,16 +267,16 @@ class SchnerrSauerCavitationPlan(AbstractVOFMassTransferPlan):
 
     def raw_rate(
         self,
-        pressure,
-        temperature,
-        alpha0,
-        density0,
-        density1,
-        interface_area_density,
-        heat_flux0,
-        heat_flux1,
+        pressure: Array,
+        temperature: Array,
+        alpha0: Array,
+        density0: Array,
+        density1: Array,
+        interface_area_density: Array,
+        heat_flux0: Array,
+        heat_flux1: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         del temperature, interface_area_density, heat_flux0, heat_flux1
         vapor_fraction = 1.0 - alpha0
         nuclei_volume = self.nuclei_number_density * np.pi * self.nuclei_diameter**3 / 6.0
@@ -323,9 +326,9 @@ class InterfaceHeatResistancePhaseChangePlan(AbstractVOFMassTransferPlan):
 
     def __init__(
         self,
-        saturation_temperature,
-        interface_heat_transfer_coefficient,
-        latent_heat,
+        saturation_temperature: float,
+        interface_heat_transfer_coefficient: float,
+        latent_heat: float,
         /,
     ) -> None:
         saturation, coefficient, latent = _positive_material_parameters(
@@ -350,16 +353,16 @@ class InterfaceHeatResistancePhaseChangePlan(AbstractVOFMassTransferPlan):
 
     def raw_rate(
         self,
-        pressure,
-        temperature,
-        alpha0,
-        density0,
-        density1,
-        interface_area_density,
-        heat_flux0,
-        heat_flux1,
+        pressure: Array,
+        temperature: Array,
+        alpha0: Array,
+        density0: Array,
+        density1: Array,
+        interface_area_density: Array,
+        heat_flux0: Array,
+        heat_flux1: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         del pressure, alpha0, density0, density1, heat_flux0, heat_flux1
         difference = temperature - self.saturation_temperature
         return (
@@ -378,10 +381,10 @@ class TemperatureRelaxationPhaseChangePlan(AbstractVOFMassTransferPlan):
 
     def __init__(
         self,
-        saturation_temperature,
-        vaporization_time,
-        condensation_time,
-        latent_heat,
+        saturation_temperature: float,
+        vaporization_time: float,
+        condensation_time: float,
+        latent_heat: float,
         /,
     ) -> None:
         saturation, vaporization, condensation, latent = _positive_material_parameters(
@@ -409,16 +412,16 @@ class TemperatureRelaxationPhaseChangePlan(AbstractVOFMassTransferPlan):
 
     def raw_rate(
         self,
-        pressure,
-        temperature,
-        alpha0,
-        density0,
-        density1,
-        interface_area_density,
-        heat_flux0,
-        heat_flux1,
+        pressure: Array,
+        temperature: Array,
+        alpha0: Array,
+        density0: Array,
+        density1: Array,
+        interface_area_density: Array,
+        heat_flux0: Array,
+        heat_flux1: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         del pressure, interface_area_density, heat_flux0, heat_flux1
         difference = temperature - self.saturation_temperature
         evaporation = (
@@ -437,7 +440,7 @@ class TemperatureRelaxationPhaseChangePlan(AbstractVOFMassTransferPlan):
 
 
 class StefanHeatFluxPhaseChangePlan(AbstractVOFMassTransferPlan):
-    def __init__(self, latent_heat, /) -> None:
+    def __init__(self, latent_heat: float, /) -> None:
         (latent,) = _positive_material_parameters(
             (latent_heat,), "Stefan heat-flux phase change"
         )
@@ -448,16 +451,16 @@ class StefanHeatFluxPhaseChangePlan(AbstractVOFMassTransferPlan):
 
     def raw_rate(
         self,
-        pressure,
-        temperature,
-        alpha0,
-        density0,
-        density1,
-        interface_area_density,
-        heat_flux0,
-        heat_flux1,
+        pressure: Array,
+        temperature: Array,
+        alpha0: Array,
+        density0: Array,
+        density1: Array,
+        interface_area_density: Array,
+        heat_flux0: Array,
+        heat_flux1: Array,
         /,
-    ):
+    ) -> tuple[Array, Array]:
         del pressure, temperature, alpha0, density0, density1
         heat_jump = heat_flux0 - heat_flux1
         return interface_area_density * heat_jump / self.latent_heat, heat_jump

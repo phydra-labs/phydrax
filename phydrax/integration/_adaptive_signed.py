@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from math import isfinite
-from typing import Any
+from typing import Any, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,6 +19,17 @@ from .._strict import StrictModule
 from ._api import _requires_random_key, IntegrationRealization, materialize
 from ._batches import PointIntegrationBatch, WeightedSampleBatch
 from ._status import IntegrationStatus
+
+
+if TYPE_CHECKING:
+    from ._execution import AdaptiveIntegration
+
+
+class _AdaptiveSignedTerm(Protocol):
+    """A training term whose integration source is solver-managed adaptive."""
+
+    @property
+    def source(self) -> AdaptiveIntegration: ...
 
 
 class AdaptiveSignedDiagnostics(StrictModule):
@@ -56,7 +67,9 @@ def _population_active(realization: IntegrationRealization, /) -> Array:
     )
 
 
-def _materialize_source(source, key):
+def _materialize_source(
+    source: AdaptiveIntegration, key: Key[Array, ""]
+) -> IntegrationRealization:
     if _requires_random_key(source.initial_plan):
         return materialize(source.target, source.initial_plan, key=key)
     return materialize(source.target, source.initial_plan)
@@ -76,10 +89,12 @@ class AdaptiveSignedEstimator(StrictModule):
         self.refresh_interval = interval
 
     @abstractmethod
-    def validate_source(self, source) -> None:
+    def validate_source(self, source: AdaptiveIntegration) -> None:
         raise NotImplementedError
 
-    def initialize(self, term, /, *, key: Key[Array, ""]) -> AdaptiveSignedPopulation:
+    def initialize(
+        self, term: _AdaptiveSignedTerm, /, *, key: Key[Array, ""]
+    ) -> AdaptiveSignedPopulation:
         source = term.source
         self.validate_source(source)
         realization = _materialize_source(source, key)
@@ -110,8 +125,8 @@ class AdaptiveSignedEstimator(StrictModule):
 
     def refresh(
         self,
-        term,
-        functions,
+        term: _AdaptiveSignedTerm,
+        functions: object,
         population: AdaptiveSignedPopulation,
         /,
         *,
@@ -215,7 +230,7 @@ class AdaptiveStratifiedEstimator(AdaptiveSignedEstimator):
         self.variance_floor = floor
         self.minimum_per_stratum = minimum
 
-    def validate_source(self, source) -> None:
+    def validate_source(self, source: AdaptiveIntegration) -> None:
         from ._plans import StratifiedMonteCarloPlan
 
         if not isinstance(source.initial_plan, StratifiedMonteCarloPlan):
@@ -260,7 +275,7 @@ class AdaptiveImportanceEstimator(AdaptiveSignedEstimator):
             raise ValueError("defensive_mixture_floor must lie in (0, 1].")
         self.defensive_mixture_floor = floor
 
-    def validate_source(self, source) -> None:
+    def validate_source(self, source: AdaptiveIntegration) -> None:
         from ._plans import ImportanceSamplingPlan
 
         if not isinstance(source.initial_plan, ImportanceSamplingPlan):

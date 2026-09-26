@@ -104,12 +104,13 @@ class CochainElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
                 for velocity, force in zip(edge_velocity, force_components, strict=True)
             ):
                 raise ValueError("edge_velocity must match unpacked cochain edge axes.")
-            edge_power = sum(
+            edge_terms = tuple(
                 jnp.sum(velocity * force * measure)
                 for velocity, force, measure in zip(
                     edge_velocity, force_components, measures, strict=True
                 )
             )
+            edge_power = sum(edge_terms[1:], start=edge_terms[0])
             packed_velocity = self.bridge.pack(1, edge_velocity)
             packed_power = jnp.sum(packed_velocity * integrated_force)
         defect = edge_power - packed_power
@@ -214,7 +215,7 @@ class MACElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
             power = jnp.asarray(0.0, dtype=charge.dtype)
         else:
             velocity = self.operators.validate_velocity(face_velocity)
-            power = sum(
+            power_terms = tuple(
                 jnp.sum(measure * velocity_component * force_component)
                 for measure, velocity_component, force_component in zip(
                     self.operators.face_dual_measures,
@@ -223,6 +224,7 @@ class MACElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
                     strict=True,
                 )
             )
+            power = sum(power_terms[1:], start=power_terms[0])
         finite = (
             pnp.header.globally_eligible
             & jnp.all(

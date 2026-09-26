@@ -22,6 +22,7 @@ from ._operators import AbstractLinearOperator, DenseLinearOperator
 from ._preconditioner_properties import PreconditionerProperties
 from ._preconditioners import AbstractPreconditioner
 from ._preconditioning import AbstractPreconditionerBuilder
+from ._properties import PropertyEvidence
 from ._sparse_contract import AbstractSparseLinearOperator, SparseStorage
 from ._sparse_triangular import (
     analyze_sparse_triangular,
@@ -154,7 +155,7 @@ class GaussSeidelPreconditioner(AbstractPreconditioner, NonTrainableState):
             "self_adjoint"
         )
         positive = symmetric and operator.properties.certifies("positive_definite")
-        evidence = {
+        evidence: dict[str, PropertyEvidence] = {
             "linear": "construction",
             "stationary": "construction",
             **({"self_adjoint": "transformed"} if symmetric else {}),
@@ -317,7 +318,7 @@ class GaussSeidelPreconditionerBuilder(AbstractPreconditionerBuilder):
             "self_adjoint"
         )
         positive = symmetric and setup_operator.properties.certifies("positive_definite")
-        evidence = {
+        evidence: dict[str, PropertyEvidence] = {
             "linear": "construction",
             "stationary": "construction",
             **({"self_adjoint": "transformed"} if symmetric else {}),

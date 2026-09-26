@@ -569,7 +569,7 @@ class IntrinsicReactionCoordinatePlan(StrictModule, NonTrainableState):
         )
         source_ids: list[str] = []
 
-        def branch(direction: float):
+        def branch(direction: float) -> tuple[np.ndarray, np.ndarray, bool]:
             position = (
                 np.asarray(transition_state.positions).copy()
                 + direction * self.step_size * mode

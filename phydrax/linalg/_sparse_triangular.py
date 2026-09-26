@@ -325,7 +325,7 @@ def solve_sparse_triangular(
     off_values = jnp.where(off_diagonal, values_, jnp.zeros((), dtype=dtype))
     initial = jnp.zeros_like(rhs)
 
-    def solve_level(level, solution):
+    def solve_level(level: Array, solution: Array) -> Array:
         products = off_values[:, None] * solution[indices]
         row_sums = jax.ops.segment_sum(
             products,

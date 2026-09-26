@@ -76,7 +76,7 @@ class ActuatorLineFlowPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _basis(self):
+    def _basis(self) -> tuple[Array, Array]:
         reference = jnp.where(
             jnp.abs(self.axis[0]) < 0.9,
             jnp.asarray((1.0, 0.0, 0.0)),

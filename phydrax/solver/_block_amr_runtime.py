@@ -33,6 +33,7 @@ from ..discretization.amr._reflux import FluxRegister
 from ..discretization.finite_volume._amr import BlockAMRConservationPlan
 from ..discretization.finite_volume._block_amr import (
     BlockAMRFiniteVolumePlan,
+    BlockAMRFiniteVolumeStageResult,
     PreparedBlockAMRFiniteVolumeDynamics,
 )
 from ._finite_volume_topology_events import (
@@ -906,9 +907,14 @@ class PreparedBlockAMRRuntime(StrictModule):
             def stage(
                 stage_time: Array,
                 stage_state: BlockHierarchyState,
-            ):
+            ) -> BlockAMRFiniteVolumeStageResult:
                 nonlocal local_ok, maximum_rate
-                if parent_old is None or parent_new is None:
+                if (
+                    parent_old is None
+                    or parent_new is None
+                    or parent_start is None
+                    or parent_end is None
+                ):
                     coarse_old = stage_state
                     coarse_new = stage_state
                     coarse_start = stage_time

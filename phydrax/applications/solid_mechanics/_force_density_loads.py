@@ -26,6 +26,7 @@ from ._loads import (
     ClosedSurfacePressure,
     CurrentSurfaceTraction,
     GeneralFollowerLoad,
+    MechanicalLoadEvaluation,
     MechanicalLoadState,
     PneumaticPressure,
     ReferenceDeadTraction,
@@ -222,7 +223,7 @@ def _integrate_surface_evaluation(
     valid_slots: Array,
     basis: Array,
     measure: DeformedMeasureState,
-    evaluation,
+    evaluation: MechanicalLoadEvaluation,
     /,
 ) -> Array:
     weights = measure.measure(evaluation.semantics.measure_frame)

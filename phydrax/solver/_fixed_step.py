@@ -9,13 +9,14 @@ from collections.abc import Callable, Sequence
 from enum import IntEnum, IntFlag
 from math import prod
 from operator import index
-from typing import Any, ClassVar, final, Literal, TypeAlias
+from typing import Any, cast, ClassVar, final, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import core as jax_core
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._admissibility import (
     AdmissibilityHeader,
@@ -42,6 +43,7 @@ from .._iteration import (
     IterationPhase,
     IterationPlan,
     IterationRecord,
+    IterationRuntimeState,
     update_iteration,
 )
 from .._model import (
@@ -89,7 +91,7 @@ def _canonical_structured_state(state: Any, /) -> PyTree[Array]:
     return jax.tree.unflatten(treedef, arrays)
 
 
-def _state_dtype(state: PyTree[Array], /):
+def _state_dtype(state: PyTree[Array], /) -> np.dtype:
     dtypes = tuple(
         leaf.dtype
         for leaf in jax.tree.leaves(state)
@@ -137,7 +139,7 @@ def _take_saved_states(states: PyTree[Array], indices: Array, /) -> PyTree[Array
     return jax.tree.map(lambda leaf: leaf[indices], states)
 
 
-def _correction_dtype(state: PyTree[Array], /):
+def _correction_dtype(state: PyTree[Array], /) -> np.dtype:
     return jnp.finfo(_state_dtype(state)).dtype
 
 
@@ -500,7 +502,9 @@ class LearnedStepCorrection(AbstractAcceptedStepTransform):
             port_mapping=self.port_mapping,
         ).contract()
 
-    def _states(self, previous_state: Any, candidate_state: Any, /):
+    def _states(
+        self, previous_state: Any, candidate_state: Any, /
+    ) -> tuple[Array, Array]:
         if not eqx.is_array(previous_state) or not eqx.is_array(candidate_state):
             raise TypeError("LearnedStepCorrection requires array states.")
         if candidate_state.shape != self.state_shape:
@@ -514,7 +518,9 @@ class LearnedStepCorrection(AbstractAcceptedStepTransform):
             raise TypeError("LearnedStepCorrection requires real floating states.")
         return previous_state, candidate_state
 
-    def _checks(self, previous: Array, native: Array, proposed: Array, /):
+    def _checks(
+        self, previous: Array, native: Array, proposed: Array, /
+    ) -> tuple[Array, Array]:
         correction = proposed - native
         finite = jnp.all(jnp.isfinite(proposed))
         supported = jnp.asarray(self.support.contains(proposed), dtype=jnp.bool_)
@@ -633,7 +639,12 @@ class CallableSSPRKStageTransform(AbstractSSPRKStageTransform, NonTrainableState
     )
     transform_id: str = eqx.field(static=True)
 
-    def __init__(self, transform, transform_id: str, /) -> None:
+    def __init__(
+        self,
+        transform: Callable[[int, Array, Array, Any], StageTransformResult],
+        transform_id: str,
+        /,
+    ) -> None:
         if not callable(transform):
             raise TypeError("transform must be callable.")
         identifier = str(transform_id)
@@ -885,7 +896,9 @@ class SSPRK33FixedStepMethod(AbstractSSPRKFixedStepMethod):
             stage_transform=stage_transform,
         )
 
-    def _advance(self, time, state, step_size, args, /):
+    def _advance(
+        self, time: Array, state: Array, step_size: Array, args: Any, /
+    ) -> SSPRKStepResult:
         return ssprk33_step_with_evidence(
             self.vector_field,
             time,
@@ -912,7 +925,9 @@ class SSPRK54FixedStepMethod(AbstractSSPRKFixedStepMethod):
             stage_transform=stage_transform,
         )
 
-    def _advance(self, time, state, step_size, args, /):
+    def _advance(
+        self, time: Array, state: Array, step_size: Array, args: Any, /
+    ) -> SSPRKStepResult:
         return ssprk54_step_with_evidence(
             self.vector_field,
             time,
@@ -939,7 +954,7 @@ def _enforce_required_step_size(
         ~jnp.isfinite(step_size) | ~jnp.isfinite(declared) | (step_size != declared)
     )
     message = "Fixed-step step_size is incompatible with method.required_step_size."
-    if isinstance(incompatible, jax.core.Tracer):
+    if isinstance(incompatible, jax_core.Tracer):
         return eqx.error_if(step_size, incompatible, message)
     if bool(incompatible):
         raise ValueError(message)
@@ -1198,12 +1213,12 @@ class FixedStepIterationMetrics(StrictModule):
 
     def __init__(
         self,
-        time,
-        residual,
-        iterations,
-        work,
-        transform_applied,
-        transform_correction_norm,
+        time: ArrayLike,
+        residual: ArrayLike,
+        iterations: ArrayLike,
+        work: ArrayLike,
+        transform_applied: ArrayLike,
+        transform_correction_norm: ArrayLike,
         /,
     ) -> None:
         self.time = jnp.asarray(time)
@@ -1214,13 +1229,22 @@ class FixedStepIterationMetrics(StrictModule):
         self.transform_correction_norm = jnp.asarray(transform_correction_norm)
 
 
+_NumericalCarry: TypeAlias = tuple[PyTree[Array], Array]
+_StepPayload: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, AdmissibilityHeader | None
+]
+_IterationCarry: TypeAlias = tuple[_NumericalCarry, IterationRuntimeState]
+_RolloutCarry: TypeAlias = _NumericalCarry | _IterationCarry
+_CheckpointCarry: TypeAlias = tuple[_RolloutCarry, PyTree[Array], Array, Array]
+
+
 def _fixed_step_advance(
     problem: FixedStepProblem,
-    state_dtype: Any,
-    carry: tuple[PyTree[Array], Array],
+    state_dtype: np.dtype,
+    carry: _NumericalCarry,
     step_index: Array,
     /,
-):
+) -> tuple[_NumericalCarry, _StepPayload]:
     state, previous_success = carry
     step_size = jnp.asarray(problem.step_size, dtype=state_dtype)
     time = jnp.asarray(problem.t0, dtype=state_dtype) + step_index * step_size
@@ -1251,15 +1275,15 @@ def _fixed_step_advance(
 
 
 def _fixed_step_iteration_record(
-    phase,
-    ordinal,
-    active,
-    successful,
-    metrics,
+    phase: IterationPhase | ArrayLike,
+    ordinal: ArrayLike,
+    active: ArrayLike,
+    successful: ArrayLike,
+    metrics: FixedStepIterationMetrics,
     /,
     *,
-    terminal=False,
-    status=None,
+    terminal: ArrayLike = False,
+    status: ArrayLike | None = None,
 ) -> IterationRecord:
     committed = jnp.asarray(active, dtype=jnp.bool_) & jnp.asarray(
         successful, dtype=jnp.bool_
@@ -1383,8 +1407,12 @@ class FixedStepRolloutPlan(StrictModule):
         if self.iteration is None:
             initial_carry = numerical_initial
 
-            def step(carry, step_index):
-                return _fixed_step_advance(problem, state_dtype, carry, step_index)
+            def step(
+                carry: _RolloutCarry, step_index: Array
+            ) -> tuple[_RolloutCarry, _StepPayload]:
+                # Without an iteration plan the rollout carry is the numerical carry.
+                numerical = cast(_NumericalCarry, carry)
+                return _fixed_step_advance(problem, state_dtype, numerical, step_index)
 
         else:
             iteration = self.iteration
@@ -1419,8 +1447,11 @@ class FixedStepRolloutPlan(StrictModule):
                 initialize_iteration(iteration, initial_record),
             )
 
-            def step(carry, step_index):
-                numerical, iteration_state = carry
+            def step(
+                carry: _RolloutCarry, step_index: Array
+            ) -> tuple[_RolloutCarry, _StepPayload]:
+                # An iteration plan pairs the numerical carry with its runtime state.
+                numerical, iteration_state = cast(_IterationCarry, carry)
                 state, previous_success = numerical
                 active = previous_success & ~iteration_state.stop_requested
                 next_numerical, built_in = _fixed_step_advance(
@@ -1470,14 +1501,33 @@ class FixedStepRolloutPlan(StrictModule):
                 )
                 return (next_numerical, next_iteration), built_in
 
-        def numerical_carry(carry):
-            return carry if self.iteration is None else carry[0]
+        def numerical_carry(carry: _RolloutCarry) -> _NumericalCarry:
+            # The carry layout is fixed by whether an iteration plan is present.
+            return (
+                cast(_NumericalCarry, carry)
+                if self.iteration is None
+                else cast(_IterationCarry, carry)[0]
+            )
 
         indices = jnp.arange(problem.step_count, dtype=jnp.int32)
 
         if self.retention == "trajectory":
 
-            def trajectory_step(carry, step_index):
+            def trajectory_step(
+                carry: _RolloutCarry, step_index: Array
+            ) -> tuple[
+                _RolloutCarry,
+                tuple[
+                    PyTree[Array],
+                    Array,
+                    Array,
+                    Array,
+                    Array,
+                    Array,
+                    Array,
+                    AdmissibilityHeader | None,
+                ],
+            ]:
                 next_carry, payload = step(carry, step_index)
                 accepted, _ = numerical_carry(next_carry)
                 return next_carry, (accepted, *payload)
@@ -1551,12 +1601,16 @@ class FixedStepRolloutPlan(StrictModule):
                 jnp.zeros((len(saved_indices),), dtype=jnp.bool_).at[0].set(True)
             )
 
-            def checkpoint_step(carry, step_index):
+            def checkpoint_step(
+                carry: _CheckpointCarry, step_index: Array
+            ) -> tuple[_CheckpointCarry, _StepPayload]:
                 state_carry, saved, saved_valid, cursor = carry
                 next_carry, payload = step(state_carry, step_index)
                 accepted, successful = numerical_carry(next_carry)
 
-                def store(values):
+                def store(
+                    values: tuple[PyTree[Array], Array, Array],
+                ) -> tuple[PyTree[Array], Array, Array]:
                     states_, valid_, cursor_ = values
                     states_ = jax.tree.map(
                         lambda buffer, value: buffer.at[cursor_].set(value),

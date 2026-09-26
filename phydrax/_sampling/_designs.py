@@ -62,7 +62,7 @@ def _qmc_engine(
     design: HaltonDesign | SobolDesign | RandomizedQMCDesign,
     dimension: int,
     seed: int | np.random.Generator,
-):
+) -> Halton | Sobol:
     if isinstance(design, RandomizedQMCDesign):
         sequence = design.sequence
         scrambled = design.scrambled
@@ -70,8 +70,10 @@ def _qmc_engine(
         sequence = "halton" if isinstance(design, HaltonDesign) else "sobol"
         scrambled = design.scrambled
     if sequence == "halton":
-        return Halton(dimension, scramble=scrambled, seed=seed)
-    return Sobol(dimension, scramble=scrambled, seed=seed)
+        # ty cannot infer that `int(...)` results are exactly `int` (optype JustInt).
+        return Halton(dimension, scramble=scrambled, seed=seed)  # ty: ignore[invalid-argument-type]
+    # ty cannot infer that `int(...)` results are exactly `int` (optype JustInt).
+    return Sobol(dimension, scramble=scrambled, seed=seed)  # ty: ignore[invalid-argument-type]
 
 
 def _validate_design_count(design: DesignLike, count: int, /) -> None:
@@ -124,12 +126,15 @@ def host_design(
         )
         return np.stack(columns, axis=1)
     if isinstance(resolved, LatinHypercubeDesign):
-        engine = LatinHypercube(dimension_, seed=seed)
+        # ty cannot infer that `int(...)` results are exactly `int` (optype JustInt).
+        engine = LatinHypercube(dimension_, seed=seed)  # ty: ignore[invalid-argument-type]
     else:
         engine = _qmc_engine(resolved, dimension_, seed)
         if start_:
-            engine.fast_forward(start_)
-    return np.asarray(engine.random(count_), dtype=np.float64).reshape(
+            # ty cannot infer that `int(...)` results are exactly `int` (optype JustInt).
+            engine.fast_forward(start_)  # ty: ignore[invalid-argument-type]
+    # ty cannot infer that `int(...)` results are exactly `int` (optype JustInt).
+    return np.asarray(engine.random(count_), dtype=np.float64).reshape(  # ty: ignore[invalid-argument-type]
         (count_, dimension_)
     )
 
@@ -183,13 +188,15 @@ def host_design_factory(
 
         return materialize_hammersley
     if isinstance(resolved, LatinHypercubeDesign):
-        engine = LatinHypercube(dimension_, seed=seed)
+        # ty cannot infer that `int(...)` results are exactly `int` (optype JustInt).
+        engine = LatinHypercube(dimension_, seed=seed)  # ty: ignore[invalid-argument-type]
     else:
         engine = _qmc_engine(resolved, dimension_, seed)
 
     def materialize_next(count: int, /) -> np.ndarray:
         count_ = checked_count(count)
-        return np.asarray(engine.random(count_), dtype=np.float64).reshape(
+        # ty cannot infer that `int(...)` results are exactly `int` (optype JustInt).
+        return np.asarray(engine.random(count_), dtype=np.float64).reshape(  # ty: ignore[invalid-argument-type]
             (count_, dimension_)
         )
 
@@ -242,7 +249,7 @@ def materialize_design(
     prototype = jnp.zeros((count_, dimension_), dtype=jnp.float64)
     result_spec = jax.ShapeDtypeStruct(prototype.shape, prototype.dtype)
 
-    def materialize_host(key_value):
+    def materialize_host(key_value: ArrayLike) -> np.ndarray:
         return np.asarray(
             host_design(
                 resolved,

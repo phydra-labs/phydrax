@@ -225,7 +225,7 @@ class BSplineInterpolant(StrictModule, NonTrainableState):
         self.output_shape = tuple(coefficients_.shape[1:])
 
     @property
-    def dtype(self):
+    def dtype(self) -> jnp.dtype:
         return self.coefficients.dtype
 
     def __call__(

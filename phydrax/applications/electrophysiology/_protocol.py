@@ -500,7 +500,9 @@ def run_experiment(
     if steps < 0:
         raise ValueError("steps must be nonnegative.")
 
-    def advance(state, _):
+    def advance(
+        state: ExperimentState, _: None
+    ) -> tuple[ExperimentState, tuple[Array, Array, Array]]:
         result = step_experiment(runtime, state)
         return result.state, (
             result.state.cable.voltage_mV,

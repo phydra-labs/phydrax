@@ -72,7 +72,12 @@ class ConnectedConfigurations(StrictModule):
 class AbstractDiscreteQuantumOperator(AbstractLocalQuantumOperator):
     """Matrix-free discrete operator exposing diagonal and connected configurations."""
 
-    def estimate(self, model, configurations, /) -> LocalOperatorEstimate:
+    def estimate(
+        self,
+        model: Callable[[Array], LogAmplitude],
+        configurations: Array,
+        /,
+    ) -> LocalOperatorEstimate:
         return _discrete_operator_estimate(model, self, configurations)
 
     @abstractmethod
@@ -145,7 +150,9 @@ class CallableDiscreteQuantumOperator(AbstractDiscreteQuantumOperator):
         return result
 
 
-def _evaluate_amplitudes(model: Callable[[Array], LogAmplitude], configs: Array):
+def _evaluate_amplitudes(
+    model: Callable[[Array], LogAmplitude], configs: Array
+) -> LogAmplitude:
     values = jax.vmap(model)(configs)
     if not isinstance(values, LogAmplitude):
         raise TypeError("The amplitude model must return LogAmplitude values.")

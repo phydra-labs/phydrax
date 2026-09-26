@@ -9,7 +9,7 @@ from math import isfinite
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState
@@ -84,7 +84,7 @@ class SparseFactorizationPreconditioner(AbstractPreconditioner, NonTrainableStat
         residual: PyTree[Any],
         /,
         *,
-        iteration: Array | None = None,
+        iteration: ArrayLike | None = None,
     ) -> PyTree[Array]:
         del iteration
         coordinates = self.space.flatten(self.space.validate(residual))

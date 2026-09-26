@@ -275,7 +275,7 @@ class PreparedSurfelVoxelProjection(StrictModule):
             attributes=(
                 None
                 if attribute_result is None
-                else attribute_result.reshape(output_shape + attribute_value.shape[1:])
+                else attribute_result.reshape(output_shape + attribute_result.shape[1:])
             ),
             supported=supported.reshape(output_shape),
             conflicting=conflicting.reshape(output_shape),

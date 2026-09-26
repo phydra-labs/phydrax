@@ -444,7 +444,7 @@ class GraphDatasetDomain(JointFactor):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap a `GraphIR -> GraphIR` model as a graph-family `DomainFunction`.
 
         The model is evaluated on each sampled batched topology and returns the
@@ -485,7 +485,7 @@ class GraphDatasetDomain(JointFactor):
         edge_input_key: str | None = None,
         global_input_key: str | None = None,
         output_key: str | None = None,
-    ):
+    ) -> "DomainFunction":
         """Wrap an autoregressive graph rollout as a graph-family `DomainFunction`.
 
         Use this when a graph model predicts a sequence by repeatedly applying a

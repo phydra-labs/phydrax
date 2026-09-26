@@ -4,6 +4,7 @@
 """Balanced positive-sequence RMS networks, native optimization and machine DAEs."""
 
 from importlib import import_module
+from typing import Any
 
 from ._dynamics import (
     ClassicalMachine,
@@ -68,7 +69,7 @@ from ._power_flow import (
 _FACADE_EXPORT_MODULES = ("._polynomial_power_flow",)
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     for module_name in reversed(_FACADE_EXPORT_MODULES):
         module = import_module(module_name, __package__)
         if name in module.__all__:

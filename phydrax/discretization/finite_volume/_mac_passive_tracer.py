@@ -25,6 +25,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import (
     apply_gather_stencil,
     gather_patches,
+    GatherStencil,
     rectilinear_stencil,
 )
 from ..._strict import StrictModule
@@ -322,7 +323,9 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
             }
         )
 
-    def _stencil(self, axis_nodes: tuple[Array, ...], coordinates: Array, /):
+    def _stencil(
+        self, axis_nodes: tuple[Array, ...], coordinates: Array, /
+    ) -> GatherStencil:
         return rectilinear_stencil(
             axis_nodes,
             coordinates,

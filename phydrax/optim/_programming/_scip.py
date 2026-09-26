@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -25,6 +26,10 @@ from ._mixed_integer_policy import (
     MixedIntegerMethodCapabilities,
 )
 from ._problem import LinearProgram
+
+
+if TYPE_CHECKING:
+    from ._mixed_integer_lifecycle import PreparedMixedIntegerProgram
 
 
 class SCIPMixedInteger(AbstractMixedIntegerMethod):
@@ -86,7 +91,7 @@ def prepare_scip_mixed_integer(
     return _SCIPMixedIntegerState(prepare_scip(method.plan))
 
 
-def _configure(model, plan: SCIPPlan, /) -> None:
+def _configure(model: Any, plan: SCIPPlan, /) -> None:
     model.setParam("limits/nodes", plan.maximum_nodes)
     if plan.time_limit is not None:
         model.setParam("limits/time", plan.time_limit)
@@ -123,7 +128,11 @@ def _provider_status(status: str, /) -> MixedIntegerStatus:
     return MixedIntegerStatus.BACKEND_FAILURE
 
 
-def solve_scip_mixed_integer(prepared, candidates, /) -> MixedIntegerResult:
+def solve_scip_mixed_integer(
+    prepared: PreparedMixedIntegerProgram,
+    candidates: tuple[MixedIntegerCandidate, ...],
+    /,
+) -> MixedIntegerResult:
     from ._mixed_integer_lifecycle import PreparedMixedIntegerProgram
 
     if not isinstance(prepared, PreparedMixedIntegerProgram):

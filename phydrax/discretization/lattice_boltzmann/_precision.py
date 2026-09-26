@@ -8,6 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from ..._precision import (
     precision_itemsize,
@@ -121,19 +122,19 @@ class LatticeBoltzmannPrecisionPolicy(StrictModule, NonTrainableState):
         self.mixed_storage = mixed
         self.policy_id = resolution.resolution_id
 
-    def coefficient(self, value: Any, /):
+    def coefficient(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.compute_dtype))
 
-    def population(self, value: Any, /):
+    def population(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.population_dtype))
 
-    def compute(self, value: Any, /):
+    def compute(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.compute_dtype))
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.accumulation_dtype))
 
-    def certification(self, value: Any, /):
+    def certification(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=jnp.dtype(self.certification_dtype))
 
     @property

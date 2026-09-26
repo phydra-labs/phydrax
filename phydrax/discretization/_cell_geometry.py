@@ -22,10 +22,17 @@ from ._cell_mesh import CellMesh
 class CellGeometryElement(Protocol):
     """Reference element contract required by a cell geometry layout."""
 
-    cell_kind: str
-    conformity: str
-    local_dof_count: int
-    element_id: str
+    @property
+    def cell_kind(self) -> str: ...
+
+    @property
+    def conformity(self) -> str: ...
+
+    @property
+    def local_dof_count(self) -> int: ...
+
+    @property
+    def element_id(self) -> str: ...
 
 
 class CellVertexGeometryElement(StrictModule, NonTrainableState):
@@ -121,7 +128,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
     def affine(cls, mesh: CellMesh, /) -> CellGeometrySpec:
         from .fem._reference import lagrange_element
 
-        elements = {}
+        elements: dict[str, CellGeometryElement] = {}
         for block in mesh.blocks:
             elements[block.name] = (
                 CellVertexGeometryElement(block.cell_kind, block.arity)

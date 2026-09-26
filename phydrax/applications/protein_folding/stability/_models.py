@@ -9,7 +9,7 @@ import abc
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import cast, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -196,6 +196,7 @@ class StabilityPrediction(StrictModule, NonTrainableState):
 class AbstractProteinStabilityPredictor(StrictModule):
     """Scientific predictor interface; implementations retain immutable fit lineage."""
 
+    transform: eqx.AbstractVar[ProteinFeatureTransform]
     model_id: str
     training_case_ids: tuple[str, ...]
     training_family_ids: tuple[str, ...]
@@ -434,7 +435,7 @@ class GlobalSubstitutionBaseline(AbstractProteinStabilityPredictor):
                 "assay_channel": self.assay_channel,
                 "condition_id": self.condition_id,
                 "sign_convention": self.sign_convention,
-                "ridge": self.ridge.hex(),
+                "ridge": float(self.ridge).hex(),
             }
         )
 
@@ -629,8 +630,8 @@ class RegularizedEnvironmentModel(AbstractProteinStabilityPredictor):
                 "assay_channel": self.assay_channel,
                 "condition_id": self.condition_id,
                 "sign_convention": self.sign_convention,
-                "family_effect_scale": self.family_effect_scale.hex(),
-                "ridge": self.ridge.hex(),
+                "family_effect_scale": float(self.family_effect_scale).hex(),
+                "ridge": float(self.ridge).hex(),
             }
         )
 
@@ -956,7 +957,7 @@ class RegularizedPairInteractionModel(StrictModule):
                 "transform_id": self.transform_id,
                 "training_source_manifest_ids": list(self.training_source_manifest_ids),
                 "single_model_id": self.single_model_id,
-                "ridge": self.ridge.hex(),
+                "ridge": float(self.ridge).hex(),
                 "assay_channel": self.assay_channel,
                 "condition_id": self.condition_id,
                 "sign_convention": self.sign_convention,
@@ -1285,7 +1286,9 @@ class ProteinStabilityModelSelectionRecord:
         )
         scores = []
         for model_fit in ordered:
-            prediction = model_fit.predictor.predict(selection_features)
+            # Lineage validation admitted only successful single-mutant predictors.
+            predictor = cast(AbstractProteinStabilityPredictor, model_fit.predictor)
+            prediction = predictor.predict(selection_features)
             validity = np.asarray(prediction.valid)
             means = np.asarray(prediction.mean)
             if (
@@ -1346,7 +1349,7 @@ class ProteinStabilityModelSelectionRecord:
                 "candidate_hyperparameters": [
                     (
                         fit_id,
-                        [(name, value.hex()) for name, value in hyperparameters],
+                        [(name, float(value).hex()) for name, value in hyperparameters],
                     )
                     for fit_id, hyperparameters in normalized_hyperparameters
                 ],
@@ -1356,7 +1359,7 @@ class ProteinStabilityModelSelectionRecord:
                 "model_selection_feature_ids": list(feature_ids),
                 "selection_source_manifest_ids": list(source_ids),
                 "candidate_scores": [
-                    (fit_id, score.hex()) for fit_id, score in candidate_scores
+                    (fit_id, float(score).hex()) for fit_id, score in candidate_scores
                 ],
                 "chosen_fit_id": chosen_fit_id,
                 "chosen_baseline_fit_id": chosen_baseline_fit_id,
@@ -1459,7 +1462,7 @@ def _transformed_rows(
 
 def _linear_prediction(
     design: Array,
-    valid: Array,
+    valid: ArrayLike,
     reasons: Sequence[str | None],
     /,
     *,
@@ -1512,12 +1515,12 @@ def _linear_prediction(
 def _measurement_weights(
     measurements: Sequence[ProteinStabilityMeasurement], /
 ) -> tuple[Array | None, tuple[str, ...]]:
-    if any(
-        item.standard_error_kcal_per_mol is None
-        or item.uncertainty_source_manifest_id is None
-        for item in measurements
-    ):
-        return None, ("calibration-measurement-uncertainty-unquantified",)
+    standard_errors: list[float] = []
+    for item in measurements:
+        standard_error = item.standard_error_kcal_per_mol
+        if standard_error is None or item.uncertainty_source_manifest_id is None:
+            return None, ("calibration-measurement-uncertainty-unquantified",)
+        standard_errors.append(standard_error)
     shared_wt_blocks: dict[tuple[str, str], int] = {}
     for item in measurements:
         block = (item.shared_wt_id, item.assay_channel)
@@ -1526,7 +1529,7 @@ def _measurement_weights(
         return None, ("shared-wt-block-covariance-unquantified",)
     return (
         jnp.asarray(
-            [1.0 / float(item.standard_error_kcal_per_mol) ** 2 for item in measurements]
+            [1.0 / float(standard_error) ** 2 for standard_error in standard_errors]
         ),
         (),
     )
@@ -1680,6 +1683,7 @@ def fit_global_substitution_baseline(
     coefficients, covariance, residual, status, reasons = result
     if reasons:
         return _failed_fit(None, reasons, selected_measurements, status, **metadata)
+    assert coefficients is not None and covariance is not None and residual is not None
     predictor = GlobalSubstitutionBaseline(
         coefficients,
         covariance,
@@ -1779,6 +1783,7 @@ def fit_regularized_environment_model(
     )
     if reasons:
         return _failed_fit(None, reasons, selected_measurements, status, **metadata)
+    assert coefficients is not None and covariance is not None and residual is not None
     family_start = 1 + rows.shape[1]
     family_effects = coefficients[family_start:] * family_scale
     unseen_family_variance = (
@@ -1974,6 +1979,7 @@ def fit_regularized_pair_interaction_model(
     )
     if reasons:
         return _failed_fit(None, reasons, measurements, status, **metadata)
+    assert coefficients is not None and covariance is not None and residual is not None
     predictor = RegularizedPairInteractionModel(
         coefficients,
         covariance,
@@ -1999,7 +2005,7 @@ def fit_regularized_pair_interaction_model(
 
 
 def _failed_fit(
-    predictor,
+    predictor: None,
     reasons: Sequence[str],
     measurements: Sequence[ProteinStabilityMeasurement],
     numerical_status: int,

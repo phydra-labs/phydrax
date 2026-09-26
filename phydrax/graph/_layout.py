@@ -7,13 +7,14 @@ import jax.core as jcore
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
+from jaxtyping import PyTree
 
 from phydrax._strict import StrictModule
 
 from ._ir import batch_graphs, GraphIR
 
 
-def _pad_tree_leading(tree, target: int):
+def _pad_tree_leading(tree: PyTree | None, target: int) -> PyTree | None:
     if tree is None:
         return None
 
@@ -29,20 +30,20 @@ def _pad_tree_leading(tree, target: int):
     return jtu.tree_map(_pad_leaf, tree)
 
 
-def _trim_tree_leading(tree, count: int):
+def _trim_tree_leading(tree: PyTree | None, count: int) -> PyTree | None:
     if tree is None:
         return None
     return jtu.tree_map(lambda x: x[:count], tree)
 
 
-def _contains_tracer(tree) -> bool:
+def _contains_tracer(tree: PyTree) -> bool:
     for leaf in jtu.tree_leaves(tree):
         if isinstance(leaf, jcore.Tracer):
             return True
     return False
 
 
-def _tree_leading_size(tree) -> int | None:
+def _tree_leading_size(tree: PyTree | None) -> int | None:
     if tree is None:
         return None
     leaves = jtu.tree_leaves(tree)

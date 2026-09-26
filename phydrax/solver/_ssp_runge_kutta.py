@@ -4,14 +4,19 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, TYPE_CHECKING
 
 import diffrax as dfx
 import equinox as eqx
+from jaxtyping import Array
 
 from .._numerics._ssp_runge_kutta import ssprk33_step, ssprk54_step
 from ._temporal_method import TemporalMethodCapabilities
 from ._temporal_precision import TemporalPrecisionPolicy
+
+
+if TYPE_CHECKING:
+    from diffrax._custom_types import Args, BoolScalarLike, RealScalarLike, VF, Y
 
 
 class SSPRK33(dfx.AbstractSolver):
@@ -42,16 +47,32 @@ class SSPRK33(dfx.AbstractSolver):
             method_id=self.solver_id,
         )
 
-    def order(self, terms):
+    def order(self, terms: dfx.AbstractTerm) -> int:
         del terms
         return 3
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> None:
         del terms, t0, t1, args
         self.precision.validate_state(y0)
         return None
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: None,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Array, None, dict[str, Array], None, dfx.RESULTS]:
         del solver_state, made_jump
         y1 = ssprk33_step(
             terms.vf,
@@ -63,7 +84,7 @@ class SSPRK33(dfx.AbstractSolver):
         )
         return y1, None, {"y0": y0, "y1": y1}, None, dfx.RESULTS.successful
 
-    def func(self, terms, t0, y0, args):
+    def func(self, terms: dfx.AbstractTerm, t0: RealScalarLike, y0: Y, args: Args) -> VF:
         return terms.vf(t0, y0, args)
 
 
@@ -101,16 +122,32 @@ class SSPRK54(dfx.AbstractSolver):
             method_id=self.solver_id,
         )
 
-    def order(self, terms):
+    def order(self, terms: dfx.AbstractTerm) -> int:
         del terms
         return 4
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> None:
         del terms, t0, t1, args
         self.precision.validate_state(y0)
         return None
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: dfx.AbstractTerm,
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: None,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Array, None, dict[str, Array], None, dfx.RESULTS]:
         del solver_state, made_jump
         y1 = ssprk54_step(
             terms.vf,
@@ -122,7 +159,7 @@ class SSPRK54(dfx.AbstractSolver):
         )
         return y1, None, {"y0": y0, "y1": y1}, None, dfx.RESULTS.successful
 
-    def func(self, terms, t0, y0, args):
+    def func(self, terms: dfx.AbstractTerm, t0: RealScalarLike, y0: Y, args: Args) -> VF:
         return terms.vf(t0, y0, args)
 
 

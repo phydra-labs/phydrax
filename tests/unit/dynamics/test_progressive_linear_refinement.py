@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import dataclasses
+import json
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -62,6 +65,22 @@ def test_progressive_policy_refines_on_plateau_then_stops_without_improvement():
     assert state.current_steps == 3
     assert not record.refined
     assert record.stopped
+
+
+def test_progressive_policy_records_python_plateau_flag_at_zero_metric():
+    policy = phx.dynamics.identification.ProgressiveLinearRefinementPolicy(
+        initial_steps=1,
+        step_increment=1,
+        maximum_steps=4,
+        grace_validations=1,
+        minimum_validations=2,
+    )
+    state = policy.initialize()
+    for step in range(2):
+        state, record = policy.observe(state, 0.0, validation_step=step)
+
+    assert record.plateau is True
+    assert json.loads(json.dumps(dataclasses.asdict(record)))["plateau"] is True
 
 
 def test_progressive_policy_rejects_invalid_metrics_and_unsupported_transitions():

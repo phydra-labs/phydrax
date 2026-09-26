@@ -125,7 +125,7 @@ def continue_scft_interactions(
         space_id=f"{prepared.prepared_id}:interaction-continuation-space",
     )
 
-    def residual(fields, scale, _):
+    def residual(fields: Array, scale: Array, _: object) -> Array:
         evaluation = prepared.evaluate(fields, chi_n=prepared.plan.model.chi_n * scale)
         return jnp.where(evaluation.successful, evaluation.residual, jnp.nan)
 

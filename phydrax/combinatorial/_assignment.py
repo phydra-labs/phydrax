@@ -10,7 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 from .._assignment_core import hungarian_assignment_one
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -91,8 +91,11 @@ class BipartiteAssignmentSpace(AbstractBoundableCombinatorialSpace):
     def structure_id(self) -> str:
         return self._structure_id
 
-    def decision_spec(self, /) -> AssignmentDecision:
-        return AssignmentDecision(jax.ShapeDtypeStruct((self.num_rows,), jnp.int32))
+    def decision_spec(self, /) -> PyTree[jax.ShapeDtypeStruct]:
+        rows = self.num_rows
+        return jax.eval_shape(
+            lambda: AssignmentDecision(jnp.zeros((rows,), dtype=jnp.int32))
+        )
 
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
         return jax.ShapeDtypeStruct(
@@ -230,7 +233,7 @@ class HungarianAssignment(AbstractBoundableLinearCombinatorialMethod):
         if not isinstance(space, BipartiteAssignmentSpace):
             raise TypeError("HungarianAssignment requires BipartiteAssignmentSpace.")
         lower, upper = space.feature_bounds()
-        return self._solve_bounds(problem, plan, lower, upper)
+        return self._solve_bounds(problem, space, plan, lower, upper)
 
     def solve_restricted(
         self,
@@ -246,13 +249,21 @@ class HungarianAssignment(AbstractBoundableLinearCombinatorialMethod):
             raise ValueError("Restriction does not belong to assignment space.")
         return self._solve_bounds(
             problem,
+            space,
             plan,
             jnp.asarray(restriction.lower),
             jnp.asarray(restriction.upper),
         )
 
-    def _solve_bounds(self, problem, plan, lower, upper, /):
-        space = problem.space
+    def _solve_bounds(
+        self,
+        problem: LinearCombinatorialProblem,
+        space: BipartiteAssignmentSpace,
+        plan: CombinatorialPlan,
+        lower: Array,
+        upper: Array,
+        /,
+    ) -> CombinatorialResult:
         raw_costs = jax.tree_util.tree_leaves(problem.costs)[0]
         batch_shape = problem.batch_shape
         rows = space.num_rows

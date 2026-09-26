@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -10,6 +10,17 @@ import numpy as np
 from phydrax._strict import StrictModule
 
 from ._ir import GraphIR
+
+
+if TYPE_CHECKING:
+    from ..domain.graph import (
+        BoundaryEdges,
+        BoundaryNodes,
+        EdgeType,
+        InterfaceEdges,
+        InteriorNodes,
+        NodeType,
+    )
 
 
 NodeFeatureMode = Literal["positions", "geometry"] | Callable[[jnp.ndarray], Any] | None
@@ -46,22 +57,22 @@ class GeometryGraph(StrictModule):
         self.boundary_edges = jnp.asarray(boundary_edges, dtype=jnp.int32)
         self.interface_edges = jnp.asarray(interface_edges, dtype=jnp.int32)
 
-    def boundary_nodes_component(self):
+    def boundary_nodes_component(self) -> BoundaryNodes:
         from ..domain.graph import BoundaryNodes
 
         return BoundaryNodes(self.boundary_nodes)
 
-    def interior_nodes_component(self):
+    def interior_nodes_component(self) -> InteriorNodes:
         from ..domain.graph import InteriorNodes
 
         return InteriorNodes(self.interior_nodes)
 
-    def boundary_edges_component(self):
+    def boundary_edges_component(self) -> BoundaryEdges:
         from ..domain.graph import BoundaryEdges
 
         return BoundaryEdges(self.boundary_edges)
 
-    def interface_edges_component(self):
+    def interface_edges_component(self) -> InterfaceEdges:
         from ..domain.graph import InterfaceEdges
 
         return InterfaceEdges(self.interface_edges)
@@ -98,17 +109,17 @@ class QueryGraph(StrictModule):
         self.target_type = int(target_type)
         self.query_edge_type = int(query_edge_type)
 
-    def source_nodes_component(self):
+    def source_nodes_component(self) -> NodeType:
         from ..domain.graph import NodeType
 
         return NodeType(self.source_type, name="source_nodes")
 
-    def target_nodes_component(self):
+    def target_nodes_component(self) -> NodeType:
         from ..domain.graph import NodeType
 
         return NodeType(self.target_type, name="target_nodes")
 
-    def query_edges_component(self):
+    def query_edges_component(self) -> EdgeType:
         from ..domain.graph import EdgeType
 
         return EdgeType(self.query_edge_type, name="query_edges")

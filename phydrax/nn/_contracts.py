@@ -25,10 +25,11 @@ def compose_regularity(
     *stages: DerivativeRegularity | None,
 ) -> DerivativeRegularity | None:
     """Regularity of applying `stages` in order; undeclared if any stage is."""
-    if not stages or any(stage is None for stage in stages):
+    declared = tuple(stage for stage in stages if stage is not None)
+    if not stages or len(declared) != len(stages):
         return None
-    result = stages[0]
-    for stage in stages[1:]:
+    result = declared[0]
+    for stage in declared[1:]:
         result = result.compose(stage)
     return result
 
@@ -38,10 +39,11 @@ def sum_regularity(
 ) -> DerivativeRegularity | None:
     """Regularity of a sum or juxtaposition of `terms`; undeclared if any is."""
     terms_ = tuple(terms)
-    if not terms_ or any(term is None for term in terms_):
+    declared = tuple(term for term in terms_ if term is not None)
+    if not terms_ or len(declared) != len(terms_):
         return None
-    result = terms_[0]
-    for term in terms_[1:]:
+    result = declared[0]
+    for term in declared[1:]:
         result = result.add(term)
     return result
 
@@ -51,10 +53,11 @@ def product_regularity(
 ) -> DerivativeRegularity | None:
     """Regularity of an elementwise product of `factors`; undeclared if any is."""
     factors_ = tuple(factors)
-    if not factors_ or any(factor is None for factor in factors_):
+    declared = tuple(factor for factor in factors_ if factor is not None)
+    if not factors_ or len(declared) != len(factors_):
         return None
-    result = factors_[0]
-    for factor in factors_[1:]:
+    result = declared[0]
+    for factor in declared[1:]:
         result = result.multiply(factor)
     return result
 

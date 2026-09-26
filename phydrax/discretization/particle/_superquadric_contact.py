@@ -95,7 +95,7 @@ class SuperquadricSetPlan(StrictModule, NonTrainableState):
         self.fixed_mask = jnp.asarray(fixed)
         self.plan_id = identifier
 
-    def prepare(self, particles: ParticleDiscretization, /):
+    def prepare(self, particles: ParticleDiscretization, /) -> PreparedSuperquadricSet:
         return PreparedSuperquadricSet(self, particles)
 
     def rigid_body_plan(self, particles: ParticleDiscretization, /) -> RigidBodySetPlan:
@@ -259,12 +259,14 @@ def superquadric_pair_contact(
         fallback,
     )
 
-    def support(rotation, axes, first, second, world_direction):
+    def support(
+        rotation: Array, axes: Array, first: Array, second: Array, world_direction: Array
+    ) -> Array:
         local_direction = contract("...ji,...j->...i", rotation, world_direction)
         local = jax.vmap(_support_local)(local_direction, axes, first, second)
         return contract("...ij,...j->...i", rotation, local)
 
-    def iteration(_, axis):
+    def iteration(_: Array, axis: Array) -> Array:
         left_support = left_position + support(
             left_rotation, left_axes, left_first, left_second, axis
         )
@@ -352,8 +354,8 @@ def superquadric_pair_contact(
     )
 
 
-def _support_local(direction, axes, first, second):
-    def dual_norm(value):
+def _support_local(direction: Array, axes: Array, first: Array, second: Array) -> Array:
+    def dual_norm(value: Array) -> Array:
         first_dual = first / (first - 1.0)
         second_dual = second / (second - 1.0)
         scaled = axes * value
@@ -365,10 +367,12 @@ def _support_local(direction, axes, first, second):
     return jax.grad(dual_norm)(direction)
 
 
-def _principal_curvature(point, axes, first, second):
+def _principal_curvature(
+    point: Array, axes: Array, first: Array, second: Array
+) -> tuple[Array, Array, Array]:
     scale = jnp.min(axes)
 
-    def field(value):
+    def field(value: Array) -> Array:
         normalized = value / axes
         planar = (normalized[0] ** 2) ** (0.5 * first) + (normalized[1] ** 2) ** (
             0.5 * first
@@ -395,7 +399,9 @@ def _principal_curvature(point, axes, first, second):
     return principal, valid, jnp.minimum(gradient_norm, step)
 
 
-def _superquadric_inertia(mass, axes, first, second):
+def _superquadric_inertia(
+    mass: np.ndarray, axes: np.ndarray, first: np.ndarray, second: np.ndarray
+) -> np.ndarray:
     result = np.zeros((mass.shape[0], 3, 3), dtype=np.result_type(mass, axes))
     for index in range(mass.shape[0]):
         p = float(first[index])
@@ -423,7 +429,7 @@ def _superquadric_inertia(mass, axes, first, second):
     return result
 
 
-def _beta_integral(exponent, moment_power, radial_power):
+def _beta_integral(exponent: float, moment_power: float, radial_power: float) -> float:
     return math.exp(
         math.lgamma((moment_power + 1.0) / exponent)
         + math.lgamma(1.0 + radial_power / exponent)

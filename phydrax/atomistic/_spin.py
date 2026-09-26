@@ -329,17 +329,14 @@ def _numeric_coefficients(
         raise ValueError("Inactive spin sites cannot carry onsite spin coefficients.")
     safe_moments = np.where(active, moments_host, 1.0)
     safe_axes = np.where(active[:, None], axes_host, 0.0)
-    return tuple(
-        jnp.asarray(value)
-        for value in (
-            exchange_host,
-            gamma_host,
-            dmi_host,
-            anisotropy_host,
-            safe_axes,
-            safe_moments,
-            field_host,
-        )
+    return (
+        jnp.asarray(exchange_host),
+        jnp.asarray(gamma_host),
+        jnp.asarray(dmi_host),
+        jnp.asarray(anisotropy_host),
+        jnp.asarray(safe_axes),
+        jnp.asarray(safe_moments),
+        jnp.asarray(field_host),
     )
 
 

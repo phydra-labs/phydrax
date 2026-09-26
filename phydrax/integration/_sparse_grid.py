@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import itertools
+from collections.abc import Iterable
 from typing import Any
 
 import jax.numpy as jnp
@@ -37,6 +38,7 @@ from .._numerics import (
     SmolyakFrontier,
     SmolyakIndexSet,
     SmolyakRefinementEpoch,
+    SmolyakTerm,
 )
 from .._strict import StrictModule
 from ._batches import PointIntegrationBatch
@@ -109,7 +111,7 @@ def _unwrap(factor: Any, /) -> Any:
 def _smolyak_rule_from_terms(
     dimension: int,
     rules: tuple[SmolyakAxisRule, ...],
-    terms,
+    terms: Iterable[SmolyakTerm],
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
     table: dict[
@@ -520,7 +522,7 @@ def _index_set_node_count(
         max((abs(weight) for weight in weights.values()), default=0.0),
     )
     threshold = 64.0 * np.finfo(np.float64).eps * weight_scale
-    return sum(abs(weight) > threshold for weight in weights.values())
+    return sum(1 for weight in weights.values() if abs(weight) > threshold)
 
 
 def prepare_adaptive_sparse_grid(

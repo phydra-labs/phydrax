@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
 from typing import Literal, TypeAlias
 
@@ -28,6 +29,13 @@ from ._kalman import initialize_kalman_filter, kalman_filter_step, KalmanFilterS
 
 BellmanExecutionMethod: TypeAlias = Literal["auto", "analytic", "optimization"]
 BellmanCurvatureMethod: TypeAlias = Literal["observed", "score-outer-product"]
+# 29 per-case optimization outputs, ordered as consumed by the filter step.
+_CaseStepOutputs: TypeAlias = tuple[Array, ...]
+# (mode, information, covariance, value, gradient, iterations, converged, valid,
+#  minimum curvature, observation log-probability) of one measurement update.
+_UpdateOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 BellmanStatus: TypeAlias = Literal[
     "success",
     "initialization_optimizer_failure",
@@ -231,7 +239,7 @@ def _covariance_to_information(
 
 
 def _minimize(
-    objective,
+    objective: Callable[[Array], Array],
     initial: Array,
     /,
     *,
@@ -452,7 +460,7 @@ def _initial_optimization_state(
     statuses = []
     for case_index in range(count):
 
-        def objective(flat_state):
+        def objective(flat_state: Array) -> Array:
             complete = locations.at[case_index].set(flat_state)
             values = complete.reshape(case_shape + state_shape)
             return -jnp.asarray(prior.log_prob(values)).reshape((count,))[case_index]
@@ -758,7 +766,7 @@ def _optimization_case_step(
     observation_mask: Array,
     active: Array,
     /,
-):
+) -> _CaseStepOutputs:
     size = _state_size(problem)
     state_shape = problem.model.state_shape
     count = _case_count(problem)
@@ -775,7 +783,7 @@ def _optimization_case_step(
     observation = problem.model.observation
     identity = jnp.eye(size, dtype=previous_mode.dtype)
 
-    def inactive(_):
+    def inactive(_: None) -> _CaseStepOutputs:
         return (
             previous_mode,
             previous_mode,
@@ -812,8 +820,8 @@ def _optimization_case_step(
             previous_time,
         )
 
-    def active_step(_):
-        def prediction_objective(joint):
+    def active_step(_: None) -> _CaseStepOutputs:
+        def prediction_objective(joint: Array) -> Array:
             prior_state = joint[:size]
             next_state = joint[size:]
             displacement = prior_state - previous_mode
@@ -870,7 +878,7 @@ def _optimization_case_step(
 
         observed_count = jnp.sum(observation_mask)
 
-        def missing_update(_):
+        def missing_update(_: None) -> _UpdateOutputs:
             return (
                 predicted_mode,
                 predicted_information,
@@ -884,8 +892,8 @@ def _optimization_case_step(
                 jnp.asarray(0.0, dtype=predicted_mode.dtype),
             )
 
-        def observed_update(_):
-            def update_objective(flat_state):
+        def observed_update(_: None) -> _UpdateOutputs:
+            def update_objective(flat_state: Array) -> Array:
                 displacement = flat_state - predicted_mode
                 prediction_value_ = (
                     0.5 * displacement @ predicted_information @ displacement

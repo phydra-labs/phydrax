@@ -208,7 +208,7 @@ def digitize_sensitive_hits(
     )
     calibrated = deposited * plan.calibration[None, :]
 
-    def event_noise(event_id):
+    def event_noise(event_id: Array) -> Array:
         event_key = jr.fold_in(key, jnp.asarray(event_id, dtype=jnp.uint32))
         return jr.normal(event_key, (plan.channel_count,), dtype=calibrated.dtype)
 

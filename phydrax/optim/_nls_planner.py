@@ -203,16 +203,15 @@ def prepare_schur_plan(graph: PreparedResidualGraph, /) -> SchurComplementPlan:
         for index, group in enumerate(groups)
         if not graph.graph.parameter_blocks[index].constant
     )
-    eliminated_values = [
-        offsets[index]
-        for index, group in enumerate(groups)
-        if group == minimum_group and offsets[index] is not None
-    ]
-    retained_values = [
-        offsets[index]
-        for index, group in enumerate(groups)
-        if group != minimum_group and offsets[index] is not None
-    ]
+    eliminated_values: list[Array] = []
+    retained_values: list[Array] = []
+    for block_offsets, group in zip(offsets, groups, strict=True):
+        if block_offsets is None:
+            continue
+        if group == minimum_group:
+            eliminated_values.append(block_offsets)
+        else:
+            retained_values.append(block_offsets)
     if not eliminated_values or not retained_values:
         raise ValueError(
             "Schur planning requires nonempty eliminated and retained groups."

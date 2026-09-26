@@ -145,8 +145,8 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
                 jnp.arange(int(np.prod(layout.shape)), dtype=volumes.dtype)
             ).reshape(layout.shape)
             if not discretization.grid.structured_axes[axis].periodic:
-                lower = [slice(None)] * component.ndim
-                upper = [slice(None)] * component.ndim
+                lower: list[slice | int] = [slice(None)] * component.ndim
+                upper: list[slice | int] = [slice(None)] * component.ndim
                 lower[axis] = 0
                 upper[axis] = component.shape[axis] - 1
                 component = component.at[tuple(lower)].set(0.0)

@@ -349,7 +349,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
                 arguments.append(safe_context[dependency])
         node_keys = jr.split(batch.evaluation_key, count)
 
-        def velocity_at(key, *values):
+        def velocity_at(key: Key[Array, ""], *values: Array) -> Array:
             return jnp.asarray(velocity.func(*values, key=key))
 
         predicted = jax.vmap(velocity_at)(node_keys, *arguments)

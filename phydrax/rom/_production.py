@@ -11,9 +11,9 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
-from .._execution_plan import ExecutionRequirements, LogicalAxis
+from .._execution_plan import ExecutionRequirements, LogicalAxis, LogicalAxisKind
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -180,9 +180,9 @@ class ROMAdmissionEvidence(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        admitted,
-        status,
-        score,
+        admitted: ArrayLike,
+        status: ArrayLike,
+        score: ArrayLike,
         /,
         *,
         support_id: str,
@@ -463,8 +463,8 @@ def rom_execution_requirements(
     return ExecutionRequirements(
         owner_id,
         logical_axes=(
-            LogicalAxis("rom-batch", int(batch_axis), splittable=True),
-            LogicalAxis("rom-reduced", int(reduced_axis), splittable=False),
+            LogicalAxis("rom-batch", int(batch_axis), LogicalAxisKind.INDEPENDENT),
+            LogicalAxis("rom-reduced", int(reduced_axis), LogicalAxisKind.MODEL),
         ),
         operations=("rom-admission", "rom-assembly", "rom-solve"),
         dtypes=(str(dtype),),

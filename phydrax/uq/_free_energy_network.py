@@ -27,7 +27,7 @@ from ..linalg._policies import RankPolicy
 from ._free_energy import FreeEnergyResult, FreeEnergyStatus
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str) or not value or value.strip() != value:
         raise ValueError(f"{name} must be a non-empty canonical string.")
     return value
@@ -42,7 +42,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     return array
 
 
-def _covariance_tolerance(value: np.ndarray, /) -> float:
+def _covariance_tolerance(value: np.ndarray, /) -> np.floating:
     scale = max(float(np.max(np.abs(value), initial=0.0)), 1.0)
     return 256.0 * np.finfo(value.dtype).eps * scale
 

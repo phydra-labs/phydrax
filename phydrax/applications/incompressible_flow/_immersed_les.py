@@ -676,7 +676,7 @@ class PreparedFixedImmersedMACLES(StrictModule, NonTrainableState):
         if step.projection.projection_id != self.solver_id:
             raise ValueError("Step projection does not match the immersed LES solver.")
 
-        def evaluated_stage(time, state):
+        def evaluated_stage(time: Array, state: Array) -> ImmersedMACLESStageResult:
             value = dynamics.rate_components(time, state, args).les_stage
             if not isinstance(value, ImmersedMACLESStageResult):
                 raise TypeError("Dynamics did not produce an immersed LES stage.")

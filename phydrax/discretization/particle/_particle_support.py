@@ -139,7 +139,7 @@ class ParticleDiscretizationSupportClaim(StrictModule, NonTrainableState):
         )
 
     @property
-    def configuration(self):
+    def configuration(self) -> tuple[str, ...]:
         return (
             self.mechanics,
             self.population_topology,
@@ -188,13 +188,15 @@ class ParticleDiscretizationSupportMatrix(StrictModule, NonTrainableState):
         )
 
     @property
-    def production_ready(self):
+    def production_ready(self) -> bool:
         return all(
             value.status is ParticleDiscretizationSupportStatus.PRODUCTION
             for value in self.claims
         )
 
-    def claims_with_status(self, status, /):
+    def claims_with_status(
+        self, status: ParticleDiscretizationSupportStatus, /
+    ) -> tuple[ParticleDiscretizationSupportClaim, ...]:
         if not isinstance(status, ParticleDiscretizationSupportStatus):
             raise TypeError("status must be ParticleDiscretizationSupportStatus.")
         return tuple(value for value in self.claims if value.status is status)

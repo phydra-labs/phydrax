@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -41,6 +41,18 @@ class MaxwellSourceForcing(StrictModule):
     magnetic_current: Array
 
 
+class PreparedMaxwellSourceContract(Protocol):
+    """Prepared source contract consumed by the compatible Maxwell runtime."""
+
+    @property
+    def prepared_id(self) -> str: ...
+
+    @property
+    def magnetic_closedness_preserving(self) -> bool: ...
+
+    def sample(self, time: ArrayLike, args: object = None, /) -> MaxwellSourceForcing: ...
+
+
 class AbstractMaxwellSourcePlan(StrictModule):
     """Static source geometry lowered once to retained Maxwell cochains."""
 
@@ -49,7 +61,7 @@ class AbstractMaxwellSourcePlan(StrictModule):
     @abc.abstractmethod
     def prepare(
         self, bridge: StructuredCochainBridge, layout: Any, /
-    ) -> PreparedMaxwellSource:
+    ) -> PreparedMaxwellSourceContract:
         raise NotImplementedError
 
 

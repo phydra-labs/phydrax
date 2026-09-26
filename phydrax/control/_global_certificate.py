@@ -243,7 +243,7 @@ class _BoundedControlBranchProblem(AbstractBranchAndBoundProblem):
         self.terminal_widths = []
         self.relaxation_validity = []
 
-    def root(self, /):
+    def root(self, /) -> _ControlBox:
         return _ControlBox(self.plan.lower, self.plan.upper, 0, "root")
 
     def node_id(self, node: _ControlBox, /) -> str:

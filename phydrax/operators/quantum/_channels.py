@@ -13,7 +13,8 @@ never repaired during execution.
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Sequence
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -24,6 +25,11 @@ from phydrax.ein import contract
 
 from ..._strict import StrictModule
 from ...linalg import HermitianSpectrum
+
+
+if TYPE_CHECKING:
+    from ...tensor_network._local_lindblad import PreparedLocalKrausChannel
+    from ._operations import LocalKrausChannelOperation
 
 
 class FiniteChannelPhysicalityEvidence(StrictModule):
@@ -462,7 +468,7 @@ def factor_finite_cptp(
 
 
 def finite_cptp_from_local_kraus_operation(
-    operation,
+    operation: LocalKrausChannelOperation,
     /,
     *,
     tolerance: float = 1e-8,
@@ -479,7 +485,7 @@ def finite_cptp_from_local_kraus_operation(
 
 
 def finite_cptp_from_prepared_local_kraus_channel(
-    prepared,
+    prepared: PreparedLocalKrausChannel,
     /,
     *,
     tolerance: float = 1e-8,
@@ -499,11 +505,11 @@ def finite_cptp_from_prepared_local_kraus_channel(
 
 def finite_cptp_to_local_kraus_operation(
     channel: FiniteCPTPMap,
-    target_wire_ids,
+    target_wire_ids: Sequence[str],
     /,
     *,
     policy: FiniteChannelFactorizationPolicy | None = None,
-):
+) -> LocalKrausChannelOperation:
     """Prepare an explicit canonical-IR Kraus operation; never factor at runtime."""
     from ._operations import LocalKrausChannelOperation
 

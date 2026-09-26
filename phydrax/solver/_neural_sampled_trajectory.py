@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
-from .._sampling import sample_markov
+from .._sampling import MarkovSampleResult, sample_markov
 from .._strict import StrictModule
 from ..linalg import (
     LinearSolvePolicy,
@@ -356,7 +356,7 @@ class ConnectedVMCNeuralTrajectoryResult(StrictModule):
 def _connected_rate_statistics(
     problem: ConnectedVMCNeuralTrajectoryProblem,
     model: Any,
-    samples,
+    samples: MarkovSampleResult,
     /,
 ) -> tuple[Array, Array, Array, Array]:
     local_rates = []

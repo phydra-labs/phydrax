@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
 import jax
@@ -24,6 +24,10 @@ from ..._trainable import fixed_field, ParameterOwner
 from ...linalg import DenseLinearOperator, FactorizationPolicy, factorize
 from ...operators.quantum._amplitude import LogAmplitude
 from ...tensor_network import MatrixProductState
+
+
+if TYPE_CHECKING:
+    from ...solver._quantum_program import PreparedDenseQuantumProgram
 
 
 _DIRECT_SAMPLE_ADDRESS = SampleAddress(
@@ -168,7 +172,7 @@ class RestrictedBoltzmannAmplitude(StrictModule, ParameterOwner):
 
     def propose_flips(
         self, cache: RestrictedBoltzmannCache, indices: ArrayLike, active: ArrayLike, /
-    ):
+    ) -> tuple[Array, RestrictedBoltzmannCache, Array]:
         sites, mask = (
             jnp.asarray(indices, dtype=jnp.int32),
             jnp.asarray(active, dtype=jnp.bool_),
@@ -189,12 +193,31 @@ class RestrictedBoltzmannAmplitude(StrictModule, ParameterOwner):
         )
 
 
-def _spin_cache_incremental_target(model, target_id: str):
-    def initialize(position):
+_SpinCache = TypeVar("_SpinCache", JastrowSpinCache, RestrictedBoltzmannCache)
+_Selected = TypeVar("_Selected")
+
+
+class _SpinCacheModel(Protocol[_SpinCache]):
+    def initialize_cache(self, configuration: ArrayLike, /) -> _SpinCache: ...
+
+    def propose_flips(
+        self, cache: _SpinCache, indices: ArrayLike, active: ArrayLike, /
+    ) -> tuple[Array, _SpinCache, Array]: ...
+
+
+def _spin_cache_incremental_target(
+    model: _SpinCacheModel[_SpinCache], target_id: str
+) -> IncrementalMarkovTarget:
+    def initialize(position: ArrayLike) -> tuple[Array, _SpinCache]:
         cache = model.initialize_cache(position)
         return 2.0 * jnp.real(cache.complex_log_amplitude), cache
 
-    def propose(current, cache, proposed_position, payload):
+    def propose(
+        current: Array,
+        cache: _SpinCache,
+        proposed_position: Array,
+        payload: tuple[ArrayLike, ArrayLike],
+    ) -> tuple[Array, _SpinCache, Array]:
         indices, active = payload
         ratio, proposed_cache, valid = model.propose_flips(
             cache,
@@ -208,7 +231,7 @@ def _spin_cache_incremental_target(model, target_id: str):
             valid & (residual == 0.0),
         )
 
-    def select(current, proposed, accepted):
+    def select(current: _Selected, proposed: _Selected, accepted: Array) -> _Selected:
         return jax.tree_util.tree_map(
             lambda proposed_leaf, current_leaf: jnp.where(
                 accepted, proposed_leaf, current_leaf
@@ -260,12 +283,12 @@ class AutoregressiveSpinAmplitude(StrictModule, ParameterOwner):
 
     def __init__(
         self,
-        conditional_bias,
-        conditional_weights,
+        conditional_bias: ArrayLike,
+        conditional_weights: ArrayLike,
         /,
         *,
-        phase_bias=None,
-        phase_weights=None,
+        phase_bias: ArrayLike | None = None,
+        phase_weights: ArrayLike | None = None,
     ) -> None:
         bias, weights = jnp.asarray(conditional_bias), jnp.asarray(conditional_weights)
         if bias.ndim != 1 or weights.shape != (bias.shape[0], bias.shape[0]):
@@ -370,7 +393,7 @@ class CircuitAmplitude(StrictModule, ParameterOwner):
 
     def __init__(
         self,
-        prepared,
+        prepared: PreparedDenseQuantumProgram,
         initial_state: ArrayLike,
         /,
         *,

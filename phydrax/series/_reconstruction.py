@@ -443,11 +443,12 @@ class SampledSeriesReconstruction(StrictModule):
             values = jax.tree_util.tree_map(node_value, rows_tree)
         else:
             values = jax.tree_util.tree_map(discrete_value, rows_tree)
-        if self.bounds == "fill" and self.fill_value is not None:
+        fill_value = self.fill_value
+        if self.bounds == "fill" and fill_value is not None:
             values = jax.tree_util.tree_map(
                 lambda value: jnp.where(
                     _expand(outside.reshape(query_shape), value),
-                    self.fill_value.astype(value.dtype),
+                    fill_value.astype(value.dtype),
                     value,
                 ),
                 values,

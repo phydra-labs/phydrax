@@ -29,7 +29,7 @@ def is_pivpy_available() -> bool:
     return importlib.util.find_spec("pivpy") is not None
 
 
-def require_xarray():
+def require_xarray() -> Any:
     """Import xarray only at the interoperability call boundary."""
     if not is_xarray_available():
         raise AdapterError(
@@ -39,7 +39,7 @@ def require_xarray():
     return importlib.import_module("xarray")
 
 
-def require_pivpy():
+def require_pivpy() -> Any:
     """Import pivpy only at the interoperability call boundary."""
     if not is_pivpy_available():
         raise AdapterError(

@@ -98,7 +98,9 @@ class GeodesicEndpointInterpolant(AbstractEndpointInterpolant):
         flat_time = time_array.reshape((count,))
         duration = self.target_coordinate - self.source_coordinate
 
-        def evaluate_one(start: Array, end: Array, coordinate: Array):
+        def evaluate_one(
+            start: Array, end: Array, coordinate: Array
+        ) -> tuple[Array, Array, Array]:
             logarithm = self.geometry.log(start, end)
             weight = (coordinate - self.source_coordinate) / duration
 

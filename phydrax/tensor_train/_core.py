@@ -9,7 +9,7 @@ from enum import IntEnum
 from itertools import pairwise
 from math import prod
 from numbers import Integral, Number
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
@@ -38,13 +38,15 @@ def _rank_caps(max_ranks: int | Sequence[int], order: int, /) -> tuple[int, ...]
         if isinstance(max_ranks, Integral) and not isinstance(max_ranks, bool):
             if max_ranks <= 0:
                 raise ValueError("max_ranks must be positive.")
-        elif tuple(max_ranks):
+        # Non-integral caps are rank sequences; tuple() rejects anything else.
+        elif tuple(cast(Sequence[int], max_ranks)):
             raise ValueError("An order-one tensor has no TT cuts.")
         return ()
     if isinstance(max_ranks, Integral) and not isinstance(max_ranks, bool):
         caps = (int(max_ranks),) * (order - 1)
     else:
-        raw = tuple(max_ranks)
+        # Non-integral caps are rank sequences; tuple() rejects anything else.
+        raw = tuple(cast(Sequence[int], max_ranks))
         if any(not isinstance(rank, Integral) or isinstance(rank, bool) for rank in raw):
             raise TypeError("max_ranks entries must be integers.")
         caps = tuple(int(rank) for rank in raw)
@@ -190,7 +192,7 @@ class TensorTrain(StrictModule):
         return len(self.cores)
 
     @property
-    def dtype(self):
+    def dtype(self) -> np.dtype:
         return self.cores[0].dtype
 
     @staticmethod
@@ -243,7 +245,7 @@ class TensorTrain(StrictModule):
         ).astype(jnp.int32)
         flat = points.reshape((-1, self.order))
 
-        def evaluate_one(point):
+        def evaluate_one(point: Array) -> Array:
             value = self.cores[0][0, point[0], :]
             for axis, core in enumerate(self.cores[1:], start=1):
                 value = ein.contract("a,ab->b", value, core[:, point[axis], :])
@@ -419,7 +421,7 @@ class TensorTrainOperator(StrictModule):
         return len(self.cores)
 
     @property
-    def dtype(self):
+    def dtype(self) -> np.dtype:
         return self.cores[0].dtype
 
     def adjoint(self) -> TensorTrainOperator:
@@ -574,7 +576,7 @@ class TensorTrainOperator(StrictModule):
         flat_outputs = outputs.reshape((-1, self.order))
         flat_inputs = inputs.reshape((-1, self.order))
 
-        def evaluate_one(output, input_):
+        def evaluate_one(output: Array, input_: Array) -> Array:
             value = self.cores[0][0, output[0], input_[0], :]
             for axis, core in enumerate(self.cores[1:], start=1):
                 value = ein.contract(

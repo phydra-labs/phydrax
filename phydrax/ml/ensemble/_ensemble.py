@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -23,7 +23,11 @@ from ..._differentiation import (
 )
 from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
-from ...uq import HeterogeneousFunctionEnsemble, HomogeneousFunctionEnsemble
+from ...uq import (
+    HeterogeneousFunctionEnsemble,
+    HomogeneousFunctionEnsemble,
+    PredictiveField,
+)
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -176,7 +180,7 @@ class HomogeneousEnsembleModel(AbstractFittedModel):
     def member_predictions(self, x: Any, /, *, key: Any = None) -> Array:
         return _homogeneous_predictions(self.ensemble, x, key)
 
-    def predictive(self, x: Any, /, *, key: Any):
+    def predictive(self, x: Any, /, *, key: Any) -> PredictiveField:
         """Return the shared UQ PredictiveField over raw member samples."""
         return self.ensemble.predict(x, key=_require_key(key, "predictive"))
 
@@ -218,7 +222,7 @@ class HeterogeneousEnsembleModel(AbstractFittedModel):
     def member_predictions(self, x: Any, /, *, key: Any = None) -> Array:
         return _call_members(self.ensemble.members, x, key)
 
-    def predictive(self, x: Any, /, *, key: Any):
+    def predictive(self, x: Any, /, *, key: Any) -> PredictiveField:
         """Return the shared UQ PredictiveField over raw member samples."""
         return self.ensemble.predict(x, key=_require_key(key, "predictive"))
 
@@ -448,8 +452,18 @@ def _flatten_prediction(prediction: Any, features: Any) -> Array:
     )
 
 
+_EnsembleFittedModel: TypeAlias = (
+    HomogeneousEnsembleModel
+    | HeterogeneousEnsembleModel
+    | SoftVotingModel
+    | HardVotingModel
+    | StackingModel
+    | MixtureOfExpertsModel
+)
+
+
 def _fit_result(
-    model: AbstractFittedModel,
+    model: _EnsembleFittedModel,
     diagnostics: EnsembleFitDiagnostics,
     method: str,
     *,
@@ -478,7 +492,7 @@ def _fit_result(
 
 def _fit_members(
     recipes: Sequence[AbstractRecipe], batch: MLBatch, key: Array, stream: int
-):
+) -> tuple[tuple[FitResult, ...], tuple[AbstractArrayModel, ...], Array, Array]:
     results = tuple(
         recipe.fit_batch(batch, key=_key(key, stream + index))
         for index, recipe in enumerate(recipes)

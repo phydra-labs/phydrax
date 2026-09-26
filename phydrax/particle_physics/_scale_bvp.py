@@ -220,7 +220,7 @@ def solve_scale_bvp(
     converged = False
     evaluation = evaluate_scale_bvp(plan, parameters)
 
-    def residual_function(value):
+    def residual_function(value: Array) -> Array:
         return evaluate_scale_bvp(plan, value).residual
 
     for _ in range(plan.maximum_newton_steps):

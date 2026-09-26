@@ -843,7 +843,7 @@ def floquet_spectrum(
                 f"Full Floquet dimension {dimension} exceeds max_full_dimension={full_limit}."
             )
 
-        def apply_column(basis):
+        def apply_column(basis: Array) -> tuple[Array, Array]:
             action = monodromy_action(
                 orbit,
                 basis.reshape(orbit.problem.state_layout.shape),

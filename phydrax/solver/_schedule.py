@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from itertools import pairwise
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,17 +17,20 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
 
+_TimeLawFunction: TypeAlias = Callable[[Array, object], ArrayLike]
+
+
 class TimeLaw(StrictModule, NonTrainableState):
-    value_function: Callable
-    first_derivative_function: Callable
-    second_derivative_function: Callable
+    value_function: _TimeLawFunction
+    first_derivative_function: _TimeLawFunction
+    second_derivative_function: _TimeLawFunction
     law_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        value_function: Callable,
-        first_derivative_function: Callable,
-        second_derivative_function: Callable,
+        value_function: _TimeLawFunction,
+        first_derivative_function: _TimeLawFunction,
+        second_derivative_function: _TimeLawFunction,
         /,
         *,
         law_id: str,
@@ -86,11 +90,11 @@ class TimeLaw(StrictModule, NonTrainableState):
             raise ValueError("Ramp interval or value shapes are invalid.")
         slope = (end - start) / (t1 - t0)
 
-        def value(time, args):
+        def value(time: Array, args: object) -> Array:
             fraction = jnp.clip((time - t0) / (t1 - t0), 0.0, 1.0)
             return start + fraction * (end - start)
 
-        def first(time, args):
+        def first(time: Array, args: object) -> Array:
             active = (time > t0) & (time < t1)
             return jnp.where(active, slope, jnp.zeros_like(slope))
 
@@ -210,7 +214,9 @@ class SolveSchedule(StrictModule, NonTrainableState):
             }
         )
 
-    def run(self, initial_state: object, args: object = None, /):
+    def run(
+        self, initial_state: object, args: object = None, /
+    ) -> tuple[object, tuple[ScheduleStepResult, ...]]:
         state = initial_state
         results = []
         for stage in self.stages:

@@ -8,6 +8,7 @@ import hashlib
 import io
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,6 +19,10 @@ from ..._strict import StrictModule
 from ...series import SampledSeries, SeriesSupport
 from ...units import UnitDefinition
 from .._energy_series import EnergySeries
+
+
+if TYPE_CHECKING:
+    from ..._external_runtime import EnergyRunResult, PinnedExecutable
 
 
 class EnergyPlusVariable(StrictModule):
@@ -79,7 +84,9 @@ class EnergyPlusReference(StrictModule):
         )
         self.content_sha256 = hashlib.sha256(model).hexdigest()
 
-    def run(self, executable, weather: bytes, *, timeout: float = 120):
+    def run(
+        self, executable: PinnedExecutable, weather: bytes, *, timeout: float = 120
+    ) -> EnergyRunResult:
         from ..._external_runtime import run_energyplus
 
         result = run_energyplus(

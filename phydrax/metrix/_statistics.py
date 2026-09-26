@@ -165,7 +165,7 @@ def frechet_mean(
         )
         return precision_.sum(weighted, axis=0)
 
-    def update(_, candidate: Array) -> Array:
+    def update(_: Array, candidate: Array) -> Array:
         next_candidate = geometry.exp(
             precision_.compute(candidate),
             step * average_log(candidate),

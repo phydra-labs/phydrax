@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, Protocol, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -29,9 +29,13 @@ if TYPE_CHECKING:
     from ..equations._periodic_les import PeriodicLESStepRestriction
 
 
+class _NonlinearDrift(Protocol):
+    def nonlinear(self, time: Array, state: Array, args: Any, /) -> Array: ...
+
+
 def _etdrk_update(
     order: Literal[2, 4],
-    drift: SemilinearDrift,
+    drift: _NonlinearDrift,
     diagonal: Array,
     time: Array,
     state: Array,
@@ -559,7 +563,7 @@ def solve_etdrk(
     def advance(
         carry: tuple[Array, Array],
         data: tuple[Array, Array, Array],
-    ):
+    ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
         state, cumulative_valid = carry
         step_index, time, duration = data
         result = prepared.step(step_index, time, state, duration, args)

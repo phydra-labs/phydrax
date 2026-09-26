@@ -53,7 +53,7 @@ def _require_materialization_budget(
         )
 
 
-def materialize(operator, policy: MaterializationPolicy, /) -> Array:
+def materialize(operator: object, policy: MaterializationPolicy, /) -> Array:
     """Materialize an operator only under an explicit bounded policy."""
     from ._operators import AbstractLinearOperator
 

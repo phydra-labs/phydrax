@@ -162,7 +162,7 @@ class TransonicSmallDisturbancePlan(StrictModule, NonTrainableState):
                 relative_residual=0.0,
                 maximum_steps=self.maximum_steps,
                 maximum_evaluations=4 * self.maximum_steps,
-                maximum_linear_iterations=8 * np.prod(self.shape),
+                maximum_linear_iterations=8 * int(np.prod(self.shape)),
             ),
             args=(forcing_, boundary),
         )

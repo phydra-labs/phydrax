@@ -125,7 +125,7 @@ def _uniform_in_bounds(
     bounds = kernel.bounds(state)
     plan_ = RejectionSamplingPlan() if plan is None else plan
 
-    def proposal(proposal_key, proposal_count):
+    def proposal(proposal_key: Key[Array, ""], proposal_count: int) -> Array:
         return jr.uniform(
             proposal_key,
             shape=(proposal_count, kernel.ambient_dimension),
@@ -594,7 +594,7 @@ class _PolygonKernel(GeometryKernel):
         first_direction = b - a
         second_direction = d - c
 
-        def cross2(left, right):
+        def cross2(left: Array, right: Array) -> Array:
             return left[:, 0] * right[:, 1] - left[:, 1] * right[:, 0]
 
         first_c = cross2(first_direction, c - a)
@@ -705,10 +705,20 @@ class _PolygonKernel(GeometryKernel):
             jnp.linalg.norm(jnp.roll(vertices, -1, axis=0) - vertices, axis=-1)
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None) -> SamplingResult:
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         return _uniform_in_bounds(self, state, int(num_points), key, plan)
 
-    def sample_boundary(self, state, num_points, /, *, key) -> SamplingResult:
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> SamplingResult:
         vertices = self._vertices(state)
         edges = jnp.roll(vertices, -1, axis=0) - vertices
         lengths = jnp.linalg.norm(edges, axis=-1)
@@ -812,7 +822,9 @@ class _EllipsoidKernel(GeometryKernel):
     radii: ParameterBinding = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, center, radii, *, source_id) -> None:
+    def __init__(
+        self, center: ParameterBinding, radii: ParameterBinding, *, source_id: str
+    ) -> None:
         self.center = center
         self.radii = radii
         self.source_id = source_id
@@ -837,29 +849,29 @@ class _EllipsoidKernel(GeometryKernel):
     def field_certificate(self) -> FieldCertificate:
         return _LEVEL_SET_CERTIFICATE
 
-    def _parameters(self, state):
+    def _parameters(self, state: DesignState) -> tuple[Array, Array]:
         return self.center.read(state), self.radii.read(state)
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, 3)
         center, radii = self._parameters(state)
         return (_finite_norm((points_ - center) / radii) - 1.0) * jnp.min(radii)
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.boundary_field(state, points) <= 0.0
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         return _normal_from_field(self, state, points)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         center, radii = self._parameters(state)
         return jnp.stack((center - radii, center + radii))
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         _, radii = self._parameters(state)
         return (4.0 / 3.0) * jnp.pi * jnp.prod(radii)
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> Array:
         _, radii = self._parameters(state)
         z = _GL_NODES
         phi = jnp.pi * (_GL_NODES + 1.0)
@@ -875,7 +887,7 @@ class _EllipsoidKernel(GeometryKernel):
         density = jnp.prod(radii) * jnp.linalg.norm(direction / radii, axis=-1)
         return jnp.pi * jnp.sum(_GL_WEIGHTS[:, None] * _GL_WEIGHTS[None, :] * density)
 
-    def boundary_mass(self, state, /):
+    def boundary_mass(self, state: DesignState, /) -> EstimatedMass:
         _, radii = self._parameters(state)
         z = _GL_LOW_NODES
         phi = jnp.pi * (_GL_LOW_NODES + 1.0)
@@ -900,7 +912,15 @@ class _EllipsoidKernel(GeometryKernel):
             provenance="ellipsoid_boundary_tensor_gauss_legendre",
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         del plan
         center, radii = self._parameters(state)
         direction_key, radial_key = jr.split(key)
@@ -910,7 +930,9 @@ class _EllipsoidKernel(GeometryKernel):
         radial = jr.uniform(radial_key, (count, 1), dtype=center.dtype) ** (1.0 / 3.0)
         return complete_sampling_result(center + radii * radial * directions)
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> SamplingResult:
         center, radii = self._parameters(state)
         proposal_count = max(8 * int(num_points), 64)
         direction_key, choice_key = jr.split(key)
@@ -926,7 +948,7 @@ class _EllipsoidKernel(GeometryKernel):
         )
         return complete_sampling_result(center + radii * directions[indices])
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         center, radii = self._parameters(state)
         return BoundaryAtlas(
             _EllipsoidBoundaryMap(center, radii),
@@ -985,7 +1007,14 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
     dimension: int = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, center, radii, *, dimension: int, source_id: str) -> None:
+    def __init__(
+        self,
+        center: ParameterBinding,
+        radii: ParameterBinding,
+        *,
+        dimension: int,
+        source_id: str,
+    ) -> None:
         self.center = center
         self.radii = radii
         self.dimension = dimension
@@ -1018,29 +1047,29 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
     def field_certificate(self) -> FieldCertificate:
         return _LEVEL_SET_CERTIFICATE
 
-    def _parameters(self, state):
+    def _parameters(self, state: DesignState) -> tuple[Array, Array]:
         return self.center.read(state), self.radii.read(state)
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)
         center, radii = self._parameters(state)
         return (_finite_norm((points_ - center) / radii) - 1.0) * jnp.min(radii)
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.boundary_field(state, points) <= 0.0
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, self.dimension)
         center, radii = self._parameters(state)
         gradient = (points_ - center) / radii**2
         norm = jnp.linalg.norm(gradient, axis=-1, keepdims=True)
         return gradient / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         center, radii = self._parameters(state)
         return jnp.stack((center - radii, center + radii))
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         _, radii = self._parameters(state)
         half_dimension = jnp.asarray(0.5 * self.dimension, dtype=radii.dtype)
         unit_measure = jnp.exp(
@@ -1049,13 +1078,21 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
         )
         return unit_measure * jnp.prod(radii)
 
-    def boundary_measure(self, state, /) -> NoReturn:
+    def boundary_measure(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError(
             "ND ellipsoid boundary measure requires an explicit estimator."
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         del plan
         center, radii = self._parameters(state)
         direction_key, radial_key = jr.split(key)
@@ -1074,13 +1111,15 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
         )
         return complete_sampling_result(center + radii * radial * directions)
 
-    def sample_boundary(self, state, num_points, /, *, key) -> NoReturn:
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError(
             "ND ellipsoid boundary sampling requires an explicit area sampler."
         )
 
-    def boundary_atlas(self, state, /) -> NoReturn:
+    def boundary_atlas(self, state: DesignState, /) -> NoReturn:
         del state
         raise NotImplementedError(
             "ND ellipsoid boundary atlas requires a selected chart construction."
@@ -1115,7 +1154,7 @@ class _CylinderBoundaryMap(AbstractBoundaryMap):
     def ambient_dimension(self) -> int:
         return 3
 
-    def map(self, chart_indices, reference, /):
+    def map(self, chart_indices: Array, reference: Array, /) -> Array:
         first, second, direction, height = _axis_frame(self.axis)
         theta = self.angle * reference[..., 0]
         radial_direction = (
@@ -1147,7 +1186,7 @@ class _CylinderBoundaryMap(AbstractBoundaryMap):
         del direction, height
         return result
 
-    def jacobian(self, chart_indices, reference, /):
+    def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
         del reference
         height = _finite_norm(self.axis)
         side = self.angle * self.radius * height
@@ -1187,7 +1226,7 @@ class Cylinder(GeometrySource):
         self.full = float(self.angle) == 2.0 * math.pi
         self.feature_id = _feature_id(feature_id, "cylinder")
 
-    def _compile(self, context):
+    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
         base = context.bind(
             ParameterId(self.feature_id, "base_center"), self.base_center, role="position"
         )
@@ -1219,35 +1258,44 @@ class _CylinderKernel(GeometryKernel):
     full: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, base, axis, radius, angle, *, full, source_id) -> None:
+    def __init__(
+        self,
+        base: ParameterBinding,
+        axis: ParameterBinding,
+        radius: ParameterBinding,
+        angle: ParameterBinding,
+        *,
+        full: bool,
+        source_id: str,
+    ) -> None:
         self.base, self.axis, self.radius, self.angle = base, axis, radius, angle
         self.full, self.source_id = full, source_id
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 3
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return 3
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return GeometryKind.REGION
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         return _EXACT_REGION_CAPABILITIES if self.full else _REGION_CAPABILITIES
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         return (
             exact_signed_distance_certificate(smooth=False)
             if self.full
             else _LEVEL_SET_CERTIFICATE
         )
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         _, axis, radius, angle = self._parameters(state)
         shape = GeometryValidityEvidence(
             finite=jnp.all(jnp.isfinite(axis)) & jnp.isfinite(radius),
@@ -1269,7 +1317,7 @@ class _CylinderKernel(GeometryKernel):
             contract_id="cylinder_geometry",
         )
 
-    def _parameters(self, state):
+    def _parameters(self, state: DesignState) -> tuple[Array, Array, Array, Array]:
         return (
             self.base.read(state),
             self.axis.read(state),
@@ -1277,7 +1325,7 @@ class _CylinderKernel(GeometryKernel):
             self.angle.read(state),
         )
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, 3)
         base, axis, radius, angle = self._parameters(state)
         x, y, z, height, _ = _axial_coordinates(points_, base, axis)
@@ -1291,13 +1339,13 @@ class _CylinderKernel(GeometryKernel):
             field = jnp.maximum(field, angular)
         return field
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.boundary_field(state, points) <= 0.0
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         return _normal_from_field(self, state, points)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         base, axis, radius, _ = self._parameters(state)
         direction = axis / _finite_norm(axis)
         radial_extent = radius * jnp.sqrt(jnp.maximum(1.0 - direction * direction, 0.0))
@@ -1308,17 +1356,25 @@ class _CylinderKernel(GeometryKernel):
             )
         )
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         _, axis, radius, angle = self._parameters(state)
         return 0.5 * angle * radius**2 * _finite_norm(axis)
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> Array:
         _, axis, radius, angle = self._parameters(state)
         height = _finite_norm(axis)
         area = angle * radius * height + angle * radius**2
         return area if self.full else area + 2.0 * radius * height
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         del plan
         base, axis, radius, angle = self._parameters(state)
         first, second, _, _ = _axis_frame(axis)
@@ -1335,7 +1391,9 @@ class _CylinderKernel(GeometryKernel):
         )
         return complete_sampling_result(points)
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> SamplingResult:
         atlas = self.boundary_atlas(state)
         reference_key, chart_key = jr.split(key)
         count = int(num_points)
@@ -1347,7 +1405,7 @@ class _CylinderKernel(GeometryKernel):
         )
         return complete_sampling_result(atlas.map(charts, reference))
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         base, axis, radius, angle = self._parameters(state)
         mapping = _CylinderBoundaryMap(base, axis, radius, angle, full=self.full)
         return BoundaryAtlas(
@@ -1374,7 +1432,9 @@ class _ConeBoundaryMap(AbstractBoundaryMap):
     angle: Array
     full: bool = eqx.field(static=True)
 
-    def __init__(self, base, axis, radii, angle, *, full) -> None:
+    def __init__(
+        self, base: Array, axis: Array, radii: Array, angle: Array, *, full: bool
+    ) -> None:
         self.base, self.axis, self.radii, self.angle, self.full = (
             base,
             axis,
@@ -1384,18 +1444,18 @@ class _ConeBoundaryMap(AbstractBoundaryMap):
         )
 
     @property
-    def num_charts(self):
+    def num_charts(self) -> int:
         return 3 if self.full else 5
 
     @property
-    def reference_dimension(self):
+    def reference_dimension(self) -> int:
         return 2
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 3
 
-    def map(self, chart_indices, reference, /):
+    def map(self, chart_indices: Array, reference: Array, /) -> Array:
         first, second, _, _ = _axis_frame(self.axis)
         theta = self.angle * reference[..., 0]
         direction = jnp.cos(theta)[..., None] * first + jnp.sin(theta)[..., None] * second
@@ -1431,7 +1491,7 @@ class _ConeBoundaryMap(AbstractBoundaryMap):
             result = jnp.where((chart_indices == 4)[..., None], radial1, result)
         return result
 
-    def jacobian(self, chart_indices, reference, /):
+    def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
         height = _finite_norm(self.axis)
         slant = jnp.sqrt(height**2 + (self.radii[1] - self.radii[0]) ** 2)
         radius = self.radii[0] + reference[..., 1] * (self.radii[1] - self.radii[0])
@@ -1458,13 +1518,13 @@ class Cone(GeometrySource):
 
     def __init__(
         self,
-        base_center,
-        axis,
-        radius0,
-        radius1=0.0,
-        angle=2.0 * math.pi,
+        base_center: Any,
+        axis: Any,
+        radius0: Any,
+        radius1: Any = 0.0,
+        angle: Any = 2.0 * math.pi,
         *,
-        feature_id=None,
+        feature_id: str | None = None,
     ) -> None:
         self.base_center = _validate_vector(base_center, 3, name="base_center")
         self.axis = _validate_vector(axis, 3, name="axis")
@@ -1486,7 +1546,7 @@ class Cone(GeometrySource):
         self.full = float(self.angle) == 2.0 * math.pi
         self.feature_id = _feature_id(feature_id, "cone")
 
-    def _compile(self, context):
+    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
         base = context.bind(
             ParameterId(self.feature_id, "base_center"), self.base_center, role="position"
         )
@@ -1518,31 +1578,40 @@ class _ConeKernel(GeometryKernel):
     full: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, base, axis, radii, angle, *, full, source_id) -> None:
+    def __init__(
+        self,
+        base: ParameterBinding,
+        axis: ParameterBinding,
+        radii: ParameterBinding,
+        angle: ParameterBinding,
+        *,
+        full: bool,
+        source_id: str,
+    ) -> None:
         self.base, self.axis, self.radii, self.angle = base, axis, radii, angle
         self.full, self.source_id = full, source_id
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 3
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return 3
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return GeometryKind.REGION
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         return _REGION_CAPABILITIES
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         return _LEVEL_SET_CERTIFICATE
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         _, axis, radii, angle = self._parameters(state)
         shape = GeometryValidityEvidence(
             finite=jnp.all(jnp.isfinite(axis)) & jnp.all(jnp.isfinite(radii)),
@@ -1570,7 +1639,7 @@ class _ConeKernel(GeometryKernel):
             contract_id="cone_geometry",
         )
 
-    def _parameters(self, state):
+    def _parameters(self, state: DesignState) -> tuple[Array, Array, Array, Array]:
         return (
             self.base.read(state),
             self.axis.read(state),
@@ -1578,7 +1647,7 @@ class _ConeKernel(GeometryKernel):
             self.angle.read(state),
         )
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, 3)
         base, axis, radii, angle = self._parameters(state)
         x, y, z, height, _ = _axial_coordinates(points_, base, axis)
@@ -1594,13 +1663,13 @@ class _ConeKernel(GeometryKernel):
             field = jnp.maximum(field, angular)
         return field
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.boundary_field(state, points) <= 0.0
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         return _normal_from_field(self, state, points)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         base, axis, radii, _ = self._parameters(state)
         direction = axis / _finite_norm(axis)
         radial_extent = jnp.max(radii) * jnp.sqrt(
@@ -1613,7 +1682,7 @@ class _ConeKernel(GeometryKernel):
             )
         )
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         _, axis, radii, angle = self._parameters(state)
         return (
             angle
@@ -1622,7 +1691,7 @@ class _ConeKernel(GeometryKernel):
             / 6.0
         )
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> Array:
         _, axis, radii, angle = self._parameters(state)
         height = _finite_norm(axis)
         slant = jnp.sqrt(height**2 + (radii[1] - radii[0]) ** 2)
@@ -1631,10 +1700,20 @@ class _ConeKernel(GeometryKernel):
         )
         return area if self.full else area + (radii[0] + radii[1]) * height
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         return _uniform_in_bounds(self, state, int(num_points), key, plan)
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> SamplingResult:
         atlas = self.boundary_atlas(state)
         reference_key, chart_key = jr.split(key)
         count = int(num_points)
@@ -1646,7 +1725,7 @@ class _ConeKernel(GeometryKernel):
         )
         return complete_sampling_result(atlas.map(charts, reference))
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         base, axis, radii, angle = self._parameters(state)
         mapping = _ConeBoundaryMap(base, axis, radii, angle, full=self.full)
         return BoundaryAtlas(
@@ -1673,7 +1752,9 @@ class _TorusBoundaryMap(AbstractBoundaryMap):
     angle: Array
     full: bool = eqx.field(static=True)
 
-    def __init__(self, center, major, minor, angle, *, full) -> None:
+    def __init__(
+        self, center: Array, major: Array, minor: Array, angle: Array, *, full: bool
+    ) -> None:
         self.center, self.major, self.minor, self.angle, self.full = (
             center,
             major,
@@ -1683,18 +1764,18 @@ class _TorusBoundaryMap(AbstractBoundaryMap):
         )
 
     @property
-    def num_charts(self):
+    def num_charts(self) -> int:
         return 1 if self.full else 3
 
     @property
-    def reference_dimension(self):
+    def reference_dimension(self) -> int:
         return 2
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 3
 
-    def map(self, chart_indices, reference, /):
+    def map(self, chart_indices: Array, reference: Array, /) -> Array:
         sweep = self.angle * reference[..., 0]
         tube = _TWO_PI * reference[..., 1]
         ring = self.major + self.minor * jnp.cos(tube)
@@ -1728,7 +1809,7 @@ class _TorusBoundaryMap(AbstractBoundaryMap):
             result = jnp.where((chart_indices == 2)[..., None], disk1, result)
         return result
 
-    def jacobian(self, chart_indices, reference, /):
+    def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
         tube = _TWO_PI * reference[..., 1]
         surface = (
             self.angle * _TWO_PI * self.minor * (self.major + self.minor * jnp.cos(tube))
@@ -1748,7 +1829,13 @@ class Torus(GeometrySource):
     feature_id: str = eqx.field(static=True)
 
     def __init__(
-        self, center, inner_radius, outer_radius, angle=2.0 * math.pi, *, feature_id=None
+        self,
+        center: Any,
+        inner_radius: Any,
+        outer_radius: Any,
+        angle: Any = 2.0 * math.pi,
+        *,
+        feature_id: str | None = None,
     ) -> None:
         self.center = _validate_vector(center, 3, name="center")
         inner = float(np.asarray(inner_radius))
@@ -1766,7 +1853,7 @@ class Torus(GeometrySource):
         self.full = float(self.angle) == 2.0 * math.pi
         self.feature_id = _feature_id(feature_id, "torus")
 
-    def _compile(self, context):
+    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
         center = context.bind(
             ParameterId(self.feature_id, "center"), self.center, role="position"
         )
@@ -1801,35 +1888,44 @@ class _TorusKernel(GeometryKernel):
     full: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, center, major, minor, angle, *, full, source_id) -> None:
+    def __init__(
+        self,
+        center: ParameterBinding,
+        major: ParameterBinding,
+        minor: ParameterBinding,
+        angle: ParameterBinding,
+        *,
+        full: bool,
+        source_id: str,
+    ) -> None:
         self.center, self.major, self.minor, self.angle = center, major, minor, angle
         self.full, self.source_id = full, source_id
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 3
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return 3
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return GeometryKind.REGION
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         return _EXACT_REGION_CAPABILITIES if self.full else _REGION_CAPABILITIES
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         return (
             exact_signed_distance_certificate(smooth=False)
             if self.full
             else _LEVEL_SET_CERTIFICATE
         )
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         _, major, minor, angle = self._parameters(state)
         shape = GeometryValidityEvidence(
             finite=jnp.isfinite(major) & jnp.isfinite(minor),
@@ -1855,7 +1951,7 @@ class _TorusKernel(GeometryKernel):
             contract_id="torus_geometry",
         )
 
-    def _parameters(self, state):
+    def _parameters(self, state: DesignState) -> tuple[Array, Array, Array, Array]:
         return (
             self.center.read(state),
             self.major.read(state),
@@ -1863,7 +1959,7 @@ class _TorusKernel(GeometryKernel):
             self.angle.read(state),
         )
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, 3)
         center, major, minor, angle = self._parameters(state)
         relative = points_ - center
@@ -1876,34 +1972,44 @@ class _TorusKernel(GeometryKernel):
             field = jnp.maximum(field, angular)
         return field
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.boundary_field(state, points) <= 0.0
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         return _normal_from_field(self, state, points)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         center, major, minor, _ = self._parameters(state)
         extent = jnp.asarray([major + minor, major + minor, minor])
         return jnp.stack((center - extent, center + extent))
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         _, major, minor, angle = self._parameters(state)
         return angle * jnp.pi * major * minor**2
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> Array:
         _, major, minor, angle = self._parameters(state)
         area = angle * _TWO_PI * major * minor
         return area if self.full else area + 2.0 * jnp.pi * minor**2
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         return _uniform_in_bounds(self, state, int(num_points), key, plan)
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> SamplingResult:
         atlas = self.boundary_atlas(state)
         return _sample_boundary_atlas(atlas, int(num_points), key)
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         center, major, minor, angle = self._parameters(state)
         mapping = _TorusBoundaryMap(center, major, minor, angle, full=self.full)
         return BoundaryAtlas(
@@ -1940,18 +2046,18 @@ class _TriangleBoundaryMap(AbstractBoundaryMap):
         self.triangles = triangles
 
     @property
-    def num_charts(self):
+    def num_charts(self) -> int:
         return self.triangles.shape[0]
 
     @property
-    def reference_dimension(self):
+    def reference_dimension(self) -> int:
         return 2
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 3
 
-    def map(self, chart_indices, reference, /):
+    def map(self, chart_indices: Array, reference: Array, /) -> Array:
         triangle = self.triangles[chart_indices]
         u = reference[..., 0]
         v = reference[..., 1]
@@ -1964,7 +2070,7 @@ class _TriangleBoundaryMap(AbstractBoundaryMap):
             + third[..., None] * triangle[..., 2, :]
         )
 
-    def jacobian(self, chart_indices, reference, /):
+    def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
         del reference
         triangle = self.triangles[chart_indices]
         return 0.5 * jnp.linalg.norm(
@@ -1984,7 +2090,14 @@ class Wedge(GeometrySource):
     top_extent: Array
     feature_id: str = eqx.field(static=True)
 
-    def __init__(self, corner, extents, top_extent, *, feature_id=None) -> None:
+    def __init__(
+        self,
+        corner: Any,
+        extents: Any,
+        top_extent: Any,
+        *,
+        feature_id: str | None = None,
+    ) -> None:
         self.corner = _validate_vector(corner, 3, name="corner")
         self.extents = _validate_positive_vector(extents, 3, name="extents")
         top = float(np.asarray(top_extent))
@@ -1993,7 +2106,7 @@ class Wedge(GeometrySource):
         self.top_extent = jnp.asarray(top, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "wedge")
 
-    def _compile(self, context):
+    def _compile(self, context: _ParameterCollector) -> GeometryKernel:
         corner = context.bind(
             ParameterId(self.feature_id, "corner"), self.corner, role="position"
         )
@@ -2019,7 +2132,14 @@ class _WedgeKernel(GeometryKernel):
     source_id: str = eqx.field(static=True)
     faces: Array
 
-    def __init__(self, corner, extents, top_extent, *, source_id) -> None:
+    def __init__(
+        self,
+        corner: ParameterBinding,
+        extents: ParameterBinding,
+        top_extent: ParameterBinding,
+        *,
+        source_id: str,
+    ) -> None:
         self.corner, self.extents, self.top_extent, self.source_id = (
             corner,
             extents,
@@ -2045,26 +2165,26 @@ class _WedgeKernel(GeometryKernel):
         )
 
     @property
-    def ambient_dimension(self):
+    def ambient_dimension(self) -> int:
         return 3
 
     @property
-    def intrinsic_dimension(self):
+    def intrinsic_dimension(self) -> int:
         return 3
 
     @property
-    def kind(self):
+    def kind(self) -> GeometryKind:
         return GeometryKind.REGION
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> frozenset[GeometryCapability]:
         return _REGION_CAPABILITIES
 
     @property
-    def field_certificate(self):
+    def field_certificate(self) -> FieldCertificate:
         return _LEVEL_SET_CERTIFICATE
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         _, extents, top = self._parameters(state)
         finite = jnp.all(jnp.isfinite(extents)) & jnp.isfinite(top)
         top_margin = jnp.minimum(top, extents[0] - top)
@@ -2084,14 +2204,14 @@ class _WedgeKernel(GeometryKernel):
             contract_id="nondegenerate_wedge_topology",
         )
 
-    def _parameters(self, state):
+    def _parameters(self, state: DesignState) -> tuple[Array, Array, Array]:
         return (
             self.corner.read(state),
             self.extents.read(state),
             self.top_extent.read(state),
         )
 
-    def _vertices(self, state):
+    def _vertices(self, state: DesignState) -> Array:
         corner, extents, top = self._parameters(state)
         x, y, z = extents
         local = jnp.asarray(
@@ -2109,7 +2229,7 @@ class _WedgeKernel(GeometryKernel):
         )
         return corner + local
 
-    def _planes(self, state):
+    def _planes(self, state: DesignState) -> tuple[Array, Array]:
         vertices = self._vertices(state)
         triangles = vertices[self.faces]
         normals = jnp.cross(
@@ -2122,28 +2242,28 @@ class _WedgeKernel(GeometryKernel):
         offsets = -jnp.sum(normals * triangles[:, 0], axis=-1)
         return normals, offsets
 
-    def boundary_field(self, state, points, /):
+    def boundary_field(self, state: DesignState, points: Array, /) -> Array:
         points_ = _check_points(points, 3)
         normals, offsets = self._planes(state)
         return jnp.max(
             jnp.sum(points_[..., None, :] * normals, axis=-1) + offsets, axis=-1
         )
 
-    def contains(self, state, points, /):
+    def contains(self, state: DesignState, points: Array, /) -> Array:
         return self.boundary_field(state, points) <= 0.0
 
-    def boundary_normal(self, state, points, /):
+    def boundary_normal(self, state: DesignState, points: Array, /) -> Array:
         return _normal_from_field(self, state, points)
 
-    def bounds(self, state, /):
+    def bounds(self, state: DesignState, /) -> Array:
         vertices = self._vertices(state)
         return jnp.stack((jnp.min(vertices, axis=0), jnp.max(vertices, axis=0)))
 
-    def measure(self, state, /):
+    def measure(self, state: DesignState, /) -> Array:
         _, extents, top = self._parameters(state)
         return extents[1] * extents[2] * 0.5 * (extents[0] + top)
 
-    def boundary_measure(self, state, /):
+    def boundary_measure(self, state: DesignState, /) -> Array:
         triangles = self._vertices(state)[self.faces]
         return jnp.sum(
             0.5
@@ -2155,13 +2275,23 @@ class _WedgeKernel(GeometryKernel):
             )
         )
 
-    def sample_interior(self, state, num_points, /, *, key, plan=None):
+    def sample_interior(
+        self,
+        state: DesignState,
+        num_points: int,
+        /,
+        *,
+        key: Key[Array, ""],
+        plan: RejectionSamplingPlan | None = None,
+    ) -> SamplingResult:
         return _uniform_in_bounds(self, state, int(num_points), key, plan)
 
-    def sample_boundary(self, state, num_points, /, *, key):
+    def sample_boundary(
+        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+    ) -> SamplingResult:
         return _sample_boundary_atlas(self.boundary_atlas(state), int(num_points), key)
 
-    def boundary_atlas(self, state, /):
+    def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         mapping = _TriangleBoundaryMap(self._vertices(state)[self.faces])
         return BoundaryAtlas(
             mapping,

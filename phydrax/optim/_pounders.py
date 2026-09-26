@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike, PyTree
 
 from phydrax._strict import StrictModule
 
@@ -45,7 +48,10 @@ from ._iterative import (
 from ._least_squares import LeastSquaresState
 
 
-def _coordinate_norm(value, precision: NonlinearPrecisionPolicy, /):
+_ResidualFunction: TypeAlias = Callable[[PyTree[Any]], PyTree[Any]]
+
+
+def _coordinate_norm(value: Array, precision: NonlinearPrecisionPolicy, /) -> Array:
     return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
 
 
@@ -107,11 +113,11 @@ class POUNDERS(AbstractLeastSquaresMethod):
         self.precision = precision_
 
     @property
-    def method_id(self):
+    def method_id(self) -> str:
         return "pounders"
 
     @property
-    def capabilities(self):
+    def capabilities(self) -> OptimizationCapabilities:
         return OptimizationCapabilities(
             scalar_objective=False,
             residual_objective=True,
@@ -120,7 +126,7 @@ class POUNDERS(AbstractLeastSquaresMethod):
             implicit_differentiation=False,
         )
 
-    def init(self, parameters, /):
+    def init(self, parameters: PyTree[Any], /) -> LeastSquaresState:
         parameters_ = validate_real_inexact_tree(parameters, name="parameters")
         dtype = jax.tree.leaves(parameters_)[0].dtype
         nan = jnp.asarray(jnp.nan, dtype=dtype)
@@ -129,22 +135,33 @@ class POUNDERS(AbstractLeastSquaresMethod):
             metrics=IterativeStepMetrics(objective=nan, damping=self.initial_radius),
         )
 
-    def prepare_state(self, residual_function, parameters, /):
+    def prepare_state(
+        self, residual_function: _ResidualFunction, parameters: PyTree[Any], /
+    ) -> LeastSquaresState:
         if not callable(residual_function):
             raise TypeError("residual_function must be callable.")
         return self.init(parameters)
 
-    def step(self, residual_function, parameters, state, /, *, termination):
+    def step(
+        self,
+        residual_function: _ResidualFunction,
+        parameters: PyTree[Any],
+        state: LeastSquaresState,
+        /,
+        *,
+        termination: OptimizationTermination | None,
+    ) -> tuple[PyTree[Any], LeastSquaresState, Array]:
+        termination_ = OptimizationTermination() if termination is None else termination
         result = self.solve(
             NonlinearLeastSquaresProblem(lambda value, args: residual_function(value)),
             parameters,
             termination=OptimizationTermination(
-                absolute_optimality=termination.absolute_optimality,
-                relative_optimality=termination.relative_optimality,
-                absolute_step=termination.absolute_step,
-                relative_step=termination.relative_step,
+                absolute_optimality=termination_.absolute_optimality,
+                relative_optimality=termination_.relative_optimality,
+                absolute_step=termination_.absolute_step,
+                relative_step=termination_.relative_step,
                 maximum_steps=1,
-                maximum_evaluations=termination.maximum_evaluations,
+                maximum_evaluations=termination_.maximum_evaluations,
             ),
             args=None,
         )
@@ -168,10 +185,18 @@ class POUNDERS(AbstractLeastSquaresMethod):
         )
         return result.parameters, next_state, result.objective
 
-    def step_metrics(self, state, /):
+    def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
         return state.metrics
 
-    def solve(self, problem, initial_parameters, /, *, termination, args):
+    def solve(
+        self,
+        problem: NonlinearLeastSquaresProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> LeastSquaresResult:
         if not isinstance(problem, NonlinearLeastSquaresProblem):
             raise TypeError("problem must be NonlinearLeastSquaresProblem.")
         self.precision.validate_tolerance(termination.absolute_optimality)
@@ -189,7 +214,7 @@ class POUNDERS(AbstractLeastSquaresMethod):
         center = space.flatten(parameters)
         coordinate_dtype = center.dtype
 
-        def evaluate(coordinates):
+        def evaluate(coordinates: ArrayLike) -> tuple[Array, Array, Any]:
             coordinates = jnp.asarray(coordinates, dtype=coordinate_dtype)
             value = space.unflatten(coordinates)
             if problem.bounds is not None:
@@ -389,11 +414,14 @@ class POUNDERS(AbstractLeastSquaresMethod):
             ),
         )
         output_parameters = jax.tree.map(self.precision.output, parameters)
+        certificate_evidence = certificate.precision_evidence
+        # certify_least_squares_physical always attaches precision evidence.
+        assert certificate_evidence is not None
         precision_evidence = self.precision.evidence_for(
             parameters,
             space.unflatten(center_residual),
             children={
-                "certificate": certificate.precision_evidence,
+                "certificate": certificate_evidence,
                 "interpolation-model": model.precision_evidence,
             },
             output_value=output_parameters,

@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import prod
-from typing import Any
+from typing import Any, cast
 
 import diffrax as dfx
 import equinox as eqx
@@ -22,12 +23,13 @@ from ...dynamics._evolution import (
     EVOLUTION_NONFINITE,
     EVOLUTION_SUCCESS,
 )
+from ...dynamics._system import ContinuousSystem
 from ...operators.differential._stochastic_estimators import (
     exact_state_divergence,
     stochastic_divergence_samples,
     StochasticTracePolicy,
 )
-from ._transport import ContinuousTransport
+from ._transport import ContinuousTransport, ContinuousTransportSample
 
 
 _DIFFRAX_SUCCESS = jax.tree.leaves(dfx.RESULTS.successful)[0]
@@ -88,8 +90,11 @@ class _ExactAugmentedField(StrictModule):
             else coordinate
         )
 
-        def vector_field(current):
-            return self.transport.evolution.system.evaluate(
+        # `_validate_density_transport` admits only DiffraxEvolution systems.
+        system = cast(ContinuousSystem, self.transport.evolution.system)
+
+        def vector_field(current: Array) -> Array:
+            return system.evaluate(
                 physical_coordinate,
                 current,
                 self.transport.args,
@@ -132,8 +137,11 @@ class _StochasticAugmentedField(StrictModule):
             - coordinate
         )
 
-        def vector_field(current):
-            return self.transport.evolution.system.evaluate(
+        # `_validate_density_transport` admits only DiffraxEvolution systems.
+        system = cast(ContinuousSystem, self.transport.evolution.system)
+
+        def vector_field(current: Array) -> Array:
+            return system.evaluate(
                 physical_coordinate,
                 current,
                 self.transport.args,
@@ -248,7 +256,7 @@ class ContinuousFlowDensityResult(StrictModule):
         backend_status: ArrayLike,
         accepted_steps: ArrayLike,
         rejected_steps: ArrayLike,
-        event_shape,
+        event_shape: Iterable[int],
         direction: str,
         divergence_method: str,
         num_probes: int,
@@ -320,7 +328,9 @@ class ContinuousFlowDensityResult(StrictModule):
         return jnp.all(self.valid) & jnp.all(self.status == EVOLUTION_SUCCESS)
 
 
-def _base_log_prob(law: AbstractProbabilityLaw, states: Array, event_shape, /) -> Array:
+def _base_log_prob(
+    law: AbstractProbabilityLaw, states: Array, event_shape: tuple[int, ...], /
+) -> Array:
     leading = _event_shape(states, event_shape)
     count = prod(leading) if leading else 1
     flat = states.reshape((count,) + tuple(event_shape))
@@ -328,7 +338,9 @@ def _base_log_prob(law: AbstractProbabilityLaw, states: Array, event_shape, /) -
     return values.reshape(leading)
 
 
-def _base_contains(law: AbstractProbabilityLaw, states: Array, event_shape, /) -> Array:
+def _base_contains(
+    law: AbstractProbabilityLaw, states: Array, event_shape: tuple[int, ...], /
+) -> Array:
     leading = _event_shape(states, event_shape)
     count = prod(leading) if leading else 1
     flat = states.reshape((count,) + tuple(event_shape))
@@ -350,7 +362,7 @@ def _exact_density_batch(
     flat = states.reshape((count,) + event_shape)
     field = _ExactAugmentedField(transport, reverse=reverse)
 
-    def one(state):
+    def one(state: Array) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         return _solve_augmented(transport, state, field, 1)
 
     transformed, raw_volume, valid, status, backend, accepted, rejected = jax.vmap(one)(
@@ -450,7 +462,7 @@ class ContinuousFlowLaw(AbstractProbabilityLaw):
         self,
         key: Key[Array, ""],
         sample_shape: tuple[int, ...] = (),
-    ):
+    ) -> ContinuousTransportSample:
         return self.transport.sample_with_diagnostics(key, sample_shape)
 
     def sample(
@@ -539,7 +551,9 @@ def estimate_continuous_flow_log_prob(
     flat = states.reshape((count,) + event_shape)
     keys = jr.split(key, count)
 
-    def one(state, probe_key):
+    def one(
+        state: Array, probe_key: Array
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         field = _StochasticAugmentedField(transport, probe_key, resolved)
         return _solve_augmented(
             transport,

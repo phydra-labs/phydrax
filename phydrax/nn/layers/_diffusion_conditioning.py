@@ -9,7 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState, ParameterOwner
@@ -58,7 +58,14 @@ class TimeConditionedVectorModel(StrictModule, ParameterOwner):
         self.embedding = SinusoidalTimeEmbedding(embedding_dimension)
         self.state_dimension = size
 
-    def __call__(self, state: ArrayLike, time: ArrayLike, /, *, key=None) -> Array:
+    def __call__(
+        self,
+        state: ArrayLike,
+        time: ArrayLike,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+    ) -> Array:
         value = jnp.asarray(state)
         if value.shape[-1:] != (self.state_dimension,):
             raise ValueError("State does not match the conditioned model dimension.")

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import cast, Literal, TypeAlias
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -479,7 +479,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         key: Key[Array, ""] = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: DenoisingScoreMatchingBatch | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Array:
         del iter_, kwargs
         resolved = self.sample(key=key) if batch is None else batch

@@ -10,7 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import PyTree
+from jaxtyping import Array, PyTree
 
 from .._tree_math import tree_add_scaled, tree_allfinite, tree_where
 from ..linalg import (
@@ -25,6 +25,7 @@ from ..linalg import (
     solve as solve_linear,
     TolerancePolicy,
 )
+from ._types import NonlinearSystemProblem
 from ._updates import (
     _provenance,
     _space_norm,
@@ -123,7 +124,13 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
             complete=complete,
         )
 
-    def _linear_problem(self, problem, state, args, /) -> LinearSystem:
+    def _linear_problem(
+        self,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> LinearSystem:
         if problem.state_space is None or problem.residual_space is None:
             raise ValueError("Lagged linear updates require bound vector spaces.")
         operator = self.operator_function(state, args)
@@ -141,7 +148,13 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
             raise ValueError("Lagged root updates require a square linear operator.")
         return LinearSystem(operator)
 
-    def _prepare_internal(self, problem, state, args, /) -> PreparedLinearSolve:
+    def _prepare_internal(
+        self,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
+        /,
+    ) -> PreparedLinearSolve:
         return prepare_linear(
             self._linear_problem(problem, state, args),
             self.linear_policy,
@@ -150,9 +163,9 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
     def _refresh_internal(
         self,
         internal_state: Any,
-        problem,
-        state,
-        args,
+        problem: NonlinearSystemProblem,
+        state: PyTree[Any],
+        args: Any,
         /,
     ) -> PreparedLinearSolve:
         if not isinstance(internal_state, PreparedLinearSolve):
@@ -176,7 +189,7 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
             eqx.is_array,
         )
 
-        def skipped(_):
+        def skipped(_: None) -> tuple[NonlinearUpdateResult, PyTree[Array]]:
             return (
                 skipped_nonlinear_update_result(
                     prepared,
@@ -187,7 +200,7 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
                 internal_dynamic,
             )
 
-        def execute(_):
+        def execute(_: None) -> tuple[NonlinearUpdateResult, PyTree[Array]]:
             problem = prepared.problem
             initial_residual, initial_auxiliary = problem.evaluate(state_, args)
             initial_norm = _space_norm(
@@ -196,7 +209,9 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
             )
             initial_finite = tree_allfinite(state_) & tree_allfinite(initial_residual)
 
-            def nonfinite_input(__):
+            def nonfinite_input(
+                __: None,
+            ) -> tuple[NonlinearUpdateResult, PyTree[Array]]:
                 work = NonlinearWork(residual_evaluations=1)
                 diagnostics = NonlinearUpdateDiagnostics(
                     initial_residual_norm=initial_norm,
@@ -218,7 +233,9 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
                     internal_dynamic,
                 )
 
-            def solve_direction(__):
+            def solve_direction(
+                __: None,
+            ) -> tuple[NonlinearUpdateResult, PyTree[Array]]:
                 combined = eqx.combine(internal_dynamic, internal_static)
                 refreshed = self._refresh_internal(
                     combined,
@@ -254,7 +271,7 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
                 ) & linear_result.diagnostics.converged
                 direction_finite = tree_allfinite(direction)
 
-                def failed_direction(___):
+                def failed_direction(___: None) -> NonlinearUpdateResult:
                     status = jnp.where(
                         linear_success,
                         int(NonlinearUpdateStatus.NONFINITE_EVALUATION),
@@ -278,7 +295,7 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
                         provenance=_provenance(prepared),
                     )
 
-                def evaluate_candidate(___):
+                def evaluate_candidate(___: None) -> NonlinearUpdateResult:
                     candidate = prepared.plan.state_space.validate(
                         tree_add_scaled(state_, direction, self.damping)
                     )

@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import DomainFunction
 from phydrax.ein import contract
@@ -21,7 +23,9 @@ class _PointwiseTransformCallable(StrictModule):
         self.source = source
         self.operation = operation
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(
+        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+    ) -> Array:
         value = jnp.asarray(self.source.func(*args, key=key, **kwargs))
         if self.operation == "conjugate":
             return jnp.conj(value)
@@ -85,7 +89,7 @@ def norm(u: DomainFunction, /, *, order: int = 2) -> DomainFunction:
     """
     order_i = int(order)
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
         val = jnp.asarray(u.func(*args, key=key, **kwargs))
         if val.ndim == 0:
             return jnp.abs(val)
@@ -109,7 +113,7 @@ def det(u: DomainFunction, /) -> DomainFunction:
     - A `DomainFunction` representing the scalar determinant field.
     """
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
         val = jnp.asarray(u.func(*args, key=key, **kwargs))
         return jnp.linalg.det(val)
 
@@ -131,7 +135,7 @@ def trace(u: DomainFunction, /) -> DomainFunction:
     - A `DomainFunction` representing the scalar trace field.
     """
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
         val = jnp.asarray(u.func(*args, key=key, **kwargs))
         return jnp.trace(val, axis1=-2, axis2=-1)
 
@@ -194,7 +198,7 @@ def einsum(subscript: str, /, *operands: DomainFunction | ArrayLike) -> DomainFu
             meta = {}
             break
 
-    def _op(*args, key=None, **kwargs):
+    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
         arrays = []
         for op, pos, const in operand_specs:
             if op is None:

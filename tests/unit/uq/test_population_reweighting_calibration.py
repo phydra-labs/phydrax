@@ -37,6 +37,36 @@ def test_posterior_reweighting_preserves_raw_weighted_measure_and_overlap():
     assert result.target.samples["x"].shape == (3,)
 
 
+def test_posterior_reweighting_and_export_accept_named_axis_weights(tmp_path):
+    target = phx.integration.WeightedSampleTarget(
+        {"x": jnp.asarray([-1.0, 0.0, 1.0])},
+        phx.axes.AxisArray(jnp.zeros(3), dims=("draw",)),
+        normalized=True,
+        independent=False,
+        sample_axes="draw",
+        provenance="named-three-point-posterior",
+    )
+    plan = phx.uq.PosteriorReweightingPlan(
+        lambda sample: jnp.asarray(0.0),
+        lambda sample: sample["x"],
+        old_target_id="old",
+        new_target_id="new",
+        policy=phx.uq.PosteriorReweightingPolicy(1.0, 0.1),
+    )
+    result = phx.uq.reweight_posterior(target, plan)
+    expected = jnp.asarray([-1.0, 0.0, 1.0]) - jsp.special.logsumexp(
+        jnp.asarray([-1.0, 0.0, 1.0])
+    )
+
+    assert isinstance(result.target.log_weights, phx.axes.AxisArray)
+    assert result.target.log_weights.dims == ("draw",)
+    np.testing.assert_allclose(result.target.log_weights.data, expected, atol=1e-12)
+    archive = phx.uq.read_result_archive(
+        phx.uq.export_result(result, tmp_path / "named.phx")
+    )
+    np.testing.assert_allclose(archive.array("log_weights"), expected, atol=1e-12)
+
+
 def test_population_recycling_and_selection_match_manual_event_integrals():
     event = phx.uq.EventPosterior(
         _measure(),

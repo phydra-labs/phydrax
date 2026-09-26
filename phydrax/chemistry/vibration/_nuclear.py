@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from math import isfinite
 
 import equinox as eqx
@@ -34,16 +35,16 @@ class VibrationalConfigurationResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        vscf_energy,
-        vscf_modal_coefficients,
-        vscf_variance,
-        vscf_iterations,
-        vci_energies,
-        vci_coefficients,
-        vci_residuals,
-        basis_quanta,
-        successful,
-        plan_id,
+        vscf_energy: ArrayLike,
+        vscf_modal_coefficients: Iterable[ArrayLike],
+        vscf_variance: ArrayLike,
+        vscf_iterations: ArrayLike,
+        vci_energies: ArrayLike,
+        vci_coefficients: ArrayLike,
+        vci_residuals: ArrayLike,
+        basis_quanta: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
         /,
     ) -> None:
         energy = jnp.asarray(vci_energies)
@@ -170,7 +171,7 @@ class VibrationalConfigurationPlan(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _product_vector(modals):
+    def _product_vector(modals: Sequence[np.ndarray]) -> np.ndarray:
         result = np.asarray([1.0])
         for modal in modals:
             result = np.kron(result, modal)
@@ -251,14 +252,14 @@ class HinderedRotorResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        energies,
-        wavefunctions,
-        grid,
-        partition_function,
-        free_energy,
-        orthonormality_residual,
-        successful,
-        plan_id,
+        energies: ArrayLike,
+        wavefunctions: ArrayLike,
+        grid: ArrayLike,
+        partition_function: ArrayLike,
+        free_energy: ArrayLike,
+        orthonormality_residual: ArrayLike,
+        successful: ArrayLike,
+        plan_id: str,
         /,
     ) -> None:
         energies_ = jnp.asarray(energies)

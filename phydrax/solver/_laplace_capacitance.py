@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
@@ -314,7 +315,13 @@ class PreparedLaplaceStableDualCalderon3D(AbstractPreconditioner, NonTrainableSt
     shape_regularity_margin: float = eqx.field(static=True)
     dual_mass_condition_number: float = eqx.field(static=True)
 
-    def apply(self, residual, /, *, iteration=None):
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> Array:
         del iteration
         value = self.space.validate(residual)
         return self.matrix @ value

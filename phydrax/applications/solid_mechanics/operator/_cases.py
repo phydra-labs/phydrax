@@ -24,6 +24,7 @@ from ....nn.operator.data import (
     OperatorBatch,
     OperatorCaseProvenance,
     OperatorPrediction,
+    OperatorTargetBatch,
     stack_operator_batches,
 )
 from ....nn.operator.sampling import OperatorCase as CanonicalOperatorCase
@@ -499,7 +500,7 @@ class MechanicsOperatorCase:
         return self.case.batch
 
     @property
-    def targets(self):
+    def targets(self) -> OperatorTargetBatch:
         return self.case.targets
 
     @property

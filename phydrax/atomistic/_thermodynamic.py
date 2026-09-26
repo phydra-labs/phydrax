@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Literal
 
 import equinox as eqx
@@ -223,7 +224,12 @@ class PreparedThermodynamicStateTable(StrictModule, NonTrainableState):
     requires_cross_evaluation: bool = eqx.field(static=True)
     table_id: str = eqx.field(static=True)
 
-    def __init__(self, dynamics: Any, states, /) -> None:
+    def __init__(
+        self,
+        dynamics: Any,
+        states: Iterable[AtomisticThermodynamicStatePlan],
+        /,
+    ) -> None:
         from ._dynamics import PreparedAtomisticDynamics
 
         if not isinstance(dynamics, PreparedAtomisticDynamics):

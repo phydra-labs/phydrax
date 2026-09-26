@@ -13,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._strict import StrictModule
@@ -466,14 +466,16 @@ class MarkerFlowTrajectoryResult(StrictModule):
 class MarkerFlowTrajectoryAdapter(StrictModule, NonTrainableState):
     """Adapter from accepted marker-flow steps to replayable trajectory arrays."""
 
-    step: Callable = eqx.field(static=True)
-    observe: Callable = eqx.field(static=True)
+    step: Callable[[PyTree, Array, Array, Array, Array], tuple[PyTree, Array, Array]] = (
+        eqx.field(static=True)
+    )
+    observe: Callable[[Array, PyTree], PyTree] = eqx.field(static=True)
     adapter_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        step: Callable,
-        observe: Callable,
+        step: Callable[[PyTree, Array, Array, Array, Array], tuple[PyTree, Array, Array]],
+        observe: Callable[[Array, PyTree], PyTree],
         /,
         *,
         adapter_id: str,
@@ -489,7 +491,7 @@ class MarkerFlowTrajectoryAdapter(StrictModule, NonTrainableState):
 
     def rollout(
         self,
-        initial_state,
+        initial_state: PyTree,
         initial_time: ArrayLike,
         step_size: ArrayLike,
         event_parameter: ArrayLike,
@@ -635,7 +637,7 @@ class MarkerFlowCompiledExportPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        state_template,
+        state_template: PyTree,
         /,
         *,
         fixed_routes: bool,
@@ -657,7 +659,7 @@ class MarkerFlowCompiledExportPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def validate(self, state, /) -> MarkerFlowCompiledExportReport:
+    def validate(self, state: PyTree, /) -> MarkerFlowCompiledExportReport:
         matches = array_tree_signature(state) == self.state_signature
         exportable = (
             matches

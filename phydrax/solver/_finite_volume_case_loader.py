@@ -27,6 +27,8 @@ from ..discretization import (
     HLLFluxPlan,
     MUSCLReconstruction,
     PiecewiseConstantReconstruction,
+    PreparedFiniteVolumeDynamics,
+    PreparedUnstructuredFiniteVolumeDynamics,
     read_unstructured_fv_archive,
     RusanovFluxPlan,
     TensorGridPlan,
@@ -219,8 +221,11 @@ def _load_structured_case(payload: dict[str, Any], /) -> PreparedFiniteVolumeCas
         problem, discretization, method, precision=precision
     )
     execution = _execution(payload["execution"])
+    dynamics = compiled.dynamics
+    # Structured finite-volume plans compile to structured finite-volume dynamics.
+    assert isinstance(dynamics, PreparedFiniteVolumeDynamics)
     runtime = PreparedFiniteVolumeRuntime(
-        compiled.dynamics, FluxPositivityPlan(), execution.step_policy
+        dynamics, FluxPositivityPlan(), execution.step_policy
     )
     case = FiniteVolumeCaseSpec(
         str(payload["name"]), runtime, execution, precision=precision
@@ -319,8 +324,11 @@ def _load_unstructured_case(
         problem, discretization, method, precision=precision
     )
     execution = _execution(payload["execution"])
+    dynamics = compiled.dynamics
+    # Unstructured finite-volume plans compile to unstructured dynamics.
+    assert isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics)
     runtime = PreparedFiniteVolumeRuntime(
-        compiled.dynamics, FluxPositivityPlan(), execution.step_policy
+        dynamics, FluxPositivityPlan(), execution.step_policy
     )
 
     initial_payload = payload["initial_state"]

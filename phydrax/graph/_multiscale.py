@@ -7,6 +7,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
+from jaxtyping import ArrayLike
 
 from phydrax._strict import StrictModule
 
@@ -29,7 +30,7 @@ def _mask_tree(tree: Any, mask: jnp.ndarray | None, /) -> Any:
     if mask is None:
         return tree
 
-    def mask_leaf(value):
+    def mask_leaf(value: ArrayLike) -> jnp.ndarray:
         arr = jnp.asarray(value)
         leaf_mask = mask
         while leaf_mask.ndim < arr.ndim:
@@ -176,7 +177,7 @@ def unpool_nodes_by_cluster(
     )
     lifted = gather_routes(membership.transpose(), coarse_nodes)
 
-    def fill_leaf(value):
+    def fill_leaf(value: jnp.ndarray) -> jnp.ndarray:
         fill = jnp.asarray(fill_value, dtype=value.dtype)
         mask = valid.reshape(valid.shape + (1,) * (value.ndim - 1))
         return jnp.where(mask, value, fill)

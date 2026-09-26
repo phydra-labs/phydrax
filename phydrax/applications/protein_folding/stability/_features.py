@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
@@ -224,11 +225,13 @@ class ProteinResidueEnvironment(StrictModule, NonTrainableState):
                 "kind": "protein-residue-environment",
                 "position": residue_position,
                 "secondary_structure": secondary_structure,
-                "relative_solvent_exposure": exposure.hex(),
-                "neighborhood_density": density.hex(),
-                "contact_counts": [(name, value.hex()) for name, value in contacts],
-                "phi_radians": phi.hex(),
-                "psi_radians": psi.hex(),
+                "relative_solvent_exposure": float(exposure).hex(),
+                "neighborhood_density": float(density).hex(),
+                "contact_counts": [
+                    (name, float(value).hex()) for name, value in contacts
+                ],
+                "phi_radians": float(phi).hex(),
+                "psi_radians": float(psi).hex(),
                 "hypothesis_id": self.hypothesis_id,
                 "residue_mapping_id": self.residue_mapping_id,
                 "source_manifest_ids": list(self.source_manifest_ids),
@@ -262,7 +265,7 @@ class ProteinMutationFeatures(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        values: ArrayLike,
+        values: npt.ArrayLike,
         /,
         *,
         measurement_id: str,

@@ -22,7 +22,9 @@ from ....circuit import ModalWaveReference
 from ._contracts import (
     ContinuousFourierModalLayer,
     FourierModalLayer,
+    FourierModalMaxwellProblem,
     FourierModalSourcePlane,
+    FrequencyMaxwellMaterial,
 )
 from ._loss import FourierModalLossConvergenceEvidence, FourierModalLossEvidence
 from ._numeric_revision import (
@@ -301,7 +303,12 @@ def _modal_admittance(modes: HomogeneousPortModes, index: int, /) -> Array:
     return jnp.sum(jnp.conj(ex) * hy - jnp.conj(ey) * hx) / denominator
 
 
-def _same_material(left, right, problem, /) -> bool:
+def _same_material(
+    left: FrequencyMaxwellMaterial,
+    right: FrequencyMaxwellMaterial,
+    problem: FourierModalMaxwellProblem,
+    /,
+) -> bool:
     left_values = _canonical_material_samples(left, problem)
     right_values = _canonical_material_samples(right, problem)
     return (

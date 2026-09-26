@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import cast, Literal, TypeAlias
+from typing import cast, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +17,10 @@ import phydrax.ein as ein
 from ..._numerics import log_normalize, weight_ess
 from ..._strict import StrictModule
 from ...integration import WeightedSampleBatch
+
+
+if TYPE_CHECKING:
+    import phydrax.axes as cx
 
 
 CrossingDirection: TypeAlias = Literal["inward", "outward", "both"]
@@ -183,7 +187,9 @@ def spherical_surface_crossings(
     flux_log_weights = repeated_log_weights
     density_log_weights = repeated_log_weights + jnp.log(jacobian)
 
-    def repeat_identifier(value, default=None):
+    def repeat_identifier(
+        value: Array | cx.AxisArray | None, default: Array | None = None
+    ) -> Array | None:
         if value is None:
             if default is None:
                 return None

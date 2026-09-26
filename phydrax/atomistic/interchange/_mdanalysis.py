@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from importlib import import_module
 from importlib.util import find_spec
+from types import ModuleType
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from ...units import (
     ANGSTROM,
@@ -25,7 +29,7 @@ from .._units import AtomisticUnitSystem, molar_energy_to_single_system_factor
 _ANGSTROM_PER_PICOSECOND = derived_unit("angstrom/ps", ((ANGSTROM, 1), (PICOSECOND, -1)))
 
 
-def _mdanalysis():
+def _mdanalysis() -> ModuleType:
     if find_spec("MDAnalysis") is None:
         raise ImportError(
             "MDAnalysis interoperability requires the optional MDAnalysis package."
@@ -34,14 +38,14 @@ def _mdanalysis():
 
 
 def atomistic_frame_from_mdanalysis(
-    universe,
+    universe: Any,
     /,
     *,
     system_id: str,
     topology_id: str,
     units: AtomisticUnitSystem,
     source_id: str,
-):
+) -> AtomisticFrame:
     if not isinstance(units, AtomisticUnitSystem):
         raise TypeError("units must be an AtomisticUnitSystem.")
     atoms = universe.atoms
@@ -98,7 +102,7 @@ def atomistic_frame_from_mdanalysis(
     )
 
 
-def atomistic_metadata_from_mdanalysis(universe, /):
+def atomistic_metadata_from_mdanalysis(universe: Any, /) -> AtomisticMetadata:
     atoms = universe.atoms
     return AtomisticMetadata(
         tuple(atoms.names),
@@ -110,7 +114,7 @@ def atomistic_metadata_from_mdanalysis(universe, /):
     )
 
 
-def mdanalysis_universe_from_frames(frames, /):
+def mdanalysis_universe_from_frames(frames: Iterable[AtomisticFrame], /) -> Any:
     mda = _mdanalysis()
     values = tuple(frames)
     if not values:
@@ -135,7 +139,13 @@ def mdanalysis_universe_from_frames(frames, /):
     return universe
 
 
-def mdanalysis_selection(universe, selection: str, /, *, stable_ids=None):
+def mdanalysis_selection(
+    universe: Any,
+    selection: str,
+    /,
+    *,
+    stable_ids: npt.ArrayLike | None = None,
+) -> AtomisticSelectionPlan:
     group = universe.select_atoms(str(selection))
     ids = (
         np.asarray(universe.atoms.indices, dtype=np.int64)

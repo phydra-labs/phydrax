@@ -9,6 +9,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable
 from math import isfinite, log, pi
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -342,7 +343,7 @@ class PathProposalEvaluation(StrictModule):
             zero,
             zero,
             zero,
-            -jnp.inf,
+            jnp.asarray(-jnp.inf),
             false,
             false,
             false,
@@ -362,6 +363,9 @@ class PathMoveResult(StrictModule):
     accepted: Array
     shooting_index: Array
     candidate_shooting_index: Array
+
+
+_GrowthCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class _GrowthResult(StrictModule):
@@ -392,7 +396,7 @@ def _grow_fixed(
         initial, initial, kernel_direction
     ).dtype
 
-    def body(carry, item):
+    def body(carry: _GrowthCarry, item: tuple[Array, Array]) -> tuple[_GrowthCarry, None]:
         state, output, log_probability, count, done, failed, status = carry
         index, step_key = item
         should_step = (~done) & (~failed) & (index < requested_steps)

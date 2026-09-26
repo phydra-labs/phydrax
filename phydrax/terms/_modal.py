@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, TypeAlias
+from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax
@@ -88,7 +88,8 @@ class CompiledModalResidualTerm(AbstractSamplingTerm):
             raise ValueError("function_name must be non-empty.")
         if callable(times):
             fixed_times = None
-            provider = times
+            # ArrayLike time batches are never callable, so this is the provider.
+            provider = cast(ModalTimeProvider, times)
         else:
             fixed_times = _time_batch(times)
             provider = None

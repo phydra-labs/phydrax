@@ -20,7 +20,7 @@ def advance_phoretic_particle(
     phoretic_velocity: ArrayLike,
     step_size_s: ArrayLike,
     /,
-):
+) -> PhoreticParticleStep:
     velocity = jnp.asarray(fluid_velocity) + jnp.asarray(phoretic_velocity)
     candidate = jnp.asarray(position) + jnp.asarray(step_size_s) * velocity
     finite = jnp.all(jnp.isfinite(candidate)) & (jnp.asarray(step_size_s) > 0)

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal, TypeAlias
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +24,10 @@ from ..equations._relativistic_hydrodynamics import (
 from ..equations._relativistic_radiation import GRGrayM1RadiationSystem
 from ..metrix._adm_exchange import ADMGridGeometry, StressEnergyProjection
 from ._relativistic_finite_volume import ValenciaFiniteVolumeStageGeometry
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume import FiniteVolumeDiscretization
 
 
 GRM1BoundaryKind: TypeAlias = Literal["outflow", "vacuum", "reflective", "prescribed"]
@@ -230,7 +234,7 @@ class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
     """Atomic metric-aware gray-M1 finite volume with SSPRK(3,3)."""
 
     system: GRGrayM1RadiationSystem
-    discretization: object
+    discretization: FiniteVolumeDiscretization
     boundaries: tuple[GRM1BoundaryPair | None, ...]
     reconstruction: GRM1ReconstructionKind = eqx.field(static=True)
     plm_theta: float = eqx.field(static=True)
@@ -241,7 +245,7 @@ class FixedGridGRM1SSPRK3Plan(StrictModule, NonTrainableState):
     def __init__(
         self,
         system: GRGrayM1RadiationSystem,
-        discretization,
+        discretization: FiniteVolumeDiscretization,
         /,
         *,
         boundaries: tuple[GRM1BoundaryPair | None, ...] | None = None,

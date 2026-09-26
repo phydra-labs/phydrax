@@ -266,7 +266,7 @@ def low_rank_gp_conditioner(
     residual_diagonal = jnp.asarray(query_residual_diagonal)
     cross_covariance = query_feature_array @ feature_array.T
 
-    def solve_observation_covariance(right):
+    def solve_observation_covariance(right: Array) -> Array:
         scaled = (
             right / diagonal_array[:, None] if right.ndim == 2 else right / diagonal_array
         )

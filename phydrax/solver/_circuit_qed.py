@@ -26,6 +26,7 @@ from ..operators.quantum import (
     HarmonicModeParameters,
     HilbertRegisterLayout,
     ModeReductionPolicy,
+    ModeReductionProblem,
     OscillatorBasis,
     prepare_mode_reduction,
     PreparedModeReduction,
@@ -33,7 +34,11 @@ from ..operators.quantum import (
     transmon_mode_problem,
     TransmonParameters,
 )
-from ._local_hamiltonian import LocalHamiltonian, LocalHamiltonianTerm
+from ._local_hamiltonian import (
+    FixedGridLocalHamiltonian,
+    LocalHamiltonian,
+    LocalHamiltonianTerm,
+)
 from ._quantum_control import (
     assemble_fixed_grid_local_hamiltonian,
     QuantumControlScheduleResult,
@@ -369,8 +374,8 @@ class CircuitQEDDeviceParameters(StrictModule):
         mode_parameters: Sequence[CircuitParameters],
         /,
         *,
-        interaction_strengths: ArrayLike = (),
-        drive_scales: ArrayLike = (),
+        interaction_strengths: ArrayLike | Sequence[float] = (),
+        drive_scales: ArrayLike | Sequence[float] = (),
     ) -> None:
         modes = tuple(mode_parameters)
         if not modes or not all(
@@ -569,7 +574,7 @@ def _mode_problem(
     parameters: CircuitParameters,
     hbar: Array,
     /,
-):
+) -> ModeReductionProblem:
     problem_id = canonical_fingerprint(
         {
             "kind": "placed-circuit-mode-problem",
@@ -831,7 +836,7 @@ def assemble_circuit_qed_hamiltonian(
     prepared: PreparedCircuitQEDDevice,
     controls: QuantumControlScheduleResult,
     /,
-):
+) -> FixedGridLocalHamiltonian:
     """Bind sampled control coefficients to prepared circuit-QED drive ports."""
 
     if not isinstance(prepared, PreparedCircuitQEDDevice):

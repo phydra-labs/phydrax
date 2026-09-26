@@ -489,10 +489,10 @@ class AbstractGeometry(JointFactor):
         remaining = delta
         reflection_count = jnp.zeros((pts.shape[0],), dtype=jnp.int32)
 
-        def adf_batch(x):
+        def adf_batch(x: Array) -> Array:
             return jax.vmap(self.adf)(x)
 
-        def normal_batch(x):
+        def normal_batch(x: Array) -> Array:
             gradient = jax.vmap(jax.grad(self.adf))(x)
             norm = jnp.linalg.norm(gradient, axis=1, keepdims=True)
             return gradient / jnp.maximum(norm, jnp.finfo(x.dtype).eps)
@@ -555,10 +555,10 @@ class AbstractGeometry(JointFactor):
         pts = jnp.asarray(points, dtype=jnp.float64).reshape((-1, self.spatial_dim))
         delta = jnp.asarray(displacement, dtype=pts.dtype).reshape(pts.shape)
 
-        def values(x):
+        def values(x: Array) -> Array:
             return jax.vmap(self.adf)(x)
 
-        def gradients(x):
+        def gradients(x: Array) -> Array:
             return jax.vmap(jax.grad(self.adf))(x)
 
         gradient = gradients(pts)

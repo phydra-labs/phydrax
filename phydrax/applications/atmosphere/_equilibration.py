@@ -151,7 +151,7 @@ def precondition_global_fluxes(
         processes.thermodynamics,
     )
 
-    def shifted(controls):
+    def shifted(controls: Array) -> GlobalAtmosphereContinuation:
         temperature = base_view.temperature + controls[0]
         slab = boundary.slab.initialize(
             base_surface_temperature + controls[1], base.state.surface_water
@@ -172,7 +172,7 @@ def precondition_global_fluxes(
             (state, held, jnp.asarray(0, jnp.int32)),
         )
 
-    def residual_and_valid(controls):
+    def residual_and_valid(controls: Array) -> tuple[Array, Array]:
         return global_flux_residuals(model, shifted(controls))
 
     controls = jnp.zeros((2,), dtype=base.state.surface_energy.dtype)
@@ -205,8 +205,7 @@ def precondition_global_fluxes(
         ):
             break
         current_norm = float(jnp.max(jnp.abs(residual)))
-        selected = None
-        selected_residual = None
+        selected: tuple[Array, Array] | None = None
         for damping in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125):
             proposal = controls - damping * direction
             within = (
@@ -220,12 +219,11 @@ def precondition_global_fluxes(
                 bool(proposal_valid)
                 and float(jnp.max(jnp.abs(proposal_residual))) < current_norm
             ):
-                selected = proposal
-                selected_residual = proposal_residual
+                selected = (proposal, proposal_residual)
                 break
         if selected is None:
             break
-        controls = selected
+        controls, selected_residual = selected
         history.append(selected_residual)
         accepted_iterations += 1
         successful = float(jnp.max(jnp.abs(selected_residual))) <= scales[0]

@@ -7,17 +7,18 @@ from __future__ import annotations
 import itertools
 from collections import defaultdict
 from collections.abc import Mapping
-from typing import Any, NamedTuple
+from typing import Any, cast, NamedTuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key
+from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
     AbstractScalarDomain,
+    Domain,
     DomainFunction,
     PointBatch,
     ProbabilityDomain,
@@ -68,7 +69,7 @@ class SmolyakInterpolationBlock(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        axes: Array,
+        axes: ArrayLike,
         nodes: tuple[Array, ...],
         barycentric_weights: tuple[Array, ...],
         values: Array,
@@ -141,7 +142,9 @@ def _resolve_axis_rules(
     return tuple(resolved)
 
 
-def _from_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
+def _from_reference(
+    factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /
+) -> Array:
     reference = jnp.asarray(value, dtype=jnp.float64)
     if isinstance(factor, ProbabilityDomain):
         return factor.reference_transport.from_reference(reference)
@@ -152,7 +155,9 @@ def _from_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: 
     return 0.5 * (upper - lower) * reference + 0.5 * (upper + lower)
 
 
-def _to_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
+def _to_reference(
+    factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /
+) -> Array:
     physical = jnp.asarray(value, dtype=jnp.float64)
     if isinstance(factor, ProbabilityDomain):
         return factor.reference_transport.to_reference(physical)
@@ -324,7 +329,7 @@ class SmolyakInterpolant(StrictModule, NonTrainableState):
         return len(self.blocks)
 
     @property
-    def dtype(self):
+    def dtype(self) -> jnp.dtype:
         return self.blocks[0].values.dtype
 
     def __call__(
@@ -356,7 +361,7 @@ class SmolyakInterpolant(StrictModule, NonTrainableState):
         return result
 
 
-def _dependency_domain(function: DomainFunction, /):
+def _dependency_domain(function: DomainFunction, /) -> Domain:
     factors = tuple(function.domain.factor(label) for label in function.deps)
     domain = factors[0]
     for factor in factors[1:]:
@@ -545,6 +550,11 @@ def _interpolate_index_set(
     )
 
 
+def _smolyak_interpolant(function: DomainFunction, /) -> SmolyakInterpolant:
+    # _interpolate_index_set always wraps a SmolyakInterpolant.
+    return cast(SmolyakInterpolant, function.func)
+
+
 def _adaptive_axis_rules(
     function: DomainFunction,
     plan: AdaptiveSmolyakInterpolationPlan,
@@ -689,8 +699,9 @@ def interpolate_adaptive_smolyak(
             proposed_function, proposed_points = _interpolate_index_set(
                 function, plan, proposed, key=key
             )
-            factors = proposed_function.func.factors
-            proposed_rules = proposed_function.func.axis_rules
+            proposed_interpolant = _smolyak_interpolant(proposed_function)
+            factors = proposed_interpolant.factors
+            proposed_rules = proposed_interpolant.axis_rules
             physical = tuple(
                 _from_reference(
                     factor,
@@ -749,8 +760,8 @@ def interpolate_adaptive_smolyak(
                                 jnp.asarray(0.0),
                             )
                             for factor, rule in zip(
-                                current.func.factors,
-                                current.func.axis_rules,
+                                _smolyak_interpolant(current).factors,
+                                _smolyak_interpolant(current).axis_rules,
                                 strict=True,
                             )
                         )

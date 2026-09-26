@@ -11,6 +11,7 @@ from enum import IntEnum
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -195,7 +196,7 @@ def _initial_distribution(
     initial_covariance: ArrayLike | None,
     case_shape: tuple[int, ...],
     state_size: int,
-    dtype,
+    dtype: DTypeLike,
     covariance_tolerance: float,
     /,
 ) -> tuple[Array, Array, Array, Array, Array]:

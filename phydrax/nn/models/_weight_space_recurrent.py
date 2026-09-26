@@ -19,6 +19,7 @@ from .._keys import EvalKey
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._weight_space_recurrence import (
     WeightSpaceExecution,
+    WeightSpaceInputMode,
     WeightSpaceRecurrence,
     WeightSpaceState,
 )
@@ -116,7 +117,7 @@ class WeightSpaceRecurrentModel(StrictModule, ParameterOwner):
         /,
         *,
         execution: WeightSpaceExecution = "associative",
-        input_mode: str = "difference",
+        input_mode: WeightSpaceInputMode = "difference",
         maximum_retention: float = 0.999,
         input_scale: float = 1e-2,
         dtype: Any | None = None,

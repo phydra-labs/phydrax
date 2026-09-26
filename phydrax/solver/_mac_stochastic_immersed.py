@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -22,6 +22,7 @@ from ..linalg import (
     FunctionLinearOperator,
     matrix_function_action,
     MatrixFunctionPolicy,
+    MatrixFunctionResult,
     OperatorProperties,
 )
 
@@ -35,7 +36,7 @@ def _metric_white(
     coordinates: Array,
     policy: MatrixFunctionPolicy,
     /,
-):
+) -> MatrixFunctionResult:
     pairing = FunctionLinearOperator(
         space.riesz,
         source=space,
@@ -347,8 +348,8 @@ class MACInertialStochasticStepPlan(StrictModule, NonTrainableState):
 
     def step(
         self,
-        velocity,
-        deterministic_force,
+        velocity: PyTree[ArrayLike],
+        deterministic_force: PyTree[ArrayLike],
         step_size: ArrayLike,
         replay_key: StochasticReplayKey,
         /,

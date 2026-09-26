@@ -19,6 +19,7 @@ from ..linalg import (
     DenseCholesky,
     DenseLinearOperator,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     OperatorProperties,
     prepare,
@@ -30,7 +31,7 @@ def _factor_and_solve_covariance_system(
     matrix: Array,
     right_hand_side: Array,
     /,
-):
+) -> tuple[LinearSolveResult, Array]:
     operator = DenseLinearOperator(
         matrix,
         properties=OperatorProperties(
@@ -50,7 +51,9 @@ def _factor_and_solve_covariance_system(
     return solve(prepared, right_hand_side), prepared.state.factor
 
 
-def _solve_covariance_system(matrix: Array, right_hand_side: Array, /):
+def _solve_covariance_system(
+    matrix: Array, right_hand_side: Array, /
+) -> LinearSolveResult:
     result, _ = _factor_and_solve_covariance_system(matrix, right_hand_side)
     return result
 

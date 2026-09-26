@@ -30,7 +30,7 @@ from ..contracts._credit import (
     DefaultEventState,
     RecoveryTerms,
 )
-from ..core import PhysicalLaw, PricingLaw, StressLaw
+from ..core import CurrencyAmount, PhysicalLaw, PricingLaw, StressLaw
 from ..curves._core import CurveRepresentation, InterpolationMethod, PreparedCurve
 
 
@@ -501,7 +501,7 @@ def default_events_from_intensity_paths(
     )
 
 
-def _face_units(amount, /) -> Array:
+def _face_units(amount: CurrencyAmount, /) -> Array:
     return amount.atoms.astype("float64") / float(amount.currency.atoms_per_unit)
 
 

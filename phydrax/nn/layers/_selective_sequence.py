@@ -118,7 +118,9 @@ class ResetAwareCausalConv1D(StrictModule, ParameterOwner):
         weight = self.weight.astype(compute_dtype)
         bias = None if self.bias is None else self.bias.astype(compute_dtype)
 
-        def step(history: Array, step_inputs: tuple[Array, Array, Array]):
+        def step(
+            history: Array, step_inputs: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array]:
             inputs, valid, reset = step_inputs
             clear = (valid & reset).reshape(valid.shape + (1, 1))
             restarted = jnp.where(clear, jnp.zeros_like(history), history)

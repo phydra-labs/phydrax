@@ -165,7 +165,7 @@ def fit_stinespring_process(
     isometries = problem.model.isometries
     factor_manifold = ComplexEuclideanManifold(factor.shape)
 
-    def loss(factor_value, isometry_values):
+    def loss(factor_value: Array, isometry_values: tuple[Array, ...]) -> Array:
         return _nll(
             _materialize(problem.model, factor_value, isometry_values),
             problem.experiments,
@@ -214,7 +214,7 @@ def fit_stinespring_process(
     coordinate_count = 2 * sum(sizes)
     coordinates = jnp.zeros((coordinate_count,), dtype=jnp.real(factor).dtype)
 
-    def probabilities(parameters):
+    def probabilities(parameters: Array) -> Array:
         candidates = []
         cursor = 0
         for index, (base, size, shape) in enumerate(

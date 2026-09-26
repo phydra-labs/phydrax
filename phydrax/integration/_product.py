@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -18,6 +18,7 @@ from phydrax.domain import (
     AbstractScalarDomain,
     Boundary,
     ComponentSum,
+    DomainComponent,
     Fixed,
     FixedEnd,
     FixedStart,
@@ -234,7 +235,7 @@ def _replicate_count(groups: tuple[tuple[tuple[str, ...], Any], ...], /) -> int:
 
 
 def _materialize_product_factor(
-    component: ComponentTarget,
+    component: DomainComponent,
     labels: tuple[str, ...],
     factor_plan: Any,
     structure: SampleLayout,
@@ -438,7 +439,7 @@ def _materialize_product_factor(
         next_offset = offset + transport.reference_dimension
         mapped = transport.map(unit[:, offset:next_offset])
 
-        def _sample_field(value):
+        def _sample_field(value: ArrayLike) -> cx.AxisArray:
             array = jnp.asarray(value)
             return cx.AxisArray(
                 array,
@@ -454,7 +455,7 @@ def _materialize_product_factor(
 
 
 def _materialize_product_replica(
-    component: ComponentTarget,
+    component: DomainComponent,
     groups: tuple[tuple[tuple[str, ...], Any], ...],
     fixed_labels: frozenset[str],
     structure: SampleLayout,

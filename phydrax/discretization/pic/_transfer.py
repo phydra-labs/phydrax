@@ -12,6 +12,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._structured_cochain import StructuredCochainBridge
+from .._tensor_support import TensorEntityLayout
 from ..particle import ParticlePrecisionPolicy, PreparedChargedParticles
 from ..splatting import (
     AbstractStructuredSplatAssignment,
@@ -99,7 +100,7 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
             raise ValueError("Particle and cochain spatial dimensions must match.")
         grid = plan.bridge.grid
 
-        def prepared_for(layout):
+        def prepared_for(layout: TensorEntityLayout) -> PreparedParticleGridSplat:
             location = grid.location(layout.offsets)
             return ParticleGridSplatPlan(
                 grid,

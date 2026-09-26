@@ -19,6 +19,7 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -269,7 +270,7 @@ class PreparedBidirectionalCoupledMode(StrictModule, NonTrainableState):
         )
 
 
-def _identity_scattering(dtype) -> Array:
+def _identity_scattering(dtype: DTypeLike) -> Array:
     return jnp.asarray(((0.0, 1.0), (1.0, 0.0)), dtype=dtype)
 
 

@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -34,6 +34,10 @@ from ._low_rank import (
     LowRankAdaptationSite,
     LowRankUpdate,
 )
+
+
+if TYPE_CHECKING:
+    from ._selection import ParameterSubspace
 
 
 _LOW_RANK_ADAPTER_FORMAT = "phydrax-low-rank-adapter"
@@ -66,7 +70,7 @@ class LowRankAdapterArtifact:
 
     model: Any
 
-    def parameter_subspace(self):
+    def parameter_subspace(self) -> ParameterSubspace:
         from ._selection import ParameterSubspace
 
         paths = []
@@ -281,7 +285,7 @@ def read_low_rank_adapter(
 
     restored_paths: list[str] = []
 
-    def restore(path_, value):
+    def restore(path_: jax.tree_util.KeyPath, value: object) -> object:
         if not isinstance(value, Linear):
             return value
         prefix = jax.tree_util.keystr(path_)

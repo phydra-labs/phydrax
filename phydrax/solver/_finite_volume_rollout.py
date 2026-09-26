@@ -19,6 +19,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._temporal import RealizedTemporalMesh, TemporalMesh
+from ..discretization.finite_volume import FiniteVolumePrecisionPolicy
 from ._finite_volume_runtime import (
     FiniteVolumeRunStatus,
     FiniteVolumeRuntimeState,
@@ -29,6 +30,7 @@ from ._finite_volume_runtime import (
 FiniteVolumeRetentionPolicy: TypeAlias = Literal["final", "checkpoints", "trajectory"]
 FiniteVolumeReplayMode: TypeAlias = Literal["full", "step", "block"]
 RolloutLoss = Callable[[FiniteVolumeRuntimeState, Any], Array]
+_ScheduledCarry: TypeAlias = tuple[FiniteVolumeRuntimeState, Array]
 
 
 class FiniteVolumeReplayPolicy(StrictModule, NonTrainableState):
@@ -87,7 +89,7 @@ def _retained(
     final_state: FiniteVolumeRuntimeState,
     states: Array | None,
     times: Array,
-    precision,
+    precision: FiniteVolumePrecisionPolicy,
     /,
 ) -> tuple[Array, Array]:
     if retention == "final":
@@ -162,7 +164,9 @@ class AdaptiveFiniteVolumeRolloutPlan(StrictModule):
             raise TypeError("initial_state must be FiniteVolumeRuntimeState.")
         retain_states = self.retention != "final"
 
-        def step(runtime_state, _):
+        def step(
+            runtime_state: FiniteVolumeRuntimeState, _: Array
+        ) -> tuple[FiniteVolumeRuntimeState, tuple[Array, ...]]:
             result = self.runtime.advance(runtime_state, args)
             next_state = result.runtime_state
             common = (next_state.time, result.accepted, next_state.last_status)
@@ -324,11 +328,13 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         del initial_time
         retain_states = self.retention != "final"
 
-        def step(carry, interval):
+        def step(
+            carry: _ScheduledCarry, interval: tuple[Array, Array]
+        ) -> tuple[_ScheduledCarry, tuple[Array, ...]]:
             runtime_state, active = carry
             start, step_size = interval
 
-            def execute(_):
+            def execute(_: None) -> tuple[_ScheduledCarry, tuple[Array, ...]]:
                 current = eqx.error_if(
                     runtime_state.time,
                     jnp.abs(runtime_state.time - start) > tolerance,
@@ -351,7 +357,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
                 )
                 return (result.runtime_state, next_active), output
 
-            def skip(_):
+            def skip(_: None) -> tuple[_ScheduledCarry, tuple[Array, ...]]:
                 common = (
                     runtime_state.time,
                     jnp.asarray(False),
@@ -427,7 +433,7 @@ class ScheduledFiniteVolumeRolloutPlan(StrictModule):
         if not np.isfinite(epsilon_) or epsilon_ <= 0.0:
             raise ValueError("epsilon must be finite and positive.")
 
-        def objective(content):
+        def objective(content: Array) -> Array:
             content_state = initial_state.content_state.with_content(content)
             runtime = FiniteVolumeRuntimeState(
                 content_state,

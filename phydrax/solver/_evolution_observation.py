@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from operator import index
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,10 @@ from ..dynamics import AbstractEvolution
 
 
 OBSERVATION_NONFINITE = -1
+
+_ObservationCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class BoundedEvolutionObservationPlan(StrictModule, NonTrainableState):
@@ -141,7 +145,9 @@ def observe_evolution_bounded(
         value_buffer = value_buffer.at[0].set(initial_value)
         valid_buffer = valid_buffer.at[0].set(initial_finite)
 
-    def advance(carry, data):
+    def advance(
+        carry: _ObservationCarry, data: tuple[Array, Array, Array]
+    ) -> tuple[_ObservationCarry, None]:
         (
             state,
             cumulative_valid,

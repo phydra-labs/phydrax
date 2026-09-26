@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -43,9 +43,16 @@ from ._rosenbrock import (
 )
 from ._temporal_method import (
     native_differentiation_evidence,
+    TemporalCheckpointing,
     TemporalSolveEvidence,
 )
 from ._temporal_precision import TemporalPrecisionPolicy
+
+
+_StageMetrics: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_ReplayStepOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class RosenbrockReplayStatus(IntEnum):
@@ -145,7 +152,7 @@ class _ReplayStepMetrics(StrictModule):
     iterations: Array
 
 
-def _checkpointing_name(replay: FixedStepReplayPolicy, /) -> str:
+def _checkpointing_name(replay: FixedStepReplayPolicy, /) -> TemporalCheckpointing:
     if replay.mode == "full":
         return "full-replay"
     if replay.mode == "step":
@@ -321,7 +328,7 @@ def prepare_rosenbrock(
     )
 
 
-def _empty_stage_metrics(state: Array, /) -> tuple[Array, ...]:
+def _empty_stage_metrics(state: Array, /) -> _StageMetrics:
     real_dtype = state.real.dtype
     return (
         jnp.full((4,), -1, dtype=jnp.int32),
@@ -383,11 +390,13 @@ def _run_replay(
     )
     indices = jnp.arange(length, dtype=jnp.int32)
 
-    def body(carry: _ReplayCarry, values):
+    def body(
+        carry: _ReplayCarry, values: tuple[Array, Array, Array, Array]
+    ) -> tuple[_ReplayCarry, _ReplayStepMetrics]:
         step_index, start, step_size, is_active = values
         should_execute = carry.successful & is_active
 
-        def execute(_):
+        def execute(_: None) -> _ReplayStepOutputs:
             result = _rosenbrock_step(
                 prepared.problem,
                 prepared.method,
@@ -439,7 +448,7 @@ def _run_replay(
                 result.iterations,
             )
 
-        def skip(_):
+        def skip(_: None) -> _ReplayStepOutputs:
             stage = _empty_stage_metrics(carry.state)
             return (
                 carry.state,
@@ -606,7 +615,7 @@ def _solve_adaptive(
         successful=input_finite,
     )
 
-    def condition(current: _AdaptiveCarry):
+    def condition(current: _AdaptiveCarry) -> Array:
         return (
             current.successful
             & (current.save_index < prepared.time_grid.num_steps)
@@ -614,7 +623,7 @@ def _solve_adaptive(
             & (current.attempt_count < controller.maximum_attempts)
         )
 
-    def body(current: _AdaptiveCarry):
+    def body(current: _AdaptiveCarry) -> _AdaptiveCarry:
         target = times[current.save_index + 1]
         remaining = target - current.time
         step_size = jnp.minimum(current.step_size, remaining)
@@ -905,8 +914,12 @@ def _scheduled_from_source(
     replay_ = FixedStepReplayPolicy() if replay is None else replay
     if not isinstance(replay_, FixedStepReplayPolicy):
         raise TypeError("replay must be a FixedStepReplayPolicy or None.")
-    if replay_.mode == "scheduled" and replay_.schedule.step_count != count:
-        raise ValueError("Prepared replay schedule does not match accepted step count.")
+    if replay_.mode == "scheduled":
+        assert replay_.schedule is not None
+        if replay_.schedule.step_count != count:
+            raise ValueError(
+                "Prepared replay schedule does not match accepted step count."
+            )
     record_point_id = canonical_fingerprint(
         {
             "kind": "rosenbrock-record-point",

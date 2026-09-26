@@ -158,6 +158,8 @@ class TensorIndexLayout(StrictModule, NonTrainableState):
         flat = sum(
             value * stride for value, stride in zip(safe_axes, self.strides, strict=True)
         )
+        # Layouts have at least one axis, so the sum is never the empty-sum 0.
+        assert isinstance(flat, Array)
         return flat.astype(jnp.int32), supported
 
     def coordinates_at(self, flat_indices: ArrayLike, /) -> tuple[Array, Array]:

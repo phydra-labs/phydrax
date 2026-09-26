@@ -31,6 +31,7 @@ from ...linalg import (
     DenseLinearOperator,
     FactorizationPolicy,
     factorize,
+    PreparedFactorization,
     RankPolicy,
 )
 from ._thermal_green import (
@@ -228,7 +229,9 @@ def _positive_int(value: int, name: str, /) -> int:
     return result
 
 
-def _native_factor(matrix: Array, tolerance: float, /):
+def _native_factor(
+    matrix: Array, tolerance: float | np.floating, /
+) -> PreparedFactorization:
     return factorize(
         DenseLinearOperator(matrix),
         FactorizationPolicy("svd", rank=RankPolicy(relative_cutoff=float(tolerance))),

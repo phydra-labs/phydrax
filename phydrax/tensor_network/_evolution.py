@@ -35,7 +35,7 @@ def apply_two_site_gate(
     right = precision.contraction(state.tensors[site + 1])
     d_left = left.shape[1]
     d_right = right.shape[1]
-    gate_ = precision.contraction(gate)
+    gate_ = precision.contraction(jnp.asarray(gate))
     if gate_.shape != (d_left, d_right, d_left, d_right):
         raise ValueError("Gate shape must be (out_left,out_right,in_left,in_right).")
     theta = ein.contract("lpi,iqr->lpqr", left, right)

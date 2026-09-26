@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, PyTree
 
 from phydrax.ein import contract
@@ -29,12 +30,13 @@ from ._problems import LinearSystem
 from ._results import LinearSolveResult, LinearSolveStatus
 from ._runtime import (
     _pack_rhs,
+    _PackedRHSLayout,
     _unpack_value,
     bind_numeric,
     prepare_template,
     solve,
 )
-from ._spaces import RHSLayout
+from ._spaces import AbstractVectorSpace, RHSLayout
 from ._structured_operators import BasePlusLowRankLinearOperator
 from .backends._jax_dense import dense_lu_slogdet, DenseLUState
 
@@ -1502,7 +1504,7 @@ def _validate_sequence_update(
         raise TypeError("Low-rank update dtype must match the sequence coordinate dtype.")
 
 
-def _update_left_coordinates(update: LowRankUpdate, dtype, /) -> Array:
+def _update_left_coordinates(update: LowRankUpdate, dtype: DTypeLike, /) -> Array:
     if update.route == "dense" or update.route == "column-indexed":
         return update.left_factor
     if update.route == "row-indexed":
@@ -1528,7 +1530,9 @@ def _update_right_transpose_action(
     return contract("nr,nk->rk", update.right_factor, coordinates)
 
 
-def _dense_update_factors(update: LowRankUpdate, dtype, /) -> tuple[Array, Array]:
+def _dense_update_factors(
+    update: LowRankUpdate, dtype: DTypeLike, /
+) -> tuple[Array, Array]:
     left = _update_left_coordinates(update, dtype)
     if update.route == "dense" or update.route == "row-indexed":
         return left, update.right_factor
@@ -1730,7 +1734,7 @@ def _validate_plan_operator(
         raise ValueError("Low-rank numeric binding changed symbolic operator structure.")
 
 
-def _certifies_nonsingular(operator, /) -> bool:
+def _certifies_nonsingular(operator: AbstractLinearOperator, /) -> bool:
     properties = operator.properties
     if properties.certifies("positive_definite"):
         return True
@@ -1738,15 +1742,15 @@ def _certifies_nonsingular(operator, /) -> bool:
     return rank is not None and rank == operator.source.size
 
 
-def _operator_columns(operator, coordinates: Array, /) -> Array:
-    def apply(column):
+def _operator_columns(operator: AbstractLinearOperator, coordinates: Array, /) -> Array:
+    def apply(column: Array) -> Array:
         return operator.target.flatten(operator.mv(operator.source.unflatten(column)))
 
     return jax.vmap(apply, in_axes=1, out_axes=1)(coordinates)
 
 
-def _column_norm(space, coordinates: Array, /) -> Array:
-    def norm(column):
+def _column_norm(space: AbstractVectorSpace, coordinates: Array, /) -> Array:
+    def norm(column: Array) -> Array:
         vector = space.unflatten(column)
         squared = jnp.real(space.inner(vector, vector))
         return jnp.sqrt(jnp.maximum(squared, 0.0))
@@ -1754,7 +1758,7 @@ def _column_norm(space, coordinates: Array, /) -> Array:
     return jax.vmap(norm, in_axes=1)(coordinates)
 
 
-def _restore_axes(value: Array, layout, /) -> Array:
+def _restore_axes(value: Array, layout: _PackedRHSLayout, /) -> Array:
     return jnp.asarray(value).reshape(layout.rhs_shape)
 
 

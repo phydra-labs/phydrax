@@ -21,6 +21,8 @@ from .._trajectory import TrajectoryData
 
 
 RecurrenceSeedMetric: TypeAlias = Literal["euclidean", "supremum"]
+# (lower, upper, lower parameter, upper parameter, valid, values, widths).
+_BisectionCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 EDGE_SUCCESS = 0
 EDGE_INVALID_BRACKET = 1
@@ -222,7 +224,7 @@ def track_basin_edge(
         raise TypeError("Edge bracket states must share one inexact dtype.")
     initial_state_finite = jnp.all(jnp.isfinite(lower)) & jnp.all(jnp.isfinite(upper))
 
-    def classify(state):
+    def classify(state: Array) -> tuple[Array, Array]:
         evolved = problem.evolution.advance(
             state,
             problem.source_coordinate,
@@ -256,7 +258,7 @@ def track_basin_edge(
     classifier_history = jnp.full((steps,), jnp.nan, dtype=lower_value.dtype)
     width_history = jnp.full((steps,), jnp.nan, dtype=lower_value.dtype)
 
-    def bisect(carry, index):
+    def bisect(carry: _BisectionCarry, index: Array) -> tuple[_BisectionCarry, None]:
         (
             lower_current,
             upper_current,

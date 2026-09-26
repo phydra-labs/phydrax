@@ -9,6 +9,7 @@ from ..linalg import (
     DenseLinearOperator,
     DenseLU,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     solve,
 )
@@ -16,7 +17,7 @@ from ..linalg import (
 
 def solve_current_distribution(
     conductance_matrix: ArrayLike, current_source: ArrayLike, /
-):
+) -> LinearSolveResult:
     matrix = jnp.asarray(conductance_matrix)
     source = jnp.asarray(current_source)
     space = ArraySpace((source.size,), dtype=matrix.dtype)

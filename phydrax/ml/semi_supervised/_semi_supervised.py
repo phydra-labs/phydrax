@@ -407,7 +407,7 @@ class LabelPropagationRecipe(AbstractRecipe):
             jnp.sum(graph, axis=-1, keepdims=True), jnp.finfo(graph.dtype).tiny
         )
 
-        def update(_, current):
+        def update(_: int | Array, current: Array) -> Array:
             propagated = ein.contract("...nm,...mc->...nc", transition, current)
             return jnp.where(labeled[..., None], targets, propagated)
 
@@ -522,7 +522,7 @@ class LabelSpreadingRecipe(AbstractRecipe):
         transition = inverse_sqrt[..., :, None] * graph * inverse_sqrt[..., None, :]
         alpha = jnp.asarray(self.alpha, dtype=transition.dtype)
 
-        def update(_, current):
+        def update(_: int | Array, current: Array) -> Array:
             return (
                 alpha * ein.contract("...nm,...mc->...nc", transition, current)
                 + (jnp.ones((), dtype=transition.dtype) - alpha) * targets

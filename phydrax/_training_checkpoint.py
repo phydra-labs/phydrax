@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
-from typing import Any, BinaryIO, TYPE_CHECKING
+from typing import Any, BinaryIO, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -44,7 +44,8 @@ def _publish_state(
     """Serialize and durably publish one content-addressed state file."""
 
     with SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b") as staged:
-        serialize(staged)
+        # A binary-mode spooled file provides the BinaryIO surface serializers use.
+        serialize(cast(BinaryIO, staged))
         staged.flush()
         staged.seek(0)
         digest = hashlib.sha256()

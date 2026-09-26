@@ -76,7 +76,7 @@ class RachfordRiceFlashPlan(StrictModule, NonTrainableState):
             "Flash composition must be normalized and K values positive finite.",
         )
 
-        def residual(fraction):
+        def residual(fraction: Array) -> Array:
             return jnp.sum(
                 composition * (ratios - 1.0) / (1.0 + fraction * (ratios - 1.0))
             )

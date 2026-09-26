@@ -120,13 +120,17 @@ class AxisDomain(StrictModule, NonTrainableState):
     def finite_bounds(self) -> Array | None:
         if self.kind not in ("bounded", "periodic"):
             return None
-        return jnp.stack((self.lower, self.upper))
+        lower, upper = self.lower, self.upper
+        assert lower is not None and upper is not None
+        return jnp.stack((lower, upper))
 
     @property
     def length(self) -> Array:
         if self.kind not in ("bounded", "periodic"):
             raise ValueError("Unbounded axis domains do not have a finite length.")
-        return self.upper - self.lower
+        lower, upper = self.lower, self.upper
+        assert lower is not None and upper is not None
+        return upper - lower
 
 
 __all__ = ["AxisDomain", "AxisDomainKind", "HalfLineDirection"]

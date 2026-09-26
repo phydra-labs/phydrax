@@ -405,9 +405,12 @@ class UpwindConstrainedTransportPlan(StrictModule):
             edge_circulation = jnp.zeros((0,), dtype=full.dtype)
             magnetic_rate = jnp.zeros_like(magnetic)
         else:
+            # Layouts of dimension two or more always carry an electromotive degree.
+            electromotive_degree = self.layout.electromotive_degree
+            assert electromotive_degree is not None
             edge_circulation = self.bridge.pack_electromotive(electromotive_components)
             magnetic_rate = -self.bridge.exterior_derivative(
-                int(self.layout.electromotive_degree), edge_circulation
+                int(electromotive_degree), edge_circulation
             )
         stable = jnp.asarray(float(cfl), dtype=full.dtype) / jnp.max(inverse_dt)
         fallback = jnp.any(jnp.stack(fallbacks, axis=0))

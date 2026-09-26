@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
+from jax.typing import DTypeLike
+from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
@@ -15,10 +17,10 @@ from .._precision import dequantize_mx, MicroscaledArray
 
 def contract_block_scaled(
     subscripts: str,
-    *operands: Any,
-    compute_dtype: Any = jnp.float32,
+    *operands: ArrayLike | MicroscaledArray,
+    compute_dtype: DTypeLike = jnp.float32,
     provider: Literal["portable", "fused"] = "portable",
-):
+) -> Array:
     """Contract scalar or block-scaled operands with explicit wide accumulation.
 
     The portable path is the correctness contract. Fused execution is rejected until a

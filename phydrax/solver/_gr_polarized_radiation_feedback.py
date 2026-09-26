@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.linalg as la
@@ -103,7 +106,7 @@ class GRPolarizedRadiationFeedbackPlan(StrictModule, NonTrainableState):
         self,
         scale: RelativityScaleContract,
         convention: RelativityConvention,
-        beam_weights: ArrayLike = (1.0,),
+        beam_weights: ArrayLike | Sequence[float] = (1.0,),
         /,
         *,
         cone_tolerance: float = 1.0e-9,
@@ -201,7 +204,11 @@ class GRPolarizedRadiationFeedbackPlan(StrictModule, NonTrainableState):
         )
 
     def _directions(
-        self, direction_vectors: ArrayLike, geometry: ADMGridGeometry, dtype, /
+        self,
+        direction_vectors: ArrayLike,
+        geometry: ADMGridGeometry,
+        dtype: DTypeLike,
+        /,
     ) -> tuple[Array, Array]:
         directions = jnp.asarray(direction_vectors, dtype=dtype)
         expected = geometry.leading_shape + (self.beam_count, 3)

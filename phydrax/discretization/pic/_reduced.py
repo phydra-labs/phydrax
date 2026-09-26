@@ -13,9 +13,10 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._tensor_support import PreparedTensorGrid
+from ._boundary import PICBoundaryResult
 
 
-def _forward(value, axis, spacing, periodic):
+def _forward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
     shifted = (
         jnp.roll(value, -1, axis=axis)
         if periodic
@@ -30,7 +31,7 @@ def _forward(value, axis, spacing, periodic):
     return (shifted - value) / spacing
 
 
-def _backward(value, axis, spacing, periodic):
+def _backward(value: Array, axis: int, spacing: float, periodic: bool) -> Array:
     if periodic:
         previous = jnp.roll(value, 1, axis=axis)
     else:
@@ -112,7 +113,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _routes(self, position: Array):
+    def _routes(self, position: Array) -> tuple[Array, Array]:
         count = position.shape[0]
         lower = jnp.asarray(self.lower, dtype=position.dtype)
         spacing = jnp.asarray(self.spacing, dtype=position.dtype)
@@ -198,7 +199,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         step_size: ArrayLike,
         /,
         *,
-        boundary_result=None,
+        boundary_result: PICBoundaryResult | None = None,
     ) -> ReducedPICCurrentResult:
         start = jnp.asarray(start_position)
         end = jnp.asarray(end_position, dtype=start.dtype)
@@ -310,7 +311,7 @@ class ReducedPICTransferPlan(StrictModule, NonTrainableState):
         return ReducedPICCurrentResult(
             rho_start,
             rho_end,
-            tuple(corrected),
+            (corrected[0], corrected[1], corrected[2]),
             final_residual,
             maximum,
             finite,

@@ -19,6 +19,8 @@ from ..linalg import (
     LinearSolvePlan,
     LinearSolveTemplate,
     LinearSystem,
+    PreparedLinearSolve,
+    RecyclingState,
     refresh_recycling,
 )
 from ._components import admit_residual_components
@@ -192,7 +194,7 @@ def _refreshed_run(
     jacobian: PreparedJacobian,
     refresh_state: LinearRefreshState,
     args: Any,
-    recycling,
+    recycling: RecyclingState | None,
     /,
 ) -> _RootState:
     residual = jacobian.residual
@@ -375,7 +377,7 @@ def refresh_nonlinear(
     if linear_operator.source.size != linear_operator.target.size:
         raise ValueError("Newton methods require a square Jacobian coordinate map.")
 
-    def refresh_linear():
+    def refresh_linear() -> tuple[PreparedLinearSolve, LinearRefreshState]:
         return prepared.linear_refresh_state.refresh(
             LinearSystem(linear_operator, problem_id=prepared.linear_plan.problem_id),
             setup_operator=problem_.linear_setup(state, args),

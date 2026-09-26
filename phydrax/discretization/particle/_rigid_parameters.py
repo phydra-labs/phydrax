@@ -123,12 +123,8 @@ def _matrix_condition_numbers(eigenvalues: np.ndarray, /) -> np.ndarray:
     upper = np.maximum(np.abs(eigenvalues[:, -1]), lower)
     with np.errstate(over="ignore", invalid="ignore"):
         condition = upper / lower
-    return np.nan_to_num(
-        condition,
-        nan=information.max,
-        posinf=information.max,
-        neginf=information.max,
-    )
+    maximum = float(information.max)
+    return np.nan_to_num(condition, nan=maximum, posinf=maximum, neginf=maximum)
 
 
 def _finite_norm(value: np.ndarray, axes: tuple[int, ...], /) -> np.ndarray:

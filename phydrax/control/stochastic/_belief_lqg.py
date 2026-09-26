@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -43,6 +45,11 @@ _RESULT_LABEL = "CENTRALIZED_GAUSSIAN_BELIEF_LQG"
 _METHOD_ID = "finite-horizon-centralized-gaussian-belief-lqg"
 _PRE_ACTION_TIMING = "pre-action"
 
+_FilterStage: TypeAlias = tuple[Array, Array, Array, Array]
+_FilterOutput: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_MeanStage: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_MeanOutput: TypeAlias = tuple[Array, Array, Array]
+
 
 def _identifier(value: str, owner: str, /) -> str:
     if not isinstance(value, str) or not value:
@@ -57,7 +64,7 @@ def _covariance_tolerance(value: float, /) -> float:
     return tolerance
 
 
-def _zeros(shape: tuple[int, ...], dtype, /) -> Array:
+def _zeros(shape: tuple[int, ...], dtype: DTypeLike, /) -> Array:
     return jnp.zeros(shape, dtype=dtype)
 
 
@@ -524,7 +531,7 @@ class BeliefFeedbackPolicy(StrictModule):
         self,
         context: DiscreteStepContext,
         belief: GaussianBelief,
-        args=None,
+        args: object = None,
         /,
     ) -> Array:
         """Act on the posterior mean; no latent state can enter this interface."""
@@ -715,7 +722,9 @@ def finite_horizon_centralized_lqg(
         _to_time_major(problem.process_covariances.astype(dtype), 2),
     )
 
-    def filter_step(prior_covariance, stage):
+    def filter_step(
+        prior_covariance: Array, stage: _FilterStage
+    ) -> tuple[Array, _FilterOutput]:
         observation, measurement, dynamics, process_covariance = stage
         innovation = (
             observation @ prior_covariance @ jnp.swapaxes(observation, -1, -2)
@@ -810,7 +819,7 @@ def finite_horizon_centralized_lqg(
         _to_time_major(deterministic.feedforward.astype(dtype), 1),
     )
 
-    def mean_step(predicted_mean, stage):
+    def mean_step(predicted_mean: Array, stage: _MeanStage) -> tuple[Array, _MeanOutput]:
         dynamics, controls, dynamics_bias, feedback, feedforward = stage
         posterior_mean = predicted_mean
         action = ein.contract("...ij,...j->...i", feedback, posterior_mean) + feedforward

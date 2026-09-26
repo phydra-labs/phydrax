@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import equinox as eqx
 import numpy as np
+from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._cell_complex import PolyhedralConnectivity
 from .._cochain_metrics import (
     CochainMetricPlan,
     CochainMetricState,
@@ -67,13 +69,15 @@ class CutCellCochainPlan(StrictModule, NonTrainableState):
         self,
         /,
         *,
-        time=0.0,
-        revision=0,
+        time: ArrayLike = 0.0,
+        revision: int = 0,
     ) -> CutCellCochainState:
         geometry = self.complex.finite_volume_plan().prepare(
             numeric_version="cut-cell-cochain"
         )
         connectivity = self.complex.mesh.connectivity
+        # Cut-complex meshes are built by CellMesh.from_polyhedra.
+        assert isinstance(connectivity, PolyhedralConnectivity)
         coordinates = np.asarray(self.complex.mesh.coordinates, dtype=np.float64)
         edges = np.asarray(connectivity.edges, dtype=np.int32)
         edge_centers = np.mean(coordinates[edges], axis=1)

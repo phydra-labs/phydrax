@@ -6,13 +6,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Any, Literal
+from typing import Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
@@ -34,6 +35,7 @@ from ._fd_halo import (
     FillPatchSource,
 )
 from ._fd_runtime import PreparedFDAMRHierarchy
+from ._fd_transfer import AMREntityTransferPlan
 from ._topology_compiler import BlockTopologyCompileResult
 
 
@@ -50,7 +52,7 @@ def _place_by_part(
     axis_name: str,
     /,
     *,
-    dtype: Any | None = None,
+    dtype: DTypeLike | None = None,
 ) -> Array:
     array = jnp.asarray(value, dtype=dtype)
     if mesh is None:
@@ -632,7 +634,11 @@ def _distributed_fill_routes(
                 same_cell[index] = np.maximum(
                     source_local_global[(target_slot,) + tuple(padded_index)], 0
                 )
-            if coarse_layout is None or coarse_lookup is None:
+            if (
+                coarse_owner is None
+                or coarse_canonical_to_local is None
+                or coarse_lookup is None
+            ):
                 continue
             for route_index in np.argwhere(coarse_valid_global[target_slot]):
                 padded_index = tuple(route_index[:-1])
@@ -696,12 +702,13 @@ def _execute_fill_local(
     coarse_child_indices: Array,
     physical_boundary_mask: Array,
     target_valid: Array,
-    transfer: Any,
+    /,
+    *,
+    transfer: AMREntityTransferPlan | None,
     coarse_old_time: ArrayLike,
     coarse_new_time: ArrayLike,
     fill_time: ArrayLike,
     boundary_supplied: bool,
-    /,
 ) -> tuple[Array, Array]:
     same_cells = jnp.maximum(same_cell_indices, 0)
     same_local_index = (jnp.maximum(same_local_indices, 0),) + tuple(
@@ -1285,7 +1292,13 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
             )
         )
 
-        def exchange_local(local, send, receive, send_valid, receive_valid):
+        def exchange_local(
+            local: Array,
+            send: Array,
+            receive: Array,
+            send_valid: Array,
+            receive_valid: Array,
+        ) -> Array:
             current = local[0]
             ghost = jnp.zeros(
                 (route.receive_capacity,) + current.shape[1:], dtype=current.dtype
@@ -1353,8 +1366,13 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
         )
 
         def accumulate_local(
-            local_owned, local_received, send, receive, send_valid, receive_valid
-        ):
+            local_owned: Array,
+            local_received: Array,
+            send: Array,
+            receive: Array,
+            send_valid: Array,
+            receive_valid: Array,
+        ) -> Array:
             result = local_owned[0]
             ghost = local_received[0]
             for phase, permutation in reversed(
@@ -1511,11 +1529,11 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
                     route.coarse_child_indices[part],
                     route.physical_boundary_mask[part],
                     route.target_valid[part],
-                    transfer,
-                    coarse_old_time,
-                    coarse_new_time,
-                    fill_time,
-                    boundary_supplied[level],
+                    transfer=transfer,
+                    coarse_old_time=coarse_old_time,
+                    coarse_new_time=coarse_new_time,
+                    fill_time=fill_time,
+                    boundary_supplied=boundary_supplied[level],
                 )
                 level_outputs.append(result[0])
                 level_valid.append(result[1])
@@ -1569,19 +1587,18 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
             specs = tuple(_part_spec(axis, value.ndim) for value in placed)
 
             def execute_local(
-                *local_values,
-                transfer=transfer,
-                boundary_is_supplied=boundary_is_supplied,
-            ):
+                *local_values: Array,
+                transfer: AMREntityTransferPlan | None = transfer,
+                boundary_is_supplied: bool = boundary_is_supplied,
+            ) -> tuple[Array, Array]:
                 values = tuple(value[0] for value in local_values)
                 result = _execute_fill_local(
-                    *values[:7],
-                    *values[7:],
-                    transfer,
-                    coarse_old_time,
-                    coarse_new_time,
-                    fill_time,
-                    boundary_is_supplied,
+                    *values,
+                    transfer=transfer,
+                    coarse_old_time=coarse_old_time,
+                    coarse_new_time=coarse_new_time,
+                    fill_time=fill_time,
+                    boundary_supplied=boundary_is_supplied,
                 )
                 return result[0][None], result[1][None]
 
@@ -1769,7 +1786,12 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
             for layout, value in zip(self.layouts, boundary_values, strict=True)
         )
 
-        def action(current_values, coarse_old_values, coarse_new_values, boundaries):
+        def action(
+            current_values: tuple[Array, ...],
+            coarse_old_values: tuple[Array, ...],
+            coarse_new_values: tuple[Array, ...],
+            boundaries: tuple[Array, ...],
+        ) -> tuple[Array, ...]:
             current_packed = tuple(
                 layout.pack(value)
                 for layout, value in zip(self.layouts, current_values, strict=True)
@@ -1852,7 +1874,12 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
         coarse_new_time: ArrayLike = 0.0,
         fill_time: ArrayLike = 0.0,
         physical_boundary_values: Sequence[ArrayLike | None] | None = None,
-    ):
+    ) -> tuple[
+        BlockHierarchyState,
+        BlockHierarchyState,
+        BlockHierarchyState,
+        tuple[Array | None, ...],
+    ]:
         return self._fill_patch_reverse(
             cotangents,
             state,
@@ -1877,7 +1904,12 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
         coarse_new_time: ArrayLike = 0.0,
         fill_time: ArrayLike = 0.0,
         physical_boundary_values: Sequence[ArrayLike | None] | None = None,
-    ):
+    ) -> tuple[
+        BlockHierarchyState,
+        BlockHierarchyState,
+        BlockHierarchyState,
+        tuple[Array | None, ...],
+    ]:
         return self._fill_patch_reverse(
             cotangents,
             state,

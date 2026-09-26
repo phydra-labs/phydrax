@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -23,7 +25,14 @@ from ...nonlinear import (
 )
 
 
-def _link_values(value, count, name, *, positive=False):
+# (previous matrix/fracture inventories, new matrix/fracture water volumes,
+# link water rates, timestep) forwarded as nonlinear-solve arguments.
+_ExchangeArgs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+
+
+def _link_values(
+    value: ArrayLike, count: int, name: str, *, positive: bool = False
+) -> Array:
     values = jnp.asarray(value, dtype=jnp.float64)
     if values.shape not in ((), (count,)):
         raise ValueError(f"{name} must be scalar or one value per exchange link.")
@@ -325,7 +334,7 @@ class FractureMatrixExchange(StrictModule):
 
     def residual(
         self,
-        state,
+        state: tuple[Array, Array],
         previous_matrix_inventory: ArrayLike,
         previous_fracture_inventory: ArrayLike,
         matrix_water_volumes: ArrayLike,
@@ -334,7 +343,7 @@ class FractureMatrixExchange(StrictModule):
         dt: ArrayLike,
         *,
         conductance: ArrayLike = 0.0,
-    ):
+    ) -> tuple[Array, Array]:
         """Coupled integrated-mole equations, directly appendable to global roots."""
         cm, cf = state
         sources = self.exchange_sources(
@@ -451,11 +460,15 @@ class FractureMatrixExchange(StrictModule):
         )
         arguments = (oldm, oldf, newm, newf, q, time)
 
-        def scaled(state, args):
+        def scaled(
+            state: tuple[Array, Array], args: _ExchangeArgs
+        ) -> tuple[Array, Array]:
             rm, rf = self.residual(state, *args, conductance=conductance)
             return rm / scale, rf / scale
 
-        def valid(state, residual, auxiliary, args):
+        def valid(
+            state: tuple[Array, Array], residual: object, auxiliary: object, args: object
+        ) -> Array:
             return jnp.all(~positive | (state[0] >= 0)) & jnp.all(
                 ~positive | (state[1] >= 0)
             )

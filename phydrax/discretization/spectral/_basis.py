@@ -73,7 +73,7 @@ def _analysis_from_synthesis(
     return np.asarray(jnp.stack(columns, axis=1))
 
 
-def _legendre_normalizers(count: int, length: ArrayLike, /) -> ArrayLike:
+def _legendre_normalizers(count: int, length: ArrayLike, /) -> np.ndarray | Array:
     """Orthonormal Legendre scaling `sqrt((2k + 1) / length)` on one interval.
 
     Host lengths give NumPy data for preparation; traced lengths give JAX data
@@ -205,7 +205,10 @@ def _finite_domain(
     expected = "periodic" if periodic else "bounded"
     if domain.kind != expected:
         raise ValueError(f"{basis} bases require an {expected} axis domain.")
-    return domain.lower, domain.upper
+    lower, upper = domain.lower, domain.upper
+    # AxisDomain requires both endpoints for bounded and periodic kinds.
+    assert lower is not None and upper is not None
+    return lower, upper
 
 
 class PreparedSpectralAxis(StrictModule, NonTrainableState):
@@ -476,8 +479,16 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
         if points.ndim != 1:
             raise ValueError("Spectral point-synthesis coordinates must be rank one.")
         coefficient_dtype = jnp.dtype(self.precision.coefficient_dtype)
-        lower = self.domain.lower.astype(points.dtype)
-        upper = self.domain.upper.astype(points.dtype)
+        unsupported = (
+            f"Spectral axis {type(self.plan).__name__} ({self.family}) does not "
+            "expose arbitrary-point synthesis; constrained and rational bases "
+            "have no prepared per-point basis rows."
+        )
+        domain_lower, domain_upper = self.domain.lower, self.domain.upper
+        if domain_lower is None or domain_upper is None:
+            raise ValueError(unsupported)
+        lower = domain_lower.astype(points.dtype)
+        upper = domain_upper.astype(points.dtype)
         length = upper - lower
         offset = (points - lower)[:, None]
         count = self.mode_count
@@ -512,20 +523,22 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
                 )
                 return rows.astype(coefficient_dtype)
             case ChebyshevBasisPlan() | LegendreBasisPlan():
+                family = self.family
+                derivative_matrix = self.derivative_matrix
+                # Prepared Chebyshev/Legendre axes carry their family and a modal
+                # derivative matrix by construction.
+                assert family in ("chebyshev", "legendre")
+                assert derivative_matrix is not None
                 reference = (2.0 * points - (lower + upper)) / length
-                rows = standard_vandermonde(self.family, reference, count - 1)
-                if self.family == "legendre":
+                rows = standard_vandermonde(family, reference, count - 1)
+                if family == "legendre":
                     rows = rows * _legendre_normalizers(count, length)[None, :]
                 rows = rows.astype(coefficient_dtype)
                 for _ in range(derivative_order):
-                    rows = rows @ self.derivative_matrix
+                    rows = rows @ derivative_matrix
                 return rows
             case _:
-                raise ValueError(
-                    f"Spectral axis {type(self.plan).__name__} ({self.family}) does not "
-                    "expose arbitrary-point synthesis; constrained and rational bases "
-                    "have no prepared per-point basis rows."
-                )
+                raise ValueError(unsupported)
 
 
 class FourierBasisPlan(AbstractSpectralBasisPlan):

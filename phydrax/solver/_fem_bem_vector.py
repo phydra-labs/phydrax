@@ -13,6 +13,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
     AbstractLinearOperator,
+    AbstractVectorSpace,
     BlockLinearOperator,
     BlockSpace,
     DifferentiationPolicy,
@@ -297,7 +298,9 @@ def _default_linear_policy() -> LinearSolvePolicy:
     )
 
 
-def _require_same_space(actual, expected_id: str, role: str, /) -> None:
+def _require_same_space(
+    actual: AbstractVectorSpace, expected_id: str, role: str, /
+) -> None:
     if actual.space_id != expected_id:
         raise ValueError(
             f"{role} space {actual.space_id!r} does not match qualified space {expected_id!r}."

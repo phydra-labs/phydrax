@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Sequence
+from typing import cast, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -161,11 +161,14 @@ class ScatteringAudit(StrictModule):
 
 
 def _electrical_reciprocity_eligible(references: tuple[WaveReference, ...]) -> bool:
-    if not all(
-        isinstance(reference, ElectricalWaveReference) for reference in references
-    ):
+    electrical = tuple(
+        reference
+        for reference in references
+        if isinstance(reference, ElectricalWaveReference)
+    )
+    if len(electrical) != len(references):
         return False
-    return all(bool(jnp.all(jnp.imag(reference.z0) == 0.0)) for reference in references)
+    return all(bool(jnp.all(jnp.imag(reference.z0) == 0.0)) for reference in electrical)
 
 
 def audit_scattering(
@@ -273,7 +276,8 @@ class CommonNodeJunction(AbstractScatteringComponent):
         omega = jnp.asarray(angular_frequency)
         values = []
         for port in self._ports:
-            z0 = port.references[0].z0
+            # Junction ports are constructed only from electrical references.
+            z0 = cast(ElectricalWaveReference, port.references[0]).z0
             if z0.ndim == 0:
                 z0 = jnp.broadcast_to(z0, omega.shape)
             elif z0.shape != omega.shape:

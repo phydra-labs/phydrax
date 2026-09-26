@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...discretization._topology import (
@@ -40,7 +40,7 @@ class SegmentTopology(StrictModule):
     vertex_edges: Array
     num_vertices: int = eqx.field(static=True)
 
-    def __init__(self, edges: Array, *, num_vertices: int | None = None) -> None:
+    def __init__(self, edges: ArrayLike, *, num_vertices: int | None = None) -> None:
         edges_host = np.asarray(edges, dtype=np.int32)
         if edges_host.ndim != 2 or edges_host.shape[1] != 2 or edges_host.shape[0] == 0:
             raise ValueError("edges must have shape (num_edges > 0, 2).")
@@ -130,7 +130,7 @@ class TriangleTopology(StrictModule):
     num_vertices: int = eqx.field(static=True)
     watertight: bool = eqx.field(static=True)
 
-    def __init__(self, faces: Array, *, num_vertices: int | None = None) -> None:
+    def __init__(self, faces: ArrayLike, *, num_vertices: int | None = None) -> None:
         faces_host = np.asarray(faces, dtype=np.int32)
         if faces_host.ndim != 2 or faces_host.shape[1] != 3 or faces_host.shape[0] == 0:
             raise ValueError("faces must have shape (num_faces > 0, 3).")

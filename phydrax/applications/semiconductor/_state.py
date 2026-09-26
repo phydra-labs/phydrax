@@ -3,12 +3,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...dynamics import DAEVariableBlock, StateLayout
+
+
+if TYPE_CHECKING:
+    from ._coupled import MaterialInterface, TrapBinding
 
 
 class SemiconductorStateLayout(StrictModule):
@@ -22,12 +30,12 @@ class SemiconductorStateLayout(StrictModule):
 
     def __init__(
         self,
-        node_count,
+        node_count: int | np.integer,
         *,
-        electrothermal=False,
-        carrier_energy=False,
-        interfaces=(),
-        traps=(),
+        electrothermal: bool = False,
+        carrier_energy: bool = False,
+        interfaces: tuple[MaterialInterface, ...] = (),
+        traps: tuple[TrapBinding, ...] = (),
     ) -> None:
         if (
             isinstance(node_count, bool)
@@ -85,16 +93,16 @@ class SemiconductorStateLayout(StrictModule):
         self.node_count = node_count
 
     @property
-    def size(self):
+    def size(self) -> int:
         return self.native.size
 
-    def indices(self, name):
+    def indices(self, name: str) -> Array:
         return jnp.asarray(self.routes[self.names.index(name)], dtype=jnp.int32)
 
-    def field(self, state, name):
+    def field(self, state: ArrayLike, name: str) -> Array:
         return jnp.asarray(state).reshape(-1)[self.indices(name)]
 
-    def set(self, state, name, value):
+    def set(self, state: ArrayLike, name: str, value: ArrayLike) -> Array:
         return (
             jnp.asarray(state)
             .reshape(-1)
@@ -103,13 +111,13 @@ class SemiconductorStateLayout(StrictModule):
             .reshape(self.shape)
         )
 
-    def pack(self, **fields):
+    def pack(self, **fields: ArrayLike) -> Array:
         result = jnp.zeros(self.shape)
         for name, value in fields.items():
             result = self.set(result, name, value)
         return result
 
-    def node_indices(self, nodes):
+    def node_indices(self, nodes: npt.ArrayLike) -> np.ndarray:
         return (
             np.asarray(nodes)[:, None] * len(self.bulk_names)
             + np.arange(len(self.bulk_names))[None, :]

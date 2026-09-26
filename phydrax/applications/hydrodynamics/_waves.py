@@ -9,6 +9,7 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -121,7 +122,7 @@ class WaveForcingPlan(StrictModule, NonTrainableState):
         )
 
     def initial_controller_state(
-        self, horizontal_shape: tuple[int, int], dtype
+        self, horizontal_shape: tuple[int, ...], dtype: DTypeLike
     ) -> ActiveAbsorptionState:
         return ActiveAbsorptionState(
             eta_history=jnp.zeros((self.history_size,) + horizontal_shape, dtype=dtype),
@@ -258,7 +259,7 @@ class WaveForcingPlan(StrictModule, NonTrainableState):
                 axis=self.boundary_axis,
             )
             boundary_normal = boundary_normal + correction[..., None]
-        location = [slice(None)] * prescribed[self.boundary_axis].ndim
+        location: list[slice | int] = [slice(None)] * prescribed[self.boundary_axis].ndim
         location[self.boundary_axis] = boundary_index
         prescribed[self.boundary_axis] = (
             prescribed[self.boundary_axis].at[tuple(location)].set(boundary_normal)

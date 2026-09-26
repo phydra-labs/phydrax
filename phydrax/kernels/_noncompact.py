@@ -249,7 +249,7 @@ def hyperbolic_feature_proposal(
 def _orthogonal_frames(key: PRNGKeyArray, sample_count: int, dimension: int, /) -> Array:
     raw = jax.random.normal(key, (sample_count, dimension, dimension))
 
-    def orthogonal(matrix):
+    def orthogonal(matrix: Array) -> Array:
         frame, triangular = jnp.linalg.qr(matrix)
         signs = jnp.where(jnp.diag(triangular) < 0.0, -1.0, 1.0)
         return frame * signs[None, :]
@@ -579,8 +579,8 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
         )
 
     def _horospherical_coordinates(self, points: Array, /) -> Array:
-        def point_coordinates(point):
-            def flag_coordinates(frame):
+        def point_coordinates(point: Array) -> Array:
+            def flag_coordinates(frame: Array) -> Array:
                 rotated = frame.T @ point @ frame
                 cholesky = jnp.linalg.cholesky(rotated)
                 return 2.0 * jnp.log(jnp.diag(cholesky))

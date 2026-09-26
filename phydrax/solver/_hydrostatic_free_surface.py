@@ -12,6 +12,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume._hydrostatic_grid import (
+    _BoundaryValues,
     HydrostaticMetricEpoch,
     PreparedHydrostaticGrid,
 )
@@ -88,7 +89,7 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
         epoch: HydrostaticMetricEpoch,
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> tuple[Array, Array]:
         gx, gy = self.geometry.surface_gradient(eta, boundary_values=boundary_values)
         return (
@@ -105,7 +106,7 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
         freshwater_rate: ArrayLike | None = None,
         /,
         *,
-        boundary_values=None,
+        boundary_values: _BoundaryValues | None = None,
     ) -> HydrostaticFreeSurfaceResult:
         eta_old = jnp.asarray(eta, dtype=self.geometry.cell_area.dtype)
         dt = jnp.asarray(step_size, dtype=eta_old.dtype).reshape(())
@@ -139,7 +140,7 @@ class LinearImplicitFreeSurfacePlan(StrictModule, NonTrainableState):
             )
         space = ArraySpace(self.geometry.horizontal_shape, dtype=eta_old.dtype)
 
-        def action(eta_value):
+        def action(eta_value: Array) -> Array:
             fx, fy = self._surface_flux_from_eta(eta_value, epoch)
             laplacian = _surface_net_flux(self.geometry, fx, fy)
             return (

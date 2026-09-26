@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 
@@ -47,7 +48,7 @@ class FacetOrientationAction:
             tuple(right.permutation[index] for index in self.permutation),
         )
 
-    def apply(self, values, /, *, axis: int = 0):
+    def apply(self, values: ArrayLike, /, *, axis: int = 0) -> Array:
         return jnp.take(jnp.asarray(values), jnp.asarray(self.permutation), axis=axis)
 
 
@@ -84,12 +85,13 @@ def facet_orientation_between(
     local_vertices: tuple[int, ...],
     /,
 ) -> FacetOrientationAction:
-    shape: FacetShape = {
+    shapes: dict[int, FacetShape] = {
         1: "point",
         2: "edge",
         3: "triangle",
         4: "quadrilateral",
-    }[len(canonical_vertices)]
+    }
+    shape = shapes[len(canonical_vertices)]
     if set(canonical_vertices) != set(local_vertices):
         raise ValueError("Facet orientations require identical vertex sets.")
     local_positions = tuple(local_vertices.index(value) for value in canonical_vertices)

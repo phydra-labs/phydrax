@@ -10,7 +10,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax._strict import StrictModule
 from phydrax.ein import contract
@@ -141,7 +141,7 @@ class LaplaceLayerPotential3D(_AbstractTrialSpaceField):
             raise ValueError("Replacement density must preserve source-node shape.")
         return eqx.tree_at(lambda potential: potential.density, self, values)
 
-    def __call__(self, target: Array, /, *, key=None) -> Array:
+    def __call__(self, target: Array, /, *, key: Key[Array, ""] | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (3,):

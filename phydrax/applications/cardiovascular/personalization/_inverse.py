@@ -304,11 +304,15 @@ class CardiovascularInverseProblem(StrictModule, NonTrainableState):
         parameter_space = self.schema.parameter_space(physical_reference)
         initial_raw = tuple(parameter_space.initial)
 
-        def residual(state, raw_parameters, dynamic_args):
+        def residual(
+            state: PyTree[Any], raw_parameters: Sequence[ArrayLike], dynamic_args: Any
+        ) -> PyTree[ArrayLike]:
             physical = self._physical(raw_parameters, physical_reference)
             return self.state_residual(state, physical, dynamic_args)
 
-        def objective(state, raw_parameters, dynamic_args):
+        def objective(
+            state: PyTree[Any], raw_parameters: Sequence[ArrayLike], dynamic_args: Any
+        ) -> tuple[Array, InverseObjectiveEvaluation]:
             evaluation = self.objective_evaluation(
                 state,
                 raw_parameters,
@@ -317,16 +321,23 @@ class CardiovascularInverseProblem(StrictModule, NonTrainableState):
             )
             return evaluation.negative_log_posterior, evaluation
 
-        def realization(state, raw_parameters, dynamic_args):
+        def realization(
+            state: PyTree[Any], raw_parameters: Sequence[ArrayLike], dynamic_args: Any
+        ) -> ArrayLike:
             physical = self._physical(raw_parameters, physical_reference)
             return self.fixed_topology(state, physical, dynamic_args)
 
         admissibility = None
-        if self.state_admissibility is not None:
+        state_admissibility = self.state_admissibility
+        if state_admissibility is not None:
 
-            def admissibility(state, raw_parameters, dynamic_args):
+            def admissibility(
+                state: PyTree[Any],
+                raw_parameters: Sequence[ArrayLike],
+                dynamic_args: Any,
+            ) -> ArrayLike:
                 physical = self._physical(raw_parameters, physical_reference)
-                return self.state_admissibility(state, physical, dynamic_args)
+                return state_admissibility(state, physical, dynamic_args)
 
         problem = StateDesignProblem(
             residual,

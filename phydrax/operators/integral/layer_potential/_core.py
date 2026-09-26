@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 import math
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -27,6 +27,10 @@ from ....geometry import (
     SignReliability,
     ZeroSetAccuracy,
 )
+
+
+if TYPE_CHECKING:
+    from ._surface3d import SurfacePanelization3D
 
 
 KernelActionSide = Literal["left", "right"]
@@ -505,7 +509,7 @@ class BoundaryOperatorAssemblyReport(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        panelization: BoundaryPanelization2D,
+        panelization: BoundaryPanelization2D | SurfacePanelization3D,
         kernel_id: str,
         policy_id: str,
         trace_policy: str,
@@ -563,7 +567,7 @@ class LayerDiscretizationReport(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        panelization: BoundaryPanelization2D,
+        panelization: BoundaryPanelization2D | SurfacePanelization3D,
         kernel_id: str,
         density_space: str,
         trace_policy: str,

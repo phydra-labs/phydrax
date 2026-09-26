@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Literal, NamedTuple, TypeAlias
+from collections.abc import Callable
+from typing import Any, cast, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._iteration import (
     IterationCoordinates,
@@ -22,6 +23,8 @@ from ..._iteration import (
     update_iteration,
 )
 from ..._strict import StrictModule
+from .._certificates import KernelCertificate
+from .._operators import AbstractLinearOperator
 from .._plans import _certified_rank, LinearSolvePlan
 from .._policies import (
     FGMRES,
@@ -31,11 +34,14 @@ from .._policies import (
     LSMR,
     MINRES,
     PCG,
+    PrecisionDType,
     ProjectedPCG,
 )
 from .._preconditioners import AbstractPreconditioner
-from .._problems import LeastSquaresProblem
+from .._problems import AbstractLinearProblem, LeastSquaresProblem
 from .._results import LinearIterationMetrics, LinearSolveStatus
+from .._spaces import AbstractVectorSpace
+from .._subspaces import LinearSubspace, NullspacePolicy
 from ..krylov._results import KrylovBreakdownStatus
 
 
@@ -47,6 +53,86 @@ from ..krylov._results import KrylovBreakdownStatus
 # orthogonalization/rotation entries contribute exact zeros, and active work
 # keeps the early-exit floating-point order.
 KrylovLoopDriver: TypeAlias = Literal["early-exit", "fixed-trip"]
+
+# Coordinate-vector callbacks shared by the scalar Krylov kernels.
+_Action: TypeAlias = Callable[[Array], Array]
+_Inner: TypeAlias = Callable[[Array, Array], Array]
+_Precondition: TypeAlias = Callable[[Array, Array], Array]
+
+# Least-squares targets pair operator-range and regularizer-range coordinates.
+_TargetPair: TypeAlias = tuple[Array, Array]
+_TargetAction: TypeAlias = Callable[[Array], _TargetPair]
+_TargetAdjoint: TypeAlias = Callable[[_TargetPair], Array]
+_TargetInner: TypeAlias = Callable[[_TargetPair, _TargetPair], Array]
+
+# (iterations, residual norm, normal residual norm, condition, breakdown).
+_KrylovAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_KrylovResult: TypeAlias = tuple[Array, _KrylovAuxiliary, IterationRuntimeState | None]
+# `_KrylovAuxiliary` followed by the executed restart cycle count.
+_FGMRESResult: TypeAlias = tuple[
+    Array,
+    tuple[Array, Array, Array, Array, Array, Array],
+    IterationRuntimeState | None,
+]
+# `_KrylovAuxiliary` followed by forward and adjoint matvec counts.
+_SolveAuxiliary: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_SolveResult: TypeAlias = tuple[Array, _SolveAuxiliary, IterationRuntimeState | None]
+
+# (x, r, z, p, rho, iterations, active, breakdown, observed).
+_PCGCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, IterationRuntimeState | None
+]
+# (x, r1, r2, y, old beta, beta, dbar, epsilon, phibar, cosine, sine, w, w2,
+# iterations, active, breakdown, observed).
+_MINRESCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    IterationRuntimeState | None,
+]
+# (x, residual, residual norm, iterations, breakdown, best norm, stagnant steps,
+# active, executed cycles, observed).
+_FGMRESCycleCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    IterationRuntimeState | None,
+]
+# (basis, preconditioned basis, Hessenberg, cosines, sines, reduced RHS,
+# iterations, active, breakdown, best norm, stagnant steps, observed).
+_ArnoldiCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    IterationRuntimeState | None,
+]
 
 
 def _loop_driver(plan: LinearSolvePlan, /) -> KrylovLoopDriver:
@@ -133,16 +219,16 @@ def _iteration_stop(state: IterationRuntimeState | None, /) -> Array:
 def _update_krylov_iteration(
     plan: IterationPlan | None,
     state: IterationRuntimeState | None,
-    iteration,
-    residual_norm,
-    rhs_norm,
-    breakdown,
+    iteration: ArrayLike,
+    residual_norm: Array,
+    rhs_norm: Array,
+    breakdown: Array,
     /,
     *,
-    matvec_count,
-    adjoint_matvec_count=0,
-    normal_residual_norm=jnp.nan,
-    condition_estimate=jnp.nan,
+    matvec_count: ArrayLike,
+    adjoint_matvec_count: ArrayLike = 0,
+    normal_residual_norm: ArrayLike = jnp.nan,
+    condition_estimate: ArrayLike = jnp.nan,
 ) -> IterationRuntimeState | None:
     if plan is None or state is None:
         return state
@@ -290,7 +376,9 @@ def solve_native_krylov(
     if inner_plan is not None and rhs.shape[1] != 1:
         raise ValueError("Inner native Krylov observation requires one right-hand side.")
 
-    def solve_column(target, guess, observed_state):
+    def solve_column(
+        target: Array, guess: Array, observed_state: IterationRuntimeState | None
+    ) -> _SolveResult:
         if method_name == PCG().name:
             return _square_solve(
                 problem,
@@ -389,7 +477,9 @@ def solve_native_krylov(
         auxiliary = jax.tree.map(lambda item: item[None], auxiliary_column)
     else:
 
-        def solve_unobserved(target, guess):
+        def solve_unobserved(
+            target: Array, guess: Array
+        ) -> tuple[Array, _SolveAuxiliary]:
             value_, auxiliary_, _ = solve_column(target, guess, None)
             return value_, auxiliary_
 
@@ -413,11 +503,11 @@ def solve_native_krylov(
     converged = residual <= tolerance[1] + tolerance[0] * rhs_norms
     if isinstance(problem, LeastSquaresProblem):
 
-        def normal_reference(column):
+        def normal_reference_column(column: Array) -> Array:
             _, adjoint, _, source_inner, target = _least_squares_actions(problem, column)
             return _norm(adjoint(target), source_inner)
 
-        normal_reference = jax.vmap(normal_reference, in_axes=1)(rhs)
+        normal_reference = jax.vmap(normal_reference_column, in_axes=1)(rhs)
         converged = normal_residual <= (tolerance[1] + tolerance[0] * normal_reference)
         adjoint_matvec_count = adjoint_matvec_count + 1
     status = jnp.full(rhs_norms.shape, int(LinearSolveStatus.SUCCESS), dtype=jnp.int32)
@@ -480,10 +570,10 @@ def solve_native_krylov(
 
 
 def _square_solve(
-    problem,
-    rhs,
-    initial,
-    plan,
+    problem: AbstractLinearProblem,
+    rhs: Array,
+    initial: Array,
+    plan: LinearSolvePlan,
     method: str,
     /,
     *,
@@ -494,7 +584,7 @@ def _square_solve(
     structural_max_steps: int,
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-):
+) -> _SolveResult:
     operator = problem.operator
     action = lambda vector: _action_coordinates(operator, vector)
     inner = lambda left, right: _space_inner(operator.source, left, right)
@@ -503,9 +593,12 @@ def _square_solve(
     driver = _loop_driver(plan)
     projected = method == "projected-pcg"
     if projected:
-        nullspace = problem.nullspace_policy
-        certificate = nullspace.certificate
-        complement = lambda vector: vector - nullspace.right.project_coordinates(vector)
+        # ProjectedPCG planning (`_projected_pcg_rejection`) certifies a right
+        # nullspace and kernel certificate before a native plan exists.
+        nullspace = cast(NullspacePolicy, problem.nullspace_policy)
+        certificate = cast(KernelCertificate, nullspace.certificate)
+        right_nullspace = cast(LinearSubspace, nullspace.right)
+        complement = lambda vector: vector - right_nullspace.project_coordinates(vector)
         rhs = eqx.error_if(
             complement(rhs),
             (~certificate.valid) | (certificate.right.dimension < 1),
@@ -520,7 +613,7 @@ def _square_solve(
         )
         method = "pcg"
 
-    def run(selected_action, target):
+    def run(selected_action: _Action, target: Array) -> _SolveResult:
         if method == "pcg":
             value, auxiliary, next_iteration_state = _pcg_raw(
                 selected_action,
@@ -570,7 +663,7 @@ def _square_solve(
                 )
                 selected_preconditioner = precondition
             restart = min(selected_method.restart, structural_max_steps)
-            value, auxiliary, next_iteration_state = _fgmres_raw(
+            value, cycle_auxiliary, next_iteration_state = _fgmres_raw(
                 selected_action,
                 target,
                 initial,
@@ -592,7 +685,8 @@ def _square_solve(
                 iteration=iteration,
                 iteration_state=iteration_state,
             )
-            *auxiliary, executed_cycles = auxiliary
+            auxiliary = cycle_auxiliary[:5]
+            executed_cycles = cycle_auxiliary[5]
             matvec_count = auxiliary[0] + executed_cycles + 1
         return (
             value,
@@ -613,21 +707,21 @@ def _square_solve(
 
 
 def _pcg_raw(
-    action,
-    rhs,
-    initial,
-    inner,
-    precondition,
+    action: _Action,
+    rhs: Array,
+    initial: Array,
+    inner: _Inner,
+    precondition: _Precondition,
     max_steps: int,
     relative: Array,
     absolute: Array,
     *,
-    finite_all=None,
+    finite_all: Callable[[Array], Array] | None = None,
     step_limit: Array | None = None,
     driver: KrylovLoopDriver = "early-exit",
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-):
+) -> _KrylovResult:
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual = rhs - action(initial)
@@ -637,7 +731,7 @@ def _pcg_raw(
     rhs_norm = _norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
     residual_norm = _norm(residual, inner)
-    state = (
+    state: _PCGCarry = (
         initial,
         residual,
         transformed,
@@ -650,10 +744,10 @@ def _pcg_raw(
     )
     epsilon = jnp.finfo(rhs.real.dtype).eps
 
-    def step(index, current):
+    def step(index: Array, current: _PCGCarry) -> _PCGCarry:
         x, r, z, p, rho_, iterations, active, breakdown, observed = current
 
-        def execute(operand):
+        def execute(operand: _PCGCarry) -> _PCGCarry:
             x_, r_, z_, p_, rho_i, _, _, _, observed_i = operand
             image = action(p_)
             denominator = jnp.real(inner(p_, image))
@@ -747,11 +841,11 @@ def _pcg_raw(
 
 
 def _minres_raw(
-    action,
-    rhs,
-    initial,
-    inner,
-    precondition,
+    action: _Action,
+    rhs: Array,
+    initial: Array,
+    inner: _Inner,
+    precondition: _Precondition,
     max_steps: int,
     relative: Array,
     absolute: Array,
@@ -759,7 +853,7 @@ def _minres_raw(
     step_limit: Array | None = None,
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-):
+) -> _KrylovResult:
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual = rhs - action(initial)
@@ -768,7 +862,7 @@ def _minres_raw(
     beta_one = jnp.sqrt(jnp.maximum(beta_one_squared, 0.0))
     rhs_norm = _norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
-    state = (
+    state: _MINRESCarry = (
         initial,
         residual,
         residual,
@@ -793,7 +887,7 @@ def _minres_raw(
     )
     epsilon = jnp.finfo(rhs.real.dtype).eps
 
-    def step(index, current):
+    def step(index: Array, current: _MINRESCarry) -> _MINRESCarry:
         (
             x,
             r1,
@@ -814,7 +908,7 @@ def _minres_raw(
             observed,
         ) = current
 
-        def execute(operand):
+        def execute(operand: _MINRESCarry) -> _MINRESCarry:
             (
                 x_,
                 r1_,
@@ -939,11 +1033,11 @@ def _minres_raw(
 
 
 def _fgmres_raw(
-    action,
-    rhs,
-    initial,
-    inner,
-    precondition,
+    action: _Action,
+    rhs: Array,
+    initial: Array,
+    inner: _Inner,
+    precondition: _Precondition,
     max_steps: int,
     restart: int,
     stagnation_iterations: int,
@@ -953,10 +1047,10 @@ def _fgmres_raw(
     step_limit: Array | None = None,
     driver: KrylovLoopDriver = "early-exit",
     identity_preconditioner: bool = False,
-    basis_dtype=None,
+    basis_dtype: PrecisionDType | None = None,
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-):
+) -> _FGMRESResult:
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     fixed_trip = _fixed_trip(driver)
@@ -974,7 +1068,7 @@ def _fgmres_raw(
         int(KrylovBreakdownStatus.NONE),
         int(KrylovBreakdownStatus.NONFINITE_ACTION),
     ).astype(jnp.int32)
-    initial_state = (
+    initial_state: _FGMRESCycleCarry = (
         initial,
         residual,
         residual_norm,
@@ -989,7 +1083,7 @@ def _fgmres_raw(
     cycles = (max_steps + restart - 1) // restart
     columns = jnp.arange(restart)
 
-    def reduced_solve(hessenberg, reduced_rhs, steps):
+    def reduced_solve(hessenberg: Array, reduced_rhs: Array, steps: Array) -> Array:
         active_columns = columns < steps
         upper = jnp.where(
             active_columns[:, None] & active_columns[None, :],
@@ -1005,7 +1099,7 @@ def _fgmres_raw(
         )
         return jnp.where(active_columns, coefficients, 0)
 
-    def cycle_step(_, state):
+    def cycle_step(_: None, state: _FGMRESCycleCarry) -> _FGMRESCycleCarry:
         (
             x,
             current_residual,
@@ -1019,7 +1113,7 @@ def _fgmres_raw(
             observed,
         ) = state
 
-        def execute_cycle(operand):
+        def execute_cycle(operand: _FGMRESCycleCarry) -> _FGMRESCycleCarry:
             (
                 cycle_base,
                 cycle_residual,
@@ -1052,7 +1146,7 @@ def _fgmres_raw(
             sines = jnp.zeros((restart,), dtype=rhs.dtype)
             reduced_rhs = jnp.zeros((restart + 1,), dtype=rhs.dtype)
             reduced_rhs = reduced_rhs.at[0].set(cycle_norm)
-            inner_state = (
+            inner_state: _ArnoldiCarry = (
                 basis,
                 preconditioned_basis,
                 hessenberg,
@@ -1067,7 +1161,7 @@ def _fgmres_raw(
                 observed_outer,
             )
 
-            def arnoldi_step(local_index, current):
+            def arnoldi_step(local_index: Array, current: _ArnoldiCarry) -> _ArnoldiCarry:
                 (
                     basis_,
                     preconditioned_,
@@ -1086,7 +1180,7 @@ def _fgmres_raw(
                     inner_active & (iteration_ < step_limit) & (iteration_ < max_steps)
                 )
 
-                def execute_arnoldi(inner_operand):
+                def execute_arnoldi(inner_operand: _ArnoldiCarry) -> _ArnoldiCarry:
                     (
                         basis_i,
                         preconditioned_i,
@@ -1114,7 +1208,9 @@ def _fgmres_raw(
                     # dynamic basis size; fixed trip runs the static restart
                     # length and masks entries beyond `local_index` to exact
                     # zeros, so active work keeps the same order.
-                    def orthogonalize(index, state):
+                    def orthogonalize(
+                        index: Array, state: tuple[Array, Array]
+                    ) -> tuple[Array, Array]:
                         remainder, coefficients = state
                         basis_vector = basis_i[index].astype(rhs.dtype)
                         coefficient = inner(basis_vector, remainder)
@@ -1155,7 +1251,7 @@ def _fgmres_raw(
                     column = column.at[:-1].set(projection)
                     column = column.at[local_index + 1].set(next_norm)
 
-                    def apply_previous_rotation(index, value):
+                    def apply_previous_rotation(index: Array, value: Array) -> Array:
                         upper = value[index]
                         lower = value[index + 1]
                         cosine = cosines_i[index]
@@ -1281,7 +1377,7 @@ def _fgmres_raw(
                     current,
                 )
 
-            def inner_condition(current):
+            def inner_condition(current: _ArnoldiCarry) -> Array:
                 iteration = current[6]
                 return (
                     current[7]
@@ -1290,7 +1386,7 @@ def _fgmres_raw(
                     & (iteration < max_steps)
                 )
 
-            def inner_body(current):
+            def inner_body(current: _ArnoldiCarry) -> _ArnoldiCarry:
                 return arnoldi_step(
                     current[6] - starting_iterations,
                     current,
@@ -1395,7 +1491,7 @@ def _fgmres_raw(
             state,
         )
 
-    def cycle_condition(state):
+    def cycle_condition(state: _FGMRESCycleCarry) -> Array:
         return (
             state[7]
             & (state[3] < step_limit)
@@ -1446,10 +1542,10 @@ def _fgmres_raw(
 
 
 def _least_squares_solve(
-    problem,
-    rhs,
-    initial,
-    plan,
+    problem: AbstractLinearProblem,
+    rhs: Array,
+    initial: Array,
+    plan: LinearSolvePlan,
     *,
     relative: Array,
     absolute: Array,
@@ -1457,7 +1553,7 @@ def _least_squares_solve(
     structural_max_steps: int,
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-):
+) -> _SolveResult:
     action, adjoint, target_inner, source_inner, right = _least_squares_actions(
         problem, rhs
     )
@@ -1495,12 +1591,12 @@ def _least_squares_solve(
 
 
 def _lsmr_raw(
-    action,
-    adjoint,
-    rhs,
-    initial,
-    source_inner,
-    target_inner,
+    action: _TargetAction,
+    adjoint: _TargetAdjoint,
+    rhs: _TargetPair,
+    initial: Array,
+    source_inner: _Inner,
+    target_inner: _TargetInner,
     max_steps: int,
     relative: Array,
     absolute: Array,
@@ -1510,7 +1606,7 @@ def _lsmr_raw(
     step_limit: Array | None = None,
     iteration: IterationPlan | None = None,
     iteration_state: IterationRuntimeState | None = None,
-):
+) -> _KrylovResult:
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual = _target_subtract(rhs, action(initial))
@@ -1556,8 +1652,8 @@ def _lsmr_raw(
         iteration_state=iteration_state,
     )
 
-    def step(index, current):
-        def execute(value):
+    def step(index: Array, current: _LSMRState) -> _LSMRState:
+        def execute(value: _LSMRState) -> _LSMRState:
             image_operator, image_regularizer = action(value.v)
             next_u_operator = image_operator - value.alpha * value.u_operator
             next_u_regularizer = image_regularizer - value.alpha * value.u_regularizer
@@ -1716,7 +1812,9 @@ def _lsmr_raw(
     )
 
 
-def _least_squares_actions(problem, rhs):
+def _least_squares_actions(
+    problem: AbstractLinearProblem, rhs: Array
+) -> tuple[_TargetAction, _TargetAdjoint, _TargetInner, _Inner, _TargetPair]:
     operator = problem.operator
     regularizer = (
         problem.regularizer if isinstance(problem, LeastSquaresProblem) else None
@@ -1729,7 +1827,7 @@ def _least_squares_actions(problem, rhs):
                 "GeneralizedLSMR weights must have one target coordinate entry."
             )
 
-    def action(vector):
+    def action(vector: Array) -> _TargetPair:
         primary = _action_coordinates(operator, vector)
         secondary = (
             jnp.zeros((0,), dtype=primary.dtype)
@@ -1738,7 +1836,7 @@ def _least_squares_actions(problem, rhs):
         )
         return primary, secondary
 
-    def adjoint(value):
+    def adjoint(value: _TargetPair) -> Array:
         primary, secondary = value
         weighted = primary if weights is None else weights * primary
         result = _adjoint_coordinates(operator, weighted)
@@ -1746,7 +1844,7 @@ def _least_squares_actions(problem, rhs):
             result = result + _adjoint_coordinates(regularizer, secondary)
         return result
 
-    def target_inner(left, right):
+    def target_inner(left: _TargetPair, right: _TargetPair) -> Array:
         left_primary, left_secondary = left
         right_primary, right_secondary = right
         weighted_right = right_primary if weights is None else weights * right_primary
@@ -1767,11 +1865,13 @@ def _least_squares_actions(problem, rhs):
     return action, adjoint, target_inner, source_inner, right
 
 
-def _preconditioner_action(preconditioner, space):
+def _preconditioner_action(
+    preconditioner: AbstractPreconditioner | None, space: AbstractVectorSpace
+) -> _Precondition:
     if preconditioner is None:
         return lambda vector, iteration: vector
 
-    def apply(vector, iteration):
+    def apply(vector: Array, iteration: Array) -> Array:
         return space.flatten(
             preconditioner.apply(space.unflatten(vector), iteration=iteration)
         )
@@ -1779,23 +1879,23 @@ def _preconditioner_action(preconditioner, space):
     return apply
 
 
-def _action_coordinates(operator, vector):
+def _action_coordinates(operator: AbstractLinearOperator, vector: Array) -> Array:
     return operator.target.flatten(operator.mv(operator.source.unflatten(vector)))
 
 
-def _adjoint_coordinates(operator, vector):
+def _adjoint_coordinates(operator: AbstractLinearOperator, vector: Array) -> Array:
     return operator.source.flatten(operator.adjoint_mv(operator.target.unflatten(vector)))
 
 
-def _space_inner(space, left, right):
+def _space_inner(space: AbstractVectorSpace, left: Array, right: Array) -> Array:
     return space.inner(space.unflatten(left), space.unflatten(right))
 
 
-def _space_norm(space, vector):
+def _space_norm(space: AbstractVectorSpace, vector: Array) -> Array:
     return _norm(vector, lambda left, right: _space_inner(space, left, right))
 
 
-def _norm(vector, inner):
+def _norm(vector: Array, inner: _Inner) -> Array:
     # Value-identical to sqrt(max(<v, v>, 0)), including NaN propagation, with a
     # finite derivative at an exact zero (exact breakdown under fixed trip).
     squared = jnp.maximum(jnp.real(inner(vector, vector)), 0.0)
@@ -1803,25 +1903,25 @@ def _norm(vector, inner):
     return jnp.where(zero, 0.0, jnp.sqrt(jnp.where(zero, 1.0, squared)))
 
 
-def _safe_abs(value):
+def _safe_abs(value: Array) -> Array:
     # Value-identical to |z|; complex |z| otherwise has no derivative at zero.
     nonzero = value != 0
     return jnp.where(nonzero, jnp.abs(jnp.where(nonzero, value, 1)), 0)
 
 
-def _target_norm(value, inner):
+def _target_norm(value: _TargetPair, inner: _TargetInner) -> Array:
     return jnp.sqrt(jnp.maximum(jnp.real(inner(value, value)), 0.0))
 
 
-def _target_subtract(left, right):
+def _target_subtract(left: _TargetPair, right: _TargetPair) -> _TargetPair:
     return left[0] - right[0], left[1] - right[1]
 
 
-def _target_scale(value, scalar):
+def _target_scale(value: _TargetPair, scalar: Array) -> _TargetPair:
     return scalar * value[0], scalar * value[1]
 
 
-def _symmetric_orthogonalization(left, right):
+def _symmetric_orthogonalization(left: Array, right: Array) -> tuple[Array, Array, Array]:
     radius = jnp.hypot(left, right)
     safe = jnp.where(radius == 0.0, 1.0, radius)
     return left / safe, right / safe, radius

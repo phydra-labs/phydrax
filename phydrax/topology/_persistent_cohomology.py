@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -28,7 +28,7 @@ class TerminalCocycleAnnotation(StrictModule, NonTrainableState):
     def __init__(
         self,
         basis: FiniteFieldBasis,
-        essential_pair_indices,
+        essential_pair_indices: ArrayLike,
         /,
     ) -> None:
         indices = jnp.asarray(essential_pair_indices, dtype=jnp.int32)

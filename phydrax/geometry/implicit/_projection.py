@@ -29,7 +29,7 @@ def _field_and_gradient(
     state: DesignState,
     points: Array,
 ) -> tuple[Array, Array]:
-    def field(point):
+    def field(point: Array) -> Array:
         return kernel.boundary_field(state, point[None, :])[0]
 
     values = kernel.boundary_field(state, points)
@@ -50,11 +50,16 @@ def _attach_normal_gauge(
 
 
 @_attach_normal_gauge.def_jvp
-def _attach_normal_gauge_jvp(primals, tangents):
+def _attach_normal_gauge_jvp(
+    primals: tuple[GeometryKernel, DesignState, Array, float],
+    tangents: tuple[GeometryKernel | None, DesignState | None, object, object],
+) -> tuple[Array, Array]:
     kernel, state, points, minimum_gradient_norm = primals
     kernel_tangent, state_tangent, _, _ = tangents
 
-    def parameter_field(current_kernel, current_state):
+    def parameter_field(
+        current_kernel: GeometryKernel, current_state: DesignState
+    ) -> Array:
         return current_kernel.boundary_field(current_state, points)
 
     _, field_tangent = eqx.filter_jvp(
@@ -273,7 +278,7 @@ class ImplicitPointProjectionPlan(StrictModule):
         policy = self.policy
         minimum_squared = float(policy.minimum_gradient_norm) ** 2
 
-        def step(_, carry):
+        def step(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             points, trust_hit = carry
             values, gradient = _field_and_gradient(self.kernel, state, points)
             squared_norm = jnp.sum(gradient * gradient, axis=-1)

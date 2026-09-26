@@ -123,7 +123,7 @@ class QuantumPoissonND(StrictModule):
         charge = (self.fixed_charge_density + quantum.reshape((-1,))) * self.cell_volumes
         return (charge + self.boundary_load) / self.scale
 
-    def solve(self, quantum_charge_density: ArrayLike, /):
+    def solve(self, quantum_charge_density: ArrayLike, /) -> la.LinearSolveResult:
         return la.solve(self.prepared, self.right_hand_side(quantum_charge_density))
 
     def residual(

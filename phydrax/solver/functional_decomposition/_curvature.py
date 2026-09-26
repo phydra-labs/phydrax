@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
-from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -31,6 +31,16 @@ from ...linalg import (
 from ...nn.parameters import ParameterSubspace
 from .._functional_residual import prepare_functional_residual
 from .._functional_solver import FunctionalSolver
+
+
+if TYPE_CHECKING:
+    import optax
+
+    from ...optim._evolution_strategy import AbstractDistributionEvolutionMethod
+    from ...optim._kfac._config import KFAC
+    from ...optim._mirror_descent import AbstractMirrorOptimizer
+    from ...optim._riemannian import AbstractRiemannianOptimizer
+    from ._prepare import PreparedFunctionalDecomposition
 
 
 class LocalCurvaturePlan(StrictModule):
@@ -104,7 +114,7 @@ def dense_local_curvature_step(
         )
     position = subspace.pack()
 
-    def objective(vector):
+    def objective(vector: Array) -> Array:
         functions = subspace.reconstruct_vector(vector)
         bound = eqx.tree_at(lambda value: value.functions, solver, functions)
         return bound.loss(key=key)
@@ -174,12 +184,18 @@ class DecompositionKFACResult(StrictModule):
 
 
 def solve_decomposition_kfac(
-    prepared,
-    patch_ids,
+    prepared: PreparedFunctionalDecomposition,
+    patch_ids: Iterable[str],
     /,
     *,
     num_iter: int,
-    optimizer=None,
+    optimizer: optax.GradientTransformation
+    | optax.GradientTransformationExtraArgs
+    | AbstractDistributionEvolutionMethod
+    | KFAC
+    | AbstractMirrorOptimizer
+    | AbstractRiemannianOptimizer
+    | None = None,
     seed: int = 0,
     jit: bool = False,
 ) -> DecompositionKFACResult:
@@ -240,15 +256,17 @@ def solve_decomposition_kfac(
     )
 
 
-def solve_local_kfac(prepared, patch_id: str, /, **kwargs) -> DecompositionKFACResult:
+def solve_local_kfac(
+    prepared: PreparedFunctionalDecomposition, patch_id: str, /, **kwargs: Any
+) -> DecompositionKFACResult:
     return solve_decomposition_kfac(prepared, (patch_id,), **kwargs)
 
 
 def solve_overlap_kfac(
-    prepared,
+    prepared: PreparedFunctionalDecomposition,
     patch_ids: Sequence[str],
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> DecompositionKFACResult:
     if len(tuple(patch_ids)) < 2:
         raise ValueError("Overlap KFAC requires at least two patch IDs.")
@@ -328,13 +346,13 @@ def matrix_free_gauss_newton_step(
     )
     position = subspace.pack()
 
-    def roots(vector):
+    def roots(vector: Array) -> Array:
         return residual.roots(subspace.reconstruct_vector(vector))
 
     residual_value, transpose = jax.vjp(roots, position)
     right_hand_side = -transpose(residual_value)[0]
 
-    def normal_action(direction):
+    def normal_action(direction: Array) -> Array:
         _, tangent = jax.jvp(roots, (position,), (direction,))
         _, pullback = jax.vjp(roots, position)
         return pullback(tangent)[0] + plan_.damping * direction

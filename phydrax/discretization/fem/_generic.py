@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from math import prod
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
@@ -59,7 +61,12 @@ from .._local_variational import (
 )
 from .._measure import DiscreteMeasure
 from .._reference_cell import reference_cell_topology
-from .._spaces import BlockDofLayout, DiscreteFieldSpace, EntityDofLayout
+from .._spaces import (
+    BlockDofLayout,
+    DiscreteFieldSpace,
+    EntityDofLayout,
+    FieldConformity,
+)
 from .._support import DiscreteSupport
 from .._topology import EntitySelection
 from ._precision import FiniteElementPrecisionPolicy
@@ -924,7 +931,7 @@ def _build_finite_element_dof_coordinates(
     layout: _FiniteElementDofLayout,
     block_dofs: tuple[Array, ...],
     /,
-) -> tuple[tuple[Array, ...], Array, Array]:
+) -> tuple[tuple[Array, ...], np.ndarray, np.ndarray]:
     association = layout.association
     global_count = layout.global_count
     connectivity = mesh.connectivity
@@ -1540,7 +1547,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
             }
         )
 
-    def prepare(self, /, *, numeric_version: str = "0"):
+    def prepare(self, /, *, numeric_version: str = "0") -> FiniteElementDiscretization:
         return FiniteElementDiscretization(self, numeric_version=numeric_version)
 
 
@@ -1549,7 +1556,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     dof_maps: tuple[FiniteElementDofMap, ...]
     default_runtime: FiniteElementRuntimeData
     elements: tuple[tuple[FiniteElementSpec, ...], ...]
-    coordinate_elements: tuple[CellGeometryElement, ...]
+    coordinate_elements: tuple[FiniteElementSpec, ...]
     coordinate_dofs: tuple[Array, ...]
     block_geometries: tuple[tuple[FiniteElementBlockGeometry, ...], ...]
     cell_domain: IntegrationDomain
@@ -1594,7 +1601,8 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             vector_shape = (dof_map.global_dof_count,) + field.component_shape
             vector_space = ArraySpace(vector_shape)
             vertex_count = mesh.coordinates.shape[0]
-            conformity = elements[0].conformity
+            # FiniteElementDofMap above rejects conformities outside H1/L2/Hdiv/Hcurl.
+            conformity = cast(FieldConformity, elements[0].conformity)
             if dof_map.association == "vertex":
                 layout = EntityDofLayout(
                     mesh.topology.entity_sets[0].entity_set_id,
@@ -1743,7 +1751,10 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         )
         self.dof_maps = tuple(dof_maps)
         self.elements = tuple(all_elements)
-        self.coordinate_elements = coordinate_elements
+        # _prepare_block_geometry above rejects non-FiniteElementSpec coordinate elements.
+        self.coordinate_elements = cast(
+            tuple[FiniteElementSpec, ...], coordinate_elements
+        )
         self.coordinate_dofs = coordinate_dofs
         self.block_geometries = tuple(all_geometries)
         self.cell_domain = IntegrationDomain(
@@ -1796,7 +1807,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         )
 
     @property
-    def precision_evidence(self):
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope:
         return self.precision_policy.evidence()
 
     def prepare_runtime(

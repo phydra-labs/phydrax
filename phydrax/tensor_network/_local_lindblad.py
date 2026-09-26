@@ -99,7 +99,7 @@ def prepare_local_lindblad_channel(
     ):
         raise ValueError("Local Hamiltonian must be finite and Hermitian; jumps finite.")
 
-    def generator(density):
+    def generator(density: Array) -> Array:
         result = -1j * (hamiltonian_ @ density - density @ hamiltonian_)
         for jump in jumps:
             product = _adjoint(jump) @ jump

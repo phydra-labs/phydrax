@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Self
 
 import equinox as eqx
 import jax
@@ -48,7 +49,7 @@ class StateVectorOperator(StrictModule):
         self.operator_id = str(operator_id)
 
     @classmethod
-    def from_matrix(cls, matrix: ArrayLike, /, *, operator_id: str):
+    def from_matrix(cls, matrix: ArrayLike, /, *, operator_id: str) -> Self:
         value = jnp.asarray(matrix)
         if value.ndim != 2 or value.shape[0] != value.shape[1]:
             raise ValueError("Operator matrix must be square.")
@@ -251,7 +252,7 @@ def _trajectory(
     count: int,
     temporal_precision: TemporalPrecisionPolicy,
     geometry_precision: GeometryPrecisionPolicy,
-):
+) -> tuple[Array, Array, Array]:
     channel_count = len(problem.collapse_operators)
     decision_address = SampleAddress(
         "quantum-trajectory",
@@ -266,7 +267,7 @@ def _trajectory(
         role="channel",
     )
 
-    def advance(state, index):
+    def advance(state: Array, index: Array) -> tuple[Array, tuple[Array, Array, Array]]:
         decision_key = derive_key(key, decision_address, index)
         channel_key = derive_key(key, channel_address, index)
         if channel_count:

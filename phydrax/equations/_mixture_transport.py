@@ -23,6 +23,7 @@ from ._gas_transport_properties import (
 )
 from ._homogeneous_thermodynamics import (
     HomogeneousHelmholtzPlan,
+    HomogeneousThermodynamicEvaluation,
     ZeroResidualHelmholtzTerm,
 )
 
@@ -90,7 +91,7 @@ def _ideal_pressure_state(
     pressure: Array,
     mass_fractions: Array,
     /,
-):
+) -> HomogeneousThermodynamicEvaluation:
     molar_masses = thermodynamics.schema.molar_masses.astype(mass_fractions.dtype)
     reciprocal_molar_mass = jnp.sum(mass_fractions / molar_masses, axis=-1)
     mixture_molar_mass = 1.0 / reciprocal_molar_mass

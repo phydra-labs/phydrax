@@ -245,8 +245,10 @@ class GeometricRoughPath(AbstractRoughControl):
         flat_first = first.reshape((-1, end - start, self.dimension))
         flat_second = second.reshape((-1, end - start, self.dimension, self.dimension))
 
-        def one_path(path_first, path_second):
-            def combine(carry, item):
+        def one_path(path_first: Array, path_second: Array) -> tuple[Array, Array]:
+            def combine(
+                carry: tuple[Array, Array], item: tuple[Array, Array]
+            ) -> tuple[tuple[Array, Array], None]:
                 return compose_rough_path_segments(*carry, *item), None
 
             initial = (

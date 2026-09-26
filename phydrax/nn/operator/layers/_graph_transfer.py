@@ -104,7 +104,9 @@ def _apply_rows(model: Any, values: Array, key: EvalKey, /) -> Array:
 class _EdgeKernel(StrictModule):
     model: MLP
 
-    def __call__(self, edges, sent_nodes, received_nodes, globals_):
+    def __call__(
+        self, edges: object, sent_nodes: object, received_nodes: Array, globals_: object
+    ) -> Array:
         del sent_nodes, globals_
         if not isinstance(edges, Mapping):
             raise TypeError("Graph transfer edge kernels require mapping-valued edges.")
@@ -270,7 +272,9 @@ class _MultiheadLogits(StrictModule):
     heads: int = eqx.field(static=True)
     head_dim: int = eqx.field(static=True)
 
-    def __call__(self, edges, keys, queries, globals_):
+    def __call__(
+        self, edges: object, keys: Array, queries: Array, globals_: object
+    ) -> Array:
         del globals_
         if not isinstance(edges, Mapping):
             raise TypeError("Graph attention transfer requires mapping-valued edges.")
@@ -290,7 +294,7 @@ class _MultiheadLogits(StrictModule):
 class _AttentionOutput(StrictModule):
     projection: Linear
 
-    def __call__(self, nodes, aggregated, globals_):
+    def __call__(self, nodes: object, aggregated: Array, globals_: object) -> Array:
         del nodes, globals_
         return self.projection(aggregated)
 

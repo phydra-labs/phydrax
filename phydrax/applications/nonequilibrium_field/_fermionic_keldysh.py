@@ -323,7 +323,12 @@ class PreparedFermionicSecondBorn(StrictModule, NonTrainableState):
     quadrature_weights: Array
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, free_functions, /) -> None:
+    def __init__(
+        self,
+        plan: FermionicSecondBornPlan,
+        free_functions: FermionicKeldyshFunctions,
+        /,
+    ) -> None:
         times = np.asarray(plan.grid.plan.time_nodes)
         differences = np.diff(times)
         weights = np.empty_like(times)

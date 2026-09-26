@@ -160,7 +160,14 @@ def _geometry_id(geometry: CellGeometrySpec, /) -> str:
     )
 
 
-def _evidence_id(patches, zones, labels, attributes, associations, /) -> str:
+def _evidence_id(
+    patches: tuple[MeshPatch, ...],
+    zones: tuple[MeshZone, ...],
+    labels: tuple[MeshLabel, ...],
+    attributes: tuple[MeshAttribute, ...],
+    associations: tuple[GeometryAssociation, ...],
+    /,
+) -> str:
     return canonical_fingerprint(
         {
             "patches": [value.patch_id for value in patches],
@@ -362,8 +369,15 @@ def _patch_zone_adjacency_issues(
 
 
 def _mesh_evidence_issues(
-    mesh, boundary, patches, zones, labels, attributes, associations, /
-):
+    mesh: CellMesh,
+    boundary: SurfaceModel | None,
+    patches: tuple[MeshPatch, ...],
+    zones: tuple[MeshZone, ...],
+    labels: tuple[MeshLabel, ...],
+    attributes: tuple[MeshAttribute, ...],
+    associations: tuple[GeometryAssociation, ...],
+    /,
+) -> tuple[str, ...]:
     issues = list(_boundary_issues(mesh, boundary))
     issues.extend(_patch_zone_adjacency_issues(mesh, patches, zones))
     meshes = (mesh,) if boundary is None else (mesh, boundary.mesh)
@@ -432,7 +446,13 @@ def _mesh_evidence_issues(
     return tuple(dict.fromkeys(issues))
 
 
-def _complete_association_coverage(mesh, boundary, patches, associations, /) -> bool:
+def _complete_association_coverage(
+    mesh: CellMesh,
+    boundary: SurfaceModel | None,
+    patches: tuple[MeshPatch, ...],
+    associations: tuple[GeometryAssociation, ...],
+    /,
+) -> bool:
     if not associations or any(not value.complete for value in associations):
         return False
     meshes = (mesh,) if boundary is None else (mesh, boundary.mesh)

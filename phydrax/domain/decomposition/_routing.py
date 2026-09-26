@@ -9,6 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -98,7 +99,7 @@ class PreparedFieldRouting(StrictModule, NonTrainableState):
         self.colors = _greedy_colors(cover.patch_ids, conflicts)
         self.maximum_overlap = int(maximum)
 
-    def active_mask(self, points: Any, /):
+    def active_mask(self, points: Any, /) -> Array:
         return jnp.stack(
             tuple(
                 jnp.asarray(patch.support(points).data) > 0
@@ -107,7 +108,7 @@ class PreparedFieldRouting(StrictModule, NonTrainableState):
             axis=-1,
         )
 
-    def active_indices(self, points: Any, /):
+    def active_indices(self, points: Any, /) -> Array:
         mask = self.active_mask(points)
         return jax.vmap(
             lambda row: jnp.nonzero(

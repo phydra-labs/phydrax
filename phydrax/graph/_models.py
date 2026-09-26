@@ -272,17 +272,23 @@ class InteractionNetwork(StrictModule):
     def __call__(self, graph: GraphIR) -> GraphIR:
         if self.include_sent_messages_in_node_update:
 
-            def node_fn(nodes, sent, recv, globals_):
+            def node_fn(
+                nodes: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+            ) -> ArrayTree:
                 del globals_
                 return self.update_node_fn(nodes, sent, recv)
 
         else:
 
-            def node_fn(nodes, sent, recv, globals_):
+            def node_fn(
+                nodes: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+            ) -> ArrayTree:
                 del sent, globals_
                 return self.update_node_fn(nodes, recv)
 
-        def edge_fn(edges, sent, recv, globals_):
+        def edge_fn(
+            edges: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del globals_
             return self.update_edge_fn(edges, sent, recv)
 
@@ -314,11 +320,15 @@ class RelationNetwork(StrictModule):
         self.aggregate_edges_for_globals_fn = aggregate_edges_for_globals_fn
 
     def __call__(self, graph: GraphIR) -> GraphIR:
-        def edge_fn(edges, sent, recv, globals_):
+        def edge_fn(
+            edges: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del edges, globals_
             return self.update_edge_fn(sent, recv)
 
-        def global_fn(node_aggr, edge_aggr, globals_):
+        def global_fn(
+            node_aggr: ArrayTree, edge_aggr: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del node_aggr, globals_
             return self.update_global_fn(edge_aggr)
 
@@ -350,11 +360,15 @@ class DeepSets(StrictModule):
         self.aggregate_nodes_for_globals_fn = aggregate_nodes_for_globals_fn
 
     def __call__(self, graph: GraphIR) -> GraphIR:
-        def node_fn(nodes, sent, recv, globals_):
+        def node_fn(
+            nodes: ArrayTree, sent: ArrayTree, recv: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del sent, recv
             return self.update_node_fn(nodes, globals_)
 
-        def global_fn(node_aggr, edge_aggr, globals_):
+        def global_fn(
+            node_aggr: ArrayTree, edge_aggr: ArrayTree, globals_: ArrayTree
+        ) -> ArrayTree:
             del edge_aggr, globals_
             return self.update_global_fn(node_aggr)
 

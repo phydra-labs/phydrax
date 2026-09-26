@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Sequence
 from math import prod
 
 import equinox as eqx
@@ -15,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 
 
-def _event_shape(value, /) -> tuple[int, ...]:
+def _event_shape(value: Sequence[int], /) -> tuple[int, ...]:
     shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("event_shape dimensions must be positive.")
@@ -53,7 +54,7 @@ class EndpointInterpolantEvaluation(StrictModule):
         state: ArrayLike,
         conditional_velocity: ArrayLike,
         valid: ArrayLike,
-        event_shape,
+        event_shape: Sequence[int],
         interpolant_id: str,
     ) -> None:
         events = _event_shape(event_shape)
@@ -115,7 +116,7 @@ class LinearEndpointInterpolant(AbstractEndpointInterpolant):
 
     def __init__(
         self,
-        event_shape,
+        event_shape: Sequence[int],
         /,
         *,
         source_coordinate: ArrayLike = 0.0,

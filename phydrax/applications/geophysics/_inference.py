@@ -9,15 +9,18 @@ increment is ever inserted into an atmospheric or slab physical-flux ledger.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any, cast
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ... import linalg, optim, uq
 from ..._array_archive import read_array_archive, write_array_archive
@@ -71,7 +74,7 @@ _SIGNALS = {
 }
 
 
-def _nonempty(value, role):
+def _nonempty(value: object, role: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{role} must be an explicit nonempty provenance label.")
     return value
@@ -91,7 +94,13 @@ class ColumnParameterSpace(StrictModule):
     names: tuple[str, ...] = eqx.field(static=True)
     parameter_id: str = eqx.field(static=True)
 
-    def __init__(self, names, scales, lower, upper) -> None:
+    def __init__(
+        self,
+        names: Iterable[str],
+        scales: ArrayLike,
+        lower: ArrayLike,
+        upper: ArrayLike,
+    ) -> None:
         names = tuple(names)
         if not names or len(set(names)) != len(names) or set(names) - set(_PARAMETERS):
             raise ValueError("Parameters must be unique supported native column leaves.")
@@ -118,7 +127,9 @@ class ColumnParameterSpace(StrictModule):
             }
         )
 
-    def apply(self, plan, physical):
+    def apply(
+        self, plan: InteractiveMoistColumnPlan, physical: ArrayLike
+    ) -> InteractiveMoistColumnPlan:
         values = jnp.asarray(physical)
         if values.shape != self.scales.shape:
             raise ValueError("Physical parameter vector has the wrong shape.")
@@ -134,7 +145,7 @@ class ColumnParameterSpace(StrictModule):
             )
         return plan
 
-    def check(self, physical) -> None:
+    def check(self, physical: ArrayLike) -> None:
         values = np.asarray(physical)
         if values.shape != self.scales.shape or not np.all(np.isfinite(values)):
             raise ValueError(
@@ -173,7 +184,7 @@ class ColumnIntervention:
             raise ValueError("Intervention multipliers must be finite and positive.")
 
     @property
-    def intervention_id(self):
+    def intervention_id(self) -> str:
         return canonical_fingerprint({"kind": "column-intervention", **self.__dict__})
 
 
@@ -208,7 +219,7 @@ class ColumnObservationBinding:
         object.__setattr__(self, "times", tuple(float(t) for t in times))
 
     @property
-    def binding_id(self):
+    def binding_id(self) -> str:
         return canonical_fingerprint(
             {
                 "signal": self.signal,
@@ -224,13 +235,21 @@ class _DifferentiableColumnMethod(AbstractFixedStepMethod, NonTrainableState):
     plan: InteractiveMoistColumnPlan
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, plan) -> None:
+    def __init__(self, plan: InteractiveMoistColumnPlan) -> None:
         self.plan = plan
         self.method_id = canonical_fingerprint(
             {"kind": "column-inference-fixed-step", "plan": plan.plan_id}
         )
 
-    def step(self, step_index, time, state, step_size, args, /):
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: tuple[InteractiveMoistColumnState, Array],
+        step_size: Array,
+        args: Mapping[str, Array],
+        /,
+    ) -> FixedStepResult:
         del step_index
         physical, regular = state
         result = self.plan.step(physical, step_size, **args)
@@ -281,27 +300,27 @@ class ColumnExperiment:
     intervention: ColumnIntervention
     dt: float
     steps: int
-    forcing: MappingProxyType
+    forcing: MappingProxyType[str, Array]
     start: float
     source_id: str
     experiment_id: str
 
     def __init__(
         self,
-        initial_state,
-        bindings,
+        initial_state: InteractiveMoistColumnState,
+        bindings: Iterable[ColumnObservationBinding],
         *,
-        time,
-        dt,
-        steps,
-        source_id,
-        intervention=None,
-        solar_down=340.0,
-        wind_speed=5.0,
-        measurement_height=10.0,
-        ventilation=0.0,
-        shear=0.0,
-        heating_rate=0.0,
+        time: GeophysicalTimeSpec,
+        dt: float,
+        steps: int,
+        source_id: str,
+        intervention: ColumnIntervention | None = None,
+        solar_down: ArrayLike = 340.0,
+        wind_speed: ArrayLike = 5.0,
+        measurement_height: ArrayLike = 10.0,
+        ventilation: ArrayLike = 0.0,
+        shear: ArrayLike = 0.0,
+        heating_rate: ArrayLike = 0.0,
     ) -> None:
         bindings = tuple(bindings)
         if not bindings or not all(
@@ -348,7 +367,11 @@ class ColumnExperiment:
             expected = (
                 (n,) if binding.signal in ("temperature", "specific_humidity") else (1,)
             )
-            if binding.operator.transfer.source.vector_space.shape != expected:
+            # GeophysicalObservationOperator.__init__ rejects non-ArraySpace sources.
+            source_space = cast(
+                linalg.ArraySpace, binding.operator.transfer.source.vector_space
+            )
+            if source_space.shape != expected:
                 raise ValueError(
                     "Observation source shape differs from the column field."
                 )
@@ -385,7 +408,7 @@ class ColumnExperiment:
             ),
         )
 
-    def refined(self, factor=2):
+    def refined(self, factor: int = 2) -> ColumnExperiment:
         if int(factor) != factor or factor < 2:
             raise ValueError("Refinement factor must be an integer at least two.")
         return ColumnExperiment(
@@ -399,7 +422,9 @@ class ColumnExperiment:
             **self.forcing,
         )
 
-    def prepared_plan_state(self, plan):
+    def prepared_plan_state(
+        self, plan: InteractiveMoistColumnPlan
+    ) -> tuple[InteractiveMoistColumnPlan, InteractiveMoistColumnState, Array]:
         state = self.initial_state
         if plan.plan_id != state.plan_id:
             raise ValueError(
@@ -426,7 +451,7 @@ class ColumnExperiment:
         state = eqx.tree_at(lambda s: s.slab, state, slab)
         return plan, state, preparation_energy
 
-    def predict(self, plan):
+    def predict(self, plan: InteractiveMoistColumnPlan) -> ColumnPrediction:
         plan, initial, preparation = self.prepared_plan_state(plan)
         forcing = {
             **self.forcing,
@@ -455,7 +480,10 @@ class ColumnExperiment:
             ).astype("int64")
             selected = jax.tree.map(lambda x, ticks=ticks: x[jnp.asarray(ticks)], states)
 
-            def sample(state, binding=binding):
+            def sample(
+                state: InteractiveMoistColumnState,
+                binding: ColumnObservationBinding = binding,
+            ) -> tuple[Array, Array]:
                 diagnosed = plan.diagnose(state)
                 signal = binding.signal
                 radiation_valid = jnp.asarray(True)
@@ -551,7 +579,13 @@ class ColumnObservationData:
     data_id: str
 
     def __init__(
-        self, experiment, products, *, provenance, role, covariance=None
+        self,
+        experiment: ColumnExperiment,
+        products: Iterable[PreparedGeophysicalObservations],
+        *,
+        provenance: str,
+        role: str,
+        covariance: ArrayLike | None = None,
     ) -> None:
         products = tuple(products)
         if role not in ("calibration", "holdout"):
@@ -648,8 +682,13 @@ class ColumnLocalInformation(StrictModule):
 
 
 def column_local_information(
-    output_fn, center, *, derivative_valid=True, active_bounds=None, rank_rtol=1e-7
-):
+    output_fn: Callable[[Array], Array],
+    center: ArrayLike,
+    *,
+    derivative_valid: ArrayLike = True,
+    active_bounds: ArrayLike | None = None,
+    rank_rtol: float = 1e-7,
+) -> ColumnLocalInformation:
     """Native SVD of a whitened JVP map in dimensionless parameter coordinates.
 
     Rows of combinations are orthonormal z directions. The covariance field is
@@ -724,7 +763,12 @@ class ColumnCalibrationProblem:
     data: tuple[ColumnObservationData, ...]
     problem_id: str
 
-    def __init__(self, plan, space, data) -> None:
+    def __init__(
+        self,
+        plan: InteractiveMoistColumnPlan,
+        space: ColumnParameterSpace,
+        data: Iterable[ColumnObservationData],
+    ) -> None:
         data = tuple(data)
         if not isinstance(plan, InteractiveMoistColumnPlan) or not isinstance(
             space, ColumnParameterSpace
@@ -759,7 +803,7 @@ class ColumnCalibrationProblem:
             ),
         )
 
-    def residual(self, dimensionless):
+    def residual(self, dimensionless: Array) -> Array:
         plan = self.space.apply(self.plan, dimensionless * self.space.scales)
         residuals = []
         for data in self.data:
@@ -770,7 +814,9 @@ class ColumnCalibrationProblem:
             residuals.append(jnp.where(predicted.successful, residual, jnp.nan))
         return jnp.concatenate(residuals)
 
-    def information(self, physical, *, rank_rtol=1e-7):
+    def information(
+        self, physical: ArrayLike, *, rank_rtol: float = 1e-7
+    ) -> ColumnLocalInformation:
         plan = self.space.apply(self.plan, physical)
         valid = jnp.all(
             jnp.stack([d.experiment.predict(plan).derivative_valid for d in self.data])
@@ -788,7 +834,9 @@ class ColumnCalibrationProblem:
             rank_rtol=rank_rtol,
         )
 
-    def fisher_action(self, physical, direction):
+    def fisher_action(
+        self, physical: ArrayLike, direction: ArrayLike
+    ) -> uq.SensitivityActionResult:
         """Native UQ JVP/VJP action with physical branch/admission validity."""
         result = uq.gauss_newton_action(
             self.residual,
@@ -808,7 +856,13 @@ class ColumnCalibrationProblem:
             ),
         )
 
-    def calibrate(self, initial, *, termination=None, rank_rtol=1e-7):
+    def calibrate(
+        self,
+        initial: ArrayLike,
+        *,
+        termination: optim.OptimizationTermination | None = None,
+        rank_rtol: float = 1e-7,
+    ) -> ColumnCalibrationResult:
         """Fit with a caller-declared native stopping policy in whitened z coordinates."""
         self.space.check(initial)
         termination = (
@@ -860,7 +914,13 @@ class ColumnCalibrationProblem:
         )
 
 
-def column_gradient_audit(problem, physical, direction, *, epsilons=(1e-2, 1e-3, 1e-4)):
+def column_gradient_audit(
+    problem: ColumnCalibrationProblem,
+    physical: ArrayLike,
+    direction: ArrayLike,
+    *,
+    epsilons: Iterable[float] = (1e-2, 1e-3, 1e-4),
+) -> dict[str, Array]:
     """Real central model perturbations versus JVP, plus dt/2 and dt/4 JVPs.
 
     Every stencil checks bounds and physical derivative validity. Invalid
@@ -914,7 +974,7 @@ def column_gradient_audit(problem, physical, direction, *, epsilons=(1e-2, 1e-3,
     tangents, refinement_valid = [], []
     for factor in (2, 4):
 
-        def refined_residual(point, factor=factor):
+        def refined_residual(point: Array, factor: int = factor) -> Array:
             plan = problem.space.apply(problem.plan, point * problem.space.scales)
             return jnp.concatenate(
                 [
@@ -989,7 +1049,13 @@ class ColumnDesignResult:
     )
 
 
-def design_column_intervention(problem, result, candidates, *, reference_covariance):
+def design_column_intervention(
+    problem: ColumnCalibrationProblem,
+    result: ColumnCalibrationResult,
+    candidates: Iterable[ColumnDesignCandidate],
+    *,
+    reference_covariance: ArrayLike,
+) -> ColumnDesignResult:
     """Choose maximum conditional local EIG using actual forward sensitivities.
 
     reference_covariance is an explicitly declared SPD uncertainty in z before
@@ -1023,7 +1089,11 @@ def design_column_intervention(problem, result, candidates, *, reference_covaria
             linalg.FactorizationPolicy("lu"),
         )
 
-        def response(point, whitening=whitening, candidate=candidate):
+        def response(
+            point: Array,
+            whitening: linalg.MatrixInversionResult = whitening,
+            candidate: ColumnDesignCandidate = candidate,
+        ) -> Array:
             return (
                 whitening.value
                 @ candidate.experiment.predict(
@@ -1068,14 +1138,20 @@ def design_column_intervention(problem, result, candidates, *, reference_covaria
     return ColumnDesignResult(chosen, values, flags, identity)
 
 
-def _matching_result(problem, result) -> None:
+def _matching_result(
+    problem: ColumnCalibrationProblem, result: ColumnCalibrationResult
+) -> None:
     if result.problem_id != problem.problem_id:
         raise ValueError(
             "Inference artifact belongs to a different model/parameter/observation lineage."
         )
 
 
-def score_column_holdout(problem, result, data):
+def score_column_holdout(
+    problem: ColumnCalibrationProblem,
+    result: ColumnCalibrationResult,
+    data: ColumnObservationData,
+) -> dict[str, Array | str]:
     """Score untouched physical responses and conditional local predictive errors.
 
     Unidentified parameter directions visible to a prediction make its marginal
@@ -1095,7 +1171,7 @@ def score_column_holdout(problem, result, data):
     plan = problem.space.apply(problem.plan, result.parameters)
     prediction = data.experiment.predict(plan)
 
-    def response(z):
+    def response(z: Array) -> Array:
         return data.experiment.predict(
             problem.space.apply(problem.plan, z * problem.space.scales)
         ).values[data.indices]
@@ -1144,7 +1220,13 @@ def score_column_holdout(problem, result, data):
     }
 
 
-def save_column_inference(path, problem, result, *, continuation_data_index=0):
+def save_column_inference(
+    path: str | os.PathLike[str],
+    problem: ColumnCalibrationProblem,
+    result: ColumnCalibrationResult,
+    *,
+    continuation_data_index: int | np.integer = 0,
+) -> Path:
     """Bind inference evidence to the native column checkpoint and its exact physics.
 
     This is a physical continuation checkpoint, not a warm optimizer-state resume.
@@ -1196,7 +1278,9 @@ def save_column_inference(path, problem, result, *, continuation_data_index=0):
     )
 
 
-def load_column_inference(path, problem):
+def load_column_inference(
+    path: str | os.PathLike[str], problem: ColumnCalibrationProblem
+) -> dict[str, Any]:
     """Validate lineage and load the actual native physical continuation unchanged."""
     path = Path(path)
     manifest, arrays = read_array_archive(path)

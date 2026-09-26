@@ -148,7 +148,9 @@ class SphericalHarmonicGravity(AbstractAstrodynamicsForce):
         self.context = field.context
         self.force_id = field.field_id
 
-    def evaluate(self, time, state, args: Any = None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):

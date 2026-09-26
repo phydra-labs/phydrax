@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -42,7 +45,7 @@ def evaluate_wall_facet_observables(
     contact: DEMContactResponse,
     /,
     *,
-    reference_point: ArrayLike = (0.0, 0.0, 0.0),
+    reference_point: ArrayLike | Sequence[float] = (0.0, 0.0, 0.0),
     wall_velocity: ArrayLike | None = None,
     heat_rate: ArrayLike | None = None,
 ) -> DEMWallFacetObservables:
@@ -202,7 +205,9 @@ class FinnieWearPlan(StrictModule, NonTrainableState):
         if not self.plan_id:
             raise ValueError("plan_id must be nonempty.")
 
-    def initialize(self, wall: PreparedTriangleWall, dtype=None, /) -> DEMWearState:
+    def initialize(
+        self, wall: PreparedTriangleWall, dtype: DTypeLike | None = None, /
+    ) -> DEMWearState:
         selected_dtype = wall.face_vertices.dtype if dtype is None else dtype
         return DEMWearState(
             jnp.zeros((wall.face_count,), dtype=selected_dtype),

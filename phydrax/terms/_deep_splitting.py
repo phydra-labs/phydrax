@@ -182,7 +182,7 @@ def deep_splitting_labels(
     )
     sample_count = prod(paths.sample_shape) if paths.sample_shape else 1
 
-    def source_at(state, value, control):
+    def source_at(state: Array, value: Array, control: Array) -> Array:
         source = jnp.asarray(
             problem.generator(right_time, state, value, control, problem.args)
         )

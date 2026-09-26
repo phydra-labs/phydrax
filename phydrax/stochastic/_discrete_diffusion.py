@@ -22,7 +22,7 @@ DiffusionPredictionKind: TypeAlias = Literal["epsilon", "clean", "score", "veloc
 DiscreteTerminalRelationship: TypeAlias = Literal["exact", "approximate", "assumed"]
 
 
-def _event_shape(value, /) -> tuple[int, ...]:
+def _event_shape(value: Sequence[int], /) -> tuple[int, ...]:
     shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("event_shape must contain positive dimensions.")
@@ -162,20 +162,26 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
         scale = self._extract(self.sqrt_one_minus_cumulative_alpha, timestep, state.shape)
         return signal * state + scale * perturbation
 
-    def clean_from_epsilon(self, noisy, epsilon, timestep, /) -> Array:
+    def clean_from_epsilon(
+        self, noisy: ArrayLike, epsilon: ArrayLike, timestep: ArrayLike, /
+    ) -> Array:
         state = jnp.asarray(noisy)
         noise = jnp.asarray(epsilon, dtype=state.dtype)
         signal = self._extract(self.sqrt_cumulative_alpha, timestep, state.shape)
         scale = self._extract(self.sqrt_one_minus_cumulative_alpha, timestep, state.shape)
         return (state - scale * noise) / signal
 
-    def epsilon_from_clean(self, noisy, clean, timestep, /) -> Array:
+    def epsilon_from_clean(
+        self, noisy: ArrayLike, clean: ArrayLike, timestep: ArrayLike, /
+    ) -> Array:
         state = jnp.asarray(noisy)
         signal = self._extract(self.sqrt_cumulative_alpha, timestep, state.shape)
         scale = self._extract(self.sqrt_one_minus_cumulative_alpha, timestep, state.shape)
         return (state - signal * jnp.asarray(clean, dtype=state.dtype)) / scale
 
-    def score_from_epsilon(self, epsilon, timestep, shape, /) -> Array:
+    def score_from_epsilon(
+        self, epsilon: ArrayLike, timestep: ArrayLike, shape: Sequence[int], /
+    ) -> Array:
         noise = jnp.asarray(epsilon)
         scale = self._extract(
             self.sqrt_one_minus_cumulative_alpha, timestep, tuple(shape)
@@ -183,8 +189,13 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
         return -noise / scale
 
     def epsilon_from_prediction(
-        self, noisy, prediction, timestep, kind: DiffusionPredictionKind, /
-    ):
+        self,
+        noisy: ArrayLike,
+        prediction: ArrayLike,
+        timestep: ArrayLike,
+        kind: DiffusionPredictionKind,
+        /,
+    ) -> Array:
         state = jnp.asarray(noisy)
         value = jnp.asarray(prediction, dtype=state.dtype)
         if value.shape != state.shape:
@@ -201,7 +212,9 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
             return scale * state + signal * value
         raise ValueError("Unknown diffusion prediction kind.")
 
-    def posterior(self, clean, noisy, timestep, /):
+    def posterior(
+        self, clean: ArrayLike, noisy: ArrayLike, timestep: ArrayLike, /
+    ) -> tuple[Array, Array, Array]:
         state = jnp.asarray(noisy)
         clean_state = jnp.asarray(clean, dtype=state.dtype)
         mean = (
@@ -239,12 +252,12 @@ class AncestralGaussianDiffusion(StrictModule):
 
     def __init__(
         self,
-        schedule,
-        predictor,
-        event_shape,
+        schedule: DiscreteGaussianDiffusionSchedule,
+        predictor: Callable[..., ArrayLike],
+        event_shape: Sequence[int],
         /,
         *,
-        prediction_kind="epsilon",
+        prediction_kind: DiffusionPredictionKind = "epsilon",
         terminal_relationship: DiscreteTerminalRelationship = "approximate",
         terminal_reference_id: str = "standard-normal",
     ) -> None:
@@ -285,7 +298,9 @@ class AncestralGaussianDiffusion(StrictModule):
         initial = jr.normal(initial_key, samples + self.event_shape)
         timesteps = jnp.arange(self.schedule.num_steps - 1, -1, -1, dtype=jnp.int32)
 
-        def step(carry, timestep):
+        def step(
+            carry: tuple[Array, Key[Array, ""]], timestep: Array
+        ) -> tuple[tuple[Array, Key[Array, ""]], Array]:
             state, current_key = carry
             current_key, model_key, noise_key = jr.split(current_key, 3)
             batch_time = jnp.full(samples, timestep, dtype=jnp.int32)
@@ -327,9 +342,9 @@ class DDIMTransport(StrictModule):
 
     def __init__(
         self,
-        schedule,
-        predictor,
-        event_shape,
+        schedule: DiscreteGaussianDiffusionSchedule,
+        predictor: Callable[..., ArrayLike],
+        event_shape: Sequence[int],
         /,
         *,
         num_inference_steps: int,
@@ -388,7 +403,9 @@ class DDIMTransport(StrictModule):
             (self.inference_timesteps[1:], jnp.asarray([-1], dtype=jnp.int32))
         )
 
-        def step(carry, pair):
+        def step(
+            carry: tuple[Array, Key[Array, ""]], pair: tuple[Array, Array]
+        ) -> tuple[tuple[Array, Key[Array, ""]], Array]:
             state, current_key = carry
             timestep, previous_timestep = pair
             current_key, model_key, noise_key = jr.split(current_key, 3)

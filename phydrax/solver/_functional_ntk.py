@@ -13,7 +13,7 @@ from jaxtyping import Array, Key, PyTree
 from .._doc import DOC_KEY0
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
-from ..linalg import ArraySpace, LinearizationPolicy
+from ..linalg import ArraySpace, FunctionLinearOperator, LinearizationPolicy
 from ..nn.neural_tangent import (
     analyze_ntk,
     NTKDiagnostics,
@@ -23,7 +23,11 @@ from ..nn.neural_tangent import (
 )
 from ..nn.parameters import ParameterSubspace
 from ..terms import ResidualBlockRef
-from ._functional_residual import prepare_functional_residual, PreparedFunctionalResidual
+from ._functional_residual import (
+    FunctionalResidualLayout,
+    prepare_functional_residual,
+    PreparedFunctionalResidual,
+)
 from ._functional_run import partition_functional_parameters
 from ._functional_surrogate import PreparedFunctionalUpdate
 
@@ -77,11 +81,11 @@ class PreparedFunctionalNTK(StrictModule):
         self.parameter_paths = tuple(parameter_paths)
 
     @property
-    def kernel(self):
+    def kernel(self) -> FunctionLinearOperator:
         return self.ntk.kernel
 
     @property
-    def layout(self):
+    def layout(self) -> FunctionalResidualLayout:
         return self.residual.layout
 
     def diagnostics(
@@ -111,7 +115,7 @@ class PreparedFunctionalNTK(StrictModule):
                 reference.term_index, reference.block_name
             )
 
-        def block_roots(parameters):
+        def block_roots(parameters: PyTree[Any]) -> Array:
             return self.residual.roots(parameters)[indices]
 
         output = block_roots(self.parameters)

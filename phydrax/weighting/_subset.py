@@ -3,6 +3,8 @@
 #
 from __future__ import annotations
 
+from typing import cast
+
 import jax
 import jax.numpy as jnp
 
@@ -15,7 +17,12 @@ from ..optim import (
     solve_mixed_integer_program,
 )
 from ._canonical import _matrix, _target_rows
-from ._problem import ExactMoments, IntervalMoments, MomentCalibrationProblem
+from ._problem import (
+    EqualWeightSubset,
+    ExactMoments,
+    IntervalMoments,
+    MomentCalibrationProblem,
+)
 from ._results import (
     MomentCalibrationDiagnostics,
     MomentCalibrationProvenance,
@@ -24,7 +31,7 @@ from ._results import (
 )
 
 
-def _program(problem):
+def _program(problem: MomentCalibrationProblem) -> MixedIntegerProgram:
     if problem.subset is None:
         raise ValueError("mixed-integer calibration requires EqualWeightSubset.")
     count = problem.source_points
@@ -78,13 +85,16 @@ def _program(problem):
     )
 
 
-def calibrate_moments_subset(problem: MomentCalibrationProblem, solver=None):
+def calibrate_moments_subset(
+    problem: MomentCalibrationProblem, solver: object | None = None
+) -> MomentCalibrationResult:
     """Solve fixed-cardinality equal weighting through MixedIntegerProgram."""
     policy = MixedIntegerSolvePolicy() if solver is None else solver
     if not isinstance(policy, MixedIntegerSolvePolicy):
         raise TypeError("mixed-integer solver must be MixedIntegerSolvePolicy.")
     result = solve_mixed_integer_program(_program(problem), policy)
-    cardinality = problem.subset.cardinality
+    # _program has already rejected problems without an EqualWeightSubset.
+    cardinality = cast(EqualWeightSubset, problem.subset).cardinality
     selected = jnp.where(result.integral, jnp.rint(result.primal), result.primal)
     weights = selected / cardinality
     positive = weights > 0.0

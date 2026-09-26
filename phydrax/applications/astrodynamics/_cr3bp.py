@@ -77,7 +77,7 @@ class CR3BPSystem(StrictModule, NonTrainableState):
         second = jnp.sqrt((x - (1.0 - self.mass_ratio)) ** 2 + y * y + z * z)
         return first, second
 
-    def vector_field(self, time: Array, state: Array, args=None, /) -> Array:
+    def vector_field(self, time: Array, state: Array, args: object = None, /) -> Array:
         del time, args
         first, second = self._distances(state)
         safe_first = jnp.where(first > 0.0, first, 1.0)
@@ -148,7 +148,7 @@ class CR3BPSystem(StrictModule, NonTrainableState):
         ratio = self.mass_ratio
         first_mass = 1.0 - ratio
 
-        def equation(x):
+        def equation(x: Array) -> Array:
             left = x + ratio
             right = x - first_mass
             return (
@@ -165,8 +165,8 @@ class CR3BPSystem(StrictModule, NonTrainableState):
             )
         )
 
-        def solve(seed):
-            def step(_, value):
+        def solve(seed: Array) -> tuple[Array, Array]:
+            def step(_: Array, value: Array) -> Array:
                 residual = equation(value)
                 derivative = jax.grad(equation)(value)
                 candidate = value - residual / jnp.where(

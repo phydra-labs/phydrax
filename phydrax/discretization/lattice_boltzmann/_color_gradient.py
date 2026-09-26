@@ -9,6 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -20,6 +21,7 @@ from ._boundary import PreparedLatticeBoltzmannBoundary
 from ._collision import macroscopic_raw_moments, quadratic_equilibrium
 from ._discretization import LatticeBoltzmannDiscretization
 from ._interfacial import continuum_surface_force, InterfacialFields
+from ._lattice import LatticeBoltzmannVelocitySet
 from ._method import (
     LatticeBoltzmannMethodPlan,
     PreparedLatticeBoltzmannMethodPlan,
@@ -211,7 +213,7 @@ def recolor_populations(
     red_density: ArrayLike,
     blue_density: ArrayLike,
     interface_normal: ArrayLike,
-    velocity_set,
+    velocity_set: LatticeBoltzmannVelocitySet,
     recoloring_strength: ArrayLike,
     /,
     *,
@@ -347,7 +349,7 @@ class PreparedColorGradientLBMDynamics(StrictModule, NonTrainableState):
         return ColorGradientLBMState(red, blue)
 
     def _wetting_data(
-        self, parameters: ColorGradientLBMRuntimeParameters, dtype, /
+        self, parameters: ColorGradientLBMRuntimeParameters, dtype: DTypeLike, /
     ) -> tuple[Array | None, Array | None, Array, Array]:
         shape = self.discretization.grid.shape
         dimension = self.discretization.velocity_set.dimension

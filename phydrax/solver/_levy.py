@@ -36,7 +36,7 @@ LevySmallJumpApproximation: TypeAlias = Literal["truncate", "gaussian"]
 class _IdentityLevyDispersion(StrictModule):
     dimension: int = eqx.field(static=True)
 
-    def __call__(self, time, state, args):
+    def __call__(self, time: Array, state: Array, args: Any) -> Array:
         del time, args
         return jnp.eye(self.dimension, dtype=jnp.asarray(state).dtype)
 
@@ -427,8 +427,10 @@ def solve_levy_sde(
             gaussian,
         )
 
-    def one_path(increments):
-        def advance(state, item):
+    def one_path(increments: Array) -> Array:
+        def advance(
+            state: Array, item: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array]:
             time, step, driver_increment = item
             drift = jnp.asarray(problem.drift(time, state, problem.args))
             if drift.shape != problem.state_shape:

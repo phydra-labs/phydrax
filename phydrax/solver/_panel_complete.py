@@ -129,7 +129,7 @@ class CompletePanelFlowPlan2D(StrictModule, NonTrainableState):
         *,
         body_velocity: ArrayLike | None = None,
         prescribed_circulation: ArrayLike = 0.0,
-        reference_point: ArrayLike = (0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float] = (0.0, 0.0),
         previous_impulse: ArrayLike | None = None,
         time_step: ArrayLike | None = None,
     ) -> CompletePanelResult2D:

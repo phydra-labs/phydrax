@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import Any, Protocol
 
 import equinox as eqx
 import jax
@@ -16,6 +17,14 @@ from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+
+
+class _LatentEncoder(Protocol):
+    def __call__(self, value: ArrayLike, /, *, key: Key[Array, ""]) -> object: ...
+
+
+class _LatentDecoder(Protocol):
+    def __call__(self, latent: Array, /, *, key: Key[Array, ""]) -> object: ...
 
 
 class LatentPosterior(StrictModule):
@@ -59,12 +68,12 @@ class CallableLatentRepresentation(AbstractLatentRepresentation):
 
     def __init__(
         self,
-        encoder,
-        decoder,
+        encoder: _LatentEncoder,
+        decoder: _LatentDecoder,
         /,
         *,
-        data_event_shape,
-        latent_event_shape,
+        data_event_shape: Iterable[int],
+        latent_event_shape: Iterable[int],
         representation_id: str,
         density_capability: str = "decoder-likelihood",
     ) -> None:
@@ -85,7 +94,7 @@ class CallableLatentRepresentation(AbstractLatentRepresentation):
         self.representation_id = representation_id
         self.density_capability = density_capability
 
-    def encode(self, value, /, *, key):
+    def encode(self, value: ArrayLike, /, *, key: Key[Array, ""]) -> LatentPosterior:
         result = self.encoder(value, key=key)
         if not isinstance(result, LatentPosterior):
             raise TypeError("encoder must return LatentPosterior.")
@@ -93,7 +102,7 @@ class CallableLatentRepresentation(AbstractLatentRepresentation):
             raise ValueError("Encoder posterior latent event shape is incompatible.")
         return result
 
-    def decode(self, latent, /, *, key):
+    def decode(self, latent: ArrayLike, /, *, key: Key[Array, ""]) -> DecodedDistribution:
         value = jnp.asarray(latent)
         if value.shape[-len(self.latent_event_shape) :] != self.latent_event_shape:
             raise ValueError("Latent value has an incompatible event shape.")
@@ -141,7 +150,7 @@ class LatentDiffusion(StrictModule):
     def __init__(
         self,
         representation: AbstractLatentRepresentation,
-        latent_sampler,
+        latent_sampler: Callable[[Key[Array, ""], tuple[int, ...]], ArrayLike],
         /,
         *,
         latent_sampler_id: str,
@@ -163,7 +172,9 @@ class LatentDiffusion(StrictModule):
         self.latent_sampler_id = latent_sampler_id
         self.model_id = identifier
 
-    def sample(self, key: Key[Array, ""], sample_shape, /) -> LatentDiffusionSample:
+    def sample(
+        self, key: Key[Array, ""], sample_shape: Iterable[int], /
+    ) -> LatentDiffusionSample:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")

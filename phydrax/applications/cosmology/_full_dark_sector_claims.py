@@ -687,7 +687,7 @@ _DEFINITIONS: dict[FullDarkSectorClaimName, _ClaimDefinition] = {
 SUPPORTED_FULL_DARK_SECTOR_CLAIM_PROFILES = tuple(_DEFINITIONS)
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be a non-empty canonical identifier.")
     return value
@@ -919,68 +919,379 @@ def full_dark_sector_claim_profile(
     )
 
 
-def _factory(profile_name: FullDarkSectorClaimName, *args, **kwargs):
-    return full_dark_sector_claim_profile(profile_name, *args, **kwargs)
+def relativistic_stress_energy_pm_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "relativistic-stress-energy-pm",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def relativistic_stress_energy_pm_claim_profile(*args, **kwargs):
-    return _factory("relativistic-stress-energy-pm", *args, **kwargs)
+def einstein_vlasov_z4c_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "einstein-vlasov-z4c",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def einstein_vlasov_z4c_claim_profile(*args, **kwargs):
-    return _factory("einstein-vlasov-z4c", *args, **kwargs)
+def dynamic_epoch_runtime_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "dynamic-epoch-runtime",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def dynamic_epoch_runtime_claim_profile(*args, **kwargs):
-    return _factory("dynamic-epoch-runtime", *args, **kwargs)
+def fixed_multiplicity_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "fixed-multiplicity",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def fixed_multiplicity_claim_profile(*args, **kwargs):
-    return _factory("fixed-multiplicity", *args, **kwargs)
+def parton_shower_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "parton-shower",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def parton_shower_claim_profile(*args, **kwargs):
-    return _factory("parton-shower", *args, **kwargs)
+def hadronization_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "hadronization",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def hadronization_claim_profile(*args, **kwargs):
-    return _factory("hadronization", *args, **kwargs)
+def quantum_uu_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "quantum-uu",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def quantum_uu_claim_profile(*args, **kwargs):
-    return _factory("quantum-uu", *args, **kwargs)
+def thermal_qft_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "thermal-qft",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def thermal_qft_claim_profile(*args, **kwargs):
-    return _factory("thermal-qft", *args, **kwargs)
+def coherent_qke_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "coherent-qke",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def coherent_qke_claim_profile(*args, **kwargs):
-    return _factory("coherent-qke", *args, **kwargs)
+def off_shell_kb_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "off-shell-kb",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def off_shell_kb_claim_profile(*args, **kwargs):
-    return _factory("off-shell-kb", *args, **kwargs)
+def radiation_packet_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "radiation-packet",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def radiation_packet_claim_profile(*args, **kwargs):
-    return _factory("radiation-packet", *args, **kwargs)
+def radiation_m1_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "radiation-m1",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def radiation_m1_claim_profile(*args, **kwargs):
-    return _factory("radiation-m1", *args, **kwargs)
+def radiation_vet_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "radiation-vet",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def radiation_vet_claim_profile(*args, **kwargs):
-    return _factory("radiation-vet", *args, **kwargs)
+def radiation_hierarchy_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "radiation-hierarchy",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
-def radiation_hierarchy_claim_profile(*args, **kwargs):
-    return _factory("radiation-hierarchy", *args, **kwargs)
-
-
-def fully_coupled_closure_claim_profile(*args, **kwargs):
-    return _factory("fully-coupled-closure", *args, **kwargs)
+def fully_coupled_closure_claim_profile(
+    campaign: ScientificCampaign,
+    criteria: Sequence[ScientificMetricCriterion],
+    condition_domain_ids: Sequence[str],
+    runtime_support: Mapping[str, SupportValue],
+    unit_contract: RelativisticUnitContract,
+    frame_plan: LocalRelativisticFramePlan,
+    /,
+    *,
+    reference_artifacts: Sequence[ReferenceArtifactManifest],
+    requested_use: FullDarkSectorReferenceUse,
+) -> ScientificClaimProfile:
+    return full_dark_sector_claim_profile(
+        "fully-coupled-closure",
+        campaign,
+        criteria,
+        condition_domain_ids,
+        runtime_support,
+        unit_contract,
+        frame_plan,
+        reference_artifacts=reference_artifacts,
+        requested_use=requested_use,
+    )
 
 
 def _definition_for_claim(claim: ScientificClaimProfile, /) -> _ClaimDefinition:

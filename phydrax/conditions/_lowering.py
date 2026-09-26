@@ -8,10 +8,12 @@ from collections.abc import Mapping, Sequence
 from typing import Any, NoReturn
 
 import equinox as eqx
+from jaxtyping import Array, Key
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..domain import DomainFunction
 from ._base import AbstractCondition, AbstractMomentCondition, AbstractResidualCondition
 from ._ir import (
     AbstractConditionOperator,
@@ -25,7 +27,7 @@ from ._ir import (
     ProductFieldSpec,
     validate_codomain_value,
 )
-from ._relations import Equality
+from ._relations import ConditionRelation, Equality
 
 
 def _exact_keys(
@@ -111,7 +113,7 @@ class BoundCondition(StrictModule):
         return self.condition.codomain
 
     @property
-    def relation(self):
+    def relation(self) -> ConditionRelation:
         return self.condition.relation
 
     @property
@@ -190,19 +192,47 @@ class _LegacyResidualOperator(AbstractConditionOperator):
         self.condition = condition
         self.capabilities = OperatorCapabilities()
 
-    def apply(self, values, /, *, key=None, **kwargs):
+    def apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> DomainFunction:
         del key, kwargs
         return self.condition.residual(values)
 
-    def linear_action(self, values, /, *, key=None, **kwargs) -> NoReturn:
+    def linear_action(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("Legacy residual callables do not certify linearity.")
 
-    def adjoint_action(self, value, /, *, key=None, **kwargs) -> NoReturn:
+    def adjoint_action(
+        self,
+        value: object,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del value, key, kwargs
         raise TypeError("Legacy residual callables do not certify an adjoint.")
 
-    def linearize(self, values, /, *, key=None, **kwargs) -> NoReturn:
+    def linearize(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("Legacy residual callables do not certify a linearization.")
 
@@ -215,7 +245,14 @@ class _LegacyMomentOperator(AbstractConditionOperator):
         self.condition = condition
         self.capabilities = OperatorCapabilities()
 
-    def apply(self, values, /, *, key=None, **kwargs):
+    def apply(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> Any:
         if "reduction" not in kwargs:
             raise TypeError(
                 "Moment evaluation requires reduction=PreparedLinearReduction."
@@ -223,15 +260,36 @@ class _LegacyMomentOperator(AbstractConditionOperator):
         reduction = kwargs.pop("reduction")
         return reduction.apply(self.condition.integrand(values), key=key, **kwargs)
 
-    def linear_action(self, values, /, *, key=None, **kwargs) -> NoReturn:
+    def linear_action(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("Legacy moment callables do not certify linearity.")
 
-    def adjoint_action(self, value, /, *, key=None, **kwargs) -> NoReturn:
+    def adjoint_action(
+        self,
+        value: object,
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del value, key, kwargs
         raise TypeError("Legacy moment callables do not certify an adjoint.")
 
-    def linearize(self, values, /, *, key=None, **kwargs) -> NoReturn:
+    def linearize(
+        self,
+        values: Mapping[str, Any],
+        /,
+        *,
+        key: Key[Array, ""] | None = None,
+        **kwargs: Any,
+    ) -> NoReturn:
         del values, key, kwargs
         raise TypeError("Legacy moment callables do not certify a linearization.")
 

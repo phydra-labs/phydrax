@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
+from typing import SupportsFloat, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,6 +16,9 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..ein import contract
+
+
+_SectionalLoopState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +33,8 @@ class SectionalPopulationState:
         cell_number: ArrayLike,
         /,
         *,
-        overflow_number: ArrayLike = 0.0,
-        overflow_first_moment: ArrayLike = 0.0,
+        overflow_number: SupportsFloat = 0.0,
+        overflow_first_moment: SupportsFloat = 0.0,
     ) -> SectionalPopulationState:
         number = np.asarray(cell_number, dtype=np.float64)
         if number.ndim != 1 or np.any(number < 0) or not np.all(np.isfinite(number)):
@@ -67,7 +71,7 @@ class SectionalPopulationRate:
 @dataclass(frozen=True, slots=True)
 class SectionalPopulationStep:
     state: SectionalPopulationState
-    internal_steps: int
+    internal_steps: Array
     first_moment_residual: Array
     minimum_cell_number: Array
     successful: Array
@@ -259,11 +263,11 @@ class ConservativeSectionalSolver:
         initial_first = self.moments(source, jnp.asarray((0, 1)))[1]
         dt = jnp.asarray(step_size_s, dtype=number.dtype)
 
-        def continue_loop(loop_state):
+        def continue_loop(loop_state: _SectionalLoopState) -> Array:
             elapsed, steps, _, _, _, failed = loop_state
             return (elapsed < dt) & (steps < maximum_internal_steps) & ~failed
 
-        def advance_loop(loop_state):
+        def advance_loop(loop_state: _SectionalLoopState) -> _SectionalLoopState:
             elapsed, steps, current_number, overflow_number, overflow_moment, failed = (
                 loop_state
             )

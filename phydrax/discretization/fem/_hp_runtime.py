@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -27,6 +27,7 @@ from ._high_order import ReferenceNodalFamily
 from ._hp import (
     finite_element_hp_workset_plan,
     FiniteElementHPLineage,
+    FiniteElementHPLineageKind,
     FiniteElementHPTopology,
     FiniteElementHPTransferPlan,
     FiniteElementHPWorksetPlan,
@@ -34,6 +35,7 @@ from ._hp import (
 from ._reference import FiniteElementSpec
 
 
+_HPInterfaceRelation: TypeAlias = Literal["conforming", "mortar", "exterior", "periodic"]
 _HP_RELATIONS = {"conforming": 0, "mortar": 1, "exterior": 2, "periodic": 3}
 _HP_LINEAGE_RELATIONS = {"unchanged": 0, "refinement": 1, "coarsening": 2}
 _QUAD_FACETS = ((0, 1), (1, 2), (2, 3), (3, 0))
@@ -246,7 +248,7 @@ class FiniteElementHPInterfacePlan(StrictModule, NonTrainableState):
         neighbor_slots: ArrayLike,
         owner_local_facets: ArrayLike,
         neighbor_local_facets: ArrayLike,
-        relations: Sequence[Literal["conforming", "mortar", "exterior", "periodic"]],
+        relations: Sequence[_HPInterfaceRelation],
         /,
         *,
         child_indices: ArrayLike | None = None,
@@ -664,11 +666,11 @@ def initial_finite_element_hp_topology(
     if not isinstance(mesh, CellMesh) or len(mesh.blocks) == 0:
         raise TypeError("Initial hp topology requires a non-empty CellMesh.")
     kinds = {block.cell_kind for block in mesh.blocks}
-    if len(kinds) != 1 or next(iter(kinds)) not in ("quadrilateral", "hexahedron"):
+    kind = next(iter(kinds))
+    if len(kinds) != 1 or kind not in ("quadrilateral", "hexahedron"):
         raise ValueError(
             "Initial hp topology requires only quadrilateral or hexahedron blocks."
         )
-    kind = next(iter(kinds))
     dimension = 2 if kind == "quadrilateral" else 3
     degrees = (
         (int(degree),) * dimension
@@ -764,7 +766,7 @@ def refine_tensor_hp_cells(
     next_global = int(np.max(identifiers[allocated], initial=-1)) + 1
     relation_source = []
     relation_target = []
-    relation_names = []
+    relation_names: list[FiniteElementHPLineageKind] = []
     unchanged = [slot for slot in active_slots if slot not in set(requested.tolist())]
     for slot in unchanged:
         relation_source.append(int(slot))
@@ -891,7 +893,7 @@ def coarsen_tensor_hp_cells(
     )
     relation_source = []
     relation_target = []
-    relation_names = []
+    relation_names: list[FiniteElementHPLineageKind] = []
     selected_children: set[int] = set()
     for parent in selected:
         parent = int(parent)
@@ -1141,7 +1143,7 @@ def finite_element_hp_interface_plan(
             points = _facet_vertices(topology, geometry, int(slot), local_facet)
             facets.append((int(slot), local_facet, points, _facet_measure(points)))
     used: set[int] = set()
-    rows: list[tuple[int, int, int, int, str, int, int]] = []
+    rows: list[tuple[int, int, int, int, _HPInterfaceRelation, int, int]] = []
     rounded_keys: dict[tuple[tuple[float, ...], ...], list[int]] = {}
     for index, (_, _, points, _) in enumerate(facets):
         key = tuple(sorted(tuple(value) for value in np.round(points, decimals=13)))

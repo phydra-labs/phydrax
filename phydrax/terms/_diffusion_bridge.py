@@ -101,8 +101,8 @@ class DiffusionBridgeDriftTerm(AbstractScalarTerm):
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-        iter_=None,
-        **kwargs,
+        iter_: int | Array | None = None,
+        **kwargs: Any,
     ) -> Array:
         del iter_, kwargs
         field = functions[self.field]

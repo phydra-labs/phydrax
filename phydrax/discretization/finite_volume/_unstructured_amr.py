@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TypedDict, Unpack
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -19,6 +21,18 @@ from ._unstructured_remap import UnstructuredConservativeRemapPlan
 
 
 _INT32_MAX = np.iinfo(np.int32).max
+
+
+class _ProlongContentOptions(TypedDict, total=False):
+    coarse_active_mask: ArrayLike | None
+    fine_active_mask: ArrayLike | None
+    coarse_volumes: ArrayLike | None
+
+
+class _RestrictContentOptions(TypedDict, total=False):
+    fine_active_mask: ArrayLike | None
+    coarse_active_mask: ArrayLike | None
+    fine_volumes: ArrayLike | None
 
 
 def _amr_identity(value: str, name: str, /) -> str:
@@ -35,7 +49,7 @@ def _scalar_time(value: ArrayLike, name: str, /) -> float:
 
 
 def _time_tolerance(first: float, second: float) -> float:
-    return 64.0 * np.finfo(np.float64).eps * max(1.0, abs(first), abs(second))
+    return 64.0 * float(np.finfo(np.float64).eps) * max(1.0, abs(first), abs(second))
 
 
 def _interval(
@@ -115,15 +129,17 @@ class UnstructuredAMRFluxRegister(StrictModule):
         coarse_flux_integral: ArrayLike | None = None,
         coarse_flux: ArrayLike | None = None,
         fine_flux: ArrayLike | None = None,
-        coarse_interval: ArrayLike | None = None,
-        fine_intervals: tuple[ArrayLike, ...] | list[ArrayLike] | None = None,
+        coarse_interval: ArrayLike | tuple[ArrayLike, ArrayLike] | None = None,
+        fine_intervals: tuple[ArrayLike | tuple[ArrayLike, ArrayLike], ...]
+        | list[ArrayLike | tuple[ArrayLike, ArrayLike]]
+        | None = None,
         start_time: ArrayLike | None = None,
         end_time: ArrayLike | None = None,
         coarse_start_time: ArrayLike | None = None,
         coarse_end_time: ArrayLike | None = None,
         fine_start_times: ArrayLike | None = None,
         fine_end_times: ArrayLike | None = None,
-        accepted_steps: ArrayLike | None = None,
+        accepted_steps: npt.ArrayLike | None = None,
         route_id: str = "unstructured-amr-interface-route",
         layout_id: str = "unstructured-amr-interface-layout",
         coarse_topology_id: str = "unstructured-amr-coarse-topology",
@@ -666,10 +682,20 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
             source_volumes=fine_volumes,
         )
 
-    def prolong_fluid_volume(self, coarse_fluid_volumes: ArrayLike, /, **kwargs) -> Array:
+    def prolong_fluid_volume(
+        self,
+        coarse_fluid_volumes: ArrayLike,
+        /,
+        **kwargs: Unpack[_ProlongContentOptions],
+    ) -> Array:
         return self.prolong_content(coarse_fluid_volumes, **kwargs)
 
-    def restrict_fluid_volume(self, fine_fluid_volumes: ArrayLike, /, **kwargs) -> Array:
+    def restrict_fluid_volume(
+        self,
+        fine_fluid_volumes: ArrayLike,
+        /,
+        **kwargs: Unpack[_RestrictContentOptions],
+    ) -> Array:
         return self.restrict_content(fine_fluid_volumes, **kwargs)
 
     def synchronize(

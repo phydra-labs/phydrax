@@ -18,6 +18,7 @@ from phydrax.applications.skeletal_muscle.thermal import (
     Pennes1948Parameters,
     RetainedHeatProjection,
 )
+from phydrax.discretization import CellBlock, CellMesh
 from tools.skeletal_muscle_thermal_qualification import (
     manufactured_case,
     manufactured_source,
@@ -226,6 +227,24 @@ def test_scalar_field_rejects_invalid_parameters_and_boundary_partition():
     )
     plan = eqx.tree_at(lambda x: x.boundaries, prepared.plan, (partial,))
     with pytest.raises(ValueError, match="partition"):
+        plan.prepare()
+    # Two tetrahedral blocks carry polyhedral connectivity, outside the P1 identity.
+    cells = np.asarray(prepared.plan.mesh.blocks[0].vertices)
+    split = cells.shape[0] // 2
+    two_block_mesh = CellMesh(
+        np.asarray(prepared.plan.mesh.coordinates),
+        (
+            CellBlock("first", "tetrahedron", cells[:split], global_ids=np.arange(split)),
+            CellBlock(
+                "second",
+                "tetrahedron",
+                cells[split:],
+                global_ids=np.arange(split, cells.shape[0]),
+            ),
+        ),
+    )
+    plan = eqx.tree_at(lambda x: x.mesh, prepared.plan, two_block_mesh)
+    with pytest.raises(ValueError, match="tetrahedral connectivity"):
         plan.prepare()
     with pytest.raises(ValueError, match="tensors"):
         Pennes1948Parameters(jnp.eye(3), [8.0], [0.0], [4.0], [300.0])

@@ -602,7 +602,7 @@ def _refine_candidate(
         complex_parameters,
     )
 
-    def residual(parameters, _arguments):
+    def residual(parameters: Array, _arguments: object) -> Array:
         weights, factors = _unpack_components(
             parameters,
             problem.rank,

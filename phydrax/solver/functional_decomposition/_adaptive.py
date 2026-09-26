@@ -250,12 +250,12 @@ class TrainableAxisPartition(StrictModule):
         self.overlap_fraction = partition.overlap_fraction
         self.periodic = partition.periodic
 
-    def normalized_widths(self):
+    def normalized_widths(self) -> jax.Array:
         count = self.width_logits.shape[0]
         free_mass = 1.0 - count * self.minimum_fraction
         return self.minimum_fraction + free_mass * jax.nn.softmax(self.width_logits)
 
-    def boundary_array(self):
+    def boundary_array(self) -> jax.Array:
         widths = (self.end - self.start) * self.normalized_widths()
         return jnp.concatenate(
             (
@@ -264,7 +264,7 @@ class TrainableAxisPartition(StrictModule):
             )
         )
 
-    def regularizer(self):
+    def regularizer(self) -> jax.Array:
         widths = self.normalized_widths()
         return jnp.mean(jnp.square(widths - jnp.mean(widths)))
 

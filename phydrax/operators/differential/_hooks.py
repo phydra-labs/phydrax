@@ -7,9 +7,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from math import comb
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from phydrax.domain import (
     DerivativeBackend,
@@ -21,6 +22,10 @@ from phydrax.domain import (
 from phydrax.domain._derivative import DerivativeRuleProvider
 
 from ..._strict import StrictModule
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def get_derivative_rule(u: DomainFunction, /) -> DerivativeRule | None:
@@ -107,8 +112,8 @@ class _BlendWithGateCallable(StrictModule, DerivativeRuleProvider):
         self.overlay_pos = tuple(overlay_pos)
         self.gate_pos = tuple(gate_pos)
 
-    def __call__(self, *args, key=None, **kwargs):
-        def _align_axiswise(a: Any, b: Any, /) -> tuple[Any, Any]:
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
+        def _align_axiswise(a: ArrayLike, b: ArrayLike, /) -> tuple[Array, Array]:
             a_arr = jnp.asarray(a)
             b_arr = jnp.asarray(b)
             if a_arr.ndim == 1 and b_arr.ndim >= 2 and a_arr.shape[0] == b_arr.shape[0]:
@@ -125,7 +130,7 @@ class _BlendWithGateCallable(StrictModule, DerivativeRuleProvider):
                 return a_arr, b_arr.reshape(shape)
             return a_arr, b_arr
 
-        def _mul_aligned(a: Any, b: Any, /):
+        def _mul_aligned(a: ArrayLike, b: ArrayLike, /) -> Array:
             a_arr = jnp.asarray(a)
             b_arr = jnp.asarray(b)
             try:
@@ -134,7 +139,7 @@ class _BlendWithGateCallable(StrictModule, DerivativeRuleProvider):
                 a_fix, b_fix = _align_axiswise(a_arr, b_arr)
                 return a_fix * b_fix
 
-        def _add_aligned(a: Any, b: Any, /):
+        def _add_aligned(a: ArrayLike, b: ArrayLike, /) -> Array:
             a_arr = jnp.asarray(a)
             b_arr = jnp.asarray(b)
             try:
@@ -143,7 +148,7 @@ class _BlendWithGateCallable(StrictModule, DerivativeRuleProvider):
                 a_fix, b_fix = _align_axiswise(a_arr, b_arr)
                 return a_fix + b_fix
 
-        def _sub_aligned(a: Any, b: Any, /):
+        def _sub_aligned(a: ArrayLike, b: ArrayLike, /) -> Array:
             a_arr = jnp.asarray(a)
             b_arr = jnp.asarray(b)
             try:

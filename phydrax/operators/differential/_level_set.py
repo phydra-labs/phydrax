@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from phydrax.domain import DomainFunction, UnaryFieldEvaluator
 from phydrax.geometry import regularized_delta_values, regularized_heaviside_values
@@ -17,24 +18,28 @@ from ..._strict import StrictModule
 from ._domain_ops import div, dt, grad
 
 
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
+
+
 class _CompactHeaviside(StrictModule):
     width: float = eqx.field(static=True)
 
-    def __call__(self, value):
+    def __call__(self, value: ArrayLike) -> Array:
         return regularized_heaviside_values(value, width=self.width)
 
 
 class _CompactDelta(StrictModule):
     width: float = eqx.field(static=True)
 
-    def __call__(self, value):
+    def __call__(self, value: ArrayLike) -> Array:
         return regularized_delta_values(value, width=self.width)
 
 
 class _GradientNorm(StrictModule):
     gradient: DomainFunction
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         values = _real_values(
             self.gradient.func(*args, key=key, **kwargs),
             "Level-set gradient",
@@ -46,7 +51,7 @@ class _NormalizedGradient(StrictModule):
     gradient: DomainFunction
     gradient_floor: float = eqx.field(static=True)
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         values = _real_values(
             self.gradient.func(*args, key=key, **kwargs),
             "Level-set gradient",
@@ -59,11 +64,11 @@ class _NormalizedGradient(StrictModule):
 class _LowerBound(StrictModule):
     minimum: float = eqx.field(static=True)
 
-    def __call__(self, value):
+    def __call__(self, value: ArrayLike) -> Array:
         return jnp.maximum(_real_values(value, "Level-set gradient norm"), self.minimum)
 
 
-def _real_values(value, name: str, /):
+def _real_values(value: ArrayLike, name: str, /) -> Array:
     values = jnp.asarray(value)
     if jnp.iscomplexobj(values):
         raise TypeError(f"{name} must be real-valued.")

@@ -317,7 +317,9 @@ class RegionalPointLatentGeometry(StrictModule, NonTrainableState):
         minimum_distance = jnp.sum((flattened - first_points[:, None, :]) ** 2, axis=-1)
         minimum_distance = jnp.where(valid, minimum_distance, -jnp.inf)
 
-        def select_next(carry, _):
+        def select_next(
+            carry: tuple[Array, Array], _: None
+        ) -> tuple[tuple[Array, Array], Array]:
             distances, selected = carry
             index = jnp.argmax(distances, axis=-1)
             point = flattened[jnp.arange(cases), index]

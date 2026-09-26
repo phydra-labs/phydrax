@@ -106,14 +106,14 @@ class BootstrapParticleProposal(AbstractParticleProposal):
 
     def propose(
         self,
-        key,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        key: Key[Array, ""],
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> ParticleProposalSample:
         del observation, mask
@@ -132,13 +132,13 @@ class BootstrapParticleProposal(AbstractParticleProposal):
 
     def lookahead_log_weight(
         self,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> Array:
         del previous_state, t0, t1, observation, mask, context
@@ -189,14 +189,14 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
 
     def propose(
         self,
-        key,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        key: Key[Array, ""],
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> ParticleProposalSample:
         _validate_problem_shape(problem, self.state_shape)
@@ -251,13 +251,13 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
 
     def lookahead_log_weight(
         self,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> Array:
         _validate_problem_shape(problem, self.state_shape)
@@ -291,14 +291,14 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
 
     def propose(
         self,
-        key,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        key: Key[Array, ""],
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> ParticleProposalSample:
         mean, covariance, lookahead, valid = _linear_gaussian_condition(
@@ -332,13 +332,13 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
 
     def lookahead_log_weight(
         self,
-        problem,
-        previous_state,
-        t0,
-        t1,
-        observation,
-        mask,
-        context,
+        problem: StateSpaceProblem,
+        previous_state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        observation: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> Array:
         _, _, lookahead, valid = _linear_gaussian_condition(

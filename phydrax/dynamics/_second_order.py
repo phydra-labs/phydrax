@@ -92,7 +92,14 @@ class SecondOrderDifferentialSystem(StrictModule):
             raise ValueError("Second-order residual must preserve state_shape.")
         return value
 
-    def scaled_residual(self, time, configuration, velocity, acceleration, args=None):
+    def scaled_residual(
+        self,
+        time: ArrayLike,
+        configuration: ArrayLike,
+        velocity: ArrayLike,
+        acceleration: ArrayLike,
+        args: Any = None,
+    ) -> Array:
         value = self.evaluate(time, configuration, velocity, acceleration, args)
         return value / self.residual_scale.astype(value.dtype)
 

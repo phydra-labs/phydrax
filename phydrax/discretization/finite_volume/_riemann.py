@@ -823,7 +823,7 @@ class HLLDFluxPlan(AbstractNumericalFluxPlan, NonTrainableState):
             total_pressure: Array,
             signal: Array,
             normal_velocity: Array,
-        ):
+        ) -> tuple[Array, Array, Array, Array, Array]:
             density_denominator, bad_density = self._safe_denominator(signal - s_m)
             density_star = density * (signal - normal_velocity) / density_denominator
             transverse_denominator_raw = (

@@ -250,10 +250,10 @@ def build_contact_velocity_operator(
     contact_count, local_dimension = _contact_layout(kinematics)
     contact_space = ArraySpace((contact_count, local_dimension), dtype=positions.dtype)
 
-    def action(rates):
+    def action(rates: PyTree[Array]) -> Array:
         return _route_velocity(participant, configuration_, kinematics, rates, offset)
 
-    def transpose_action(local_effort):
+    def transpose_action(local_effort: Array) -> PyTree[Array]:
         surface_effort = _surface_impulse(participant, kinematics, local_effort, offset)
         return participant.effort_pullback(configuration_, surface_effort)
 

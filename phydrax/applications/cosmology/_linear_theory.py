@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,7 +26,11 @@ from ...backends import (
     BackendCapabilities,
 )
 from ...logging import emit
-from ._closure import CosmologyPhysicalState, PhysicalDependencyProjection
+from ._closure import (
+    CosmologyPhysicalState,
+    CosmologyRealizationSignature,
+    PhysicalDependencyProjection,
+)
 from ._products import (
     CosmologyProductProvenance,
     LinearTransferDescriptor,
@@ -33,6 +38,7 @@ from ._products import (
     MatterPowerDescriptor,
     MatterPowerTable,
     ThermodynamicsHistory,
+    TransferGauge,
 )
 from ._scales import CosmologyScaleContract
 
@@ -110,8 +116,8 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
     primordial_pivot: float = eqx.field(static=True)
     reionization_optical_depth: float = eqx.field(static=True)
     transfer_fields: tuple[str, ...] = eqx.field(static=True)
-    gauge: str = eqx.field(static=True)
-    power_field: str = eqx.field(static=True)
+    gauge: TransferGauge = eqx.field(static=True)
+    power_field: Literal["cold_baryon", "total_matter"] = eqx.field(static=True)
     request_id: str = eqx.field(static=True)
     model_form_id: str = eqx.field(static=True)
 
@@ -280,7 +286,7 @@ class CosmologyModelRequest(StrictModule, NonTrainableState):
         )
 
     @property
-    def realization(self):
+    def realization(self) -> CosmologyRealizationSignature:
         return PhysicalDependencyProjection(self.physical_state.names).project(
             self.physical_state
         )
@@ -490,14 +496,11 @@ class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState
                     "visibility",
                 }.issubset(output.files)
                 thermodynamics_arrays = (
-                    tuple(
-                        jnp.asarray(output[name])
-                        for name in (
-                            "ionization_fraction",
-                            "baryon_temperature",
-                            "opacity_derivative",
-                            "visibility",
-                        )
+                    (
+                        jnp.asarray(output["ionization_fraction"]),
+                        jnp.asarray(output["baryon_temperature"]),
+                        jnp.asarray(output["opacity_derivative"]),
+                        jnp.asarray(output["visibility"]),
                     )
                     if has_thermodynamics
                     else None

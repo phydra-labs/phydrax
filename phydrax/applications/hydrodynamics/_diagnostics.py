@@ -43,8 +43,12 @@ def free_surface_diagnostic_view(
     state: FreeSurfaceALEContinuationState | FreeSurfaceALEState,
     /,
 ) -> FreeSurfaceALEDiagnosticView:
-    continuation = state if isinstance(state, FreeSurfaceALEContinuationState) else None
-    physical = continuation.state if continuation is not None else state
+    if isinstance(state, FreeSurfaceALEContinuationState):
+        continuation = state
+        physical = state.state
+    else:
+        continuation = None
+        physical = state
     eta_rate = (
         continuation.eta_rate
         if continuation is not None

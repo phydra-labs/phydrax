@@ -203,7 +203,7 @@ def _portable_positive_definite_solve(
     factor = jnp.zeros_like(matrix)
     failed = jnp.zeros((batch_size,), dtype=jnp.bool_)
 
-    def factor_step(index, state):
+    def factor_step(index: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         current, current_failed = state
         selector = jax.nn.one_hot(index, dimension, dtype=matrix.dtype)
         diagonal_selector = selector[:, None] * selector[None, :]
@@ -240,7 +240,7 @@ def _portable_positive_definite_solve(
     )
     forward = jnp.zeros_like(right_hand_side)
 
-    def forward_step(index, current):
+    def forward_step(index: Array, current: Array) -> Array:
         selector = jax.nn.one_hot(index, dimension, dtype=matrix.dtype)
         factor_row = jnp.sum(factor * selector[None, :, None], axis=1)
         rhs_value = jnp.sum(right_hand_side * selector[None, :], axis=-1)
@@ -251,7 +251,7 @@ def _portable_positive_definite_solve(
     forward = jax.lax.fori_loop(0, dimension, forward_step, forward)
     solution = jnp.zeros_like(right_hand_side)
 
-    def backward_step(offset, current):
+    def backward_step(offset: Array, current: Array) -> Array:
         index = dimension - 1 - offset
         selector = jax.nn.one_hot(index, dimension, dtype=matrix.dtype)
         factor_column = jnp.sum(factor * selector[None, None, :], axis=-1)

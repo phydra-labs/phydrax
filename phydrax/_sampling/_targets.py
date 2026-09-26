@@ -88,7 +88,11 @@ class FullMarkovTarget(StrictModule):
         )
 
     def propose(
-        self, state: MarkovTargetState, proposed_position: PyTree[Any], payload=(), /
+        self,
+        state: MarkovTargetState,
+        proposed_position: PyTree[Any],
+        payload: PyTree[Any] = (),
+        /,
     ) -> IncrementalTargetProposal:
         del payload
         proposed = jnp.asarray(self.evaluate(proposed_position))
@@ -105,7 +109,7 @@ class FullMarkovTarget(StrictModule):
     def commit(
         self,
         state: MarkovTargetState,
-        proposed_position,
+        proposed_position: PyTree[Any],
         proposal: IncrementalTargetProposal,
         accepted: Array,
         /,
@@ -230,7 +234,11 @@ class IncrementalMarkovTarget(StrictModule):
         )
 
     def propose(
-        self, state: MarkovTargetState, proposed_position, payload, /
+        self,
+        state: MarkovTargetState,
+        proposed_position: PyTree[Any],
+        payload: PyTree[Any],
+        /,
     ) -> IncrementalTargetProposal:
         ratio, cache, valid = self.propose_fn(
             state.position, state.cache, proposed_position, payload
@@ -252,7 +260,7 @@ class IncrementalMarkovTarget(StrictModule):
     def commit(
         self,
         state: MarkovTargetState,
-        proposed_position,
+        proposed_position: PyTree[Any],
         proposal: IncrementalTargetProposal,
         accepted: Array,
         /,

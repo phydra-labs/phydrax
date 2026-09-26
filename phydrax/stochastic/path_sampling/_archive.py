@@ -11,6 +11,7 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 from ..._array_archive import (
     array_collection_digest,
@@ -361,7 +362,7 @@ def _restore_tps_state(
     prepared_id: str,
     /,
 ) -> TPSState:
-    def value(name: str):
+    def value(name: str) -> Array:
         return jnp.asarray(arrays[prefix + name])
 
     path = PathBuffer(

@@ -322,10 +322,10 @@ class PreparedFixedBodyRoute(StrictModule):
         source = ArraySpace((self.articulation.nv,), dtype=point.dtype)
         target = ArraySpace((self.route_capacity,), dtype=point.dtype)
 
-        def action(generalized_velocity):
+        def action(generalized_velocity: Array) -> Array:
             return jax.jvp(self.lengths, (point,), (generalized_velocity,))[1]
 
-        def transpose_action(route_covector):
+        def transpose_action(route_covector: Array) -> Array:
             return jax.linear_transpose(
                 action, jnp.zeros((self.articulation.nv,), dtype=point.dtype)
             )(route_covector)[0]

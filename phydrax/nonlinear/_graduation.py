@@ -59,7 +59,7 @@ class SolverGraduationResult(StrictModule):
     product_passed: Array
 
     @property
-    def production_ready(self):
+    def production_ready(self) -> Array:
         return self.level == 2
 
 

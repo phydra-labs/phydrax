@@ -107,6 +107,18 @@ def _integral_thickness_rates(
     return rates[0], rates[1]
 
 
+def _one_temperature_system(
+    case: CompressibleFlowCaseSpec,
+) -> HomogeneousMixtureEulerSystem | HomogeneousMixtureCompressibleNavierStokesSystem:
+    system = case.system
+    # CompressiblePlaneBaseflowPlan admits only one-temperature canonical systems.
+    assert isinstance(
+        system,
+        (HomogeneousMixtureEulerSystem, HomogeneousMixtureCompressibleNavierStokesSystem),
+    )
+    return system
+
+
 def _thermal_rates(
     case: CompressibleFlowCaseSpec,
     primitive: Array,
@@ -114,16 +126,17 @@ def _thermal_rates(
     /,
 ) -> tuple[Array, Array, Array, Array]:
     species_count = case.species_count
+    thermodynamics = _one_temperature_system(case).thermodynamics
 
-    def thermal_state(value):
+    def thermal_state(value: Array) -> tuple[Array, Array]:
         species_density = value[..., :species_count]
         density = jnp.sum(species_density, axis=-1)
         temperature = value[..., -1]
-        evaluation = case.thermodynamics.evaluate_density_temperature(
+        evaluation = thermodynamics.evaluate_density_temperature(
             species_density, temperature
         )
         molar_density = jnp.sum(
-            species_density / case.thermodynamics.schema.molar_masses.astype(value.dtype),
+            species_density / thermodynamics.schema.molar_masses.astype(value.dtype),
             axis=-1,
         )
         specific_internal_energy = (
@@ -416,7 +429,7 @@ class CompressiblePlaneBaseflowPlan(StrictModule):
             ...,
             self.case.species_count : self.case.species_count + self.dimension,
         ]
-        system = self.case.system
+        system = _one_temperature_system(self.case)
         recovered = system.recover_thermodynamics(state)
         pressure = recovered.state.pressure
         temperature = recovered.state.temperature
@@ -698,7 +711,7 @@ class PreparedSlowGrowthSource(StrictModule):
             self.snapshot.case, primitive, primitive_source
         )
         species_count = self.snapshot.case.species_count
-        system = self.snapshot.case.system
+        system = _one_temperature_system(self.snapshot.case)
         species_density = primitive[..., :species_count]
         density = jnp.sum(species_density, axis=-1)
         velocity = primitive[..., species_count : species_count + self.snapshot.dimension]

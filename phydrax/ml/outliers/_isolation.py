@@ -118,7 +118,9 @@ def _hard_tree_path(
     leaf_mass: Array,
     max_depth: int,
 ) -> Array:
-    def descend(_depth, state):
+    def descend(
+        _depth: Array, state: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         node, depth, done = state
         split = splittable[node] & ~done
         go_left = point[features[node]] < thresholds[node]
@@ -150,7 +152,7 @@ def _hard_forest_scores_one(
     normalization: Array,
     max_depth: int,
 ) -> Array:
-    def score_point(point):
+    def score_point(point: Array) -> Array:
         paths = jax.vmap(
             lambda f_, t_, s_, m_: _hard_tree_path(point, f_, t_, s_, m_, max_depth)
         )(features, thresholds, splittable, leaf_mass)
@@ -205,7 +207,7 @@ def _smooth_forest_scores_one(
     max_depth: int,
     temperature: float,
 ) -> Array:
-    def score_point(point):
+    def score_point(point: Array) -> Array:
         paths = jax.vmap(
             lambda f_, t_, s_, m_: _smooth_tree_path(
                 point, f_, t_, s_, m_, max_depth, temperature
@@ -439,7 +441,9 @@ class IsolationForestRecipe(AbstractRecipe):
         flat_weights = weights.reshape((cases, batch.sample_count))
         flat_active = active.reshape((cases, batch.sample_count))
 
-        def build_case(x_, weights_, active_, keys_):
+        def build_case(
+            x_: Array, weights_: Array, active_: Array, keys_: Array
+        ) -> tuple[Array, Array, Array, Array]:
             return jax.vmap(
                 lambda key_: _build_tree_one(x_, weights_, active_, key_, self.max_depth)
             )(keys_)

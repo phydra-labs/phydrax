@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, Key
+from jaxtyping import Array, ArrayLike, Key
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
@@ -195,10 +195,10 @@ class FunctionalDecompositionIterationMetrics(StrictModule):
 
     def __init__(
         self,
-        completed_sweeps,
-        local_steps,
-        maximum_interface_defect,
-        training_loss,
+        completed_sweeps: ArrayLike,
+        local_steps: ArrayLike | Sequence[int],
+        maximum_interface_defect: ArrayLike,
+        training_loss: ArrayLike,
         /,
     ) -> None:
         self.completed_sweeps = jnp.asarray(completed_sweeps, dtype=jnp.int32)
@@ -208,12 +208,12 @@ class FunctionalDecompositionIterationMetrics(StrictModule):
 
 
 def _decomposition_iteration_record(
-    phase,
+    phase: IterationPhase,
     metrics: FunctionalDecompositionIterationMetrics,
     /,
     *,
-    terminal=False,
-    status=0,
+    terminal: bool = False,
+    status: int = 0,
 ) -> IterationRecord:
     return IterationRecord(
         IterationCoordinates(

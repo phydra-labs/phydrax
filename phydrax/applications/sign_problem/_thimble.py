@@ -235,7 +235,7 @@ def _flow_map(prepared: PreparedHolomorphicFlowQuadrature, real_point: Array, /)
     step_size = prepared.plan.flow_time / prepared.plan.flow_steps
     initial = real_point.astype(jnp.result_type(real_point.dtype, 1j))
 
-    def step(point, _):
+    def step(point: Array, _: None) -> tuple[Array, None]:
         k1 = _upward_flow_vector(prepared, point)
         k2 = _upward_flow_vector(prepared, point + 0.5 * step_size * k1)
         k3 = _upward_flow_vector(prepared, point + 0.5 * step_size * k2)

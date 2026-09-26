@@ -84,8 +84,11 @@ def celsius_to_kelvin(temperature: ArrayLike) -> Array:
 
 
 def thermal_unfolding_free_energy(
-    parameters, temperature, denaturant, reference_temperature
-):
+    parameters: ArrayLike,
+    temperature: ArrayLike,
+    denaturant: ArrayLike,
+    reference_temperature: float,
+) -> Array:
     """Constant-heat-capacity law with linear denaturant and thermal m-value.
 
     parameters = (dG_ref, dH_ref, dCp, m_ref, dm_dT). The thermal reference
@@ -102,15 +105,18 @@ def thermal_unfolding_free_energy(
     )
 
 
-def two_state_log_populations(delta_g, thermal_energy):
+def two_state_log_populations(delta_g: ArrayLike, thermal_energy: ArrayLike) -> Array:
     """Log fractions ordered (folded, unfolded), with dG=G_U-G_F."""
     reduced = jnp.asarray(delta_g) / thermal_energy
     return jnp.stack((-jax.nn.softplus(-reduced), -jax.nn.softplus(reduced)), axis=-1)
 
 
 def dimer_log_populations(
-    delta_g, thermal_energy, total_concentration, standard_concentration
-):
+    delta_g: Array,
+    thermal_energy: ArrayLike,
+    total_concentration: ArrayLike,
+    standard_concentration: float,
+) -> Array:
     """N2 <-> 2U monomer-equivalent fractions, ordered (N2, U).
 
     Kd=[U]^2/[N2]=c_standard exp(-dG/RT), C=[U]+2[N2]. The stable
@@ -136,7 +142,9 @@ def dimer_log_populations(
 _THERMAL_NAMES = ("dg_ref", "dh_ref", "dcp", "m_ref", "dm_dt")
 
 
-def _thermal_slots(prefix, convention):
+def _thermal_slots(
+    prefix: str, convention: ThermodynamicConvention
+) -> tuple[tuple[str, UnitDefinition], ...]:
     return tuple(
         (f"{prefix}.{name}", unit)
         for name, unit in zip(_THERMAL_NAMES, convention.thermal_units, strict=True)
@@ -151,10 +159,16 @@ class TwoStateUnfolding:
     prefix: str = "unfolding"
     state_names = ("folded", "unfolded")
 
-    def parameter_slots(self):
+    def parameter_slots(self) -> tuple[tuple[str, UnitDefinition], ...]:
         return _thermal_slots(self.prefix, self.convention)
 
-    def populations(self, parameters, temperature, denaturant, concentration):
+    def populations(
+        self,
+        parameters: Array,
+        temperature: Array,
+        denaturant: Array,
+        concentration: Array,
+    ) -> Array:
         dg = thermal_unfolding_free_energy(
             parameters, temperature, denaturant, self.convention.reference_temperature
         )
@@ -171,12 +185,18 @@ class ThreeStateUnfolding:
     prefix: str = "unfolding"
     state_names = ("folded", "intermediate", "unfolded")
 
-    def parameter_slots(self):
+    def parameter_slots(self) -> tuple[tuple[str, UnitDefinition], ...]:
         return _thermal_slots(f"{self.prefix}.fi", self.convention) + _thermal_slots(
             f"{self.prefix}.iu", self.convention
         )
 
-    def populations(self, parameters, temperature, denaturant, concentration):
+    def populations(
+        self,
+        parameters: Array,
+        temperature: Array,
+        denaturant: Array,
+        concentration: Array,
+    ) -> Array:
         fi = thermal_unfolding_free_energy(
             parameters[:5], temperature, denaturant, self.convention.reference_temperature
         )
@@ -194,7 +214,13 @@ class ThreeStateUnfolding:
 class DimerTwoStateUnfolding(TwoStateUnfolding):
     """Reversible N2 <-> 2U with monomer-equivalent fluorescence baselines."""
 
-    def populations(self, parameters, temperature, denaturant, concentration):
+    def populations(
+        self,
+        parameters: Array,
+        temperature: Array,
+        denaturant: Array,
+        concentration: Array,
+    ) -> Array:
         dg = thermal_unfolding_free_energy(
             parameters, temperature, denaturant, self.convention.reference_temperature
         )
@@ -212,7 +238,13 @@ class DimerTwoStateUnfolding(TwoStateUnfolding):
 class DimerThreeStateUnfolding(ThreeStateUnfolding):
     """Reversible N2 <-> 2I <-> 2U; IU energy is per monomer."""
 
-    def populations(self, parameters, temperature, denaturant, concentration):
+    def populations(
+        self,
+        parameters: Array,
+        temperature: Array,
+        denaturant: Array,
+        concentration: Array,
+    ) -> Array:
         ni = thermal_unfolding_free_energy(
             parameters[:5], temperature, denaturant, self.convention.reference_temperature
         )
@@ -242,8 +274,10 @@ class DimerThreeStateUnfolding(ThreeStateUnfolding):
 
 
 def repeat_transfer_statistics(
-    folding_free_energy, interface_free_energy, thermal_energy
-):
+    folding_free_energy: ArrayLike,
+    interface_free_energy: ArrayLike,
+    thermal_energy: ArrayLike,
+) -> tuple[Array, Array]:
     """Open-chain binary-repeat partition and folded marginal probabilities.
 
     E(x)=sum_i g_i*x_i + sum_i J_i*x_i*x_(i+1), x_i=1 folded. Energies
@@ -256,7 +290,7 @@ def repeat_transfer_statistics(
     pair = jnp.array([[0.0, 0.0], [0.0, 1.0]])
     transitions = -bonds[:, None, None] / thermal_energy * pair
 
-    def forward(previous, inputs):
+    def forward(previous: Array, inputs: tuple[Array, Array]) -> tuple[Array, Array]:
         node, edge = inputs
         current = node + jsp.special.logsumexp(previous[:, None] + edge, axis=0)
         return current, current
@@ -264,7 +298,7 @@ def repeat_transfer_statistics(
     _, rest = jax.lax.scan(forward, local[0], (local[1:], transitions))
     alpha = jnp.concatenate((local[:1], rest), axis=0)
 
-    def backward(following, inputs):
+    def backward(following: Array, inputs: tuple[Array, Array]) -> tuple[Array, Array]:
         node, edge = inputs
         current = jsp.special.logsumexp(edge + node[None, :] + following[None, :], axis=1)
         return current, current
@@ -295,7 +329,7 @@ class RepeatTransferUnfolding:
         ):
             raise ValueError("repeat_count must be a positive integer.")
 
-    def parameter_slots(self):
+    def parameter_slots(self) -> tuple[tuple[str, UnitDefinition], ...]:
         nodes = tuple(
             slot
             for i in range(self.repeat_count)
@@ -306,11 +340,17 @@ class RepeatTransferUnfolding:
             for i in range(self.repeat_count - 1)
         )
 
-    def populations(self, parameters, temperature, denaturant, concentration):
+    def populations(
+        self,
+        parameters: Array,
+        temperature: Array,
+        denaturant: Array,
+        concentration: Array,
+    ) -> Array:
         nodes = parameters[: 5 * self.repeat_count].reshape((self.repeat_count, 5))
         bonds = parameters[5 * self.repeat_count :]
 
-        def at_condition(t, d):
+        def at_condition(t: Array, d: Array) -> Array:
             dg = thermal_unfolding_free_energy(
                 nodes, t, d, self.convention.reference_temperature
             )
@@ -330,7 +370,7 @@ class ChevronKinetics:
     convention: ThermodynamicConvention = ThermodynamicConvention()
     prefix: str = "chevron"
 
-    def parameter_slots(self):
+    def parameter_slots(self) -> tuple[tuple[str, UnitDefinition], ...]:
         slope = self.convention.thermal_units[3]
         return (
             (f"{self.prefix}.log_kf", ONE),
@@ -339,12 +379,16 @@ class ChevronKinetics:
             (f"{self.prefix}.mu", slope),
         )
 
-    def log_rates(self, parameters, temperature, denaturant):
+    def log_rates(
+        self, parameters: Array, temperature: Array, denaturant: Array
+    ) -> Array:
         kf, ku, mf, mu = parameters
         kt = self.convention.thermal_constant * temperature
         return jnp.stack((kf - mf * denaturant / kt, ku + mu * denaturant / kt), axis=-1)
 
-    def predict_log_rate(self, parameters, temperature, denaturant):
+    def predict_log_rate(
+        self, parameters: Array, temperature: Array, denaturant: Array
+    ) -> Array:
         return jsp.special.logsumexp(
             self.log_rates(parameters, temperature, denaturant), axis=-1
         )
@@ -362,7 +406,7 @@ class ParallelPathKinetics:
     convention: ThermodynamicConvention = ThermodynamicConvention()
     prefix: str = "parallel"
 
-    def parameter_slots(self):
+    def parameter_slots(self) -> tuple[tuple[str, UnitDefinition], ...]:
         e, slope = self.convention.energy_unit, self.convention.thermal_units[3]
         return (
             (f"{self.prefix}.dg_ref", e),
@@ -373,7 +417,9 @@ class ParallelPathKinetics:
             (f"{self.prefix}.mf2", slope),
         )
 
-    def log_rates(self, parameters, temperature, denaturant):
+    def log_rates(
+        self, parameters: Array, temperature: Array, denaturant: Array
+    ) -> Array:
         dg, m, k1, m1, k2, m2 = parameters
         kt = self.convention.thermal_constant * temperature
         log_f = jnp.stack((k1 - m1 * denaturant / kt, k2 - m2 * denaturant / kt), axis=-1)
@@ -386,7 +432,9 @@ class ParallelPathKinetics:
             axis=-1,
         )
 
-    def predict_log_rate(self, parameters, temperature, denaturant):
+    def predict_log_rate(
+        self, parameters: Array, temperature: Array, denaturant: Array
+    ) -> Array:
         return jsp.special.logsumexp(
             self.log_rates(parameters, temperature, denaturant), axis=-1
         )

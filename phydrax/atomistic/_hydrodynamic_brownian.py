@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.ein import contract
@@ -20,11 +21,13 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleNeighborhoodState
+from ..linalg import AbstractLinearOperator
 from ._dynamics import PreparedAtomisticDynamics
 from ._hydrodynamic_mobility import (
     AbstractHydrodynamicMobilityPlan,
     AbstractPreparedHydrodynamicMobility,
 )
+from ._potential_program import AtomisticHamiltonianEvaluation
 
 
 HydrodynamicDifferentiationPolicy: TypeAlias = Literal["pathwise", "weak"]
@@ -33,7 +36,7 @@ HydrodynamicDifferentiationPolicy: TypeAlias = Literal["pathwise", "weak"]
 class _HydrodynamicMobilityProvider(StrictModule, NonTrainableState):
     mobility: AbstractPreparedHydrodynamicMobility
 
-    def __call__(self, positions: ArrayLike, /):
+    def __call__(self, positions: ArrayLike, /) -> AbstractLinearOperator:
         return self.mobility.operator(positions)
 
 
@@ -177,7 +180,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
             }
         )
 
-    def _initial_cell_vectors(self, dtype) -> Array:
+    def _initial_cell_vectors(self, dtype: DTypeLike) -> Array:
         cell = self.dynamics.system.cell
         return (
             jnp.zeros((0, 3), dtype=dtype) if cell is None else cell.vectors.astype(dtype)
@@ -204,7 +207,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         image_counts: Array,
         cell_vectors: Array,
         /,
-    ):
+    ) -> tuple[ParticleNeighborhoodState, AtomisticHamiltonianEvaluation]:
         neighborhood = self.dynamics.neighborhood.build(positions)
         unwrapped = self._unwrapped(positions, image_counts, cell_vectors)
         kwargs = {

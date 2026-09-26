@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Self
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -130,7 +131,7 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def periodic(cls, bridge: StructuredCochainBridge, /):
+    def periodic(cls, bridge: StructuredCochainBridge, /) -> Self:
         return cls(bridge, ElectrostaticBoundaryKind.PERIODIC)
 
     @classmethod
@@ -141,7 +142,7 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         /,
         *,
         mask: ArrayLike | None = None,
-    ):
+    ) -> Self:
         return cls(
             bridge,
             ElectrostaticBoundaryKind.DIRICHLET,
@@ -150,7 +151,7 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def neumann(cls, bridge: StructuredCochainBridge, source: ArrayLike = 0.0, /):
+    def neumann(cls, bridge: StructuredCochainBridge, source: ArrayLike = 0.0, /) -> Self:
         return cls(
             bridge,
             ElectrostaticBoundaryKind.NEUMANN,

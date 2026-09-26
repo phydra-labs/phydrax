@@ -173,7 +173,7 @@ def diffusion_paths_from_noise(
     step_noise = jnp.moveaxis(z, -2, 0)
     step_keys = jr.split(key, slicing.num_steps)
 
-    def step(current, xs):
+    def step(current: Array, xs: tuple[Array, Array, Array]) -> tuple[Array, Array]:
         time, normal, step_key = xs
         drift_key, diffusion_key = jr.split(step_key)
         drift_value = _evaluate_drift(

@@ -18,6 +18,7 @@ from ..._interpolation import (
     BSplineGridBank,
     BSplineGridTransfer,
     TrainableBSplineGrid,
+    TrainableBSplineGridBank,
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -244,7 +245,9 @@ def _adapt_layer(
     if coefficients is None:
         raise RuntimeError("B-spline KAN layer is missing its dense coefficients.")
 
-    if isinstance(layer.edge_basis.grid, TrainableBSplineGrid):
+    if isinstance(
+        layer.edge_basis.grid, (TrainableBSplineGrid, TrainableBSplineGridBank)
+    ):
         raise ValueError(
             "Explicit grid adaptation only supports fixed B-spline grids; "
             "trainable knot grids must be optimized through solver phases."

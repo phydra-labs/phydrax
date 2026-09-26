@@ -556,7 +556,9 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
             }
         )
 
-    def _plic_values(self, plic: Any, /):
+    def _plic_values(
+        self, plic: Any, /
+    ) -> tuple[Array, Array, Array, Array, bool, str, str]:
         try:
             normals = jnp.asarray(plic.normals)
             centers = getattr(plic, "interface_centers", None)
@@ -765,7 +767,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         volume_fraction: ArrayLike | None,
         velocity: ArrayLike | None,
         /,
-    ):
+    ) -> tuple[Array, Array, Array, Array, Array, CurvatureEvidence]:
         density_ = self._validate_density(density)
         del density_
         if volume_fraction is None:

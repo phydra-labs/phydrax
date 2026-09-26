@@ -16,6 +16,7 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import (
     normalize_least_squares_design,
+    NormalizedLeastSquaresDesign,
     solve_normalized_least_squares,
 )
 from ..._strict import StrictModule
@@ -111,7 +112,13 @@ def _target_scales(design: SINDyDesign, enabled: bool, /) -> Array:
     return jnp.where(scale > tolerance, scale, 1.0)
 
 
-def _solve_outputs(normalized, target, support, ridge: float, /):
+def _solve_outputs(
+    normalized: NormalizedLeastSquaresDesign,
+    target: Array,
+    support: Array,
+    ridge: float,
+    /,
+) -> tuple[Array, Array, Array, Array]:
     coefficients = []
     ranks = []
     conditions = []
@@ -222,7 +229,7 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
         condition_history = [conditions]
         residual_history = []
 
-        def physical(normalized_coefficients):
+        def physical(normalized_coefficients: Array) -> Array:
             return (
                 target_scale[:, None]
                 * normalized_coefficients

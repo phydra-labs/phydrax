@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from itertools import product
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +24,7 @@ from ..discretization.spatial import (
     MortonPointHierarchyPlan,
     MortonPointHierarchyState,
     MortonRadiusRelationPlan,
+    SpatialDistanceBackend,
 )
 from ..discretization.spatial._plane_interactions import MortonPlaneInteractionPlan
 from ..discretization.spatial._plane_schedule import MortonPlaneSchedulePlan
@@ -35,6 +36,12 @@ from ..operators.integral.multipole._cartesian_radial import (
     treepm_scaled_cartesian_derivatives,
 )
 from ..sparse import EdgeRelation, RelationAccumulation, RelationExecutionPlan
+
+
+_TargetInputs: TypeAlias = tuple[Array, Array, Array]
+_TargetOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_TraversalState: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_DirectLeafState: TypeAlias = tuple[Array, Array, Array]
 
 
 class NewtonianPairKernel(StrictModule, NonTrainableState):
@@ -586,7 +593,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
             None if cutoff is None else jnp.asarray(cutoff, dtype=position.dtype)
         )
 
-        def radial_kernel(distance_squared, distance):
+        def radial_kernel(distance_squared: Array, distance: Array) -> Array:
             kernel = distance_squared ** (-1.5)
             if scale is not None:
                 argument = distance / (2.0 * scale)
@@ -596,7 +603,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                 )
             return kernel
 
-        def evaluate_target(inputs):
+        def evaluate_target(inputs: _TargetInputs) -> _TargetOutputs:
             target_position, target_storage, target_active = inputs
             node_displacement = tree.leaf_center_of_mass - target_position
             node_distance_squared = (
@@ -624,7 +631,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
             )
             terminal = accept | (node_valid & outside_cutoff)
 
-            def propagate_blocked(node, blocked):
+            def propagate_blocked(node: Array, blocked: Array) -> Array:
                 parent = hierarchy.node_parents[node]
                 safe_parent = jnp.maximum(parent, 0)
                 value = (parent >= 0) & (blocked[safe_parent] | terminal[safe_parent])
@@ -776,7 +783,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
             None if cutoff is None else jnp.asarray(cutoff, dtype=position.dtype)
         )
 
-        def radial_kernel(distance_squared, distance):
+        def radial_kernel(distance_squared: Array, distance: Array) -> Array:
             kernel = distance_squared ** (-1.5)
             if scale is not None:
                 argument = distance / (2.0 * scale)
@@ -786,7 +793,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                 )
             return kernel
 
-        def evaluate_target(inputs):
+        def evaluate_target(inputs: _TargetInputs) -> _TargetOutputs:
             target_position, target_storage, target_active = inputs
             stack = jnp.zeros((stack_capacity,), dtype=jnp.int32)
             has_root = target_active & (hierarchy.root_slot >= 0)
@@ -802,7 +809,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                 jnp.asarray(False),
             )
 
-            def traversal_body(state):
+            def traversal_body(state: _TraversalState) -> _TraversalState:
                 (
                     current_stack,
                     top,
@@ -860,7 +867,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                     node_valid & hierarchy.node_is_leaf[node] & ~outside_cutoff
                 )
 
-                def direct_leaf(direct_state):
+                def direct_leaf(direct_state: _DirectLeafState) -> _DirectLeafState:
                     offset, direct_acceleration, interactions = direct_state
                     source_storage = (
                         hierarchy.node_item_starts[node] + offset + chunk_offsets
@@ -905,7 +912,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                     jnp.asarray(0, dtype=jnp.int32),
                 )
 
-                def evaluate_direct_leaf(_):
+                def evaluate_direct_leaf(_operand: None) -> tuple[Array, Array]:
                     if not fixed_iterations:
                         _, leaf_acceleration, leaf_interactions = jax.lax.while_loop(
                             lambda direct_state: (
@@ -916,7 +923,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                         )
                         return leaf_acceleration, leaf_interactions
 
-                    def run_chunks(chunk_count):
+                    def run_chunks(chunk_count: int) -> tuple[Array, Array]:
                         _, leaf_acceleration, leaf_interactions = jax.lax.fori_loop(
                             0,
                             chunk_count,
@@ -977,7 +984,9 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
 
             if fixed_iterations:
 
-                def traversal_iteration(_, state):
+                def traversal_iteration(
+                    _: Array, state: _TraversalState
+                ) -> _TraversalState:
                     active_step = (state[1] > 0) & ~state[7]
                     return jax.lax.cond(
                         active_step,
@@ -1056,7 +1065,7 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
         plan = self
 
         @jax.custom_vjp
-        def run(current_tree):
+        def run(current_tree: PreparedParticleOctree3D) -> TreeGravityResult:
             return plan._evaluate_impl(
                 current_tree,
                 short_range_scale=short_range_scale,
@@ -1064,7 +1073,9 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
                 fixed_iterations=False,
             )
 
-        def forward(current_tree):
+        def forward(
+            current_tree: PreparedParticleOctree3D,
+        ) -> tuple[TreeGravityResult, PreparedParticleOctree3D]:
             result = plan._evaluate_impl(
                 current_tree,
                 short_range_scale=short_range_scale,
@@ -1073,7 +1084,9 @@ class BarnesHutGravityPlan(StrictModule, NonTrainableState):
             )
             return result, current_tree
 
-        def backward(current_tree, cotangent):
+        def backward(
+            current_tree: PreparedParticleOctree3D, cotangent: TreeGravityResult
+        ) -> tuple[PreparedParticleOctree3D]:
             _, pullback = jax.vjp(
                 lambda value: plan._evaluate_impl(
                     value,
@@ -1147,6 +1160,7 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
             or (split is None) != (cutoff is None)
             or (
                 split is not None
+                and cutoff is not None
                 and (
                     not np.isfinite(split)
                     or split <= 0.0
@@ -1207,7 +1221,11 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
             total = jnp.asarray(0.0, dtype=values.dtype)
             for index, beta in enumerate(self.expansion.exponents):
                 if all(beta[axis] <= alpha[axis] for axis in range(3)):
-                    difference = tuple(alpha[axis] - beta[axis] for axis in range(3))
+                    difference = (
+                        alpha[0] - beta[0],
+                        alpha[1] - beta[1],
+                        alpha[2] - beta[2],
+                    )
                     total = (
                         total
                         + multi_binomial(alpha, beta)
@@ -1302,7 +1320,11 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
             total = jnp.asarray(0.0, dtype=values.dtype)
             for alpha_index, alpha in enumerate(self.expansion.exponents):
                 if all(beta[axis] <= alpha[axis] for axis in range(3)):
-                    difference = tuple(alpha[axis] - beta[axis] for axis in range(3))
+                    difference = (
+                        alpha[0] - beta[0],
+                        alpha[1] - beta[1],
+                        alpha[2] - beta[2],
+                    )
                     total = (
                         total
                         + multi_binomial(alpha, beta)
@@ -1336,7 +1358,7 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
                     gradient = gradient.at[axis].add(
                         values[index]
                         * exponent[axis]
-                        * monomial(normalized, tuple(reduced))
+                        * monomial(normalized, (reduced[0], reduced[1], reduced[2]))
                         / scale_
                     )
         return potential, -gradient
@@ -1355,16 +1377,16 @@ class CartesianFMMOperators(StrictModule, NonTrainableState):
         radius_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
         radius = jnp.sqrt(radius_squared)
         factor = radius_squared ** (-1.5)
-        if self.short_range_scale is not None:
-            argument = radius / (2.0 * self.short_range_scale)
+        split = self.short_range_scale
+        cutoff = self.short_range_cutoff
+        if split is not None and cutoff is not None:
+            argument = radius / (2.0 * split)
             factor = factor * (
                 jax.scipy.special.erfc(argument)
-                + radius
-                / (self.short_range_scale * jnp.sqrt(jnp.pi))
-                * jnp.exp(-(argument**2))
+                + radius / (split * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
             )
             factor = jnp.where(
-                radius <= self.short_range_cutoff,
+                radius <= cutoff,
                 factor,
                 0.0,
             )
@@ -1389,7 +1411,7 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
     coarsening_factor: int = eqx.field(static=True)
     target_top_nodes: int = eqx.field(static=True)
     accumulation: RelationAccumulation = eqx.field(static=True)
-    execution_backend: str = eqx.field(static=True)
+    execution_backend: SpatialDistanceBackend = eqx.field(static=True)
     pallas_interpret: bool = eqx.field(static=True)
     short_range_scale: float | None = eqx.field(static=True)
     short_range_cutoff: float | None = eqx.field(static=True)
@@ -1411,7 +1433,7 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         coarsening_factor: int = 8,
         target_top_nodes: int = 32,
         accumulation: RelationAccumulation = "deterministic",
-        execution_backend: str = "jax",
+        execution_backend: SpatialDistanceBackend = "jax",
         pallas_interpret: bool = False,
         short_range_scale: float | None = None,
         short_range_cutoff: float | None = None,
@@ -1454,6 +1476,7 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             or (split is None) != (cutoff is None)
             or (
                 split is not None
+                and cutoff is not None
                 and (
                     not np.isfinite(split)
                     or split <= 0.0
@@ -1714,7 +1737,9 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
             sorted_mass[safe_sources][:, None, :],
             pair_valid.shape,
         )
-        if self.short_range_scale is None:
+        split = self.short_range_scale
+        cutoff = self.short_range_cutoff
+        if split is None or cutoff is None:
             pair_value = spatial_pair_acceleration(
                 displacement,
                 source_mass,
@@ -1725,13 +1750,11 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
                 pallas_interpret=self.pallas_interpret,
             )
         else:
-            pair_valid = pair_valid & (pair_radius <= self.short_range_cutoff)
-            argument = pair_radius / (2.0 * self.short_range_scale)
+            pair_valid = pair_valid & (pair_radius <= cutoff)
+            argument = pair_radius / (2.0 * split)
             factor = pair_radius_squared ** (-1.5) * (
                 jax.scipy.special.erfc(argument)
-                + pair_radius
-                / (self.short_range_scale * jnp.sqrt(jnp.pi))
-                * jnp.exp(-(argument**2))
+                + pair_radius / (split * jnp.sqrt(jnp.pi)) * jnp.exp(-(argument**2))
             )
             pair_value = jnp.where(
                 pair_valid[..., None],
@@ -1830,14 +1853,18 @@ class UniformFMMPlan(StrictModule, NonTrainableState):
         plan = self
 
         @jax.custom_vjp
-        def run(current_tree):
+        def run(current_tree: PreparedParticleOctree3D) -> TreeGravityResult:
             return plan._evaluate_impl(current_tree)
 
-        def forward(current_tree):
+        def forward(
+            current_tree: PreparedParticleOctree3D,
+        ) -> tuple[TreeGravityResult, PreparedParticleOctree3D]:
             result = plan._evaluate_impl(current_tree)
             return result, current_tree
 
-        def backward(current_tree, cotangent):
+        def backward(
+            current_tree: PreparedParticleOctree3D, cotangent: TreeGravityResult
+        ) -> tuple[PreparedParticleOctree3D]:
             _, pullback = jax.vjp(
                 lambda value: plan._evaluate_impl(value).acceleration,
                 current_tree,
@@ -2037,6 +2064,9 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
         mass: Array,
         active: Array,
     ) -> tuple[Array, Array, Array, Array]:
+        real_cutoff = self.real_cutoff
+        # __init__ requires real_cutoff for screened_radius execution.
+        assert real_cutoff is not None
         count = position.shape[0]
         capacity = (
             count * count * self.real_offsets.shape[0]
@@ -2068,7 +2098,7 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             relation_result = relation_plan.query(
                 wrapped + offset,
                 wrapped,
-                self.real_cutoff,
+                real_cutoff,
                 source_mask=active,
                 target_mask=active,
                 source_stable_ids=identifiers,

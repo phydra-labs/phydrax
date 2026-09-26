@@ -617,7 +617,10 @@ def _initial_candidate_points(
     /,
 ) -> tuple[Array, Array]:
     if domain.continuous_dimension == 0:
-        pool_count = domain.categorical.size
+        categorical = domain.categorical
+        # Construction rejects domains with neither continuous nor categorical axes.
+        assert categorical is not None
+        pool_count = categorical.size
         units = jnp.zeros((pool_count, 0), dtype=domain.continuous_initial.dtype)
         categories = jnp.arange(pool_count, dtype=jnp.int32)
     else:
@@ -891,7 +894,7 @@ def _positive_integer(value: int, /, *, name: str) -> int:
     return result
 
 
-def _positive_real(value: Real, /, *, name: str) -> float:
+def _positive_real(value: object, /, *, name: str) -> float:
     if not isinstance(value, Real) or isinstance(value, bool):
         raise TypeError(f"{name} must be a real scalar.")
     result = float(value)

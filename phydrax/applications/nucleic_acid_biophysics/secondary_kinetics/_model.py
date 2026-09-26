@@ -9,6 +9,7 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import SupportsFloat
 
 from ...._fingerprint import canonical_fingerprint
 from ....qualification import ReferenceArtifactManifest
@@ -26,7 +27,7 @@ from ._state import SecondaryStructureState
 _AVOGADRO = 6.02214076e23
 
 
-def _positive(value: float, name: str) -> float:
+def _positive(value: SupportsFloat, name: str) -> float:
     result = float(value)
     if not math.isfinite(result) or result <= 0:
         raise ValueError(f"{name} must be finite and positive.")
@@ -287,7 +288,7 @@ class SecondaryEnergyModel:
             dict(self.internal_energies),
         )
 
-        def required(table, key, kind):
+        def required(table: Mapping[str, float], key: str, kind: str) -> float:
             if key not in table:
                 raise ValueError(f"Missing source-pinned {kind} parameter for {key}.")
             return table[key]

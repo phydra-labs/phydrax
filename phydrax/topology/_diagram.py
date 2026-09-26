@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -126,7 +127,7 @@ class PackedPersistenceDiagram(StrictModule, NonTrainableState):
         count = diagram.interval_count
         active = np.arange(size) < count
 
-        def pad(value: Array, *, dtype=None):
+        def pad(value: Array, *, dtype: npt.DTypeLike | None = None) -> Array:
             source = np.asarray(value, dtype=dtype)
             output = np.zeros((size,), dtype=source.dtype)
             output[:count] = source

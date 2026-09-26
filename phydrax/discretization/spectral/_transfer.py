@@ -191,16 +191,21 @@ class SpectralModalTransferPlan(StrictModule, NonTrainableState):
         )
 
     def prepare(self, /) -> "PreparedSpectralModalTransfer":
-        if isinstance(self.source, SphericalSpectralDiscretization):
+        source = self.source
+        target = self.target
+        if isinstance(source, SphericalSpectralDiscretization):
             return self._prepare_spherical()
-        if isinstance(self.source, LatticeHarmonicDiscretization):
+        if isinstance(source, LatticeHarmonicDiscretization):
             return self._prepare_lattice()
+        # The constructor admits only same-family pairs, so a tensor source has a
+        # tensor target.
+        assert isinstance(target, TensorSpectralDiscretization)
         matrices: list[Array | None] = []
         actions: list[str] = []
         trace_residual = 0.0
         for source_axis, target_axis in zip(
-            self.source.axes,
-            self.target.axes,
+            source.axes,
+            target.axes,
             strict=True,
         ):
             _validate_axis_compatibility(source_axis, target_axis)
@@ -216,10 +221,7 @@ class SpectralModalTransferPlan(StrictModule, NonTrainableState):
                 matrices.append(None)
                 actions.append("degree-prefix")
 
-        source = self.source
-        target = self.target
-
-        def action(coefficients):
+        def action(coefficients: Array) -> Array:
             result = source._validate_leading(
                 coefficients,
                 source.modal_shape,
@@ -321,7 +323,7 @@ class SpectralModalTransferPlan(StrictModule, NonTrainableState):
         target_offset = target.layout.bandlimit - 1
         retained_limit = min(source.layout.bandlimit, target.layout.bandlimit)
 
-        def action(coefficients):
+        def action(coefficients: Array) -> Array:
             values = jnp.asarray(coefficients)
             if values.shape != source.coefficient_shape:
                 raise ValueError(
@@ -418,7 +420,7 @@ class SpectralModalTransferPlan(StrictModule, NonTrainableState):
         source_indices_array = jnp.asarray(source_indices, dtype=jnp.int32)
         target_indices_array = jnp.asarray(target_indices, dtype=jnp.int32)
 
-        def action(coefficients):
+        def action(coefficients: Array) -> Array:
             values = jnp.asarray(coefficients)
             if values.shape != (source.harmonic_count,):
                 raise ValueError(
@@ -640,6 +642,9 @@ def _validate_plan_family(
         return
     if isinstance(
         source,
+        (RationalChebyshevLineBasisPlan, RationalChebyshevHalfLineBasisPlan),
+    ) and isinstance(
+        target,
         (RationalChebyshevLineBasisPlan, RationalChebyshevHalfLineBasisPlan),
     ):
         if not np.array_equal(np.asarray(source.scale), np.asarray(target.scale)):

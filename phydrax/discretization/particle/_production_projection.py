@@ -219,7 +219,9 @@ class ProjectedIterationAccelerationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def relaxation(self, iteration: ArrayLike, maximum_iterations: int, /) -> Array:
+    def relaxation(
+        self, iteration: ArrayLike, maximum_iterations: int, /
+    ) -> Array | float:
         fraction = jnp.asarray(iteration) / jnp.maximum(maximum_iterations - 1, 1)
         if self.kind == "reference":
             return jnp.asarray(self.relaxation_minimum)
@@ -284,7 +286,7 @@ def solve_projected_pressure(
     diagonal = jnp.diag(matrix)
     safe_diagonal = jnp.where(jnp.abs(diagonal) > 1e-14, diagonal, 1.0)
 
-    def body(iteration, carry):
+    def body(iteration: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         pressure, _ = carry
         residual = matrix @ pressure - rhs
         relaxation = plan.acceleration.relaxation(iteration, plan.maximum_iterations)

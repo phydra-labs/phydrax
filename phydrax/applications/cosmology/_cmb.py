@@ -8,6 +8,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._differentiation import DerivativeSurface
@@ -126,7 +127,7 @@ class CmbSpectrumTable(StrictModule):
 
     def __init__(
         self,
-        multipoles: ArrayLike,
+        multipoles: npt.ArrayLike,
         spectra: ArrayLike,
         modes: tuple[str, ...],
         provenance: CosmologyProductProvenance,

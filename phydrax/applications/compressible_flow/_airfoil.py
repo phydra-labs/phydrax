@@ -224,13 +224,14 @@ class AirfoilOGridPlan(StrictModule, NonTrainableState):
         ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
         reference = FiniteVolumePlan(grid, component_names=names).prepare()
         seam = MappedPeriodicSeamPlan(0, jnp.eye(2), jnp.zeros((2,)))
+        center_host = np.asarray(self.center)
         coordinate_map = partial(
             _static_airfoil_o_grid_map,
             coordinates=tuple(
-                tuple(float(component) for component in point)
+                (float(point[0]), float(point[1]))
                 for point in np.asarray(self.section.coordinates)
             ),
-            center=tuple(float(component) for component in np.asarray(self.center)),
+            center=(float(center_host[0]), float(center_host[1])),
             radius=self.farfield_radius,
         )
         discretization = MappedFiniteVolumePlan(

@@ -218,7 +218,7 @@ def schwinger_observables(
     )
 
 
-def _electric_coefficients(model: SchwingerChainModel, /):
+def _electric_coefficients(model: SchwingerChainModel, /) -> tuple[Array, Array, Array]:
     links = model.site_count - 1
     offsets = model.left_boundary_flux + model.external_flux
     suffix_count = jnp.arange(links, 0, -1, dtype=offsets.dtype)

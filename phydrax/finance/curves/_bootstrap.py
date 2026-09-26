@@ -731,7 +731,7 @@ class AbstractCurveBootstrapPlan(StrictModule):
             factorization.materialize_pseudoinverse().value * weights[None, :]
         )
 
-        def actual_flat(raw):
+        def actual_flat(raw: Array) -> Array:
             return jnp.concatenate(_decode_flat(self.definitions, raw))
 
         actual_raw_jacobian = jax.jacfwd(actual_flat)(fitted_raw)

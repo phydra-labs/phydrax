@@ -13,9 +13,10 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ...interchange import AdapterLoss, AdapterReport, AdapterStatus
+from ...interchange import AdapterReport, AdapterStatus
 from ...units import (
     BOHR,
     conversion_factor,
@@ -165,7 +166,7 @@ def is_qcelemental_available() -> bool:
     return importlib.util.find_spec("qcelemental") is not None
 
 
-def require_qcelemental():
+def require_qcelemental() -> Any:
     if not is_qcelemental_available():
         raise ImportError(
             "QCSchema object construction requires optional dependency 'qcelemental'."
@@ -184,10 +185,10 @@ def _driver(calculation: ElectronicCalculationPlan, /) -> str:
 
 def electronic_calculation_to_qcschema(
     calculation: ElectronicCalculationPlan,
-    positions,
+    positions: ArrayLike,
     /,
     *,
-    cell_vectors=None,
+    cell_vectors: ArrayLike | None = None,
     keywords: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], AdapterReport]:
     """Return one QCSchema AtomicInput mapping and a lossless adapter report."""
@@ -291,12 +292,12 @@ def electronic_calculation_to_qcschema(
 
 def electronic_calculation_to_qcelemental(
     calculation: ElectronicCalculationPlan,
-    positions,
+    positions: ArrayLike,
     /,
     *,
-    cell_vectors=None,
+    cell_vectors: ArrayLike | None = None,
     keywords: Mapping[str, Any] | None = None,
-):
+) -> tuple[Any, AdapterReport]:
     qcelemental = require_qcelemental()
     payload, report = electronic_calculation_to_qcschema(
         calculation, positions, cell_vectors=cell_vectors, keywords=keywords
@@ -332,11 +333,11 @@ def _source_units(
 def electronic_evaluation_from_qcschema(
     calculation: ElectronicCalculationPlan,
     provider_id: str,
-    positions,
+    positions: ArrayLike,
     record: Mapping[str, Any],
     /,
     *,
-    cell_vectors=None,
+    cell_vectors: ArrayLike | None = None,
 ) -> tuple[ElectronicEvaluation, AdapterReport]:
     """Convert one QCSchema AtomicResult mapping into native units and order."""
 
@@ -443,7 +444,6 @@ def electronic_evaluation_from_qcschema(
         raise ValueError(
             "QCSchema result does not preserve the exact calculation, task, model, system, state, geometry, and particle identities."
         )
-    losses: tuple[AdapterLoss, ...] = ()
     provenance = record.get("provenance", {})
     provenance_id = canonical_fingerprint(
         {"kind": "qcschema-result-provenance", "content": provenance}
@@ -483,7 +483,7 @@ def electronic_evaluation_from_qcschema(
         {"kind": "qcschema-atomic-result", "content": dict(record)}
     )
     report = AdapterReport(
-        AdapterStatus.DECLARED_LOSS if losses else AdapterStatus.LOSSLESS,
+        AdapterStatus.LOSSLESS,
         "QCSchema AtomicResult",
         type(result).__name__,
         source_id=source_id,
@@ -502,7 +502,7 @@ def electronic_evaluation_from_qcschema(
             "provenance",
         ),
         assumptions=("QCSchema result quantities use atomic units.",),
-        losses=losses,
+        losses=(),
     )
     return result, report
 

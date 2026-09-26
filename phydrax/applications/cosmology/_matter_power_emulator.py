@@ -15,6 +15,7 @@ import time
 import zipfile
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -46,6 +47,7 @@ from ._products import (
     MatterPowerDescriptor,
     MatterPowerTable,
 )
+from ._scales import CosmologyScaleContract
 
 
 _SCALE_FACTOR_UNIT = "dimensionless"
@@ -98,7 +100,9 @@ _DESCRIPTOR_FIELDS = frozenset(
 )
 
 
-def _power_unit(scale, descriptor: MatterPowerDescriptor, /) -> UnitDefinition:
+def _power_unit(
+    scale: CosmologyScaleContract, descriptor: MatterPowerDescriptor, /
+) -> UnitDefinition:
     return derived_unit(
         f"{scale.length_unit.symbol}^{descriptor.spatial_dimension}",
         ((scale.length_unit, descriptor.spatial_dimension),),
@@ -860,7 +864,8 @@ class SubprocessMatterPowerBackend(AbstractExternalBackend, NonTrainableState):
                 "Matter-power provider clamped, extrapolated, or remapped coordinates.",
                 adapter_status=AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
             )
-        support_record = _mapping(metadata["support"], "support evidence")
+        # Decoded provider JSON; EmulatorSupportEvidence validates the numeric bounds.
+        support_record: dict[str, Any] = _mapping(metadata["support"], "support evidence")
         _exact_fields(support_record, _SUPPORT_FIELDS, "support evidence")
         support = EmulatorSupportEvidence(
             _bounds(request.scale_factors),

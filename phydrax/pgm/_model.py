@@ -146,7 +146,7 @@ class VariableSelection(StrictModule, NonTrainableState):
     def __init__(
         self,
         group: DiscreteVariableGroup | str,
-        indices: ArrayLike,
+        indices: ArrayLike | Sequence[int],
         /,
     ) -> None:
         if isinstance(group, DiscreteVariableGroup):
@@ -820,7 +820,7 @@ def factor_group_dense_tables(
         values = group.log_count_potentials[:, counts]
     elif isinstance(group, KernelFactorGroup):
 
-        def score_configuration(configuration):
+        def score_configuration(configuration: Array) -> Array:
             # Preserve the public (..., factor_count, arity) kernel ABI.
             states = jnp.broadcast_to(configuration, (count, len(signature)))
             return group.kernel.log_scores(group.parameters, states)
@@ -848,8 +848,8 @@ def _dense_scores(tables: Array, states: Array, /) -> Array:
     arity = states.shape[-1]
     flat_states = states.reshape((-1, factor_count_, arity))
 
-    def one_batch(batch_states):
-        def one_factor(table, factor_states):
+    def one_batch(batch_states: Array) -> Array:
+        def one_factor(table: Array, factor_states: Array) -> Array:
             return table[tuple(factor_states)]
 
         return jax.vmap(one_factor)(tables, batch_states)
@@ -891,7 +891,7 @@ def factor_group_scores(
         factor_count_ = counts.shape[-1]
         flat_counts = counts.reshape((-1, factor_count_))
 
-        def one_batch(batch_counts):
+        def one_batch(batch_counts: Array) -> Array:
             return group.log_count_potentials[
                 jnp.arange(factor_count_, dtype=jnp.int32),
                 batch_counts,
@@ -945,7 +945,7 @@ def factor_graph_log_score(
     return jnp.where(factor_graph_contains(graph, states), score, -jnp.inf)
 
 
-def _graph_score_dtype(graph: DiscreteFactorGraph, /):
+def _graph_score_dtype(graph: DiscreteFactorGraph, /) -> np.dtype:
     dtypes = []
     for group in graph.factor_groups:
         if isinstance(

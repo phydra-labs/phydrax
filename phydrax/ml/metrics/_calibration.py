@@ -73,7 +73,7 @@ def _binary_probability_inputs(
     sample_axis: int,
     metric: str,
     from_logits: bool,
-):
+) -> tuple[Array, Array, Array, Array, Array, Array]:
     labels_raw = jnp.asarray(y_true)
     probability_raw = jnp.asarray(probability)
     _require_integer_labels(labels_raw, metric)

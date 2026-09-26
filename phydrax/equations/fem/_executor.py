@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import cast, Protocol, TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -12,17 +15,32 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ...discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
+from ...discretization._cell_complex import (
+    IntervalConnectivity,
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization._local_variational import (
     AbstractPreparedLocalDiscretization,
+    LocalMetricResult,
+    LocalReferenceActions,
 )
-from ...discretization.fem import FiniteElementDiscretization, IntegrationDomain
+from ...discretization.fem import (
+    FiniteElementDiscretization,
+    FiniteElementRuntimeData,
+    IntegrationDomain,
+)
 from ...discretization.fem._boundary import tensor_local_face
 from ...discretization.fem._high_order import SumFactorizationPlan
+from ...discretization.fem._reference_operator import (
+    FiniteElementFacetReference,
+    PreparedFiniteElementReference,
+)
 from ...discretization.fem._sbp import MappedTensorMetrics
 from ...linalg import DualSpace
-from ...sparse import scatter_local as _scatter_local
+from ...sparse import RelationAccumulation, scatter_local as _scatter_local
 from ...variational import FunctionalContext, LocalFieldJet, LocalGeometry
 from .._finite_element_variational import (
     _action_domain,
@@ -37,6 +55,7 @@ from .._finite_element_variational import (
     CellResidualAction,
     DiffusionAction,
     ExteriorFacetAction,
+    FiniteElementAction,
     FiniteElementExecutionContext,
     FiniteElementForm,
     InteriorFacetAction,
@@ -56,14 +75,58 @@ from ._operators import (
     FiniteElementFacetMetricData,
     FiniteElementMetricData,
 )
-from ._worksets import WorksetProgram
+from ._worksets import CompiledWorkset, WorksetProgram
+
+
+# Mortar flux kernel: (owner, neighbor, points, weights, normal, context) -> flux or side fluxes.
+_MortarFluxKernel: TypeAlias = Callable[
+    [Array, Array, Array, Array, Array, FiniteElementExecutionContext],
+    ArrayLike | tuple[ArrayLike, ArrayLike],
+]
+
+
+class _LocalEnergy(Protocol):
+    def __call__(self, *coefficients: Array) -> Array: ...
+
+
+# Cell functional problem: (energy, local inputs, DOF routes, DOF orientations, input index).
+_CellFunctionalProblem: TypeAlias = tuple[
+    _LocalEnergy,
+    tuple[Array, ...],
+    tuple[Array, ...],
+    tuple[Array, ...],
+    dict[str, int],
+]
+
+# Prepared facet side: (facet, DOF routes, DOF orientations, point permutations,
+# canonical trace or None, canonical points, canonical weights, canonical normals).
+_PreparedFacetSide: TypeAlias = tuple[
+    FiniteElementFacetReference,
+    Array,
+    Array,
+    Array,
+    Array | None,
+    Array,
+    Array,
+    Array,
+]
+
+# Functional evaluation: (total value, per-term values, residual or None).
+_FunctionalEvaluation: TypeAlias = tuple[
+    Array, tuple[Array, ...], Array | tuple[Array, ...] | None
+]
+
+
+def _runtime_coordinates(context: FiniteElementExecutionContext, /) -> Array:
+    # FiniteElementDiscretization.validate_local_runtime admitted this runtime.
+    return cast(FiniteElementRuntimeData, context.runtime).coordinates
 
 
 def execute_finite_element_mortar_flux(
-    workset,
+    workset: CompiledWorkset,
     owner_trace: ArrayLike,
     neighbor_trace: ArrayLike,
-    kernel,
+    kernel: _MortarFluxKernel,
     context: FiniteElementExecutionContext,
     /,
 ) -> tuple[Array, Array]:
@@ -162,7 +225,7 @@ def _cell_metric(
     discretization: FiniteElementDiscretization,
     block_index: int,
     local_cells: Array,
-    reference,
+    reference: PreparedFiniteElementReference,
     coordinates: Array,
     /,
 ) -> FiniteElementMetricData:
@@ -263,7 +326,7 @@ def _pairwise_volume_residual(
     action: PairwiseVolumeFluxAction,
     local_state: Array,
     local_cells: Array,
-    reference,
+    reference: PreparedFiniteElementReference,
     metric: FiniteElementMetricData,
     context: FiniteElementExecutionContext,
     /,
@@ -285,10 +348,10 @@ def _pairwise_volume_residual(
         cofactor_grid = context.metric_data.contravariant_cofactors[local_cells]
     else:
         points_grid = metric.physical_points.reshape(
-            (local_state.shape[0]) + nodal_shape + (metric.physical_points.shape[-1],)
+            (local_state.shape[0],) + nodal_shape + (metric.physical_points.shape[-1],)
         )
         cofactor_grid = metric.cofactor.reshape(
-            (local_state.shape[0])
+            (local_state.shape[0],)
             + nodal_shape
             + (plan.tabulation.dimension, metric.physical_points.shape[-1])
         )
@@ -351,7 +414,7 @@ def _cell_coefficient_values(
     coefficient_: VariationalCoefficient,
     discretization: FiniteElementDiscretization,
     block_index: int,
-    workset,
+    workset: CompiledWorkset,
     gathers: dict[str, Array],
     physical_points: Array,
     reference_points: Array,
@@ -359,7 +422,7 @@ def _cell_coefficient_values(
     entity_indices: Array,
     /,
     *,
-    value_shape: tuple[int, ...] = (),
+    value_shape: tuple[int, ...] | None = (),
 ) -> Array:
     dof_indices = None
     coefficient_basis = None
@@ -406,7 +469,7 @@ def _cell_coefficient_values(
 
 
 def _workset_domain(
-    action,
+    action: FiniteElementAction,
     discretization: FiniteElementDiscretization,
     entity_indices: ArrayLike | tuple[int, ...],
     /,
@@ -435,7 +498,7 @@ def _workset_domain(
 def _mortar_facet_residual(
     state: Array,
     action: InteriorFacetAction,
-    workset,
+    workset: CompiledWorkset,
     context: FiniteElementExecutionContext,
     /,
 ) -> Array:
@@ -465,7 +528,7 @@ def _mortar_facet_residual(
 
 
 def _prepared_local_basis(
-    reference, runtime, entity_count: int, /
+    reference: LocalReferenceActions, runtime: object, entity_count: int, /
 ) -> tuple[Array, Array]:
     identity = jnp.broadcast_to(
         jnp.eye(reference.local_width),
@@ -479,9 +542,9 @@ def _prepared_local_basis(
 def _prepared_local_coefficient_values(
     coefficient_: VariationalCoefficient,
     discretization: AbstractPreparedLocalDiscretization,
-    workset,
-    references: dict[str, object],
-    metric,
+    workset: CompiledWorkset,
+    references: dict[str, LocalReferenceActions],
+    metric: LocalMetricResult,
     context: FiniteElementExecutionContext,
     /,
     *,
@@ -492,7 +555,10 @@ def _prepared_local_coefficient_values(
     basis_values = None
     if coefficient_.location == "dof":
         coefficient_field = None
-        for field_name in workset.local_region.field_names:
+        region = workset.local_region
+        # Only prepared-local worksets, whose region the caller checked, reach here.
+        assert region is not None
+        for field_name in region.field_names:
             binding = discretization.local_field_binding(field_name)
             if binding.field_space.field_space_id == coefficient_.field_space_id:
                 coefficient_field = field_name
@@ -524,9 +590,9 @@ def _prepared_local_coefficient_values(
 
 
 def _prepared_local_volume_residual(
-    action,
+    action: FiniteElementAction,
     discretization: AbstractPreparedLocalDiscretization,
-    workset,
+    workset: CompiledWorkset,
     state_by_field: dict[str, Array],
     context: FiniteElementExecutionContext,
     /,
@@ -549,7 +615,7 @@ def _prepared_local_volume_residual(
     reference = references[output_field]
     physical_weights = metric.physical_weights
 
-    def weighted(values, scalar_weight):
+    def weighted(values: Array, scalar_weight: Array) -> Array:
         return values * scalar_weight.reshape(
             scalar_weight.shape + (1,) * (values.ndim - scalar_weight.ndim)
         )
@@ -679,7 +745,7 @@ def _prepared_local_volume_residual(
             )
     elif isinstance(action, CellEnergyAction):
 
-        def energy(local_coefficients):
+        def energy(local_coefficients: Array) -> Array:
             values = reference.interpolate(context.runtime, local_coefficients)
             reference_gradient = reference.reference_gradient(
                 context.runtime, local_coefficients
@@ -731,13 +797,13 @@ def _prepared_local_volume_residual(
 def _prepared_local_functional_value_and_residual(
     action: LocalFunctionalAction,
     discretization: AbstractPreparedLocalDiscretization,
-    workset,
+    workset: CompiledWorkset,
     state_by_field: dict[str, Array],
     context: FiniteElementExecutionContext,
     /,
     *,
     with_residual: bool,
-):
+) -> tuple[Array, tuple[tuple[str, Array, Array], ...]]:
     region = workset.local_region
     if region is None:
         raise ValueError("Prepared functional execution requires a local region.")
@@ -773,7 +839,7 @@ def _prepared_local_functional_value_and_residual(
             )
         normal = metric.normals
 
-    def energy(*coefficients):
+    def energy(*coefficients: Array) -> Array:
         jets = {}
         for specification in action.term.fields:
             field_name = semantic_to_field[specification.field_name]
@@ -839,12 +905,12 @@ def _cell_functional_problem(
     discretization: FiniteElementDiscretization,
     state_by_field: dict[str, Array],
     action: LocalFunctionalAction,
-    workset,
+    workset: CompiledWorkset,
     block_index: int,
     local_cells: Array,
     context: FiniteElementExecutionContext,
     /,
-):
+) -> _CellFunctionalProblem:
     block = discretization.mesh.blocks[block_index]
     rule = _action_rule(action, block.name, block.cell_kind)
     rule_data = _reference_rule_data(rule)
@@ -862,7 +928,7 @@ def _cell_functional_problem(
         geometry = discretization.evaluate_block_geometry(
             field_name,
             block_index,
-            context.runtime.coordinates,
+            _runtime_coordinates(context),
             rule_data.points,
             rule_data.weights,
         )
@@ -878,7 +944,7 @@ def _cell_functional_problem(
             basis = basis[local_cells]
         points = geometry.physical_points[local_cells]
         weights = geometry.physical_weights[local_cells]
-        if physical_points is None:
+        if physical_points is None or physical_weights is None:
             physical_points = points
             physical_weights = weights
         elif (
@@ -905,7 +971,7 @@ def _cell_functional_problem(
     )
     valid = jnp.asarray(workset.valid)
 
-    def energy(*coefficients):
+    def energy(*coefficients: Array) -> Array:
         jets = {}
         for specification in action.term.fields:
             field_name = semantic_to_field[specification.field_name]
@@ -984,11 +1050,11 @@ def _accumulate_cell_functional_residual(
     state_by_field: dict[str, Array],
     residual_by_field: dict[str, Array],
     action: LocalFunctionalAction,
-    workset,
+    workset: CompiledWorkset,
     block_index: int,
     local_cells: Array,
     context: FiniteElementExecutionContext,
-    accumulation: str,
+    accumulation: RelationAccumulation,
     /,
 ) -> Array:
     energy, local_inputs, local_dofs, orientations, input_indices = (
@@ -1036,13 +1102,13 @@ def _exterior_functional_value(
     discretization: FiniteElementDiscretization,
     state_by_field: dict[str, Array],
     action: LocalFunctionalAction,
-    workset,
+    workset: CompiledWorkset,
     domain: IntegrationDomain,
     context: FiniteElementExecutionContext,
     /,
     *,
     residual_by_field: dict[str, Array] | None = None,
-    accumulation: str = "fast",
+    accumulation: RelationAccumulation = "fast",
 ) -> Array:
     connectivity = discretization.mesh.connectivity
     if not isinstance(connectivity, PolygonalConnectivity):
@@ -1065,7 +1131,7 @@ def _exterior_functional_value(
     owner_local = jnp.asarray(domain.owner_local_entities, dtype=jnp.int32)
     signs = jnp.asarray(connectivity.cell_edge_signs)
     owner_sign = signs[owners, owner_local]
-    edge_points = context.runtime.coordinates[jnp.asarray(connectivity.edges)[facets]]
+    edge_points = _runtime_coordinates(context)[jnp.asarray(connectivity.edges)[facets]]
     parameter = data.points[:, 0]
     physical_points = (1.0 - parameter)[None, :, None] * edge_points[
         :, None, 0, :
@@ -1075,7 +1141,7 @@ def _exterior_functional_value(
     if action.term.normal:
         normal = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
         normal = normal / measure[:, None]
-        centers = jnp.mean(context.runtime.coordinates[block.vertices], axis=1)
+        centers = jnp.mean(_runtime_coordinates(context)[block.vertices], axis=1)
         midpoint = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
         outward = jnp.sum(normal * (midpoint - centers[local_owners]), axis=-1)
         normal = jnp.where((outward < 0.0)[:, None], -normal, normal)
@@ -1123,7 +1189,7 @@ def _exterior_functional_value(
                 geometry = discretization.evaluate_block_geometry(
                     field_name,
                     block_index,
-                    context.runtime.coordinates,
+                    _runtime_coordinates(context),
                     reference_points,
                     jnp.ones_like(data.weights),
                 )
@@ -1146,7 +1212,7 @@ def _exterior_functional_value(
         orientations.append(orientation)
         selected_bases.append(selected_basis)
 
-    def energy(*coefficients):
+    def energy(*coefficients: Array) -> Array:
         jets = {}
         for specification in action.term.fields:
             field_name = semantic_to_field[specification.field_name]
@@ -1206,10 +1272,10 @@ def _exterior_functional_value(
 def _accumulate_finite_element_workset(
     form: FiniteElementForm,
     discretization: AbstractPreparedLocalDiscretization,
-    workset,
+    workset: CompiledWorkset,
     state_by_field: dict[str, Array],
     residual_by_field: dict[str, Array],
-    accumulation: str,
+    accumulation: RelationAccumulation,
     context: FiniteElementExecutionContext,
     block_names: tuple[str, ...],
     cell_offsets: np.ndarray,
@@ -1363,7 +1429,6 @@ def _accumulate_finite_element_workset(
                     output_field_index,
                     output_state,
                     action,
-                    workset,
                     domain,
                     context,
                     accumulation,
@@ -1401,7 +1466,6 @@ def _accumulate_finite_element_workset(
                     output_field_index,
                     output_state,
                     action,
-                    workset,
                     domain,
                     context,
                     accumulation,
@@ -1415,7 +1479,7 @@ def _accumulate_finite_element_workset(
             output_geometry = discretization.evaluate_block_geometry(
                 output_field,
                 block_index,
-                context.runtime.coordinates,
+                _runtime_coordinates(context),
                 rule_data.points,
                 rule_data.weights,
             )
@@ -1432,7 +1496,7 @@ def _accumulate_finite_element_workset(
                 block_index,
                 local_cells,
                 reference,
-                context.runtime.coordinates,
+                _runtime_coordinates(context),
             )
             physical_points = metric.physical_points
             factorized_without_test_gradients = workset.signature.local_kernel in (
@@ -1511,15 +1575,15 @@ def _accumulate_finite_element_workset(
                 reference_gradient = _tensor_gradient(plan, local_state)
                 qshape = plan.tabulation.evaluation_shape
                 inverse_jacobian = metric.inverse_jacobian.reshape(
-                    (local_state.shape[0])
+                    (local_state.shape[0],)
                     + qshape
                     + (plan.tabulation.dimension, dimension)
                 )
                 tensor_grid = tensor.reshape(
-                    (local_state.shape[0]) + qshape + (dimension, dimension)
+                    (local_state.shape[0],) + qshape + (dimension, dimension)
                 )
                 weighted_measure = metric.weighted_measure.reshape(
-                    (local_state.shape[0]) + qshape
+                    (local_state.shape[0],) + qshape
                 )
                 reference_tensor = ein.contract(
                     "...rd,...de,...se,...->...rs",
@@ -1693,7 +1757,7 @@ def _accumulate_finite_element_workset(
                 input_geometry = discretization.evaluate_block_geometry(
                     input_field,
                     block_index,
-                    context.runtime.coordinates,
+                    _runtime_coordinates(context),
                     rule_data.points,
                     rule_data.weights,
                 )
@@ -1772,7 +1836,7 @@ def _accumulate_finite_element_workset(
                     )
                 )
 
-                def energy(local_coefficients):
+                def energy(local_coefficients: Array) -> Array:
                     values_grid = _tensor_forward(plan, local_coefficients)
                     reference_gradient = _tensor_gradient(plan, local_coefficients)
                     physical_gradient = ein.contract(
@@ -1812,7 +1876,7 @@ def _accumulate_finite_element_workset(
 
             else:
 
-                def energy(local_coefficients):
+                def energy(local_coefficients: Array) -> Array:
                     if basis_values.ndim == 2:
                         values_ = ein.contract(
                             "qi,ci...->cq...",
@@ -1899,7 +1963,7 @@ def _full_residual(
     discretization: AbstractPreparedLocalDiscretization,
     workset_program: WorksetProgram,
     state: Array | tuple[Array, ...],
-    accumulation: str,
+    accumulation: RelationAccumulation,
     context: FiniteElementExecutionContext,
     /,
 ) -> Array | tuple[Array, ...]:
@@ -1992,11 +2056,15 @@ def _localize_facet(values: Array, permutations: Array, /) -> Array:
 
 
 def _facet_point_permutations(
-    connectivity,
-    workset,
+    connectivity: IntervalConnectivity
+    | PolygonalConnectivity
+    | TetrahedralConnectivity
+    | HexahedralConnectivity
+    | PolyhedralConnectivity,
+    workset: CompiledWorkset,
     cells: Array,
     local_facet: int,
-    facet_reference,
+    facet_reference: FiniteElementFacetReference,
     /,
     *,
     neighbor: bool,
@@ -2068,8 +2136,8 @@ def _facet_point_permutations(
 
 def _certified_facet_geometry(
     metrics: MappedTensorMetrics,
-    reference,
-    facet,
+    reference: PreparedFiniteElementReference,
+    facet: FiniteElementFacetReference,
     cells: Array,
     local_facet: int,
     /,
@@ -2106,14 +2174,14 @@ def _prepared_facet_side(
     discretization: FiniteElementDiscretization,
     field_index: int,
     state: Array | None,
-    workset,
+    workset: CompiledWorkset,
     cells: Array,
     local_facet: int,
     context: FiniteElementExecutionContext,
     /,
     *,
     neighbor: bool,
-):
+) -> _PreparedFacetSide:
     block_names = tuple(block.name for block in discretization.mesh.blocks)
     block_name = (
         workset.signature.neighbor_block_name
@@ -2149,7 +2217,7 @@ def _prepared_facet_side(
         metric = FiniteElementMetricData(
             coordinate_basis,
             coordinate_gradients,
-            context.runtime.coordinates[coordinate_routes],
+            _runtime_coordinates(context)[coordinate_routes],
             facet.weights,
         )
         facet_metric = FiniteElementFacetMetricData(
@@ -2195,9 +2263,9 @@ def _prepared_tensor_facet_residual(
     state_by_field: dict[str, Array],
     output_field: str,
     action: InteriorFacetAction | ExteriorFacetAction,
-    workset,
+    workset: CompiledWorkset,
     context: FiniteElementExecutionContext,
-    accumulation: str,
+    accumulation: RelationAccumulation,
     /,
 ) -> Array:
     reference = workset.reference
@@ -2246,11 +2314,11 @@ def _prepared_tensor_facet_residual(
     output_component_shape = output_state.shape[1:]
     output_trace_shape = (count, point_count) + output_component_shape
     physical_points = jnp.zeros(
-        (count, point_count, context.runtime.coordinates.shape[-1]),
-        dtype=context.runtime.coordinates.dtype,
+        (count, point_count, _runtime_coordinates(context).shape[-1]),
+        dtype=_runtime_coordinates(context).dtype,
     )
     physical_weights = jnp.zeros(
-        (count, point_count), dtype=context.runtime.coordinates.dtype
+        (count, point_count), dtype=_runtime_coordinates(context).dtype
     )
     normal = jnp.zeros_like(physical_points)
     plus_sides = []
@@ -2307,7 +2375,10 @@ def _prepared_tensor_facet_residual(
             )
             active = valid & (local_entities == local_facet)
             mask = active.reshape((count, 1) + (1,) * len(component_shape))
-            values = jnp.where(mask, side[4], values)
+            trace = side[4]
+            # A side built from a supplied state always carries its trace.
+            assert trace is not None
+            values = jnp.where(mask, trace, values)
         return values
 
     plus_values = tuple(traces(field) for field in action.input_field_names)
@@ -2397,7 +2468,7 @@ def _sipg_facet_residual(
     action: SIPGFacetAction,
     domain: IntegrationDomain,
     context: FiniteElementExecutionContext,
-    accumulation: str,
+    accumulation: RelationAccumulation,
     /,
 ) -> Array:
     connectivity = discretization.mesh.connectivity
@@ -2428,7 +2499,7 @@ def _sipg_facet_residual(
     safe_neighbors = jnp.maximum(neighbors, 0)
     neighbor_sign = edge_signs[safe_neighbors, jnp.maximum(neighbor_local, 0)]
     edge_vertices = jnp.asarray(connectivity.edges, dtype=jnp.int32)[facets]
-    edge_points = context.runtime.coordinates[edge_vertices]
+    edge_points = _runtime_coordinates(context)[edge_vertices]
     parameter = rule_data.points[:, 0]
     physical_points = (1.0 - parameter)[None, :, None] * edge_points[
         :, None, 0, :
@@ -2443,7 +2514,7 @@ def _sipg_facet_residual(
     normal = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
     normal = normal / facet_measure[:, None]
     cell_centers = jnp.mean(
-        context.runtime.coordinates[block.vertices],
+        _runtime_coordinates(context)[block.vertices],
         axis=1,
     )
     midpoint = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
@@ -2461,7 +2532,7 @@ def _sipg_facet_residual(
     cell_geometry = discretization.evaluate_block_geometry(
         _action_output_fields(action)[0],
         0,
-        context.runtime.coordinates,
+        _runtime_coordinates(context),
         discretization.block_geometries[field_index][0].reference_points,
         discretization.block_geometries[field_index][0].reference_weights,
     )
@@ -2491,7 +2562,9 @@ def _sipg_facet_residual(
         "SIPG diffusivity must be positive and finite.",
     )
 
-    def side_data(local_facet: int, orientation: float, cells: Array):
+    def side_data(
+        local_facet: int, orientation: float, cells: Array
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         reference_points = _polygon_side_points(
             block.cell_kind,
             local_facet,
@@ -2501,7 +2574,7 @@ def _sipg_facet_residual(
         geometry = discretization.evaluate_block_geometry(
             _action_output_fields(action)[0],
             0,
-            context.runtime.coordinates,
+            _runtime_coordinates(context),
             reference_points,
             jnp.ones_like(rule_data.weights),
         )
@@ -2728,7 +2801,7 @@ def _cell_local_interior_facet_residual(
     action: InteriorFacetAction,
     domain: IntegrationDomain,
     context: FiniteElementExecutionContext,
-    accumulation: str,
+    accumulation: RelationAccumulation,
     /,
 ) -> Array:
     connectivity = discretization.mesh.connectivity
@@ -2754,7 +2827,7 @@ def _cell_local_interior_facet_residual(
     owner_sign = signs[owners, owner_local]
     neighbor_sign = signs[neighbors, neighbor_local]
     edge_vertices = jnp.asarray(connectivity.edges)[facets]
-    edge_points = context.runtime.coordinates[edge_vertices]
+    edge_points = _runtime_coordinates(context)[edge_vertices]
     parameter = data.points[:, 0]
     physical_points = (1.0 - parameter)[None, :, None] * edge_points[
         :, None, 0, :
@@ -2763,13 +2836,15 @@ def _cell_local_interior_facet_residual(
     measure = jnp.sqrt(jnp.sum(tangent**2, axis=-1))
     normal = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
     normal = normal / measure[:, None]
-    centers = jnp.mean(context.runtime.coordinates[block.vertices], axis=1)
+    centers = jnp.mean(_runtime_coordinates(context)[block.vertices], axis=1)
     midpoint = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
     outward = jnp.sum(normal * (midpoint - centers[owners]), axis=-1)
     normal = jnp.where((outward < 0.0)[:, None], -normal, normal)
     weights = measure[:, None] * data.weights[None, :]
 
-    def side_data(local_facet: int, orientation: float, cells: Array):
+    def side_data(
+        local_facet: int, orientation: float, cells: Array
+    ) -> tuple[Array, Array, Array, Array]:
         points = _polygon_side_points(
             block.cell_kind,
             local_facet,
@@ -2779,7 +2854,7 @@ def _cell_local_interior_facet_residual(
         geometry = discretization.evaluate_block_geometry(
             _action_output_fields(action)[0],
             0,
-            context.runtime.coordinates,
+            _runtime_coordinates(context),
             points,
             jnp.ones_like(data.weights),
         )
@@ -2881,22 +2956,11 @@ def _exterior_facet_residual(
     field_index: int,
     state: Array,
     action: ExteriorFacetAction,
-    workset,
     domain: IntegrationDomain,
     context: FiniteElementExecutionContext,
-    accumulation: str,
+    accumulation: RelationAccumulation,
     /,
 ) -> Array:
-    if workset.reference is not None:
-        return _prepared_tensor_facet_residual(
-            discretization,
-            field_index,
-            state,
-            action,
-            workset,
-            context,
-            accumulation,
-        )
     connectivity = discretization.mesh.connectivity
     dof_map = discretization.dof_maps[field_index]
     if (
@@ -2915,7 +2979,7 @@ def _exterior_facet_residual(
     owner_local = jnp.asarray(domain.owner_local_entities, dtype=jnp.int32)
     signs = jnp.asarray(connectivity.cell_edge_signs)
     owner_sign = signs[owners, owner_local]
-    edge_points = context.runtime.coordinates[jnp.asarray(connectivity.edges)[facets]]
+    edge_points = _runtime_coordinates(context)[jnp.asarray(connectivity.edges)[facets]]
     parameter = data.points[:, 0]
     physical_points = (1.0 - parameter)[None, :, None] * edge_points[
         :, None, 0, :
@@ -2924,7 +2988,7 @@ def _exterior_facet_residual(
     measure = jnp.sqrt(jnp.sum(tangent**2, axis=-1))
     normal = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
     normal = normal / measure[:, None]
-    centers = jnp.mean(context.runtime.coordinates[block.vertices], axis=1)
+    centers = jnp.mean(_runtime_coordinates(context)[block.vertices], axis=1)
     midpoint = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
     outward = jnp.sum(normal * (midpoint - centers[owners]), axis=-1)
     normal = jnp.where((outward < 0.0)[:, None], -normal, normal)
@@ -2942,7 +3006,7 @@ def _exterior_facet_residual(
             geometry = discretization.evaluate_block_geometry(
                 _action_output_fields(action)[0],
                 0,
-                context.runtime.coordinates,
+                _runtime_coordinates(context),
                 points,
                 jnp.ones_like(data.weights),
             )
@@ -2990,22 +3054,11 @@ def _interior_facet_residual(
     field_index: int,
     state: Array,
     action: InteriorFacetAction,
-    workset,
     domain: IntegrationDomain,
     context: FiniteElementExecutionContext,
-    accumulation: str,
+    accumulation: RelationAccumulation,
     /,
 ) -> Array:
-    if workset.reference is not None:
-        return _prepared_tensor_facet_residual(
-            discretization,
-            field_index,
-            state,
-            action,
-            workset,
-            context,
-            accumulation,
-        )
     connectivity = discretization.mesh.connectivity
     facets = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
     owners = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
@@ -3030,7 +3083,7 @@ def _interior_facet_residual(
         if data.cell != "interval":
             raise ValueError("Polygon interior facets require an interval rule.")
         edge_vertices = jnp.asarray(connectivity.edges)[facets]
-        edge_points = context.runtime.coordinates[edge_vertices]
+        edge_points = _runtime_coordinates(context)[edge_vertices]
         parameter = data.points[:, 0]
         physical_points = (1.0 - parameter)[None, :, None] * edge_points[
             :, None, 0, :
@@ -3042,7 +3095,7 @@ def _interior_facet_residual(
         cell_centers = jnp.concatenate(
             tuple(
                 jnp.mean(
-                    context.runtime.coordinates[block.vertices],
+                    _runtime_coordinates(context)[block.vertices],
                     axis=1,
                 )
                 for block in discretization.mesh.blocks
@@ -3081,7 +3134,7 @@ def _interior_facet_residual(
     elif isinstance(connectivity, TetrahedralConnectivity):
         data = _reference_rule_data(_triangle_rule())
         face_vertices = jnp.asarray(connectivity.faces)[facets]
-        face_points = context.runtime.coordinates[face_vertices]
+        face_points = _runtime_coordinates(context)[face_vertices]
         first = data.points[:, 0]
         second = data.points[:, 1]
         trace_basis = jnp.stack((1.0 - first - second, first, second), axis=-1)
@@ -3137,9 +3190,9 @@ def _prepared_tensor_boundary_load(
     field_index: int,
     state: Array,
     action: BoundaryLoadAction,
-    workset,
+    workset: CompiledWorkset,
     context: FiniteElementExecutionContext,
-    accumulation: str,
+    accumulation: RelationAccumulation,
     /,
 ) -> Array:
     reference = workset.reference
@@ -3152,11 +3205,11 @@ def _prepared_tensor_boundary_load(
     point_count = reference.facets[0].points.shape[0]
     component_shape = state.shape[1:]
     physical_points = jnp.zeros(
-        (count, point_count, context.runtime.coordinates.shape[-1]),
-        dtype=context.runtime.coordinates.dtype,
+        (count, point_count, _runtime_coordinates(context).shape[-1]),
+        dtype=_runtime_coordinates(context).dtype,
     )
     physical_weights = jnp.zeros(
-        (count, point_count), dtype=context.runtime.coordinates.dtype
+        (count, point_count), dtype=_runtime_coordinates(context).dtype
     )
     sides = []
     for local_facet in range(len(reference.facets)):
@@ -3219,7 +3272,7 @@ def _boundary_load(
     owner_cells = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
     field_shape = discretization.field_spaces[field_index].vector_space.structure().shape
     component_shape = field_shape[1:]
-    result = jnp.zeros(field_shape, dtype=context.runtime.coordinates.dtype)
+    result = jnp.zeros(field_shape, dtype=_runtime_coordinates(context).dtype)
     rule_bindings = dict(action.rules)
     cell_start = 0
     for block in discretization.mesh.blocks:
@@ -3238,7 +3291,7 @@ def _boundary_load(
             if data.cell != "interval":
                 raise ValueError("Polygon boundary terms require an interval rule.")
             edge_vertices = jnp.asarray(connectivity.edges)[facet_indices]
-            edge_points = context.runtime.coordinates[edge_vertices]
+            edge_points = _runtime_coordinates(context)[edge_vertices]
             parameter = data.points[:, 0]
             physical_points = (1.0 - parameter)[None, :, None] * edge_points[
                 :, None, 0, :
@@ -3270,7 +3323,7 @@ def _boundary_load(
             if data.cell != "triangle":
                 raise ValueError("Tetrahedron boundary terms require a triangle rule.")
             face_vertices = jnp.asarray(connectivity.faces)[facet_indices]
-            face_points = context.runtime.coordinates[face_vertices]
+            face_points = _runtime_coordinates(context)[face_vertices]
             first = data.points[:, 0]
             second = data.points[:, 1]
             basis = jnp.stack((1.0 - first - second, first, second), axis=-1)
@@ -3314,11 +3367,12 @@ def _execute_finite_element_functional(
     context: FiniteElementExecutionContext,
     /,
     *,
-    accumulation: str | None,
-):
-    if form.functional is None or not all(
-        isinstance(action, LocalFunctionalAction) for action in form.actions
-    ):
+    accumulation: RelationAccumulation | None,
+) -> _FunctionalEvaluation:
+    functional_actions = tuple(
+        action for action in form.actions if isinstance(action, LocalFunctionalAction)
+    )
+    if form.functional is None or len(functional_actions) != len(form.actions):
         raise ValueError("Finite-element form is not generated by one functional.")
     states = state if isinstance(state, tuple) else (state,)
     if len(states) != len(form.field_names):
@@ -3354,7 +3408,7 @@ def _execute_finite_element_functional(
     for workset in workset_program.worksets:
         if workset.local_region is not None:
             for raw_action_index in workset.action_index_values:
-                action = form.actions[raw_action_index]
+                action = functional_actions[raw_action_index]
                 contribution, blocks = _prepared_local_functional_value_and_residual(
                     action,
                     discretization,
@@ -3363,7 +3417,7 @@ def _execute_finite_element_functional(
                     context,
                     with_residual=residual_by_field is not None,
                 )
-                if residual_by_field is not None:
+                if residual_by_field is not None and accumulation is not None:
                     for output_field, dofs, local in blocks:
                         residual_by_field[output_field] = _scatter_local(
                             residual_by_field[output_field],
@@ -3383,7 +3437,7 @@ def _execute_finite_element_functional(
         work_cells = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
         local_cells = work_cells - int(cell_offsets[block_index])
         for raw_action_index in workset.action_index_values:
-            action = form.actions[raw_action_index]
+            action = functional_actions[raw_action_index]
             domain = (
                 _action_domain(action, discretization)
                 if len(discretization.mesh.blocks) == 1
@@ -3394,7 +3448,7 @@ def _execute_finite_element_functional(
                 )
             )
             if domain.kind == "cell":
-                if residual_by_field is None:
+                if residual_by_field is None or accumulation is None:
                     energy, local_inputs, _, _, _ = _cell_functional_problem(
                         discretization,
                         state_by_field,
@@ -3470,12 +3524,12 @@ def execute_finite_element_value_and_residual(
     form: FiniteElementForm,
     discretization: AbstractPreparedLocalDiscretization,
     state: Array | tuple[Array, ...],
-    accumulation: str,
+    accumulation: RelationAccumulation,
     context: FiniteElementExecutionContext,
     /,
-):
+) -> tuple[Array, tuple[Array, ...], Array | tuple[Array, ...]]:
     """Evaluate one functional and all full-space variations in one local pass."""
-    return _execute_finite_element_functional(
+    value, term_values, residual = _execute_finite_element_functional(
         workset_program,
         form,
         discretization,
@@ -3483,6 +3537,9 @@ def execute_finite_element_value_and_residual(
         context,
         accumulation=accumulation,
     )
+    # A non-None accumulation always assembles the residual.
+    assert residual is not None
+    return value, term_values, residual
 
 
 def execute_finite_element_residual(
@@ -3492,7 +3549,7 @@ def execute_finite_element_residual(
     kernel_table: KernelTable,
     discretization: AbstractPreparedLocalDiscretization,
     state: Array | tuple[Array, ...],
-    accumulation: str,
+    accumulation: RelationAccumulation,
     context: FiniteElementExecutionContext,
     /,
 ) -> Array | tuple[Array, ...]:

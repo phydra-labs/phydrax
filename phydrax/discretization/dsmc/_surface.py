@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,6 +16,12 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._core import DSMCParticleState, DSMCSpeciesPlan
+
+
+# particle index, outward normal, PRNG key
+_SurfaceEvent: TypeAlias = tuple[Array, Array, Array]
+# reacted, mass to surface, absorbed, momentum to surface, energy to surface, finite
+_SurfaceEventDiagnostics: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class DSMCSurfaceReactionPlan(StrictModule, NonTrainableState):
@@ -179,7 +185,7 @@ class DSMCSurfaceInteractionPlan(StrictModule, NonTrainableState):
         state: DSMCParticleState,
         particle_indices: ArrayLike,
         outward_normals: ArrayLike,
-        keys: ArrayLike,
+        keys: Array,
         /,
     ) -> DSMCSurfaceResult:
         indices = jnp.asarray(particle_indices, dtype=jnp.int32)
@@ -197,7 +203,9 @@ class DSMCSurfaceInteractionPlan(StrictModule, NonTrainableState):
                 "DSMC surface indices, normals, keys, or dimension are invalid."
             )
 
-        def body(particles, event):
+        def body(
+            particles: DSMCParticleState, event: _SurfaceEvent
+        ) -> tuple[DSMCParticleState, _SurfaceEventDiagnostics]:
             index, normal, key = event
             safe_index = jnp.clip(index, 0, particles.capacity - 1)
             valid = (

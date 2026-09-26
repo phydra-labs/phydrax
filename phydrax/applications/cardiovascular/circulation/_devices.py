@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import IntFlag
 from math import isfinite, pi
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,11 +25,16 @@ from ....dynamics import (
     DAEComponent,
     DAEDerivativeIncidence,
     DAEEquationBlock,
+    DAEJet,
     DAEPort,
     DAEVariableBlock,
 )
 from ._components import PressureFlowComponent
 from ._oxygen import exchange_membrane_oxygen, MembraneOxygenatorModel
+
+
+# Per-sample controller outputs stacked by jax.lax.scan during replay.
+_ReplayOutputs: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class PumpMapStatus(IntFlag):
@@ -410,7 +416,9 @@ def replay_pacemaker_controller(
     if times.ndim != 1 or sensed.shape != times.shape:
         raise ValueError("Pacemaker replay arrays must be equal one-dimensional shapes.")
 
-    def transition(state, sample):
+    def transition(
+        state: PacemakerControllerState, sample: tuple[Array, Array]
+    ) -> tuple[PacemakerControllerState, _ReplayOutputs]:
         time, sensed_now = sample
         result = step_pacemaker_controller(plan, state, time, sensed_now)
         return result.state, (
@@ -688,7 +696,9 @@ def replay_pump_controller(
     if times.ndim != 1 or measured.shape != times.shape or setpoint.shape != times.shape:
         raise ValueError("Pump replay arrays must have equal one-dimensional shapes.")
 
-    def transition(state, sample):
+    def transition(
+        state: PumpControllerState, sample: tuple[Array, Array, Array]
+    ) -> tuple[PumpControllerState, _ReplayOutputs]:
         result = step_pump_controller(plan, state, sample[0], sample[1], sample[2])
         return result.state, (
             result.speed_command_rpm,
@@ -924,7 +934,7 @@ class HydraulicOxygenator(StrictModule, NonTrainableState):
 
 
 class _FlowConservationResidual(StrictModule):
-    def __call__(self, time: Array, jet, args, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         return jet.value("flow_in") - jet.value("flow_out")
 
@@ -933,7 +943,7 @@ class _HydraulicDropResidual(StrictModule):
     linear_resistance: Array
     quadratic_loss: Array
 
-    def __call__(self, time: Array, jet, args, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         flow = jet.value("flow_out")
         return (
@@ -948,7 +958,7 @@ class _PumpHeadResidual(StrictModule):
     pump_map: PumpHeadFlowMap
     speed_rpm: Array
 
-    def __call__(self, time: Array, jet, args, /) -> Array:
+    def __call__(self, time: Array, jet: DAEJet, args: Any, /) -> Array:
         del time, args
         result = evaluate_pump_map(self.pump_map, jet.value("flow_out"), self.speed_rpm)
         return jet.value("pressure_out") - jet.value("pressure_in") - result.head_kPa
@@ -1184,7 +1194,7 @@ def solve_ecmo_hydraulics(
     minimum_flow = plan.pump_map.flow_axis_mm3_per_ms[0]
     maximum_flow = plan.pump_map.flow_axis_mm3_per_ms[-1]
 
-    def residual(flow):
+    def residual(flow: Array) -> Array:
         map_result = evaluate_pump_map(plan.pump_map, flow, speed)
         drops = _ecmo_component_drops(plan, flow)
         total_drop = sum(drops, start=jnp.asarray(0.0, dtype=flow.dtype))
@@ -1202,7 +1212,7 @@ def solve_ecmo_hydraulics(
     speed_map_result = evaluate_pump_map(plan.pump_map, minimum_flow, speed)
     bracketed = (lower_residual >= 0.0) & (upper_residual <= 0.0)
 
-    def bisect(_, bracket):
+    def bisect(_: Array, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
         lower, upper = bracket
         middle = 0.5 * (lower + upper)
         middle_residual = residual(middle)

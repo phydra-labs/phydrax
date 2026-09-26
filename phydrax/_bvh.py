@@ -4,11 +4,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
+
+
+# (stack, top, candidates, count, visits, stack_overflow)
+_TraversalCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_BoundedCandidates: TypeAlias = tuple[Array, Array, Array]
 
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
@@ -186,7 +194,7 @@ def refit_packed_bvh_bounds(
     bbox_min = bbox_min.at[leaf_node].set(leaf_min)
     bbox_max = bbox_max.at[leaf_node].set(leaf_max)
 
-    def body(index, bounds):
+    def body(index: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
         current_min, current_max = bounds
         node = node_count - 1 - index
         internal = leaf_id[node] < 0
@@ -244,7 +252,7 @@ def beam_select_nodes(
     nodes = jnp.full((pts.shape[0], B), jnp.int32(-1))
     nodes = nodes.at[:, 0].set(jnp.int32(0))
 
-    def _step(_, nodes):
+    def _step(_: Array, nodes: Array) -> Array:
         valid = nodes >= 0
         safe = jnp.where(valid, nodes, jnp.int32(0))
         is_leaf = valid & (leaf_id[safe] >= 0)
@@ -304,11 +312,11 @@ def beam_select_leaf_items(
 
 
 def _bounded_leaf_candidates(
-    overlaps,
+    overlaps: Callable[[Array, Array], Array],
     bvh: PackedBVH,
     maximum_candidates: int,
     /,
-) -> tuple[Array, Array, Array]:
+) -> _BoundedCandidates:
     capacity = int(maximum_candidates)
     if capacity <= 0:
         raise ValueError("maximum_candidates must be positive.")
@@ -317,10 +325,10 @@ def _bounded_leaf_candidates(
     stack = jnp.full((stack_capacity,), -1, dtype=jnp.int32).at[0].set(0)
     candidates = jnp.full((capacity,), -1, dtype=jnp.int32)
 
-    def visit_leaf(leaf_items, state):
+    def visit_leaf(leaf_items: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
         values, count = state
 
-        def append_item(slot, carry):
+        def append_item(slot: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             current, current_count = carry
             item = leaf_items[slot]
             item_valid = item >= 0
@@ -338,11 +346,11 @@ def _bounded_leaf_candidates(
             (values, count),
         )
 
-    def continue_traversal(state):
+    def continue_traversal(state: _TraversalCarry) -> Array:
         _, top, _, _, visits, stack_overflow = state
         return (top > 0) & (visits < node_count) & ~stack_overflow
 
-    def traverse(state):
+    def traverse(state: _TraversalCarry) -> _TraversalCarry:
         current_stack, top, values, count, visits, stack_overflow = state
         popped_top = top - 1
         node = current_stack[popped_top]
@@ -399,7 +407,12 @@ def _bounded_leaf_candidates(
     return jnp.maximum(candidates, 0), valid, complete
 
 
-def _map_bounded_queries(query, arguments, query_batch_capacity: int, /):
+def _map_bounded_queries(
+    query: Callable[..., _BoundedCandidates],
+    arguments: tuple[Array, ...],
+    query_batch_capacity: int,
+    /,
+) -> _BoundedCandidates:
     count = arguments[0].shape[0]
     capacity = int(query_batch_capacity)
     if capacity <= 0:
@@ -448,7 +461,7 @@ def point_select_leaf_items(
     if isinstance(tolerance, (int, float)) and tolerance < 0.0:
         raise ValueError("tolerance must be non-negative.")
 
-    def query(point):
+    def query(point: Array) -> _BoundedCandidates:
         return _bounded_leaf_candidates(
             lambda lower, upper: jnp.all(
                 (point >= lower - padding) & (point <= upper + padding)
@@ -502,8 +515,13 @@ def ray_select_leaf_items(
         parameter_shape,
     )
 
-    def query(origin, direction, parameter_lower, parameter_upper):
-        def overlaps(lower, upper):
+    def query(
+        origin: Array,
+        direction: Array,
+        parameter_lower: Array,
+        parameter_upper: Array,
+    ) -> _BoundedCandidates:
+        def overlaps(lower: Array, upper: Array) -> Array:
             parallel = jnp.abs(direction) <= jnp.finfo(direction.dtype).tiny
             outside = parallel & ((origin < lower) | (origin > upper))
             inverse = jnp.where(parallel, 1.0, 1.0 / direction)

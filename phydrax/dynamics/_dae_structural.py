@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax
@@ -20,7 +20,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._differential_algebraic import DAEStructure, DifferentialAlgebraicSystem
+from ._differential_algebraic import DAERole, DAEStructure, DifferentialAlgebraicSystem
 from ._layout import InputLayout
 
 
@@ -598,10 +598,19 @@ def _assemble(source: AcausalDAESource, /) -> _Assembly:
             )
         name_map = dict(zip(local_names, global_names, strict=True))
         for equation in component.equations:
+            # The source input layout declares which residual arity every equation uses.
             residual = (
-                _AutonomousComponentResidual(equation.residual, local_names, global_names)
+                _AutonomousComponentResidual(
+                    cast(AutonomousDAEEquationResidual, equation.residual),
+                    local_names,
+                    global_names,
+                )
                 if source.input_layout is None
-                else _InputComponentResidual(equation.residual, local_names, global_names)
+                else _InputComponentResidual(
+                    cast(InputDAEEquationResidual, equation.residual),
+                    local_names,
+                    global_names,
+                )
             )
             assembled = _AssembledEquation(
                 f"{component.name}.{equation.name}",
@@ -1294,13 +1303,15 @@ def compile_acausal_dae(
         if source.input_layout is None
         else _InputReducedResidual(residual_core)
     )
-    variable_roles = []
+    variable_roles: list[DAERole] = []
     for variable in assembly.variables:
-        role = "differential" if variable.maximum_derivative_order > 0 else "algebraic"
+        role: DAERole = (
+            "differential" if variable.maximum_derivative_order > 0 else "algebraic"
+        )
         variable_roles.extend(
             [role] * variable.size * max(variable.maximum_derivative_order, 1)
         )
-    equation_roles = []
+    equation_roles: list[DAERole] = []
     for equation, size in zip(assembly.equations, equation_sizes, strict=True):
         matched = variable_by_name[matching[equation.name]]
         role = "differential" if matched.maximum_derivative_order > 0 else "algebraic"

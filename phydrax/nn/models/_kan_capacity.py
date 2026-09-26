@@ -156,7 +156,9 @@ def _single_grids(
     )
 
 
-def _edge_parameters(parameters: Any, first: int, second: int, /):
+def _edge_parameters(
+    parameters: Any, first: int, second: int, /
+) -> RationalBSplineEdgeParameters | Array:
     if isinstance(parameters, RationalBSplineEdgeParameters):
         return RationalBSplineEdgeParameters(
             parameters.control_values[first, second][None, None, :],
@@ -234,7 +236,7 @@ def _basis_key(edge: _SplineEdge) -> tuple[Any, ...]:
     )
 
 
-def _basis_with_grid(edge: _SplineEdge):
+def _basis_with_grid(edge: _SplineEdge) -> BSplineEdgeBasis | RationalBSplineEdgeBasis:
     basis = edge.basis
     if isinstance(basis, BSplineEdgeBasis):
         return BSplineEdgeBasis(
@@ -389,7 +391,7 @@ def _refine_edge(
     if target is None:
         return None, "inserted spans violate the trainable grid minimum span"
     transfer = BSplineGridTransfer(old_grid, fixed)
-    if edge.basis_kind == "polynomial":
+    if not isinstance(edge.basis, RationalBSplineEdgeBasis):
         coefficients = transfer(jnp.asarray(edge.coefficients))
         norm = float(np.linalg.norm(np.asarray(edge.coefficients)))
         return (
@@ -546,7 +548,7 @@ def _coarsening_transfer(
     if target is None:
         return None
     transfer = BSplineGridTransfer(old_grid, fixed)
-    if edge.basis_kind == "polynomial":
+    if not isinstance(edge.basis, RationalBSplineEdgeBasis):
         coefficients = jnp.asarray(edge.coefficients)
         projected = transfer(coefficients)
         error = _coefficient_projection_error(old_grid, fixed, transfer, coefficients)

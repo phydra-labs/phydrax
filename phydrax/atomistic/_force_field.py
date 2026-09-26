@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,13 +23,15 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import PreparationReport
-from ._classical import LennardJonesPotential
+from ._classical import LennardJonesCombiningRule, LennardJonesPotential
 from ._constraints import DistanceConstraintPlan, PreparedDistanceConstraints
 from ._electrostatics import (
+    ChargeNeutralityPolicy,
     DirectCoulombPotential,
     EwaldReferencePotential,
     ParticleMeshEwaldPotential,
 )
+from ._graph import AtomisticGraphExecutionPlan
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -38,6 +42,10 @@ from ._potential_program import (
     PreparedAtomisticPotentialProgram,
 )
 from ._system import AtomisticSystemPlan, PreparedAtomisticSystem
+
+
+NonbondedElectrostatics: TypeAlias = Literal["direct", "reaction-field", "ewald", "pme"]
+NonbondedDispersion: TypeAlias = Literal["cutoff", "tail-correction", "lj-pme"]
 
 
 class ForceFieldTermKind(StrEnum):
@@ -129,10 +137,10 @@ class AtomisticForceFieldProvenance(StrictModule, NonTrainableState):
 class AtomisticNonbondedPolicy(StrictModule, NonTrainableState):
     cutoff: float = eqx.field(static=True)
     switch_distance: float | None = eqx.field(static=True)
-    combining_rule: str = eqx.field(static=True)
-    electrostatics: str = eqx.field(static=True)
-    dispersion: str = eqx.field(static=True)
-    charge_neutrality: str = eqx.field(static=True)
+    combining_rule: LennardJonesCombiningRule = eqx.field(static=True)
+    electrostatics: NonbondedElectrostatics = eqx.field(static=True)
+    dispersion: NonbondedDispersion = eqx.field(static=True)
+    charge_neutrality: ChargeNeutralityPolicy = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -184,7 +192,13 @@ class AtomisticNonbondedPolicy(StrictModule, NonTrainableState):
         )
 
 
-def _validate_general_term_data(kind, arrays, routes, cutoff, /) -> None:
+def _validate_general_term_data(
+    kind: ForceFieldTermKind,
+    arrays: tuple[ArrayLike, ...],
+    routes: np.ndarray,
+    cutoff: float | None,
+    /,
+) -> None:
     host = tuple(np.asarray(value) for value in arrays)
     route_width = {
         ForceFieldTermKind.HARMONIC_IMPROPER: 4,
@@ -457,7 +471,10 @@ class GeneralForceFieldTerm(AbstractAtomisticEnergyTerm, NonTrainableState):
         if self.kind is ForceFieldTermKind.LENNARD_JONES_PME:
             if system.cell is None or not system.cell.fully_periodic:
                 raise ValueError("Lennard-Jones PME requires a fully periodic cell.")
-            system.cell.require_unique_image(float(self.cutoff))
+            cutoff = self.cutoff
+            if cutoff is None:
+                raise ValueError("Lennard-Jones PME requires a cutoff.")
+            system.cell.require_unique_image(cutoff)
             c6, _, factors, _ = self.arrays
             type_count = (
                 int(np.max(np.asarray(system.coordinate_map.plan.sites.site_type_ids)))
@@ -788,7 +805,15 @@ class PreparedGeneralForceFieldTerm(AbstractPreparedAtomisticEnergyTerm):
         )
 
 
-def _term(kind, arrays, *, routes=None, cutoff=None, name=None, force_group=0):
+def _term(
+    kind: ForceFieldTermKind,
+    arrays: Iterable[ArrayLike],
+    *,
+    routes: ArrayLike | None = None,
+    cutoff: float | None = None,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return GeneralForceFieldTerm(
         kind,
         tuple(arrays),
@@ -800,8 +825,13 @@ def _term(kind, arrays, *, routes=None, cutoff=None, name=None, force_group=0):
 
 
 def HarmonicImproperPotential(
-    stiffness, target, *, routes=None, name=None, force_group=0
-):
+    stiffness: ArrayLike,
+    target: ArrayLike,
+    *,
+    routes: ArrayLike | None = None,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.HARMONIC_IMPROPER,
         (stiffness, target),
@@ -811,7 +841,14 @@ def HarmonicImproperPotential(
     )
 
 
-def UreyBradleyPotential(stiffness, target, routes, *, name=None, force_group=0):
+def UreyBradleyPotential(
+    stiffness: ArrayLike,
+    target: ArrayLike,
+    routes: ArrayLike,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.UREY_BRADLEY,
         (stiffness, target),
@@ -822,8 +859,15 @@ def UreyBradleyPotential(stiffness, target, routes, *, name=None, force_group=0)
 
 
 def PeriodicTorsionSeriesPotential(
-    amplitude, periodicity, phase, mask, routes, *, name=None, force_group=0
-):
+    amplitude: ArrayLike,
+    periodicity: ArrayLike,
+    phase: ArrayLike,
+    mask: ArrayLike,
+    routes: ArrayLike,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.TORSION_SERIES,
         (amplitude, periodicity, phase, mask),
@@ -833,7 +877,13 @@ def PeriodicTorsionSeriesPotential(
     )
 
 
-def RyckaertBellemansPotential(coefficients, routes, *, name=None, force_group=0):
+def RyckaertBellemansPotential(
+    coefficients: ArrayLike,
+    routes: ArrayLike,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.RYCKAERT_BELLEMANS,
         (coefficients,),
@@ -843,7 +893,13 @@ def RyckaertBellemansPotential(coefficients, routes, *, name=None, force_group=0
     )
 
 
-def CMAPPotential(grid, routes, *, name=None, force_group=0):
+def CMAPPotential(
+    grid: ArrayLike,
+    routes: ArrayLike,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.CMAP,
         (grid,),
@@ -854,8 +910,14 @@ def CMAPPotential(grid, routes, *, name=None, force_group=0):
 
 
 def PairOverrideLennardJonesPotential(
-    epsilon, sigma, pair_mask, cutoff, *, name=None, force_group=0
-):
+    epsilon: ArrayLike,
+    sigma: ArrayLike,
+    pair_mask: ArrayLike,
+    cutoff: float,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.PAIR_OVERRIDE,
         (epsilon, sigma, pair_mask),
@@ -865,7 +927,15 @@ def PairOverrideLennardJonesPotential(
     )
 
 
-def MorsePotential(depth, alpha, equilibrium, cutoff, *, name=None, force_group=0):
+def MorsePotential(
+    depth: ArrayLike,
+    alpha: ArrayLike,
+    equilibrium: ArrayLike,
+    cutoff: float,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.MORSE,
         (depth, alpha, equilibrium),
@@ -875,7 +945,15 @@ def MorsePotential(depth, alpha, equilibrium, cutoff, *, name=None, force_group=
     )
 
 
-def BuckinghamPotential(amplitude, decay, c6, cutoff, *, name=None, force_group=0):
+def BuckinghamPotential(
+    amplitude: ArrayLike,
+    decay: ArrayLike,
+    c6: ArrayLike,
+    cutoff: float,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.BUCKINGHAM,
         (amplitude, decay, c6),
@@ -885,7 +963,14 @@ def BuckinghamPotential(amplitude, decay, c6, cutoff, *, name=None, force_group=
     )
 
 
-def TabulatedPairPotential(radii, values, cutoff, *, name=None, force_group=0):
+def TabulatedPairPotential(
+    radii: ArrayLike,
+    values: ArrayLike,
+    cutoff: float,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.TABULATED_PAIR,
         (radii, values),
@@ -895,7 +980,13 @@ def TabulatedPairPotential(radii, values, cutoff, *, name=None, force_group=0):
     )
 
 
-def ReactionFieldPotential(dielectric, cutoff, *, name=None, force_group=0):
+def ReactionFieldPotential(
+    dielectric: ArrayLike,
+    cutoff: float,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.REACTION_FIELD,
         (jnp.asarray(dielectric), jnp.asarray(cutoff)),
@@ -905,7 +996,12 @@ def ReactionFieldPotential(dielectric, cutoff, *, name=None, force_group=0):
     )
 
 
-def LennardJonesDispersionCorrection(coefficient, *, name=None, force_group=0):
+def LennardJonesDispersionCorrection(
+    coefficient: ArrayLike,
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     return _term(
         ForceFieldTermKind.DISPERSION_CORRECTION,
         (jnp.asarray(coefficient),),
@@ -914,7 +1010,15 @@ def LennardJonesDispersionCorrection(coefficient, *, name=None, force_group=0):
     )
 
 
-def LennardJonesPMEPotential(c6, alpha, cutoff, grid_shape, *, name=None, force_group=0):
+def LennardJonesPMEPotential(
+    c6: ArrayLike,
+    alpha: float,
+    cutoff: float,
+    grid_shape: Sequence[int],
+    *,
+    name: str | None = None,
+    force_group: int = 0,
+) -> GeneralForceFieldTerm:
     matrix = np.asarray(c6, dtype=np.float64)
     shape = tuple(grid_shape)
     if (
@@ -1082,7 +1186,11 @@ class AtomisticForceFieldPlan(StrictModule):
         )
 
     def prepare(
-        self, /, *, graph_execution=None, numeric_version: str = "0"
+        self,
+        /,
+        *,
+        graph_execution: AtomisticGraphExecutionPlan | None = None,
+        numeric_version: str = "0",
     ) -> "PreparedAtomisticForceField":
         system = self.system.prepare(numeric_version=numeric_version)
         potential = self.potential.prepare(system, graph_execution=graph_execution)
@@ -1120,7 +1228,15 @@ class PreparedAtomisticForceField(StrictModule):
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan, system, potential, constraints, preparation, /) -> None:
+    def __init__(
+        self,
+        plan: AtomisticForceFieldPlan,
+        system: PreparedAtomisticSystem,
+        potential: PreparedAtomisticPotentialProgram,
+        constraints: PreparedDistanceConstraints | None,
+        preparation: PreparationReport,
+        /,
+    ) -> None:
         self.plan = plan
         self.system = system
         self.potential = potential
@@ -1242,7 +1358,9 @@ class PreparedSETTLE(StrictModule, NonTrainableState):
         pair_index = jnp.arange(3, dtype=jnp.int32)
         solve_plan = la.SmallLinearSolvePlan(3)
 
-        def project_water(water, water_p, water_masses, inverse_mass):
+        def project_water(
+            water: Array, water_p: Array, water_masses: Array, inverse_mass: Array
+        ) -> tuple[Array, Array, Array, Array, Array]:
             total_mass = jnp.sum(water_masses)
             center = jnp.sum(water_masses[:, None] * water, axis=0) / total_mass
             midpoint = 0.5 * (water[1] + water[2])

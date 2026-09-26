@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from phydrax.domain import DomainFunction
 
@@ -19,13 +20,17 @@ from ._validation import (
 )
 
 
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
+
+
 class _StateNormCallable(StrictModule):
     state: DomainFunction
 
     def __init__(self, state: DomainFunction) -> None:
         self.state = state
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         state = validate_vector_value(
             self.state.func(*args, key=key, **kwargs),
             role="quantum state",
@@ -54,7 +59,7 @@ class _StateObservableCallable(StrictModule):
         self.observable_positions = observable_positions
         self.operation = operation
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         state_args = tuple(args[index] for index in self.state_positions)
         observable_args = tuple(args[index] for index in self.observable_positions)
         state = validate_vector_value(
@@ -97,7 +102,7 @@ class _DensityExpectationCallable(StrictModule):
         self.density_positions = density_positions
         self.observable_positions = observable_positions
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         density_args = tuple(args[index] for index in self.density_positions)
         observable_args = tuple(args[index] for index in self.observable_positions)
         density = validate_matrix_value(
@@ -121,7 +126,7 @@ class _DensityFromFactorCallable(StrictModule):
     def __init__(self, factor: DomainFunction) -> None:
         self.factor = factor
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         factor = jnp.asarray(self.factor.func(*args, key=key, **kwargs))
         if factor.ndim != 2 or factor.shape[0] == 0 or factor.shape[1] == 0:
             raise ValueError(

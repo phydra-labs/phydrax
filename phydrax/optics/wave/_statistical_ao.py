@@ -337,19 +337,23 @@ def long_exposure_otf(
     if optical.shape != residual.total_residual_psd.shape:
         raise ValueError("Optical OTF and residual PSD supports must have equal shapes.")
     reference = residual.atmosphere.layers[0].screen
-    requested_axes = tuple(axis * scale for axis in diffraction_limited.frequency_axes)
-    residual_axes = tuple(
+    requested_axes = (
+        diffraction_limited.frequency_axes[0] * scale,
+        diffraction_limited.frequency_axes[1] * scale,
+    )
+    residual_axes = (
         jnp.fft.fftshift(
             jnp.fft.fftfreq(
-                count,
-                d=1.0 / (count * spacing),
+                optical.shape[0],
+                d=1.0 / (optical.shape[0] * reference.spacings[0]),
             )
-        )
-        for count, spacing in zip(
-            optical.shape,
-            reference.spacings,
-            strict=True,
-        )
+        ),
+        jnp.fft.fftshift(
+            jnp.fft.fftfreq(
+                optical.shape[1],
+                d=1.0 / (optical.shape[1] * reference.spacings[1]),
+            )
+        ),
     )
     alignment_errors = jnp.stack(
         tuple(

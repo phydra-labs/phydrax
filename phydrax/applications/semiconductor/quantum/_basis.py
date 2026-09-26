@@ -9,11 +9,14 @@ energies, including reservoir chemical potentials, share ``energy_reference``.
 
 from __future__ import annotations
 
+from typing import Self, TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jaxtyping import Array, ArrayLike
 
 from .... import linalg as la
 from ...._strict import StrictModule
@@ -21,11 +24,15 @@ from ....linalg import eigen
 from .._quantities import _text, BOLTZMANN_CONSTANT_SI as KB, ELEMENTARY_CHARGE_SI as Q
 
 
+if TYPE_CHECKING:
+    from ._effective_mass_nd import DenseHamiltonianND
+
+
 PLANCK = 6.62607015e-34
 HBAR = PLANCK / (2.0 * np.pi)
 
 
-def _array(value, name, *, positive=False):
+def _array(value: npt.ArrayLike, name: str, *, positive: bool = False) -> Array:
     raw = np.asarray(value)
     if np.iscomplexobj(raw):
         raise ValueError(f"{name} must be real for the admitted scalar cell basis.")
@@ -54,13 +61,13 @@ class QuantumResources(StrictModule):
     def __init__(
         self,
         *,
-        max_nodes=4096,
-        max_modes=64,
-        max_bound_states=32,
-        max_evaluations=30000,
-        max_intervals=512,
-        max_eigen_steps=300,
-        workspace_bytes=256 * 1024 * 1024,
+        max_nodes: int = 4096,
+        max_modes: int = 64,
+        max_bound_states: int = 32,
+        max_evaluations: int = 30000,
+        max_intervals: int = 512,
+        max_eigen_steps: int = 300,
+        workspace_bytes: int = 256 * 1024 * 1024,
     ) -> None:
         raw = (
             max_nodes,
@@ -101,7 +108,9 @@ class TransverseModes(StrictModule):
     offsets: Array
     degeneracies: Array
 
-    def __init__(self, offsets=(0.0,), degeneracies=(2.0,)) -> None:
+    def __init__(
+        self, offsets: npt.ArrayLike = (0.0,), degeneracies: npt.ArrayLike = (2.0,)
+    ) -> None:
         offsets_ = _array(offsets, "transverse energies")
         degeneracies_ = _array(degeneracies, "transverse degeneracies", positive=True)
         if (
@@ -115,7 +124,9 @@ class TransverseModes(StrictModule):
         self.offsets = offsets_
         self.degeneracies = degeneracies_
 
-    def occupation(self, energy, mu, temperature):
+    def occupation(
+        self, energy: ArrayLike, mu: ArrayLike, temperature: ArrayLike
+    ) -> Array:
         return jnp.sum(
             self.degeneracies
             * jax.nn.sigmoid(
@@ -124,7 +135,9 @@ class TransverseModes(StrictModule):
             axis=-1,
         )
 
-    def occupied_energy(self, energy, mu, temperature):
+    def occupied_energy(
+        self, energy: ArrayLike, mu: ArrayLike, temperature: ArrayLike
+    ) -> Array:
         total = jnp.asarray(energy)[..., None] + self.offsets
         return jnp.sum(
             total * self.degeneracies * jax.nn.sigmoid((mu - total) / (KB * temperature)),
@@ -148,7 +161,13 @@ class ChainHamiltonian(StrictModule):
     resources: QuantumResources
 
     def __init__(
-        self, diagonal, off_diagonal, cell_volumes, *, energy_reference, resources=None
+        self,
+        diagonal: npt.ArrayLike,
+        off_diagonal: npt.ArrayLike,
+        cell_volumes: npt.ArrayLike,
+        *,
+        energy_reference: str,
+        resources: QuantumResources | None = None,
     ) -> None:
         d = _array(diagonal, "Hamiltonian diagonal")
         o = _array(off_diagonal, "Hamiltonian hopping")
@@ -170,19 +189,21 @@ class ChainHamiltonian(StrictModule):
         self.resources = r
 
     @property
-    def size(self):
+    def size(self) -> int:
         return self.diagonal.size
 
-    def with_potential(self, potential):
+    def with_potential(self, potential: ArrayLike) -> Self:
         psi = jnp.asarray(potential)
         if psi.shape != self.diagonal.shape:
             raise ValueError("Potential must have one value per cell in V.")
         return eqx.tree_at(lambda h: h.diagonal, self, self.diagonal - Q * psi)
 
-    def shifted(self, energy):
+    def shifted(self, energy: ArrayLike) -> Self:
         return eqx.tree_at(lambda h: h.diagonal, self, self.diagonal + energy)
 
-    def operator(self, *, scale=Q, shift=0.0):
+    def operator(
+        self, *, scale: ArrayLike = Q, shift: ArrayLike = 0.0
+    ) -> la.TridiagonalLinearOperator:
         op = la.TridiagonalLinearOperator(
             self.off_diagonal / scale,
             (self.diagonal - shift) / scale,
@@ -197,7 +218,7 @@ class ChainHamiltonian(StrictModule):
             ),
         )
 
-    def density(self, mode_vectors, occupations):
+    def density(self, mode_vectors: Array, occupations: Array) -> Array:
         return (
             jnp.sum(jnp.abs(mode_vectors) ** 2 * occupations[None, :], axis=1)
             / self.cell_volumes
@@ -219,7 +240,14 @@ class EffectiveMass1D(StrictModule):
     base_hamiltonian: ChainHamiltonian
 
     def __init__(
-        self, x, band_edge, mass, *, area, energy_reference, resources=None
+        self,
+        x: npt.ArrayLike,
+        band_edge: npt.ArrayLike,
+        mass: npt.ArrayLike,
+        *,
+        area: npt.ArrayLike,
+        energy_reference: str,
+        resources: QuantumResources | None = None,
     ) -> None:
         x_ = _array(x, "cell centers")
         if x_.ndim != 1 or x_.size < 2:
@@ -253,7 +281,7 @@ class EffectiveMass1D(StrictModule):
             resources=resources,
         )
 
-    def hamiltonian(self, potential):
+    def hamiltonian(self, potential: ArrayLike) -> ChainHamiltonian:
         return self.base_hamiltonian.with_potential(potential)
 
 
@@ -277,7 +305,13 @@ class SchrodingerResult(StrictModule):
     successful: Array
 
 
-def selected_eigenpairs(hamiltonian, count, *, shift=0.0, which="smallest-algebraic"):
+def selected_eigenpairs(
+    hamiltonian: ChainHamiltonian | DenseHamiltonianND,
+    count: int,
+    *,
+    shift: ArrayLike = 0.0,
+    which: eigen.EigenTarget = "smallest-algebraic",
+) -> eigen.EigenSolveResult:
     """Native bounded selected Lanczos solve, in numerically scaled joules."""
     n = hamiltonian.size
     r = hamiltonian.resources
@@ -322,7 +356,7 @@ def selected_eigenpairs(hamiltonian, count, *, shift=0.0, which="smallest-algebr
     )
 
 
-def _sturm_eigenvalue_lower_bound(hamiltonian, index):
+def _sturm_eigenvalue_lower_bound(hamiltonian: ChainHamiltonian, index: int) -> Array:
     """Conservative lower endpoint for one ordered tridiagonal eigenvalue."""
     diagonal = hamiltonian.diagonal / Q
     off_diagonal = hamiltonian.off_diagonal / Q
@@ -334,7 +368,7 @@ def _sturm_eigenvalue_lower_bound(hamiltonian, index):
     scale = jnp.maximum(1.0, jnp.maximum(jnp.max(jnp.abs(diagonal)), jnp.max(radius)))
     pivot_floor = 32 * jnp.finfo(diagonal.dtype).eps * scale
 
-    def count_below(value):
+    def count_below(value: Array) -> Array:
         first = diagonal[0] - value
         first_safe = jnp.where(
             jnp.abs(first) > pivot_floor,
@@ -342,7 +376,9 @@ def _sturm_eigenvalue_lower_bound(hamiltonian, index):
             jnp.where(first < 0, -pivot_floor, pivot_floor),
         )
 
-        def step(carry, data):
+        def step(
+            carry: tuple[Array, Array], data: tuple[Array, Array]
+        ) -> tuple[tuple[Array, Array], None]:
             pivot, count = carry
             diagonal_value, coupling = data
             next_pivot = diagonal_value - value - coupling**2 / pivot
@@ -360,7 +396,7 @@ def _sturm_eigenvalue_lower_bound(hamiltonian, index):
         )
         return count
 
-    def bisect(_, interval):
+    def bisect(_: Array, interval: tuple[Array, Array]) -> tuple[Array, Array]:
         left, right = interval
         middle = 0.5 * (left + right)
         below = count_below(middle)
@@ -377,14 +413,14 @@ def _sturm_eigenvalue_lower_bound(hamiltonian, index):
 
 
 def solve_schrodinger(
-    hamiltonian,
-    chemical_potential,
-    temperature,
+    hamiltonian: ChainHamiltonian | DenseHamiltonianND,
+    chemical_potential: npt.ArrayLike,
+    temperature: npt.ArrayLike,
     *,
-    count,
-    transverse=None,
-    omitted_particle_tolerance=1e-8,
-):
+    count: int | np.integer,
+    transverse: TransverseModes | None = None,
+    omitted_particle_tolerance: float = 1e-8,
+) -> SchrodingerResult:
     """Occupied modes with a conservative finite-basis population bound.
 
     A tridiagonal Sturm count brackets the first omitted eigenvalue from below.
@@ -416,10 +452,15 @@ def solve_schrodinger(
     occupations = modes.occupation(energies, chemical_potential_, temperature_)
     if retained == hamiltonian.size:
         omitted = jnp.asarray(0.0, dtype=energies.dtype)
-    else:
+    elif isinstance(hamiltonian, ChainHamiltonian):
         omitted_energy = _sturm_eigenvalue_lower_bound(hamiltonian, retained)
         omitted = (hamiltonian.size - retained) * modes.occupation(
             omitted_energy, chemical_potential_, temperature_
+        )
+    else:
+        raise ValueError(
+            "DenseHamiltonianND confinement requires the complete declared finite "
+            "basis; count must equal hamiltonian.size."
         )
     density = hamiltonian.density(vectors, occupations)
     energy_density = hamiltonian.density(

@@ -233,7 +233,9 @@ def _evaluate_jacobi_fraction(
     )
     capacity = diagonal.size
 
-    def step(offset, current):
+    def step(
+        offset: Array, current: tuple[Array, Array, Array]
+    ) -> tuple[Array, Array, Array]:
         value, singular, healthy = current
         index = capacity - 1 - offset
         active = index < effective_dimension

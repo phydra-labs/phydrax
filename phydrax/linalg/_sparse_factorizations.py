@@ -13,6 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -206,7 +208,9 @@ class PreparedSparseFactorization(StrictModule):
         statuses = self.status.reshape((batch_count,))
         right_hand_sides = rhs.reshape((batch_count, size, rhs.shape[-1]))
 
-        def solve_one(factor_values, factor_status, value):
+        def solve_one(
+            factor_values: Array, factor_status: Array, value: Array
+        ) -> tuple[Array, Array, Array, Array]:
             permuted_rhs = value[self.plan.permutation]
             lower_values = factor_values[self.plan.lower_positions]
             if self.plan.kind == "lu":
@@ -502,7 +506,7 @@ def _triangular_pattern(
     rows: list[dict[int, int]],
     combined_positions: dict[tuple[int, int], int],
     triangle: Literal["lower", "upper"],
-    index_dtype,
+    index_dtype: DTypeLike,
     /,
     *,
     unit_diagonal: bool,
@@ -740,10 +744,14 @@ def refresh_sparse_factorization(
 
     routed = isinstance(operator, (SparseCoordinateOperator, SparseLinearMap))
     traced_routes = routed and any(
-        isinstance(leaf, jax.core.Tracer)
+        isinstance(leaf, jax_core.Tracer)
         for leaf in jax.tree_util.tree_leaves(operator.relation)
     )
-    if traced_routes and plan.storage_plan is not None:
+    if (
+        isinstance(operator, (SparseCoordinateOperator, SparseLinearMap))
+        and traced_routes
+        and plan.storage_plan is not None
+    ):
         storage = plan.storage_plan.apply(
             operator.coefficients, relation=operator.relation
         )
@@ -780,7 +788,9 @@ def refresh_sparse_factorization_values(
     if not jnp.issubdtype(numeric_values.dtype, jnp.inexact):
         raise TypeError("Sparse factorization values must have an inexact dtype.")
 
-    def factor_one(input_values):
+    def factor_one(
+        input_values: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
         safe_input = jnp.maximum(plan.input_positions, 0)
         gathered = input_values[safe_input]
         gathered = jnp.where(plan.input_conjugate, jnp.conj(gathered), gathered)
@@ -798,7 +808,9 @@ def refresh_sparse_factorization_values(
             jnp.asarray(jnp.inf, dtype=values.real.dtype),
         )
 
-        def factor_step(pivot_index, carry):
+        def factor_step(
+            pivot_index: Array, carry: tuple[Array, Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array, Array]:
             current, status, replaced, dropped, minimum_pivot = carry
             if (
                 plan.policy.drop_tolerance > 0.0

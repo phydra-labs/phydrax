@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -168,17 +170,19 @@ class FrequencyDomainEMPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _operator(self, angular_frequency: Array, material: ConductiveEMMaterial):
+    def _operator(
+        self, angular_frequency: Array, material: ConductiveEMMaterial
+    ) -> tuple[la.FunctionLinearOperator, Callable[[ArrayLike], Array]]:
         omega = angular_frequency
 
-        def full_action(field):
+        def full_action(field: ArrayLike) -> Array:
             return (
                 self.space.curl_curl_action(field, material.inverse_permeability_m_H)
                 - omega**2 * self.space.mass_action(field, material.permittivity_F_m)
                 - 1j * omega * self.space.mass_action(field, material.conductivity_S_m)
             )
 
-        def reduced_action(values):
+        def reduced_action(values: Array) -> Array:
             full = (
                 jnp.zeros((self.space.edge_count,), dtype=values.dtype)
                 .at[self.free_edges]

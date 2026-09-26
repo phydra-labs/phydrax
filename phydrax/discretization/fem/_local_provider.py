@@ -32,12 +32,13 @@ from .._local_variational import (
 
 if TYPE_CHECKING:
     from ._generic import FiniteElementDiscretization
+    from ._reference import FiniteElementSpec
 
 
-def _tabulation_hessians(element, points: Array, /) -> Array:
+def _tabulation_hessians(element: FiniteElementSpec, points: Array, /) -> Array:
     """Differentiate the element's owned reference-gradient action."""
 
-    def point_gradient(point):
+    def point_gradient(point: Array) -> Array:
         return element.tabulate(point[None, :])[1][0]
 
     return jax.vmap(jax.jacfwd(point_gradient))(points)
@@ -265,6 +266,10 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         )
 
     def realize(self, runtime: object, /) -> LocalMetricResult:
+        from ._generic import FiniteElementRuntimeData
+
+        if not isinstance(runtime, FiniteElementRuntimeData):
+            raise TypeError("runtime must be FiniteElementRuntimeData.")
         coordinates = jnp.asarray(runtime.coordinates)[self.coordinate_gathers]
         points = ein.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
@@ -311,7 +316,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
 class FiniteElementLocalProvider(StrictModule):
     """Adapter from stable FE storage to the prepared-local contract."""
 
-    discretization: object
+    discretization: FiniteElementDiscretization
 
     def __init__(self, discretization: FiniteElementDiscretization, /) -> None:
         from ._generic import FiniteElementDiscretization

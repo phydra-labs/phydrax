@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._strict import StrictModule
 from ...linalg._gaussian_chain import associative_freeze
@@ -122,7 +122,7 @@ def _flatten_sequence_cases(
     count = prod(case_shape) if case_shape else 1
     rank = len(case_shape)
 
-    def flatten(leaf):
+    def flatten(leaf: ArrayLike) -> Array:
         value = jnp.asarray(leaf)
         moved = jnp.moveaxis(value, rank, 0)
         return jnp.moveaxis(
@@ -227,19 +227,23 @@ def run_causal_recurrent(
     case_probe_keys = jr.split(probe_root, count)
 
     def solve_case(
-        current_cell,
-        case_initial,
-        case_restart,
-        case_inputs,
-        case_valid,
-        case_reset,
-        case_initial_trajectory,
-        case_probe_key,
-    ):
+        current_cell: AbstractRecurrentCell,
+        case_initial: PyTree[Array],
+        case_restart: PyTree[Array],
+        case_inputs: PyTree[Array],
+        case_valid: Array,
+        case_reset: Array,
+        case_initial_trajectory: PyTree[Array],
+        case_probe_key: Array,
+    ) -> tuple[PyTree[Array], Array, CausalRecurrenceDiagnostics]:
         if step_keys is None:
             drivers = (case_inputs, case_valid, case_reset)
 
-            def transition(parameters, previous, driver):
+            def transition(
+                parameters: tuple[AbstractRecurrentCell, PyTree[Array]],
+                previous: PyTree[Array],
+                driver: tuple[PyTree[Array], Array, Array],
+            ) -> PyTree[Array]:
                 recurrent_cell, recurrent_restart = parameters
                 inputs, valid, reset = driver
                 restarted = _tree_where(reset & valid, recurrent_restart, previous)
@@ -250,7 +254,11 @@ def run_causal_recurrent(
         else:
             drivers = (case_inputs, case_valid, case_reset, step_keys)
 
-            def transition(parameters, previous, driver):
+            def transition(
+                parameters: tuple[AbstractRecurrentCell, PyTree[Array]],
+                previous: PyTree[Array],
+                driver: tuple[PyTree[Array], Array, Array, Array],
+            ) -> PyTree[Array]:
                 recurrent_cell, recurrent_restart = parameters
                 inputs, valid, reset, step_key = driver
                 restarted = _tree_where(reset & valid, recurrent_restart, previous)
@@ -304,14 +312,14 @@ def run_causal_recurrent(
     )
 
     def output_case(
-        current_cell,
-        case_initial,
-        case_restart,
-        case_inputs,
-        case_valid,
-        case_reset,
-        case_states,
-    ):
+        current_cell: AbstractRecurrentCell,
+        case_initial: PyTree[Array],
+        case_restart: PyTree[Array],
+        case_inputs: PyTree[Array],
+        case_valid: Array,
+        case_reset: Array,
+        case_states: PyTree[Array],
+    ) -> tuple[PyTree[Array], PyTree[Array], PyTree[Array]]:
         predecessors = jax.tree.map(
             lambda initial_leaf, state_leaf: jnp.concatenate(
                 (initial_leaf[None, ...], state_leaf[:-1]),
@@ -324,7 +332,12 @@ def run_causal_recurrent(
 
         if step_keys is None:
 
-            def evaluate(previous, inputs, valid, reset):
+            def evaluate(
+                previous: PyTree[Array],
+                inputs: PyTree[Array],
+                valid: Array,
+                reset: Array,
+            ) -> PyTree[Array]:
                 restarted = _tree_where(reset & valid, case_restart, previous)
                 safe_inputs = _tree_zero_where_invalid(valid, inputs)
                 _, output = current_cell.step(restarted, safe_inputs, key=None)
@@ -338,7 +351,13 @@ def run_causal_recurrent(
             )
         else:
 
-            def evaluate(previous, inputs, valid, reset, step_key):
+            def evaluate(
+                previous: PyTree[Array],
+                inputs: PyTree[Array],
+                valid: Array,
+                reset: Array,
+                step_key: Array,
+            ) -> PyTree[Array]:
                 restarted = _tree_where(reset & valid, case_restart, previous)
                 safe_inputs = _tree_zero_where_invalid(valid, inputs)
                 _, output = current_cell.step(restarted, safe_inputs, key=step_key)

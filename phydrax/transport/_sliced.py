@@ -94,7 +94,7 @@ def sliced_wasserstein_distance(
     source_projected = source_points @ directions.T
     target_projected = target_points @ directions.T
 
-    def projection_cost(source_values, target_values):
+    def projection_cost(source_values: Array, target_values: Array) -> Array:
         return _wasserstein_cost_1d(
             source_values,
             target_values,

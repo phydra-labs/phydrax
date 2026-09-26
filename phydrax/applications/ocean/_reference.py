@@ -172,7 +172,8 @@ class LinearSeawaterReference(StrictModule, NonTrainableState):
 
     @property
     def field_names(self) -> tuple[str, str]:
-        return tuple(sorted((self.temperature_name, self.salinity_name)))
+        first, second = sorted((self.temperature_name, self.salinity_name))
+        return first, second
 
     def density_anomaly(
         self,

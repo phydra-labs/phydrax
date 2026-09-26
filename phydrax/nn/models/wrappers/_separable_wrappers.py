@@ -905,7 +905,7 @@ class LatentContractionModel(
             out = jnp.squeeze(out, axis=-1)
         return out
 
-    def _split_key(self, key: EvalKey, /):
+    def _split_key(self, key: EvalKey, /) -> tuple[None, ...] | Array:
         return split_eval_key(key, len(self.factor_models))
 
 
@@ -1240,7 +1240,7 @@ class Separable(_AbstractStructuredInputModel):
             group_models = self.models[model_index : model_index + clones]
             group_keys = keys[model_index : model_index + clones]
 
-            def group_latents(value):
+            def group_latents(value: Array) -> Array:
                 product = jnp.ones(
                     (self.latent_size, _get_size(self.out_size)),
                     dtype=jnp.result_type(value),
@@ -1353,5 +1353,5 @@ class Separable(_AbstractStructuredInputModel):
             out = jnp.squeeze(out, axis=-1)
         return out
 
-    def _split_key(self, key: EvalKey, /):
+    def _split_key(self, key: EvalKey, /) -> tuple[None, ...] | Array:
         return split_eval_key(key, len(self.models))

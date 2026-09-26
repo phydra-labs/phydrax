@@ -483,7 +483,7 @@ def _coordinate_pairing_matrix(space: AbstractVectorSpace, /) -> Array:
     """Materialize the coordinate Gram matrix of one finite-dimensional pairing."""
     basis = jnp.eye(space.size, dtype=_coordinate_dtype(space))
 
-    def row(left_coordinates):
+    def row(left_coordinates: Array) -> Array:
         left = space.unflatten(left_coordinates)
         return jax.vmap(
             lambda right_coordinates: space.inner(

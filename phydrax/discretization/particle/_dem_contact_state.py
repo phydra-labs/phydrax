@@ -90,7 +90,15 @@ class DEMContactHistory(StrictModule):
         )
 
     @property
-    def values(self):
+    def values(
+        self,
+    ) -> tuple[
+        Array,
+        DEMNormalHistory,
+        DEMCohesionHistory,
+        DEMTangentialHistory,
+        DEMRotationalHistory,
+    ]:
         return (
             self.active,
             self.normal,

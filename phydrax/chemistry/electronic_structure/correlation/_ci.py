@@ -6,13 +6,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from itertools import combinations
 from math import comb
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
@@ -54,7 +55,9 @@ def _determinants(
     )
 
 
-def _spin_orbital_integrals(one: np.ndarray, two: np.ndarray, /):
+def _spin_orbital_integrals(
+    one: np.ndarray, two: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
     spatial = one.shape[0]
     spin_count = 2 * spatial
     one_spin = np.zeros((spin_count, spin_count), dtype=one.dtype)
@@ -157,12 +160,12 @@ class CASCIResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        energies,
-        coefficients,
-        residuals,
+        energies: ArrayLike,
+        coefficients: ArrayLike,
+        residuals: ArrayLike,
         determinant_bits: tuple[int, ...],
         active_orbitals: tuple[int, ...],
-        successful,
+        successful: ArrayLike,
         plan_id: str,
         store_id: str,
         /,
@@ -208,7 +211,7 @@ class CASCIPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        active_orbitals,
+        active_orbitals: Iterable[int],
         active_alpha_electrons: int,
         active_beta_electrons: int,
         /,

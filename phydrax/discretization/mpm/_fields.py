@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,6 +15,10 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+
+
+if TYPE_CHECKING:
+    from ._contact_kway import KWayMPMContactPlan
 
 
 class MPMMaterialBankEntry(StrictModule, NonTrainableState):
@@ -69,7 +73,7 @@ class MPMMaterialBankState(StrictModule):
 class MPMNodalFieldPlan(StrictModule, NonTrainableState):
     field_ids: tuple[str, ...] = eqx.field(static=True)
     initial_particle_field_slots: Array
-    contact_plan: object
+    contact_plan: KWayMPMContactPlan | None
     plan_id: str = eqx.field(static=True)
 
     def __init__(

@@ -105,3 +105,44 @@ def test_boundary_normal_accepts_density_wrapped_component_target():
     )
 
     assert len(terms) == 1
+
+
+def test_boundary_normal_rejects_component_sum_target_with_contract_error():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    left = domain.component(
+        {"x": phx.domain.Boundary()}, where={"x": lambda point: point[0] < 0.5}
+    )
+    right = domain.component(
+        {"x": phx.domain.Boundary()}, where={"x": lambda point: point[0] >= 0.5}
+    )
+    boundary = phx.domain.ComponentSum((left, right), assume_disjoint=True)
+    field = domain.Function("x")(lambda x: x[0])
+    functional = phx.variational.Functional(
+        "boundary-flux",
+        (
+            phx.variational.LocalIntegralTerm(
+                "boundary",
+                region="boundary",
+                fields=(phx.variational.FieldJetSpec("u", value=True),),
+                density=lambda fields, geometry, context: (
+                    fields["u"].value * geometry.normal[0]
+                ),
+                density_id="boundary-flux-normal",
+                normal=True,
+            ),
+        ),
+        variable_fields=("u",),
+    )
+    source = phx.integration.per_step(
+        phx.integration.over(boundary),
+        phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
+    )
+    (term,) = phx.terms.bind_functional(
+        functional,
+        {"u": field},
+        {"boundary": source},
+        geometry_variables={"boundary": "x"},
+    )
+
+    with pytest.raises(ValueError, match="functional normal requires a boundary"):
+        term.integrand({"u": field})

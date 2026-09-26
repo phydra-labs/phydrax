@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array
 
 from ...._fingerprint import canonical_fingerprint
@@ -28,6 +29,8 @@ from ._continuous import (
     PreparedContinuousFourierModalLayer,
 )
 from ._contracts import (
+    AbstractFourierFactorizationPlan,
+    AbstractFourierModalPort,
     ContinuousFourierModalLayer,
     FourierModalLayer,
     FourierModalMaxwellProblem,
@@ -396,7 +399,7 @@ def plan_fourier_modal_maxwell(
 
 
 def _tree_has_tracer(value: object, /) -> bool:
-    return any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(value))
+    return any(isinstance(leaf, jax_core.Tracer) for leaf in jax.tree.leaves(value))
 
 
 def _canonical_material_samples(
@@ -404,14 +407,11 @@ def _canonical_material_samples(
     problem: FourierModalMaxwellProblem,
     /,
 ) -> tuple[Array, Array, Array, Array]:
-    return tuple(
-        _tensor_samples(value, problem.harmonics)[0]
-        for value in (
-            material.permittivity,
-            material.permeability,
-            material.magnetoelectric_xi,
-            material.magnetoelectric_zeta,
-        )
+    return (
+        _tensor_samples(material.permittivity, problem.harmonics)[0],
+        _tensor_samples(material.permeability, problem.harmonics)[0],
+        _tensor_samples(material.magnetoelectric_xi, problem.harmonics)[0],
+        _tensor_samples(material.magnetoelectric_zeta, problem.harmonics)[0],
     )
 
 
@@ -470,10 +470,10 @@ def _checked_material_slot(
 
 
 def _checked_factorization_frame(
-    factorization,
+    factorization: AbstractFourierFactorizationPlan,
     records: dict[str, Array],
     /,
-):
+) -> AbstractFourierFactorizationPlan:
     if not isinstance(factorization, VectorFourierFactorizationPlan) or not isinstance(
         factorization.frame, AnalyticInterfaceFramePlan
     ):
@@ -516,7 +516,7 @@ def _checked_problem_slots(
     ] = {}
     frame_records: dict[str, Array] = {}
 
-    def checked_port(port):
+    def checked_port(port: AbstractFourierModalPort) -> AbstractFourierModalPort:
         material = _checked_material_slot(port.material, problem, material_records)
         port = eqx.tree_at(lambda value: value.material, port, material)
         if isinstance(port, PeriodicMaxwellPort):
@@ -792,7 +792,7 @@ def _values_proven_equal(left: object, right: object, /) -> bool:
     )
 
 
-def _port_identity(port, /) -> tuple[object, ...]:
+def _port_identity(port: AbstractFourierModalPort, /) -> tuple[object, ...]:
     return (
         type(port),
         port.port_id,
@@ -964,7 +964,8 @@ def refresh_fourier_modal_maxwell(
         new_elements.append(
             _refreshed_layer(
                 problem,
-                element,
+                # Continuous layers returned through full preparation above.
+                cast(FourierModalLayer, element),
                 old,
                 prepared.plan.policy,
                 lattice_same=lattice_same,

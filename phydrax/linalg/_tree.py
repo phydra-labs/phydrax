@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from numbers import Integral
 from typing import Any
 
@@ -183,7 +183,7 @@ def _prepare_tree(operator: TreeLinearOperator, /) -> _TreeFactorization:
         | jnp.any(~jnp.isfinite(operator.upper[children]))
     )
 
-    def eliminate(position, carry):
+    def eliminate(position: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         diagonal, failed = carry
         child = children[position]
         parent = parents[position]
@@ -228,7 +228,7 @@ def _solve_tree(
         factor.singular, jnp.ones_like(factor.diagonal), factor.diagonal
     )
 
-    def reduce_rhs(position, reduced):
+    def reduce_rhs(position: Array, reduced: Array) -> Array:
         child = order[position]
         parent = operator.topology.parent_index[child]
         return reduced.at[parent].add(
@@ -240,7 +240,7 @@ def _solve_tree(
     root = operator.topology.root_index
     value = jnp.zeros_like(rhs).at[root].set(reduced[root] / safe_diagonal[root])
 
-    def substitute(position, solution):
+    def substitute(position: Array, solution: Array) -> Array:
         child = order[count - 2 - position]
         parent = operator.topology.parent_index[child]
         return solution.at[child].set(
@@ -265,10 +265,10 @@ def _implicit_tree_value(
     fixed_operator = jax.tree.map(jax.lax.stop_gradient, operator)
     fixed_factor = jax.tree.map(jax.lax.stop_gradient, factor)
 
-    def residual(value):
+    def residual(value: Array) -> Array:
         return operator.mv_block(value) - rhs
 
-    def solve_tree(right, *, transposed=False):
+    def solve_tree(right: Array, *, transposed: bool = False) -> Array:
         value, failed = _solve_tree(
             fixed_operator,
             fixed_factor,
@@ -283,7 +283,7 @@ def _implicit_tree_value(
             )
         return value
 
-    def tangent_solve(linearized, target):
+    def tangent_solve(linearized: Callable[[Array], Array], target: Array) -> Array:
         return jax.lax.custom_linear_solve(
             linearized,
             target,

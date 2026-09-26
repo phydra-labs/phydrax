@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import NamedTuple, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -23,6 +23,10 @@ from ._unstructured_embedded_boundary import (
     EmbeddedBoundaryStabilizationPolicy,
     EmbeddedBoundaryStatus,
 )
+
+
+if TYPE_CHECKING:
+    from ..amr._cut_complex import MultivaluedCutCellComplex
 
 
 class ConservativeSmallCellRedistributionEvidence(NamedTuple):
@@ -374,7 +378,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
     @classmethod
     def from_multivalued_cut_complex(
         cls,
-        complex_,
+        complex_: MultivaluedCutCellComplex,
         policy: EmbeddedBoundaryStabilizationPolicy,
         /,
     ) -> "ConservativeSmallCellRedistributionPlan":

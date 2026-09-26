@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from math import isfinite
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -598,7 +598,7 @@ def _coverage_fill_distance(
     )
     offsets = jnp.arange(block, dtype=jnp.int32)
 
-    def source_body(source_block, maximum_squared_distance):
+    def source_body(source_block: Array, maximum_squared_distance: Array) -> Array:
         source_start = source_block * block
         left = jax.lax.dynamic_slice(
             source_padded,
@@ -606,7 +606,9 @@ def _coverage_fill_distance(
             (block, coordinate_size),
         )
 
-        def retained_body(retained_block, minimum_squared_distance):
+        def retained_body(
+            retained_block: Array, minimum_squared_distance: Array
+        ) -> Array:
             retained_start = retained_block * block
             right = jax.lax.dynamic_slice(
                 retained_padded,
@@ -663,7 +665,7 @@ def _point_feature_matrix(batch: PointBatch, axis: str, count: int, /) -> Array:
     return features
 
 
-def CoresetCollocation(**kwargs) -> CoresetCollocationPolicy:
+def CoresetCollocation(**kwargs: Any) -> CoresetCollocationPolicy:
     """Construct residual-weighted, diversity-preserving paired collocation."""
     return CoresetCollocationPolicy(**kwargs)
 

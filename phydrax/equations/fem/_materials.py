@@ -112,8 +112,10 @@ class AbstractLocalImplicitMaterial(AbstractComponentSlot):
         """Constitutive response at a local state."""
         raise NotImplementedError
 
-    def _newton_solve(self, function: Callable, initial: Array, args: object) -> Array:
-        def body(_, value):
+    def _newton_solve(
+        self, function: Callable[[Array, object], Array], initial: Array, args: object
+    ) -> Array:
+        def body(_: Array, value: Array) -> Array:
             residual = function(value, args)
             jacobian = jax.jacfwd(lambda candidate: function(candidate, args))(value)
             flat_residual = residual.reshape((-1,))
@@ -131,14 +133,16 @@ class AbstractLocalImplicitMaterial(AbstractComponentSlot):
             raise ValueError("Initial local state has the wrong trailing shape.")
         function = self.local_residual
 
-        def solve_fn(residual_fn, guess):
+        def solve_fn(residual_fn: Callable[[Array], Array], guess: Array) -> Array:
             return self._newton_solve(
                 lambda state, parameters: residual_fn(state),
                 guess,
                 None,
             )
 
-        def tangent_solve(linearize, right_hand_side):
+        def tangent_solve(
+            linearize: Callable[[Array], Array], right_hand_side: Array
+        ) -> Array:
             zero = jnp.zeros_like(right_hand_side)
             matrix = jax.jacfwd(linearize)(zero)
             flat_rhs = right_hand_side.reshape((-1,))
@@ -345,8 +349,11 @@ class LearnedLocalImplicitMaterial(AbstractLocalImplicitMaterial):
         precision = NonlinearPrecisionPolicy(
             components=(contract,), residual_scale=residual_scale
         )
+        model_precision = contract.model_contract.precision
+        # _bind_learned_law rejects models without a ComponentPrecisionContract.
+        assert model_precision is not None
         precision.validate_tolerance(
-            tolerance_, residual_dtype=contract.model_contract.precision.output_dtype
+            tolerance_, residual_dtype=model_precision.output_dtype
         )
         self.binding = binding
         self.residual = residual

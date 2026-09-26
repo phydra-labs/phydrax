@@ -83,7 +83,9 @@ class PerturbAndMAPResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _smooth_max(values: Array, temperature: float, /, *, axis=None) -> Array:
+def _smooth_max(
+    values: Array, temperature: float, /, *, axis: int | tuple[int, ...] | None = None
+) -> Array:
     if temperature == 0.0:
         return jnp.max(values, axis=axis)
     return temperature * jsp.special.logsumexp(values / temperature, axis=axis)
@@ -169,7 +171,7 @@ def solve_smooth_dual_lp(
         prepared, evidence_values, values, method.temperature
     )
 
-    def step(values, _):
+    def step(values: Array, _: None) -> tuple[Array, Array]:
         current, gradient = jax.value_and_grad(objective)(values)
         updated = values - method.learning_rate * gradient
         return updated, current
@@ -241,7 +243,7 @@ def perturb_and_map_log_normalizer(
     keys = jr.split(key, count)
     euler_gamma = jnp.asarray(0.5772156649015329, dtype=base.dtype)
 
-    def one(sample_key):
+    def one(sample_key: Key[Array, ""]) -> Array:
         uniform = jr.uniform(
             sample_key,
             (graph.num_variable_states,),

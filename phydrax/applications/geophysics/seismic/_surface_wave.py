@@ -161,7 +161,7 @@ class HomogeneousRayleighWavePlan(StrictModule, NonTrainableState):
             raise ValueError("Rayleigh halfspace requires finite vp > vs > 0.")
         ratio = (p / s) ** 2
 
-        def equation(x):
+        def equation(x: float) -> float:
             return (2 - x) ** 2 - 4 * np.sqrt(1 - x) * np.sqrt(1 - x / ratio)
 
         left, right = 1e-8, 1 - 1e-8

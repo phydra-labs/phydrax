@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -12,6 +12,10 @@ from jaxtyping import Array
 
 from ._geometry import block_count, cost_block, indices
 from ._unbalanced_problem import UnbalancedTransportProblem
+
+
+# (source_marginal, target_marginal, cost_total, ratio_total, mass_total, finite)
+_MarginalCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 Direction = Literal["source_to_target", "target_to_source"]
@@ -185,13 +189,13 @@ def _blockwise_statistics(
         jnp.asarray(True),
     )
 
-    def source_body(source_block, state):
+    def source_body(source_block: Array, state: _MarginalCarry) -> _MarginalCarry:
         source_result, target_result, cost_total, ratio_total, mass_total, finite = state
         source_start = source_block * block_size
         source_indices, source_valid = indices(source_start, block_size, source_count)
         source_accumulator = jnp.zeros((block_size,), dtype=source_potential.dtype)
 
-        def target_body(target_block, inner):
+        def target_body(target_block: Array, inner: _MarginalCarry) -> _MarginalCarry:
             (
                 source_partial,
                 target_partial,
@@ -310,7 +314,7 @@ def _blockwise_apply(
     output_count = target_blocks if direction == "source_to_target" else source_blocks
     output = jnp.zeros((output_count * block_size, payload_size), dtype=values.dtype)
 
-    def source_body(source_block, result):
+    def source_body(source_block: Array, result: Array) -> Array:
         source_start = source_block * block_size
         source_indices, source_valid = indices(source_start, block_size, source_count)
         f = jnp.take(source_potential, source_indices, axis=0)
@@ -320,7 +324,7 @@ def _blockwise_apply(
         else:
             source_output = jnp.zeros((block_size, payload_size), dtype=values.dtype)
 
-        def target_body(target_block, inner_result):
+        def target_body(target_block: Array, inner_result: Array) -> Array:
             target_start = target_block * block_size
             target_indices, target_valid = indices(target_start, block_size, target_count)
             g = jnp.take(target_potential, target_indices, axis=0)

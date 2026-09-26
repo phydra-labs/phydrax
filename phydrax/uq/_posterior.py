@@ -378,7 +378,11 @@ class ParameterSpace(StrictModule):
         )
         keys = jr.split(key, len(initial_leaves))
 
-        def draw(sample_key, prior, physical_shape):
+        def draw(
+            sample_key: Array,
+            prior: AbstractProbabilityLaw,
+            physical_shape: tuple[int, ...],
+        ) -> Array:
             prior_shape = tuple(prior.batch_shape) + tuple(prior.event_shape)
             sample_shape = (count,) if prior_shape else (count,) + physical_shape
             samples = prior.sample(sample_key, sample_shape=sample_shape)

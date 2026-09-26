@@ -125,7 +125,7 @@ def _eliminate_to_rank(
         )
         return jnp.where(can_reduce, updated, current)
 
-    def body(_, current):
+    def body(_: Array, current: Array) -> Array:
         return eliminate_once(current)
 
     reduced = jax.lax.fori_loop(0, count, body, weights)

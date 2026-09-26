@@ -18,6 +18,7 @@ from ..linalg import (
     DenseLU,
     FailurePolicy,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSolveStatus,
     LinearSystem,
     solve,
@@ -105,7 +106,7 @@ class IdentifiabilityReport(StrictModule):
     problem_id: str = eqx.field(static=True)
 
 
-def _dense_solve(matrix: Array, right: Array, problem_id: str, /):
+def _dense_solve(matrix: Array, right: Array, problem_id: str, /) -> LinearSolveResult:
     return solve(
         LinearSystem(
             DenseLinearOperator(matrix, operator_id=f"{problem_id}/matrix"),
@@ -184,7 +185,7 @@ def parameter_identifiability(
     if not jnp.issubdtype(output.dtype, jnp.number):
         raise TypeError("prediction must return numeric values.")
 
-    def real_coordinates(current):
+    def real_coordinates(current: Array) -> Array:
         predicted = jnp.asarray(prediction(current, args)).reshape((-1,))
         return jnp.concatenate((jnp.real(predicted), jnp.imag(predicted)))
 

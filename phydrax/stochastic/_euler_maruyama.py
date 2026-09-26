@@ -470,13 +470,28 @@ class EulerMaruyamaQuasiLikelihood(StrictModule):
         case_indices = jnp.repeat(jnp.arange(case_count, dtype=jnp.int32), pair_count)
         step_indices = jnp.tile(jnp.arange(pair_count, dtype=jnp.int32), case_count)
 
-        def transition_log_density(source_, target_, start_, end_, case_, step_, input_):
+        def transition_log_density(
+            source_: Array,
+            target_: Array,
+            start_: Array,
+            end_: Array,
+            case_: Array,
+            step_: Array,
+            input_: Array,
+        ) -> Array:
             context = self._context(args, case_, step_, input_)
             return self.kernel.log_prob(target_, source_, start_, end_, context)
 
         if inputs is None:
 
-            def score_without_input(source_, target_, start_, end_, case_, step_):
+            def score_without_input(
+                source_: Array,
+                target_: Array,
+                start_: Array,
+                end_: Array,
+                case_: Array,
+                step_: Array,
+            ) -> Array:
                 context = self._context(args, case_, step_, None)
                 return self.kernel.log_prob(target_, source_, start_, end_, context)
 

@@ -5,13 +5,15 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jax.typing import DTypeLike
+from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from phydrax.ein import contract
 
@@ -35,6 +37,7 @@ from ..._training_kernel import (
     prepare_training_kernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKeys,
     TrainingRejectionBudgetError,
 )
 from ..._training_objective import _ObjectiveContribution
@@ -325,7 +328,7 @@ class FreeEnergyFitResult(StrictModule):
 def _free_energy_loss(
     model: AbstractArrayModel, data: MeanForceData, /
 ) -> tuple[Array, Array]:
-    def model_gradient(point):
+    def model_gradient(point: Array) -> Array:
         return jax.grad(lambda value: jnp.asarray(model(value, key=None)).reshape(()))(
             point
         )
@@ -348,7 +351,13 @@ def _free_energy_loss(
 _validation_loss = eqx.filter_jit(_free_energy_loss)
 
 
-def _free_energy_objective(parameters, model_state, fixed, data, keys):
+def _free_energy_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    data: MeanForceData,
+    keys: TrainingKeys,
+) -> tuple[_ObjectiveContribution, PyTree[Any], tuple[Array, Array]]:
     """Mean-force data fit whose invalid evaluations carry no support.
 
     An evaluation without active windows or with nonfinite predictions has zero
@@ -400,7 +409,7 @@ def fit_free_energy_model(
         rule_id = canonical_fingerprint(
             {
                 "kind": "free-energy-training-adam",
-                "learning_rate": policy_.learning_rate.hex(),
+                "learning_rate": float(policy_.learning_rate).hex(),
             }
         )
     else:
@@ -600,7 +609,7 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
             }
         )
 
-    def initialize(self, dtype=jnp.float64) -> LearnedFreeEnergyBiasState:
+    def initialize(self, dtype: DTypeLike = jnp.float64) -> LearnedFreeEnergyBiasState:
         return LearnedFreeEnergyBiasState(
             successful=jnp.asarray(True, dtype=jnp.bool_), bias_id=self.bias_id
         )
@@ -639,10 +648,10 @@ class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
     def energy(
         self,
         positions: Array,
-        state: LearnedFreeEnergyBiasState,
+        state: AbstractAtomisticBiasState,
         time: Array,
         /,
-    ):
+    ) -> tuple[Array, tuple[Array, Array, Array, Array]]:
         if not isinstance(state, LearnedFreeEnergyBiasState):
             raise TypeError("state must be a LearnedFreeEnergyBiasState.")
         if state.bias_id != self.plan.bias_id:
@@ -679,7 +688,7 @@ class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
     def evaluate(
         self,
         positions: Array,
-        state: LearnedFreeEnergyBiasState,
+        state: AbstractAtomisticBiasState,
         time: Array,
         /,
     ) -> AtomisticBiasEvaluation:
@@ -702,7 +711,7 @@ class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
 
     def update(
         self,
-        state: LearnedFreeEnergyBiasState,
+        state: AbstractAtomisticBiasState,
         evaluation: AtomisticBiasEvaluation,
         physical_forces: Array,
         /,

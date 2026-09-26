@@ -56,6 +56,7 @@ def test_kalman_filter_checkpoint_replays_streaming_state(tmp_path):
     replay, _ = phx.uq.kalman_filter_step(problem, restored)
 
     assert restored.step_index == 1
+    assert restored.step_index.dtype == state.step_index.dtype
     assert jnp.array_equal(restored.mean, state.mean)
     assert jnp.array_equal(replay.mean, expected.mean)
     assert jnp.array_equal(replay.covariance, expected.covariance)

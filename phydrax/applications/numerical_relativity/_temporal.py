@@ -308,7 +308,7 @@ def evaluate_z4c_step(
     stage_source_valid: list[Array] = []
     stage_boundary_valid: list[Array] = []
 
-    def vector_field(time, values, args):
+    def vector_field(time: Array, values: Array, args: object) -> Array:
         del args
         stage_state = Z4cState(values, grid_id=runtime.grid.grid_id)
         bounded = runtime.boundary.apply_state(time, stage_state, runtime.grid)

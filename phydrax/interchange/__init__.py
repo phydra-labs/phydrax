@@ -5,6 +5,7 @@
 """Generic external-representation interchange contracts."""
 
 from importlib import import_module
+from typing import Any
 
 from .. import _external_runtime as external_runtime
 from .._document_resource import (
@@ -221,7 +222,7 @@ from ._waveform_formats import (
 from ._well_formats import QualifiedWellLog, read_las_curve, WellFormatDependencyError
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "hep":
         value = import_module(".hep", __name__)
     elif name in _external_runtime_all:

@@ -261,7 +261,7 @@ def _materialize_by_basis(operator: "AbstractLinearOperator", /) -> Array:
     structure = operator.source.structure()
     dtype = jnp.result_type(*[spec.dtype for spec in jax.tree.leaves(structure)])
 
-    def column(index):
+    def column(index: Array) -> Array:
         coordinates = jax.nn.one_hot(index, operator.source.size, dtype=dtype)
         vector = operator.source.unflatten(coordinates)
         return operator.target.flatten(operator.mv(vector))

@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from math import factorial
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -22,6 +24,9 @@ from ._finite_density import (
     FiniteDensityStatus,
     SusceptibilityEstimate,
 )
+
+
+_NewtonCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class PreparedTaylorEOS(StrictModule, NonTrainableState):
@@ -68,14 +73,16 @@ def prepare_taylor_eos(estimate: SusceptibilityEstimate, /) -> PreparedTaylorEOS
     return PreparedTaylorEOS(estimate)
 
 
-def _monomial_derivative(exponents, ratios, axis):
+def _monomial_derivative(exponents: Array, ratios: Array, axis: int) -> Array:
     order = exponents[:, axis]
     reduced = exponents.at[:, axis].set(jnp.maximum(order - 1, 0))
     powers = jnp.prod(jnp.power(ratios[None, :], reduced), axis=1)
     return jnp.where(order > 0, order * powers, 0.0)
 
 
-def _monomial_second_derivative(exponents, ratios, first, second):
+def _monomial_second_derivative(
+    exponents: Array, ratios: Array, first: int, second: int
+) -> Array:
     first_order = exponents[:, first]
     after_first = exponents.at[:, first].set(jnp.maximum(first_order - 1, 0))
     second_order = after_first[:, second]
@@ -254,7 +261,7 @@ def solve_heavy_ion_path(
     baryon_chemical_potential: ArrayLike,
     /,
     *,
-    initial_charge_strangeness: ArrayLike = (0.0, 0.0),
+    initial_charge_strangeness: ArrayLike | Sequence[float] = (0.0, 0.0),
 ) -> HeavyIonConstraintResult:
     """Solve n_S=0 and n_Q=r n_B under a bounded fixed Newton budget."""
     if not isinstance(prepared, PreparedTaylorEOS) or not isinstance(
@@ -269,7 +276,7 @@ def solve_heavy_ion_path(
     if initial.shape != (2,):
         raise ValueError("initial_charge_strangeness must contain Q/S values.")
 
-    def iteration(_, state):
+    def iteration(_: int | Array, state: _NewtonCarry) -> _NewtonCarry:
         values, active, failed, iterations = state
         chemical = jnp.asarray([baryon, values[0], values[1]])
         evaluated = evaluate_taylor_eos(prepared, temperature_, chemical)

@@ -9,6 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array
 
 from phydrax._strict import StrictModule
@@ -228,7 +229,14 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
             self.process_id, ("spectral_acceleration",), (coefficients,)
         )
 
-    def _parameter(self, fixed: float, argument: str | None, args: Any, dtype, name: str):
+    def _parameter(
+        self,
+        fixed: float,
+        argument: str | None,
+        args: Any,
+        dtype: DTypeLike,
+        name: str,
+    ) -> Array:
         raw = fixed if argument is None else args[argument]
         value = jnp.asarray(raw, dtype=dtype).reshape(())
         return eqx.error_if(

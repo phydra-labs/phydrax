@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -109,7 +109,7 @@ class LowOrderAuxiliaryPreconditioner(AbstractPreconditioner):
         /,
         *,
         iteration: ArrayLike | None = None,
-    ):
+    ) -> PyTree[Array]:
         checked = self.space.validate(residual)
         weighted = jax.tree.map(
             lambda value, weight: value * weight,

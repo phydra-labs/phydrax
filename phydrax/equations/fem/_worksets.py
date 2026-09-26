@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -320,14 +321,16 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         ):
             raise ValueError("Neighbor gathers must match neighbor signature layouts.")
 
-        def route(values, default, dtype):
+        def route(
+            values: ArrayLike | None, default: int, dtype: npt.DTypeLike
+        ) -> np.ndarray:
             return (
                 np.full((count,), default, dtype=dtype)
                 if values is None
                 else np.asarray(values, dtype=dtype)
             )
 
-        def permutation(values):
+        def permutation(values: ArrayLike | None) -> np.ndarray:
             result = (
                 np.ones((count,), dtype=np.int32)
                 if values is None

@@ -11,7 +11,7 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
@@ -25,6 +25,7 @@ from ..._training_kernel import (
     prepare_training_kernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
 from ...geometry import regularized_delta_values, regularized_heaviside_values
@@ -336,7 +337,7 @@ def explicit_front_stefan_loss(
     temperature = lambda point: _scalar_call(model.temperature, point, key)
     front = lambda time: _scalar_call(model.front, jnp.asarray((time,)), key)
 
-    def pde_one(reference_point):
+    def pde_one(reference_point: Array) -> Array:
         coordinate, time = reference_point
         physical = jnp.asarray((coordinate * front(time), time))
         gradient = jax.grad(temperature)(physical)
@@ -359,7 +360,7 @@ def explicit_front_stefan_loss(
     boundary_target = jax.vmap(data.boundary_temperature)(batch.boundary_times)
     fixed_boundary = jnp.mean((boundary_prediction - boundary_target) ** 2)
 
-    def interface_one(time):
+    def interface_one(time: Array) -> tuple[Array, Array]:
         position = front(time)
         point = jnp.asarray((position, time))
         value = temperature(point)
@@ -410,7 +411,9 @@ def implicit_level_set_stefan_loss(
     temperature = lambda point: _scalar_call(model.temperature, point, key)
     level_set = lambda point: _scalar_call(model.level_set, point, key)
 
-    def ambient_one(point):
+    def ambient_one(
+        point: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
         value = level_set(point)
         indicator = regularized_heaviside_values(-value, width=width)
         delta = regularized_delta_values(value, width=width)
@@ -486,7 +489,7 @@ def reference_map_stefan_loss(
     temperature = lambda point: _scalar_call(model.reference_temperature, point, key)
     coordinate_map = lambda point: _scalar_call(model.coordinate_map, point, key)
 
-    def pde_one(point):
+    def pde_one(point: Array) -> tuple[Array, Array]:
         map_gradient = jax.grad(coordinate_map)(point)
         jacobian = map_gradient[0]
         safe_jacobian = jnp.maximum(jacobian, parameters.jacobian_floor)
@@ -532,7 +535,7 @@ def reference_map_stefan_loss(
         boundary_map**2
     )
 
-    def interface_one(time):
+    def interface_one(time: Array) -> tuple[Array, Array]:
         point = jnp.asarray((1.0, time))
         value = temperature(point)
         map_gradient = jax.grad(coordinate_map)(point)
@@ -593,7 +596,14 @@ def compare_stefan_representations(
     )
 
 
-def _stefan_objective(parameters, model_state, fixed, loss, keys, /):
+def _stefan_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    loss: Callable[[Any], StefanLoss],
+    keys: TrainingKeys,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree[Any], StefanLoss]:
     """Kernel objective: the ordered Stefan total as one unit-support contribution."""
     del keys
     result = loss(combine_parameters(parameters, model_state, fixed))
@@ -699,7 +709,9 @@ def fit_stefan_time_slabs(
     )
 
 
-def _scalar_call(model: Callable[[Array], Array], point: Array, key, /) -> Array:
+def _scalar_call(
+    model: Callable[[Array], Array], point: Array, key: Key[Array, ""], /
+) -> Array:
     value = (
         model(point, key=key) if isinstance(model, AbstractArrayModel) else model(point)
     )

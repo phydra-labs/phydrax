@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections import deque
-from typing import Literal
+from collections.abc import Iterable
+from typing import Generic, Literal, TypeVar
 
 import equinox as eqx
 import jax
@@ -80,7 +81,9 @@ class JointDiscreteBlock(StrictModule):
     maximum_configurations: int = eqx.field(static=True)
     block_id: str = eqx.field(static=True)
 
-    def __init__(self, variables, /, *, maximum_configurations: int = 4096) -> None:
+    def __init__(
+        self, variables: Iterable[int], /, *, maximum_configurations: int = 4096
+    ) -> None:
         selected = tuple(variables)
         if not selected or len(set(selected)) != len(selected) or min(selected) < 0:
             raise ValueError("Joint block variables must be unique and non-negative.")
@@ -136,19 +139,23 @@ class ReducedGibbsResult(StrictModule):
     policy_id: str = eqx.field(static=True)
 
 
-class AbstractChainReducer(StrictModule):
+_CarryT = TypeVar("_CarryT")
+_ReductionT = TypeVar("_ReductionT")
+
+
+class AbstractChainReducer(StrictModule, Generic[_CarryT, _ReductionT]):
     """Fixed-structure online reduction of correlated chain states."""
 
     @abstractmethod
-    def initialize(self, positions: Array, scores: Array, /):
+    def initialize(self, positions: Array, scores: Array, /) -> _CarryT:
         raise NotImplementedError
 
     @abstractmethod
-    def update(self, carry, positions: Array, scores: Array, /):
+    def update(self, carry: _CarryT, positions: Array, scores: Array, /) -> _CarryT:
         raise NotImplementedError
 
     @abstractmethod
-    def finalize(self, carry, /):
+    def finalize(self, carry: _CarryT, /) -> _ReductionT:
         raise NotImplementedError
 
 
@@ -158,10 +165,10 @@ class MomentReducerState(StrictModule):
     second_sum: Array
 
 
-class MomentReducer(AbstractChainReducer):
+class MomentReducer(AbstractChainReducer[MomentReducerState, dict[str, Array]]):
     """Online first and second raw moments over chain states."""
 
-    def initialize(self, positions: Array, scores: Array, /):
+    def initialize(self, positions: Array, scores: Array, /) -> MomentReducerState:
         del scores
         shape = positions.shape[1:]
         return MomentReducerState(
@@ -170,7 +177,9 @@ class MomentReducer(AbstractChainReducer):
             second_sum=jnp.zeros(shape, dtype=jnp.float64),
         )
 
-    def update(self, carry, positions: Array, scores: Array, /):
+    def update(
+        self, carry: MomentReducerState, positions: Array, scores: Array, /
+    ) -> MomentReducerState:
         del scores
         values = positions.astype("float64")
         return MomentReducerState(
@@ -179,7 +188,7 @@ class MomentReducer(AbstractChainReducer):
             second_sum=carry.second_sum + jnp.sum(values**2, axis=0),
         )
 
-    def finalize(self, carry, /):
+    def finalize(self, carry: MomentReducerState, /) -> dict[str, Array]:
         denominator = jnp.maximum(carry.count, 1)
         mean = carry.first_sum / denominator
         return {"mean": mean, "variance": carry.second_sum / denominator - mean**2}
@@ -190,16 +199,20 @@ class BestStateReducerState(StrictModule):
     score: Array
 
 
-class BestStateReducer(AbstractChainReducer):
+class BestStateReducer(
+    AbstractChainReducer[BestStateReducerState, BestStateReducerState]
+):
     """Online highest-score assignment with deterministic first-tie retention."""
 
-    def initialize(self, positions: Array, scores: Array, /):
+    def initialize(self, positions: Array, scores: Array, /) -> BestStateReducerState:
         return BestStateReducerState(
             position=jnp.zeros_like(positions[0]),
             score=jnp.asarray(-jnp.inf, dtype=scores.dtype),
         )
 
-    def update(self, carry, positions: Array, scores: Array, /):
+    def update(
+        self, carry: BestStateReducerState, positions: Array, scores: Array, /
+    ) -> BestStateReducerState:
         index = jnp.argmax(scores)
         replace = scores[index] > carry.score
         return BestStateReducerState(
@@ -207,19 +220,19 @@ class BestStateReducer(AbstractChainReducer):
             score=jnp.where(replace, scores[index], carry.score),
         )
 
-    def finalize(self, carry, /):
+    def finalize(self, carry: BestStateReducerState, /) -> BestStateReducerState:
         return carry
 
 
 def _sample_site(
-    prepared,
-    positions,
-    variable,
-    key,
-    sweep_index,
-    event_index,
-    clamped,
-):
+    prepared: PreparedChromaticGibbs,
+    positions: Array,
+    variable: int,
+    key: Key[Array, ""],
+    sweep_index: Array,
+    event_index: int,
+    clamped: Array,
+) -> tuple[Array, Array, Array]:
     chain_count = positions.shape[0]
     chain_indices = jnp.arange(chain_count, dtype=jnp.uint32)
     logits = jax.vmap(lambda position: _conditional_logits(prepared, position, variable))(
@@ -307,7 +320,11 @@ def gibbs_sweep_with_policy(
         attempted_updates = count
     else:
 
-        def update_stage(current, stage, event_offset):
+        def update_stage(
+            current: tuple[Array, Array, Array],
+            stage: tuple[int, ...],
+            event_offset: int,
+        ) -> tuple[Array, Array, Array]:
             stage_positions, stage_valid, stage_changed = current
             snapshot = stage_positions
             for local_index, variable in enumerate(stage):
@@ -399,7 +416,7 @@ def joint_block_sweep(
     configurations = jnp.asarray(tuple(np.ndindex(cards)), dtype=jnp.int32)
     chain_indices = jnp.arange(state.num_chains, dtype=jnp.uint32)
 
-    def one(position, chain):
+    def one(position: Array, chain: Array) -> tuple[Array, Array, Array]:
         candidates = jnp.broadcast_to(position, (count, graph.num_variables))
         candidates = candidates.at[:, jnp.asarray(block.variables)].set(configurations)
         scores = prepared.precision.accumulation(
@@ -548,7 +565,7 @@ def parallel_tempering_step(
 def reduce_gibbs_chain(
     prepared: PreparedChromaticGibbs,
     state: GibbsState,
-    reducer: AbstractChainReducer,
+    reducer: AbstractChainReducer[_CarryT, _ReductionT],
     /,
     *,
     key: Key[Array, ""],
@@ -564,7 +581,9 @@ def reduce_gibbs_chain(
         raise TypeError("policy must be GibbsScanPolicy or None.")
     reduction = reducer.initialize(state.positions, state.log_score)
 
-    def step(carry, _):
+    def step(
+        carry: tuple[GibbsState, _CarryT], _: None
+    ) -> tuple[tuple[GibbsState, _CarryT], None]:
         chain_state, reducer_state = carry
         updated, _info = gibbs_sweep_with_policy(
             prepared,

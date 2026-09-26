@@ -291,7 +291,7 @@ def peng_robinson_roots(
     )
 
 
-def _monic_cubic_real_roots(a, b, c):
+def _monic_cubic_real_roots(a: Array, b: Array, c: Array) -> tuple[Array, Array]:
     p = b - a**2 / 3.0
     q = 2.0 * a**3 / 27.0 - a * b / 3.0 + c
     discriminant = (0.5 * q) ** 2 + (p / 3.0) ** 3

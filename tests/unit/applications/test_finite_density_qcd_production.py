@@ -55,6 +55,19 @@ def test_taylor_eos_fields_derive_from_one_pressure_potential():
     assert jnp.abs(result.thermodynamic_identity_residual) < 1.0e-12
 
 
+@pytest.mark.parametrize("temperature_bounds", [(0.15,), (0.15, 0.25, 0.35)])
+def test_finite_density_domain_rejects_non_pair_temperature_bounds(
+    temperature_bounds,
+):
+    qcd = phx.applications.lattice_field
+    with pytest.raises(ValueError, match="temperature"):
+        qcd.FiniteDensityDomain(
+            temperature_bounds,
+            ((-1.0, 1.0), (-0.5, 0.5), (-0.5, 0.5)),
+            maximum_total_order=2,
+        )
+
+
 def test_heavy_ion_constraints_solve_declared_charge_ratio():
     qcd = phx.applications.lattice_field
     prepared, _, _ = _prepared()

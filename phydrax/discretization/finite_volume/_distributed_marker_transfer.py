@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -22,7 +23,7 @@ from ._mac_marker_transfer import (
 )
 
 
-DistributedMarkerExchange = Callable[[str, object], object]
+DistributedMarkerExchange = Callable[[str, Any], Any]
 
 
 class DistributedMarkerOwnershipPlan(StrictModule, NonTrainableState):

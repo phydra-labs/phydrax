@@ -53,7 +53,8 @@ def polymer_network_observables(state: PolymerReactionState, /) -> PolymerNetwor
     for event in state.ledger:
         if not event.accepted:
             continue
-        pair = tuple(sorted((event.left_particle_id, event.right_particle_id)))
+        low_id, high_id = sorted((event.left_particle_id, event.right_particle_id))
+        pair = (low_id, high_id)
         if event.reaction_kind is PolymerReactionKind.CURE:
             winding_by_pair[pair] = np.asarray(event.image_shift, dtype=np.int64)
         else:

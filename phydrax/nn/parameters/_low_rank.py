@@ -190,7 +190,7 @@ class LowRankUpdate(StrictModule, ParameterOwner):
         return self.base.shape[0], self.base.shape[1]
 
     @property
-    def dtype(self):
+    def dtype(self) -> jnp.dtype:
         return self.base.dtype
 
     @property
@@ -525,7 +525,7 @@ def adapt_low_rank(
             )
         )
 
-    def replace(path, value):
+    def replace(path: jax.tree_util.KeyPath, value: object) -> object:
         if not isinstance(value, Linear):
             return value
         prefix = jax.tree_util.keystr(path)

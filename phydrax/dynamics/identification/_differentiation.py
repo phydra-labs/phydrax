@@ -25,7 +25,7 @@ def _event_scale(value: Array, event_rank: int, /) -> Array:
     return value.reshape(value.shape + (1,) * event_rank)
 
 
-def _time_index(case_rank: int, index, /) -> tuple:
+def _time_index(case_rank: int, index: int, /) -> tuple[slice | int, ...]:
     return (slice(None),) * case_rank + (index,)
 
 
@@ -255,7 +255,13 @@ def local_polynomial_derivative(
     flat_weights = weight_array.reshape((problem_count, window_size))
     flat_scale = scale_array.reshape((problem_count,))
 
-    def solve_one(design, response, mask, sample_weights, scale):
+    def solve_one(
+        design: Array,
+        response: Array,
+        mask: Array,
+        sample_weights: Array,
+        scale: Array,
+    ) -> tuple[Array, Array, Array]:
         result = solve_weighted_least_squares(
             design,
             response,

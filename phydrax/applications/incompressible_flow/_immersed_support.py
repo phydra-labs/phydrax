@@ -18,6 +18,9 @@ from ..._trainable import NonTrainableState
 from ...discretization.finite_volume._distributed_marker_transfer import (
     DistributedMACMarkerTransfer,
 )
+from ...discretization.finite_volume._mac_marker_transfer import (
+    PreparedMACMarkerTransfer,
+)
 from ...discretization.lattice_boltzmann._immersed import ImmersedBoundaryForcingPlan
 from ...discretization.particle._resolved_lubrication import (
     ResolvedLubricationCorrectionPlan,
@@ -282,7 +285,7 @@ def _support_tuple(regime: ImmersedRegime, /) -> SupportTuple:
     return support_by_regime[regime]
 
 
-def _owner_transfer(owner: ImmersedOwnerPlan, /):
+def _owner_transfer(owner: ImmersedOwnerPlan, /) -> PreparedMACMarkerTransfer | None:
     if isinstance(owner, MACImmersedBoundaryProjectionPlan):
         return owner.transfer
     if isinstance(
@@ -396,6 +399,8 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
                 )
             if regime != "fixed-topology-sharp":
                 raise ValueError("A sharp epoch owner requires the sharp regime.")
+            # _owner_contract assigns the sharp regime only to sharp projection plans.
+            assert isinstance(owner, MACSharpInterfaceProjectionPlan)
             if (
                 sharp_epoch_owner.operators.prepared_id != owner.operators.prepared_id
                 or sharp_epoch_owner.boundaries.prepared_id

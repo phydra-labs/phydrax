@@ -68,7 +68,7 @@ def _components(
     return names
 
 
-def _identifier(value: str | None, payload, prefix: str, /) -> str:
+def _identifier(value: str | None, payload: object, prefix: str, /) -> str:
     if value is not None:
         if not isinstance(value, str) or not value:
             raise ValueError("layout_id must be a non-empty string or None.")

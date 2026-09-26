@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from numbers import Integral
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -18,6 +19,10 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ._abelian import AbelianTensor, AbelianTensorLayout
 from ._abelian_core import AbelianMatrixProductState
+
+
+if TYPE_CHECKING:
+    from ._abelian_evolution import AbelianTensorTruncationEvidence
 
 
 class AbelianContractionPlan(StrictModule):
@@ -410,7 +415,7 @@ def execute_abelian_two_site_gate(
     plan: AbelianTwoSiteGatePlan,
     state: AbelianMatrixProductState,
     /,
-):
+) -> tuple[AbelianMatrixProductState, AbelianTensorTruncationEvidence]:
     if not isinstance(plan, AbelianTwoSiteGatePlan):
         raise TypeError("plan must be AbelianTwoSiteGatePlan.")
     if state.structure_id != plan.structure_id:

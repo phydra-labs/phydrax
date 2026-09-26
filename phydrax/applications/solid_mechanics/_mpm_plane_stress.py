@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -30,6 +31,25 @@ from ._plane_stress import (
     BlockDiagonalPlaneStressReductionPlan,
     PlaneStressFailure,
 )
+
+
+# Per-particle (stress, trial state, energy, wave speed, dissipation, branch,
+# suggested step, valid, log stretch, residual, sensitivity, tangent, failure).
+_PlaneStressPointOutputs: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class _MPMPointHyperelasticLaw(HyperelasticLaw):
@@ -143,7 +163,9 @@ class PlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
             }
         )
 
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         base = self.base.initialize_state(tuple(batch_shape), dtype).reshape(
             tuple(batch_shape) + (self.base_state_width,)
         )
@@ -151,18 +173,18 @@ class PlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         return jnp.concatenate((base, eta), axis=-1)
 
     @staticmethod
-    def _embed(deformation, eta):
+    def _embed(deformation: Array, eta: Array) -> Array:
         embedded = jnp.zeros((3, 3), dtype=deformation.dtype)
         embedded = embedded.at[:2, :2].set(deformation)
         return embedded.at[2, 2].set(jnp.exp(eta))
 
     def _point_law(
         self,
-        history,
-        density,
-        parameters,
-        time,
-        step_size,
+        history: Array,
+        density: Array,
+        parameters: Any,
+        time: ArrayLike,
+        step_size: ArrayLike,
     ) -> _MPMPointHyperelasticLaw:
         return _MPMPointHyperelasticLaw(
             self.base,
@@ -178,7 +200,7 @@ class PlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         deformation_gradient: ArrayLike,
         committed_state: ArrayLike,
         reference_density: ArrayLike,
-        parameters,
+        parameters: Any,
         time: ArrayLike,
         step_size: ArrayLike,
         /,
@@ -197,7 +219,9 @@ class PlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         flat_state = state.reshape((-1, self.state_shape[0]))
         flat_density = density.reshape((-1,))
 
-        def point(value, history, density_value):
+        def point(
+            value: Array, history: Array, density_value: Array
+        ) -> _PlaneStressPointOutputs:
             base_history = history[: self.base_state_width].reshape(self.base.state_shape)
             law = self._point_law(
                 base_history,
@@ -291,7 +315,7 @@ class PlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         deformation_gradient: ArrayLike,
         committed_state: ArrayLike,
         reference_density: ArrayLike,
-        parameters,
+        parameters: Any,
         time: ArrayLike,
         step_size: ArrayLike,
         /,

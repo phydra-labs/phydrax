@@ -292,7 +292,7 @@ def _field_data_on_graph_axis(
     batch: GraphBatch,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: Key[Array, ""] | None = DOC_KEY0,
     **kwargs: Any,
 ) -> tuple[cx.AxisArray, int, jnp.ndarray]:
     y = func(batch, key=key, **kwargs)
@@ -331,7 +331,7 @@ def _optional_edge_weight_data(
     target: jnp.ndarray,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: Key[Array, ""] | None = DOC_KEY0,
     **kwargs: Any,
 ) -> jnp.ndarray | None:
     if weight is None:
@@ -356,7 +356,7 @@ class _GraphDegreeCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -399,7 +399,7 @@ class _NeighborAggregateCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
@@ -436,7 +436,7 @@ class _GraphLaplacianCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
@@ -487,7 +487,7 @@ class _GraphGradientCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_edge_batch(batch)
@@ -535,7 +535,7 @@ class _GraphDivergenceCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key[Array, ""] | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_node_batch(batch)

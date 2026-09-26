@@ -6,12 +6,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Literal
+from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
@@ -25,6 +25,7 @@ from ..._training_kernel import (
     prepare_training_kernel,
     run_training_attempt,
     TrainingKernelSpec,
+    TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
 from ...geometry import regularized_heaviside_values
@@ -249,7 +250,7 @@ def probabilistic_stefan_moment_loss(
         test_on_domain,
     )
 
-    def phase_at_time(time):
+    def phase_at_time(time: Array) -> Array:
         points = jnp.concatenate(
             (
                 batch.domain_points,
@@ -328,7 +329,14 @@ def probabilistic_stefan_moment_loss(
     )
 
 
-def _moment_objective(parameters, model_state, fixed, payload, keys, /):
+def _moment_objective(
+    parameters: PyTree[Any],
+    model_state: PyTree[Any],
+    fixed: PyTree[Any],
+    payload: tuple[ProbabilisticStefanBatch, ProbabilisticStefanParameters],
+    keys: TrainingKeys,
+    /,
+) -> tuple[_ObjectiveContribution, PyTree[Any], ProbabilisticStefanLoss]:
     """Kernel objective: the probabilistic Stefan total with unit support."""
     del keys
     batch, physical = payload
@@ -396,7 +404,9 @@ def fit_probabilistic_level_set_stefan(
     )
 
 
-def _path_level_sets(level_set, paths: Array, times: Array, /) -> Array:
+def _path_level_sets(
+    level_set: Callable[[Array], Array], paths: Array, times: Array, /
+) -> Array:
     path_count, time_count, dimension = paths.shape
     time_values = jnp.broadcast_to(times[None, :, None], (path_count, time_count, 1))
     spacetime = jnp.concatenate((paths, time_values), axis=-1)

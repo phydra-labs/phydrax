@@ -22,6 +22,7 @@ from ....geometry import MeshRegion
 from ....integration import IntegrationPrecisionPolicy
 from ....linalg import (
     AbstractLinearOperator,
+    AbstractVectorSpace,
     DenseLinearOperator,
     DualSpace,
     LinearCapabilityError,
@@ -184,7 +185,7 @@ class _LaplaceDP0WeakOperator3D(_AbstractCostedLinearOperator):
     def __init__(
         self,
         pair_data: _SurfacePairData3D,
-        space,
+        space: AbstractVectorSpace,
         /,
         *,
         target_block_size: int,

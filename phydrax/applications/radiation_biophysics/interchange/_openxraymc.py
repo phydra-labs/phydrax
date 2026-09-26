@@ -60,7 +60,7 @@ def _dataset_path(value: str, name: str, /) -> str:
     return path
 
 
-def _attribute_text(value, name: str, /) -> str:
+def _attribute_text(value: object, name: str, /) -> str:
     array = np.asarray(value)
     if array.size != 1:
         raise ValueError(f"HDF5 attribute {name!r} must be scalar.")
@@ -73,12 +73,12 @@ def _attribute_text(value, name: str, /) -> str:
 
 
 def _fixed_numeric_dataset(
-    handle,
+    handle: h5py.Group,
     path: str,
     /,
     *,
     expected_shape: tuple[int, ...],
-    expected_dtype: str | None,
+    expected_dtype: str | np.dtype | None,
     max_logical_bytes: int,
 ) -> np.ndarray:
     if path not in handle or not isinstance(handle[path], h5py.Dataset):
@@ -263,13 +263,9 @@ def import_openxraymc_hdf5(
     if not resource.data.startswith(_HDF5_SIGNATURE):
         raise ValueError("OpenXRayMC/XRayMClib score artifact must be HDF5.")
     expected_uncertainty_shape = (
-        None
-        if profile.uncertainty_dataset is None
-        else (
-            (math.prod(profile.score.shape),) * 2
-            if profile.uncertainty_kind == "covariance"
-            else profile.score.shape
-        )
+        (math.prod(profile.score.shape),) * 2
+        if profile.uncertainty_kind == "covariance"
+        else profile.score.shape
     )
     max_logical_bytes = resource.manifest.limits.max_bytes
     with h5py.File(BytesIO(resource.data), "r") as handle:

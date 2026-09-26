@@ -54,7 +54,7 @@ def _subspace_residuals(operator: AbstractLinearOperator, subspace: Any, /) -> A
     real_dtype = columns.real.dtype
     floor = jnp.finfo(real_dtype).tiny
 
-    def residual(column):
+    def residual(column: Array) -> Array:
         vector = operator.source.unflatten(column)
         image = operator.mv(vector)
         input_norm = jnp.sqrt(

@@ -225,7 +225,9 @@ class InvariantScalarTransferPlan(StrictModule, NonTrainableState):
         emission_step = jnp.where(self.active, emission, 0.0)
         extinction_step = jnp.where(self.active, extinction, 0.0)
 
-        def step(value, segment):
+        def step(
+            value: Array, segment: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array]:
             source, opacity, length = segment
             result = _stable_slab_step(value, source, opacity, length)
             return result, result
@@ -684,7 +686,9 @@ class PolarizedInvariantTransferPlan(StrictModule, NonTrainableState):
         )
         lengths = jnp.where(self.active, self.segment_lengths, 0.0)
 
-        def step(carry, segment):
+        def step(
+            carry: tuple[Array, Array], segment: tuple[Array, Array, Array]
+        ) -> tuple[tuple[Array, Array], Array]:
             stokes, prior_converged = carry
             source, operator, length = segment
             intensity_scale = jnp.maximum(

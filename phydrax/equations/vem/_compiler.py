@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
@@ -21,17 +22,22 @@ from ...discretization import (
     DiscretizationKey,
     DiscretizationRecord,
     DiscretizationRole,
+    IntegrationDomain,
 )
 from ...discretization.vem import (
     FactorizedVirtualElementOperator,
     stabilize_virtual_element_tensor,
     VirtualElementDirichletConstraint,
     VirtualElementDiscretization,
+    VirtualElementProjectionData,
     VirtualElementRuntimeData,
+    VirtualElementStabilizationPolicy,
 )
 from ...dynamics import DAEStructure, DifferentialAlgebraicSystem
 from ...linalg import (
     AbstractLinearOperator,
+    AbstractVectorSpace,
+    ConstraintMap,
     DualSpace,
     FunctionLinearOperator,
     LinearSubspace,
@@ -46,23 +52,32 @@ from ...linalg import (
 )
 from ...linalg.eigen import GeneralizedEigenproblem
 from ...sparse import EdgeRelation, scatter_local, SparseCoordinateOperator
-from .._variational import BoundaryLoadAction, DiffusionAction, MassAction, SourceAction
+from .._variational import (
+    BoundaryLoadAction,
+    DiffusionAction,
+    MassAction,
+    SourceAction,
+    VariationalCoefficient,
+)
 from ._form import (
+    VirtualElementAction,
     VirtualElementExecutionContext,
     VirtualElementExecutionPolicy,
     VirtualElementForm,
     VirtualElementRobinAction,
 )
-from ._reconstruction import _runtime_matches_discretization
+from ._reconstruction import _polygonal_connectivity, _runtime_matches_discretization
 
 
-def _cell_indices(discretization: VirtualElementDiscretization, block_index: int, /):
+def _cell_indices(
+    discretization: VirtualElementDiscretization, block_index: int, /
+) -> Array:
     offset = sum(block.cell_count for block in discretization.mesh.blocks[:block_index])
     count = discretization.mesh.blocks[block_index].cell_count
     return jnp.arange(offset, offset + count, dtype=jnp.int32)
 
 
-def _cell_mask(action, indices: Array, /) -> Array:
+def _cell_mask(action: VirtualElementAction, indices: Array, /) -> Array:
     if action.domain is None:
         return jnp.ones(indices.shape, dtype=jnp.bool_)
     selected = jnp.asarray(action.domain.entity_indices, dtype=jnp.int32)
@@ -70,7 +85,7 @@ def _cell_mask(action, indices: Array, /) -> Array:
 
 
 def _coefficient_values(
-    coefficient,
+    coefficient: VariationalCoefficient,
     points: Array,
     indices: Array,
     discretization: VirtualElementDiscretization,
@@ -91,7 +106,7 @@ def _diffusion_polynomial_matrices(
     discretization: VirtualElementDiscretization,
     context: VirtualElementExecutionContext,
     /,
-):
+) -> tuple[Array, ...]:
     family = discretization.field.element.family
     if family == "DiscontinuousL2":
         raise ValueError("Diffusion is undefined on discontinuous L2 VEM spaces.")
@@ -158,13 +173,13 @@ def _diffusion_polynomial_matrices(
 
 
 def _mass_polynomial_matrices(
-    coefficient,
+    coefficient: VariationalCoefficient,
     discretization: VirtualElementDiscretization,
     context: VirtualElementExecutionContext,
     /,
     *,
-    domain=None,
-):
+    domain: IntegrationDomain | None = None,
+) -> tuple[Array, ...]:
     result = []
     for block_index, (geometry, cubature, projection) in enumerate(
         zip(
@@ -218,17 +233,17 @@ def _mass_polynomial_matrices(
 
 
 def _factorized_action(
-    projections,
-    coefficient_maps,
-    polynomial_matrices,
+    projections: Sequence[VirtualElementProjectionData],
+    coefficient_maps: Sequence[Array],
+    polynomial_matrices: Sequence[Array],
     discretization: VirtualElementDiscretization,
     policy: VirtualElementExecutionPolicy,
     /,
     *,
     kernel_projector: str,
-    stabilization_policy,
+    stabilization_policy: VirtualElementStabilizationPolicy,
     operator_id: str,
-):
+) -> FactorizedVirtualElementOperator:
     oriented_coefficients = []
     stabilization_matrices = []
     for projection, coefficient, polynomial, orientation in zip(
@@ -272,7 +287,7 @@ def _factorized_action(
 
 def _merge_sparse(
     operators: Sequence[SparseCoordinateOperator],
-    full_space,
+    full_space: AbstractVectorSpace,
     /,
     *,
     properties: OperatorProperties,
@@ -311,7 +326,7 @@ def _merge_sparse(
 
 def _realize_factorized(
     factorized: FactorizedVirtualElementOperator,
-    full_space,
+    full_space: AbstractVectorSpace,
     policy: VirtualElementExecutionPolicy,
     /,
 ) -> AbstractLinearOperator:
@@ -340,7 +355,7 @@ def _realize_factorized(
 
 def _sum_operators(
     operators: Sequence[AbstractLinearOperator],
-    full_space,
+    full_space: AbstractVectorSpace,
     /,
     *,
     operator_id: str,
@@ -348,9 +363,12 @@ def _sum_operators(
     values = tuple(operators)
     if not values:
         raise ValueError("VEM form contains no bilinear action.")
-    if all(isinstance(value, SparseCoordinateOperator) for value in values):
+    sparse = tuple(
+        value for value in values if isinstance(value, SparseCoordinateOperator)
+    )
+    if len(sparse) == len(values):
         return _merge_sparse(
-            values,
+            sparse,
             full_space,
             properties=OperatorProperties(),
             operator_id=operator_id,
@@ -390,9 +408,9 @@ def _edge_routes(discretization: VirtualElementDiscretization, edges: Array, /) 
     if trace_kind in ("normal", "tangential"):
         modes = jnp.arange(degree + 1, dtype=jnp.int32)
         return offset + edges[:, None] * (degree + 1) + modes[None, :]
-    endpoints = jnp.asarray(discretization.mesh.connectivity.edges, dtype=jnp.int32)[
-        edges
-    ]
+    endpoints = jnp.asarray(
+        _polygonal_connectivity(discretization).edges, dtype=jnp.int32
+    )[edges]
     routes = [endpoints[:, 0]]
     for interior in range(degree - 1):
         routes.append(offset + edges * (degree - 1) + interior)
@@ -412,7 +430,7 @@ def _legendre_values(degree: int, points: Array, /) -> Array:
 
 
 def _boundary_data(
-    coefficient,
+    coefficient: VariationalCoefficient,
     points: Array,
     edges: Array,
     discretization: VirtualElementDiscretization,
@@ -429,12 +447,12 @@ def _boundary_data(
 
 
 def _boundary_operator_and_rhs(
-    action,
+    action: BoundaryLoadAction | VirtualElementRobinAction,
     discretization: VirtualElementDiscretization,
     context: VirtualElementExecutionContext,
     policy: VirtualElementExecutionPolicy,
     /,
-):
+) -> tuple[SparseCoordinateOperator | None, Array, Array]:
     from ...integration import (
         GaussLegendreRule,
         GaussLobattoLegendreRule,
@@ -471,12 +489,12 @@ def _boundary_operator_and_rhs(
         trace_basis = trace_basis * dual
         owner = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
         owner_local = jnp.asarray(domain.owner_local_entities, dtype=jnp.int32)
-        signs = jnp.asarray(discretization.mesh.connectivity.cell_edge_signs)[
+        signs = jnp.asarray(_polygonal_connectivity(discretization).cell_edge_signs)[
             owner, owner_local
         ]
         basis = signs[:, None, None] * trace_basis[None]
     connectivity_edges = jnp.asarray(
-        discretization.mesh.connectivity.edges, dtype=jnp.int32
+        _polygonal_connectivity(discretization).edges, dtype=jnp.int32
     )[edges]
     start = context.runtime.coordinates[connectivity_edges[:, 0]]
     stop = context.runtime.coordinates[connectivity_edges[:, 1]]
@@ -525,7 +543,7 @@ def _boundary_operator_and_rhs(
 class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
     form: VirtualElementForm
     discretization: VirtualElementDiscretization
-    constraint: object
+    constraint: VirtualElementDirichletConstraint | None
     execution_policy: VirtualElementExecutionPolicy
     lift: object
     discretization_bundle: DiscretizationBundle
@@ -538,7 +556,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         /,
         *,
         constraint: VirtualElementDirichletConstraint | None = None,
-        dirichlet_values=None,
+        dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
         execution_policy: VirtualElementExecutionPolicy | None = None,
     ) -> None:
         if not isinstance(form, VirtualElementForm):
@@ -629,11 +647,11 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         )
 
     @property
-    def full_space(self):
+    def full_space(self) -> AbstractVectorSpace:
         return self.discretization.field_space.vector_space
 
     @property
-    def state_space(self):
+    def state_space(self) -> AbstractVectorSpace:
         return (
             self.full_space
             if self.constraint is None
@@ -641,14 +659,14 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         )
 
     @property
-    def residual_space(self):
+    def residual_space(self) -> DualSpace:
         return DualSpace(self.state_space)
 
     @property
-    def constraint_map(self):
+    def constraint_map(self) -> ConstraintMap | None:
         return None if self.constraint is None else self.constraint.constraint_map
 
-    def _context(self, args=None, /) -> VirtualElementExecutionContext:
+    def _context(self, args: object = None, /) -> VirtualElementExecutionContext:
         if isinstance(args, VirtualElementExecutionContext):
             context = args
         else:
@@ -664,14 +682,16 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             raise ValueError("VEM execution context is incompatible with the space.")
         return context
 
-    def expand(self, state, context=None, /):
+    def expand(self, state: PyTree[Any], context: object = None, /) -> PyTree[Array]:
         context_ = self._context(context)
         lift = self.lift if context_.lift is None else context_.lift
         if self.constraint is None:
             return self.full_space.validate(state)
         return self.constraint.constraint_map.expand(state, lift)
 
-    def _action_operator(self, action, context):
+    def _action_operator(
+        self, action: VirtualElementAction, context: VirtualElementExecutionContext
+    ) -> AbstractLinearOperator | None:
         if isinstance(action, DiffusionAction):
             polynomial = _diffusion_polynomial_matrices(
                 action, self.discretization, context
@@ -739,7 +759,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             return operator
         return None
 
-    def full_affine_operator(self, args=None, /) -> AbstractLinearOperator:
+    def full_affine_operator(self, args: object = None, /) -> AbstractLinearOperator:
         context = self._context(args)
         operators = tuple(
             operator
@@ -758,7 +778,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             ),
         )
 
-    def affine_operator(self, args=None, /) -> AbstractLinearOperator:
+    def affine_operator(self, args: object = None, /) -> AbstractLinearOperator:
         full = self.full_affine_operator(args)
         if self.constraint is None:
             return full
@@ -782,7 +802,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             ),
         )
 
-    def full_right_hand_side(self, args=None, /) -> Array:
+    def full_right_hand_side(self, args: object = None, /) -> Array:
         context = self._context(args)
         result = jnp.zeros(
             (self.full_space.size,), dtype=context.runtime.coordinates.dtype
@@ -866,7 +886,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
                 )
         return result
 
-    def right_hand_side(self, args=None, /) -> Array:
+    def right_hand_side(self, args: object = None, /) -> Array:
         context = self._context(args)
         full_rhs = self.full_right_hand_side(context)
         if self.constraint is None:
@@ -877,13 +897,13 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             full_rhs - full_operator.mv(lift)
         )
 
-    def full_residual(self, state, args=None, /) -> Array:
+    def full_residual(self, state: PyTree[Any], args: object = None, /) -> Array:
         context = self._context(args)
         return self.full_affine_operator(context).mv(state) - self.full_right_hand_side(
             context
         )
 
-    def residual(self, state, args=None, /) -> Array:
+    def residual(self, state: PyTree[Any], args: object = None, /) -> Array:
         context = self._context(args)
         full = self.expand(state, context)
         residual = self.full_residual(full, context)
@@ -893,7 +913,9 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
             else self.constraint.constraint_map.pullback_dual(residual)
         )
 
-    def _default_nullspace_policy(self, operator) -> NullspacePolicy | None:
+    def _default_nullspace_policy(
+        self, operator: AbstractLinearOperator
+    ) -> NullspacePolicy | None:
         if (
             self.constraint is not None
             or self.discretization.field.element.family != "ConformingH1"
@@ -923,11 +945,11 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
 
     def linear_system(
         self,
-        args=None,
+        args: object = None,
         /,
         *,
         nullspace_policy: NullspacePolicy | None = None,
-    ):
+    ) -> tuple[LinearSystem, Array]:
         weak = self.affine_operator(args)
         operator = FunctionLinearOperator(
             lambda state: self.state_space.inverse_riesz(weak.mv(state)),
@@ -958,7 +980,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
 
     def sparse_assembly_plan(
         self,
-        args=None,
+        args: object = None,
         /,
         *,
         policy: SparseAssemblyPolicy | None = None,
@@ -967,7 +989,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
 
     def prepare_sparse_assembly(
         self,
-        args=None,
+        args: object = None,
         /,
         *,
         plan: SparseAssemblyPlan | None = None,
@@ -979,12 +1001,12 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
 
     def mass_operator(
         self,
-        args=None,
+        args: object = None,
         /,
         *,
         coefficient: ArrayLike = 1.0,
         return_full: bool = False,
-    ):
+    ) -> AbstractLinearOperator:
         context = self._context(args)
         from .._variational import coefficient as bind_coefficient
 
@@ -1047,7 +1069,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
         )
         structure = self.state_space.structure()
 
-        def context(time, args):
+        def context(time: Array, args: object) -> VirtualElementExecutionContext:
             base = self._context(args)
             return VirtualElementExecutionContext(
                 base.runtime,
@@ -1057,10 +1079,12 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
                 user_args=base.user_args,
             )
 
-        def mass_matrix(time, state, args):
+        def mass_matrix(
+            time: Array, state: Array, args: object
+        ) -> AbstractLinearOperator:
             return self.mass_operator(context(time, args), coefficient=mass_coefficient)
 
-        def vector_field(time, state, args):
+        def vector_field(time: Array, state: Array, args: object) -> Array:
             current = context(time, args)
             result = -self.residual(state, current)
             if self.constraint is not None and current.lift_rate is not None:
@@ -1082,7 +1106,7 @@ class CompiledVirtualElementProblem(StrictModule, NonTrainableState):
 
     def as_generalized_eigenproblem(
         self,
-        args=None,
+        args: object = None,
         /,
         *,
         mass_coefficient: ArrayLike = 1.0,
@@ -1147,7 +1171,7 @@ def compile_virtual_element_problem(
     /,
     *,
     constraint: VirtualElementDirichletConstraint | None = None,
-    dirichlet_values=None,
+    dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
     execution_policy: VirtualElementExecutionPolicy | None = None,
 ) -> CompiledVirtualElementProblem:
     return CompiledVirtualElementProblem(

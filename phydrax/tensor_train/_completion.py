@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -191,7 +192,7 @@ def _validate_samples(
 
 
 def _deterministic_initial(
-    mode_sizes: tuple[int, ...], max_rank: int, mean: Array, dtype, /
+    mode_sizes: tuple[int, ...], max_rank: int, mean: Array, dtype: DTypeLike, /
 ) -> TensorTrain:
     total = prod(mode_sizes)
     ranks = [1]
@@ -217,7 +218,7 @@ def _sample_core_frame(
     axis: int,
     /,
 ) -> Array:
-    def one(point):
+    def one(point: Array) -> Array:
         left = jnp.ones((1,), dtype=tensor.dtype)
         for position in range(axis):
             left = ein.contract(

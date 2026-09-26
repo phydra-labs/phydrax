@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -15,6 +17,11 @@ from ..._strict import StrictModule
 from ..core._currency import Currency
 from ..core._evidence import FinanceEvidenceBinding
 from ..core._laws import PricingLaw
+
+
+_HedgeCarry: TypeAlias = tuple[Array, Array]
+_HedgeStepData: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
+_HedgeStepOutput: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class HedgeReplayEvidence(StrictModule):
@@ -127,7 +134,9 @@ def evaluate_hedge_replay(
     )
     cash0 = eqx.error_if(cash0, ~jnp.isfinite(cash0), "initial cash must be finite.")
 
-    def step(carry, data):
+    def step(
+        carry: _HedgeCarry, data: _HedgeStepData
+    ) -> tuple[_HedgeCarry, _HedgeStepOutput]:
         previous_cash, previous_units = carry
         dt, interval_rate, spot, derivative, next_units, cost_rate = data
         accrued = previous_cash * jnp.exp(interval_rate * dt)

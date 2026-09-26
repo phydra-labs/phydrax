@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -18,7 +20,10 @@ from ...equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
     HomogeneousMixtureEulerSystem,
 )
-from ...equations._hyperbolic_systems import AbstractNormalCharacteristicSystem
+from ...equations._hyperbolic_systems import (
+    AbstractConservationSystem,
+    AbstractNormalCharacteristicSystem,
+)
 
 
 class CharacteristicReflectionLedger(StrictModule):
@@ -73,11 +78,11 @@ class CharacteristicNonreflectingBoundaryPlan(StrictModule, NonTrainableState):
 
     def apply(
         self,
-        system: AbstractNormalCharacteristicSystem,
+        system: AbstractConservationSystem,
         interior_state: ArrayLike,
         far_field_state: ArrayLike,
         outward_normal: ArrayLike,
-        args=None,
+        args: Any = None,
         /,
     ) -> CharacteristicBoundaryResult:
         if not isinstance(system, AbstractNormalCharacteristicSystem):

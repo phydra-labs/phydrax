@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._cell_complex import PolygonalConnectivity
 from ...discretization._cell_mesh import CellMesh
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from ._contracts import (
@@ -35,8 +36,15 @@ if TYPE_CHECKING:
     from ._intersection import PlaneSurfaceSection
 
 
-def _triangle_faces(mesh: CellMesh, /) -> np.ndarray:
+def _surface_connectivity(mesh: CellMesh, /) -> PolygonalConnectivity:
     connectivity = mesh.connectivity
+    # Surface meshes are validated as two-dimensional, which builds polygonal connectivity.
+    assert isinstance(connectivity, PolygonalConnectivity)
+    return connectivity
+
+
+def _triangle_faces(mesh: CellMesh, /) -> np.ndarray:
+    connectivity = _surface_connectivity(mesh)
     faces = np.asarray(connectivity.cell_vertices, dtype=np.int32)
     kinds = np.asarray(connectivity.cell_kinds, dtype=np.int32)
     if faces.ndim != 2 or kinds.shape != (faces.shape[0],) or np.any(kinds != 3):
@@ -443,7 +451,7 @@ class _CellMeshTriangleMap(AbstractBoundaryMap):
         return 3
 
     def map(self, chart_indices: Array, reference: Array, /) -> Array:
-        faces = self.mesh.connectivity.cell_vertices[chart_indices, :3]
+        faces = _surface_connectivity(self.mesh).cell_vertices[chart_indices, :3]
         triangles = self.mesh.coordinates[faces]
         first = reference[..., :1]
         second = reference[..., 1:2]
@@ -454,7 +462,7 @@ class _CellMeshTriangleMap(AbstractBoundaryMap):
         )
 
     def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
-        faces = self.mesh.connectivity.cell_vertices[chart_indices, :3]
+        faces = _surface_connectivity(self.mesh).cell_vertices[chart_indices, :3]
         triangles = self.mesh.coordinates[faces]
         doubled_area = jnp.linalg.norm(
             jnp.cross(

@@ -10,12 +10,14 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dem_cohesion import (
+    AbstractDEMCohesionPlan,
     BagheriCapillaryBridgePlan,
     CompositeDEMCohesionPlan,
     DEMCohesionComponentHistory,
@@ -208,7 +210,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         self.plan_id = identifier
 
     def initialize(
-        self, capacity: int, dtype, active_mask: ArrayLike, /
+        self, capacity: int, dtype: DTypeLike, active_mask: ArrayLike, /
     ) -> DEMLiquidState:
         count = int(capacity)
         active = jnp.asarray(active_mask, dtype=jnp.bool_)
@@ -580,7 +582,9 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         )
 
 
-def conserved_bagheri_component(cohesion, /) -> tuple[BagheriCapillaryBridgePlan, int]:
+def conserved_bagheri_component(
+    cohesion: AbstractDEMCohesionPlan | None, /
+) -> tuple[BagheriCapillaryBridgePlan, int]:
     if isinstance(cohesion, BagheriCapillaryBridgePlan):
         if not cohesion.conserve_liquid:
             raise ValueError("Liquid process requires conserve_liquid=True.")

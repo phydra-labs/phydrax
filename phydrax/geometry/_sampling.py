@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -153,6 +153,10 @@ def complete_sampling_result(
     )
 
 
+# (key, points, accepted count, proposed count, rounds)
+_RejectionState: TypeAlias = tuple[Key[Array, ""], Array, Array, Array, Array]
+
+
 def bounded_rejection_sample(
     proposal: Callable[[Key[Array, ""], int], Array],
     accept: Callable[[Array], Array],
@@ -189,11 +193,11 @@ def bounded_rejection_sample(
         jnp.asarray(0, dtype=jnp.int32),
     )
 
-    def condition(state):
+    def condition(state: _RejectionState) -> Array:
         _, _, accepted_count, _, rounds = state
         return (accepted_count < requested_count) & (rounds < maximum_rounds)
 
-    def body(state):
+    def body(state: _RejectionState) -> _RejectionState:
         loop_key, points, accepted_count, proposed_count, rounds = state
         loop_key, proposal_key = jr.split(loop_key)
         candidates = jnp.asarray(

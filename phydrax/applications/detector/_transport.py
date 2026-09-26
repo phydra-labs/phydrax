@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -16,6 +17,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.pic import RelativisticBorisPlan
 from ._core import DetectorConditions, TransportTrackBank
+
+
+# (position, proper velocity, alive) per flattened track.
+_PropagationCarry: TypeAlias = tuple[Array, Array, Array]
 
 
 class ChargedPropagationPlan(StrictModule, NonTrainableState):
@@ -104,7 +109,9 @@ def propagate_charged_tracks(
     electric = jnp.broadcast_to(plan.conditions.electric_field, (count, 3))
     magnetic = jnp.broadcast_to(plan.conditions.magnetic_field, (count, 3))
 
-    def step(carry, _):
+    def step(
+        carry: _PropagationCarry, _: None
+    ) -> tuple[_PropagationCarry, tuple[Array, Array, Array]]:
         position, proper_velocity, alive = carry
         pushed = plan.pusher.push(
             proper_velocity,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -25,6 +26,10 @@ from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...measurement import MeasurementAsset, SampleTimeAxis
 from ...units import SECOND
+
+
+# Conjugate-gradient iterate, residual, search direction, and squared residual norm.
+_CGCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,7 +366,7 @@ class CGSensePlan:
         )
         right = self.encoding.adjoint(data)
 
-        def normal(value):
+        def normal(value: Array) -> Array:
             return (
                 self.encoding.adjoint(self.encoding.forward(value)[0])
                 + self.l2_regularization * value
@@ -371,7 +376,7 @@ class CGSensePlan:
         direction = residual
         gamma = jnp.real(jnp.vdot(residual, residual))
 
-        def step(carry, _):
+        def step(carry: _CGCarry, _: None) -> tuple[_CGCarry, Array]:
             x, residual, direction, gamma = carry
             action = normal(direction)
             alpha = gamma / jnp.maximum(
@@ -502,7 +507,7 @@ class OffResonanceMRIEncodingPlan(StrictModule, NonTrainableState):
         )
         flat = value.reshape((-1,))
 
-        def sample(k, time, translation):
+        def sample(k: Array, time: Array, translation: Array) -> Array:
             phase = jnp.exp(-2j * jnp.pi * self.off_resonance_hz.reshape((-1,)) * time)
             motion = jnp.exp(-1j * jnp.sum(k * translation))
             fourier = jnp.exp(-1j * (points @ k))
@@ -625,7 +630,7 @@ class BlochSequencePlan:
             raise ValueError("Bloch state/field require final dimension three.")
         dt = jnp.asarray(self.time_step, dtype=magnetization.dtype)
 
-        def step(value, applied):
+        def step(value: Array, applied: Array) -> tuple[Array, Array]:
             angle = self.gyromagnetic_ratio * jnp.sqrt(jnp.sum(applied * applied)) * dt
             axis = applied / jnp.maximum(
                 jnp.sqrt(jnp.sum(applied * applied)), jnp.finfo(value.dtype).tiny

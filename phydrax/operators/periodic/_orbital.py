@@ -240,7 +240,7 @@ class PeriodicOrbitalPencilPlan(StrictModule, NonTrainableState):
         hamiltonian_state: PeriodicTranslationFamilyState,
         energy_unit: UnitDefinition,
         /,
-        **kwargs,
+        **kwargs: float,
     ) -> "PeriodicOrbitalPencilPlan":
         count = basis.orbital_count
         relation = EdgeRelation(

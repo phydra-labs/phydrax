@@ -10,13 +10,15 @@ from uuid import uuid4
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
+from ..._polynomial._cubature import CubatureReference
 from ..._strict import StrictModule
 from ...discretization._cell_mesh import CellMesh
 from ...discretization._support import DiscreteSupport
 from .._atlas import BoundaryAtlas, BoundaryMap
-from .._cubature import AbstractCubatureMap, CubatureAtlas
+from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureMapEvaluation
 from ._topology import TriangleTopology
 
 
@@ -55,7 +57,11 @@ class TriangleMesh(StrictModule):
     source_id: str = eqx.field(static=True)
 
     def __init__(
-        self, vertices: Array, faces: Array, *, source_id: str | None = None
+        self,
+        vertices: npt.ArrayLike,
+        faces: npt.ArrayLike,
+        *,
+        source_id: str | None = None,
     ) -> None:
         vertices_host = np.asarray(vertices, dtype=np.float64)
         faces_host = np.asarray(faces, dtype=np.int32)
@@ -230,7 +236,7 @@ class _TriangleCubatureMap(AbstractCubatureMap):
         return self.faces.shape[0]
 
     @property
-    def reference_domain(self):
+    def reference_domain(self) -> CubatureReference:
         return "triangle"
 
     @property
@@ -265,7 +271,7 @@ class _TriangleCubatureMap(AbstractCubatureMap):
         chart_indices: Array,
         reference: Array,
         /,
-    ):
+    ) -> CubatureMapEvaluation:
         return super().evaluate(chart_indices, reference)
 
 

@@ -64,7 +64,9 @@ class AbstractDEMBarrierMotionPlan(StrictModule, NonTrainableState):
 class StaticDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
     motion_id: str = "dem-barrier-motion:static"
 
-    def evaluate(self, geometry, time, points, args, /):
+    def evaluate(
+        self, geometry: Any, time: Array, points: Array, args: Any, /
+    ) -> DEMBarrierMotion:
         del time, args
         dimension = points.shape[-1]
         angular_dimension = 1 if dimension == 2 else 3
@@ -96,7 +98,9 @@ class PrescribedDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         self.motion_function = motion_function
         self.motion_id = identifier
 
-    def evaluate(self, geometry, time, points, args, /):
+    def evaluate(
+        self, geometry: Any, time: Array, points: Array, args: Any, /
+    ) -> DEMBarrierMotion:
         result = self.motion_function(geometry, time, points, args)
         if not isinstance(result, DEMBarrierMotion):
             raise TypeError("motion_function must return DEMBarrierMotion.")
@@ -303,7 +307,9 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
             saturated,
         )
 
-    def evaluate(self, geometry, time, points, args, /):
+    def evaluate(
+        self, geometry: Any, time: Array, points: Array, args: Any, /
+    ) -> DEMBarrierMotion:
         del time
         if not isinstance(args, ServoDEMBarrierState):
             raise TypeError("Servo barrier motion requires ServoDEMBarrierState args.")
@@ -512,7 +518,7 @@ def evaluate_dem_barrier(
     if geometry.ambient_dimension != bodies.ambient_dimension:
         raise ValueError("DEM barrier dimension does not match rigid spheres.")
 
-    def broadcast(name, value, width):
+    def broadcast(name: str, value: Array, width: int) -> Array:
         array = jnp.asarray(value, dtype=position.dtype)
         if array.shape == (width,):
             return jnp.broadcast_to(array, (bodies.capacity, width))

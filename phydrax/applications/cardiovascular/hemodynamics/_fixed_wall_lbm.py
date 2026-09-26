@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -33,6 +36,7 @@ from ....discretization.lattice_boltzmann import (
     TRTCollisionPlan,
 )
 from ....discretization.lattice_boltzmann._collision import macroscopic_raw_moments
+from ....discretization.lattice_boltzmann._link_topology import BoundarySide
 from ._domain import (
     FixedWallLumenRegion,
     FixedWallScope,
@@ -106,7 +110,7 @@ class FixedWallLBMAdvance(StrictModule):
     committed_state: FixedWallLBMState
 
 
-def _rheology_bounds(model: RheologyModel, density: float, /) -> tuple[float, float]:
+def _rheology_bounds(model: RheologyModel, density: float, /) -> tuple[Array, Array]:
     return (
         model.minimum_dynamic_viscosity_kpa_ms / density,
         model.maximum_dynamic_viscosity_kpa_ms / density,
@@ -157,7 +161,7 @@ def _shear_rate(
     velocity: Array,
     fluid_mask: Array,
     cell_size: Array,
-    periodic: tuple[bool, bool, bool],
+    periodic: tuple[bool, ...],
     /,
 ) -> Array:
     gradients = jnp.stack(
@@ -335,7 +339,8 @@ class FixedWallLBMPlan(StrictModule, NonTrainableState):
         faces = tuple(
             LatticeBoltzmannFaceBoundary(
                 terminal.face.axis,
-                terminal.face.side,
+                # TerminalFace validates its side as "lower" or "upper".
+                cast(BoundarySide, terminal.face.side),
                 (
                     LatticeBoltzmannLinkOwner.PRESSURE
                     if isinstance(terminal, PressureTerminalPort)
@@ -545,7 +550,7 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
         /,
         *,
         density_mg_per_mm3: ArrayLike | None = None,
-        velocity_mm_per_ms: ArrayLike = (0.0, 0.0, 0.0),
+        velocity_mm_per_ms: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         time_ms: ArrayLike = 0.0,
     ) -> FixedWallLBMState:
         density = (
@@ -562,7 +567,7 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
         )
         populations = self.initializer.initialize_state(
             density,
-            velocity_mm_per_ms,
+            jnp.asarray(velocity_mm_per_ms),
             parameters,
             time=time_ms,
         )
@@ -596,7 +601,7 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
     def _safe_port_values(
         self,
         values: TerminalPortValues,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> tuple[TerminalPortValues, Array]:
         """Replace invalid boundary controls while retaining rejection evidence."""
@@ -664,7 +669,7 @@ class PreparedFixedWallLBM(StrictModule, NonTrainableState):
     def _boundary_parameters(
         self,
         values: TerminalPortValues,
-        dtype,
+        dtype: DTypeLike,
         /,
     ) -> LatticeBoltzmannBoundaryParameters:
         values = self.terminal_measurements.validate_values(values)

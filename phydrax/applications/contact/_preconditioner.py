@@ -34,13 +34,13 @@ class ContactGraphPlan(StrictModule, NonTrainableState):
         route_count = len(endpoints)
         parent = list(range(route_count))
 
-        def root(index):
+        def root(index: int) -> int:
             while parent[index] != index:
                 parent[index] = parent[parent[index]]
                 index = parent[index]
             return index
 
-        def union(left, right) -> None:
+        def union(left: int, right: int) -> None:
             left_root = root(left)
             right_root = root(right)
             if left_root != right_root:

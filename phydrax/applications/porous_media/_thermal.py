@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...discretization.finite_volume._hybrid_diffusion import _positive_tensor, _tensor
@@ -21,6 +23,14 @@ from ...units import (
     UnitDefinition,
 )
 from ._materials import _finite
+
+
+if TYPE_CHECKING:
+    from ...discretization.finite_volume._unstructured import (
+        UnstructuredFiniteVolumeDiscretization,
+    )
+    from ._materials import PorousMaterial
+    from ._state import PorousState
 
 
 CONDUCTIVITY_UNIT = derived_unit(
@@ -47,13 +57,13 @@ class PorousThermalMaterial(StrictModule):
 
     def __init__(
         self,
-        conductivity_W_m_K,
+        conductivity_W_m_K: ArrayLike,
         /,
         *,
-        dry_conductivity_W_m_K=None,
-        solid_heat_capacity_J_m3_K=2.0e6,
-        liquid_heat_capacity_J_kg_K=4180.0,
-        reference_temperature_K=273.15,
+        dry_conductivity_W_m_K: ArrayLike | None = None,
+        solid_heat_capacity_J_m3_K: ArrayLike = 2.0e6,
+        liquid_heat_capacity_J_kg_K: ArrayLike = 4180.0,
+        reference_temperature_K: ArrayLike = 273.15,
         conductivity_unit: UnitDefinition = CONDUCTIVITY_UNIT,
     ) -> None:
         saturated = convert_value(
@@ -88,18 +98,23 @@ class PorousThermalMaterial(StrictModule):
                 "One liquid requires scalar specific heat and a common enthalpy reference."
             )
 
-    def conductivity(self, saturation):
+    def conductivity(self, saturation: Array) -> Array:
         count = saturation.size
         dry = _tensor(self.dry_conductivity_W_m_K, count)
         saturated = _tensor(self.saturated_conductivity_W_m_K, count)
         return dry + saturation[:, None, None] * (saturated - dry)
 
-    def enthalpy(self, temperature_K):
+    def enthalpy(self, temperature_K: ArrayLike) -> Array:
         return self.liquid_heat_capacity_J_kg_K * (
             jnp.asarray(temperature_K) - self.reference_temperature_K
         )
 
-    def energy(self, water_state, discretization, porous_material):
+    def energy(
+        self,
+        water_state: PorousState,
+        discretization: UnstructuredFiniteVolumeDiscretization,
+        porous_material: PorousMaterial,
+    ) -> Array:
         skeleton_capacity = (
             (1 - porous_material.porosity)
             * discretization.cell_volumes

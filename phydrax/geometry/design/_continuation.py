@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from math import isfinite
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -243,9 +243,11 @@ def solve_csg_continuation(
         if search is None:
             result = system.solve(initial_state=state, **options)
         else:
+            # A non-None search was validated above to come with an explicit key.
+            search_key = cast(Key[Array, ""], key)
             result = system.search(
                 search,
-                key=jr.fold_in(key, epoch),
+                key=jr.fold_in(search_key, epoch),
                 bounds=bounds,
                 initial_state=state,
             )

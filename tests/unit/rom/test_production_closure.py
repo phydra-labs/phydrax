@@ -287,3 +287,21 @@ def test_ssm_balancing_interpolatory_and_structure_preserving_reductions():
         jnp.eye(2),
     )
     assert port.system_matrix().shape == (2, 2)
+
+
+def test_rom_execution_requirements_declare_batch_and_reduced_axes():
+    requirements = phx.rom.rom_execution_requirements(
+        "rom-owner",
+        batch_axis=4,
+        reduced_axis=3,
+        dtype="float64",
+        distributed_output=False,
+    )
+    axes = {axis.name: axis for axis in requirements.logical_axes}
+    assert set(axes) == {"rom-batch", "rom-reduced"}
+    assert axes["rom-batch"].size == 4
+    assert axes["rom-batch"].kind == phx.execution.LogicalAxisKind.INDEPENDENT
+    assert axes["rom-reduced"].size == 3
+    assert axes["rom-reduced"].kind == phx.execution.LogicalAxisKind.MODEL
+    assert requirements.dtypes == ("float64",)
+    assert not requirements.allows_distributed_output

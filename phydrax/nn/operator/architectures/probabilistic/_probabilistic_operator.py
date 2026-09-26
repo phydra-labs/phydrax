@@ -25,7 +25,9 @@ from phydrax.nn.operator.distribution import (
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
 
-def _gaussian_operator_contract(model):
+def _gaussian_operator_contract(
+    model: GaussianFunctionOperator,
+) -> ConfiguredOperatorContract:
     wrapped = model.base.operator_contract
     return ConfiguredOperatorContract(
         architecture="GaussianFunctionOperator",

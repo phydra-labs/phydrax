@@ -116,7 +116,12 @@ class FieldGaussianDiffusion(StrictModule):
     process_id: str = eqx.field(static=True)
 
     def __init__(
-        self, geometry, coefficient_process, /, *, process_id: str | None = None
+        self,
+        geometry: FieldNoiseGeometry,
+        coefficient_process: AbstractGaussianDiffusion,
+        /,
+        *,
+        process_id: str | None = None,
     ) -> None:
         if not isinstance(geometry, FieldNoiseGeometry):
             raise TypeError("geometry must be a FieldNoiseGeometry.")
@@ -149,7 +154,9 @@ class FieldGaussianDiffusion(StrictModule):
     ) -> Array:
         return self.subspace_process.perturb(key, field, time=time)
 
-    def conditional_coefficient_score(self, perturbed, clean, /, *, time):
+    def conditional_coefficient_score(
+        self, perturbed: ArrayLike, clean: ArrayLike, /, *, time: ArrayLike
+    ) -> Array:
         return self.subspace_process.conditional_coefficient_score(
             perturbed,
             clean,

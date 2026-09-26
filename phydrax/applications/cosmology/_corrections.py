@@ -17,6 +17,7 @@ from ..._trainable import NonTrainableState
 from ._products import (
     CosmologyProductProvenance,
     MatterPowerDescriptor,
+    MatterPowerStage,
     MatterPowerTable,
 )
 
@@ -28,8 +29,8 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
     model_version: str = eqx.field(static=True)
     source_reference: str = eqx.field(static=True)
     calibration_id: str = eqx.field(static=True)
-    denominator_stage: str = eqx.field(static=True)
-    output_stage: str = eqx.field(static=True)
+    denominator_stage: MatterPowerStage = eqx.field(static=True)
+    output_stage: MatterPowerStage = eqx.field(static=True)
     minimum_scale_factor: float = eqx.field(static=True)
     maximum_scale_factor: float = eqx.field(static=True)
     minimum_wavenumber: float = eqx.field(static=True)
@@ -45,8 +46,8 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
         model_version: str,
         source_reference: str,
         calibration_id: str,
-        denominator_stage: str,
-        output_stage: str,
+        denominator_stage: MatterPowerStage,
+        output_stage: MatterPowerStage,
         scale_factor_domain: tuple[float, float],
         wavenumber_domain: tuple[float, float],
         expected_error: str,
@@ -90,11 +91,13 @@ class CorrectionModelCard(StrictModule, NonTrainableState):
             self.model_version,
             self.source_reference,
             self.calibration_id,
-            self.denominator_stage,
-            self.output_stage,
+            _,
+            _,
             self.expected_error,
             self.license_id,
         ) = strings
+        self.denominator_stage = denominator_stage
+        self.output_stage = output_stage
         self.minimum_scale_factor = a_min
         self.maximum_scale_factor = a_max
         self.minimum_wavenumber = k_min

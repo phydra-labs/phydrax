@@ -16,7 +16,7 @@ import functools
 from abc import abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from enum import IntEnum
-from typing import Any, ClassVar, final, NamedTuple
+from typing import Any, cast, ClassVar, final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -502,7 +502,10 @@ class OptaxUpdateRule(AbstractKernelUpdateRule):
         /,
     ) -> tuple[PyTree[Any], PyTree[Any], PyTree[Any], Array]:
         if self.reevaluates_objective:
-            updates, next_state = self.optimizer.update(
+            optimizer = self.optimizer
+            # The constructor admits reevaluation only for extra-args transformations.
+            assert isinstance(optimizer, optax.GradientTransformationExtraArgs)
+            updates, next_state = optimizer.update(
                 gradients,
                 rule_state,
                 parameters,
@@ -1061,7 +1064,11 @@ def _parameter_authorities(
             f"{context}: parameters at {unowned!r} have no owning component slot or "
             "ComponentBinding and the frontend declared no root authority."
         )
-    return tuple(authorities[path] or root_authority for path in parameter_paths)
+    # Unowned paths fall back to root_authority, which the check above made non-None.
+    return cast(
+        "tuple[ComponentAuthority, ...]",
+        tuple(authorities[path] or root_authority for path in parameter_paths),
+    )
 
 
 def _objective_admission(
@@ -1559,7 +1566,12 @@ class PreparedTrainingKernel(StrictModule):
             leaf if axis == 0 else None for leaf, axis in zip(leaves, axes, strict=True)
         ]
 
-        def lane_function(lane_state, lane_fixed, lane_payload, lane):
+        def lane_function(
+            lane_state: TrainingKernelState,
+            lane_fixed: list[Any],
+            lane_payload: Any,
+            lane: Array,
+        ) -> Any:
             fixed = jax.tree_util.tree_unflatten(
                 treedef,
                 [
@@ -1869,7 +1881,9 @@ def prepare_training_kernel(
         raise TypeError("root_authority must be a ComponentAuthority or None.")
 
     resolution = require_parameter_roles(tree, context=context)
-    paths, roles = resolution.paths, resolution.roles
+    paths = resolution.paths
+    # require_parameter_roles rejects unclassified (None-role) leaves.
+    roles = cast("tuple[ArrayRole, ...]", resolution.roles)
     parameter_paths = tuple(
         path
         for path, role in zip(paths, roles, strict=True)
@@ -2101,11 +2115,13 @@ def _content_digest(arrays: Mapping[str, Any], /) -> str:
 
 def training_role_schema_id(resolution: RoleResolution, /) -> str:
     """Fingerprint the path and array role of every leaf of one resolved tree."""
+    # Callers pass resolutions already checked by `_declared_roles` (no None roles).
+    roles = cast("tuple[ArrayRole, ...]", resolution.roles)
     return canonical_fingerprint(
         {
             "kind": "training-role-schema",
             "paths": list(resolution.paths),
-            "roles": [role.value for role in resolution.roles],
+            "roles": [role.value for role in roles],
         }
     )
 

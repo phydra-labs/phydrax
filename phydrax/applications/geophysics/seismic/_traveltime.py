@@ -87,7 +87,9 @@ class TravelTimeGraphPlan(StrictModule, NonTrainableState):
         predecessor = jnp.full(times.shape, -1, dtype=jnp.int32)
         second = jnp.full_like(times, infinity)
 
-        def relax(_, state):
+        def relax(
+            _: Array, state: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             current_times, current_predecessor, current_second = state
             candidates = current_times[self.edge_nodes[:, 0]] + edge_time
             destination = self.edge_nodes[:, 1]

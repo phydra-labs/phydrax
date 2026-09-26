@@ -227,9 +227,11 @@ class PatchwiseScalarField(StrictModule):
         /,
     ) -> Array:
         transition = self.atlas.transition(source, target)
-        source_value = jnp.asarray(self.local_fields[int(source)](coordinates))
+        source_value = jnp.asarray(
+            self.local_fields[int(source)](jnp.asarray(coordinates))
+        )
         target_value = jnp.asarray(
-            self.local_fields[int(target)](transition(coordinates))
+            self.local_fields[int(target)](transition(jnp.asarray(coordinates)))
         )
         return jnp.max(jnp.abs(source_value - target_value))
 

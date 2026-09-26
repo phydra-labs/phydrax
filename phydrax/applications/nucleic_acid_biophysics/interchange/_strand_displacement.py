@@ -18,7 +18,7 @@ import io
 import json
 import math
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
@@ -26,6 +26,7 @@ from xml.etree import ElementTree
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -196,11 +197,11 @@ class FluorescenceTimeTrace:
         self,
         case_id: str,
         identity: PlateWellIdentity,
-        time_seconds,
-        intensity,
-        saturation_mask,
+        time_seconds: npt.ArrayLike,
+        intensity: npt.ArrayLike,
+        saturation_mask: npt.ArrayLike,
         construct_ids: Sequence[str],
-        initial_concentrations_molar,
+        initial_concentrations_molar: npt.ArrayLike,
         *,
         temperature_kelvin: float,
         condition_id: str,
@@ -348,14 +349,18 @@ _TRACE_META_FIELDS = (
 )
 
 
-def _flatten_fluorescence_trace(trace):
+def _flatten_fluorescence_trace(
+    trace: FluorescenceTimeTrace,
+) -> tuple[tuple[object, ...], tuple[object, ...]]:
     return (
         tuple(getattr(trace, name) for name in _TRACE_DATA_FIELDS),
         tuple(getattr(trace, name) for name in _TRACE_META_FIELDS),
     )
 
 
-def _unflatten_fluorescence_trace(metadata, arrays):
+def _unflatten_fluorescence_trace(
+    metadata: tuple[object, ...], arrays: Iterable[object]
+) -> FluorescenceTimeTrace:
     trace = object.__new__(FluorescenceTimeTrace)
     for name, value in zip(_TRACE_DATA_FIELDS, arrays, strict=True):
         object.__setattr__(trace, name, value)
@@ -742,15 +747,19 @@ def _parse_admitted_workbooks(
     if len(header_rows) != 1:
         raise ValueError("Raw workbook requires exactly one Time [s] row.")
     header = header_rows[0]
-    measurement_rows = tuple(
-        row
-        for row in raw_rows
-        if row.get("A") is not None and row.get("B", "").startswith("Sample X")
-    )
+    measurement_rows: list[tuple[str, str, dict[str, str | None]]] = []
+    for row in raw_rows:
+        well_label, sample_label = row.get("A"), row.get("B")
+        if (
+            well_label is not None
+            and sample_label is not None
+            and sample_label.startswith("Sample X")
+        ):
+            measurement_rows.append((well_label, sample_label, row))
     if not measurement_rows:
         raise ValueError("Raw workbook contains no well/sample fluorescence rows.")
-    wells = tuple(row["A"] for row in measurement_rows)
-    samples = tuple(row["B"] for row in measurement_rows)
+    wells = tuple(well for well, _, _ in measurement_rows)
+    samples = tuple(sample for _, sample, _ in measurement_rows)
     if len(set(wells)) != len(wells):
         raise ValueError("Raw workbook contains duplicate plate/well identities.")
     if len(set(samples)) != len(samples):
@@ -779,11 +788,17 @@ def _parse_admitted_workbooks(
             key=column_number,
         )
     )
-    if not data_columns or any(header[column] is None for column in data_columns):
+    if not data_columns:
         raise ValueError("Raw workbook time columns must be complete.")
+    header_times: dict[str, str] = {}
+    for column in data_columns:
+        time_label = header[column]
+        if time_label is None:
+            raise ValueError("Raw workbook time columns must be complete.")
+        header_times[column] = time_label
     marker_columns_by_row = tuple(
         frozenset(column for column in data_columns if row.get(column) == injection)
-        for row in measurement_rows
+        for _, _, row in measurement_rows
     )
     marker_columns = marker_columns_by_row[0]
     if any(columns != marker_columns for columns in marker_columns_by_row):
@@ -798,13 +813,13 @@ def _parse_admitted_workbooks(
         column for column in data_columns if column not in marker_columns
     )
     source_times = np.asarray(
-        [float(header[column]) for column in kept_columns], dtype=np.float64
+        [float(header_times[column]) for column in kept_columns], dtype=np.float64
     )
     marker_column = next(iter(marker_columns))
     marker_position = data_columns.index(marker_column)
     if marker_position == 0:
         raise ValueError("Injection marker requires a preceding source time sample.")
-    injection_reference = float(header[data_columns[marker_position - 1]])
+    injection_reference = float(header_times[data_columns[marker_position - 1]])
     source_times = source_times - injection_reference
     if np.any(~np.isfinite(source_times)) or np.any(np.diff(source_times) <= 0.0):
         raise ValueError(
@@ -813,8 +828,7 @@ def _parse_admitted_workbooks(
 
     manifest_ids = _source_manifest_ids(source)
     traces: list[FluorescenceTimeTrace] = []
-    for row in measurement_rows:
-        sample = row["B"]
+    for well, sample, row in measurement_rows:
         specification = specifications[sample]
         if plate_labels[sample] != specification.source_description:
             raise ValueError(
@@ -829,13 +843,11 @@ def _parse_admitted_workbooks(
                 saturated.append(True)
             else:
                 if scalar is None:
-                    raise ValueError(
-                        f"Well {row['A']!r} has a missing fluorescence value."
-                    )
+                    raise ValueError(f"Well {well!r} has a missing fluorescence value.")
                 number = float(scalar)
                 if not math.isfinite(number):
                     raise ValueError(
-                        f"Well {row['A']!r} has a non-finite fluorescence value."
+                        f"Well {well!r} has a non-finite fluorescence value."
                     )
                 values.append(number)
                 saturated.append(False)
@@ -845,7 +857,7 @@ def _parse_admitted_workbooks(
                 PlateWellIdentity(
                     source.experiment_id,
                     source.plate_id,
-                    row["A"],
+                    well,
                     specification.preparation_id,
                     specification.replicate_id,
                 ),
@@ -955,7 +967,7 @@ def admit_strand_displacement_paths(
         raise ValueError(
             "Processed CSV path and manifest must either both be present or both absent."
         )
-    if source.processed_csv is not None:
+    if source.processed_csv is not None and processed_csv_path is not None:
         processed = read_reference_artifact(
             processed_csv_path, source.processed_csv.manifest
         ).data
@@ -964,7 +976,7 @@ def admit_strand_displacement_paths(
         raise ValueError(
             "README path and manifest must either both be present or both absent."
         )
-    if source.readme is not None:
+    if source.readme is not None and readme_path is not None:
         readme = read_reference_artifact(readme_path, source.readme.manifest).data
         _require_manifest_bytes(readme, source.readme.manifest, use)
     return _parse_admitted_workbooks(

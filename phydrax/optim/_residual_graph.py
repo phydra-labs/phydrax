@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import equinox as eqx
 import jax
@@ -125,7 +125,9 @@ class ResidualBlock(StrictModule):
         self.parameter_ids = parameter_ids_
         self.block_id = identifier
 
-    def weighted_residual(self, values, args, /):
+    def weighted_residual(
+        self, values: tuple[PyTree[Any], ...], args: Any, /
+    ) -> PyTree[Array]:
         """Evaluate one block after measurement weighting but before robust loss."""
         residual = validate_real_inexact_tree(
             self.function(values, args),
@@ -146,7 +148,7 @@ class ResidualBlock(StrictModule):
         space = PyTreeSpace(residual)
         return weight @ space.flatten(residual)
 
-    def evaluate(self, values, args, /):
+    def evaluate(self, values: tuple[PyTree[Any], ...], args: Any, /) -> PyTree[Array]:
         weighted = self.weighted_residual(values, args)
         return (
             weighted if self.loss is None else robustify_residual(weighted, self.loss)[0]
@@ -198,12 +200,14 @@ class ResidualGraphProblem(StrictModule):
         self.residual_blocks = residuals
         self.problem_id = identifier
 
-    def parameter_values(self, parameters, /):
+    def parameter_values(self, parameters: PyTree[Any], /) -> dict[str, PyTree[Any]]:
         return {
             block.block_id: block.extract(parameters) for block in self.parameter_blocks
         }
 
-    def residual(self, parameters, args=None, /):
+    def residual(
+        self, parameters: PyTree[Any], args: Any = None, /
+    ) -> tuple[PyTree[Array], ...]:
         values = self.parameter_values(parameters)
         return tuple(
             block.evaluate(
@@ -213,7 +217,9 @@ class ResidualGraphProblem(StrictModule):
             for block in self.residual_blocks
         )
 
-    def retract(self, parameters, tangent_steps: dict[str, PyTree[Any]], /):
+    def retract(
+        self, parameters: PyTree[Any], tangent_steps: dict[str, PyTree[Any]], /
+    ) -> PyTree[Any]:
         result = parameters
         for block in self.parameter_blocks:
             if block.constant or block.block_id not in tangent_steps:
@@ -225,7 +231,7 @@ class ResidualGraphProblem(StrictModule):
             result = block.replace(result, retracted)
         return result
 
-    def manifold_valid(self, parameters, /):
+    def manifold_valid(self, parameters: PyTree[Any], /) -> Array:
         valid = jnp.asarray(True)
         for block in self.parameter_blocks:
             if block.geometry is not None:
@@ -420,10 +426,15 @@ def refresh_residual_graph(
     )
 
 
-def residual_graph_certificate(graph, parameters, args=None, /):
+def residual_graph_certificate(
+    graph: ResidualGraphProblem, parameters: PyTree[Any], args: Any = None, /
+) -> tuple[Array, Array]:
     residuals = graph.residual(parameters, args)
-    objective = 0.5 * sum(
-        jnp.real(jnp.vdot(value, value)) for value in jax.tree.leaves(residuals)
+    # Residual blocks validate nonempty array PyTrees, so the leaf sum is an array.
+    objective = cast(
+        Array,
+        0.5
+        * sum(jnp.real(jnp.vdot(value, value)) for value in jax.tree.leaves(residuals)),
     )
     gradient = jax.grad(
         lambda value: (

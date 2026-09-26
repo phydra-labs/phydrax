@@ -37,8 +37,8 @@ def _shift(value: Array, offset: int, axis: int, /) -> Array:
     return jnp.roll(value, shift=-offset, axis=axis)
 
 
-def _set_index(value: Array, axis: int, index: int, update: Array, /) -> Array:
-    selection = [slice(None)] * value.ndim
+def _set_index(value: Array, axis: int, index: int, update: ArrayLike, /) -> Array:
+    selection: list[slice | int] = [slice(None)] * value.ndim
     selection[axis] = index
     return value.at[tuple(selection)].set(update)
 
@@ -330,7 +330,8 @@ class FourthOrderDerivatives(StrictModule, NonTrainableState):
         speed = jnp.asarray(velocity)
         if speed.shape != (3,) + self.grid_shape:
             raise ValueError(f"velocity must have shape {(3,) + self.grid_shape}.")
-        return sum(speed[i] * self.upwind(value, speed[i], i) for i in range(3))
+        terms = tuple(speed[i] * self.upwind(value, speed[i], i) for i in range(3))
+        return sum(terms[1:], start=terms[0])
 
     def dissipation(self, field: ArrayLike, /) -> Array:
         value = self._validate(field)

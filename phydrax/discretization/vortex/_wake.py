@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -88,7 +89,7 @@ class VortexWakePlan(StrictModule, NonTrainableState):
         )
 
     def initialize(
-        self, bound_circulation: ArrayLike, /, *, dtype=None
+        self, bound_circulation: ArrayLike, /, *, dtype: DTypeLike | None = None
     ) -> VortexWakeState:
         bound = jnp.asarray(bound_circulation, dtype=dtype)
         if bound.shape != (self.source_count,):

@@ -9,7 +9,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...ein import contract
@@ -18,6 +18,7 @@ from ...linalg import (
     ConjugateGradient,
     FunctionLinearOperator,
     LinearSolvePolicy,
+    LinearSolveResult,
     LinearSystem,
     OperatorProperties,
     solve,
@@ -26,7 +27,7 @@ from ._diffusion_boundary import HybridDiffusionBoundary
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
-def _tensor(value, count: int) -> Array:
+def _tensor(value: ArrayLike, count: int) -> Array:
     result = jnp.asarray(value)
     result = result.astype(jnp.result_type(result, 1.0))
     if result.shape == ():
@@ -82,7 +83,13 @@ class HybridMimeticDiffusion(StrictModule):
     component_count: int = eqx.field(static=True)
     stabilization: float = eqx.field(static=True)
 
-    def __init__(self, discretization, /, *, stabilization: float = 1.0) -> None:
+    def __init__(
+        self,
+        discretization: UnstructuredFiniteVolumeDiscretization,
+        /,
+        *,
+        stabilization: float = 1.0,
+    ) -> None:
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("Hybrid diffusion requires native prepared unstructured FV.")
         if discretization.cell_dimension != 3:
@@ -155,14 +162,14 @@ class HybridMimeticDiffusion(StrictModule):
         self.stabilization = float(stabilization)
 
     @property
-    def cell_count(self):
+    def cell_count(self) -> int:
         return self.discretization.cell_volumes.size
 
     @property
-    def face_count(self):
+    def face_count(self) -> int:
         return self.discretization.face_measures.size
 
-    def local_matrices(self, tensor) -> Array:
+    def local_matrices(self, tensor: ArrayLike) -> Array:
         tensor = _positive_tensor(_tensor(tensor, self.cell_count))
         normal = (
             self.outward_areas / self.discretization.face_measures[self.cell_faces, None]
@@ -174,13 +181,20 @@ class HybridMimeticDiffusion(StrictModule):
         )
         return consistent + contract("cfg,cf,cfh->cgh", self.defect, penalty, self.defect)
 
-    def gradient(self, cell_values, face_values) -> Array:
+    def gradient(self, cell_values: ArrayLike, face_values: ArrayLike) -> Array:
         difference = (
             jnp.asarray(face_values)[self.cell_faces] - jnp.asarray(cell_values)[:, None]
         )
         return contract("cfi,cf->ci", self.gradient_weights, difference)
 
-    def local_fluxes(self, cell_values, face_values, tensor, *, body_force=None) -> Array:
+    def local_fluxes(
+        self,
+        cell_values: ArrayLike,
+        face_values: ArrayLike,
+        tensor: ArrayLike,
+        *,
+        body_force: ArrayLike | None = None,
+    ) -> Array:
         tensor = _tensor(tensor, self.cell_count)
         difference = (
             jnp.asarray(face_values)[self.cell_faces] - jnp.asarray(cell_values)[:, None]
@@ -193,22 +207,29 @@ class HybridMimeticDiffusion(StrictModule):
             )
         return jnp.where(self.valid, result, 0.0)
 
-    def owner_rates(self, local_fluxes) -> Array:
+    def owner_rates(self, local_fluxes: Array) -> Array:
         return local_fluxes[self.discretization.owner_cells, self.owner_slots]
 
-    def face_fluxes(self, cell_values, face_values, tensor, *, body_force=None) -> Array:
+    def face_fluxes(
+        self,
+        cell_values: ArrayLike,
+        face_values: ArrayLike,
+        tensor: ArrayLike,
+        *,
+        body_force: ArrayLike | None = None,
+    ) -> Array:
         return self.owner_rates(
             self.local_fluxes(cell_values, face_values, tensor, body_force=body_force)
         )
 
-    def continuity_residual(self, local_fluxes) -> Array:
+    def continuity_residual(self, local_fluxes: Array) -> Array:
         return (
             jnp.zeros(self.face_count, dtype=local_fluxes.dtype)
             .at[self.cell_faces]
             .add(jnp.where(self.valid, local_fluxes, 0.0))
         )
 
-    def cell_divergence(self, face_rates) -> Array:
+    def cell_divergence(self, face_rates: ArrayLike) -> Array:
         """Net outward integrated owner rates, without division by cell volume."""
         owner = self.discretization.owner_cells
         neighbor = self.discretization.neighbor_cells
@@ -218,7 +239,7 @@ class HybridMimeticDiffusion(StrictModule):
             jnp.where(neighbor >= 0, -rates, 0.0)
         )
 
-    def anchored_components(self, boundary) -> Array:
+    def anchored_components(self, boundary: HybridDiffusionBoundary) -> Array:
         anchored = (boundary.kind == 1) | (
             (boundary.kind == 3) & (boundary.conductance > 0)
         )
@@ -230,7 +251,14 @@ class HybridMimeticDiffusion(StrictModule):
         )
 
     def residual(
-        self, cell_values, face_values, tensor, boundary, *, source=0.0, body_force=None
+        self,
+        cell_values: ArrayLike,
+        face_values: Array,
+        tensor: ArrayLike,
+        boundary: HybridDiffusionBoundary,
+        *,
+        source: ArrayLike = 0.0,
+        body_force: ArrayLike | None = None,
     ) -> Array:
         if boundary.geometry_id != self.discretization.geometry_id:
             raise ValueError("Boundary and diffusion geometry must match.")
@@ -246,7 +274,14 @@ class HybridMimeticDiffusion(StrictModule):
         faces = boundary.face_residual(face_values, self.continuity_residual(local))
         return jnp.concatenate((cells, faces))
 
-    def linear_system(self, tensor, boundary, *, source=0.0, body_force=None):
+    def linear_system(
+        self,
+        tensor: ArrayLike,
+        boundary: HybridDiffusionBoundary,
+        *,
+        source: ArrayLike = 0.0,
+        body_force: ArrayLike | None = None,
+    ) -> tuple[LinearSystem, Array]:
         """Build the symmetric lifted global hybrid system; shared faces stay global."""
         size = self.cell_count + self.face_count
         zero = jnp.zeros(size, dtype=self.discretization.cell_volumes.dtype)
@@ -256,7 +291,7 @@ class HybridMimeticDiffusion(StrictModule):
             "Every diffusion component needs Dirichlet or positive Robin anchoring.",
         )
 
-        def residual(value):
+        def residual(value: Array) -> Array:
             return self.residual(
                 value[: self.cell_count],
                 value[self.cell_count :],
@@ -278,13 +313,13 @@ class HybridMimeticDiffusion(StrictModule):
 
     def solve(
         self,
-        tensor,
+        tensor: ArrayLike,
         boundary: HybridDiffusionBoundary,
         *,
-        source=0.0,
-        body_force=None,
-        policy=None,
-    ):
+        source: ArrayLike = 0.0,
+        body_force: ArrayLike | None = None,
+        policy: LinearSolvePolicy | None = None,
+    ) -> LinearSolveResult:
         system, rhs = self.linear_system(
             tensor, boundary, source=source, body_force=body_force
         )

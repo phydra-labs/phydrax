@@ -9,6 +9,7 @@ from itertools import combinations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -157,7 +158,9 @@ def _composite_volume_quality(
     return volume, mean_ratio, aspect, validity
 
 
-def _standard_block_quality(kind: str, points: Array, /):
+def _standard_block_quality(
+    kind: str, points: Array, /
+) -> tuple[Array, Array, Array, Array]:
     if kind == "interval":
         length = jnp.linalg.norm(points[:, 1] - points[:, 0], axis=-1)
         return length, jnp.ones_like(length), jnp.ones_like(length), length > 0.0
@@ -207,7 +210,9 @@ def _standard_block_quality(kind: str, points: Array, /):
     return _composite_volume_quality(points, tetrahedra, edges)
 
 
-def _polyhedral_quality(mesh: CellMesh, coordinates: Array, /):
+def _polyhedral_quality(
+    mesh: CellMesh, coordinates: Array, /
+) -> tuple[Array, Array, Array, Array]:
     connectivity = mesh.connectivity
     if not isinstance(connectivity, PolyhedralConnectivity):
         raise TypeError("Polyhedral quality requires PolyhedralConnectivity.")
@@ -288,12 +293,12 @@ class SweptLayerQualityEvaluation(StrictModule, NonTrainableState):
 
 
 def evaluate_swept_layer_quality(
-    points: ArrayLike,
-    prisms: ArrayLike,
-    layer_indices: ArrayLike,
-    origin: ArrayLike,
-    unit_direction: ArrayLike,
-    requested_thicknesses: ArrayLike,
+    points: npt.ArrayLike,
+    prisms: npt.ArrayLike,
+    layer_indices: npt.ArrayLike,
+    origin: npt.ArrayLike,
+    unit_direction: npt.ArrayLike,
+    requested_thicknesses: npt.ArrayLike,
     /,
 ) -> SweptLayerQualityEvaluation:
     """Measure thickness, growth, axial alignment, and interface placement."""

@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...discretization.finite_volume._hybrid_diffusion import _positive_tensor, _tensor
@@ -31,7 +33,13 @@ INVERSE_PASCAL = derived_unit("1/Pa", ((PASCAL, -1),))
 INVERSE_KELVIN = derived_unit("1/K", ((KELVIN, -1),))
 
 
-def _finite(value, name, *, positive=False, nonnegative=False):
+def _finite(
+    value: ArrayLike | Sequence[float],
+    name: str,
+    *,
+    positive: bool = False,
+    nonnegative: bool = False,
+) -> Array:
     result = jnp.asarray(value)
     result = result.astype(jnp.result_type(result, 1.0))
     invalid = ~jnp.all(jnp.isfinite(result))
@@ -67,18 +75,18 @@ class PorousMaterial(StrictModule):
 
     def __init__(
         self,
-        porosity,
-        permeability_m2,
+        porosity: ArrayLike,
+        permeability_m2: ArrayLike,
         /,
         *,
-        density_kg_m3=1000.0,
-        viscosity_Pa_s=1.0e-3,
-        fluid_compressibility_Pa_inverse=0.0,
-        pore_compressibility_Pa_inverse=0.0,
-        thermal_expansion_K_inverse=0.0,
-        viscosity_temperature_K_inverse=0.0,
-        reference_pressure_Pa=0.0,
-        reference_temperature_K=293.15,
+        density_kg_m3: ArrayLike = 1000.0,
+        viscosity_Pa_s: ArrayLike = 1.0e-3,
+        fluid_compressibility_Pa_inverse: ArrayLike = 0.0,
+        pore_compressibility_Pa_inverse: ArrayLike = 0.0,
+        thermal_expansion_K_inverse: ArrayLike = 0.0,
+        viscosity_temperature_K_inverse: ArrayLike = 0.0,
+        reference_pressure_Pa: ArrayLike = 0.0,
+        reference_temperature_K: ArrayLike = 293.15,
         permeability_unit: UnitDefinition = SQUARE_METER,
         density_unit: UnitDefinition = DENSITY_UNIT,
         viscosity_unit: UnitDefinition = VISCOSITY_UNIT,
@@ -137,7 +145,7 @@ class PorousMaterial(StrictModule):
             reference_temperature_K, "reference temperature", positive=True
         )
 
-    def density(self, pressure_Pa, temperature_K):
+    def density(self, pressure_Pa: ArrayLike, temperature_K: ArrayLike) -> Array:
         return self.density_kg_m3 * jnp.exp(
             self.fluid_compressibility_Pa_inverse
             * (pressure_Pa - self.reference_pressure_Pa)
@@ -145,25 +153,25 @@ class PorousMaterial(StrictModule):
             * (temperature_K - self.reference_temperature_K)
         )
 
-    def viscosity(self, temperature_K):
+    def viscosity(self, temperature_K: ArrayLike) -> Array:
         return self.viscosity_Pa_s * jnp.exp(
             -self.viscosity_temperature_K_inverse
             * (temperature_K - self.reference_temperature_K)
         )
 
-    def pore_fraction(self, pressure_Pa):
+    def pore_fraction(self, pressure_Pa: ArrayLike) -> Array:
         return self.porosity * jnp.exp(
             self.pore_compressibility_Pa_inverse
             * (pressure_Pa - self.reference_pressure_Pa)
         )
 
-    def admissible(self, pressure_Pa, temperature_K):
+    def admissible(self, pressure_Pa: ArrayLike, temperature_K: ArrayLike) -> Array:
         phi = self.pore_fraction(pressure_Pa)
         rho, mu = self.density(pressure_Pa, temperature_K), self.viscosity(temperature_K)
         return jnp.all(
             jnp.isfinite(pressure_Pa)
             & jnp.isfinite(temperature_K)
-            & (temperature_K > 0)
+            & (jnp.asarray(temperature_K) > 0)
             & jnp.isfinite(phi)
             & (phi > 0)
             & (phi < 1)

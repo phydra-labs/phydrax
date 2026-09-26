@@ -10,7 +10,8 @@ from enum import IntEnum, StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -149,7 +150,7 @@ class PolymerReactionState(StrictModule, NonTrainableState):
         system: AtomisticSystemPlan,
         ports: tuple[RealizedPolymerConnectionPort, ...],
         ledger: tuple[PolymerReactionEvent, ...],
-        image_counts: ArrayLike,
+        image_counts: npt.ArrayLike,
         initial_port_capacity: int,
         /,
     ) -> None:
@@ -204,7 +205,7 @@ def initialize_polymer_reaction_state(
     construction: PolymerConstructionResult,
     /,
     *,
-    image_counts: ArrayLike | None = None,
+    image_counts: npt.ArrayLike | None = None,
 ) -> PolymerReactionState:
     if not isinstance(construction, PolymerConstructionResult):
         raise TypeError("construction must be PolymerConstructionResult.")
@@ -221,7 +222,9 @@ def initialize_polymer_reaction_state(
     return PolymerReactionState(system, construction.ports, (), images, capacity)
 
 
-def _replacement_system(system: AtomisticSystemPlan, topology: MolecularTopologyPlan, /):
+def _replacement_system(
+    system: AtomisticSystemPlan, topology: MolecularTopologyPlan, /
+) -> AtomisticSystemPlan:
     return AtomisticSystemPlan(
         system.particle_ids,
         system.atomic_numbers,
@@ -249,7 +252,7 @@ def apply_polymer_reaction(
     right_port_id: str,
     /,
     *,
-    positions: ArrayLike | None = None,
+    positions: npt.ArrayLike | None = None,
     maximum_distance: float | None = None,
     periodic_image_shift: tuple[int, ...] | None = None,
 ) -> PolymerReactionResult:
@@ -405,14 +408,14 @@ def apply_polymer_reaction(
         improper_type_ids=old.improper_type_ids,
     )
     replacement = _replacement_system(system, topology)
+    reacting_port_ids = (str(left_port_id), str(right_port_id))
     updated_ports = tuple(
         RealizedPolymerConnectionPort(
             port.port_id,
             port.particle_id,
             port.compatibility_class,
             port.maximum_uses,
-            port.uses
-            + (port_delta if port.port_id in (left.port_id, right.port_id) else 0),
+            port.uses + (port_delta if port.port_id in reacting_port_ids else 0),
         )
         for port in state.ports
     )

@@ -13,6 +13,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import meshio
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -24,10 +25,15 @@ from ..._mesh_file_profiles import resolve_mesh_file_profile
 from ..._publication import publish_bytes
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from .._cell_complex import PolyhedralConnectivity
+from .._cell_complex import (
+    PolygonalConnectivity,
+    PolyhedralConnectivity,
+    TetrahedralConnectivity,
+)
 from .._cell_geometry import CellGeometrySpec
 from .._cell_mesh import CellBlock, CellMesh
 from .._cell_ordering import MESHIO_CELL_TYPES, reference_node_permutation
+from .._hexahedral import HexahedralConnectivity
 from ._hp_runtime import FiniteElementHPEpoch
 from ._mortar import FiniteElementMortarMetricData, FiniteElementMortarPlan
 from ._reference import lagrange_element
@@ -191,7 +197,7 @@ def write_adaptive_vtk(
         "tetrahedron": "tetra",
         "hexahedron": "hexahedron",
     }
-    cells = [
+    cells: list[tuple[str, npt.ArrayLike] | meshio.CellBlock] = [
         (cell_types[block.cell_kind], np.asarray(block.vertices, dtype=np.int32))
         for block in mesh.blocks
     ]
@@ -281,7 +287,7 @@ def write_hp_forest(path: str | Path, epoch: FiniteElementHPEpoch, /) -> None:
 def _canonical_source_metadata(
     metadata: Mapping[str, object], /
 ) -> tuple[tuple[str, str], ...]:
-    def portable(value):
+    def portable(value: object) -> object:
         if isinstance(value, Mapping):
             return {
                 str(key): portable(item)
@@ -655,15 +661,18 @@ def read_finite_element_mesh(
         points,
     )
 
+    connectivity = mesh.connectivity
     if topological_dimension == 2:
-        facet_vertices = np.asarray(mesh.connectivity.edges)
+        # CellMesh builds polygonal connectivity for every two-dimensional mesh.
+        assert isinstance(connectivity, PolygonalConnectivity)
+        facet_vertices = np.asarray(connectivity.edges)
         facets_by_key = {
             tuple(sorted(int(value) for value in vertices)): index
             for index, vertices in enumerate(facet_vertices)
         }
-    elif isinstance(mesh.connectivity, PolyhedralConnectivity):
-        offsets = np.asarray(mesh.connectivity.face_vertex_offsets, dtype=np.int32)
-        values = np.asarray(mesh.connectivity.face_vertex_values, dtype=np.int32)
+    elif isinstance(connectivity, PolyhedralConnectivity):
+        offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
+        values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
         facets_by_key = {
             tuple(sorted(int(value) for value in values[int(start) : int(stop)])): index
             for index, (start, stop) in enumerate(
@@ -671,7 +680,9 @@ def read_finite_element_mesh(
             )
         }
     else:
-        facet_vertices = np.asarray(mesh.connectivity.faces)
+        # Other three-dimensional CellMesh connectivity is tetrahedral or hexahedral.
+        assert isinstance(connectivity, (TetrahedralConnectivity, HexahedralConnectivity))
+        facet_vertices = np.asarray(connectivity.faces)
         facets_by_key = {
             tuple(sorted(int(value) for value in vertices)): index
             for index, vertices in enumerate(facet_vertices)

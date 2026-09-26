@@ -7,12 +7,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
+
+import phydrax.axes as cx
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -20,10 +21,10 @@ from ..integration import WeightedSampleTarget
 from ._particle import effective_sample_size, normalize_log_weights, resample_indices
 
 
-def _raw(value: Array | cx.Field | None, /) -> Array | None:
+def _raw(value: Array | cx.AxisArray | None, /) -> Array | None:
     if value is None:
         return None
-    return jnp.asarray(value.data if isinstance(value, cx.Field) else value)
+    return jnp.asarray(value.data if isinstance(value, cx.AxisArray) else value)
 
 
 def _flatten_target(
@@ -37,7 +38,7 @@ def _flatten_target(
     shape = tuple(weights.shape)
     if not shape:
         raise ValueError("Posterior weights require at least one sample axis.")
-    if isinstance(target.log_weights, cx.Field):
+    if isinstance(target.log_weights, cx.AxisArray):
         if tuple(target.log_weights.named_dims) != tuple(target.sample_axes):
             raise ValueError(
                 "Named posterior weights must consist exactly of sample axes."
@@ -58,7 +59,7 @@ def _flatten_target(
         raise ValueError("Posterior mask must select at least one weighted sample.")
     count = int(np.prod(shape))
 
-    def flatten(value):
+    def flatten(value: ArrayLike) -> Array:
         array = jnp.asarray(value)
         if array.ndim < len(shape) or tuple(array.shape[: len(shape)]) != shape:
             raise ValueError(
@@ -72,10 +73,10 @@ def _flatten_target(
 
 def _restore_log_weights(
     target: WeightedSampleTarget, values: Array, shape: tuple[int, ...], /
-):
+) -> Array | cx.AxisArray:
     restored = values.reshape(shape)
-    if isinstance(target.log_weights, cx.Field):
-        return cx.Field(restored, dims=target.log_weights.dims)
+    if isinstance(target.log_weights, cx.AxisArray):
+        return cx.AxisArray(restored, dims=target.log_weights.dims)
     return restored
 
 

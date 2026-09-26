@@ -9,7 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Bool, Key
+from jaxtyping import Array, ArrayLike, Bool, Key
 
 from .._doc import DOC_KEY0
 from .._sampling import host_design_factory, seed_from_key
@@ -186,7 +186,12 @@ class ScalarInterval(AbstractScalarDomain):
         where: Callable | None = None,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Array:
-        def _sample_host(num_points, sampler, where, key):
+        def _sample_host(
+            num_points: int,
+            sampler: str,
+            where: Callable[..., object] | None,
+            key: ArrayLike,
+        ) -> np.ndarray:
             rng = np.random.default_rng(seed_from_key(key))
             sampler_fn = host_design_factory(sampler, dimension=1, seed=rng)
             samples = np.empty((0, 1), dtype=np.float64)

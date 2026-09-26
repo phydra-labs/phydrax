@@ -39,6 +39,8 @@ broadcasting.
     ```
 """
 
+from typing import Any
+
 from .._model import ModelBinding, ModelEvaluator
 from . import graph
 from ._base import (
@@ -213,7 +215,7 @@ _NORMALIZED_DENSITY_EXPORTS = frozenset(
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in _DECOMPOSITION_EXPORTS:
         from importlib import import_module
 

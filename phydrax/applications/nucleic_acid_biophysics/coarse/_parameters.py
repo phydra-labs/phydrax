@@ -12,11 +12,14 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from ....atomistic._units import AtomisticUnitSystem
 from ....qualification._reference import ReferenceArtifactManifest
+from .._construct import NucleicAcidConstruct
 from ._published import radial_support
 
 
@@ -30,14 +33,14 @@ FAMILY_MODELS = {
 SITE_NAMES = ("backbone", "base", "stack3", "stack5", "coax")
 
 
-def _vector(value, size, name):
+def _vector(value: npt.ArrayLike, size: int, name: str) -> npt.NDArray[np.float64]:
     array = np.asarray(value, dtype=np.float64)
     if array.shape != (size,) or not np.isfinite(array).all():
         raise ValueError(f"{name} must contain {size} finite numeric values.")
     return array
 
 
-def _angle(value) -> None:
+def _angle(value: npt.ArrayLike) -> None:
     a, theta0, join = _vector(value, 3, "angular window")
     if a <= 0 or join <= 0 or not 0 <= theta0 <= 2 * math.pi or a * join * join >= 1:
         raise ValueError(
@@ -45,7 +48,7 @@ def _angle(value) -> None:
         )
 
 
-def _helicity(value) -> None:
+def _helicity(value: npt.ArrayLike) -> None:
     a, join = _vector(value, 2, "helicity window")
     if a <= 0 or not -1 < join < 0 or a * join * join >= 1:
         raise ValueError(
@@ -53,14 +56,16 @@ def _helicity(value) -> None:
         )
 
 
-def _radial(value, kind) -> None:
+def _radial(value: npt.ArrayLike, kind: str) -> None:
     array = _vector(value, 6, "radial well")
     if array[0] < 0 or array[5] <= 0:
         raise ValueError("Radial amplitude must be nonnegative and width positive.")
     radial_support(array, kind)
 
 
-def _validate_profile(profile, model, *, screening_required, hybrid) -> None:
+def _validate_profile(
+    profile: dict[str, Any], model: str, *, screening_required: bool, hybrid: bool
+) -> None:
     required = {
         "backbone",
         "excluded",
@@ -190,15 +195,15 @@ class NucleotideParameterArtifact:
 
     def __init__(
         self,
-        manifest,
+        manifest: ReferenceArtifactManifest,
         payload: bytes,
-        units,
+        units: AtomisticUnitSystem,
         /,
         *,
-        commercial_use=False,
-        redistribution=False,
-        training_use=False,
-        export=False,
+        commercial_use: bool = False,
+        redistribution: bool = False,
+        training_use: bool = False,
+        export: bool = False,
     ) -> None:
         if not isinstance(manifest, ReferenceArtifactManifest) or not isinstance(
             units, AtomisticUnitSystem
@@ -351,12 +356,12 @@ class NucleotideParameterArtifact:
         ):
             object.__setattr__(self, name, value)
 
-    def data(self):
+    def data(self) -> dict[str, Any]:
         """Host-only fresh parse; mutation cannot change the admitted artifact."""
         return json.loads(self.raw_payload)
 
     @property
-    def calibration_gate(self):
+    def calibration_gate(self) -> str:
         return (
             "Equations are implemented; published numerical equivalence, "
             "duplex/mechanical observables and physical clock calibration require "
@@ -364,7 +369,9 @@ class NucleotideParameterArtifact:
         )
 
 
-def nucleotide_reference_sites(construct, parameters):
+def nucleotide_reference_sites(
+    construct: NucleicAcidConstruct, parameters: NucleotideParameterArtifact
+) -> npt.NDArray[np.float64]:
     """Compile five physical sites plus three exact differential frame markers.
 
     Frame markers have zero physical mass/charge and are not interaction sites.

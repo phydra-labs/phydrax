@@ -194,7 +194,7 @@ class TransformDiagonalLinearOperator(AbstractLinearOperator):
     def _materialize(self, /) -> Array:
         basis = jnp.eye(self.source.size, dtype=self.spectrum.dtype)
 
-        def column(coordinates):
+        def column(coordinates: Array) -> Array:
             value = coordinates.reshape(self.source.shape)
             return self.target.flatten(self.mv(value))
 

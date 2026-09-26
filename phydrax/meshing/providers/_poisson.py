@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import operator
 import time
+from types import ModuleType
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -40,7 +41,7 @@ from .._trace import (
 )
 
 
-def _open3d():
+def _open3d() -> ModuleType:
     try:
         import open3d
     except (ImportError, OSError) as exc:

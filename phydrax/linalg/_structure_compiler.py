@@ -371,7 +371,7 @@ def _compile_candidate(
         lower_error = np.linalg.norm(matrix - lower)
         upper_error = np.linalg.norm(matrix - upper)
         projected = lower if lower_error <= upper_error else upper
-        is_lower = lower_error <= upper_error
+        is_lower = bool(lower_error <= upper_error)
         if not _accepted(matrix, projected, policy):
             return None
         variant = "lower" if is_lower else "upper"
@@ -572,7 +572,7 @@ def _orthogonal_transform_matrix(
     axes = tuple(range(len(shape)))
     basis = jnp.eye(size, dtype=dtype)
 
-    def column(coordinates):
+    def column(coordinates: Array) -> Array:
         value = coordinates.reshape(shape)
         return _forward_transform(value, transform, axes).reshape((-1,))
 

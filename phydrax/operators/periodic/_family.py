@@ -19,6 +19,7 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -67,8 +68,8 @@ class PeriodicTranslationFamilyPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         relation: EdgeRelation,
-        translations: ArrayLike,
-        reverse_indices: ArrayLike,
+        translations: npt.ArrayLike,
+        reverse_indices: npt.ArrayLike,
         /,
         *,
         convention: PeriodicFourierConvention | None = None,
@@ -304,9 +305,9 @@ class PeriodicFiniteRealization(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        row_indices: ArrayLike,
-        column_indices: ArrayLike,
-        values: ArrayLike,
+        row_indices: npt.ArrayLike,
+        column_indices: npt.ArrayLike,
+        values: npt.ArrayLike,
         /,
         *,
         supercell_shape: tuple[int, ...],
@@ -650,8 +651,8 @@ def coalesce_periodic_translation_family(
             raise ValueError("Periodic edges are missing an explicit reverse partner.")
         reverse.append(key_to_index[reverse_key])
     relation = EdgeRelation(
-        [key[1] for key in ordered],
-        [key[2] for key in ordered],
+        np.asarray([key[1] for key in ordered]),
+        np.asarray([key[2] for key in ordered]),
         source_size=int(node_count),
         target_size=int(node_count),
     )

@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import product
 from operator import index
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +17,10 @@ from ._differentiation import AbstractConstructionCertificate
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+
+
+if TYPE_CHECKING:
+    from ._holomorphic import HolomorphicMapCertificate
 
 
 MultiIndex = tuple[int, ...]
@@ -270,7 +274,7 @@ class HolomorphicLinearFrame(Protocol):
 class MultivariableHolomorphicPotentialProvider(Protocol):
     def __call__(self, coordinates: ArrayLike, /) -> Array: ...
 
-    def holomorphic_certificate(self): ...
+    def holomorphic_certificate(self) -> HolomorphicMapCertificate: ...
 
     def multi_jet(
         self,

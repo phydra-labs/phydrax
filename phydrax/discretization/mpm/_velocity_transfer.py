@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,6 +15,7 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..splatting import ParticleGridSplatState
 from ._transfer import APICGatherResult, gather_apic
 
 
@@ -133,7 +135,13 @@ class PICAdvectionPlan(AbstractMPMAdvectionPlan):
         self.advection_name = "pic"
         self.plan_id = canonical_fingerprint({"kind": "mpm-advection", "name": "pic"})
 
-    def velocity(self, transferred_velocity, pic_velocity, previous_velocity, /):
+    def velocity(
+        self,
+        transferred_velocity: Array,
+        pic_velocity: Array,
+        previous_velocity: Array,
+        /,
+    ) -> Array:
         del transferred_velocity, previous_velocity
         return pic_velocity
 
@@ -148,7 +156,13 @@ class TransferredVelocityAdvectionPlan(AbstractMPMAdvectionPlan):
             {"kind": "mpm-advection", "name": "transferred-velocity"}
         )
 
-    def velocity(self, transferred_velocity, pic_velocity, previous_velocity, /):
+    def velocity(
+        self,
+        transferred_velocity: Array,
+        pic_velocity: Array,
+        previous_velocity: Array,
+        /,
+    ) -> Array:
         del pic_velocity, previous_velocity
         return transferred_velocity
 
@@ -163,7 +177,13 @@ class MidpointAdvectionPlan(AbstractMPMAdvectionPlan):
             {"kind": "mpm-advection", "name": "midpoint"}
         )
 
-    def velocity(self, transferred_velocity, pic_velocity, previous_velocity, /):
+    def velocity(
+        self,
+        transferred_velocity: Array,
+        pic_velocity: Array,
+        previous_velocity: Array,
+        /,
+    ) -> Array:
         del pic_velocity
         return 0.5 * (previous_velocity + transferred_velocity)
 
@@ -181,7 +201,7 @@ class MPMVelocityTransferResult(StrictModule):
 def apply_velocity_transfer(
     transfer: AbstractMPMVelocityTransferPlan,
     advection: AbstractMPMAdvectionPlan,
-    routes,
+    routes: ParticleGridSplatState,
     grid_velocity_before: Array,
     grid_velocity_after: Array,
     particle_velocity: Array,
@@ -219,7 +239,9 @@ def apply_velocity_transfer(
         if isinstance(transfer, FLIPTransferPlan):
             velocity = flip
         else:
-            velocity = transfer.pic_fraction * pic + (1.0 - transfer.pic_fraction) * flip
+            # PICFLIPTransferPlan is the remaining concrete transfer plan.
+            fraction = cast(PICFLIPTransferPlan, transfer).pic_fraction
+            velocity = fraction * pic + (1.0 - fraction) * flip
         affine = jnp.zeros_like(after.affine_velocity)
         successful = (
             after.successful & before.successful & jnp.all(jnp.isfinite(velocity))

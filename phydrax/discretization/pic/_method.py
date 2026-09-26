@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -78,7 +78,7 @@ class RelativisticBorisPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def velocity(self, proper_velocity: ArrayLike, /):
+    def velocity(self, proper_velocity: ArrayLike, /) -> Array:
         proper = jnp.asarray(proper_velocity)
         gamma = jnp.sqrt(1.0 + jnp.sum(proper * proper, axis=-1) / self.speed_of_light**2)
         return proper / gamma[..., None]

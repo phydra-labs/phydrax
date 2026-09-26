@@ -136,7 +136,7 @@ def _validate_library(data: TrajectoryData, library: AbstractFeatureLibrary, /) 
         raise ValueError("Feature library and trajectory must use the same input layout.")
 
 
-def _time_values(data: TrajectoryData, values: Array, index, /) -> Array:
+def _time_values(data: TrajectoryData, values: Array, index: int | slice, /) -> Array:
     return values[(slice(None),) * len(data.case_shape) + (index,)]
 
 
@@ -147,7 +147,9 @@ def _flatten_state(values: Array, layout: StateLayout, /) -> Array:
     return values.reshape(prefix + (layout.size,))
 
 
-def _row_metadata(case_count: int, starts: Sequence[int], ends: Sequence[int], /):
+def _row_metadata(
+    case_count: int, starts: Sequence[int], ends: Sequence[int], /
+) -> tuple[Array, Array, Array]:
     row_count = len(starts)
     return (
         jnp.repeat(jnp.arange(case_count, dtype=jnp.int32), row_count),
@@ -263,7 +265,7 @@ def _required_input_valid(data: TrajectoryData, /) -> Array:
     return data.input_valid
 
 
-def _sample_inputs(data: TrajectoryData, count: int, /):
+def _sample_inputs(data: TrajectoryData, count: int, /) -> tuple[Array | None, Array]:
     if data.inputs is None:
         return None, jnp.ones(data.case_shape + (count,), dtype=jnp.bool_)
     return (
@@ -406,7 +408,7 @@ def _interval_features(
     library: AbstractFeatureLibrary,
     interval: int,
     /,
-):
+) -> tuple[Array, Array, Array]:
     source_state = _time_values(data, data.states, interval)
     target_state = _time_values(data, data.states, interval + 1)
     if data.inputs is None:
@@ -441,7 +443,7 @@ def _window_feature_integral(
     *,
     quadrature: WindowQuadrature,
     test_order: int | None,
-):
+) -> tuple[Array, Array, Array, Array]:
     duration = data.coordinates[..., end] - data.coordinates[..., start]
     safe_duration = jnp.where(duration > 0.0, duration, 1.0)
     integral = jnp.zeros(data.case_shape + (library.num_features,))

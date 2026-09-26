@@ -11,6 +11,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
 import phydrax.ein as ein
@@ -92,7 +93,7 @@ class FiniteOrthogonalGroup(StrictModule, NonTrainableState):
     def __init__(
         self,
         name: str,
-        matrices: Array | Sequence[Array],
+        matrices: npt.ArrayLike,
         /,
         *,
         tolerance: float = 1e-6,

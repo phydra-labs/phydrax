@@ -197,7 +197,7 @@ class DatasetDomain(JointFactor):
         idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         rows = self.input_rows(idx)
 
-        def _to_field(v: ArrayLike):
+        def _to_field(v: ArrayLike) -> cx.AxisArray:
             arr = jnp.asarray(v)
             if arr.ndim == 0:
                 raise ValueError(

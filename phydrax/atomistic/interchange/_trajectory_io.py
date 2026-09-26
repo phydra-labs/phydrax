@@ -6,12 +6,16 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Iterator
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
+from types import ModuleType
+from typing import Any, overload
 
 import equinox as eqx
 import numpy as np
+from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from .._frame import (
@@ -25,7 +29,7 @@ from .._sites import AtomisticSiteDomain
 from .._units import AtomisticUnitSystem
 
 
-def _h5py():
+def _h5py() -> ModuleType:
     if find_spec("h5py") is None:
         raise ImportError("H5MD trajectory I/O requires the optional 'h5py' package.")
     return import_module("h5py")
@@ -52,7 +56,7 @@ def _h5md_field_path(name: str, /) -> str:
     return _H5MD_FIELD_PATHS[name]
 
 
-def _decoded_text(value) -> str:
+def _decoded_text(value: object) -> str:
     return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
@@ -97,7 +101,15 @@ class H5MDTrajectoryPlan(
         self.source_id = identifier
         self.sink_id = identifier
 
-    def open(self, *, append: bool | None = None):
+    @overload
+    def open(self, *, append: None = None) -> H5MDTrajectoryReader: ...
+
+    @overload
+    def open(self, *, append: bool) -> H5MDTrajectoryWriter: ...
+
+    def open(
+        self, *, append: bool | None = None
+    ) -> H5MDTrajectoryReader | H5MDTrajectoryWriter:
         if append is None:
             return H5MDTrajectoryReader(self.path, self.source_id)
         return H5MDTrajectoryWriter(self.path, self.sink_id, append=append)
@@ -158,17 +170,17 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
         if self.count == 0:
             self.units = None
 
-    def _frame_datasets(self):
+    def _frame_datasets(self) -> tuple[tuple[str, Any], ...]:
         result = []
 
-        def collect(name, value) -> None:
+        def collect(name: str, value: object) -> None:
             if isinstance(value, self.h5py.Dataset) and name != "id":
                 result.append((name, value))
 
         self.group.visititems(collect)
         return tuple(result)
 
-    def _dataset(self, name, shape, dtype):
+    def _dataset(self, name: str, shape: tuple[int, ...], dtype: np.dtype) -> Any:
         fields = _h5md_field_path(name).split("/")
         parent = self.group
         for field in fields[:-1]:
@@ -196,6 +208,8 @@ class H5MDTrajectoryWriter(AtomisticTrajectoryWriter):
                 np.asarray(self.group["id"]), np.asarray(frame.stable_ids)
             ):
                 raise ValueError("Cannot append a frame with different stable IDs.")
+            # A nonempty stream loaded its unit system in ``__init__``.
+            assert self.units is not None
             if frame.units.unit_system_id != self.units.unit_system_id:
                 raise ValueError(
                     "Cannot append a frame with incompatible complete units."
@@ -287,7 +301,7 @@ class H5MDTrajectoryReader(AtomisticTrajectoryReader):
             }
         )
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[AtomisticFrame]:
         group = self.group
         ids = np.asarray(group["id"])
         auxiliary_names = tuple(name for name in group.get("observables/auxiliary", {}))
@@ -297,7 +311,7 @@ class H5MDTrajectoryReader(AtomisticTrajectoryReader):
                 if _h5md_field_path(name) not in group
                 else np.asarray(group[_h5md_field_path(name)][index])
             )
-            auxiliary = {
+            auxiliary: dict[str, ArrayLike] = {
                 name: np.asarray(group[f"observables/auxiliary/{name}/value"][index])
                 for name in auxiliary_names
             }
@@ -363,7 +377,15 @@ class ExtendedXYZTrajectoryPlan(
         self.source_id = identifier
         self.sink_id = identifier
 
-    def open(self, *, append: bool | None = None):
+    @overload
+    def open(self, *, append: None = None) -> ExtendedXYZTrajectoryReader: ...
+
+    @overload
+    def open(self, *, append: bool) -> ExtendedXYZTrajectoryWriter: ...
+
+    def open(
+        self, *, append: bool | None = None
+    ) -> ExtendedXYZTrajectoryReader | ExtendedXYZTrajectoryWriter:
         if append is None:
             return ExtendedXYZTrajectoryReader(self.path, self.source_id)
         return ExtendedXYZTrajectoryWriter(self.path, self.sink_id, append=append)
@@ -451,7 +473,7 @@ class ExtendedXYZTrajectoryReader(AtomisticTrajectoryReader):
         self.units = None
         self.stream_contract = None
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[AtomisticFrame]:
         while True:
             count_line = self.handle.readline()
             if not count_line:

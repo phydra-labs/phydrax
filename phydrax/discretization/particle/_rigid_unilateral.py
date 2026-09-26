@@ -236,7 +236,7 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
         effective_free = jnp.where(enabled, free, 0.0)
         warm = jnp.where(enabled, jnp.maximum(state.impulses, 0.0), 0.0)
 
-        def operator(impulses, arguments):
+        def operator(impulses: Array, arguments: object) -> Array:
             del arguments
             return contract("ij,j->i", effective_matrix, impulses) + effective_free
 
@@ -844,7 +844,7 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
         row_valid = jnp.repeat(self.plan.valid, 2)
         row_count = 2 * self.capacity
 
-        def response(impulse):
+        def response(impulse: Array) -> Array:
             torque = jnp.zeros((self.bodies.capacity, 3), dtype=kinematics.position.dtype)
             applied = row_axis * impulse[:, None] * row_valid[:, None]
             torque = torque.at[row_right].add(applied)

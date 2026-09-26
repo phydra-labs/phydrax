@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeAlias
 
 import equinox as eqx
 import jax
@@ -51,6 +51,9 @@ _MAHALANOBIS_CONTRACT = prediction_fit_contract(
     route=DerivativeRoute.DIRECT,
     nondifferentiable_outputs=("predict",),
 )
+
+# location, precision, rank, condition, update size
+_RobustCovarianceState: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 def _regularize_covariance(
@@ -337,7 +340,7 @@ def _robust_covariance_one(
         covariance, shrinkage=shrinkage, ridge=ridge
     )
 
-    def step(_iteration, state):
+    def step(_iteration: Array, state: _RobustCovarianceState) -> _RobustCovarianceState:
         current_location, current_precision, _rank, _condition, _delta = state
         scores = _mahalanobis_one(x, current_location, current_precision)
         robust_weight = 1.0 / (1.0 + scores / (tuning * tuning))

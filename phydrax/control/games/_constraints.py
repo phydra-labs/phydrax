@@ -656,10 +656,13 @@ def _evaluate_path_block(
     controls = trajectory.controls.reshape(
         (count, trajectory.num_intervals) + trajectory.control_shape
     )
+    constraint = block.constraint
+    # GameConstraintBlock.__init__ requires a BoundedPathConstraint for PATH blocks.
+    assert isinstance(constraint, BoundedPathConstraint)
 
     def evaluate_case(case_states: Array, case_controls: Array) -> Array:
         return jax.vmap(
-            lambda time, state, control: block.constraint(
+            lambda time, state, control: constraint(
                 time,
                 state,
                 control,
@@ -685,7 +688,10 @@ def _evaluate_trajectory_block(
     args: Any,
     /,
 ) -> Array:
-    values = jnp.asarray(block.constraint(trajectory, args))
+    constraint = block.constraint
+    # GameConstraintBlock.__init__ requires a BoundedTrajectoryConstraint off PATH.
+    assert isinstance(constraint, BoundedTrajectoryConstraint)
+    values = jnp.asarray(constraint(trajectory, args))
     expected = trajectory.case_shape + block.residual_shape
     if values.shape != expected:
         raise ValueError(

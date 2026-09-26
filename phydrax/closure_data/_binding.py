@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax
@@ -58,7 +58,7 @@ StressEnergyPolicy = Literal["signed", "dissipative", "bounded_backscatter"]
 
 
 def conservative_face_numeric_revision(
-    binding: LearnedClosureBindingPlan | TrainableLearnedClosureBinding, /
+    binding: _AbstractLearnedClosureBinding, /
 ) -> NumericRevision:
     """Numeric revision of a conservative-face predictor under its binding identity.
 
@@ -1001,7 +1001,9 @@ class PreparedLearnedStressBinding(StrictModule, ExplicitFreeze):
         elif self.plan.energy_policy == "bounded_backscatter":
             raw_forward = jnp.sum(jnp.maximum(raw_transfer, 0.0))
             raw_backscatter = jnp.sum(jnp.maximum(-raw_transfer, 0.0))
-            backscatter_limit = self.plan.maximum_backscatter_fraction * raw_forward
+            # The plan admits bounded_backscatter only with a validated finite fraction.
+            fraction = cast(float, self.plan.maximum_backscatter_fraction)
+            backscatter_limit = fraction * raw_forward
             safe_backscatter = jnp.where(raw_backscatter > 0.0, raw_backscatter, 1.0)
             backscatter_scale = jnp.minimum(1.0, backscatter_limit / safe_backscatter)
             selected_transfer = jnp.where(
@@ -1259,7 +1261,7 @@ class PreparedSpectralDriftHook(StrictModule):
 
     def __init__(
         self,
-        binding: LearnedClosureBindingPlan | TrainableLearnedClosureBinding,
+        binding: _AbstractLearnedClosureBinding,
         projector: PeriodicLerayProjector,
         hermitian_coordinates: HermitianSpectralCoordinates,
         dealiasing: PreparedDealiasingPlan,

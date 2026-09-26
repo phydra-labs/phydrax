@@ -26,7 +26,9 @@ class FlowPanelGeometry2D(StrictModule):
     geometry_id: str = eqx.field(static=True)
 
     @classmethod
-    def from_vertices(cls, vertices: ArrayLike, /, *, geometry_id: str | None = None):
+    def from_vertices(
+        cls, vertices: ArrayLike, /, *, geometry_id: str | None = None
+    ) -> FlowPanelGeometry2D:
         points_host = np.asarray(vertices, dtype=np.float64).copy()
         if points_host.ndim != 2 or points_host.shape[1] != 2 or points_host.shape[0] < 4:
             raise ValueError("Closed flow-panel vertices require shape (count >= 4, 2).")

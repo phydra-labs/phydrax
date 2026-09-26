@@ -14,7 +14,11 @@ from phydrax.ein import contract
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...linalg import (
+    SmallLinearSolvePlan,
+    SmallLinearSolveResult,
+    solve_small_linear,
+)
 from ...optim import AbstractRobustLoss, IdentityLoss
 
 
@@ -158,7 +162,9 @@ def triangulate_weighted_rays(
     batch_shape = origins_.shape[:-2]
     identity_rhs = jnp.broadcast_to(identity, batch_shape + (3, 3))
 
-    def solve_with(ray_weights):
+    def solve_with(
+        ray_weights: Array,
+    ) -> tuple[SmallLinearSolveResult, Array, Array, Array]:
         normal = contract("...r,...rij->...ij", ray_weights, projectors)
         right = contract("...r,...ri->...i", ray_weights, projected_origins)
         right_with_inverse = jnp.concatenate((right[..., None], identity_rhs), axis=-1)

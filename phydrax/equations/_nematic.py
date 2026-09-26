@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -390,7 +391,7 @@ def beris_edwards_constitutive_fields(
     )
 
 
-def _levi_civita(dtype):
+def _levi_civita(dtype: DTypeLike) -> Array:
     return jnp.asarray(
         (
             ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0)),

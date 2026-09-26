@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from math import prod
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
@@ -41,6 +41,13 @@ _STAGE_COST_SEMANTICS = "unweighted-discrete-stage-sum"
 _EVALUATION_METHOD = "deterministic-full-state-simultaneous-game-evaluation"
 _RESIDUAL_METHOD = "nominal-owned-row-discrete-adjoint"
 _CERTIFICATE = "LOCAL_NOMINAL_NASH_STATIONARY"
+
+_EvaluationCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_EvaluationRecord: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+_StepDerivatives: TypeAlias = tuple[Array, Array, Array, Array, Array]
+_AdjointInputs: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class GameStageCost(Protocol):
@@ -501,7 +508,7 @@ def _evaluate_active_cases(
     once every case has stopped.
     """
 
-    def evaluate_case(flag, *values):
+    def evaluate_case(flag: Array, *values: Array) -> Any:
         return jax.lax.cond(
             flag,
             lambda _: evaluate(*values),
@@ -526,6 +533,8 @@ def _validate_policy(
         raise TypeError("problem must be a DeterministicFeedbackGameProblem.")
     if not isinstance(policy, AbstractInputPolicy):
         raise TypeError("policy must implement AbstractInputPolicy.")
+    from ._local_lq import LocalAffineGamePolicy
+
     system_layout = problem.dynamics.system.input_layout
     assert system_layout is not None
     if policy.input_layout.layout_id != system_layout.layout_id:
@@ -542,8 +551,6 @@ def _validate_policy(
             and policy.partition_id == problem.partition.partition_id
         )
     else:
-        from ._local_lq import LocalAffineGamePolicy
-
         compatible = isinstance(policy, LocalAffineGamePolicy) and (
             policy.time_grid.time_id == problem.time_grid.time_id
             and policy.time_grid.times.shape == problem.time_grid.times.shape
@@ -558,6 +565,8 @@ def _validate_policy(
             "Game policy must carry the exact time, state, case, dynamics, and "
             "player-partition binding."
         )
+    # The compatibility check above admits only these two time-bound policies.
+    assert isinstance(policy, (BoundGameInputPolicy, LocalAffineGamePolicy))
     checked_times = eqx.error_if(
         policy.time_grid.times,
         jnp.any(policy.time_grid.times != problem.time_grid.times),
@@ -601,7 +610,9 @@ def evaluate_game_policy(
     initial_failed_step = jnp.where(initial_valid, -1, 0).astype(jnp.int32)
     initial_failed_player = jnp.full((count,), -1, dtype=jnp.int32)
 
-    def scan_step(carry, step_index):
+    def scan_step(
+        carry: _EvaluationCarry, step_index: Array
+    ) -> tuple[_EvaluationCarry, _EvaluationRecord]:
         state, trajectory_active, status, failed_step, failed_player = carry
         context = DiscreteStepContext(
             problem.time_grid.times[step_index],
@@ -650,7 +661,9 @@ def evaluate_game_policy(
         )
         stage_finite = attempted[:, None] & jnp.isfinite(raw_stage)
 
-        def evaluate_transition(case_state, case_control):
+        def evaluate_transition(
+            case_state: Array, case_control: Array
+        ) -> tuple[Array, Array, Array, Array]:
             result = problem.dynamics.system.evaluate_result(
                 context,
                 case_state,
@@ -987,14 +1000,16 @@ def nominal_nash_residual(
     controls = evaluation.trajectory.controls.reshape((count, horizon, control_size))
     step_indices = jnp.arange(horizon, dtype=jnp.int32)
 
-    def derivatives_at_step(step_index, state, control, next_state):
+    def derivatives_at_step(
+        step_index: Array, state: Array, control: Array, next_state: Array
+    ) -> _StepDerivatives:
         context = DiscreteStepContext(
             problem.time_grid.times[step_index],
             problem.time_grid.times[step_index + 1],
             step_index,
         )
 
-        def transition(current_state, joint_control):
+        def transition(current_state: Array, joint_control: Array) -> Array:
             result = problem.dynamics.system.evaluate_result(
                 context,
                 current_state,
@@ -1007,7 +1022,7 @@ def nominal_nash_residual(
                 jnp.full_like(result.accepted_state, jnp.nan),
             )
 
-        def player_costs(current_state, joint_control):
+        def player_costs(current_state: Array, joint_control: Array) -> Array:
             return _stage_cost_vector(
                 problem,
                 context,
@@ -1024,7 +1039,9 @@ def nominal_nash_residual(
         defect = next_state - transition(state, control)
         return dynamics_state, dynamics_control, cost_state, cost_control, defect
 
-    def derivatives_for_case(case_states, case_controls):
+    def derivatives_for_case(
+        case_states: Array, case_controls: Array
+    ) -> _StepDerivatives:
         return jax.vmap(derivatives_at_step)(
             step_indices,
             case_states[:-1],
@@ -1041,7 +1058,9 @@ def nominal_nash_residual(
         )(state)
     )(states[:, -1])
 
-    def adjoint_step(next_costate, inputs):
+    def adjoint_step(
+        next_costate: Array, inputs: _AdjointInputs
+    ) -> tuple[Array, tuple[Array, Array]]:
         (
             dynamics_state_step,
             dynamics_control_step,

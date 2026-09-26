@@ -37,7 +37,7 @@ from ..tensor_network._environments import (
     TwoSiteMPOEffectiveAction,
 )
 from ..tensor_network._mpo import apply_mpo_exact
-from ..tensor_network._split import truncated_svd
+from ..tensor_network._split import TensorTruncationEvidence, truncated_svd
 
 
 class FiniteDMRGStatus(IntEnum):
@@ -405,7 +405,7 @@ def _solve_two_site(
     policy: FiniteDMRGPolicy,
     direction: int,
     /,
-):
+) -> tuple[MatrixProductState, Array, Array, Array, TensorTruncationEvidence]:
     precision = state.precision
     left = precision.contraction(state.tensors[bond])
     right = precision.contraction(state.tensors[bond + 1])

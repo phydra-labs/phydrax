@@ -35,8 +35,8 @@ def _basis_gram(
     batch_count = math.prod(batch_shape) if batch_shape else 1
     flattened = active_basis.reshape((batch_count, space.size, capacity))
 
-    def gram_one(columns):
-        def inner(left, right):
+    def gram_one(columns: Array) -> Array:
+        def inner(left: Array, right: Array) -> Array:
             return space.inner(space.unflatten(left), space.unflatten(right))
 
         return jax.vmap(
@@ -175,8 +175,8 @@ class LinearSubspace(StrictModule):
         gram_flat = gram.reshape((batch_count, self.capacity, self.capacity))
         value_flat = value.reshape((batch_count, self.space.size))
 
-        def project_one(columns, matrix, vector):
-            def inner(column):
+        def project_one(columns: Array, matrix: Array, vector: Array) -> Array:
+            def inner(column: Array) -> Array:
                 return self.space.inner(
                     self.space.unflatten(column),
                     self.space.unflatten(vector),

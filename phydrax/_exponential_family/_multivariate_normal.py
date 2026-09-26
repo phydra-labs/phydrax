@@ -8,7 +8,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 import phydrax.ein as ein
 
@@ -19,6 +19,7 @@ from ..linalg import (
     FactorizationPolicy,
     factorize,
     inverse,
+    PreparedFactorization,
     verify_dense_properties,
 )
 from ._contracts import (
@@ -26,6 +27,7 @@ from ._contracts import (
     _mean_domain_result,
     _natural_domain_result,
     ExponentialFamilyDomainResult,
+    ExponentialFamilyLaw,
     ExponentialFamilySignature,
     NaturalCoordinates,
     StatisticBatch,
@@ -40,7 +42,9 @@ def _error_if(value: Array, predicate: Array, message: str, /) -> Array:
     return value
 
 
-def _positive_definite_factorization(matrix: Array, /):
+def _positive_definite_factorization(
+    matrix: Array, /
+) -> tuple[PreparedFactorization, Array, Array]:
     evidence = verify_dense_properties(
         matrix,
         policy=DensePropertyVerificationPolicy(
@@ -165,7 +169,9 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
         linear = ein.contract("...ij,...j->...i", precision, location_array)
         return self.natural(jnp.concatenate((linear, svec(-0.5 * precision)), axis=-1))
 
-    def law_from_location_covariance(self, location: ArrayLike, covariance: ArrayLike, /):
+    def law_from_location_covariance(
+        self, location: ArrayLike, covariance: ArrayLike, /
+    ) -> ExponentialFamilyLaw:
         """Return a multivariate Normal law from conventional parameters."""
         return self.law(self.natural_from_location_covariance(location, covariance))
 
@@ -285,7 +291,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

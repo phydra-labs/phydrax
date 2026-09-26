@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -14,6 +16,12 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._core import DSMCParticleState, DSMCSpeciesPlan
+
+
+# first index, second index, accepted collision, PRNG key
+_InternalEvent: TypeAlias = tuple[Array, Array, Array, Array]
+# reacted, relaxed, energy defect, chemical energy consumed, finite
+_InternalEventDiagnostics: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class DSMCReactionChannelPlan(StrictModule, NonTrainableState):
@@ -399,7 +407,7 @@ class DSMCInternalReactionPlan(StrictModule, NonTrainableState):
         first_indices: ArrayLike,
         second_indices: ArrayLike,
         accepted_collisions: ArrayLike,
-        keys: ArrayLike,
+        keys: Array,
         /,
     ) -> DSMCInternalReactionResult:
         first = jnp.asarray(first_indices, dtype=jnp.int32)
@@ -414,7 +422,9 @@ class DSMCInternalReactionPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("DSMC internal event arrays are incompatible.")
 
-        def body(particles, event):
+        def body(
+            particles: DSMCParticleState, event: _InternalEvent
+        ) -> tuple[DSMCParticleState, _InternalEventDiagnostics]:
             first_, second_, accepted_, key_ = event
             result = self.apply_one(
                 particles,

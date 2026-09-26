@@ -3,6 +3,8 @@
 #
 from __future__ import annotations
 
+from typing import Any, cast, TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -10,8 +12,10 @@ import jax.numpy as jnp
 from .._bounds import Bounds
 from .._numerics import weight_ess
 from .._strict import StrictModule
+from ..linalg import AbstractLinearOperator, AbstractSparseLinearOperator
 from ..optim import (
     ConicProgram,
+    ConvexProgramResult,
     ConvexSolvePolicy,
     ConvexTermination,
     ExponentialCone,
@@ -22,7 +26,12 @@ from ..optim import (
     solve_convex_program,
     ZeroCone,
 )
-from ._problem import ExactMoments, IntervalMoments
+from ._problem import (
+    ExactMoments,
+    IntervalMoments,
+    MomentCalibrationProblem,
+    MomentTarget,
+)
 from ._results import (
     MomentCalibrationDiagnostics,
     MomentCalibrationProvenance,
@@ -31,13 +40,18 @@ from ._results import (
 )
 
 
-def _matrix(operator):
+_ConstraintRows: TypeAlias = tuple[tuple[jax.Array, jax.Array], ...]
+
+
+def _matrix(operator: AbstractLinearOperator) -> jax.Array:
     if not operator.capabilities.materialize:
         raise ValueError("Canonical calibration requires an explicit moment map.")
     return operator._materialize()
 
 
-def _target_rows(matrix, target):
+def _target_rows(
+    matrix: jax.Array, target: MomentTarget
+) -> tuple[_ConstraintRows, _ConstraintRows]:
     if isinstance(target, ExactMoments):
         return ((matrix, target.values),), ()
     if isinstance(target, IntervalMoments):
@@ -45,7 +59,7 @@ def _target_rows(matrix, target):
     raise TypeError("Canonical conic calibration supports exact/interval targets.")
 
 
-def _program(problem):
+def _program(problem: MomentCalibrationProblem) -> ConicProgram:
     count = problem.source_points
     dtype = problem.prior_log_weights.dtype
     prior = jax.nn.softmax(jnp.where(problem.mask, problem.prior_log_weights, -jnp.inf))
@@ -117,7 +131,9 @@ class BoundaryFaceEvidence(StrictModule):
     relaxations: tuple
 
 
-def _face_program(problem, objective):
+def _face_program(
+    problem: MomentCalibrationProblem, objective: jax.Array
+) -> LinearProgram:
     count = problem.source_points
     dtype = problem.prior_log_weights.dtype
     exact_rows = [jnp.ones((1, count), dtype=dtype)]
@@ -158,7 +174,7 @@ def _face_program(problem, objective):
     )
 
 
-def _monotone_equality_upper_bound(program, index):
+def _monotone_equality_upper_bound(program: LinearProgram, index: int) -> jax.Array:
     matrix = program.equality_matrix
     rhs = program.equality_rhs
     coefficient = matrix[:, index]
@@ -180,25 +196,28 @@ def _monotone_equality_upper_bound(program, index):
     )
 
 
-def _audit_face_coordinate(program, result, index, policy, zero_tolerance):
+def _audit_face_coordinate(
+    program: LinearProgram,
+    result: ConvexProgramResult,
+    index: int,
+    policy: ConvexSolvePolicy,
+    zero_tolerance: float,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     canonical = program.canonical
+    constraint_matrix = canonical.constraint_matrix
+    # LinearProgram always lowers to a dense canonical constraint matrix.
+    assert not isinstance(constraint_matrix, AbstractSparseLinearOperator)
     cone_dual = canonical.cone.project_dual(result.cone_dual)
     lower_dual = jnp.maximum(result.lower_bound_dual, 0.0)
     upper_dual = jnp.maximum(result.upper_bound_dual, 0.0)
     stationarity = (
-        canonical.linear
-        + canonical.constraint_matrix.T @ cone_dual
-        - lower_dual
-        + upper_dual
+        canonical.linear + constraint_matrix.T @ cone_dual - lower_dual + upper_dual
     )
     normalization_shift = -jnp.min(stationarity)
     cone_dual = cone_dual.at[0].add(normalization_shift)
     lower_dual = lower_dual + stationarity + normalization_shift
     corrected_stationarity = (
-        canonical.linear
-        + canonical.constraint_matrix.T @ cone_dual
-        - lower_dual
-        + upper_dual
+        canonical.linear + constraint_matrix.T @ cone_dual - lower_dual + upper_dual
     )
     scale = jnp.maximum(
         1.0,
@@ -251,7 +270,9 @@ def _audit_face_coordinate(program, result, index, policy, zero_tolerance):
     return maximum_upper_bound, witness, forced_zero, certified
 
 
-def discover_boundary_face(problem, solver):
+def discover_boundary_face(
+    problem: MomentCalibrationProblem, solver: ConvexSolvePolicy
+) -> BoundaryFaceEvidence:
     """Certify forced-zero coordinates by bounded maximum-mass LPs."""
     if problem.boundary is None:
         raise ValueError("Boundary face discovery requires BoundaryFacePolicy.")
@@ -296,7 +317,9 @@ def discover_boundary_face(problem, solver):
     )
 
 
-def calibrate_moments_conic(problem, solver=None):
+def calibrate_moments_conic(
+    problem: MomentCalibrationProblem, solver: object | None = None
+) -> MomentCalibrationResult:
     """Execute exact/interval/group relative entropy through ConicProgram."""
     if problem.subset is not None:
         raise ValueError("EqualWeightSubset requires the mixed-integer route.")
@@ -333,12 +356,14 @@ def calibrate_moments_conic(problem, solver=None):
         residual = achieved - problem.target.values
         target_ok = jnp.max(jnp.abs(residual)) <= policy.termination.absolute
     else:
+        # _program has already rejected targets other than exact/interval moments.
+        interval = cast(IntervalMoments, problem.target)
         residual = jnp.where(
-            achieved < problem.target.lower,
-            achieved - problem.target.lower,
+            achieved < interval.lower,
+            achieved - interval.lower,
             jnp.where(
-                achieved > problem.target.upper,
-                achieved - problem.target.upper,
+                achieved > interval.upper,
+                achieved - interval.upper,
                 0.0,
             ),
         )
@@ -416,7 +441,11 @@ def calibrate_moments_conic(problem, solver=None):
     return calibrated
 
 
-def implicit_calibrate_fixed_face(problem, face, **kwargs):
+def implicit_calibrate_fixed_face(
+    problem: MomentCalibrationProblem,
+    face: BoundaryFaceEvidence,
+    **kwargs: Any,
+) -> jax.Array:
     """Differentiate calibration only while one certified face remains fixed."""
     if not isinstance(face, BoundaryFaceEvidence):
         raise TypeError("face must be BoundaryFaceEvidence.")

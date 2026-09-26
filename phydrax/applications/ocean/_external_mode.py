@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -105,7 +106,7 @@ class ExternalModeSubcyclePolicy(StrictModule, NonTrainableState):
             minimum_spacing=minimum_spacing,
         )
 
-    def empty(self, dtype, /) -> ExternalModeSubcycleSchedule:
+    def empty(self, dtype: DTypeLike, /) -> ExternalModeSubcycleSchedule:
         return ExternalModeSubcycleSchedule(
             substep_sizes=jnp.zeros((self.maximum_substeps,), dtype=dtype),
             active_mask=jnp.zeros((self.maximum_substeps,), dtype=jnp.bool_),

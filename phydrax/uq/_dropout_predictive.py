@@ -361,7 +361,7 @@ def sample_mc_dropout_predictive(
         axis=0,
     )
 
-    def evaluate_batch(batch_keys):
+    def evaluate_batch(batch_keys: Array) -> Array:
         return jax.vmap(
             lambda draw_key: jnp.asarray(function(points, key=draw_key, **kwargs).data)
         )(batch_keys)

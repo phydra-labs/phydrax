@@ -7,14 +7,19 @@ from __future__ import annotations
 import math
 import operator as py_operator
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from phydrax.domain import DomainFunction
 
 from ..._strict import StrictModule
 from ._validation import join_function_arguments, validate_matrix_value
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 def _subsystem_dimensions(subsystem_dims: Sequence[int], /) -> tuple[int, ...]:
@@ -88,7 +93,7 @@ class _TensorProductCallable(StrictModule):
         self.factors = factors
         self.factor_positions = factor_positions
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         result = None
         value_rank = None
         for index, (factor, positions) in enumerate(
@@ -140,7 +145,7 @@ class _PartialTraceCallable(StrictModule):
         self.trace_out = trace_out
         self.total_dimension = math.prod(subsystem_dims)
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         density = validate_matrix_value(
             self.density.func(*args, key=key, **kwargs),
             role="partial_trace density operator",
@@ -187,7 +192,7 @@ class _EmbeddedOperatorCallable(StrictModule):
         self.left_dimension = math.prod(subsystem_dims[:subsystem])
         self.right_dimension = math.prod(subsystem_dims[subsystem + 1 :])
 
-    def __call__(self, *args, key=None, **kwargs):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         source = validate_matrix_value(
             self.source.func(*args, key=key, **kwargs),
             role="embedded subsystem operator",

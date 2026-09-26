@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._model import SurfaceRealization
+from ._model import _surface_connectivity, SurfaceRealization
 
 
 class PlaneSectionStatus(str, Enum):
@@ -282,7 +282,7 @@ def intersect_plane_surface(
     points = np.asarray(realization.mesh.coordinates, dtype=np.float64)
     scale = max(float(np.linalg.norm(np.ptp(points, axis=0))), 1.0)
     tolerance_ = (
-        128.0 * np.finfo(np.float64).eps * scale
+        float(128.0 * np.finfo(np.float64).eps * scale)
         if tolerance is None
         else float(tolerance)
     )
@@ -303,7 +303,9 @@ def intersect_plane_surface(
             empty_cells,
         )
 
-    faces = np.asarray(realization.mesh.connectivity.cell_vertices[:, :3], dtype=np.int32)
+    faces = np.asarray(
+        _surface_connectivity(realization.mesh).cell_vertices[:, :3], dtype=np.int32
+    )
     vertex_global_ids = np.asarray(realization.mesh.vertex_global_ids, dtype=np.int64)
     chart_cell_ids = np.asarray(realization.chart_mapping.cell_global_ids, dtype=np.int64)
     edge_points: dict[tuple[int, int], np.ndarray] = {}
@@ -332,9 +334,10 @@ def intersect_plane_surface(
                 edge_points[edge] = points[start] + parameter * (
                     points[stop] - points[start]
                 )
-                edge_global_ids[edge] = tuple(
-                    sorted((int(vertex_global_ids[start]), int(vertex_global_ids[stop])))
+                lower_id, upper_id = sorted(
+                    (int(vertex_global_ids[start]), int(vertex_global_ids[stop]))
                 )
+                edge_global_ids[edge] = (lower_id, upper_id)
             crossings.append(edge)
         if len(crossings) != 2 or crossings[0] == crossings[1]:
             charts = np.asarray((*segment_charts, chart), dtype=np.int32)

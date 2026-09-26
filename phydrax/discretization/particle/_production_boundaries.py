@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Protocol
 
 import equinox as eqx
 import jax
@@ -16,7 +17,14 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._free_surface import FreeSurfaceState
+from ._smoothing import AbstractSPHSmoothingKernel
 from ._wall import PreparedWallParticles
+
+
+class _ProjectedBoundaryGeometry(Protocol):
+    def signed_distance(self, points: Array, /) -> Array: ...
+
+    def boundary_normal(self, points: Array, /) -> Array: ...
 
 
 class BoundaryFeatureKind(StrEnum):
@@ -86,10 +94,12 @@ class WallRelaxationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def relax(self, geometry, positions: ArrayLike, /) -> Array:
+    def relax(
+        self, geometry: _ProjectedBoundaryGeometry, positions: ArrayLike, /
+    ) -> Array:
         initial = jnp.asarray(positions)
 
-        def body(_, current):
+        def body(_: Array, current: Array) -> Array:
             displacement = current[:, None, :] - current[None, :, :]
             distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
             mask = (distance > 0.0) & (distance < 1.5 * self.target_spacing)
@@ -123,7 +133,7 @@ class WallMomentCertification(StrictModule):
 
 def certify_wall_moments(
     wall: PreparedWallParticles,
-    kernel,
+    kernel: AbstractSPHSmoothingKernel,
     smoothing_length: float,
     /,
     *,

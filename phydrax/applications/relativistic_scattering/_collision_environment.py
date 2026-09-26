@@ -140,7 +140,7 @@ def assign_collision_pileup(
         pileup_pool.event_active & pileup_pool.valid, dtype=jnp.int32
     )
 
-    def draw(event_id):
+    def draw(event_id: Array) -> tuple[Array, Array]:
         identifier = jnp.asarray(event_id, dtype=jnp.uint64)
         low = identifier.astype(jnp.uint32)
         high = (identifier >> jnp.asarray(32, dtype=jnp.uint64)).astype(jnp.uint32)

@@ -5,7 +5,7 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 
 def elrod_adams_flux(
@@ -15,7 +15,7 @@ def elrod_adams_flux(
     viscosity: float,
     sliding_velocity: float,
     /,
-):
+) -> Array:
     if not isfinite(viscosity) or viscosity <= 0 or not isfinite(sliding_velocity):
         raise ValueError(
             "Cavitation viscosity must be finite/positive and velocity finite."

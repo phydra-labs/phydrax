@@ -10,6 +10,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
@@ -50,8 +51,8 @@ class BeamConditionSnapshot(StrictModule, NonTrainableState):
         beam_energies: tuple[float, float],
         bunch_intensities: tuple[float, float],
         crossing_angle: float,
-        beam_spot_mean,
-        beam_spot_covariance,
+        beam_spot_mean: npt.ArrayLike,
+        beam_spot_covariance: npt.ArrayLike,
         energy_unit: UnitDefinition,
         length_unit: UnitDefinition,
         source_id: str,

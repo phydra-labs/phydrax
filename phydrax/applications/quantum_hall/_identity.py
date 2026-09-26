@@ -184,7 +184,7 @@ class HallChargeSector(StrictModule, NonTrainableState):
         )
         modulus_source = {} if moduli is None else dict(moduli)
         modulus_values = tuple(
-            (key, None if modulus_source.get(key) is None else int(modulus_source[key]))
+            (key, None if (modulus := modulus_source.get(key)) is None else int(modulus))
             for key, _ in target_values
         )
         if not target_values or any(not key for key, _ in target_values):

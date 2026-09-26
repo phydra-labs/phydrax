@@ -9,7 +9,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -25,7 +25,7 @@ from ...sparse import EdgeRelation, SparseCoordinateOperator
 from .._constraints import AbstractDiscreteDirichletConstraint
 from .._topology import EntitySelection
 from ._boundary import FiniteElementBoundarySet
-from ._generic import FiniteElementDiscretization
+from ._generic import FiniteElementDiscretization, FiniteElementDofMap
 from ._hp_runtime import FiniteElementHPTraceConstraintPlan
 
 
@@ -55,13 +55,13 @@ class FiniteElementLinearConstraint(StrictModule, NonTrainableState):
         self.constraint_map = constraint_map
         self.constraint_id = constraint_map.constraint_id
 
-    def lift(self, /):
+    def lift(self, /) -> PyTree[Array]:
         return self.constraint_map.full_space.zeros()
 
 
 def _validate_component_constraints(
     discretization: FiniteElementDiscretization,
-    dof_map,
+    dof_map: FiniteElementDofMap,
     mask: np.ndarray,
     /,
 ) -> None:

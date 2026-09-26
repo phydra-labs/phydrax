@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import BinaryIO, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -41,6 +42,9 @@ from .._scope import MeshingScope
 
 
 _CELL_KINDS = ("tetrahedron", "pyramid", "prism", "hexahedron")
+_DonorRecords: TypeAlias = dict[
+    tuple[int, int], list[tuple[int, int, np.ndarray, np.ndarray]]
+]
 
 
 class TiogaOptions(StrictModule, NonTrainableState):
@@ -426,10 +430,11 @@ def _write_input(
                 limits.maximum_data_bytes,
             )
         )
-        part_node_counts = np.asarray(
-            [part.carrier.mesh.coordinates.shape[0] for part in assembly.parts],
-            dtype="<u8",
-        )
+        node_counts: list[int] = []
+        for part in assembly.parts:
+            assert isinstance(part.carrier, CellMeshingResult)
+            node_counts.append(part.carrier.mesh.coordinates.shape[0])
+        part_node_counts = np.asarray(node_counts, dtype="<u8")
         part_node_counts.tofile(stream)
         node_offset = 0
         for part in assembly.parts:
@@ -480,7 +485,7 @@ def _write_input(
             stream.seek(end)
 
 
-def _read_array(stream, dtype, count: int) -> np.ndarray:
+def _read_array(stream: BinaryIO, dtype: np.dtype, count: int) -> np.ndarray:
     if count < 0:
         raise ValueError("Negative TIOGA output count.")
     values = np.fromfile(stream, dtype=dtype, count=count)
@@ -494,9 +499,9 @@ def _read_outputs(
     assembly: MeshAssembly,
     ranks: int,
     limits: MeshingLimits,
-):
+) -> tuple[tuple[TiogaPartBlanking, ...], _DonorRecords]:
     blanking = {}
-    records: dict[tuple[int, int], list[tuple[int, int, np.ndarray, np.ndarray]]] = {}
+    records: _DonorRecords = {}
     total_bytes = sum(Path(f"{prefix}.{rank}").stat().st_size for rank in range(ranks))
     if total_bytes > limits.maximum_data_bytes:
         raise ValueError("TIOGA output exceeds maximum_data_bytes.")
@@ -579,9 +584,9 @@ def _read_outputs(
 def _couplings(
     assembly: MeshAssembly,
     blanking: tuple[TiogaPartBlanking, ...],
-    records,
+    records: _DonorRecords,
     tolerance: float,
-):
+) -> tuple[tuple[OversetCoupling, ...], tuple[TiogaDonorEvidence, ...]]:
     links, evidence = [], []
     receptors = [set() for _ in assembly.parts]
     for (source_index, target_index), rows in sorted(records.items()):
@@ -599,6 +604,7 @@ def _couplings(
             np.zeros((len(rows), width)),
         )
         cells = np.asarray([row[1] for row in rows], dtype=np.int64)
+        assert isinstance(source.carrier, CellMeshingResult)
         source_mesh = source.carrier.mesh
         cell_nodes = {
             int(identifier): np.asarray(source_mesh.vertex_global_ids)[vertices]

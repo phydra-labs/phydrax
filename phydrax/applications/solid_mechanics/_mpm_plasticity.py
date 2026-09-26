@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -21,7 +24,11 @@ from ...equations import (
     MPMConstitutiveResponse,
     MPMLinearizedConstitutiveResponse,
 )
-from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...linalg import SmallLinearSolvePlan, SmallLinearSolveResult, solve_small_linear
+
+
+if TYPE_CHECKING:
+    from ._mpm_plane_stress import PlaneStressMPMConstitutivePlan
 
 
 class FiniteStrainJ2Parameters(StrictModule, NonTrainableState):
@@ -99,18 +106,26 @@ class FiniteStrainJ2MPMConstitutivePlan(
             }
         )
 
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         shape = tuple(batch_shape)
         plastic = jnp.broadcast_to(jnp.eye(3, dtype=dtype), shape + (3, 3))
         alpha = jnp.zeros(shape + (1,), dtype=dtype)
         return jnp.concatenate((plastic.reshape(shape + (9,)), alpha), axis=-1)
 
     @staticmethod
-    def _inverse(value):
+    def _inverse(value: Array) -> SmallLinearSolveResult:
         identity = jnp.broadcast_to(jnp.eye(3, dtype=value.dtype), value.shape)
         return solve_small_linear(SmallLinearSolvePlan(3), value, identity)
 
-    def _point(self, deformation, history, density, parameters):
+    def _point(
+        self,
+        deformation: Array,
+        history: Array,
+        density: Array,
+        parameters: FiniteStrainJ2Parameters,
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array, Array]:
         plastic = history[:9].reshape((3, 3))
         alpha = history[9]
         inverse_plastic = self._inverse(plastic)
@@ -289,7 +304,7 @@ class FiniteStrainJ2MPMConstitutivePlan(
         flat_history = history.reshape((-1, 10))
         flat_density = density.reshape((-1,))
 
-        def stress(value, state, rho):
+        def stress(value: Array, state: Array, rho: Array) -> Array:
             return self._point(value, state, rho, parameters)[0]
 
         tangent = jax.vmap(jax.jacfwd(stress, argnums=0))(
@@ -319,7 +334,7 @@ class FiniteStrainJ2MPMConstitutivePlan(
 def finite_strain_j2_plane_stress_plan(
     *,
     yield_tolerance: float = 1.0e-10,
-):
+) -> PlaneStressMPMConstitutivePlan:
     from ._mpm_plane_stress import PlaneStressMPMConstitutivePlan
 
     return PlaneStressMPMConstitutivePlan(

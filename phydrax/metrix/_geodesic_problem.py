@@ -70,7 +70,7 @@ class _RK4GeodesicStep(StrictModule):
         self.step_size = float(step_size)
         self.precision = precision
 
-    def __call__(self, _, state: Array) -> Array:
+    def __call__(self, _: Array, state: Array) -> Array:
         self.precision.validate_coordinates(state)
         staged = self.precision.compute(state)
         step = self.precision.compute(jnp.asarray(self.step_size, dtype=state.dtype))

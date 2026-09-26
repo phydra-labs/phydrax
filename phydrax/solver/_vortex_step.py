@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,6 +25,10 @@ from ..nonlinear import (
     NonlinearTermination,
 )
 from ._vortex_lattice import SteadyVortexLatticePlan
+
+
+# velocity, angle, lift, drag, moment coefficients, circulation target
+_PanelFields: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class SampledAirfoilPolar(StrictModule, NonTrainableState):
@@ -173,7 +177,7 @@ class VortexStepPlan(StrictModule, NonTrainableState):
             :, None
         ]
 
-        def fields(gamma):
+        def fields(gamma: Array) -> _PanelFields:
             velocity = freestream + contract("tjc,j->tc", influence, gamma)
             chord_speed = jnp.sum(velocity * chord_direction, axis=-1)
             normal_speed = jnp.sum(velocity * surface.normal, axis=-1)
@@ -183,7 +187,7 @@ class VortexStepPlan(StrictModule, NonTrainableState):
             target = 0.5 * crossflow * surface.chord * cl
             return velocity, angle, cl, cd, cm, target
 
-        def residual(gamma, args):
+        def residual(gamma: Array, args: object) -> Array:
             del args
             return fields(gamma)[-1] - gamma
 

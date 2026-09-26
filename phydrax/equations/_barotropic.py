@@ -313,17 +313,23 @@ class HomogeneousEquilibriumCavitationMaterial(AbstractBarotropicMaterial):
         )
 
     @staticmethod
-    def _linear_energy_increment_host(rho0, rho1, slope, intercept):
+    def _linear_energy_increment_host(
+        rho0: float, rho1: float, slope: float, intercept: float
+    ) -> float:
         return slope * np.log(rho1 / rho0) - intercept * (1.0 / rho1 - 1.0 / rho0)
 
     @staticmethod
-    def _wallis_pressure_host(rho, reference, pressure, a, b):
+    def _wallis_pressure_host(
+        rho: float, reference: float, pressure: float, a: float, b: float
+    ) -> float:
         return (
             pressure + np.log(rho * (a + b * reference) / (reference * (a + b * rho))) / a
         )
 
     @staticmethod
-    def _wallis_energy_primitive_host(rho, reference, pressure, a, b):
+    def _wallis_energy_primitive_host(
+        rho: float, reference: float, pressure: float, a: float, b: float
+    ) -> float:
         log_ratio = np.log(rho / reference)
         log_compressibility = np.log((a + b * rho) / (a + b * reference))
         return (
@@ -336,7 +342,15 @@ class HomogeneousEquilibriumCavitationMaterial(AbstractBarotropicMaterial):
         )
 
     @classmethod
-    def _wallis_energy_increment_host(cls, rho0, rho1, reference, pressure, a, b):
+    def _wallis_energy_increment_host(
+        cls,
+        rho0: float,
+        rho1: float,
+        reference: float,
+        pressure: float,
+        a: float,
+        b: float,
+    ) -> float:
         return cls._wallis_energy_primitive_host(
             rho1, reference, pressure, a, b
         ) - cls._wallis_energy_primitive_host(rho0, reference, pressure, a, b)
@@ -472,7 +486,7 @@ class HomogeneousEquilibriumCavitationMaterial(AbstractBarotropicMaterial):
         b = jnp.asarray(self.wallis_b, dtype=density.dtype)
         pressure = jnp.asarray(self.saturation_pressure, dtype=density.dtype)
 
-        def primitive(rho):
+        def primitive(rho: Array) -> Array:
             log_ratio = jnp.log(rho / midpoint)
             log_compressibility = jnp.log((a + b * rho) / (a + b * midpoint))
             return (

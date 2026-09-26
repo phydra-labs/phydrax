@@ -8,6 +8,7 @@ import numpy as np
 
 import phydrax as phx
 import phydrax.axes as cx
+from phydrax._doc import DOC_KEY0
 from phydrax._frozendict import frozendict
 
 
@@ -133,3 +134,52 @@ def test_causal_schedule_and_narrow_band_policy_retain_interface_points():
 
     assert coordinates.shape == (64,)
     assert jnp.sum(jnp.abs(coordinates) < 0.2) >= 8
+
+
+def test_narrow_band_policy_honors_abstract_default_collocation_key():
+    domain = phx.domain.Interval1d(-1.0, 1.0)
+
+    @domain.Function("x")
+    def level_set(point):
+        return point[0]
+
+    @domain.Function("x")
+    def residual_coordinate(point):
+        return 0.01 * point[0] ** 2
+
+    policy = phx.sampling.collocation.NarrowBandCollocationPolicy(
+        "phi",
+        0.2,
+        base_policy=phx.sampling.collocation.R3(refresh_every=1, sampler="uniform"),
+    )
+    condition = phx.conditions.Residual(
+        "u",
+        domain.component(),
+        lambda _u: residual_coordinate,
+    )
+    source = phx.integration.adaptive(
+        phx.integration.mean_over(condition.on),
+        phx.domain.PointSampling(
+            16,
+            layout=phx.domain.SampleLayout((("x",),)),
+            design="uniform",
+        ),
+        policy,
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
+    functions = {"u": domain.Function()(0.0), "phi": level_set}
+
+    initial = policy.initialize(term)
+    explicit_initial = policy.initialize(term, key=DOC_KEY0)
+    refreshed = policy.refresh(term, functions, initial, iter_=1)
+    explicit_refreshed = policy.refresh(
+        term, functions, explicit_initial, key=DOC_KEY0, iter_=1
+    )
+
+    np.testing.assert_array_equal(
+        initial.batch.points["x"].data, explicit_initial.batch.points["x"].data
+    )
+    np.testing.assert_array_equal(
+        refreshed.batch.points["x"].data, explicit_refreshed.batch.points["x"].data
+    )
+    assert int(refreshed.refresh_count) == 1

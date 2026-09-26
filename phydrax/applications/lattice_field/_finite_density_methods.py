@@ -108,9 +108,19 @@ def canonical_sector_transform(
             "grand_partition_imaginary_mu must be one complex value per B/Q/S node."
         )
     sectors = jnp.fft.fftshift(jnp.fft.fftn(values) / np.prod(plan.node_shape))
-    axes = tuple(
-        jnp.arange(-(node // 2), node - node // 2, dtype=jnp.int32)
-        for node in plan.node_shape
+    baryon_nodes, charge_nodes, strangeness_nodes = plan.node_shape
+    axes = (
+        jnp.arange(
+            -(baryon_nodes // 2), baryon_nodes - baryon_nodes // 2, dtype=jnp.int32
+        ),
+        jnp.arange(
+            -(charge_nodes // 2), charge_nodes - charge_nodes // 2, dtype=jnp.int32
+        ),
+        jnp.arange(
+            -(strangeness_nodes // 2),
+            strangeness_nodes - strangeness_nodes // 2,
+            dtype=jnp.int32,
+        ),
     )
     active = (
         (jnp.abs(axes[0])[:, None, None] <= plan.charge_bounds[0])

@@ -438,7 +438,7 @@ class BatteryProtocolValues(StrictModule):
         self,
         protocol: BatteryProtocolPlan,
         current_amplitudes_a: ArrayLike,
-        stop_thresholds: ArrayLike = (),
+        stop_thresholds: ArrayLike | Sequence[float] = (),
         /,
     ) -> None:
         if not isinstance(protocol, BatteryProtocolPlan):

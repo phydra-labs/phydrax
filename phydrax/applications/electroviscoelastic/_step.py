@@ -25,7 +25,7 @@ def advance_constitutive_state(
     surface_charge_rate: ArrayLike,
     step_size_s: ArrayLike,
     /,
-):
+) -> ElectroViscoelasticState:
     dt = jnp.asarray(step_size_s)
     minus = (
         state.conformation_minus

@@ -32,7 +32,7 @@ class OblateOccultationPlan(StrictModule, NonTrainableState):
     angular_nodes: Array
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, *, radial_order=96, angular_order=192) -> None:
+    def __init__(self, *, radial_order: int = 96, angular_order: int = 192) -> None:
         radial = GaussLegendreRule(int(radial_order)).data()
         angular = GaussLegendreRule(int(angular_order)).data()
         self.radial_nodes = 0.5 * (radial.nodes + 1.0)
@@ -104,7 +104,12 @@ class FiniteSourceMicrolensingPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(
-        self, source_radius: ArrayLike, /, *, radial_order=48, angular_order=96
+        self,
+        source_radius: ArrayLike,
+        /,
+        *,
+        radial_order: int = 48,
+        angular_order: int = 96,
     ) -> None:
         radial = GaussLegendreRule(int(radial_order)).data()
         angular = GaussLegendreRule(int(angular_order)).data()

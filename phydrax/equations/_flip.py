@@ -21,6 +21,7 @@ from ..discretization import (
     DiscretizationKey,
     DiscretizationRecord,
     DiscretizationRole,
+    StructuredAxis,
 )
 from ..discretization.flip import (
     FLIPDiagnostics,
@@ -89,20 +90,28 @@ class FLIPProblemIR(StrictModule, NonTrainableState):
         )
 
 
-def _shift_valid(value, valid, axis, offset, periodic):
+def _shift_valid(
+    value: Array, valid: Array, axis: int, offset: int, periodic: bool
+) -> tuple[Array, Array]:
     shifted_value = jnp.roll(value, offset, axis=axis)
     shifted_valid = jnp.roll(valid, offset, axis=axis)
     if periodic:
         return shifted_value, shifted_valid
-    index = [slice(None)] * value.ndim
+    index: list[slice | int] = [slice(None)] * value.ndim
     index[axis] = 0 if offset > 0 else value.shape[axis] - 1
     shifted_valid = shifted_valid.at[tuple(index)].set(False)
     shifted_value = shifted_value.at[tuple(index)].set(0.0)
     return shifted_value, shifted_valid
 
 
-def _extrapolate_component(value, valid, allowed, axes, layers):
-    def body(_, carry):
+def _extrapolate_component(
+    value: Array,
+    valid: Array,
+    allowed: Array,
+    axes: tuple[StructuredAxis, ...],
+    layers: int,
+) -> tuple[Array, Array]:
+    def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
         current, support = carry
         current = jnp.where(allowed, current, 0.0)
         support = support & allowed
@@ -169,7 +178,9 @@ class CompiledFLIPProblem(StrictModule, NonTrainableState):
             geometry_id,
         )
 
-    def _extrapolate(self, velocity, support):
+    def _extrapolate(
+        self, velocity: tuple[Array, ...], support: tuple[Array, ...]
+    ) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
         axes = self.projection.operators.discretization.grid.structured_axes
         allowed = (
             tuple(jnp.ones_like(value, dtype=jnp.bool_) for value in velocity)

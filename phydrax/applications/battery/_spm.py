@@ -16,7 +16,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...solver import DifferentialProblem
+from ...solver import DifferentialProblem, DifferentialSolution
 from ._experiment import BatteryRuntimeInputs
 from ._particle import (
     BatteryParticleEvaluation,
@@ -1353,7 +1353,7 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
     def ledger(
         self,
         prepared_model: PreparedPrescribedCurrentSpm,
-        native_solution,
+        native_solution: DifferentialSolution,
         runtime_inputs: BatteryRuntimeInputs,
         /,
     ) -> SpmLedger:

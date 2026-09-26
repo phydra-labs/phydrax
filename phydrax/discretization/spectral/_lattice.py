@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from collections.abc import Sequence
+from typing import Literal, TYPE_CHECKING, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -21,11 +22,21 @@ from ...linalg import ArraySpace
 from ._precision import SpectralPrecisionPolicy
 
 
+if TYPE_CHECKING:
+    from ._signed_coordinates import SignedHermitianSpectralCoordinates
+
+
 HarmonicTruncationKind: TypeAlias = Literal[
     "circular",
     "parallelogramic",
     "custom",
 ]
+
+
+class _LatticeHarmonicPlanOptions(TypedDict, total=False):
+    precision: SpectralPrecisionPolicy | None
+    max_harmonics: int
+    max_convolution_bytes: int
 
 
 def _canonical_coefficients(coefficients: ArrayLike) -> np.ndarray:
@@ -210,7 +221,7 @@ class LatticeHarmonicPlan(StrictModule, NonTrainableState):
         mode_counts: tuple[int, ...],
         sample_shape: tuple[int, ...],
         /,
-        **kwargs,
+        **kwargs: Unpack[_LatticeHarmonicPlanOptions],
     ) -> "LatticeHarmonicPlan":
         counts = tuple(mode_counts)
         if len(counts) not in (1, 2) or any(
@@ -235,7 +246,7 @@ class LatticeHarmonicPlan(StrictModule, NonTrainableState):
         harmonic_count: int,
         sample_shape: tuple[int, int],
         /,
-        **kwargs,
+        **kwargs: Unpack[_LatticeHarmonicPlanOptions],
     ) -> "LatticeHarmonicPlan":
         primitive = np.asarray(reference_primitive_vectors, dtype=np.float64)
         count = int(harmonic_count)
@@ -330,7 +341,7 @@ class LatticeHarmonicDiscretization(StrictModule, NonTrainableState):
             raise ValueError(
                 f"primitive_vectors must have shape {expected_shape}; got {vectors.shape}."
             )
-        if not isinstance(vectors, jax.core.Tracer):
+        if not isinstance(vectors, jax_core.Tracer):
             vectors_host = np.asarray(vectors)
             measure_host = (
                 np.linalg.norm(vectors_host[0])
@@ -389,7 +400,7 @@ class LatticeHarmonicDiscretization(StrictModule, NonTrainableState):
         component_shape: tuple[int, ...] = (),
         reality_tolerance: float = 1e-10,
         maximum_coordinate_size: int = 10_000_000,
-    ):
+    ) -> SignedHermitianSpectralCoordinates:
         """Return independent Hermitian coordinates for a real lattice field."""
         from ._signed_coordinates import SignedHermitianSpectralCoordinates
 
@@ -499,7 +510,7 @@ class LatticeHarmonicDiscretization(StrictModule, NonTrainableState):
         )
         return self.plan.precision.coefficients(gathered * phase)
 
-    def translation_phase(self, displacement: ArrayLike, /) -> Array:
+    def translation_phase(self, displacement: ArrayLike | Sequence[float], /) -> Array:
         value = jnp.asarray(displacement, dtype=self.primitive_vectors.dtype)
         if value.shape != (2,):
             raise ValueError("displacement must have shape (2,).")
@@ -508,7 +519,7 @@ class LatticeHarmonicDiscretization(StrictModule, NonTrainableState):
     def translate_coefficients(
         self,
         coefficients: ArrayLike,
-        displacement: ArrayLike,
+        displacement: ArrayLike | Sequence[float],
         /,
     ) -> Array:
         values = self.plan.precision.coefficients(coefficients)
@@ -522,7 +533,7 @@ class LatticeHarmonicDiscretization(StrictModule, NonTrainableState):
     def translate_convolution(
         self,
         matrix: ArrayLike,
-        displacement: ArrayLike,
+        displacement: ArrayLike | Sequence[float],
         /,
     ) -> Array:
         value = self.plan.precision.coefficients(matrix)

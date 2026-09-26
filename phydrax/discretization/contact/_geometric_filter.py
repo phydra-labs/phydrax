@@ -119,7 +119,7 @@ class GeometricContactFilterResult(StrictModule):
     evidence: GeometricContactFilterEvidence
 
 
-def _safe_normal(value):
+def _safe_normal(value: Array) -> Array:
     norm = jnp.sqrt(jnp.sum(value * value, axis=-1, keepdims=True))
     return value / jnp.maximum(norm, jnp.finfo(value.dtype).eps)
 

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -29,6 +31,10 @@ from .._units import AtomisticUnitSystem
 _EXCHANGE_STREAM = 0x45584348
 _SAMS_STREAM = 0x53414D53
 _UINT32_MAX = np.iinfo(np.uint32).max
+
+_ExchangeOutcome: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 def _identity_token(identifier: str, /) -> Array:
@@ -458,7 +464,9 @@ class PreparedAtomisticMultistate(StrictModule):
         )
 
     @staticmethod
-    def _semantic_key(root_key: Array, stream: int, counter: Array, identity: Array):
+    def _semantic_key(
+        root_key: Array, stream: int, counter: Array, identity: Array
+    ) -> Key[Array, ""]:
         key = jr.wrap_key_data(root_key)
         key = jr.fold_in(key, jnp.asarray(stream, dtype=jnp.uint32))
         key = jr.fold_in(key, jnp.asarray(counter, dtype=jnp.uint32))
@@ -468,7 +476,7 @@ class PreparedAtomisticMultistate(StrictModule):
 
     def initialize(
         self,
-        states,
+        states: Iterable[AtomisticDynamicsState],
         state_at_replica: ArrayLike,
         key: Key[Array, ""],
         /,
@@ -575,7 +583,7 @@ class PreparedAtomisticMultistate(StrictModule):
             dynamics_state.kinematics, dynamics_state.cell_vectors
         )
 
-        def evaluate_state(state_index):
+        def evaluate_state(state_index: Array) -> tuple[Array, Array]:
             row = self.thermodynamic.state_at_replica(state_index)
             evaluation = jax.vmap(
                 lambda lane, whole: self.dynamics._energy_configuration(
@@ -617,7 +625,7 @@ class PreparedAtomisticMultistate(StrictModule):
         state: AtomisticMultistateState,
         reduced: AtomisticReducedPotentialEvaluation,
         scheduled: Array,
-    ):
+    ) -> _ExchangeOutcome:
         pair_count = max(self.plan.replica_count - 1, 0)
         starts = jnp.arange(pair_count, dtype=jnp.int32)
         pair_indices = jnp.stack((starts, starts + 1), axis=-1)
@@ -640,7 +648,7 @@ class PreparedAtomisticMultistate(StrictModule):
         exchange = self.plan.exchange
         realization = 0 if exchange is None else exchange.realization_id
 
-        def propose(_):
+        def propose(_: None) -> Array:
             keys = jax.vmap(
                 lambda start: self._semantic_key(
                     state.root_key,
@@ -691,7 +699,7 @@ class PreparedAtomisticMultistate(StrictModule):
         state: AtomisticMultistateState,
         reduced: AtomisticReducedPotentialEvaluation,
         scheduled: Array,
-    ):
+    ) -> tuple[Array, Array, Array, Array, AtomisticSAMSState, Array]:
         sams_plan = self.plan.sams
         replica_count = self.plan.replica_count
         if sams_plan is None:
@@ -710,7 +718,7 @@ class PreparedAtomisticMultistate(StrictModule):
             - reduced.values
         )
 
-        def propose_labels(_):
+        def propose_labels(_: None) -> Array:
             keys = jax.vmap(
                 lambda replica_id, counter: self._semantic_key(
                     state.root_key,
@@ -767,19 +775,20 @@ class PreparedAtomisticMultistate(StrictModule):
         propagation_valid = jnp.all(propagated.successful)
         next_iteration = state.iteration_index + 1
         barostat_plan = self.plan.barostat
-        if barostat_plan is None:
+        barostat_interval = self.plan.barostat_interval
+        if barostat_plan is None or barostat_interval is None:
             barostat_scheduled = jnp.asarray(False)
             barostat_attempted = jnp.zeros((self.plan.replica_count,), dtype=jnp.bool_)
             barostat_accepted = jnp.zeros_like(barostat_attempted)
             barostat_valid = jnp.asarray(True)
             barostat_counter = state.barostat_action_counter
         else:
-            barostat_scheduled = next_iteration % self.plan.barostat_interval == 0
+            barostat_scheduled = next_iteration % barostat_interval == 0
             barostat_attempted = jnp.full(
                 (self.plan.replica_count,), barostat_scheduled, dtype=jnp.bool_
             )
 
-            def apply_moves(_):
+            def apply_moves(_: None) -> tuple[AtomisticDynamicsState, Array, Array]:
                 evaluations = jax.vmap(
                     lambda lane, counter: apply_isotropic_monte_carlo_barostat(
                         self.dynamics,
@@ -795,7 +804,7 @@ class PreparedAtomisticMultistate(StrictModule):
                     jnp.all(evaluations.successful),
                 )
 
-            def skip_moves(_):
+            def skip_moves(_: None) -> tuple[AtomisticDynamicsState, Array, Array]:
                 return (
                     dynamics_state,
                     jnp.zeros((self.plan.replica_count,), dtype=jnp.bool_),
@@ -978,7 +987,12 @@ class AtomisticMultistateSegmentPlan(StrictModule, NonTrainableState):
             checked_iteration,
         )
 
-        def advance(carry, _):
+        def advance(
+            carry: tuple[AtomisticMultistateState, Array], _: None
+        ) -> tuple[
+            tuple[AtomisticMultistateState, Array],
+            tuple[AtomisticMultistateIteration, Array, Array],
+        ]:
             current, active = carry
             iteration = self.runtime.iterate(current)
             committed = active & iteration.successful

@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, Self, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -23,6 +23,11 @@ from ._realization import (
     realization_path_labels as _realization_path_ids,
     StochasticRealization,
 )
+
+
+if TYPE_CHECKING:
+    from ..nn.operator.training import OperatorDataset
+    from ..uq._predictive import PredictiveField
 
 
 TransitionWeighting = Literal["trajectory", "transition"]
@@ -146,7 +151,7 @@ class _TrajectoryRecord:
         if self.realizations is not None:
             object.__setattr__(self, "realizations", tuple(self.realizations))
 
-    def prepend(self, initial_time: ArrayLike, initial_state: ArrayLike, /):
+    def prepend(self, initial_time: ArrayLike, initial_state: ArrayLike, /) -> Self:
         """Return a record with one finite initial state prepended."""
         leading = self.case_shape + self.realization_shape
         initial = jnp.asarray(initial_state)
@@ -454,7 +459,7 @@ class StochasticTrajectory(StrictModule):
             )
         return tuple(out)
 
-    def to_predictive(self):
+    def to_predictive(self) -> PredictiveField:
         """Convert realization axes into explicit process-uncertainty axes.
 
         Validity is reduced conservatively across every physical case and saved
@@ -864,7 +869,7 @@ class StochasticTransitionView(StrictModule):
         duration_name: str | None = "duration",
         source_time_name: str | None = None,
         case_axis: str = "transition",
-    ):
+    ) -> OperatorDataset:
         """Lower valid transitions to the canonical neural-operator dataset."""
         from ..nn.operator import OperatorCaseProvenance
         from ..nn.operator.training import operator_dataset_from_arrays

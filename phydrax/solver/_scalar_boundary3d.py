@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -267,7 +268,7 @@ def solve_laplace_boundary_3d(
     formulation: ScalarBoundaryFormulation3D,
     boundary_data: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> ScalarBoundarySolveResult3D:
     """Named Laplace path; reject a formulation from any other kernel family."""
     if not isinstance(formulation, ScalarBoundaryFormulation3D):
@@ -281,7 +282,7 @@ def solve_helmholtz_boundary_3d(
     formulation: ScalarBoundaryFormulation3D,
     boundary_data: ArrayLike,
     /,
-    **kwargs,
+    **kwargs: Any,
 ) -> ScalarBoundarySolveResult3D:
     """Named outgoing Helmholtz path with raw/CFIE risk retained in metadata."""
     if not isinstance(formulation, ScalarBoundaryFormulation3D):

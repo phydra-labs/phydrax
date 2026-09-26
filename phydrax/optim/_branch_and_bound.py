@@ -330,6 +330,8 @@ def branch_and_bound(
                     incumbent = candidate.candidate
                     incumbent_value = candidate.objective
 
+        # Counted entries are only re-queued after their evaluation succeeded.
+        assert evaluation is not None
         if evaluation.failure is not None:
             failure = evaluation.failure
             unresolved_bound = inherited_bound

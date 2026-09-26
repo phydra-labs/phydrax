@@ -6,9 +6,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import cast
 
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
@@ -32,6 +33,8 @@ from ._binding import LearnedStressBindingPlan, PreparedLearnedStressBinding
 from ._dataset import (
     ChunkedClosureDatasetManifest,
     ClosureSample,
+    ClosureSampleKey,
+    DatasetExtent,
     DatasetSplit,
     LeakageSafePartition,
     TrainOnlyNormalizer,
@@ -90,7 +93,7 @@ class ClosureOperatorCase:
         object.__setattr__(self, "references", references)
 
     @property
-    def key(self):
+    def key(self) -> ClosureSampleKey:
         return next(iter(self.inputs.values())).key
 
     @property
@@ -137,7 +140,7 @@ def _extent_for_case(
     case: ClosureOperatorCase,
     manifest: ChunkedClosureDatasetManifest,
     /,
-):
+) -> DatasetExtent:
     key = case.key
     matches = tuple(
         extent
@@ -501,12 +504,13 @@ class TrainedClosureOperatorPredictor(StrictModule, NonTrainableState):
                 "target": target,
                 "output_shape": shape,
                 "physical_support": self.prepared.physical_batch.input(
-                    source_field.source_name
+                    # The template-membership check above rejects a missing source.
+                    cast(str, source_field.source_name)
                 ).support_id,
             }
         )
 
-    def __call__(self, normalized: Any, args: Any = None, /):
+    def __call__(self, normalized: ArrayLike, args: object = None, /) -> Array:
         if args is not None:
             raise ValueError(
                 "Trained closure operator predictors do not accept hidden runtime args."

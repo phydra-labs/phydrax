@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from collections.abc import Sequence
+from typing import Any, Literal, TypeVar
 
 import equinox as eqx
 import jax
@@ -101,11 +102,14 @@ def _split_chain_keys(key: Array, num_chains: int, /) -> tuple[Array, Array]:
     return root_key, jr.split(root_key, int(num_chains))
 
 
-def _stack_trees(values):
+_TreeT = TypeVar("_TreeT")
+
+
+def _stack_trees(values: Sequence[_TreeT]) -> _TreeT:
     return jax.tree_util.tree_map(lambda *leaves: jnp.stack(leaves), *values)
 
 
-def _unstack_tree(tree, count: int):
+def _unstack_tree(tree: _TreeT, count: int) -> tuple[_TreeT, ...]:
     return tuple(
         jax.tree_util.tree_map(lambda value: value[index], tree)
         for index in range(int(count))

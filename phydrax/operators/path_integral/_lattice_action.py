@@ -137,7 +137,7 @@ def _initialize_incremental_action(
     action: AbstractIncrementalLatticeAction,
     configuration: PyTree[Any],
     /,
-):
+) -> tuple[Array, PyTree[Array]]:
     value, cache = action.initialize_incremental(configuration)
     return -jnp.asarray(value), cache
 
@@ -149,7 +149,7 @@ def _propose_incremental_action(
     proposed: PyTree[Any],
     payload: PyTree[Any],
     /,
-):
+) -> tuple[Array, PyTree[Array], Array]:
     delta, proposed_cache, valid = action.propose_incremental(
         current, cache, proposed, payload
     )
@@ -162,7 +162,7 @@ def _select_incremental_action(
     proposed: PyTree[Any],
     accepted: Array,
     /,
-):
+) -> PyTree[Array]:
     return action.select_incremental(current, proposed, accepted)
 
 
@@ -170,7 +170,7 @@ def _refresh_incremental_action(
     action: AbstractIncrementalLatticeAction,
     configuration: PyTree[Any],
     /,
-):
+) -> tuple[Array, PyTree[Array]]:
     value, cache = action.refresh_incremental(configuration)
     return -jnp.asarray(value), cache
 

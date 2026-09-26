@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -168,11 +168,14 @@ class ShortestPathSpace(AbstractCombinatorialSpace):
     def structure_id(self) -> str:
         return self._structure_id
 
-    def decision_spec(self, /) -> PathDecision:
-        return PathDecision(
-            jax.ShapeDtypeStruct((self.vertex_count,), jnp.int32),
-            jax.ShapeDtypeStruct((max(self.vertex_count - 1, 0),), jnp.int32),
-            jax.ShapeDtypeStruct((), jnp.int32),
+    def decision_spec(self, /) -> PyTree[jax.ShapeDtypeStruct]:
+        vertices = self.vertex_count
+        return jax.eval_shape(
+            lambda: PathDecision(
+                jnp.zeros((vertices,), dtype=jnp.int32),
+                jnp.zeros((max(vertices - 1, 0),), dtype=jnp.int32),
+                jnp.zeros((), dtype=jnp.int32),
+            )
         )
 
     def feature_spec(self, /) -> jax.ShapeDtypeStruct:
@@ -311,7 +314,9 @@ def _reconstruct_one(
         jnp.asarray(target == source),
     )
 
-    def body(_, state):
+    def body(
+        _: Array, state: tuple[Array, Array, Array, Array, Array]
+    ) -> tuple[Array, Array, Array, Array, Array]:
         vertices, edges, current, steps, reached = state
         active = ~reached & (steps < edge_capacity)
         edge = predecessor[jnp.clip(current, 0, vertex_count - 1)]
@@ -472,7 +477,7 @@ class DAGShortestPath(AbstractLinearCombinatorialMethod):
             dtype=jnp.int32,
         )
 
-        def visit(position, state):
+        def visit(position: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             distance, previous = state
             vertex = space.topological_order[position]
             sources = space.incoming_sources[vertex]

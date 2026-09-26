@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import isfinite
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -269,7 +270,11 @@ def evaluate_path_payoff(
         log_returns = jnp.diff(jnp.log(paths.values[:, :, 0]), axis=1)
         horizon = paths.times[-1] - paths.times[0]
         realized_variance = jnp.sum(log_returns**2, axis=1) / horizon
-        values = payoff.variance_notional * (realized_variance - payoff.variance_strike)
+        # _validate_payoff admits VarianceSwapPayoff as the only remaining type.
+        variance_payoff = cast(VarianceSwapPayoff, payoff)
+        values = variance_payoff.variance_notional * (
+            realized_variance - variance_payoff.variance_strike
+        )
     return jnp.where(path_valid, values, 0.0), path_valid & jnp.isfinite(values)
 
 
@@ -304,8 +309,16 @@ def prepare_monte_carlo(
 
 
 def _mean_evidence(
-    values, valid, discount, minimum_paths, confidence_level, route, path_id, binding, law
-):
+    values: Array,
+    valid: Array,
+    discount: Array,
+    minimum_paths: int,
+    confidence_level: float,
+    route: str,
+    path_id: str,
+    binding: FinanceEvidenceBinding | None,
+    law: PricingLaw | None,
+) -> ValuationResult:
     count = jnp.sum(valid, dtype=jnp.int32)
     safe_count = jnp.maximum(count, 1)
     mean = discount * jnp.sum(jnp.where(valid, values, 0.0)) / safe_count

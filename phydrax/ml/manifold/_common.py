@@ -226,7 +226,7 @@ def _connectivity_one(adjacency: Array, active: Array) -> tuple[Array, Array, Ar
     n = active.shape[0]
     labels = jnp.where(active, jnp.arange(n, dtype=jnp.int32), n)
 
-    def propagate(_iteration, current):
+    def propagate(_iteration: int | Array, current: Array) -> Array:
         candidates = jnp.where(adjacency, current[None, :], n)
         neighbor_min = jnp.min(candidates, axis=-1)
         return jnp.where(active, jnp.minimum(current, neighbor_min), n)

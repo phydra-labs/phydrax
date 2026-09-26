@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import factorial
 from numbers import Integral
 
@@ -154,7 +155,7 @@ def _validation_tolerance(
     /,
 ) -> float:
     magnitude = max(1.0, float(np.max(np.abs(increments)))) ** degree
-    return (
+    return float(
         np.finfo(increments.dtype).eps
         * max(path_count, segment_count, noise_dimension)
         * magnitude
@@ -176,7 +177,7 @@ def _expected_wiener_signature_level(
     )
     brownian_pair_weights = tuple(0.5**count for count in range(degree // 2 + 1))
 
-    def coefficient(word):
+    def coefficient(word: tuple[int, ...]) -> float:
         generator_factors = 0
         brownian_pairs = 0
         position = 0
@@ -335,7 +336,9 @@ def fit_wiener_cubature_path(
     path_count: int,
     segment_count: int,
     initial_data: WienerCubaturePathData | ArrayLike,
-    optimizer=None,
+    optimizer: (
+        Callable[[Callable[[np.ndarray], np.ndarray], np.ndarray], ArrayLike] | None
+    ) = None,
     maximum_signature_terms: int = 1_000_000,
     maximum_workspace_bytes: int = _DEFAULT_PATH_BYTES,
 ) -> WienerCubaturePathData:
@@ -377,7 +380,7 @@ def fit_wiener_cubature_path(
     initial_logits = np.log(initial_weights)
     initial_vector = np.concatenate((initial_increments.reshape((-1,)), initial_logits))
 
-    def unpack(vector):
+    def unpack(vector: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         split = paths * segments * dimension
         increments = np.asarray(vector[:split]).reshape(expected_shape)
         logits = np.asarray(vector[split:])
@@ -385,7 +388,7 @@ def fit_wiener_cubature_path(
         weights = np.exp(shifted)
         return increments, weights / np.sum(weights)
 
-    def residual(vector):
+    def residual(vector: np.ndarray) -> np.ndarray:
         increments, weights = unpack(vector)
         driver_increments = _time_augmented_increments(increments, widths)
         levels = tuple(

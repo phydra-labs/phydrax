@@ -264,7 +264,7 @@ def particle_conversion_surrogate_bias(
     )
 
 
-def _mask_sensitivity(value, usable):
+def _mask_sensitivity(value: PyTree, usable: Array) -> PyTree:
     return jax.tree.map(
         lambda leaf: (
             jnp.where(usable, leaf, jnp.nan) if eqx.is_inexact_array(leaf) else leaf

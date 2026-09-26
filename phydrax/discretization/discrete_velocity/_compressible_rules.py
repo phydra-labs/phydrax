@@ -9,6 +9,7 @@ import itertools
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -166,11 +167,11 @@ def _signed_permutations(base: tuple[int, int, int]) -> set[tuple[int, int, int]
             point = list(permutation)
             for index, sign in zip(active, signs, strict=True):
                 point[index] *= sign
-            points.add(tuple(point))
+            points.add((point[0], point[1], point[2]))
     return points
 
 
-def d3q39_guided_rule(*, dtype: np.dtype | str = np.float64) -> CompressibleVelocityRule:
+def d3q39_guided_rule(*, dtype: npt.DTypeLike = np.float64) -> CompressibleVelocityRule:
     points = {(0, 0, 0)}
     for shell in ((1, 0, 0), (1, 1, 1), (2, 0, 0), (2, 2, 0), (3, 0, 0)):
         points.update(_signed_permutations(shell))
@@ -197,7 +198,7 @@ def d3q39_guided_rule(*, dtype: np.dtype | str = np.float64) -> CompressibleVelo
 def d3q343_entropic_rule(
     *,
     reference_temperature: float = 0.6979533220196831,
-    dtype: np.dtype | str = np.float64,
+    dtype: npt.DTypeLike = np.float64,
 ) -> CompressibleVelocityRule:
     temperature = float(reference_temperature)
     if not np.isfinite(temperature) or temperature <= 0.0:
@@ -248,7 +249,7 @@ def d3q343_entropic_rule(
 def d3q33_filtered_rule(
     *,
     reference_temperature: float = 1.0 / 3.0,
-    dtype: np.dtype | str = np.float64,
+    dtype: npt.DTypeLike = np.float64,
 ) -> CompressibleVelocityRule:
     temperature = float(reference_temperature)
     if not np.isfinite(temperature) or temperature <= 0.0:

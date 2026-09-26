@@ -10,7 +10,8 @@ from itertools import pairwise
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jaxtyping import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -33,7 +34,7 @@ class PolymerChainSpec(StrictModule, NonTrainableState):
     def __init__(
         self,
         chain_id: str,
-        bead_type_indices: ArrayLike,
+        bead_type_indices: npt.ArrayLike,
         /,
         *,
         ring: bool = False,
@@ -122,12 +123,12 @@ class PolymerMaterialRecipePlan(StrictModule, NonTrainableState):
         self,
         material_id: str,
         bead_type_ids: tuple[str, ...],
-        bead_masses: ArrayLike,
+        bead_masses: npt.ArrayLike,
         chains: tuple[PolymerChainSpec, ...],
         units: AtomisticUnitSystem,
         /,
         *,
-        bead_charges: ArrayLike | None = None,
+        bead_charges: npt.ArrayLike | None = None,
         ports: tuple[PolymerConnectionPortPlan, ...] = (),
         cell: PeriodicCell | None = None,
         maximum_particles: int | None = None,

@@ -32,7 +32,7 @@ class UnstructuredThermalBoundaryCondition(StrictModule, NonTrainableState):
     def __init__(
         self,
         kind: UnstructuredThermalBoundaryKind = "adiabatic",
-        value=0.0,
+        value: float = 0.0,
         /,
     ) -> None:
         if kind not in ("adiabatic", "temperature", "heat_flux"):
@@ -80,8 +80,8 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
     def __init__(
         self,
         discretization: UnstructuredFiniteVolumeDiscretization,
-        phase0_conductivity,
-        phase1_conductivity,
+        phase0_conductivity: float,
+        phase1_conductivity: float,
         /,
         *,
         boundaries: Mapping[
@@ -111,17 +111,15 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             raise ValueError(
                 f"Thermal boundaries reference unknown patches {sorted(unknown)!r}."
             )
-        conditions = tuple(
-            (
-                supplied[name]
-                if isinstance(
-                    supplied.get(name, "adiabatic"),
-                    UnstructuredThermalBoundaryCondition,
-                )
-                else UnstructuredThermalBoundaryCondition(supplied.get(name, "adiabatic"))
+        condition_list: list[UnstructuredThermalBoundaryCondition] = []
+        for name in discretization.boundary_patch_names:
+            condition = supplied.get(name, "adiabatic")
+            condition_list.append(
+                condition
+                if isinstance(condition, UnstructuredThermalBoundaryCondition)
+                else UnstructuredThermalBoundaryCondition(condition)
             )
-            for name in discretization.boundary_patch_names
-        )
+        conditions = tuple(condition_list)
         self.discretization = discretization
         self.phase0_conductivity = conductivity0
         self.phase1_conductivity = conductivity1

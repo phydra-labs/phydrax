@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from ..discretization.amr import (
     BlockMetadata,
     PreparedDistributedBlockAMRHierarchy,
 )
+from ..discretization.finite_volume import PeriodicSlidingCoupling
 from ._block_amr_runtime import (
     BlockAMRAdvancePhase,
     BlockAMRRuntimeState,
@@ -82,7 +84,7 @@ _CONTENT_RECORD_FIELDS = frozenset(
 )
 
 
-def _payload_id(manifest, arrays, /) -> str:
+def _payload_id(manifest: Mapping[str, Any], arrays: Mapping[str, np.ndarray], /) -> str:
     metadata = {
         name: value
         for name, value in manifest.items()
@@ -164,9 +166,10 @@ def _validate_array_inventory(
 
 
 def _expected_content_shape(plan: FiniteVolumeCheckpointPlan, /) -> tuple[int, ...]:
+    case = _ordinary_case(plan)
     return (
-        int(np.prod(plan.case.state_shape[:-1])),
-        plan.case.state_shape[-1],
+        int(np.prod(case.state_shape[:-1])),
+        case.state_shape[-1],
     )
 
 
@@ -175,12 +178,13 @@ def _validate_initial_epoch(
     journal: FiniteVolumeTopologyEventJournal,
     /,
 ) -> None:
+    case = _ordinary_case(plan)
     initial = journal.epoch_table[0]
     artifacts = journal.artifact_table[0]
     if (
-        artifacts.prepared_id != plan.case.discretization_id
-        or initial.topology_id != plan.case.mesh_topology_id
-        or initial.geometry_id != plan.case.mesh_geometry_id
+        artifacts.prepared_id != case.discretization_id
+        or initial.topology_id != case.mesh_topology_id
+        or initial.geometry_id != case.mesh_geometry_id
         or initial.partition_id != "serial"
     ):
         raise ValueError(
@@ -302,11 +306,18 @@ _SLIDING_RECORD_FIELDS = frozenset(
 )
 
 
+def _ordinary_case(plan: FiniteVolumeCheckpointPlan, /) -> FiniteVolumeCaseSpec:
+    if plan.case is None:
+        raise RuntimeError("Ordinary checkpoint plan lost its finite-volume case.")
+    return plan.case
+
+
 def _sliding_record(
     plan: FiniteVolumeCheckpointPlan,
     runtime_state: FiniteVolumeRuntimeState,
     /,
 ) -> dict[str, Any] | None:
+    case = _ordinary_case(plan)
     coupling = runtime_state.sliding_coupling
     sliding_plan = None if plan.runtime is None else plan.runtime.sliding_plan
     if coupling is None:
@@ -322,7 +333,7 @@ def _sliding_record(
     runtime_shift = np.asarray(runtime_state.sliding_shift)
     expected_runtime_shift = np.asarray(
         coupling.normalized_shift,
-        dtype=plan.case.precision.numpy_dtype("reduction"),
+        dtype=case.precision.numpy_dtype("reduction"),
     )
     if not np.array_equal(runtime_shift, expected_runtime_shift):
         raise ValueError("Checkpoint sliding shift and coupling identity are stale.")
@@ -389,8 +400,9 @@ def _expected_array_names(
     sliding_record: dict[str, Any] | None,
     /,
 ) -> set[str]:
+    case = _ordinary_case(plan)
     names = set(_RUNTIME_ARRAY_NAMES)
-    if plan.case.mesh_kind == "unstructured":
+    if case.mesh_kind == "unstructured":
         names.update(
             {
                 "mesh/vertices",
@@ -408,7 +420,8 @@ def _runtime_arrays(
     runtime_state: FiniteVolumeRuntimeState,
     /,
 ) -> dict[str, np.ndarray]:
-    checkpoint_dtype = plan.case.precision.numpy_dtype("checkpoint")
+    case = _ordinary_case(plan)
+    checkpoint_dtype = case.precision.numpy_dtype("checkpoint")
     content = runtime_state.content_state
     arrays = {
         "content/conservative_content": np.asarray(
@@ -434,16 +447,14 @@ def _runtime_arrays(
             for name, value in runtime_state.topology_journal.archive_arrays().items()
         }
     )
-    if plan.case.mesh_kind == "unstructured":
+    if case.mesh_kind == "unstructured":
         arrays.update(
             {
-                "mesh/vertices": np.asarray(plan.case.mesh_vertices),
+                "mesh/vertices": np.asarray(case.mesh_vertices),
                 "mesh/vertex_global_ids": np.asarray(
-                    plan.case.vertex_global_ids, dtype=np.int64
+                    case.vertex_global_ids, dtype=np.int64
                 ),
-                "mesh/cell_global_ids": np.asarray(
-                    plan.case.cell_global_ids, dtype=np.int64
-                ),
+                "mesh/cell_global_ids": np.asarray(case.cell_global_ids, dtype=np.int64),
             }
         )
     if runtime_state.sliding_coupling is not None:
@@ -452,7 +463,7 @@ def _runtime_arrays(
             {
                 "sliding/shift": np.asarray(
                     runtime_state.sliding_shift,
-                    dtype=plan.case.precision.numpy_dtype("reduction"),
+                    dtype=case.precision.numpy_dtype("reduction"),
                 ),
                 "sliding/left_routes": np.asarray(coupling.left_routes),
                 "sliding/right_routes": np.asarray(coupling.right_routes),
@@ -469,7 +480,8 @@ def _validate_runtime_arrays(
     arrays: dict[str, np.ndarray],
     /,
 ) -> None:
-    checkpoint_dtype = plan.case.precision.numpy_dtype("checkpoint")
+    case = _ordinary_case(plan)
+    checkpoint_dtype = case.precision.numpy_dtype("checkpoint")
     content_shape = _expected_content_shape(plan)
     cell_count = content_shape[0]
     exact_shapes_and_dtypes = {
@@ -536,14 +548,15 @@ def _restore_sliding(
     record: Any,
     arrays: dict[str, np.ndarray],
     /,
-):
+) -> tuple[PeriodicSlidingCoupling | None, np.ndarray, str | None]:
+    case = _ordinary_case(plan)
     sliding_plan = None if plan.runtime is None else plan.runtime.sliding_plan
     if record is None:
         if sliding_plan is not None:
             raise ValueError("Finite-volume checkpoint omitted sliding runtime state.")
         return (
             None,
-            np.asarray(0.0, dtype=plan.case.precision.numpy_dtype("reduction")),
+            np.asarray(0.0, dtype=case.precision.numpy_dtype("reduction")),
             None,
         )
     if not isinstance(record, dict) or set(record) != _SLIDING_RECORD_FIELDS:
@@ -584,7 +597,7 @@ def _restore_sliding(
     shift = np.asarray(arrays["sliding/shift"])
     expected_shift = np.asarray(
         normalized_shift,
-        dtype=plan.case.precision.numpy_dtype("reduction"),
+        dtype=case.precision.numpy_dtype("reduction"),
     )
     if (
         shift.shape != ()
@@ -1099,6 +1112,7 @@ def _read_checkpoint(
     /,
 ) -> FiniteVolumeCheckpoint:
     """Strictly reconstruct one canonical content-authoritative archive."""
+    case = _ordinary_case(plan)
 
     required_manifest = {
         "archive_kind",
@@ -1119,19 +1133,19 @@ def _read_checkpoint(
     if manifest["checkpoint_id"] != plan.checkpoint_id:
         raise ValueError("Finite-volume checkpoint is incompatible with this plan.")
     FiniteVolumeCaseSpec.validate_dict(manifest["case"])
-    if manifest["case"] != plan.case.to_dict():
+    if manifest["case"] != case.to_dict():
         raise ValueError("Finite-volume checkpoint case identity changed.")
     expected_mesh = {
-        "kind": plan.case.mesh_kind,
-        "topology_id": plan.case.mesh_topology_id,
-        "geometry_id": plan.case.mesh_geometry_id,
+        "kind": case.mesh_kind,
+        "topology_id": case.mesh_topology_id,
+        "geometry_id": case.mesh_geometry_id,
     }
     if manifest["mesh"] != expected_mesh:
         raise ValueError("Finite-volume checkpoint mesh identity changed.")
     precision_evidence = PrecisionEvidenceEnvelope.from_dict(
         manifest["precision_evidence"]
     )
-    expected_precision = plan.case.precision.evidence()
+    expected_precision = case.precision.evidence()
     if precision_evidence.evidence_id != expected_precision.evidence_id:
         raise ValueError("Finite-volume checkpoint precision evidence changed.")
 
@@ -1140,15 +1154,13 @@ def _read_checkpoint(
     if _payload_id(manifest, arrays) != manifest["payload_id"]:
         raise ValueError("Finite-volume checkpoint payload identity changed.")
     _validate_runtime_arrays(plan, arrays)
-    if plan.case.mesh_kind == "unstructured":
+    if case.mesh_kind == "unstructured":
         if (
-            not np.array_equal(arrays["mesh/vertices"], plan.case.mesh_vertices)
+            not np.array_equal(arrays["mesh/vertices"], case.mesh_vertices)
             or not np.array_equal(
-                arrays["mesh/vertex_global_ids"], plan.case.vertex_global_ids
+                arrays["mesh/vertex_global_ids"], case.vertex_global_ids
             )
-            or not np.array_equal(
-                arrays["mesh/cell_global_ids"], plan.case.cell_global_ids
-            )
+            or not np.array_equal(arrays["mesh/cell_global_ids"], case.cell_global_ids)
         ):
             raise ValueError("Finite-volume checkpoint mesh payload changed.")
 
@@ -1168,7 +1180,7 @@ def _read_checkpoint(
         "evidence_policy_id",
     ):
         _require_identifier(content_record[name], name)
-    if content_record["precision_policy_id"] != plan.case.precision.policy_id:
+    if content_record["precision_policy_id"] != case.precision.policy_id:
         raise ValueError("Finite-volume checkpoint content precision identity changed.")
 
     journal = FiniteVolumeTopologyEventJournal.from_archive_record(
@@ -1186,17 +1198,17 @@ def _read_checkpoint(
             "Finite-volume checkpoint content and journal epoch identities changed."
         )
     content = FiniteVolumeConservativeContentState(
-        plan.case.precision.storage(arrays["content/conservative_content"]),
-        plan.case.precision.reduction(arrays["content/effective_cell_volumes"]),
+        case.precision.storage(arrays["content/conservative_content"]),
+        case.precision.reduction(arrays["content/effective_cell_volumes"]),
         arrays["content/active_cell_mask"],
-        plan.case.precision.decision(arrays["content/time"]),
+        case.precision.decision(arrays["content/time"]),
         topology_epoch_id=content_record["topology_epoch_id"],
         geometry_family_id=content_record["geometry_family_id"],
         geometry_layout_id=content_record["geometry_layout_id"],
         geometry_version=arrays["content/geometry_version"],
         evidence_policy_id=content_record["evidence_policy_id"],
         evidence_version=arrays["content/evidence_version"],
-        precision=plan.case.precision,
+        precision=case.precision,
     )
     if _content_record(content) != content_record:
         raise ValueError("Finite-volume checkpoint content identity changed.")
@@ -1208,7 +1220,7 @@ def _read_checkpoint(
     runtime = FiniteVolumeRuntimeState(
         content,
         journal,
-        plan.case.precision.decision(arrays["step_size"]),
+        case.precision.decision(arrays["step_size"]),
         accepted_step=arrays["accepted_step"],
         last_status=arrays["last_status"],
         controller_state=arrays["controller_state"],

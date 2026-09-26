@@ -25,7 +25,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...continuation import (
@@ -170,7 +170,7 @@ class _SemiconductorJacobian(StrictModule):
 
     derivative: SparseDerivativePlan
 
-    def __call__(self, flat: Array, args: Any):
+    def __call__(self, flat: Array, args: Any) -> SparseCoordinateOperator:
         return self.derivative.operator(flat)
 
 
@@ -182,7 +182,7 @@ def _state_pattern(plan: DevicePlan) -> SparsePattern:
     row_parts: list[np.ndarray] = []
     column_parts: list[np.ndarray] = []
 
-    def couple(rows, columns) -> None:
+    def couple(rows: np.ndarray, columns: np.ndarray) -> None:
         row_values = np.asarray(rows, dtype=np.int32).reshape(-1)
         column_values = np.asarray(columns, dtype=np.int32).reshape(-1)
         row_parts.append(
@@ -528,11 +528,11 @@ class PreparedSemiconductorDevice(ClassicalPhysics):
 
     def evidence(
         self,
-        u: Any,
-        voltages: Any,
+        u: ArrayLike,
+        voltages: ArrayLike,
         *,
-        nonlinear_successful: Any = True,
-        tolerance: float = 1e-8,
+        nonlinear_successful: ArrayLike = True,
+        tolerance: ArrayLike = 1e-8,
     ) -> SemiconductorEvidence:
         u = self._coordinates(u)
         voltage = self._voltages(voltages)

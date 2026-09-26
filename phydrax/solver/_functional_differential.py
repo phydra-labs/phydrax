@@ -409,7 +409,7 @@ class _FunctionalPolynomialInterpolation(StrictModule):
         reference, indices, query_shape = self._query_geometry(query_times, left=left)
         selected = self.values[indices]
 
-        def reference_derivative(point, values):
+        def reference_derivative(point: Array, values: Array) -> Array:
             interpolate = lambda location: barycentric_interpolate(
                 location,
                 self.reference_nodes,
@@ -644,7 +644,7 @@ def _argument_values(
             dtype=states.dtype,
         )
 
-    def one_argument_map(time, state):
+    def one_argument_map(time: Array, state: Array) -> Array:
         locations = jnp.asarray(argument_times(time, state, args))
         if problem.num_arguments == 1 and locations.shape == ():
             locations = locations.reshape((1,))
@@ -715,7 +715,7 @@ def _residual_blocks(
         problem, trajectory, flat_times, flat_states, callback_args
     )
 
-    def evaluate_vector_field(time, state, arguments):
+    def evaluate_vector_field(time: Array, state: Array, arguments: Array) -> Array:
         value = jnp.asarray(problem.vector_field(time, state, arguments, callback_args))
         if value.shape != problem.state_shape:
             raise ValueError("vector_field must return exactly state_shape.")
@@ -816,7 +816,7 @@ def _initial_values(
         initial_guess_function = cast(Callable[[Array, Any], ArrayLike], initial_guess)
         flat_times = physical_times.reshape((-1,))
 
-        def evaluate(time):
+        def evaluate(time: Array) -> Array:
             value = jnp.asarray(initial_guess_function(time, callback_args))
             if value.shape != problem.state_shape:
                 raise ValueError("initial_guess must return exactly state_shape.")

@@ -13,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import lineax as lx
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.axes as cx
 
@@ -33,7 +33,7 @@ from ._wiener_operator import WienerNoiseLayout
 DifferentialInterpretation: TypeAlias = Literal["ito", "stratonovich"]
 NoiseStructure: TypeAlias = Literal["additive", "commutative", "general"]
 WienerCoefficientRepresentation: TypeAlias = Literal["dense", "diagonal", "operator"]
-DifferentialVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
+DifferentialVectorField: TypeAlias = Callable[[Array, PyTree, Any], PyTree]
 WienerCoefficient: TypeAlias = Callable[[Array, Array, Any], Any]
 
 

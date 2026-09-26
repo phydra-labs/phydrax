@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -19,7 +22,13 @@ from ..discretization.mpm import (
     MPMRuntimeState,
     PreparedMPMDynamics,
 )
+from ..discretization.splatting import ParticleGridSplatState
 from ..equations import MaterialPointArguments
+
+
+if TYPE_CHECKING:
+    from ..applications.solid_mechanics._mpm_fracture import MPMPhaseFieldParameters
+    from ..discretization.spatial import SparseBlockTopologyState
 
 
 class MPMPhaseFieldFracturePlan(StrictModule, NonTrainableState):
@@ -83,7 +92,7 @@ class MPMPhaseFieldStepResult(StrictModule):
     suggested_step: Array
 
 
-def _neighbor_sum(value, periodic):
+def _neighbor_sum(value: Array, periodic: Iterable[bool]) -> Array:
     result = jnp.zeros_like(value)
     for axis, wraps in enumerate(periodic):
         if wraps:
@@ -140,24 +149,37 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize_state(self, mechanics_state: MPMRuntimeState, /):
+    def initialize_state(
+        self, mechanics_state: MPMRuntimeState, /
+    ) -> MPMPhaseFieldRuntimeState:
         history = mechanics_state.particles.material_state
         if history.shape[-1] != 2:
             raise ValueError("Phase-field material history width must be two.")
         return MPMPhaseFieldRuntimeState(mechanics_state, history[:, 0], history[:, 1])
 
-    def _grid_field(self, routes, storage_state, volume, value):
+    def _grid_field(
+        self,
+        routes: ParticleGridSplatState,
+        storage_state: SparseBlockTopologyState | None,
+        volume: Array,
+        value: Array,
+    ) -> tuple[Array, Array]:
         measure = self.mechanics._deposit_content(routes, storage_state, volume).content
         content = self.mechanics._deposit_content(
             routes, storage_state, volume * value
         ).content
         return jnp.where(measure > 0.0, content / measure, 0.0), measure
 
-    def _compact_neighbors(self, storage_state):
+    def _compact_neighbors(
+        self, storage_state: SparseBlockTopologyState | None
+    ) -> tuple[tuple[tuple[Array, ...], ...] | None, Array]:
         if not self.mechanics.compact_storage:
             return None, jnp.asarray(True)
         storage = self.mechanics.nodal_storage
-        if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
+        if (
+            not isinstance(storage, BlockSparseMPMNodalStoragePlan)
+            or storage_state is None
+        ):
             raise TypeError("Compact MPM requires block-sparse storage.")
         topology = storage_state
         logical = topology.logical_node_ids.reshape((-1,))
@@ -186,7 +208,13 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             neighbor_slots.append(tuple(axis_slots))
         return tuple(neighbor_slots), complete
 
-    def _damage_solve(self, old_damage, history, parameters, storage_state):
+    def _damage_solve(
+        self,
+        old_damage: Array,
+        history: Array,
+        parameters: MPMPhaseFieldParameters,
+        storage_state: SparseBlockTopologyState | None,
+    ) -> tuple[Array, Array, Array]:
         coefficient = tuple(
             parameters.critical_energy_release_rate * parameters.length_scale / spacing**2
             for spacing in self.spacing
@@ -202,7 +230,7 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             old_damage.shape
         )
 
-        def neighbor_values(damage):
+        def neighbor_values(damage: Array) -> tuple[Array, Array]:
             neighbor = jnp.zeros_like(damage)
             unweighted = jnp.zeros_like(damage)
             for axis, value in enumerate(coefficient):
@@ -232,7 +260,7 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
                 unweighted = unweighted + pair
             return neighbor, unweighted
 
-        def iterate(_, damage):
+        def iterate(_: Array, damage: Array) -> Array:
             neighbor, _ = neighbor_values(damage)
             candidate = (2.0 * history + neighbor) / diagonal
             candidate = jnp.clip(jnp.maximum(old_damage, candidate), 0.0, 1.0)
@@ -270,6 +298,7 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
 
         if not isinstance(arguments.material_parameters, MPMPhaseFieldParameters):
             raise TypeError("Phase-field dynamics require MPMPhaseFieldParameters.")
+        parameters: MPMPhaseFieldParameters = arguments.material_parameters
         mechanics_result = self.mechanics.step_detailed(
             state.mechanics, step_size, arguments
         )
@@ -287,12 +316,15 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
         damage_grid, residual, stencil_complete = self._damage_solve(
             grid_damage,
             grid_history,
-            arguments.material_parameters,
+            parameters,
             storage_state,
         )
         if self.mechanics.compact_storage:
             storage = self.mechanics.nodal_storage
-            if not isinstance(storage, BlockSparseMPMNodalStoragePlan):
+            if (
+                not isinstance(storage, BlockSparseMPMNodalStoragePlan)
+                or storage_state is None
+            ):
                 raise AssertionError("Compact MPM requires block-sparse storage.")
             damage = self.mechanics.splat.gather_mapped(
                 routes,
@@ -312,7 +344,7 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
             particles.deformation_gradient,
             material_state,
             density,
-            arguments.material_parameters,
+            parameters,
             candidate_mechanics.time,
             step_size,
         )
@@ -378,12 +410,12 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
         gradient_norm = sum(jnp.sum(value * value) for value in gradients)
         cell_measure = float(np.prod(self.spacing))
         fracture_energy = cell_measure * (
-            arguments.material_parameters.critical_energy_release_rate
-            / (2.0 * arguments.material_parameters.length_scale)
+            parameters.critical_energy_release_rate
+            / (2.0 * parameters.length_scale)
             * jnp.sum(damage_grid**2)
             + 0.5
-            * arguments.material_parameters.critical_energy_release_rate
-            * arguments.material_parameters.length_scale
+            * parameters.critical_energy_release_rate
+            * parameters.length_scale
             * gradient_norm
         )
         evidence = MPMPhaseFieldEvidence(

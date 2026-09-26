@@ -199,7 +199,9 @@ class BarotropicBetaPlane(StrictModule, NonTrainableState):
 
     @property
     def state_shape(self) -> tuple[int, int]:
-        return self.discretization.modal_shape
+        # Construction admits exactly two periodic Fourier axes.
+        first, second = self.discretization.modal_shape
+        return (first, second)
 
     def validate_state(self, vorticity: ArrayLike, /) -> Array:
         value = jnp.asarray(vorticity)

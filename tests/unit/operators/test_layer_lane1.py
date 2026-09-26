@@ -77,6 +77,24 @@ def test_single_layer_self_panel_regularization_is_finite():
     assert result.evaluation_report.error_estimate < 1e-4
 
 
+def test_adaptive_boundary_targets_reject_combined_field_without_self_correction():
+    panelization = _circle_panelization(panels=2, order=4)
+    potential = phx.operators.HelmholtzCombinedField2D(
+        panelization,
+        2.0,
+        jnp.ones((panelization.node_count,), dtype="complex128"),
+        eta=1.3,
+    )
+
+    with pytest.raises(ValueError, match="Boundary targets require QBX"):
+        phx.operators.evaluate_layer_potential(
+            potential,
+            panelization.points[0],
+            phx.operators.LayerEvaluationPlan2D("adaptive"),
+            target_side="boundary",
+        )
+
+
 def test_kress_partition_preserves_support_and_measure():
     geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
     topology = phx.operators.BoundaryCornerTopology2D(

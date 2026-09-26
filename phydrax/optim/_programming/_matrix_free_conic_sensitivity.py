@@ -8,14 +8,16 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._strict import StrictModule
 from ...linalg import (
     adjoint,
+    FailureMode,
     JacobianLinearOperator,
     LeastSquaresProblem,
     LinearSolvePolicy,
+    LinearSolveResult,
     prepare_linearization,
     solve as solve_linear,
     StabilityLowerBound,
@@ -49,28 +51,35 @@ class PreparedMatrixFreeConicSensitivity(StrictModule):
     generalized: ConicGeneralizedDerivativePolicy | None
     num_variables: int = eqx.field(static=True)
     regularity_tolerance: float = eqx.field(static=True)
-    failure_mode: str = eqx.field(static=True)
+    failure_mode: FailureMode = eqx.field(static=True)
     convex_plan_id: str = eqx.field(static=True)
     numeric_binding_id: str = eqx.field(static=True)
 
 
-def _selected_projection(cone, value, generalized):
+def _selected_projection(
+    cone: AbstractConvexCone,
+    value: Array,
+    generalized: ConicGeneralizedDerivativePolicy | None,
+) -> Array:
     if generalized is None:
         return cone.project_dual(value)
+    policy = generalized
 
     @jax.custom_jvp
-    def selected(candidate):
+    def selected(candidate: Array) -> Array:
         return cone.project_dual(candidate)
 
     @selected.defjvp
-    def selected_jvp(primals, tangents):
+    def selected_jvp(
+        primals: tuple[Array], tangents: tuple[Array]
+    ) -> tuple[Array, Array]:
         (candidate,), (candidate_dot,) = primals, tangents
         shifted = candidate
-        if generalized.approach_direction:
-            if len(generalized.approach_direction) != cone.dimension:
+        if policy.approach_direction:
+            if len(policy.approach_direction) != cone.dimension:
                 raise ValueError("approach_direction must match cone dimension.")
-            shifted = candidate + generalized.approach_scale * jnp.asarray(
-                generalized.approach_direction, dtype=candidate.dtype
+            shifted = candidate + policy.approach_scale * jnp.asarray(
+                policy.approach_direction, dtype=candidate.dtype
             )
         jacobian = jax.jacfwd(cone.project_dual)(shifted)
         blocks = cone.cones if isinstance(cone, ProductCone) else (cone,)
@@ -86,7 +95,7 @@ def _selected_projection(cone, value, generalized):
                     jnp.where(
                         candidate[indices] < 0.0,
                         0.0,
-                        generalized.orthant_zero_value,
+                        policy.orthant_zero_value,
                     ),
                 )
                 jacobian = jacobian.at[indices, indices].set(diagonal)
@@ -95,7 +104,13 @@ def _selected_projection(cone, value, generalized):
     return selected(value)
 
 
-def _residual(data, state, cone, variables, generalized):
+def _residual(
+    data: ConicProgramData,
+    state: Array,
+    cone: AbstractConvexCone,
+    variables: int,
+    generalized: ConicGeneralizedDerivativePolicy | None,
+) -> Array:
     primal = state[:variables]
     dual = state[variables:]
     projection_point = (
@@ -116,10 +131,10 @@ def prepare_matrix_free_conic_sensitivity(
     /,
     *,
     linear: LinearSolvePolicy,
-    stability: Callable[[JacobianLinearOperator], StabilityLowerBound],
+    stability: Callable[[JacobianLinearOperator], StabilityLowerBound] | None,
     regularity_tolerance: float,
     generalized: ConicGeneralizedDerivativePolicy | None,
-    failure_mode: str,
+    failure_mode: FailureMode,
 ) -> PreparedMatrixFreeConicSensitivity:
     program = prepared.program
     if not isinstance(program, ConicProgram) or program.batch_shape:
@@ -222,7 +237,9 @@ def prepare_matrix_free_conic_sensitivity(
     )
 
 
-def _regular(prepared, linear_result):
+def _regular(
+    prepared: PreparedMatrixFreeConicSensitivity, linear_result: LinearSolveResult
+) -> Array:
     return (
         prepared.forward_valid
         & prepared.projection_regular
@@ -234,7 +251,9 @@ def _regular(prepared, linear_result):
     )
 
 
-def matrix_free_conic_primal_jvp(prepared, tangent):
+def matrix_free_conic_primal_jvp(
+    prepared: PreparedMatrixFreeConicSensitivity, tangent: ConicProgramData
+) -> ConicSensitivityResult:
     _, action = jax.jvp(
         lambda data: _residual(
             data,
@@ -258,7 +277,9 @@ def matrix_free_conic_primal_jvp(prepared, tangent):
     return _result(prepared, linear_result, regular, value)
 
 
-def matrix_free_conic_primal_vjp(prepared, cotangent: ArrayLike):
+def matrix_free_conic_primal_vjp(
+    prepared: PreparedMatrixFreeConicSensitivity, cotangent: ArrayLike
+) -> ConicSensitivityResult:
     cotangent_ = jnp.asarray(cotangent, dtype=prepared.state.dtype)
     if cotangent_.shape != (prepared.num_variables,):
         raise ValueError("cotangent has the wrong shape.")
@@ -307,7 +328,12 @@ def matrix_free_conic_primal_vjp(prepared, cotangent: ArrayLike):
     return _result(prepared, linear_result, regular, value)
 
 
-def _result(prepared, linear_result, regular, value):
+def _result(
+    prepared: PreparedMatrixFreeConicSensitivity,
+    linear_result: LinearSolveResult,
+    regular: Array,
+    value: PyTree[Array],
+) -> ConicSensitivityResult:
     return ConicSensitivityResult(
         value,
         prepared.forward_valid,

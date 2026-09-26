@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -19,6 +19,11 @@ from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ...._trainable import ParameterOwner
 from ..._keys import EvalKey, fold_in_eval_key, split_eval_key
+
+
+_PoolCarry: TypeAlias = tuple[Array, Array]
+_CaseData: TypeAlias = tuple[Array, Array, Array]
+_StepData: TypeAlias = tuple[Array, Array, Array]
 
 
 MaskedSeriesReduction = Literal["mean", "sum"]
@@ -278,16 +283,16 @@ class MaskedSeriesPoolingModel(StrictModule, ParameterOwner):
         zero_latent = jnp.zeros((latent_size,), dtype=output_spec.dtype)
         max_length = step_input.shape[1]
 
-        def pool_case(case_data):
+        def pool_case(case_data: _CaseData) -> _PoolCarry:
             case_index, features, case_mask = case_data
 
-            def step(carry, step_data):
+            def step(carry: _PoolCarry, step_data: _StepData) -> tuple[_PoolCarry, None]:
                 pooled_value, valid_count = carry
                 time_index, feature, active = step_data
                 site = case_index * max_length + time_index
                 step_key = fold_in_eval_key(key_step, site)
 
-                def evaluate(_):
+                def evaluate(_: None) -> Array:
                     value = jnp.asarray(self.step_model(feature, key=step_key))
                     return value.reshape((latent_size,))
 

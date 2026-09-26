@@ -9,6 +9,7 @@ from __future__ import annotations
 from enum import IntEnum
 from math import prod
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -40,6 +41,9 @@ from ._nonlinear_response import (
 )
 from ._pulse_time import PulseTimeSpace
 from ._unidirectional import _forward_square_root, _relative_error, _uniform_spacing
+
+
+_RK4Carry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 class CylindricalUnidirectionalPropagationStatus(IntEnum):
@@ -633,7 +637,7 @@ def _interaction_picture_solve(
     zero = jnp.asarray(0.0, dtype=initial_spectrum.real.dtype)
     valid = jnp.asarray(True)
 
-    def scan_step(carry, _):
+    def scan_step(carry: _RK4Carry, _: Array) -> tuple[_RK4Carry, None]:
         state, maximum_rejected, maximum_backward, response_successful = carry
         k1, rejected1, backward1, valid1 = _nonlinear_rate(prepared, state, response)
         state2 = half_linear * (state + 0.5 * step * k1)

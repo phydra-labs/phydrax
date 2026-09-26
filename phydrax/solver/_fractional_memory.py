@@ -137,15 +137,15 @@ def solve_caputo_fractional(
     )
     normalization = jsp.special.gamma(problem.order + 1.0)
 
-    def outer(index, state_buffer):
+    def outer(index: Array, state_buffer: Array) -> Array:
         target = grid[index]
         base = problem.initial_state
         if problem.order_interval == 2:
             assert problem.initial_derivative is not None
             base = base + (target - problem.t0) * problem.initial_derivative
 
-        def inner(source_index, total):
-            def contribute(accumulator):
+        def inner(source_index: Array, total: Array) -> Array:
+            def contribute(accumulator: Array) -> Array:
                 left_lag = target - grid[source_index]
                 right_lag = target - grid[source_index + 1]
                 weight = (

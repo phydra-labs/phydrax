@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
@@ -37,12 +38,12 @@ class PointInTimePanel(StrictModule, NonTrainableState):
     def __init__(
         self,
         layout: RiskFactorLayout,
-        event_time_ns: Array,
-        decision_time_ns: Array,
-        values: Array,
-        valid_mask: Array,
-        status: Array,
-        availability_time_ns: Array,
+        event_time_ns: npt.ArrayLike,
+        decision_time_ns: npt.ArrayLike,
+        values: npt.ArrayLike,
+        valid_mask: npt.ArrayLike,
+        status: npt.ArrayLike,
+        availability_time_ns: npt.ArrayLike,
         /,
         *,
         observation_ids: Sequence[Sequence[str]],

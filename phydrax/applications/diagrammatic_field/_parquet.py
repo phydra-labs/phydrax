@@ -170,7 +170,9 @@ class PreparedParquetIteration(StrictModule, NonTrainableState):
             raise ValueError("initial_channels must have shape (3, n, n).")
         initial_residuals = jnp.full((3,), jnp.inf)
 
-        def step(_, state):
+        def step(
+            _: Array, state: tuple[Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array]:
             current, iterations, residuals, converged = state
             full = self.fully_irreducible_vertex + jnp.sum(current, axis=0)
             channel_images = contract(

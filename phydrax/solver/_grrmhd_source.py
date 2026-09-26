@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -408,7 +410,7 @@ class GRRMHDImplicitSourcePlan(StrictModule, NonTrainableState):
         }
         return _RadiationVariableResidual(**common), _MaterialVariableResidual(**common)
 
-    def _kernel(self, residual) -> SmallRootKernel:
+    def _kernel(self, residual: Callable[[Array, Any], Array]) -> SmallRootKernel:
         return SmallRootKernel(
             residual,
             maximum_dimension=4,

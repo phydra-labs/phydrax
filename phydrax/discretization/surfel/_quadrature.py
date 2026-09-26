@@ -74,7 +74,7 @@ class SurfelQuadraturePlan(NonTrainableState, StrictModule):
         if self.deterministic:
             initial = jnp.zeros(value.shape[1:], dtype=value.dtype)
 
-            def add_one(index, current):
+            def add_one(index: Array, current: Array) -> Array:
                 return current + weighted[index]
 
             integral = jax.lax.fori_loop(0, value.shape[0], add_one, initial)

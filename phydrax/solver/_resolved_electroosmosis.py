@@ -244,7 +244,7 @@ class ResolvedElectroosmoticStokesPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "electrode_state is required exactly when an electrode binding is configured."
             )
-        if self.electrode_binding is not None:
+        if self.electrode_binding is not None and electrode_state is not None:
             initial_electrode = self.electrode_binding.evaluate(
                 concentration,
                 electrode_state,
@@ -309,6 +309,9 @@ class ResolvedElectroosmoticStokesPlan(StrictModule, NonTrainableState):
                 electrode_candidate = None
                 electrode_residual = jnp.asarray(0.0, dtype=step.dtype)
             else:
+                previous_electrode = state.electrode
+                # A plan-owned state carries an electrode exactly when a binding exists.
+                assert previous_electrode is not None and electrode_state is not None
                 electrode_evaluation = self.electrode_binding.evaluate(
                     concentration,
                     electrode_state,
@@ -320,11 +323,11 @@ class ResolvedElectroosmoticStokesPlan(StrictModule, NonTrainableState):
                 electrode_rate = electrode_evaluation.concentration_rate
                 electrode_plan = self.electrode_binding.electrode
                 candidate_amount = (
-                    state.electrode.surface_amount
+                    previous_electrode.surface_amount
                     + step * electrode_evaluation.electrode.surface_amount_rate
                 )
                 candidate_charge = (
-                    state.electrode.surface_charge
+                    previous_electrode.surface_charge
                     - step * electrode_evaluation.electrode.faradaic_current
                 )
                 candidate_stern = candidate_charge / (
@@ -334,7 +337,7 @@ class ResolvedElectroosmoticStokesPlan(StrictModule, NonTrainableState):
                     candidate_amount,
                     candidate_charge,
                     candidate_stern,
-                    state.electrode.state_id,
+                    previous_electrode.state_id,
                 )
                 electrode_residual = jnp.maximum(
                     jnp.max(
@@ -411,6 +414,8 @@ class ResolvedElectroosmoticStokesPlan(StrictModule, NonTrainableState):
             electrode_species_change = jnp.zeros_like(species_change)
             electrode_ok = jnp.asarray(True)
         else:
+            # An electrode evaluation is recorded only with its electrode candidate.
+            assert electrode_state is not None
             electrode_species_change = step * jnp.sum(
                 volumes[..., None] * final_electrode.concentration_rate,
                 axis=spatial_axes,

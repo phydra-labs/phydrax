@@ -124,7 +124,7 @@ class VentricularMicrostructureEvidence(StrictModule, NonTrainableState):
     nondegenerate: Array
     successful: Array
 
-    def __init__(self, **values) -> None:
+    def __init__(self, **values: ArrayLike) -> None:
         self.transmural_gradient_norm = jnp.asarray(values["transmural_gradient_norm"])
         self.projected_longitudinal_gradient_norm = jnp.asarray(
             values["projected_longitudinal_gradient_norm"]

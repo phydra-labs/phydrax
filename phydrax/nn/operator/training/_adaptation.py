@@ -91,7 +91,7 @@ def adapt_operator_context(
     if lower is not None and upper is not None and bool(jnp.any(lower > upper)):
         raise ValueError("lower_bound cannot exceed upper_bound.")
 
-    def checked_objective(context):
+    def checked_objective(context: Array) -> Array:
         value = jnp.asarray(residual_objective(context))
         if value.shape != () or jnp.iscomplexobj(value):
             raise ValueError("residual_objective must return one real scalar.")
@@ -101,7 +101,7 @@ def adapt_operator_context(
 
     value_and_grad = jax.value_and_grad(checked_objective)
 
-    def step(context):
+    def step(context: Array) -> tuple[Array, Array]:
         value, gradient = value_and_grad(context)
         gradient_norm = jnp.sqrt(jnp.sum(gradient * gradient))
         scale = jnp.minimum(

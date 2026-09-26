@@ -55,7 +55,12 @@ class UniformVUMPSProblem(StrictModule):
     abelian_identity: str | None = eqx.field(static=True)
 
     def __init__(
-        self, initial_state, hamiltonian, /, *, problem_id: str = "uniform-vumps"
+        self,
+        initial_state: UniformMatrixProductState | UniformAbelianMatrixProductState,
+        hamiltonian: UniformMatrixProductOperator | UniformAbelianMatrixProductOperator,
+        /,
+        *,
+        problem_id: str = "uniform-vumps",
     ) -> None:
         abelian_identity = None
         if isinstance(initial_state, UniformAbelianMatrixProductState):
@@ -193,7 +198,7 @@ class UniformVUMPSDiagnostics(StrictModule):
     status: Array
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return self.status == int(UniformVUMPSStatus.SUCCESS)
 
 
@@ -209,18 +214,23 @@ class UniformVUMPSResult(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return self.diagnostics.successful
 
 
-def _operator_transfer(bra, operator, ket, /):
+def _operator_transfer(bra: Array, operator: Array, ket: Array, /) -> Array:
     bond, operator_bond = ket.shape[0], operator.shape[0]
     return ein.contract("apr,wpqx,bqs->awbrxs", jnp.conj(bra), operator, ket).reshape(
         (bond * operator_bond * bond, bond * operator_bond * bond)
     )
 
 
-def _cell_matrix_element(bra_tensors, operator_tensors, ket_tensors, /):
+def _cell_matrix_element(
+    bra_tensors: tuple[Array, ...],
+    operator_tensors: tuple[Array, ...],
+    ket_tensors: tuple[Array, ...],
+    /,
+) -> Array:
     bond, operator_bond = ket_tensors[0].shape[0], operator_tensors[0].shape[0]
     transfer = jnp.eye(
         bond * operator_bond * bond,
@@ -233,7 +243,9 @@ def _cell_matrix_element(bra_tensors, operator_tensors, ket_tensors, /):
     return jnp.trace(transfer)
 
 
-def _cell_overlap(bra_tensors, ket_tensors, /):
+def _cell_overlap(
+    bra_tensors: tuple[Array, ...], ket_tensors: tuple[Array, ...], /
+) -> Array:
     bond = ket_tensors[0].shape[0]
     transfer = jnp.eye(bond * bond, dtype=jnp.result_type(*bra_tensors, *ket_tensors))
     for bra, ket in zip(bra_tensors, ket_tensors, strict=True):
@@ -243,14 +255,14 @@ def _cell_overlap(bra_tensors, ket_tensors, /):
     return jnp.trace(transfer)
 
 
-def _cell_energy(tensors, operators, /):
+def _cell_energy(tensors: tuple[Array, ...], operators: tuple[Array, ...], /) -> Array:
     return jnp.real(
         _cell_matrix_element(tensors, operators, tensors)
         / _cell_overlap(tensors, tensors)
     ) / len(tensors)
 
 
-def _transfer_policy(policy):
+def _transfer_policy(policy: UniformVUMPSPolicy) -> UniformTransferPolicy:
     return UniformTransferPolicy(
         maximum_modes=2,
         injectivity_tolerance=policy.injectivity_tolerance,
@@ -258,14 +270,18 @@ def _transfer_policy(policy):
     )
 
 
-def _normalize_state(state, fixed):
+def _normalize_state(
+    state: UniformMatrixProductState, fixed: UniformTransferFixedPoints
+) -> UniformMatrixProductState:
     factor = jnp.abs(fixed.eigenvalues[0]) ** (-0.5 / float(state.unit_cell_size))
     return UniformMatrixProductState(
         tuple(tensor * factor for tensor in state.tensors), precision=state.precision
     )
 
 
-def plan_uniform_vumps(problem, policy, /):
+def plan_uniform_vumps(
+    problem: UniformVUMPSProblem, policy: UniformVUMPSPolicy, /
+) -> UniformVUMPSPlan:
     if not isinstance(problem, UniformVUMPSProblem) or not isinstance(
         policy, UniformVUMPSPolicy
     ):
@@ -303,7 +319,7 @@ def plan_uniform_vumps(problem, policy, /):
     )
 
 
-def _validate(problem, plan) -> None:
+def _validate(problem: UniformVUMPSProblem, plan: UniformVUMPSPlan) -> None:
     if (
         problem.problem_id != plan.problem_id
         or problem.initial_state.structure_id != plan.state_structure_id
@@ -312,7 +328,11 @@ def _validate(problem, plan) -> None:
         raise ValueError("Uniform VUMPS structure changed; replan is required.")
 
 
-def prepare_uniform_vumps(problem, plan_or_policy, /):
+def prepare_uniform_vumps(
+    problem: UniformVUMPSProblem,
+    plan_or_policy: UniformVUMPSPlan | UniformVUMPSPolicy,
+    /,
+) -> PreparedUniformVUMPS:
     if not isinstance(problem, UniformVUMPSProblem):
         raise TypeError("problem must be UniformVUMPSProblem.")
     if not isinstance(plan_or_policy, (UniformVUMPSPlan, UniformVUMPSPolicy)):
@@ -335,7 +355,9 @@ def prepare_uniform_vumps(problem, plan_or_policy, /):
     )
 
 
-def refresh_uniform_vumps(prepared, problem, /):
+def refresh_uniform_vumps(
+    prepared: PreparedUniformVUMPS, problem: UniformVUMPSProblem, /
+) -> PreparedUniformVUMPS:
     if not isinstance(prepared, PreparedUniformVUMPS) or not isinstance(
         problem, UniformVUMPSProblem
     ):
@@ -349,7 +371,9 @@ def refresh_uniform_vumps(prepared, problem, /):
     )
 
 
-def _projected_gradient(tensors, operators, /):
+def _projected_gradient(
+    tensors: tuple[Array, ...], operators: tuple[Array, ...], /
+) -> tuple[tuple[Array, ...], Array]:
     gradient = jax.grad(_cell_energy)(tensors, operators)
     projected = []
     for tensor, value in zip(tensors, gradient, strict=True):
@@ -362,7 +386,11 @@ def _projected_gradient(tensors, operators, /):
     )
 
 
-def solve_uniform_vumps(problem_or_prepared, policy=None, /):
+def solve_uniform_vumps(
+    problem_or_prepared: UniformVUMPSProblem | PreparedUniformVUMPS,
+    policy: UniformVUMPSPlan | UniformVUMPSPolicy | None = None,
+    /,
+) -> UniformVUMPSResult:
     if isinstance(problem_or_prepared, PreparedUniformVUMPS):
         if policy is not None:
             raise ValueError("policy must be omitted for prepared uniform VUMPS.")
@@ -507,20 +535,20 @@ class UniformTangentResponse(StrictModule):
     status: Array
 
     @property
-    def successful(self):
+    def successful(self) -> Array:
         return self.status == int(UniformTangentStatus.SUCCESS)
 
 
 def solve_uniform_tangent_response(
-    state,
-    hamiltonian,
+    state: UniformMatrixProductState,
+    hamiltonian: UniformMatrixProductOperator,
     source_tangent: ArrayLike,
     frequencies: ArrayLike,
-    policy,
+    policy: UniformTangentPolicy,
     /,
     *,
     site: int = 0,
-):
+) -> UniformTangentResponse:
     if not isinstance(policy, UniformTangentPolicy):
         raise TypeError("policy must be UniformTangentPolicy.")
     if not isinstance(state, UniformMatrixProductState) or not isinstance(

@@ -31,7 +31,7 @@ def _cell_neighbor_stencils(
     cell_count: int,
     centers: np.ndarray,
     /,
-):
+) -> tuple[np.ndarray, np.ndarray]:
     adjacency = [set() for _ in range(cell_count)]
     for left, right in zip(owner, neighbor, strict=True):
         if right >= 0:
@@ -217,7 +217,7 @@ class TriangleMUSCLReconstructionPlan(StrictModule, NonTrainableState):
             minimum = jnp.min(jnp.where(mask, gathered, value[:, None, ...]), axis=1)
             maximum = jnp.max(jnp.where(mask, gathered, value[:, None, ...]), axis=1)
 
-            def factors(cell_values, delta, cell_indices):
+            def factors(cell_values: Array, delta: Array, cell_indices: Array) -> Array:
                 upper = maximum[cell_indices] - cell_values[cell_indices]
                 lower = minimum[cell_indices] - cell_values[cell_indices]
                 allowed = jnp.where(delta >= 0.0, upper, lower)

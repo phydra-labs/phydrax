@@ -47,6 +47,8 @@ boundaries.
     ```
 """
 
+from typing import Any
+
 from . import advanced, coupling, maxwell
 from ._adaptive_tdvp import (
     AdaptiveTDVPPlan,
@@ -2636,7 +2638,7 @@ _FACADE_EXPORT_MODULES = (
 )
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in _FUNCTIONAL_DECOMPOSITION_EXPORTS:
         from importlib import import_module
 

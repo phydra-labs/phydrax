@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import Any
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax import ein
@@ -36,6 +38,7 @@ from ...integration import (
     ReferencePrismRule,
     ReferencePyramidRule,
     ReferenceQuadrilateralRule,
+    ReferenceRule,
     ReferenceTetrahedronRule,
     ReferenceTriangleRule,
 )
@@ -53,9 +56,17 @@ from ...solver import (
     ProductionRunPlan,
     RobustRetryPolicy,
 )
-from ...variational import FieldJetSpec, Functional, LocalIntegralTerm
+from ...variational import (
+    FieldJetSpec,
+    Functional,
+    FunctionalContext,
+    LocalFieldJet,
+    LocalGeometry,
+    LocalIntegralTerm,
+)
 from ._boundary import (
     AbstractPhaseFieldSurfaceEnergy,
+    PhaseFieldBoundaryPatch,
     PhaseFieldBoundaryPlan,
     PrescribedPhaseFieldFlux,
 )
@@ -409,7 +420,10 @@ class _CahnHilliardStepArguments(StrictModule):
     user_args: object
 
 
-def _previous_block(arguments, geometry):
+def _previous_block(
+    arguments: _AllenCahnStepArguments | _CahnHilliardStepArguments,
+    geometry: LocalGeometry,
+) -> tuple[Array, Array]:
     if geometry.block_name is None:
         if len(arguments.block_names) != 1:
             raise ValueError("Multiblock phase-field density requires block metadata.")
@@ -422,7 +436,9 @@ def _previous_block(arguments, geometry):
     )
 
 
-def _gradient_incremental_density(model, current, previous):
+def _gradient_incremental_density(
+    model: BinaryPhaseFieldModel, current: Array, previous: Array
+) -> Array:
     kappa = model.thermodynamics.gradient_coefficient.astype(current.dtype)
     if model.evolution_law.exact_identity:
         return (
@@ -433,7 +449,11 @@ def _gradient_incremental_density(model, current, previous):
     return 0.5 * kappa * ein.contract("...d,...d->...", current, current)
 
 
-def _allen_cahn_stationarity_density(jets, geometry, context):
+def _allen_cahn_stationarity_density(
+    jets: Mapping[str, LocalFieldJet],
+    geometry: LocalGeometry,
+    context: FunctionalContext,
+) -> Array:
     arguments = context.user_args
     if not isinstance(arguments, _AllenCahnStepArguments):
         raise TypeError("Allen-Cahn functional requires its dynamic step arguments.")
@@ -457,7 +477,11 @@ def _allen_cahn_stationarity_density(jets, geometry, context):
     return 0.5 * delta**2 / arguments.step_size + coefficient * energy
 
 
-def _cahn_hilliard_stationarity_density(jets, geometry, context):
+def _cahn_hilliard_stationarity_density(
+    jets: Mapping[str, LocalFieldJet],
+    geometry: LocalGeometry,
+    context: FunctionalContext,
+) -> Array:
     arguments = context.user_args
     if not isinstance(arguments, _CahnHilliardStepArguments):
         raise TypeError("Cahn-Hilliard functional requires its dynamic step arguments.")
@@ -498,7 +522,12 @@ class _EnergyArguments(StrictModule):
 class _PhysicalCellEnergy(StrictModule):
     model: BinaryPhaseFieldModel
 
-    def __call__(self, jets, geometry, context):
+    def __call__(
+        self,
+        jets: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         del geometry, context
         phase = jets["phase"]
         if phase.value is None or phase.gradient is None:
@@ -510,7 +539,12 @@ class _SurfaceStepDensity(StrictModule):
     surface: AbstractPhaseFieldSurfaceEnergy
     factor: float = eqx.field(static=True)
 
-    def __call__(self, jets, geometry, context):
+    def __call__(
+        self,
+        jets: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         arguments = context.user_args
         if not isinstance(
             arguments, (_AllenCahnStepArguments, _CahnHilliardStepArguments)
@@ -530,7 +564,12 @@ class _SurfaceStepDensity(StrictModule):
 class _PhysicalSurfaceDensity(StrictModule):
     surface: AbstractPhaseFieldSurfaceEnergy
 
-    def __call__(self, jets, geometry, context):
+    def __call__(
+        self,
+        jets: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         arguments = context.user_args
         if not isinstance(arguments, _EnergyArguments):
             raise TypeError("Surface energy requires energy-evaluation arguments.")
@@ -548,7 +587,12 @@ class _PhysicalSurfaceDensity(StrictModule):
 class _FluxStepDensity(StrictModule):
     flux: PrescribedPhaseFieldFlux
 
-    def __call__(self, jets, geometry, context):
+    def __call__(
+        self,
+        jets: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         arguments = context.user_args
         if not isinstance(arguments, _CahnHilliardStepArguments):
             raise TypeError("Boundary flux requires Cahn-Hilliard step arguments.")
@@ -566,7 +610,12 @@ class _FluxStepDensity(StrictModule):
 class _FluxWorkDensity(StrictModule):
     flux: PrescribedPhaseFieldFlux
 
-    def __call__(self, jets, geometry, context):
+    def __call__(
+        self,
+        jets: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         arguments = context.user_args
         if not isinstance(arguments, _CahnHilliardStepArguments):
             raise TypeError("Boundary flux work requires step arguments.")
@@ -584,7 +633,12 @@ class _FluxWorkDensity(StrictModule):
 class _FluxAmountDensity(StrictModule):
     flux: PrescribedPhaseFieldFlux
 
-    def __call__(self, jets, geometry, context):
+    def __call__(
+        self,
+        jets: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         arguments = context.user_args
         if not isinstance(arguments, _CahnHilliardStepArguments):
             raise TypeError("Boundary flux amount requires step arguments.")
@@ -597,6 +651,20 @@ class _FluxAmountDensity(StrictModule):
             arguments.user_args,
         )
         return arguments.step_size * value + 0.0 * chemical.value
+
+
+def _surface_energy(patch: PhaseFieldBoundaryPatch, /) -> AbstractPhaseFieldSurfaceEnergy:
+    surface_energy = patch.surface_energy
+    # PhaseFieldBoundaryPlan.surface_patches keeps only patches with a surface energy.
+    assert surface_energy is not None
+    return surface_energy
+
+
+def _mass_flux(patch: PhaseFieldBoundaryPatch, /) -> PrescribedPhaseFieldFlux:
+    mass_flux = patch.mass_flux
+    # PhaseFieldBoundaryPlan.flux_patches keeps only patches with a mass flux.
+    assert mass_flux is not None
+    return mass_flux
 
 
 def _allen_cahn_functional(
@@ -624,7 +692,7 @@ def _allen_cahn_functional(
                     region,
                     region=region,
                     fields=(FieldJetSpec("phase", value=True),),
-                    density=_SurfaceStepDensity(patch.surface_energy, factor),
+                    density=_SurfaceStepDensity(_surface_energy(patch), factor),
                     density_id=f"allen-cahn-surface/{patch.patch_id}",
                 )
             )
@@ -674,7 +742,7 @@ def _cahn_hilliard_functional(
                     region,
                     region=region,
                     fields=(FieldJetSpec("concentration", value=True),),
-                    density=_SurfaceStepDensity(patch.surface_energy, -1.0),
+                    density=_SurfaceStepDensity(_surface_energy(patch), -1.0),
                     density_id=f"cahn-hilliard-surface/{patch.patch_id}",
                 )
             )
@@ -686,7 +754,7 @@ def _cahn_hilliard_functional(
                     region,
                     region=region,
                     fields=(FieldJetSpec("chemical_potential", value=True),),
-                    density=_FluxStepDensity(patch.mass_flux),
+                    density=_FluxStepDensity(_mass_flux(patch)),
                     density_id=f"cahn-hilliard-flux/{patch.patch_id}",
                 )
             )
@@ -723,7 +791,7 @@ def _physical_energy_functional(
                     region,
                     region=region,
                     fields=(FieldJetSpec("phase", value=True),),
-                    density=_PhysicalSurfaceDensity(patch.surface_energy),
+                    density=_PhysicalSurfaceDensity(_surface_energy(patch)),
                     density_id=f"physical-surface/{patch.patch_id}",
                 )
             )
@@ -745,9 +813,9 @@ def _flux_diagnostic_functional(
     for patch in boundary.flux_patches:
         region = f"flux/{patch.name}"
         density = (
-            _FluxWorkDensity(patch.mass_flux)
+            _FluxWorkDensity(_mass_flux(patch))
             if work
-            else _FluxAmountDensity(patch.mass_flux)
+            else _FluxAmountDensity(_mass_flux(patch))
         )
         terms.append(
             LocalIntegralTerm(
@@ -786,7 +854,7 @@ def _termination_payload(termination: NonlinearTermination, /) -> dict[str, obje
 
 def _validated_mobility(
     value: AbstractPhaseFieldMobility | ArrayLike,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> AbstractPhaseFieldMobility:
     mobility = as_phase_field_mobility(value)
@@ -1058,7 +1126,7 @@ def _reference_rules(
     discretization: FiniteElementDiscretization,
     field_indices: tuple[int, ...],
     /,
-):
+) -> dict[str, ReferenceRule]:
     factories = {
         "triangle": ReferenceTriangleRule,
         "quadrilateral": ReferenceQuadrilateralRule,
@@ -1067,7 +1135,7 @@ def _reference_rules(
         "prism": ReferencePrismRule,
         "pyramid": ReferencePyramidRule,
     }
-    rules = {}
+    rules: dict[str, ReferenceRule] = {}
     for block_index, block in enumerate(discretization.mesh.blocks):
         degree = max(
             discretization.elements[index][block_index].degree for index in field_indices

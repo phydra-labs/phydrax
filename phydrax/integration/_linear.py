@@ -392,7 +392,10 @@ def _base_coefficients(
         raise TypeError(
             "Prepared linear reductions support component, probability, density, mapped, and declared discrete targets."
         )
-    if any(isinstance(batch, MappedIntegrationBatch) for batch in batches):
+    fixed_batches = tuple(
+        batch for batch in batches if not isinstance(batch, MappedIntegrationBatch)
+    )
+    if len(fixed_batches) != len(batches):
         raise TypeError("Component and probability targets require named fixed batches.")
     if replica_key_policy is not None:
         if replica_key_policy == "split":
@@ -402,7 +405,7 @@ def _base_coefficients(
         else:
             raise RuntimeError("Unknown replicated coefficient key policy.")
         replica_coefficients = []
-        for batch, replica_key in zip(batches, replica_keys, strict=True):
+        for batch, replica_key in zip(fixed_batches, replica_keys, strict=True):
             coefficient = _target_reduction_weights(
                 target,
                 batch,

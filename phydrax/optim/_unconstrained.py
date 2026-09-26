@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -55,6 +56,10 @@ from ._trust_region import (
     SteihaugToint,
     TrustRegionQuadraticProblem,
 )
+
+
+# (next parameters, dynamic state partition, objective value)
+_BranchResult: TypeAlias = tuple[PyTree[Any], PyTree[Any], Array]
 
 
 class _AbstractScalarExtensionState(StrictModule):
@@ -219,7 +224,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
 
     def prepare_state(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         /,
     ) -> NonlinearConjugateGradientState:
@@ -281,7 +286,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
 
     def step(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         state: _AbstractScalarExtensionState,
         /,
@@ -306,7 +311,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
             <= termination.optimality_threshold(state.initial_optimality_norm)
         )
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> _BranchResult:
             status = jnp.where(
                 finite,
                 int(OptimizationStatus.SUCCESS),
@@ -339,7 +344,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
             dynamic, _ = eqx.partition(updated, eqx.is_array)
             return parameters, dynamic, state.value
 
-        def conjugate_gradient_step(_):
+        def conjugate_gradient_step(_: None) -> _BranchResult:
             proposed_directional = _tree_inner(state.gradient, state.direction)
             valid_stored_direction = (
                 _tree_allfinite(state.direction)
@@ -629,7 +634,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
 
     def prepare_state(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         /,
     ) -> DenseNewtonDoglegState:
@@ -639,7 +644,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
 
     def step(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         state: _AbstractScalarExtensionState,
         /,
@@ -657,7 +662,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
                 f"max_dense_dimension={self.max_dense_dimension}."
             )
 
-        def flat_objective(candidate):
+        def flat_objective(candidate: Array) -> Array:
             return value_function(unravel(candidate))
 
         value, flat_gradient = jax.value_and_grad(flat_objective)(flat_parameters)
@@ -685,7 +690,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
         )
         _, static_state = eqx.partition(state, eqx.is_array)
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> _BranchResult:
             status = jnp.where(
                 ~finite,
                 int(OptimizationStatus.NONFINITE_EVALUATION),
@@ -725,7 +730,7 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
             dynamic, _ = eqx.partition(updated, eqx.is_array)
             return parameters, dynamic, value
 
-        def trust_region_step(_):
+        def trust_region_step(_: None) -> _BranchResult:
             hessian = jax.hessian(flat_objective)(flat_parameters)
             hessian = 0.5 * (hessian + hessian.T)
             spectrum = HermitianSpectrum(hessian)
@@ -1033,7 +1038,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
 
     def prepare_state(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         /,
     ) -> NewtonTrustRegionState:
@@ -1043,7 +1048,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
 
     def step(
         self,
-        value_function,
+        value_function: Callable[[PyTree[Any]], Any],
         parameters: PyTree[Any],
         state: _AbstractScalarExtensionState,
         /,
@@ -1080,7 +1085,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         )
         _, static_state = eqx.partition(state, eqx.is_array)
 
-        def terminal_step(_):
+        def terminal_step(_: None) -> _BranchResult:
             status = jnp.where(
                 ~finite,
                 int(OptimizationStatus.NONFINITE_EVALUATION),
@@ -1120,7 +1125,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
             dynamic, _ = eqx.partition(updated, eqx.is_array)
             return parameters_, dynamic, value
 
-        def trust_region_step(_):
+        def trust_region_step(_: None) -> _BranchResult:
             linearized_gradient, hessian_action = jax.linearize(
                 jax.grad(value_function),
                 parameters_,

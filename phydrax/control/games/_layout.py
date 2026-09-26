@@ -11,6 +11,7 @@ from operator import index
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -76,7 +77,7 @@ class PlayerControlPartition(StrictModule):
         self.joint_control_size = offsets[-1]
         self.partition_id = f"player-controls:{canonical_fingerprint(payload)}"
 
-    def split_controls(self, joint_controls, /) -> tuple[jax.Array, ...]:
+    def split_controls(self, joint_controls: ArrayLike, /) -> tuple[jax.Array, ...]:
         """Split the trailing joint-control axis in declared player order."""
         array = jnp.asarray(joint_controls)
         if array.ndim < 1 or array.shape[-1] != self.joint_control_size:
@@ -85,7 +86,7 @@ class PlayerControlPartition(StrictModule):
             )
         return tuple(array[..., start:stop] for start, stop in self.control_slices)
 
-    def join_controls(self, player_controls: Sequence, /) -> jax.Array:
+    def join_controls(self, player_controls: Sequence[ArrayLike], /) -> jax.Array:
         """Join player-local trailing control axes in declared player order."""
         arrays = tuple(jnp.asarray(value) for value in player_controls)
         if len(arrays) != self.num_players:
@@ -105,7 +106,7 @@ class PlayerControlPartition(StrictModule):
                 raise ValueError("All player control arrays must share leading axes.")
         return jnp.concatenate(arrays, axis=-1)
 
-    def split_feedback_gain(self, gain, /) -> tuple[jax.Array, ...]:
+    def split_feedback_gain(self, gain: ArrayLike, /) -> tuple[jax.Array, ...]:
         """Split the penultimate control-row axis of a joint feedback gain."""
         array = jnp.asarray(gain)
         if array.ndim < 2 or array.shape[-2] != self.joint_control_size:

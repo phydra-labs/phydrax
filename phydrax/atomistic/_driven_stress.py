@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
@@ -88,7 +89,7 @@ class AtomisticDrivenStressResult(StrictModule):
 
 def _optional_stress(
     value: ArrayLike | None,
-    dtype,
+    dtype: DTypeLike,
     /,
 ) -> tuple[Array, Array]:
     if value is None:

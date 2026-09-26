@@ -4,8 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any, cast
+from collections.abc import Callable, Sequence
+from typing import Any, cast, Literal, Self, TYPE_CHECKING
 
 import diffrax as dfx
 import equinox as eqx
@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import optimistix as optx
 from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax.typing import DTypeLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from phydrax._strict import StrictModule
 
@@ -49,6 +50,7 @@ from ._delay_history import (
 )
 from ._delay_plan import (
     compile_delay_execution_plan,
+    DelayExecutionPlan,
     DelayHistoryMode,
     fixed_delay_history_capacity,
     resolve_delay_solver,
@@ -70,6 +72,23 @@ from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
 
 
+if TYPE_CHECKING:
+    from diffrax._custom_types import (
+        Args,
+        BoolScalarLike,
+        DenseInfo,
+        IntScalarLike,
+        RealScalarLike,
+        VF,
+        Y,
+    )
+
+
+def _diffrax_time(value: RealScalarLike, /) -> Array:
+    # Diffrax converts solve and step times to JAX arrays before calling solvers.
+    return cast(Array, value)
+
+
 class _DelayValidation(StrictModule):
     """Runtime delay checks attached to a consumed vector-field output."""
 
@@ -87,7 +106,7 @@ class _CoordinateDelayHistory(StrictModule):
     function: Any
     adapter: _PreparedDiffraxStateAdapter
 
-    def __call__(self, time, args):
+    def __call__(self, time: Array, args: Any) -> Array:
         public_args = self.adapter.unpack_args(args)
         value = self.function(time, public_args)
         return self.adapter.pack_state(value, owner="Delay history")
@@ -99,7 +118,7 @@ class _CoordinateDelayDerivative(StrictModule):
 
     tangent_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def __call__(self, time, args):
+    def __call__(self, time: Array, args: Any) -> Array:
         public_args = self.adapter.unpack_args(args)
         value = self.function(time, public_args)
         return self.adapter.pack_tangent(
@@ -115,22 +134,22 @@ class _PublicDelayWindow(StrictModule):
 
     tangent_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def value(self, time, /, *, left=False):
+    def value(self, time: ArrayLike, /, *, left: bool = False) -> PyTree:
         return self.adapter.unpack_state(self.window.value(time, left=left))
 
-    def values(self, times, /, *, left=False):
+    def values(self, times: ArrayLike, /, *, left: bool = False) -> PyTree:
         return self.adapter.unpack_values(
             self.window.values(times, left=left),
             jnp.asarray(times).ndim,
         )
 
-    def derivative(self, time, /, *, left=False):
+    def derivative(self, time: ArrayLike, /, *, left: bool = False) -> Array:
         return self.adapter.unpack_tangent(
             self.window.derivative(time, left=left),
             self.tangent_shape,
         )
 
-    def derivatives(self, times, /, *, left=False):
+    def derivatives(self, times: ArrayLike, /, *, left: bool = False) -> Array:
         return self.adapter.unpack_tangent_values(
             self.window.derivatives(times, left=left),
             jnp.asarray(times).ndim,
@@ -144,14 +163,14 @@ class _CoordinateDelayInterpolation(StrictModule):
 
     tangent_shape: tuple[int, ...] = eqx.field(static=True)
 
-    def evaluate(self, query_times, /, *, left=True):
+    def evaluate(self, query_times: ArrayLike, /, *, left: bool = True) -> PyTree:
         query = jnp.asarray(query_times)
         return self.adapter.unpack_values(
             self.interpolation.evaluate(query, left=left),
             query.ndim,
         )
 
-    def derivative(self, query_times, /, *, left=True):
+    def derivative(self, query_times: ArrayLike, /, *, left: bool = True) -> Array:
         query = jnp.asarray(query_times)
         return self.adapter.unpack_tangent_values(
             self.interpolation.derivative(query, left=left),
@@ -433,7 +452,7 @@ class _ZeroVectorField(StrictModule):
 def _bind_delay_history(
     terms: Any, history: DenseDelayHistory | RollingDelayHistory, /
 ) -> Any:
-    def bind(value):
+    def bind(value: PyTree) -> PyTree:
         if isinstance(value, _DelayVectorField):
             return eqx.tree_at(
                 lambda vector_field: vector_field.computed_history,
@@ -463,42 +482,61 @@ class _RetardedSolver(dfx.AbstractWrappedSolver):
     maximum_lag: Array | None
 
     @property
-    def term_structure(self):  # ty: ignore[invalid-attribute-override]
+    def term_structure(  # ty: ignore[invalid-attribute-override]
+        self,
+    ) -> PyTree[type[dfx.AbstractTerm]]:
         return self.solver.term_structure
 
     @property
-    def interpolation_cls(self):  # ty: ignore[invalid-attribute-override]
+    def interpolation_cls(  # ty: ignore[invalid-attribute-override]
+        self,
+    ) -> Callable[..., dfx.AbstractLocalInterpolation]:
         return self.solver.interpolation_cls
 
     @property
-    def term_compatible_contr_kwargs(self):  # ty: ignore[invalid-attribute-override]
+    def term_compatible_contr_kwargs(  # ty: ignore[invalid-attribute-override]
+        self,
+    ) -> PyTree[dict[str, Any]]:
         return self.solver.term_compatible_contr_kwargs
 
     @property
-    def root_finder(self):
+    def root_finder(self) -> optx.AbstractRootFinder:
         return cast(Any, self.solver).root_finder
 
     @property
-    def root_find_max_steps(self):
+    def root_find_max_steps(self) -> int:
         return cast(Any, self.solver).root_find_max_steps
 
     @property
-    def scan_kind(self):
+    def scan_kind(self) -> Literal["lax", "checkpointed", "bounded"] | None:
         return cast(Any, self.solver).scan_kind
 
-    def order(self, terms):
+    def order(self, terms: PyTree[dfx.AbstractTerm]) -> int | None:
         return self.solver.order(terms)
 
-    def strong_order(self, terms):
+    def strong_order(self, terms: PyTree[dfx.AbstractTerm]) -> RealScalarLike | None:
         return self.solver.strong_order(terms)
 
-    def error_order(self, terms):
+    def error_order(self, terms: PyTree[dfx.AbstractTerm]) -> RealScalarLike | None:
         return self.solver.error_order(terms)
 
-    def func(self, terms, t0, y0, args):
+    def func(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> VF:
         return self.solver.func(terms, t0, y0, args)
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> _RetardedSolverState:
         provisional_state = self.solver.init(terms, t0, t1, y0, args)
         _, _, dense_info_structure, _, _ = eqx.filter_eval_shape(
             self.solver.step,
@@ -512,7 +550,7 @@ class _RetardedSolver(dfx.AbstractWrappedSolver):
         )
         if self.history_mode == "full":
             history: DenseDelayHistory | RollingDelayHistory = DenseDelayHistory.allocate(
-                time=t0,
+                time=_diffrax_time(t0),
                 dense_info_structure=dense_info_structure,
                 capacity=self.history_capacity,
                 interpolation_cls=self.solver.interpolation_cls,
@@ -521,7 +559,7 @@ class _RetardedSolver(dfx.AbstractWrappedSolver):
             if self.maximum_lag is None:
                 raise ValueError("Rolling history requires a finite maximum delay.")
             history = RollingDelayHistory.allocate(
-                time=t0,
+                time=_diffrax_time(t0),
                 dense_info_structure=dense_info_structure,
                 capacity=self.history_capacity,
                 interpolation_cls=self.solver.interpolation_cls,
@@ -531,7 +569,16 @@ class _RetardedSolver(dfx.AbstractWrappedSolver):
         inner_state = self.solver.init(bound_terms, t0, t1, y0, args)
         return _RetardedSolverState(inner_state=inner_state, history=history)
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: _RetardedSolverState,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Y, Y | None, DenseInfo, _RetardedSolverState, dfx.RESULTS]:
         bound_terms = _bind_delay_history(terms, solver_state.history)
         y1, y_error, dense_info, inner_state, result = self.solver.step(
             bound_terms,
@@ -542,7 +589,9 @@ class _RetardedSolver(dfx.AbstractWrappedSolver):
             solver_state.inner_state,
             made_jump,
         )
-        history = solver_state.history.append(t0, t1, dense_info)
+        history = solver_state.history.append(
+            _diffrax_time(t0), _diffrax_time(t1), dense_info
+        )
         if isinstance(history, RollingDelayHistory):
             result = dfx.RESULTS.where(
                 history.overflowed,
@@ -609,7 +658,10 @@ class _NeutralRecovery(StrictModule):
             )
         endpoint_neutral = self.endpoint_neutral
 
-        def residual(candidate, packed):
+        def residual(
+            candidate: Array,
+            packed: tuple[Array, DelayValues, Any, Array, Array],
+        ) -> Array:
             query_time, delayed_memory, packed_args, target, retarded_value = packed
             public_args = self.state_adapter.unpack_args(packed_args)
             endpoint = jnp.asarray(
@@ -720,14 +772,23 @@ class _NeutralRetardedSolver(_RetardedSolver):
     initial_transformed_state: Array
 
     @property
-    def interpolation_cls(self):  # ty: ignore[invalid-attribute-override]
+    def interpolation_cls(  # ty: ignore[invalid-attribute-override]
+        self,
+    ) -> Callable[..., dfx.AbstractLocalInterpolation]:
         return dfx.LocalLinearInterpolation
 
-    def init(self, terms, t0, t1, y0, args):
+    def init(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+    ) -> _RetardedSolverState:
         dense_info_structure = {"y0": y0, "y1": y0}
         if self.history_mode == "full":
             history: DenseDelayHistory | RollingDelayHistory = DenseDelayHistory.allocate(
-                time=t0,
+                time=_diffrax_time(t0),
                 dense_info_structure=dense_info_structure,
                 capacity=self.history_capacity,
                 interpolation_cls=self.interpolation_cls,
@@ -736,7 +797,7 @@ class _NeutralRetardedSolver(_RetardedSolver):
             if self.maximum_lag is None:
                 raise ValueError("Rolling history requires a finite maximum delay.")
             history = RollingDelayHistory.allocate(
-                time=t0,
+                time=_diffrax_time(t0),
                 dense_info_structure=dense_info_structure,
                 capacity=self.history_capacity,
                 interpolation_cls=self.interpolation_cls,
@@ -756,7 +817,16 @@ class _NeutralRetardedSolver(_RetardedSolver):
         )
         return _RetardedSolverState(inner_state=inner, history=history)
 
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+    def step(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        args: Args,
+        solver_state: _RetardedSolverState,
+        made_jump: BoolScalarLike,
+    ) -> tuple[Y, Y | None, DenseInfo, _RetardedSolverState, dfx.RESULTS]:
         bound_terms = _bind_delay_history(terms, solver_state.history)
         inner = solver_state.inner_state
         transformed, y_error, _, next_solver_state, result = self.solver.step(
@@ -769,9 +839,11 @@ class _NeutralRetardedSolver(_RetardedSolver):
             made_jump,
         )
         vector_field = _underlying_neutral_vector_field(bound_terms)
-        y1 = vector_field.recovery.recover(t1, transformed, args)
+        y1 = vector_field.recovery.recover(_diffrax_time(t1), transformed, args)
         dense_info = {"y0": y0, "y1": y1}
-        history = solver_state.history.append(t0, t1, dense_info)
+        history = solver_state.history.append(
+            _diffrax_time(t0), _diffrax_time(t1), dense_info
+        )
         if isinstance(history, RollingDelayHistory):
             result = dfx.RESULTS.where(
                 history.overflowed,
@@ -810,30 +882,40 @@ class _CausalAdaptiveStepSizeController(dfx.AbstractAdaptiveStepSizeController):
         self.maximum_step = maximum_step
 
     @property
-    def rtol(self):
+    def rtol(self) -> RealScalarLike:
         return self.controller.rtol
 
     @property
-    def atol(self):
+    def atol(self) -> RealScalarLike:
         return self.controller.atol
 
     @property
-    def norm(self):
+    def norm(self) -> Callable[[PyTree], RealScalarLike]:
         return self.controller.norm
 
-    def wrap(self, direction):
+    def wrap(self, direction: IntScalarLike) -> Self:
         return eqx.tree_at(
             lambda controller: controller.controller,
             self,
             self.controller.wrap(direction),
         )
 
-    def _cap(self, start, proposed_end):
+    def _cap(self, start: RealScalarLike, proposed_end: RealScalarLike) -> Array:
         boundary = jax.lax.stop_gradient(start + self.maximum_step)
         causal_end = jnp.nextafter(boundary, jax.lax.stop_gradient(start))
         return jax.lax.stop_gradient(jnp.minimum(proposed_end, causal_end))
 
-    def init(self, terms, t0, t1, y0, dt0, args, func, error_order):
+    def init(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        dt0: RealScalarLike | None,
+        args: Args,
+        func: Callable[[PyTree[dfx.AbstractTerm], RealScalarLike, Y, Args], VF],
+        error_order: RealScalarLike | None,
+    ) -> tuple[Array, PyTree]:
         next_t1, state = self.controller.init(
             terms,
             t0,
@@ -848,15 +930,22 @@ class _CausalAdaptiveStepSizeController(dfx.AbstractAdaptiveStepSizeController):
 
     def adapt_step_size(
         self,
-        t0,
-        t1,
-        y0,
-        y1_candidate,
-        args,
-        y_error,
-        error_order,
-        controller_state,
-    ):
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        y1_candidate: Y,
+        args: Args,
+        y_error: Y | None,
+        error_order: RealScalarLike,
+        controller_state: PyTree,
+    ) -> tuple[
+        BoolScalarLike,
+        RealScalarLike,
+        Array,
+        BoolScalarLike,
+        PyTree,
+        dfx.RESULTS,
+    ]:
         keep, next_t0, next_t1, made_jump, state, result = (
             self.controller.adapt_step_size(
                 jax.lax.stop_gradient(t0),
@@ -885,13 +974,13 @@ class _CausalFixedStepSizeController(dfx.AbstractStepSizeController):
     maximum_step: Array
     jump_ts: Array
 
-    def wrap(self, direction):
+    def wrap(self, direction: IntScalarLike) -> Self:
         return type(self)(
             maximum_step=self.maximum_step,
             jump_ts=jnp.sort(self.jump_ts * direction),
         )
 
-    def _next_jump(self, index, dtype):
+    def _next_jump(self, index: Array, dtype: DTypeLike) -> Array:
         if self.jump_ts.size == 0:
             return jnp.asarray(jnp.inf, dtype=dtype)
         safe = jnp.minimum(index, self.jump_ts.size - 1)
@@ -901,11 +990,21 @@ class _CausalFixedStepSizeController(dfx.AbstractStepSizeController):
             jnp.asarray(jnp.inf, dtype=dtype),
         )
 
-    def _end_before_jump(self, proposed_end, next_jump):
+    def _end_before_jump(self, proposed_end: ArrayLike, next_jump: Array) -> Array:
         previous = jnp.nextafter(next_jump, jnp.asarray(-jnp.inf))
         return jnp.minimum(proposed_end, previous)
 
-    def init(self, terms, t0, t1, y0, dt0, args, func, error_order):
+    def init(
+        self,
+        terms: PyTree[dfx.AbstractTerm],
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        dt0: RealScalarLike | None,
+        args: Args,
+        func: Callable[[PyTree[dfx.AbstractTerm], RealScalarLike, Y, Args], VF],
+        error_order: RealScalarLike | None,
+    ) -> tuple[Array, tuple[Array, Array]]:
         del terms, t1, y0, args, func, error_order
         if dt0 is None:
             raise ValueError("Fixed-step delay solves require dt0.")
@@ -921,15 +1020,15 @@ class _CausalFixedStepSizeController(dfx.AbstractStepSizeController):
 
     def adapt_step_size(
         self,
-        t0,
-        t1,
-        y0,
-        y1_candidate,
-        args,
-        y_error,
-        error_order,
-        controller_state,
-    ):
+        t0: RealScalarLike,
+        t1: RealScalarLike,
+        y0: Y,
+        y1_candidate: Y,
+        args: Args,
+        y_error: Y | None,
+        error_order: RealScalarLike,
+        controller_state: tuple[Array, Array],
+    ) -> tuple[bool, Array, Array, Array, tuple[Array, Array], dfx.RESULTS]:
         del t0, y0, y1_candidate, args, y_error, error_order
         step, old_index = controller_state
         old_jump = self._next_jump(old_index, jnp.result_type(t1))
@@ -990,7 +1089,7 @@ def _neutral_discontinuity_times(
     schedule = jnp.full((max_discontinuities,), jnp.inf, dtype=dtype)
     epsilon = 64.0 * jnp.finfo(dtype).eps
 
-    def next_after(previous, known):
+    def next_after(previous: Array, known: Array) -> Array:
         tolerance = epsilon * jnp.maximum(1.0, jnp.abs(previous))
         threshold = jnp.where(jnp.isneginf(previous), previous, previous + tolerance)
         if sources.size == 0:
@@ -1014,7 +1113,7 @@ def _neutral_discontinuity_times(
             descendant_candidate = jnp.min(descendants)
         return jnp.minimum(source_candidate, descendant_candidate)
 
-    def append(index, known):
+    def append(index: Array, known: Array) -> Array:
         previous = jnp.where(index == 0, -jnp.inf, known[index - 1])
         candidate = next_after(previous, known)
         candidate = jnp.where(candidate < limit, candidate, jnp.inf)
@@ -1061,7 +1160,7 @@ def _native_delay_solution(
     max_steps: int | None,
     throw: bool,
     state_adapter: _PreparedDiffraxStateAdapter,
-):
+) -> dfx.Solution:
     if isinstance(problem, NeutralDelayProblem):
         wrapped_solver = _NeutralRetardedSolver(
             solver=solver,
@@ -1160,10 +1259,10 @@ def _deterministic_delay_terms(
 
 
 def _validate_whole_delay_controls(
-    problem,
+    problem: DelayDifferentialProblem | NeutralDelayProblem,
     *,
     dense: bool,
-    history_mode: str,
+    history_mode: DelayHistoryMode,
     max_steps: int | None,
     history_capacity: int | None,
     history_margin: int,
@@ -1171,9 +1270,9 @@ def _validate_whole_delay_controls(
     root_rtol: float,
     root_atol: float,
     max_root_iterations: int,
-    complex_state_policy,
-    state_coordinates,
-):
+    complex_state_policy: DiffraxComplexStatePolicy | None,
+    state_coordinates: AbstractRealCoordinateMap | None,
+) -> _PreparedDiffraxStateAdapter:
     if not isinstance(problem, (DelayDifferentialProblem, NeutralDelayProblem)):
         raise TypeError(
             "solve_diffrax_delay requires a DelayDifferentialProblem or NeutralDelayProblem."
@@ -1226,13 +1325,13 @@ def _validate_whole_delay_controls(
 
 
 def _prepare_deterministic_delay_execution(
-    problem,
-    realization,
-    solver,
-    discontinuity_depth,
-    history_mode: str,
+    problem: DelayDifferentialProblem | NeutralDelayProblem,
+    realization: WienerRealization | None,
+    solver: Any | None,
+    discontinuity_depth: int | None,
+    history_mode: DelayHistoryMode,
     /,
-):
+) -> tuple[dfx.AbstractSolver, DelayExecutionPlan]:
     if realization is not None:
         raise ValueError(
             "Deterministic delay problems do not accept a WienerRealization."
@@ -1602,9 +1701,12 @@ def solve_diffrax_delay(
         internal_restarts = jnp.asarray(0, dtype=jnp.int32)
         tracked_discontinuity_times = discontinuities
         dynamic_root_times = jnp.empty((0,), dtype=problem.t0.dtype)
-    native_times = jnp.asarray(native.ts["requested"])
-    native_states = state_adapter.unpack_values(native.ys["requested"], 1)
-    final_time = jnp.asarray(native.ts["final"])[0]
+    requested_times = native.ts
+    requested_states = native.ys
+    assert requested_times is not None and requested_states is not None
+    native_times = jnp.asarray(requested_times["requested"])
+    native_states = state_adapter.unpack_values(requested_states["requested"], 1)
+    final_time = jnp.asarray(requested_times["final"])[0]
     solver_state = native.solver_state
     rolling_history = None
     if history_mode == "rolling":

@@ -462,7 +462,7 @@ def _llg_problem(
 ) -> DifferentialProblem:
     plan = prepared.plan
 
-    def drift(time, directions, args):
+    def drift(time: Array, directions: Array, args: object) -> Array:
         del time, args
         evaluation = evaluate_classical_spin_hamiltonian(plan.hamiltonian, directions)
         return _llg_field_action(
@@ -475,10 +475,12 @@ def _llg_problem(
     if plan.thermal:
         sites = plan.hamiltonian.plan.site_count
 
-        def coefficient(time, directions, args):
+        def coefficient(
+            time: Array, directions: Array, args: object
+        ) -> lx.FunctionLinearOperator:
             del time, args
 
-            def action(noise):
+            def action(noise: Array) -> Array:
                 field = prepared.thermal_field_amplitude[:, None] * noise
                 return _llg_field_action(
                     directions,
@@ -590,7 +592,7 @@ def solve_llg_dynamics(
         jnp.where(mask[None, :], jnp.abs(norms - 1.0), 0.0), initial=0.0
     )
 
-    def trajectory_values(value):
+    def trajectory_values(value: Array) -> tuple[Array, Array]:
         evaluation = evaluate_classical_spin_hamiltonian(prepared.plan.hamiltonian, value)
         drift = _llg_field_action(
             value,

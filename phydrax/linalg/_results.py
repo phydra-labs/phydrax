@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._differentiation import DerivativeContract, DerivativeRoute, DerivativeSurface
 from .._iteration import IterationEvidence
@@ -145,14 +145,14 @@ class LinearIterationMetrics(StrictModule):
     def __init__(
         self,
         *,
-        residual_norm,
-        relative_residual,
-        normal_residual_norm=jnp.nan,
-        iterations=0,
-        matvec_count=0,
-        adjoint_matvec_count=0,
-        condition_estimate=jnp.nan,
-        breakdown_status=0,
+        residual_norm: ArrayLike,
+        relative_residual: ArrayLike,
+        normal_residual_norm: ArrayLike = jnp.nan,
+        iterations: ArrayLike = 0,
+        matvec_count: ArrayLike = 0,
+        adjoint_matvec_count: ArrayLike = 0,
+        condition_estimate: ArrayLike = jnp.nan,
+        breakdown_status: ArrayLike = 0,
     ) -> None:
         self.residual_norm = jnp.asarray(residual_norm)
         self.relative_residual = jnp.asarray(relative_residual)

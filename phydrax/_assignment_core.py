@@ -4,9 +4,21 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
+
+
+# (u, v, matching, feasible, total_steps)
+_RowCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+# (u, v, matching, minimum, used, way, column, active, row_feasible, steps)
+_AugmentSearchCarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+# (matching, column, count)
+_AugmentPathCarry: TypeAlias = tuple[Array, Array, Array]
 
 
 def hungarian_assignment_one(
@@ -22,10 +34,10 @@ def hungarian_assignment_one(
     feasible = jnp.asarray(rows <= columns)
     total_steps = jnp.asarray(0, dtype=jnp.int32)
 
-    def add_row(row_index, outer):
+    def add_row(row_index: Array, outer: _RowCarry) -> _RowCarry:
         feasible_ = outer[3]
 
-        def solve_row(state):
+        def solve_row(state: _RowCarry) -> _RowCarry:
             u_current, v_current, matching_current, feasible_current, total = state
             row = row_index + 1
             matching_current = matching_current.at[0].set(row)
@@ -45,10 +57,10 @@ def hungarian_assignment_one(
                 jnp.asarray(0, dtype=jnp.int32),
             )
 
-            def condition(inner):
+            def condition(inner: _AugmentSearchCarry) -> Array:
                 return inner[7] & (inner[9] <= columns)
 
-            def augment_step(inner):
+            def augment_step(inner: _AugmentSearchCarry) -> _AugmentSearchCarry:
                 (
                     u_inner,
                     v_inner,
@@ -121,10 +133,10 @@ def hungarian_assignment_one(
                 jnp.asarray(0, dtype=jnp.int32),
             )
 
-            def augment_condition(augment):
+            def augment_condition(augment: _AugmentPathCarry) -> Array:
                 return row_feasible & (augment[1] != 0) & (augment[2] <= columns)
 
-            def augment_body(augment):
+            def augment_body(augment: _AugmentPathCarry) -> _AugmentPathCarry:
                 matching_aug, column, count = augment
                 previous = way[column]
                 matching_aug = matching_aug.at[column].set(matching_aug[previous])
@@ -154,7 +166,7 @@ def hungarian_assignment_one(
     )
     assigned = jnp.full((rows,), -1, dtype=jnp.int32)
 
-    def assign_column(column, current):
+    def assign_column(column: Array, current: Array) -> Array:
         row = matching[column] - 1
         return jax.lax.cond(
             row >= 0,

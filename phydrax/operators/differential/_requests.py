@@ -528,8 +528,8 @@ def evaluate_fused_coordinate_derivatives(
     else:
         first_values = ()
 
-    def second_direction(tangent):
-        def first_direction(current):
+    def second_direction(tangent: Array) -> Any:
+        def first_direction(current: Array) -> Any:
             return jax.jvp(function, (current,), (tangent,))[1]
 
         return jax.jvp(first_direction, (point_,), (tangent,))[1]

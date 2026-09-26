@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._numerics._quadrature_rules import gauss_legendre_data
@@ -121,7 +122,7 @@ class TrainableBSplineGridBank(StrictModule):
         degree: int,
         /,
         *,
-        intervals: ArrayLike,
+        intervals: npt.ArrayLike,
         minimum_spans: ArrayLike | None = None,
     ) -> None:
         if isinstance(degree, bool) or not isinstance(degree, Integral):
@@ -185,7 +186,7 @@ class TrainableBSplineGridBank(StrictModule):
         num_intervals: int = 8,
         /,
         *,
-        intervals: ArrayLike = (-1.0, 1.0),
+        intervals: npt.ArrayLike = (-1.0, 1.0),
         minimum_spans: ArrayLike | None = None,
     ) -> TrainableBSplineGridBank:
         """Construct independently trainable rows with uniform initial spans."""

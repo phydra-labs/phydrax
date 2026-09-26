@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -142,7 +141,7 @@ def advance_particle_epoch_segments(
         successful = successful & segment_successful
         if segment_index < len(counts) - 1 and requests:
             request = requests[segment_index]
-            if request is not None:
+            if request is not None and growth_policy is not None:
                 transition = grow_particle_execution_epoch(
                     epoch,
                     growth_policy,
@@ -275,11 +274,11 @@ def pullback_particle_epoch_transition(
 
 
 def segmented_particle_epoch_vjp(
-    transition_pullbacks: Sequence[Callable[[Any], Any]],
+    transition_pullbacks: Sequence[Callable[[DEMRuntimeState], DEMRuntimeState]],
     transitions: Sequence[ParticleEpochTransition],
     terminal_cotangent: DEMRuntimeState,
     /,
-):
+) -> DEMRuntimeState:
     pullbacks = tuple(transition_pullbacks)
     transition_values = tuple(transitions)
     if len(pullbacks) != len(transition_values) + 1:

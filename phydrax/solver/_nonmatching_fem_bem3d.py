@@ -66,7 +66,13 @@ class PreparedNonmatchingFEMBEM3D(StrictModule, NonTrainableState):
         )
 
 
-def _prepare(interior_matrix, boundary_matrix, coupling, family, maximum_dense_entries):
+def _prepare(
+    interior_matrix: ArrayLike,
+    boundary_matrix: ArrayLike,
+    coupling: ArrayLike,
+    family: str,
+    maximum_dense_entries: int,
+) -> PreparedNonmatchingFEMBEM3D:
     interior = np.asarray(interior_matrix)
     boundary = np.asarray(boundary_matrix)
     trace = np.asarray(coupling)

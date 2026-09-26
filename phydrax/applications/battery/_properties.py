@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -22,7 +25,7 @@ def _identifier(value: str, name: str, /) -> str:
     return value
 
 
-def _support_bounds(values: ArrayLike, /) -> Array:
+def _support_bounds(values: ArrayLike | Sequence[float], /) -> Array:
     bounds = jnp.asarray(values)
     if bounds.shape != (2,) or jnp.issubdtype(bounds.dtype, jnp.complexfloating):
         raise ValueError("Property support bounds must be two real scalars.")
@@ -34,7 +37,7 @@ def _support_bounds(values: ArrayLike, /) -> Array:
     return bounds.astype(inexact_result_type(bounds))
 
 
-def _value_bounds(values: ArrayLike, dtype, /) -> Array:
+def _value_bounds(values: ArrayLike | Sequence[float], dtype: DTypeLike, /) -> Array:
     bounds = jnp.asarray(values, dtype=dtype)
     if bounds.shape != (2,) or jnp.issubdtype(bounds.dtype, jnp.complexfloating):
         raise ValueError("Property value bounds must be two real scalars.")
@@ -62,10 +65,10 @@ class ConstantPropertyLaw(StrictModule):
     def __init__(
         self,
         value: ArrayLike,
-        support_bounds: ArrayLike,
+        support_bounds: ArrayLike | Sequence[float],
         /,
         *,
-        value_bounds: ArrayLike = (-jnp.inf, jnp.inf),
+        value_bounds: ArrayLike | Sequence[float] = (-jnp.inf, jnp.inf),
         quantity: str,
         coordinate: str,
         value_unit: str,
@@ -152,7 +155,7 @@ class TabulatedPropertyLaw(StrictModule):
         values: ArrayLike,
         /,
         *,
-        value_bounds: ArrayLike = (-jnp.inf, jnp.inf),
+        value_bounds: ArrayLike | Sequence[float] = (-jnp.inf, jnp.inf),
         source_mask: ArrayLike | None = None,
         quantity: str,
         coordinate: str,
@@ -282,7 +285,7 @@ class ConcentrationTemperaturePropertyLaw(StrictModule):
         values: ArrayLike,
         /,
         *,
-        value_bounds: ArrayLike = (-jnp.inf, jnp.inf),
+        value_bounds: ArrayLike | Sequence[float] = (-jnp.inf, jnp.inf),
         source_mask: ArrayLike | None = None,
         quantity: str,
         value_unit: str,

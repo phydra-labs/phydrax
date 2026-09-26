@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
 from typing import Any, get_origin, Literal, TypeAlias
 
@@ -12,7 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
 
 import phydrax.ein as ein
 
@@ -28,12 +29,24 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
 )
 from ._conditioning import condition_gaussian_moments
-from ._gaussian_factor import gaussian_factor_from_covariance
+from ._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 from ._nonlinear_gaussian import (
     first_order_gaussian_transform,
+    NonlinearGaussianTransformResult,
     scaled_unscented_transform,
     spherical_radial_cubature,
 )
+
+
+# (augmented moments, left time, solver valid, finite, first backend status).
+_SegmentCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
+# (mean, covariance, cross covariance, solver valid, transform valid, finite, status).
+_TransitionOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_UpdateOutputs: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+# (smoothed mean, smoothed covariance, gain, factor valid, finite).
+_SmoothOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 ContinuousDiscreteGaussianMethod: TypeAlias = Literal["extended", "cubature", "unscented"]
@@ -279,12 +292,14 @@ def _solve_differential_flow(
         (flat_initial, jnp.zeros((size * size,), dtype=flat_initial.dtype))
     )
 
-    def augmented_drift(time, augmented, args):
+    def augmented_drift(
+        time: Array, augmented: Array, args: StateSpaceStepContext
+    ) -> Array:
         state_flat = augmented[:size]
         state = state_flat.reshape(state_shape)
         covariance = augmented[size:].reshape((size, size))
 
-        def flat_drift(value):
+        def flat_drift(value: Array) -> Array:
             return jnp.asarray(
                 transition.drift(time, value.reshape(state_shape), args)
             ).reshape((size,))
@@ -298,7 +313,9 @@ def _solve_differential_flow(
         )
         return jnp.concatenate((drift, covariance_rate.reshape((-1,))))
 
-    def solve_segment(augmented, bounds):
+    def solve_segment(
+        augmented: Array, bounds: tuple[Array, Array]
+    ) -> tuple[Array, Array, Array, Array]:
         left, right = bounds
         differential = DifferentialProblem(
             augmented_drift,
@@ -337,7 +354,9 @@ def _solve_differential_flow(
         jnp.concatenate((jnp.where(breakpoint_valid, breakpoints, padding), end[None]))
     )
 
-    def segment_step(carry, candidate):
+    def segment_step(
+        carry: _SegmentCarry, candidate: Array
+    ) -> tuple[_SegmentCarry, None]:
         augmented, left, solver_valid, finite, backend_status = carry
         should_solve = (
             context.input_valid
@@ -347,7 +366,7 @@ def _solve_differential_flow(
             & (candidate <= end)
         )
 
-        def apply(values):
+        def apply(values: _SegmentCarry) -> _SegmentCarry:
             state, lower, previous_solver_valid, previous_finite, previous_status = values
             safe_right = jnp.where(candidate > lower, candidate, lower + padding_step)
             solved, segment_solver_valid, segment_finite, segment_status = solve_segment(
@@ -397,7 +416,7 @@ def _solve_differential_flow(
 
 
 def _nonlinear_transform(
-    function,
+    function: Callable[[PyTree[Array]], PyTree[Array]],
     mean: Array,
     covariance: Array,
     method: ContinuousDiscreteGaussianMethod,
@@ -407,7 +426,7 @@ def _nonlinear_transform(
     unscented_alpha: float,
     unscented_beta: float,
     unscented_kappa: float,
-):
+) -> tuple[GaussianFactor, NonlinearGaussianTransformResult]:
     factor = gaussian_factor_from_covariance(
         covariance,
         rank_tolerance=rank_tolerance,
@@ -516,7 +535,7 @@ def _differential_transition(
         factor_id="continuous-discrete-flow-input",
     )
 
-    def flow_payload(point):
+    def flow_payload(point: Array) -> Array:
         (
             state,
             process_covariance,
@@ -541,7 +560,7 @@ def _differential_transition(
         )
         return jnp.concatenate((state, process_covariance.reshape((-1,)), metadata))
 
-    def evaluate(_):
+    def evaluate(_: None) -> _TransitionOutputs:
         factor = input_factor.factor
         rank = input_factor.rank
         if method == "extended":
@@ -664,7 +683,7 @@ def _differential_transition(
             backend_status,
         )
 
-    def invalid_input(_):
+    def invalid_input(_: None) -> _TransitionOutputs:
         finite = jnp.all(jnp.isfinite(mean)) & jnp.all(jnp.isfinite(covariance))
         return (
             mean,
@@ -746,7 +765,7 @@ def _observation_moments(
             finite,
         )
 
-    def location(point):
+    def location(point: Array) -> Array:
         return observation.location(point.reshape(state_shape), time, context).reshape(
             (observation_size,)
         )
@@ -973,7 +992,7 @@ def continuous_discrete_gaussian_filter(
             target_time = flat_times[case_index, step_index]
             context = problem.step_context(case_index, step_index)
 
-            def propagate(_):
+            def propagate(_: None) -> _TransitionOutputs:
                 if isinstance(transition, LinearGaussianTransitionKernel):
                     return _analytic_transition(
                         transition,
@@ -998,7 +1017,7 @@ def continuous_discrete_gaussian_filter(
                     unscented_kappa=kappa,
                 )
 
-            def skip_propagation(_):
+            def skip_propagation(_: None) -> _TransitionOutputs:
                 return (
                     mean,
                     covariance,
@@ -1024,7 +1043,7 @@ def continuous_discrete_gaussian_filter(
                 None,
             )
 
-            def update(_):
+            def update(_: None) -> _UpdateOutputs:
                 return _observation_update(
                     observation,
                     predicted_mean,
@@ -1043,7 +1062,7 @@ def continuous_discrete_gaussian_filter(
                     unscented_kappa=kappa,
                 )
 
-            def skip_update(_):
+            def skip_update(_: None) -> _UpdateOutputs:
                 return (
                     predicted_mean,
                     predicted_covariance,
@@ -1370,7 +1389,7 @@ def continuous_discrete_gaussian_smoother(
                 & operands_finite
             )
 
-            def smooth(_):
+            def smooth(_: None) -> _SmoothOutputs:
                 gain = jnp.conj(
                     jnp.linalg.solve(
                         predicted_covariance,
@@ -1407,7 +1426,7 @@ def continuous_discrete_gaussian_smoother(
                     finite,
                 )
 
-            def skip(_):
+            def skip(_: None) -> _SmoothOutputs:
                 return (
                     filtered_means[case_index, index],
                     filtered_covariances[case_index, index],

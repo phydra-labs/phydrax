@@ -303,7 +303,8 @@ class BlockComplex:
                 if facet.block_id not in by_id:
                     raise ValueError("Permitted contact references an unknown block.")
                 by_id[facet.block_id]._validate_facet(facet)
-            contacts.append(tuple(sorted((first, second))))
+            low, high = sorted((first, second))
+            contacts.append((low, high))
         if len(set(contacts)) != len(contacts):
             raise ValueError("Permitted boundary contacts must be unique.")
         atlas_id = None if patch_atlas is None else patch_atlas.atlas_id

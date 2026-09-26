@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -27,10 +27,12 @@ from ._ilqr import (
     _evaluate_ilqr_flow,
     _flow_map,
     _local_model,
+    _LocalModel,
     _trajectory_cost,
     _validate_solver_options,
     DifferentialControlFlow,
     ILQRDiagnostics,
+    ILQRFlow,
     ILQRPolicy,
     ILQRResult,
     ILQRStatus,
@@ -42,6 +44,52 @@ from ._trajectory import (
     ControlResult,
     ControlTrajectory,
 )
+
+
+_TransitionValues: TypeAlias = tuple[Array, Array, Array, Array]
+_RolloutCarry: TypeAlias = tuple[Array, Array, Array]
+_RolloutRecord: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_FeedbackRolloutRecord: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
+_RolloutResult: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, DiscreteTransitionEvidence | None
+]
+_BackwardCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_BackwardResult: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_SearchCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    DiscreteTransitionEvidence | None,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+_ILQRLoop: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    DiscreteTransitionEvidence | None,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class ILQRPlan(StrictModule, NonTrainableState):
@@ -176,16 +224,20 @@ def prepare_ilqr(
     )
 
 
-def _rollout(problem, flow, initial_state, controls):
+def _rollout(
+    problem: ControlProblem, flow: ILQRFlow | None, initial_state: Array, controls: Array
+) -> _RolloutResult:
 
-    def step(carry, inputs):
+    def step(
+        carry: _RolloutCarry, inputs: tuple[Array, Array]
+    ) -> tuple[_RolloutCarry, _RolloutRecord]:
         state, active, failed_step = carry
         index, control = inputs
         index = jnp.asarray(index, dtype=jnp.int32)
         control_finite = jnp.all(jnp.isfinite(control))
         attempted = active & control_finite
 
-        def evaluate_transition(values):
+        def evaluate_transition(values: tuple[Array, Array]) -> _TransitionValues:
             current_state, current_control = values
             return _evaluate_ilqr_flow(
                 problem,
@@ -195,7 +247,7 @@ def _rollout(problem, flow, initial_state, controls):
                 current_control,
             )
 
-        def skip_transition(values):
+        def skip_transition(values: tuple[Array, Array]) -> _TransitionValues:
             current_state, _ = values
             unavailable = jnp.full_like(current_state, jnp.nan)
             return (
@@ -295,21 +347,23 @@ def _rollout(problem, flow, initial_state, controls):
 
 
 def _feedback_rollout(
-    problem,
-    flow,
-    initial_state,
-    nominal_states,
-    nominal_controls,
-    feedforward,
-    feedback,
-    step_size,
-):
+    problem: ControlProblem,
+    flow: ILQRFlow | None,
+    initial_state: Array,
+    nominal_states: Array,
+    nominal_controls: Array,
+    feedforward: Array,
+    feedback: Array,
+    step_size: Array,
+) -> _RolloutResult:
     state_layout = problem.dynamics.system.state_layout
     geometry = state_layout.geometry
     state_size = state_layout.local_size
     control_size = prod(problem.control_shape)
 
-    def step(carry, inputs):
+    def step(
+        carry: _RolloutCarry, inputs: tuple[Array, Array, Array, Array, Array]
+    ) -> tuple[_RolloutCarry, _FeedbackRolloutRecord]:
         state, active, failed_step = carry
         index, nominal_state, nominal_control, feedforward_, feedback_ = inputs
         index = jnp.asarray(index, dtype=jnp.int32)
@@ -330,7 +384,7 @@ def _feedback_rollout(
         control_finite = jnp.all(jnp.isfinite(control))
         attempted = active & control_finite
 
-        def evaluate_transition(values):
+        def evaluate_transition(values: tuple[Array, Array]) -> _TransitionValues:
             current_state, current_control = values
             return _evaluate_ilqr_flow(
                 problem,
@@ -340,7 +394,7 @@ def _feedback_rollout(
                 current_control,
             )
 
-        def skip_transition(values):
+        def skip_transition(values: tuple[Array, Array]) -> _TransitionValues:
             current_state, _ = values
             unavailable = jnp.full_like(current_state, jnp.nan)
             return (
@@ -472,12 +526,14 @@ def _select_transition_evidence(
     )
 
 
-def _backward(model, regularization):
+def _backward(model: _LocalModel, regularization: float) -> _BackwardResult:
     model.dynamics_state.shape[-1]
     control_size = model.dynamics_control.shape[-1]
     identity = jnp.eye(control_size, dtype=model.terminal_hessian.dtype)
 
-    def step(carry, inputs):
+    def step(
+        carry: _BackwardCarry, inputs: tuple[Array, ...]
+    ) -> tuple[_BackwardCarry, tuple[Array, Array]]:
         (
             value_gradient,
             value_hessian,
@@ -580,7 +636,9 @@ def _backward(model, regularization):
     )
 
 
-def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: Array):
+def _solve_case(
+    prepared: PreparedILQR, initial_state: Array, initial_controls: Array
+) -> _ILQRLoop:
     plan = prepared.plan
     problem = prepared.problem
     states, controls, valid, objective, failed_step, transition_evidence = _rollout(
@@ -624,7 +682,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
         jnp.zeros(history_shape, dtype=jnp.int32),
     )
 
-    def iteration(index, loop):
+    def iteration(index: Array, loop: _ILQRLoop) -> _ILQRLoop:
         (
             states_,
             controls_,
@@ -646,7 +704,7 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
             evaluations_history,
         ) = loop
 
-        def advance(_):
+        def advance(_: None) -> _ILQRLoop:
             model = _local_model(problem, states_, controls_, prepared.flow)
             gradient_norm = jnp.sqrt(jnp.sum(jnp.square(jnp.abs(model.control_gradient))))
             (
@@ -676,10 +734,10 @@ def _solve_case(prepared: PreparedILQR, initial_state: Array, initial_controls: 
 
             can_search = backward_valid & (~gradient_converged)
 
-            def search(search_index, search_carry):
+            def search(search_index: Array, search_carry: _SearchCarry) -> _SearchCarry:
                 found = search_carry[0]
 
-                def attempt(_):
+                def attempt(_: object) -> _SearchCarry:
                     (
                         _,
                         best_states,

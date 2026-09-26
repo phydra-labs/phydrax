@@ -13,7 +13,7 @@ subspaces described by their evidence objects.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -22,9 +22,11 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..algebraic._system import PolynomialScaling, SparsePolynomialSupport
+from ..conditions._lowering import BoundCondition
 from ..linalg import (
     AbstractLinearOperator,
     ArraySpace,
@@ -996,7 +998,10 @@ def _subspace_tolerances(
     /,
 ) -> tuple[float, float]:
     verification = (
-        max(action.evidence.verification_tolerance, 64.0 * np.finfo(np.float64).eps)
+        max(
+            action.evidence.verification_tolerance,
+            64.0 * float(np.finfo(np.float64).eps),
+        )
         if verification_tolerance is None
         else float(verification_tolerance)
     )
@@ -1515,16 +1520,18 @@ def lower_polynomial_linear_representation(
         }
     )
 
-    def extract(values):
+    def extract(values: Mapping[str, Any]) -> Array:
         return basis.coordinates(representation.extract(values))
 
-    def replace(values, coordinates):
+    def replace(
+        values: Mapping[str, Any], coordinates: ArrayLike
+    ) -> frozendict[str, Any]:
         return representation.replace(values, basis.coefficients(coordinates))
 
-    def synthesize(coordinates):
+    def synthesize(coordinates: ArrayLike) -> frozendict[str, Any]:
         return representation.synthesize(basis.coefficients(coordinates))
 
-    def assemble(bound):
+    def assemble(bound: BoundCondition) -> LinearConditionAssembly:
         full = representation.assemble(bound)
         operator = lower_polynomial_enforcement_operator(full.operator, basis)
         full_evidence = full.evidence

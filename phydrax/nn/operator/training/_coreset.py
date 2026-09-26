@@ -69,6 +69,7 @@ def compress_operator_cases(
     feature_values = jnp.asarray(features)
     if feature_values.ndim != 2 or feature_values.shape[0] != dataset.size:
         raise ValueError("features must have shape (case, feature).")
+    assert dataset.case_log_weights is not None and dataset.case_mask is not None
     source_log_weights = (
         dataset.case_log_weights
         if log_weights is None
@@ -143,7 +144,7 @@ def compress_operator_queries(
             ),
             mask=source_mask[0] & (source_weights[0] > 0.0),
         )
-        selections: tuple[CoresetSelection, ...] | None = None
+        reported: CoresetSelection | tuple[CoresetSelection, ...] = selection
         indices = jnp.broadcast_to(selection.indices, (case_count, selection.capacity))
         selected_mask = jnp.broadcast_to(selection.mask, indices.shape)
         normalized = jnp.broadcast_to(selection.weights, indices.shape)
@@ -163,7 +164,7 @@ def compress_operator_queries(
             )
             for case in range(case_count)
         )
-        selections = result
+        reported = result
         selection = result[0]
         if any(item.capacity != selection.capacity for item in result[1:]):
             raise ValueError("Per-case query selectors must have one fixed capacity.")
@@ -234,7 +235,7 @@ def compress_operator_queries(
     return OperatorQueryCoreset(
         dataset=compressed,
         query_name=query_name,
-        selection=selection if shared else selections,
+        selection=reported,
         source_physical_mass=physical_mass,
         objective=(
             "supplied-query-feature-moments"

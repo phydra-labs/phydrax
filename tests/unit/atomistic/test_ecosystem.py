@@ -3,6 +3,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -247,3 +248,35 @@ def test_committee_advanced_physics_and_distributed_contracts():
     np.testing.assert_allclose(
         jnp.sum(local_energy), state.force.potential_energy, atol=1.0e-12
     )
+
+
+def test_interaction_site_cv_rejects_cell_vectors_without_cell() -> None:
+    physical_ids = np.asarray([10, 20, 30])
+    sites = phx.atomistic.AtomisticInteractionSitePlan(
+        [10, 20, 30, 40],
+        [1, 1, 1, 0],
+        [0, 0, 0, 1],
+        [0.4, -0.2, -0.2, 0.1],
+        physical_mask=[True, True, True, False],
+    )
+    rule = phx.atomistic.VirtualSiteRule(
+        phx.atomistic.VirtualSiteKind.LOCAL_FRAME,
+        40,
+        physical_ids,
+        [0.2, 0.1, 0.0],
+    )
+    mapping = phx.atomistic.AtomisticCoordinateMapPlan(
+        physical_ids, sites, [0, 1, 2, -1], virtual_rules=(rule,)
+    )
+    system, _ = _system(coordinate_map=mapping)
+    cv = phx.atomistic.sampling.CollectiveVariablePlan(
+        phx.atomistic.sampling.CollectiveVariableKind.DISTANCE,
+        [0, 3],
+        domain=phx.atomistic.AtomisticSiteDomain.INTERACTION_SITES,
+    ).prepare(system)
+    positions = jnp.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    np.testing.assert_allclose(
+        cv.evaluate(positions).value, np.hypot(0.2, 0.1), atol=1e-12
+    )
+    with pytest.raises(ValueError, match="fractions and cell vectors"):
+        cv.evaluate(positions, cell_vectors=10.0 * jnp.eye(3))

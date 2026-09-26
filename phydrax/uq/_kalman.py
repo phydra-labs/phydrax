@@ -97,7 +97,9 @@ def _transition_parameters(
     case_indices = jnp.tile(jnp.arange(case_count, dtype=jnp.int32), repetitions)
     dtype = jnp.asarray(prior.location).dtype
 
-    def parameters(start, end, case_index, step_index):
+    def parameters(
+        start: Array, end: Array, case_index: Array, step_index: Array
+    ) -> LinearGaussianParameters:
         context = problem.step_context(case_index, step_index)
         return jax.lax.cond(
             end == start,
@@ -448,7 +450,9 @@ def _sequential_kalman_filter(
         problem, covariance_regularization=covariance_regularization
     )
 
-    def step(state: KalmanFilterState, _):
+    def step(
+        state: KalmanFilterState, _: None
+    ) -> tuple[KalmanFilterState, KalmanFilterStep]:
         return kalman_filter_step(problem, state)
 
     state, records = jax.lax.scan(

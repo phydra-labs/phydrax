@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import Enum
 from math import isfinite
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -79,7 +79,10 @@ def _positive(value: float, name: str, /) -> float:
     return number
 
 
-def _enum(value: Any, enum_type: type[Enum], name: str, /):
+_EnumT = TypeVar("_EnumT", bound=Enum)
+
+
+def _enum(value: object, enum_type: type[_EnumT], name: str, /) -> _EnumT:
     if isinstance(value, enum_type):
         return value
     allowed_values = tuple(member.value for member in enum_type)

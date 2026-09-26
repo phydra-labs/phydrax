@@ -36,7 +36,9 @@ class PDEConditionedInput(StrictModule):
         self.tokens = tokens
 
 
-def _pde_conditioned_contract(model):
+def _pde_conditioned_contract(
+    model: PDEConditionedOperator,
+) -> ConfiguredOperatorContract:
     wrapped = model.operator.operator_contract
     capability = wrapped.capabilities
     input_name = model.input_name

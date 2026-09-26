@@ -157,11 +157,12 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(plan, FiniteVolumeDecompositionPlan):
             raise TypeError("plan must be a FiniteVolumeDecompositionPlan.")
-        available = tuple(
-            jax.devices()
-            if devices is None and execution_group is None
-            else (execution_group.devices if execution_group is not None else devices)
-        )
+        if execution_group is not None:
+            available = tuple(execution_group.devices)
+        elif devices is not None:
+            available = tuple(devices)
+        else:
+            available = tuple(jax.devices())
         required = prod(plan.split_factors)
         if execution_group is not None and len(available) != required:
             raise ValueError(

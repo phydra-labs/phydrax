@@ -12,6 +12,7 @@ from enum import IntEnum, StrEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -73,10 +74,10 @@ class NamedWeightSnapshot(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        values: ArrayLike,
+        values: npt.ArrayLike,
         /,
         *,
-        event_active: ArrayLike,
+        event_active: npt.ArrayLike,
         names: Sequence[str],
         variation_kinds: Sequence[WeightVariationKind | str],
         correlation_groups: Sequence[str],
@@ -296,7 +297,7 @@ def _event_identity(event: ParticleEventBatch | HostEventRecord, /) -> str:
                         value.value for value in event.weights.variation_kinds
                     ],
                     "correlation_groups": list(event.weights.correlation_groups),
-                    "nominal_name": event.weights.nominal_name,
+                    "nominal_name": event.weights.names[event.weights.nominal_index],
                 },
             }
         )

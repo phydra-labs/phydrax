@@ -90,7 +90,7 @@ class MeanShift(AbstractRecipe):
         centers = initialize_centers(x, w, self.center_capacity, self.initialization, key)
         delta = jnp.full(batch.case_shape, jnp.inf, dtype=w.dtype)
 
-        def step(_, state):
+        def step(_: Array, state: tuple[Array, Array]) -> tuple[Array, Array]:
             centers, delta = state
             distance = distances_to_centers(
                 x, centers, "squared-euclidean", batch.case_shape
@@ -275,7 +275,9 @@ class AffinityPropagation(AbstractRecipe):
         delta = jnp.full(batch.case_shape, jnp.inf, dtype=w.dtype)
         identity = jnp.eye(n, dtype=jnp.bool_)
 
-        def step(_, state):
+        def step(
+            _: Array, state: tuple[Array, Array, Array]
+        ) -> tuple[Array, Array, Array]:
             availability, responsibility, delta = state
             combined = availability + similarity
             best_index = jnp.argmax(combined, axis=-1)

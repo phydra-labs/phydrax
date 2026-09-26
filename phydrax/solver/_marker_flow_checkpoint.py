@@ -220,7 +220,7 @@ class MarkerFlowReplayPlan(StrictModule, NonTrainableState):
 
     def replay(
         self,
-        initial_state,
+        initial_state: object,
         record: MarkerFlowReplayRecord,
         step: Callable[[object, Array, Array, Array, Array], tuple[object, Array, Array]],
         /,

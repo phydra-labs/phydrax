@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import IntFlag
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +24,29 @@ from ..equations._mac_penalty_ib_cfd_dem import (
     MACPenaltyIBEvaluation,
 )
 from ._structured_incompressible import MACRateProjectionResult
+
+
+_SubstepCarry: TypeAlias = tuple[
+    DEMRuntimeState,
+    FaceVelocity,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class MACPenaltyIBWindowStatus(IntFlag):
@@ -253,7 +276,9 @@ def advance_mac_penalty_ib_cfd_dem_window(
         valid_window, 0, int(MACPenaltyIBWindowStatus.INVALID_TIME_STEP)
     ).astype(jnp.int32)
 
-    def substep(carry, index):
+    def substep(
+        carry: _SubstepCarry, index: Array
+    ) -> tuple[_SubstepCarry, MACPenaltyIBEvaluation]:
         (
             dem_state,
             fluid_increment,

@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -16,7 +19,13 @@ from ..linalg._causal_linear import (
 from ._types import NonlinearStatus
 
 
-def _exact_transition_matrices(problem, trajectory: Array, /) -> Array:
+if TYPE_CHECKING:
+    from ._causal import CausalRecurrenceProblem, CausalRecurrenceResult
+
+
+def _exact_transition_matrices(
+    problem: CausalRecurrenceProblem, trajectory: Array, /
+) -> Array:
     predecessors = jnp.concatenate(
         (problem.flat_initial_state[None, :], trajectory[:-1]),
         axis=0,
@@ -28,19 +37,23 @@ def _exact_transition_matrices(problem, trajectory: Array, /) -> Array:
     return matrices.at[0].set(jnp.zeros_like(matrices[0]))
 
 
-def attach_causal_implicit_derivative(problem, result, /):
+def attach_causal_implicit_derivative(
+    problem: CausalRecurrenceProblem, result: CausalRecurrenceResult, /
+) -> CausalRecurrenceResult:
     """Attach the exact implicit solution derivative to a certified trajectory."""
 
     forward_states = jax.lax.stop_gradient(result.flat_states)
 
-    def residual_function(trajectory):
+    def residual_function(trajectory: Array) -> Array:
         residual, _ = problem.evaluate_flat(trajectory)
         return residual
 
-    def primal_solve(_, __):
+    def primal_solve(_: Callable[[Array], Array], __: Array) -> Array:
         return forward_states
 
-    def tangent_solve(linearized, right_hand_side):
+    def tangent_solve(
+        linearized: Callable[[Array], Array], right_hand_side: Array
+    ) -> Array:
         checked = eqx.error_if(
             right_hand_side,
             result.status != int(NonlinearStatus.SUCCESS),

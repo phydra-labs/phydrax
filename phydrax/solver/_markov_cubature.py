@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from enum import IntEnum
 from numbers import Integral
-from typing import Literal, TypeAlias
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -30,7 +30,16 @@ from ..stochastic._cubature_path import (
 from ._differential import DifferentialProblem
 
 
+if TYPE_CHECKING:
+    from ..integration import WeightedSampleTarget
+
+
 MarkovCubatureMethod: TypeAlias = Literal["weak-euler", "stratonovich-flow"]
+_MarkovCubatureCarry: TypeAlias = tuple[Array, Array, Array, Array]
+_MarkovCubatureInterval: TypeAlias = tuple[Array, Array, Array]
+_MarkovCubatureStepOutput: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class MarkovCubatureStatus(IntEnum):
@@ -228,7 +237,7 @@ class MarkovCubatureSolution(StrictModule):
     def successful(self) -> Array:
         return self.status == int(MarkovCubatureStatus.SUCCESS)
 
-    def measure(self, index: int = -1, /):
+    def measure(self, index: int = -1, /) -> WeightedSampleTarget:
         """Return one deterministic weighted state law as an integration target."""
         if isinstance(index, bool) or not isinstance(index, Integral):
             raise TypeError("measure index must be an integer.")
@@ -329,8 +338,10 @@ def solve_markov_cubature(
     )
     log_control_weights = jnp.log(control_weights)
 
-    def evaluate_parent(time: Array, flat_state: Array, active: Array):
-        def evaluate(state_flat):
+    def evaluate_parent(
+        time: Array, flat_state: Array, active: Array
+    ) -> tuple[Array, Array]:
+        def evaluate(state_flat: Array) -> tuple[Array, Array]:
             state = state_flat.reshape(state_shape)
             drift_value = jnp.asarray(problem.drift(time, state, problem.args))
             if drift_value.shape != state_shape:
@@ -354,7 +365,9 @@ def solve_markov_cubature(
             flat_state,
         )
 
-    def weak_euler_step(time: Array, width: Array, current: Array, active: Array):
+    def weak_euler_step(
+        time: Array, width: Array, current: Array, active: Array
+    ) -> Array:
         drift, diffusion = jax.vmap(
             lambda state, enabled: evaluate_parent(time, state, enabled)
         )(current, active)
@@ -366,21 +379,22 @@ def solve_markov_cubature(
             + jnp.sqrt(state_width) * noise
         )
 
-    def flow_step(time: Array, width: Array, current: Array, active: Array):
-        if plan.path is None:
+    def flow_step(time: Array, width: Array, current: Array, active: Array) -> Array:
+        path = plan.path
+        if path is None:
             raise RuntimeError("stratonovich-flow is missing cubature path data.")
-        path_increments = jnp.asarray(plan.path.increments, dtype=points.dtype)
-        segment_widths = plan.path.segment_widths
+        path_increments = jnp.asarray(path.increments, dtype=points.dtype)
+        segment_widths = path.segment_widths
         segment_starts = jnp.cumsum(segment_widths) - segment_widths
         substep = 1.0 / float(plan.flow_substeps)
 
-        def one_path(state: Array, increments: Array):
-            def segment_body(segment_index, segment_state):
+        def one_path(state: Array, increments: Array) -> Array:
+            def segment_body(segment_index: Array, segment_state: Array) -> Array:
                 increment = increments[segment_index]
                 segment_width = segment_widths[segment_index]
                 segment_start = segment_starts[segment_index]
 
-                def rhs(fraction: Array, value: Array):
+                def rhs(fraction: Array, value: Array) -> Array:
                     drift, diffusion = evaluate_parent(
                         time + width * (segment_start + fraction * segment_width),
                         value,
@@ -392,7 +406,7 @@ def solve_markov_cubature(
                         state_width
                     ) * (diffusion @ increment)
 
-                def substep_body(index, value):
+                def substep_body(index: Array, value: Array) -> Array:
                     start = jnp.asarray(index, dtype=width.dtype) * substep
                     time_step = jnp.asarray(substep, dtype=width.dtype)
                     state_step = jnp.asarray(substep, dtype=value.dtype)
@@ -412,9 +426,9 @@ def solve_markov_cubature(
                     0, plan.flow_substeps, substep_body, segment_state
                 )
 
-            return jax.lax.fori_loop(0, plan.path.segment_count, segment_body, state)
+            return jax.lax.fori_loop(0, path.segment_count, segment_body, state)
 
-        def one_parent(state: Array, enabled: Array):
+        def one_parent(state: Array, enabled: Array) -> Array:
             return jax.lax.cond(
                 enabled,
                 lambda value: jax.vmap(lambda increments: one_path(value, increments))(
@@ -426,14 +440,18 @@ def solve_markov_cubature(
 
         return jax.vmap(one_parent)(current, active)
 
-    def one_interval(carry, inputs):
+    def one_interval(
+        carry: _MarkovCubatureCarry, inputs: _MarkovCubatureInterval
+    ) -> tuple[_MarkovCubatureCarry, _MarkovCubatureStepOutput]:
         current_points, current_log_weights, current_mask, current_status = carry
         start, end, interval_active = inputs
         should_advance = interval_active & (
             current_status == int(MarkovCubatureStatus.SUCCESS)
         )
 
-        def advance(values):
+        def advance(
+            values: _MarkovCubatureCarry,
+        ) -> tuple[_MarkovCubatureCarry, _MarkovCubatureStepOutput]:
             source_points, source_log_weights, source_mask, _ = values
             width = end - start
             propagated = (
@@ -541,7 +559,9 @@ def solve_markov_cubature(
                 next_status,
             ), step_output
 
-        def hold(values):
+        def hold(
+            values: _MarkovCubatureCarry,
+        ) -> tuple[_MarkovCubatureCarry, _MarkovCubatureStepOutput]:
             source_points, source_log_weights, source_mask, source_status = values
             active_points = jnp.sum(source_mask, dtype=jnp.int32)
             zero = jnp.asarray(0.0, dtype=source_log_weights.dtype)

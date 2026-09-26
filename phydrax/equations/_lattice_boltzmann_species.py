@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -58,7 +58,7 @@ class SpeciesLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
         transport: SpeciesLatticeBoltzmannPlan,
         /,
         *,
-        boundaries=(),
+        boundaries: Sequence[SpeciesBoundaryCondition] = (),
         volumetric_source: ArrayLike | None = None,
         problem_id: str | None = None,
     ) -> None:
@@ -131,7 +131,7 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         problem: SpeciesLatticeBoltzmannProblemIR,
         lattice: LatticeBoltzmannVelocitySet,
         precision: LatticeBoltzmannPrecisionPolicy,
-        spatial_shape,
+        spatial_shape: Sequence[int],
         spacing: float,
         step_size: float,
         cell_measure: ArrayLike,
@@ -243,7 +243,7 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         )
         return concentration
 
-    def _validate_state(self, state) -> None:
+    def _validate_state(self, state: object) -> None:
         if not isinstance(state, SpeciesLatticeBoltzmannState):
             raise TypeError("state must be a SpeciesLatticeBoltzmannState.")
         if state.state_id != self.compilation_id:
@@ -259,7 +259,7 @@ def compile_species_lattice_boltzmann_problem(
     problem: SpeciesLatticeBoltzmannProblemIR,
     lattice: LatticeBoltzmannVelocitySet,
     precision: LatticeBoltzmannPrecisionPolicy,
-    spatial_shape,
+    spatial_shape: Sequence[int],
     /,
     *,
     spacing: float,
@@ -388,7 +388,9 @@ def advance_species_lattice_boltzmann(
     )
 
 
-def _select_species_ledger(condition, proposed, current):
+def _select_species_ledger(
+    condition: Array, proposed: SpeciesLedger, current: SpeciesLedger
+) -> SpeciesLedger:
     return SpeciesLedger(
         jnp.where(
             condition, proposed.initial_species_amount, current.initial_species_amount

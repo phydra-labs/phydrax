@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -19,7 +19,11 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._cut_transition import MultivaluedCutCellTransition
-from ._mapped_geometry import CanonicalMappedGeometryPlan
+from ._mapped_geometry import CanonicalMappedGeometryPlan, CanonicalMappedGeometryState
+
+
+if TYPE_CHECKING:
+    from ...solver._hybrid_event import HybridEventActionResult
 
 
 BlockAMRDerivativeMode = Literal["frozen-history", "event-aware", "relaxed"]
@@ -248,7 +252,7 @@ class EventAwareCutCellDerivativePlan(StrictModule, NonTrainableState):
         args: Any = None,
         time_tangent: ArrayLike = 0.0,
         args_tangent: Any = None,
-    ):
+    ) -> HybridEventActionResult:
         from ...solver._hybrid_event import hybrid_event_jvp
 
         return hybrid_event_jvp(
@@ -269,7 +273,7 @@ class EventAwareCutCellDerivativePlan(StrictModule, NonTrainableState):
         /,
         *,
         args: Any = None,
-    ):
+    ) -> tuple[Array, Array, Any, HybridEventActionResult]:
         from ...solver._hybrid_event import hybrid_event_vjp
 
         return hybrid_event_vjp(
@@ -350,7 +354,19 @@ class MappedGeometryDerivativePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def jvp(self, time: ArrayLike, args: Any, args_tangent: Any, /, *, revision=0):
+    def jvp(
+        self,
+        time: ArrayLike,
+        args: Any,
+        args_tangent: Any,
+        /,
+        *,
+        revision: ArrayLike = 0,
+    ) -> tuple[
+        CanonicalMappedGeometryState,
+        CanonicalMappedGeometryState,
+        BlockAMRDerivativeEvidence,
+    ]:
         primal, tangent = jax.jvp(
             lambda parameters: self.geometry.evaluate(
                 time,

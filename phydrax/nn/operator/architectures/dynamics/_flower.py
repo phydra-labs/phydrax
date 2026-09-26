@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import prod, sqrt
-from typing import Literal
+from typing import Literal, TypedDict
 
 import equinox as eqx
 import jax
@@ -39,6 +39,19 @@ from ....._precision import inexact_result_type
 
 FlowerTransitionMode = Literal["learned", "resolution_consistent"]
 FlowerQueryMode = Literal["coincident", "interpolate"]
+
+
+class _WarpKwargs(TypedDict):
+    spatial_ndim: int
+    in_channels: int
+    out_channels: int
+    num_heads: int
+    boundary: tuple[WarpBoundaryMode, ...]
+    conditioning_size: int
+    mask_mode: WarpMaskMode
+    displacement_width: int
+    fill_value: float
+    key: Key[Array, ""]
 
 
 class _ChannelLastGroupNorm(StrictModule):
@@ -189,7 +202,7 @@ class _FlowerBlock(StrictModule):
         key: Key[Array, ""],
     ) -> None:
         warp_key, identity_key, modulation_key = jr.split(key, 3)
-        warp_kwargs = dict(
+        warp_kwargs = _WarpKwargs(
             spatial_ndim=spatial_ndim,
             in_channels=in_channels,
             out_channels=out_channels,

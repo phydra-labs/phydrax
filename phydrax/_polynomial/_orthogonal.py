@@ -11,6 +11,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 from scipy.special import eval_legendre, roots_jacobi
 
@@ -54,7 +55,7 @@ class OrthogonalRuleData(StrictModule, NonTrainableState):
         /,
         *,
         exact_degree: int,
-        family: OrthogonalFamily,
+        family: str,
         node_rule: str,
         reference_domain: str,
         basis_measure: str,
@@ -295,7 +296,9 @@ def _node_count(value: int, /) -> int:
     return count
 
 
-def _canonical_arrays(nodes, weights, dtype, /) -> tuple[np.ndarray, np.ndarray]:
+def _canonical_arrays(
+    nodes: ArrayLike, weights: ArrayLike, dtype: DTypeLike, /
+) -> tuple[np.ndarray, np.ndarray]:
     nodes_host = np.asarray(nodes, dtype=np.float64).reshape((-1,))
     weights_host = np.asarray(weights, dtype=np.float64).reshape((-1,))
     order = np.argsort(nodes_host)
@@ -311,7 +314,7 @@ def legendre_rule_data(
     kind: LegendreRuleKind = "gauss",
     /,
     *,
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
 ) -> OrthogonalRuleData:
     """Return a canonical raw-Lebesgue Legendre Gauss, Radau, or Lobatto rule."""
     count = _node_count(num_nodes)
@@ -388,7 +391,7 @@ def standard_normal_hermite_rule_data(
     num_nodes: int,
     /,
     *,
-    dtype=jnp.float64,
+    dtype: DTypeLike = jnp.float64,
 ) -> OrthogonalRuleData:
     """Return a probabilists' Hermite rule normalized as a standard-normal expectation."""
     count = _node_count(num_nodes)

@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Self
 
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._model._ports import PortMapping, ValuePort
+from ...nn._keys import EvalKey
 from ...nn.operator import (
+    AbstractOperatorModel,
     FunctionSamples,
     OperatorBatch,
     OperatorCaseProvenance,
@@ -196,6 +199,10 @@ def column_closure_dataset(
     ):
         source = binding.task.field_by_name[source_name]
         target = binding.task.field_by_name[target_name]
+        # ColumnClosureBinding validated these roles, so the task field resolved
+        # its source name, query name and output specification.
+        assert source.source_name is not None
+        assert target.query_name is not None and target.output_spec is not None
         if source.source_name in inputs:
             raise ValueError("Forcing may not overwrite the column state.")
         inputs[source.source_name] = FunctionSamples(
@@ -223,6 +230,12 @@ def column_closure_dataset(
     )
 
 
+def _records(dataset: OperatorDataset) -> tuple[OperatorCaseProvenance, ...]:
+    # OperatorDataset.__post_init__ resolves omitted provenance to per-case records.
+    assert dataset.provenance is not None
+    return dataset.provenance
+
+
 def _simulation_identity(record: OperatorCaseProvenance) -> str:
     keys = ("scenario", "model", "member")
     if any(key not in record.identities for key in keys):
@@ -243,7 +256,7 @@ class GeophysicalLearningExperiment:
     def __post_init__(self) -> None:
         partitions = (self.split.train, self.split.validation, self.split.test)
         policy = self.split.policy
-        records = tuple(record for part in partitions for record in part.provenance)
+        records = tuple(record for part in partitions for record in _records(part))
         selected_keys = (
             tuple(sorted({key for record in records for key in record.identities}))
             if policy.group_by == "all"
@@ -274,13 +287,14 @@ class GeophysicalLearningExperiment:
         previous_interval_end = None
         for partition in partitions:
             self.task.validate_batch(partition.batch)
-            cases = {record.case_id for record in partition.provenance}
+            provenance = _records(partition)
+            cases = {record.case_id for record in provenance}
             if cases & seen_cases:
                 raise ValueError(
                     "Training and evaluation partitions share case identities."
                 )
             seen_cases.update(cases)
-            for record in partition.provenance:
+            for record in provenance:
                 identity = _simulation_identity(record)
                 if (
                     "geophysical_simulation" in record.identities
@@ -291,14 +305,14 @@ class GeophysicalLearningExperiment:
                     )
             for key, seen in seen_groups.items():
                 if policy.group_by != "all" and any(
-                    key not in record.identities for record in partition.provenance
+                    key not in record.identities for record in provenance
                 ):
                     raise ValueError(
                         f"Every partition requires the selected {key!r} group identity."
                     )
                 groups = {
                     record.identities[key]
-                    for record in partition.provenance
+                    for record in provenance
                     if key in record.identities
                 }
                 if groups & seen:
@@ -307,28 +321,21 @@ class GeophysicalLearningExperiment:
                     )
                 seen.update(groups)
             if policy.order_by is not None:
-                if any(
-                    policy.order_by not in record.order for record in partition.provenance
-                ):
+                if any(policy.order_by not in record.order for record in provenance):
                     raise ValueError(
                         "Every chronological case requires the selected order coordinate."
                     )
-                positions = [
-                    record.order[policy.order_by] for record in partition.provenance
-                ]
+                positions = [record.order[policy.order_by] for record in provenance]
                 if previous_order_end is not None and min(positions) < previous_order_end:
                     raise ValueError("Chronological partition order coordinates overlap.")
                 previous_order_end = max(positions)
             if bounds is not None:
-                if any(
-                    not set(bounds).issubset(record.order)
-                    for record in partition.provenance
-                ):
+                if any(not set(bounds).issubset(record.order) for record in provenance):
                     raise ValueError(
                         "Every chronological window requires its declared temporal bounds."
                     )
-                starts = [record.order[bounds[0]] for record in partition.provenance]
-                ends = [record.order[bounds[1]] for record in partition.provenance]
+                starts = [record.order[bounds[0]] for record in provenance]
+                ends = [record.order[bounds[1]] for record in provenance]
                 if any(end < start for start, end in zip(starts, ends, strict=True)):
                     raise ValueError(
                         "Temporal window ends must not precede their starts."
@@ -351,7 +358,7 @@ class GeophysicalLearningExperiment:
         temporal_bounds: tuple[str, str] | None = None,
         train_fraction: float = 0.6,
         validation_fraction: float = 0.2,
-    ):
+    ) -> Self:
         """Default to joint-simulation holdout; explicit policies define other questions.
 
         A selected native key protects that key independently. The default is
@@ -360,7 +367,7 @@ class GeophysicalLearningExperiment:
         start/end order coordinates so overlapping target support is rejected.
         """
         records = []
-        for record in dataset.provenance:
+        for record in _records(dataset):
             simulation = _simulation_identity(record)
             if (
                 "geophysical_simulation" in record.identities
@@ -399,7 +406,7 @@ class GeophysicalLearningExperiment:
 
     def fit(
         self,
-        model,
+        model: AbstractOperatorModel,
         /,
         *,
         steps: int,
@@ -440,7 +447,7 @@ class GeophysicalLearningExperiment:
             artifact_id=artifact_id,
             jit=jit,
             provenance={
-                "training_case_ids": [p.case_id for p in train.provenance],
+                "training_case_ids": [p.case_id for p in _records(train)],
                 "group_keys": self.split.group_keys,
                 "order_by": self.split.policy.order_by,
                 "temporal_bounds": self.temporal_bounds,
@@ -460,7 +467,7 @@ class ColumnClosureAdmission:
     quantity_ids: tuple[str, ...]
     budget_units: tuple[str, ...]
 
-    def require_state(self):
+    def require_state(self) -> Any:
         if not self.admitted:
             raise ValueError(
                 "Learned closure failed physical domain admission; no state may be committed."
@@ -545,7 +552,7 @@ def deploy_column_closure(
     target_budget: Any,
     resolved_increment: Any,
     domain_admission: Callable[[Any], Any],
-    key=None,
+    key: EvalKey = None,
 ) -> ColumnClosureAdmission:
     """Consume a trained native operator, convert its interval labels, and admit."""
     if (
@@ -561,13 +568,15 @@ def deploy_column_closure(
             "External model execution is outside the column deployment schema."
         )
     prediction = trained.predict(batch, key=key)
-    before = jnp.stack(
-        [
-            batch.input(binding.task.field_by_name[name].source_name).values
-            for name in binding.state_fields
-        ],
-        axis=-1,
-    )
+    states = []
+    for name in binding.state_fields:
+        source_name = binding.task.field_by_name[name].source_name
+        # Binding validation fixed the source role; predict validated its values.
+        assert source_name is not None
+        values = batch.input(source_name).values
+        assert values is not None
+        states.append(values)
+    before = jnp.stack(states, axis=-1)
     delta = jnp.stack(
         [prediction.field(name).values for name in binding.target_fields], axis=-1
     )
@@ -622,7 +631,7 @@ class GeophysicalForcingSchedule:
             )
 
     @property
-    def schedule_id(self):
+    def schedule_id(self) -> str:
         return canonical_fingerprint(
             {
                 "source": self.source_name,
@@ -635,7 +644,7 @@ class GeophysicalForcingSchedule:
 
     def route(self) -> OperatorRolloutControlRoute:
         # Native deployment invokes policies on the host with a concrete step.
-        def policy(batch, step, key):
+        def policy(batch: OperatorBatch, step: Array, key: EvalKey) -> FunctionSamples:
             del batch, key
             return self.samples[int(step)]
 
@@ -668,7 +677,7 @@ class GeophysicalForecastRequest:
         self.time.encode((self.initialization,))
 
     @property
-    def request_id(self):
+    def request_id(self) -> str:
         return canonical_fingerprint(
             {
                 "clock": self.time.time_id,
@@ -700,7 +709,7 @@ class GeophysicalForecastProduct:
     continuation: GeophysicalForecastContinuation
     quantities: Mapping[str, GeophysicalQuantity]
 
-    def field(self, name: str):
+    def field(self, name: str) -> Array:
         """Return (lead, member, native spatial axes..., native channels...)."""
         return jnp.stack(
             [prediction.field(name).values for prediction in self.predictions]
@@ -806,7 +815,7 @@ class NativeGeophysicalForecast:
         /,
         *,
         steps: int | None = None,
-        key=None,
+        key: EvalKey = None,
     ) -> GeophysicalForecastProduct:
         if request.steps > self.trained.task.problem.rollout_steps:
             raise ValueError(

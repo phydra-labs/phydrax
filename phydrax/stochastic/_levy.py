@@ -535,7 +535,7 @@ class LevyProcessRealization(StrictModule):
         terms = jnp.arange(self.max_terms, dtype=jnp.uint32)
         flat_paths = self.path_keys.reshape((-1,) + tuple(self.root_key.shape))
 
-        def one_path(path_key):
+        def one_path(path_key: Array) -> Array:
             namespaced = jr.fold_in(path_key, namespace)
             return jax.vmap(lambda term: jr.fold_in(namespaced, term))(terms)
 

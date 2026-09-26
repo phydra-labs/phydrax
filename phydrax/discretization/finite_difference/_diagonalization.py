@@ -30,6 +30,7 @@ from ...linalg import (
     TransformDiagonalSolvePlan,
     TransformDiagonalSolveResult,
 )
+from .._tensor_entities import StructuredAxis
 from .._tensor_support import PreparedTensorGrid
 
 
@@ -213,7 +214,7 @@ class FDLaplacianDiagonalization(StrictModule, NonTrainableState):
         space = ArraySpace(unknown_shape, dtype=dtype)
         actions_ = tuple(actions)
 
-        def laplacian_action(values):
+        def laplacian_action(values: Array) -> Array:
             result = jnp.zeros_like(values)
             for action in actions_:
                 result = result + action.apply(values)
@@ -440,7 +441,7 @@ def _normalize_boundaries(
     return tuple(output)
 
 
-def _uniform_spacing(axis, /) -> tuple[np.ndarray, float]:
+def _uniform_spacing(axis: StructuredAxis, /) -> tuple[np.ndarray, float]:
     coordinates = np.asarray(
         axis.interval_centers
         if axis.primary_entity == "interval"
@@ -463,11 +464,17 @@ def _uniform_spacing(axis, /) -> tuple[np.ndarray, float]:
 def _prepare_axis(
     axis_index: int,
     axis_name: str,
-    axis,
+    axis: StructuredAxis,
     boundaries: FDBoundaryPair,
     dtype: np.dtype,
     /,
-):
+) -> tuple[
+    _FDSecondDifferenceAxis,
+    FDTransformAxisReport,
+    AbstractLinearTransform,
+    Array,
+    Array,
+]:
     coordinates, spacing = _uniform_spacing(axis)
     full_count = coordinates.size
     lower, upper = boundaries

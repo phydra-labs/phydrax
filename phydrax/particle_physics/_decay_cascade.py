@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from numbers import Integral
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -447,7 +448,37 @@ def seed_decay_frontier_from_host(
     )
 
 
-def _cascade_tables(plan: DarkDecayCascadePlan):
+# Twenty-three frontier, product, event, counter, and evidence arrays in the decay loop.
+_CascadeCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+
+
+def _cascade_tables(
+    plan: DarkDecayCascadePlan,
+) -> tuple[Array, Array, Array, Array, Array, Array, Array, tuple[TwoBodyDecayPlan, ...]]:
     species_ids = np.asarray(plan.species.pdg_ids)
     active = np.asarray(plan.species.active)
     charges = np.asarray(plan.species.charges)
@@ -498,7 +529,7 @@ def _cascade_tables(plan: DarkDecayCascadePlan):
     )
 
 
-def _child_ids(parent_ids, ordinal, epoch_sequence):
+def _child_ids(parent_ids: Array, ordinal: int, epoch_sequence: ArrayLike) -> Array:
     constants = jnp.asarray(
         (
             0x9E3779B9,
@@ -626,7 +657,7 @@ def evolve_decay_cascade_epoch(
         charge_residual,
     )
 
-    def body(index, values):
+    def body(index: Array, values: _CascadeCarry) -> _CascadeCarry:
         (
             next_ids,
             next_values,

@@ -287,7 +287,7 @@ def rollout_adaptive_coupling(
         def attempt_body(_: int, attempt: _AttemptCarry) -> _AttemptCarry:
             active = ~attempt.done
 
-            def execute(_: None):
+            def execute(_: None) -> _AttemptCarry:
                 result = advance_coupling_window(
                     prepared, carry.state, attempt.trial_size, args
                 )

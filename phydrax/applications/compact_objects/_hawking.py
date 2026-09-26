@@ -10,7 +10,7 @@ import math
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from fractions import Fraction
-from typing import Literal, Protocol
+from typing import Literal, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
@@ -26,6 +26,11 @@ from ...ein import contract
 
 
 QuantumStatistics = Literal["boson", "fermion"]
+_EvaporationCarry: TypeAlias = tuple[Array, Array, Array, Array]
+_EvaporationInterval: TypeAlias = tuple[Array, Array, Array]
+_EvaporationFluxes: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 class QuantumFieldSpecies(StrictModule, NonTrainableState):
@@ -1044,13 +1049,15 @@ def evolve_kerr_evaporation(
     quantum_area = plan.planck_area.astype(dtype)
     floor = plan.semiclassical_mass_floor.astype(dtype)
 
-    def step(carry, interval):
+    def step(
+        carry: _EvaporationCarry, interval: _EvaporationInterval
+    ) -> tuple[_EvaporationCarry, tuple[Array, ...]]:
         mass, angular_momentum, active, termination = carry
         start, end, local_index = interval
         dt = end - start
         attempted = active
 
-        def evaluate_current(_):
+        def evaluate_current(_: None) -> _EvaporationFluxes:
             state = KerrEvaporationState(
                 mass,
                 angular_momentum,
@@ -1075,7 +1082,7 @@ def evolve_kerr_evaporation(
                 spectrum.coverage_satisfied,
             )
 
-        def hold(_):
+        def hold(_: None) -> _EvaporationFluxes:
             return (
                 jnp.asarray(0.0, dtype=dtype),
                 jnp.asarray(0.0, dtype=dtype),

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
 import equinox as eqx
 import jax
@@ -21,6 +21,9 @@ from ..discretization.lattice_boltzmann._program import (
 )
 from ..discretization.lattice_boltzmann._species import SpeciesLatticeBoltzmannState
 from ..discretization.lattice_boltzmann._thermal import ThermalLatticeBoltzmannState
+
+
+_ReactionCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class ReactiveLocalStepResult(StrictModule):
@@ -136,10 +139,10 @@ class ReactiveSpeciesCouplingSchedulePlan(StrictModule, NonTrainableState):
         stepper: ReactiveLocalStepper,
         args: Any,
         /,
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    ) -> _ReactionCarry:
         dt = 0.5 * jnp.asarray(step_size) / float(self.reaction_substeps)
 
-        def body(_, carry):
+        def body(_: Array, carry: _ReactionCarry) -> _ReactionCarry:
             (
                 current_species,
                 current_energy,

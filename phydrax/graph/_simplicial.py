@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -13,6 +13,10 @@ from ..sparse import linear_apply
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._typed import edge_type_ids, node_type_ids
+
+
+if TYPE_CHECKING:
+    from ..domain.graph import EdgeType, NodeType
 
 
 FormDegree = Literal[0, 1, 2]
@@ -193,37 +197,37 @@ class SimplicialComplexGraph(StrictModule):
         self.edge_to_face_type = int(edge_to_face_type)
         self.face_to_edge_type = int(face_to_edge_type)
 
-    def vertex_cells_component(self):
+    def vertex_cells_component(self) -> NodeType:
         from ..domain.graph import NodeType
 
         return NodeType(self.vertex_type, name="vertex_cells")
 
-    def edge_cells_component(self):
+    def edge_cells_component(self) -> NodeType:
         from ..domain.graph import NodeType
 
         return NodeType(self.edge_type, name="edge_cells")
 
-    def face_cells_component(self):
+    def face_cells_component(self) -> NodeType:
         from ..domain.graph import NodeType
 
         return NodeType(self.face_type, name="face_cells")
 
-    def vertex_to_edge_component(self):
+    def vertex_to_edge_component(self) -> EdgeType:
         from ..domain.graph import EdgeType
 
         return EdgeType(self.vertex_to_edge_type, name="vertex_to_edge")
 
-    def edge_to_vertex_component(self):
+    def edge_to_vertex_component(self) -> EdgeType:
         from ..domain.graph import EdgeType
 
         return EdgeType(self.edge_to_vertex_type, name="edge_to_vertex")
 
-    def edge_to_face_component(self):
+    def edge_to_face_component(self) -> EdgeType:
         from ..domain.graph import EdgeType
 
         return EdgeType(self.edge_to_face_type, name="edge_to_face")
 
-    def face_to_edge_component(self):
+    def face_to_edge_component(self) -> EdgeType:
         from ..domain.graph import EdgeType
 
         return EdgeType(self.face_to_edge_type, name="face_to_edge")

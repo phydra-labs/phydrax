@@ -8,12 +8,12 @@ import abc
 from collections.abc import Callable
 from enum import IntEnum
 from math import isfinite
-from typing import Any
+from typing import Any, TypeVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._iteration import IterationEvidence
 from .._precision import PrecisionEvidenceEnvelope
@@ -21,6 +21,9 @@ from .._strict import StrictModule
 from .._tree_math import tree_allfinite, validate_inexact_tree
 from ..linalg import AbstractLinearOperator, AbstractVectorSpace, PyTreeSpace
 from ._domain_cond import domain_cond as _domain_cond
+
+
+_T = TypeVar("_T")
 
 
 class NonlinearStatus(IntEnum):
@@ -192,7 +195,7 @@ class NonlinearCapabilities(StrictModule):
         self.nonlinear_preconditioning = bool(nonlinear_preconditioning)
 
 
-def _guarded_call(predicate, function, *args):
+def _guarded_call(predicate: ArrayLike, function: Callable[..., _T], *args: object) -> _T:
     """Execute numeric work only on admissible inputs, preserving its PyTree shape.
 
     Shape tracing is not a numeric residual/Jacobian evaluation. The zero branch
@@ -209,7 +212,7 @@ def _guarded_call(predicate, function, *args):
         jnp.zeros(leaves[index].shape, leaves[index].dtype) for index in array_positions
     )
 
-    def evaluate(_):
+    def evaluate(_: None) -> tuple[Array, ...]:
         output = jax.tree.leaves(function(*args))
         return tuple(output[index] for index in array_positions)
 
@@ -314,11 +317,12 @@ class NonlinearSystemProblem(StrictModule):
     ) -> tuple[PyTree[Array], Any]:
         state_ = self.validate_state(state)
         if self.trial_validity_function is not None:
-            if not self.has_aux and self.residual_space is not None:
+            residual_space = self.residual_space
+            if not self.has_aux and residual_space is not None:
                 return _domain_cond(
                     self.trial_valid(state_, args),
                     lambda _: self._evaluate_unchecked(state_, args),
-                    lambda _: (self.residual_space.zeros(), None),
+                    lambda _: (residual_space.zeros(), None),
                     None,
                 )
             return _guarded_call(
@@ -326,7 +330,9 @@ class NonlinearSystemProblem(StrictModule):
             )
         return self._evaluate_unchecked(state_, args)
 
-    def _evaluate_unchecked(self, state, args, /):
+    def _evaluate_unchecked(
+        self, state: PyTree[Array], args: Any, /
+    ) -> tuple[PyTree[Array], Any]:
         output = self.residual_function(state, args)
         if self.has_aux:
             if not isinstance(output, tuple) or len(output) != 2:
@@ -362,12 +368,13 @@ class NonlinearSystemProblem(StrictModule):
         state_ = self.validate_state(state)
         residual_ = self.validate_residual(residual)
         finite = self.trial_valid(state_, args) & tree_allfinite(residual_)
-        if self.validity_function is None:
+        validity = self.validity_function
+        if validity is None:
             return finite
         return _domain_cond(
             finite,
             lambda _: jnp.asarray(
-                self.validity_function(state_, residual_, auxiliary, args),
+                validity(state_, residual_, auxiliary, args),
                 dtype=jnp.bool_,
             ),
             lambda _: jnp.asarray(False),
@@ -406,7 +413,9 @@ class NonlinearSystemProblem(StrictModule):
 
         return _jacobian_solve_operator(operator)
 
-    def derivative_linear_setup(self, state, args=None, /, *, transpose=False):
+    def derivative_linear_setup(
+        self, state: PyTree[Any], args: Any = None, /, *, transpose: bool = False
+    ) -> AbstractLinearOperator | None:
         factory = (
             self.adjoint_linear_setup_function
             if transpose
@@ -511,7 +520,7 @@ class FixedPointProblem(StrictModule):
     def as_nonlinear_problem(self) -> NonlinearSystemProblem:
         """Return the equivalent residual problem using ``mapping - state``."""
 
-        def residual(state, args):
+        def residual(state: PyTree[Array], args: Any) -> PyTree[Array]:
             mapped = self.mapping(state, args)
             return jax.tree.map(
                 lambda mapped_leaf, state_leaf: mapped_leaf - state_leaf,

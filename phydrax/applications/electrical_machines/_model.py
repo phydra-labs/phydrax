@@ -492,7 +492,7 @@ def polar_machine(
     )
     cells, ids, air = [], [], []
 
-    def rotor_region(sector):
+    def rotor_region(sector: int) -> int:
         body_sector = (sector - shift) % n
         return 1 if salient and abs(np.cos(mid_phi[body_sector])) < np.sqrt(0.5) else 0
 

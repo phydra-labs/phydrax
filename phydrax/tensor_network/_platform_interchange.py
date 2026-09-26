@@ -57,7 +57,9 @@ def _payload_digest(value: np.ndarray, /) -> str:
 
 
 def _attribute(value: object, /) -> InterchangeAttribute:
-    if type(value) not in (str, int, float, bool):
+    if type(value) not in (str, int, float, bool) or not isinstance(
+        value, (str, int, float)
+    ):
         raise TypeError("Interchange attributes must be JSON scalar values.")
     if isinstance(value, str) and not value:
         raise ValueError("Interchange string attributes must be nonempty.")
@@ -184,9 +186,7 @@ class TensorNetworkInterchangeDataset(StrictModule, NonTrainableState):
         return {**self._content_record(), "dataset_id": self.dataset_id}
 
     @classmethod
-    def from_record(
-        cls, record: Mapping[str, object], /
-    ) -> TensorNetworkInterchangeDataset:
+    def from_record(cls, record: Mapping[str, Any], /) -> TensorNetworkInterchangeDataset:
         expected = {
             "name",
             "shape",
@@ -472,7 +472,7 @@ class TensorNetworkInterchangeManifest(StrictModule, NonTrainableState):
 
     @classmethod
     def from_record(
-        cls, record: Mapping[str, object], /
+        cls, record: Mapping[str, Any], /
     ) -> TensorNetworkInterchangeManifest:
         expected = {
             "kind",

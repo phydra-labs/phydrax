@@ -500,7 +500,7 @@ def _batched_dense_matrix_function_action(
     scales = scale_.reshape((batch_count,))
     right_hand_sides = canonical.reshape((batch_count, size, canonical.shape[-1]))
 
-    def apply_one(matrix_, scale_value, right_hand_side):
+    def apply_one(matrix_: Array, scale_value: Array, right_hand_side: Array) -> Array:
         function_matrix = _small_matrix_function(
             matrix_,
             scale_value,
@@ -824,7 +824,7 @@ def matrix_function_action(
             failure=selected.failure,
         )
 
-    def action(value):
+    def action(value: Array) -> Array:
         return operator.target.flatten(operator.mv(operator.source.unflatten(value)))
 
     if method == "chebyshev":
@@ -1070,15 +1070,17 @@ def matrix_function_action(
 
 
 def matrix_exponential_action(
-    operator,
-    vector,
+    operator: AbstractLinearOperator
+    | Callable[[PyTree[Any]], PyTree[Array]]
+    | PreparedTaylorExponentialAction,
+    vector: PyTree[Any],
     scale: ArrayLike = 1.0,
     /,
     *,
     policy: MatrixFunctionPolicy | TaylorExponentialPolicy | None = None,
     key: Array | None = None,
     trace: ArrayLike | None = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> MatrixFunctionResult:
     if isinstance(operator, PreparedTaylorExponentialAction):
         if policy is not None or key is not None or kwargs:
@@ -1123,19 +1125,31 @@ def matrix_exponential_action(
 
 
 def matrix_phi1_action(
-    operator, vector, scale: ArrayLike = 1.0, /, **kwargs
+    operator: AbstractLinearOperator | Callable[[PyTree[Any]], PyTree[Array]],
+    vector: PyTree[Any],
+    scale: ArrayLike = 1.0,
+    /,
+    **kwargs: Any,
 ) -> MatrixFunctionResult:
     return matrix_function_action(operator, vector, scale, kind="phi1", **kwargs)
 
 
 def matrix_phi2_action(
-    operator, vector, scale: ArrayLike = 1.0, /, **kwargs
+    operator: AbstractLinearOperator | Callable[[PyTree[Any]], PyTree[Array]],
+    vector: PyTree[Any],
+    scale: ArrayLike = 1.0,
+    /,
+    **kwargs: Any,
 ) -> MatrixFunctionResult:
     return matrix_function_action(operator, vector, scale, kind="phi2", **kwargs)
 
 
 def matrix_phi3_action(
-    operator, vector, scale: ArrayLike = 1.0, /, **kwargs
+    operator: AbstractLinearOperator | Callable[[PyTree[Any]], PyTree[Array]],
+    vector: PyTree[Any],
+    scale: ArrayLike = 1.0,
+    /,
+    **kwargs: Any,
 ) -> MatrixFunctionResult:
     return matrix_function_action(operator, vector, scale, kind="phi3", **kwargs)
 
@@ -1341,7 +1355,7 @@ def _general_matrix_logarithm(matrix: Array, /) -> Array:
 
 
 def _chebyshev_action(
-    action,
+    action: Callable[[Array], Array],
     vector: Array,
     scale: Array,
     kind: MatrixFunctionKind,
@@ -1368,7 +1382,7 @@ def _chebyshev_action(
     )
     coefficients = (2.0 / degree) * (jnp.cos(indices[:, None] * theta[None, :]) @ samples)
 
-    def normalized(value):
+    def normalized(value: Array) -> Array:
         return (action(value) - center * value) / radius
 
     previous = vector

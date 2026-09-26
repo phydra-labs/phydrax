@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
@@ -15,6 +17,7 @@ from .linalg import (
     AbstractPreconditioner,
     LinearSolvePolicy,
     LinearSolveTemplate,
+    PreconditionerRefreshKind,
     prepare as prepare_linear,
     PreparedLinearSolve,
     PreparedPreconditioner,
@@ -108,7 +111,10 @@ class LinearRefreshState(StrictModule):
             plan,
             numeric_version=self.preconditioner_numeric_version,
             built_numeric_version=self.preconditioner_built_numeric_version,
-            refresh_kind=self.preconditioner_refresh_kind,
+            # PreparedPreconditioner rejects stored kinds outside the literal set.
+            refresh_kind=cast(
+                PreconditionerRefreshKind, self.preconditioner_refresh_kind
+            ),
         )
 
     def refresh(

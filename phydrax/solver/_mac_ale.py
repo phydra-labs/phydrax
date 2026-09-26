@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -33,9 +34,12 @@ from ._mac_pressure_operator import execute_weighted_pressure_iteration
 
 MACCoordinateMap = Callable[[Array, Array, Any], ArrayLike]
 MACGridVelocity = Callable[[Array, Array, Any], ArrayLike]
+_ProjectionResult: TypeAlias = tuple[FaceVelocity, Array, Array, Array, Array, Array]
 
 
-def _provider_vertices(provider, time, vertices, args, /) -> Array:
+def _provider_vertices(
+    provider: MACGridVelocity, time: Array, vertices: Array, args: Any, /
+) -> Array:
     dimension = vertices.shape[-1]
     flat = vertices.reshape((-1, dimension))
     values = jax.vmap(lambda point: jnp.asarray(provider(time, point, args)))(flat)
@@ -44,13 +48,17 @@ def _provider_vertices(provider, time, vertices, args, /) -> Array:
     return values.reshape(vertices.shape)
 
 
-def _face_average(vertices, reference, axis, /) -> Array:
+def _face_average(
+    vertices: Array, reference: FiniteVolumeDiscretization, axis: int, /
+) -> Array:
     return _keep_periodic_faces(
         _full_face_geometry(vertices, reference, axis)[0], reference, axis
     )
 
 
-def _boundary_maximum(values, reference, /) -> Array:
+def _boundary_maximum(
+    values: FaceVelocity, reference: FiniteVolumeDiscretization, /
+) -> Array:
     residuals = []
     for axis, structured_axis in enumerate(reference.grid.structured_axes):
         if not structured_axis.periodic:
@@ -63,7 +71,7 @@ def _boundary_maximum(values, reference, /) -> Array:
     )
 
 
-def _norm_squared(volume, value, /) -> Array:
+def _norm_squared(volume: Array, value: Array, /) -> Array:
     return jnp.sum(volume * value * value)
 
 
@@ -160,7 +168,9 @@ class MACALEStageGeometry(StrictModule, NonTrainableState):
             output.append(jump * self.face_measures[axis] / self.face_dual_measures[axis])
         return tuple(output)
 
-    def pressure_action(self, pressure, face_inverse_momentum, /) -> Array:
+    def pressure_action(
+        self, pressure: ArrayLike, face_inverse_momentum: FaceVelocity, /
+    ) -> Array:
         value = self.validate_pressure(pressure)
         coefficient = self.validate_velocity(face_inverse_momentum)
         mean = jnp.sum(self.cell_volumes * value) / jnp.sum(self.cell_volumes)
@@ -233,7 +243,13 @@ class MACALEStageGeometry(StrictModule, NonTrainableState):
                 )
         return jnp.linalg.solve(matrix, rhs[..., None])[..., 0]
 
-    def interpolate_cell_vector(self, cell_vector, /, *, prescribed_normal=None):
+    def interpolate_cell_vector(
+        self,
+        cell_vector: ArrayLike,
+        /,
+        *,
+        prescribed_normal: FaceVelocity | None = None,
+    ) -> FaceVelocity:
         value = jnp.asarray(cell_vector, dtype=self.cell_volumes.dtype)
         dimension = len(self.face_measures)
         if value.shape != self.cell_volumes.shape + (dimension,):
@@ -269,25 +285,28 @@ class MACALEStageGeometry(StrictModule, NonTrainableState):
 
     def kinetic_energy(self, velocity: FaceVelocity, /) -> Array:
         return 0.5 * sum(
-            jnp.sum(measure * value**2)
-            for measure, value in zip(
-                self.face_dual_measures, self.validate_velocity(velocity), strict=True
-            )
+            (
+                jnp.sum(measure * value**2)
+                for measure, value in zip(
+                    self.face_dual_measures, self.validate_velocity(velocity), strict=True
+                )
+            ),
+            start=jnp.zeros((), dtype=self.cell_volumes.dtype),
         )
 
 
 def _pressure_cg(
-    geometry,
-    rhs,
-    coefficient,
-    initial,
-    tolerance,
-    steps,
-    geometry_epoch,
-    gcl_residual,
-    metric_residual,
+    geometry: _ALEGeometry,
+    rhs: Array,
+    coefficient: FaceVelocity,
+    initial: Array,
+    tolerance: float,
+    steps: int,
+    geometry_epoch: int,
+    gcl_residual: Array,
+    metric_residual: Array,
     /,
-):
+) -> tuple[Array, Array, Array]:
     iteration = execute_weighted_pressure_iteration(
         geometry,
         rhs,
@@ -305,17 +324,17 @@ def _pressure_cg(
 
 
 def _project(
-    geometry,
-    velocity,
-    coefficient,
-    pressure,
-    tolerance,
-    steps,
-    geometry_epoch,
-    gcl_residual,
-    metric_residual,
+    geometry: _ALEGeometry,
+    velocity: FaceVelocity,
+    coefficient: Array,
+    pressure: Array,
+    tolerance: float,
+    steps: int,
+    geometry_epoch: int,
+    gcl_residual: Array,
+    metric_residual: Array,
     /,
-):
+) -> _ProjectionResult:
     values = geometry.validate_velocity(velocity)
     face_coefficient = tuple(jnp.ones_like(value) * coefficient for value in values)
     before = geometry.divergence(values)
@@ -343,6 +362,9 @@ def _project(
     rhs_norm = jnp.sqrt(_norm_squared(geometry.cell_volumes, rhs))
     converged = converged & (after_norm <= tolerance * jnp.maximum(rhs_norm, 1.0))
     return candidate, increment, residual, before, after, converged
+
+
+_ALEGeometry: TypeAlias = MACALEStageGeometry | PreparedMappedMACGeometry
 
 
 class MACALEResult(StrictModule):
@@ -397,15 +419,15 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        reference,
-        coordinate_map,
-        grid_velocity,
+        reference: FiniteVolumeDiscretization,
+        coordinate_map: MACCoordinateMap,
+        grid_velocity: MACGridVelocity,
         /,
         *,
-        mapping_id,
-        tolerance=1e-9,
-        maximum_iterations=500,
-        geometry_epoch=0,
+        mapping_id: str,
+        tolerance: float = 1e-9,
+        maximum_iterations: int = 500,
+        geometry_epoch: int = 0,
     ) -> None:
         if not isinstance(reference, FiniteVolumeDiscretization):
             raise TypeError("MAC ALE requires structured reference FV geometry.")
@@ -459,7 +481,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
     def evaluate(self, time: ArrayLike, args: Any = None, /) -> MACALEStageGeometry:
         time_ = jnp.asarray(time).reshape(())
 
-        def geometry_at(stage_time):
+        def geometry_at(stage_time: Array) -> tuple[Any, ...]:
             return _evaluate_mapped_mac_geometry(
                 self.reference,
                 lambda point: self.coordinate_map(stage_time, point, args),
@@ -631,7 +653,9 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
 
     stage = evaluate
 
-    def enforce_wall_kinematics(self, geometry, velocity, /) -> FaceVelocity:
+    def enforce_wall_kinematics(
+        self, geometry: MACALEStageGeometry, velocity: FaceVelocity, /
+    ) -> FaceVelocity:
         values = list(geometry.validate_velocity(velocity))
         for axis, structured_axis in enumerate(self.reference.grid.structured_axes):
             if not structured_axis.periodic:
@@ -642,7 +666,9 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
                 )
         return tuple(values)
 
-    def wall_kinematic_residual(self, geometry, velocity, /) -> Array:
+    def wall_kinematic_residual(
+        self, geometry: MACALEStageGeometry, velocity: FaceVelocity, /
+    ) -> Array:
         return _boundary_maximum(
             tuple(
                 value - grid
@@ -655,7 +681,9 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             self.reference,
         )
 
-    def relative_flux(self, geometry, velocity, /) -> FaceVelocity:
+    def relative_flux(
+        self, geometry: MACALEStageGeometry, velocity: FaceVelocity, /
+    ) -> FaceVelocity:
         return tuple(
             measure * (value - grid)
             for value, grid, measure in zip(
@@ -666,7 +694,9 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             )
         )
 
-    def convection(self, geometry, velocity, /) -> FaceVelocity:
+    def convection(
+        self, geometry: MACALEStageGeometry, velocity: FaceVelocity, /
+    ) -> FaceVelocity:
         values = geometry.validate_velocity(velocity)
         cells = geometry.reconstruct_cell_velocity(values)
         face_vectors = geometry.interpolate_cell_vector(cells, prescribed_normal=values)
@@ -694,7 +724,9 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             )
         )
 
-    def laplacian(self, geometry, velocity, /) -> FaceVelocity:
+    def laplacian(
+        self, geometry: MACALEStageGeometry, velocity: FaceVelocity, /
+    ) -> FaceVelocity:
         cells = geometry.reconstruct_cell_velocity(velocity)
         laplacian = jnp.stack(
             tuple(
@@ -711,7 +743,15 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             )
         )
 
-    def momentum_rate(self, geometry, velocity, /, *, viscosity=0.0, forcing=None):
+    def momentum_rate(
+        self,
+        geometry: MACALEStageGeometry,
+        velocity: FaceVelocity,
+        /,
+        *,
+        viscosity: ArrayLike = 0.0,
+        forcing: FaceVelocity | None = None,
+    ) -> FaceVelocity:
         values = geometry.validate_velocity(velocity)
         viscosity_ = jnp.asarray(viscosity, dtype=geometry.cell_volumes.dtype).reshape(())
         transport = self.convection(geometry, values)
@@ -728,22 +768,22 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
 
     def _result(
         self,
-        geometry,
-        original,
-        tentative,
-        rate,
-        projection_coefficient,
-        projected,
-        increment,
-        pressure_residual,
-        divergence_before,
-        candidate_divergence,
-        converged,
-        pressure,
-        geometry_valid,
+        geometry: MACALEStageGeometry,
+        original: FaceVelocity,
+        tentative: FaceVelocity,
+        rate: FaceVelocity,
+        projection_coefficient: Array,
+        projected: FaceVelocity,
+        increment: Array,
+        pressure_residual: Array,
+        divergence_before: Array,
+        candidate_divergence: Array,
+        converged: Array,
+        pressure: Array,
+        geometry_valid: Array,
         /,
         *,
-        energy_before,
+        energy_before: Array,
     ) -> MACALEResult:
         zero_pressure = jnp.zeros_like(geometry.cell_volumes)
         zero_velocity = tuple(jnp.zeros_like(value) for value in original)
@@ -844,7 +884,16 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             motion_plan_id=self.plan_id,
         )
 
-    def project(self, geometry, velocity, step_size, /, *, density=1.0, pressure=None):
+    def project(
+        self,
+        geometry: MACALEStageGeometry,
+        velocity: FaceVelocity,
+        step_size: ArrayLike,
+        /,
+        *,
+        density: ArrayLike = 1.0,
+        pressure: ArrayLike | None = None,
+    ) -> MACALEResult:
         values = geometry.validate_velocity(velocity)
         step = jnp.asarray(step_size, dtype=geometry.cell_volumes.dtype).reshape(())
         density_ = jnp.asarray(density, dtype=geometry.cell_volumes.dtype).reshape(())
@@ -862,7 +911,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
         )
         projection_coefficient = jnp.where(valid, step / density_, 0.0)
         zeros = jnp.zeros_like(geometry.cell_volumes)
-        solved = jax.lax.cond(
+        projected, increment, residual, before, after, converged = jax.lax.cond(
             valid,
             lambda _: _project(
                 geometry,
@@ -884,7 +933,12 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             values,
             tuple(jnp.zeros_like(value) for value in values),
             projection_coefficient,
-            *solved,
+            projected,
+            increment,
+            residual,
+            before,
+            after,
+            converged,
             incoming,
             valid,
             energy_before=geometry.kinetic_energy(values),
@@ -892,17 +946,17 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
 
     def advance(
         self,
-        velocity,
-        start_time,
-        step_size,
-        args=None,
+        velocity: FaceVelocity,
+        start_time: ArrayLike,
+        step_size: ArrayLike,
+        args: Any = None,
         /,
         *,
-        viscosity=0.0,
-        density=1.0,
-        forcing=None,
-        pressure=None,
-    ):
+        viscosity: ArrayLike = 0.0,
+        density: ArrayLike = 1.0,
+        forcing: FaceVelocity | None = None,
+        pressure: ArrayLike | None = None,
+    ) -> MACALEResult:
         start = self.evaluate(start_time, args)
         step = jnp.asarray(step_size, dtype=start.cell_volumes.dtype).reshape(())
         end = self.evaluate(start.time + step, args)
@@ -925,7 +979,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
         zero_velocity = tuple(jnp.zeros_like(value) for value in initial)
         zero_pressure = jnp.zeros_like(start.cell_volumes)
 
-        def transition(_):
+        def transition(_: None) -> tuple[FaceVelocity, FaceVelocity, *_ProjectionResult]:
             enforced = self.enforce_wall_kinematics(start, initial)
             rate = self.momentum_rate(
                 start, enforced, viscosity=viscosity, forcing=forcing
@@ -1038,19 +1092,19 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        source,
-        target,
-        cell_target_offsets,
-        cell_source_indices,
-        cell_intersection_measures,
-        face_target_offsets,
-        face_source_indices,
-        face_flux_weights,
-        face_momentum_weights,
+        source: PreparedMappedMACGeometry,
+        target: PreparedMappedMACGeometry,
+        cell_target_offsets: npt.ArrayLike,
+        cell_source_indices: npt.ArrayLike,
+        cell_intersection_measures: npt.ArrayLike,
+        face_target_offsets: npt.ArrayLike,
+        face_source_indices: npt.ArrayLike,
+        face_flux_weights: npt.ArrayLike,
+        face_momentum_weights: npt.ArrayLike,
         /,
         *,
-        tolerance=1e-9,
-        maximum_iterations=500,
+        tolerance: float = 1e-9,
+        maximum_iterations: int = 500,
     ) -> None:
         if not isinstance(source, PreparedMappedMACGeometry) or not isinstance(
             target, PreparedMappedMACGeometry
@@ -1135,11 +1189,11 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
         )
 
     @staticmethod
-    def _flatten(values):
+    def _flatten(values: FaceVelocity) -> Array:
         return jnp.concatenate(tuple(value.reshape((-1,)) for value in values))
 
     @staticmethod
-    def _unflatten(flat, geometry):
+    def _unflatten(flat: Array, geometry: PreparedMappedMACGeometry) -> FaceVelocity:
         values = []
         offset = 0
         for layout in geometry.reference.face_layouts:
@@ -1148,7 +1202,7 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
             offset += count
         return tuple(values)
 
-    def transfer_cells(self, source_values, /):
+    def transfer_cells(self, source_values: ArrayLike, /) -> Array:
         value = jnp.asarray(source_values)
         shape = self.source.reference.cell_shape
         if value.shape[: len(shape)] != shape:
@@ -1172,7 +1226,7 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
             (target / volumes).reshape(self.target.reference.cell_shape + trailing)
         )
 
-    def _transfer_moments(self, source, weights):
+    def _transfer_moments(self, source: Array, weights: Array) -> Array:
         target_count = sum(
             prod(layout.shape) for layout in self.target.reference.face_layouts
         )
@@ -1182,7 +1236,7 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
             .add(weights * source[self.face_source_indices])
         )
 
-    def transfer_face_flux(self, velocity, /):
+    def transfer_face_flux(self, velocity: FaceVelocity, /) -> FaceVelocity:
         values = self.source.validate_velocity(velocity)
         source = self._flatten(
             tuple(a * b for a, b in zip(self.source.face_measures, values, strict=True))
@@ -1195,7 +1249,7 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
             self.target,
         )
 
-    def transfer_face_momentum(self, velocity, /):
+    def transfer_face_momentum(self, velocity: FaceVelocity, /) -> FaceVelocity:
         values = self.source.validate_velocity(velocity)
         source = self._flatten(
             tuple(
@@ -1210,7 +1264,15 @@ class MACRemeshEpochPlan(StrictModule, NonTrainableState):
             self.target,
         )
 
-    def execute(self, cell_values, velocity, /, *, pressure=None, density=1.0):
+    def execute(
+        self,
+        cell_values: ArrayLike,
+        velocity: FaceVelocity,
+        /,
+        *,
+        pressure: ArrayLike | None = None,
+        density: ArrayLike = 1.0,
+    ) -> MACRemeshEpochResult:
         transferred_cells = self.transfer_cells(cell_values)
         flux_velocity = self.transfer_face_flux(velocity)
         momentum_velocity = self.transfer_face_momentum(velocity)

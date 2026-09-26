@@ -182,7 +182,7 @@ class PreparedTriangleWall(StrictModule, NonTrainableState):
         return self.face_vertices.shape[0]
 
 
-def _segment_closest(point, start, end, /):
+def _segment_closest(point: Array, start: Array, end: Array, /) -> tuple[Array, Array]:
     direction = end - start
     denominator = jnp.sum(direction * direction, axis=-1)
     parameter = jnp.sum((point - start) * direction, axis=-1) / denominator

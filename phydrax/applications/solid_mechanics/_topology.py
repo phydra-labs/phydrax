@@ -183,7 +183,9 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
             else jnp.asarray(penalty)
         )
 
-        def residual(states, density, dynamic_args):
+        def residual(
+            states: PyTree[Any], density: Array, dynamic_args: Any
+        ) -> tuple[PyTree[Any], ...]:
             if not isinstance(states, tuple) or len(states) != len(self.load_cases):
                 raise ValueError("states must contain one tuple entry per load case.")
             material = self.material_parameters(
@@ -196,7 +198,9 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
                 for state, case in zip(states, self.load_cases, strict=True)
             )
 
-        def objective(states, density, dynamic_args):
+        def objective(
+            states: PyTree[Any], density: Array, dynamic_args: Any
+        ) -> tuple[Array, Array]:
             values = self.load_values(
                 states,
                 density,
@@ -210,7 +214,9 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
             )
             return self.aggregation(values, weights), values
 
-        def admissibility(states, density, dynamic_args):
+        def admissibility(
+            states: PyTree[Any], density: Array, dynamic_args: Any
+        ) -> Array:
             if self.branch_evaluator is None:
                 return jnp.asarray(True)
             physical = self.physical_density(density, selected_beta)
@@ -222,7 +228,7 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
                 raise TypeError("branch_evaluator must return BranchGateEvidence.")
             return jnp.all(jnp.stack(tuple(item.accepted for item in evidence)))
 
-        def realization(states, density, dynamic_args):
+        def realization(states: PyTree[Any], density: Array, dynamic_args: Any) -> Array:
             if self.state_realization is None:
                 return jnp.asarray(True)
             physical = self.physical_density(density, selected_beta)

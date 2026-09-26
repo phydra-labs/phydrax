@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import StrEnum
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -103,7 +105,12 @@ class CommitteeAtomisticPotential(StrictModule):
     policy: CommitteeReductionPolicy
     committee_id: str = eqx.field(static=True)
 
-    def __init__(self, members, policy: CommitteeReductionPolicy, /) -> None:
+    def __init__(
+        self,
+        members: Iterable[PreparedAtomisticPotentialProgram],
+        policy: CommitteeReductionPolicy,
+        /,
+    ) -> None:
         values = tuple(members)
         if len(values) < 2 or any(
             not isinstance(value, PreparedAtomisticPotentialProgram) for value in values
@@ -125,7 +132,11 @@ class CommitteeAtomisticPotential(StrictModule):
         )
 
     def evaluate(
-        self, positions: ArrayLike, neighborhood: ParticleNeighborhoodState, /, **kwargs
+        self,
+        positions: ArrayLike,
+        neighborhood: ParticleNeighborhoodState,
+        /,
+        **kwargs: Any,
     ) -> CommitteeEvaluation:
         evaluations = tuple(
             member.evaluate(positions, neighborhood, **kwargs) for member in self.members
@@ -198,11 +209,15 @@ class ConservativeUncertaintyBlend(StrictModule):
         )
 
     def evaluate(
-        self, positions: ArrayLike, neighborhood: ParticleNeighborhoodState, /, **kwargs
-    ):
+        self,
+        positions: ArrayLike,
+        neighborhood: ParticleNeighborhoodState,
+        /,
+        **kwargs: Any,
+    ) -> tuple[Array, Array, AtomisticUncertaintyEvidence, Array]:
         position = jnp.asarray(positions)
 
-        def energy(value):
+        def energy(value: Array) -> tuple[Array, Array]:
             member_energies = jnp.stack(
                 tuple(
                     member.energy(value, neighborhood, **kwargs)[0]
@@ -363,7 +378,14 @@ class AcquisitionPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def select(self, frames, uncertainty, /, *, descriptors: ArrayLike | None = None):
+    def select(
+        self,
+        frames: Iterable[AtomisticFrame],
+        uncertainty: Iterable[AtomisticUncertaintyEvidence],
+        /,
+        *,
+        descriptors: ArrayLike | None = None,
+    ) -> tuple[AcquisitionRecord, ...]:
         frame_values = tuple(frames)
         evidence = tuple(uncertainty)
         if len(frame_values) != len(evidence):

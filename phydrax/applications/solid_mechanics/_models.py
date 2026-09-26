@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -16,7 +18,14 @@ from ...operators.mechanics import (
     neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
-from ...variational import FieldJetSpec, Functional, LocalIntegralTerm
+from ...variational import (
+    FieldJetSpec,
+    Functional,
+    FunctionalContext,
+    LocalFieldJet,
+    LocalGeometry,
+    LocalIntegralTerm,
+)
 
 
 def neo_hookean_functional(
@@ -34,7 +43,11 @@ def neo_hookean_functional(
     if not field:
         raise ValueError("field_name must be non-empty.")
 
-    def density(fields, geometry, context):
+    def density(
+        fields: Mapping[str, LocalFieldJet],
+        geometry: LocalGeometry,
+        context: FunctionalContext,
+    ) -> Array:
         del geometry, context
         gradient = fields[field].gradient
         if gradient is None:

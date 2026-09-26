@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -180,7 +180,8 @@ class BatteryRawTimeSeries:
 
     @property
     def source_current_sign(self) -> BatteryCurrentSign:
-        return self.source_units.current_sign
+        # BatterySourceUnits.__post_init__ normalizes current_sign to the enum.
+        return cast(BatteryCurrentSign, self.source_units.current_sign)
 
 
 @dataclass(frozen=True, slots=True)

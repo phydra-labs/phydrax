@@ -11,7 +11,7 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -46,13 +46,13 @@ class IRSpectrumResult(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        wavenumbers,
-        line_strengths,
-        grid,
-        intensity,
-        area_residual,
-        dipole_derivative,
-        successful,
+        wavenumbers: ArrayLike,
+        line_strengths: ArrayLike,
+        grid: ArrayLike,
+        intensity: ArrayLike,
+        area_residual: ArrayLike,
+        dipole_derivative: ArrayLike,
+        successful: ArrayLike,
         line_strength_unit: UnitDefinition,
         units: AtomisticUnitSystem,
         source_result_ids: tuple[str, ...],
@@ -220,7 +220,9 @@ class IRSpectrumPlan(StrictModule, NonTrainableState):
             InlineTaskExecutor() if executor is None else executor
         )
 
-        def displaced(atom: int, component: int, direction: int):
+        def displaced(
+            atom: int, component: int, direction: int
+        ) -> ElectronicGroundStatePropertyEvaluation:
             candidate = positions.copy()
             candidate[atom, component] += direction * self.displacement
             result = self.calculation.evaluate(candidate, cell)

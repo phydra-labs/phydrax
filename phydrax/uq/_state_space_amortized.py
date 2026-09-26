@@ -286,7 +286,7 @@ class AmortizedGaussianMarkovFamily(AbstractVariationalFamily):
         /,
         *,
         sample_shape: tuple[int, ...] = (),
-    ):
+    ) -> tuple[Array, Array]:
         return self.conditional_family.sample_and_log_prob(
             key,
             sample_shape=sample_shape,
@@ -397,9 +397,12 @@ def fit_amortized_state_space_variational(
     log_model = jax.vmap(
         lambda path: state_space_path_log_density(problem, path).log_density
     )(fitted.unconstrained_samples)
+    # The training kernel rebuilds the fitted family with the input family's treedef.
+    fitted_family = fitted.family
+    assert isinstance(fitted_family, AmortizedGaussianMarkovFamily)
     return AmortizedStateSpaceVariationalResult(
         problem=problem,
-        family=fitted.family,
+        family=fitted_family,
         states=fitted.unconstrained_samples,
         log_model=log_model,
         log_variational=fitted.log_variational,

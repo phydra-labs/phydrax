@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -22,6 +22,9 @@ from .._strict import StrictModule
 
 
 SkewMode = Literal["require", "project"]
+
+
+_PfaffianCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
 
 
 class PfaffianStatus(IntEnum):
@@ -631,7 +634,7 @@ def _factor_one(
     minimum_pivot = jnp.asarray(jnp.inf, dtype=matrix.real.dtype)
     coordinates = jnp.arange(dimension)
 
-    def body(pair, state):
+    def body(pair: Array, state: _PfaffianCarry) -> _PfaffianCarry:
         work, factors, block_pivots, order, parity, failed, minimum = state
         first_index = 2 * pair
         second_index = first_index + 1
@@ -777,7 +780,10 @@ def _prepared_pfaffian_outputs(
 
 
 @_prepared_pfaffian_outputs.defjvp
-def _prepared_pfaffian_outputs_jvp(primals, tangents):
+def _prepared_pfaffian_outputs_jvp(
+    primals: tuple[Array, Array, Array, Array, Array, Array, Array],
+    tangents: tuple[Array, object, object, object, object, object, object],
+) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array]]:
     matrix, lower, factor_scale, pivots, permutation, swap_sign, singular = primals
     matrix_tangent, _, _, _, _, _, _ = tangents
     sign, log_abs = _signed_log(pivots, swap_sign, singular, factor_scale)

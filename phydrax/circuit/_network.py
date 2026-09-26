@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import IntEnum
 from math import prod
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -196,6 +196,21 @@ class _Flattened:
         self.probes: list[tuple[str, tuple[str, ...]]] = []
 
 
+_CompiledTopology: TypeAlias = tuple[
+    _Flattened,
+    tuple[tuple[str, ...], ...],
+    tuple[WaveReference, ...],
+    tuple[tuple[int, int], ...],
+    tuple[tuple[int, int], ...],
+    tuple[tuple[tuple[int, ...], tuple[int, ...]], ...],
+    tuple[str, ...],
+    tuple[int, ...],
+    tuple[str, ...],
+    tuple[tuple[int, ...], ...],
+    tuple[str, ...],
+]
+
+
 def _flatten_definition(
     network: ScatteringNetwork,
     path: tuple[str, ...],
@@ -248,7 +263,7 @@ def _flatten_definition(
     }
 
 
-def _compile_topology(network: ScatteringNetwork):
+def _compile_topology(network: ScatteringNetwork) -> _CompiledTopology:
     flat = _Flattened()
     external_mapping = _flatten_definition(network, (), (), flat)
     channel_paths: list[tuple[str, ...]] = []

@@ -339,13 +339,13 @@ class RadiationMatterExchangePlan(StrictModule):
         upper = jnp.maximum(total, jnp.asarray(0.0, dtype=total.dtype))
         coefficient = step * self.scale.reduced_light_speed * self.absorption_coefficient
 
-        def residual(radiation):
+        def residual(radiation: Array) -> Array:
             material = total - radiation
             thermal = self.thermodynamics.solve_density_energy(species_density, material)
             equilibrium = self.radiation_constant * thermal.state.temperature**4
             return radiation - radiation_initial - coefficient * (equilibrium - radiation)
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             low, high = bounds
             midpoint = 0.5 * (low + high)
             value = residual(midpoint)

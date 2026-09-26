@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from numbers import Integral, Real
-from typing import Literal, Sequence
+from typing import Literal, Sequence, TypeAlias
 
 import equinox as eqx
 import jax
@@ -19,6 +19,9 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry.analytic import RigidFrame
 from ._interface import evaluate_refractive_interface, OpticalRayState
+
+
+_BracketCarry: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 SurfaceKind = Literal["plane", "sphere", "conic", "even-asphere"]
@@ -438,7 +441,7 @@ def _bounded_sag_intersection(
         derivatives[1:], stationary_index, axis=0
     )[0]
 
-    def refine(carry, _):
+    def refine(carry: _BracketCarry, _x: None) -> tuple[_BracketCarry, None]:
         low, high, flow, fhigh = carry
         midpoint = 0.5 * (low + high)
         fmid, dfmid, _, _, midpoint_domain = _surface_values(
@@ -488,7 +491,7 @@ def _bounded_sag_intersection(
         length=root_iteration_count,
     )
 
-    def refine_stationary(carry, _):
+    def refine_stationary(carry: _BracketCarry, _x: None) -> tuple[_BracketCarry, None]:
         low, high, dlow, dhigh = carry
         midpoint = 0.5 * (low + high)
         _, derivative_midpoint, _, _, midpoint_domain = _surface_values(

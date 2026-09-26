@@ -45,7 +45,7 @@ class KuttaJoukowskiLoadPlan(StrictModule, NonTrainableState):
         velocity: ArrayLike,
         /,
         *,
-        reference_point: ArrayLike = (0.0, 0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> VortexLoadResult:
         gamma = jnp.asarray(circulation, dtype=surface.control_point.dtype)
         flow = jnp.asarray(velocity, dtype=surface.control_point.dtype)
@@ -93,7 +93,7 @@ class UnsteadyBernoulliLoadPlan(StrictModule, NonTrainableState):
         reference_speed: ArrayLike,
         /,
         *,
-        reference_point: ArrayLike = (0.0, 0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> VortexLoadResult:
         speed = jnp.asarray(tangential_speed, dtype=surface.control_point.dtype)
         rate = jnp.asarray(potential_rate, dtype=speed.dtype)
@@ -142,7 +142,7 @@ class ImpulseLoadPlan(StrictModule, NonTrainableState):
         time_step: ArrayLike,
         /,
         *,
-        reference_point: ArrayLike = (0.0, 0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> VortexLoadResult:
         previous = jnp.asarray(previous_impulse)
         current = jnp.asarray(current_impulse, dtype=previous.dtype)

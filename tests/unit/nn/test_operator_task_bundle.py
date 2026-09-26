@@ -501,9 +501,7 @@ def test_operator_artifact_binding_tracks_parameters_and_fails_closed(tmp_path):
             jax.tree.map(lambda leaf: leaf + 1.0, parameters), model_state, fixed
         )
     )
-    base_path = phx.nn.operator.training.save_operator_artifact(
-        tmp_path / "base", base
-    )
+    base_path = phx.nn.operator.training.save_operator_artifact(tmp_path / "base", base)
     updated_path = phx.nn.operator.training.save_operator_artifact(
         tmp_path / "updated", updated
     )
@@ -1048,9 +1046,7 @@ def test_host_only_external_checkpoint_runs_eagerly_and_refuses_compilation(tmp_
     assert len(calls) == 1
     prepared = trained.prepare(_batch())
     with pytest.raises(TypeError, match="JAX transformations"):
-        jax.jit(
-            lambda: trained.predict_prepared(prepared).field("solution").values
-        )()
+        jax.jit(lambda: trained.predict_prepared(prepared).field("solution").values)()
     assert len(calls) == 1
 
 

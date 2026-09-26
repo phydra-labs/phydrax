@@ -141,7 +141,7 @@ class SOSFilterPlan:
         if state_.delays.dtype != dtype:
             raise TypeError("SOS state dtype does not match the promoted signal dtype.")
 
-        def sample_step(delays, sample):
+        def sample_step(delays: Array, sample: Array) -> tuple[Array, Array]:
             output = sample
             updated = []
             for index in range(self.sections.shape[0]):
@@ -322,7 +322,9 @@ class StreamingFFTConvolutionPlan:
             self.plan_id,
         )
 
-    def apply(self, block: ArrayLike, state: FFTConvolutionState, /):
+    def apply(
+        self, block: ArrayLike, state: FFTConvolutionState, /
+    ) -> tuple[Array, FFTConvolutionState]:
         values = jnp.asarray(block)
         if values.shape != (self.block_size,):
             raise ValueError("Streaming block shape does not match the plan.")
@@ -393,7 +395,7 @@ def cross_spectrum_and_coherence(
     time_bandwidth: float = 3.5,
     taper_count: int | None = None,
     sample_spacing: float = 1.0,
-):
+) -> tuple[Array, Array, Array]:
     left_ = jnp.asarray(left)
     right_ = jnp.asarray(right)
     if left_.shape != right_.shape or left_.ndim != 1 or left_.size < 2:

@@ -4,9 +4,12 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -19,6 +22,10 @@ from ...equations import (
     MPMLinearizedConstitutiveResponse,
 )
 from ._models import NeoHookeanParameters
+
+
+# Per-particle (stress, trial state, energy, wave speed, valid, tensile energy).
+_PhaseFieldPointOutputs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array]
 
 
 class MPMPhaseFieldParameters(StrictModule, NonTrainableState):
@@ -93,17 +100,21 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
             }
         )
 
-    def initialize_state(self, batch_shape, dtype, /):
+    def initialize_state(
+        self, batch_shape: tuple[int, ...], dtype: DTypeLike, /
+    ) -> Array:
         return jnp.zeros(tuple(batch_shape) + (2,), dtype=dtype)
 
-    def _embed(self, deformation):
+    def _embed(self, deformation: Array) -> Array:
         if self.dimension == 3:
             return deformation
         embedded = jnp.eye(3, dtype=deformation.dtype)
         return embedded.at[:2, :2].set(deformation)
 
     @staticmethod
-    def _split_energy(embedded, parameters):
+    def _split_energy(
+        embedded: Array, parameters: MPMPhaseFieldParameters
+    ) -> tuple[Array, Array, Array]:
         right_cauchy = embedded.T @ embedded
         eigenvalues = jnp.linalg.eigvalsh(right_cauchy)
         valid = jnp.all(eigenvalues > 0.0) & jnp.all(jnp.isfinite(eigenvalues))
@@ -122,11 +133,17 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
         )
         return positive_energy, negative_energy, valid
 
-    def _point(self, deformation, state, density, parameters):
+    def _point(
+        self,
+        deformation: Array,
+        state: Array,
+        density: Array,
+        parameters: MPMPhaseFieldParameters,
+    ) -> _PhaseFieldPointOutputs:
         damage = jnp.clip(state[0], 0.0, 1.0)
         history = jnp.maximum(state[1], 0.0)
 
-        def degraded_energy(value):
+        def degraded_energy(value: Array) -> Array:
             embedded = self._embed(value)
             positive, negative, _ = self._split_energy(embedded, parameters)
             degradation = (1.0 - damage) ** 2 + parameters.residual_stiffness
@@ -224,7 +241,7 @@ class PhaseFieldNeoHookeanMPMConstitutivePlan(
         flat_state = state.reshape((-1, 2))
         flat_density = density.reshape((-1,))
 
-        def stress(value, history, rho):
+        def stress(value: Array, history: Array, rho: Array) -> Array:
             return self._point(value, history, rho, parameters)[0]
 
         tangent = jax.vmap(jax.jacfwd(stress, argnums=0))(

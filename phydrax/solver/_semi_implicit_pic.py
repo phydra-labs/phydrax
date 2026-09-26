@@ -14,11 +14,13 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import CochainDiscretization
 from ..discretization.particle import ParticlePopulationState
 from ..discretization.pic import (
     PICChargeModelPlan,
     PICChargeState,
     PICParticleResponsePlan,
+    PICParticleResponseState,
     PICParticleState,
     PreparedPICParticleCochainTransfer,
 )
@@ -41,8 +43,8 @@ from ._maxwell import (
 
 class _SemiImplicitFieldAction(StrictModule):
     response: PICParticleResponsePlan
-    response_state: object
-    cochain: object
+    response_state: PICParticleResponseState
+    cochain: CochainDiscretization
     theta_dt: Array
 
     def __call__(self, electric: Array, /) -> Array:
@@ -325,7 +327,7 @@ class PICGaussCorrectionPlan(StrictModule, NonTrainableState):
         target = jnp.asarray(target_charge)
         active = jnp.asarray(active_mask, dtype=jnp.bool_)
 
-        def objective(value):
+        def objective(value: Array) -> Array:
             routes = self.transfer.build(value, active_mask=active)
             deposited = self.transfer.deposit_macrocharge(routes, macrocharge)
             residual = deposited.cochain - target

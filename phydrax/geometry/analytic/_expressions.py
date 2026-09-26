@@ -13,6 +13,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
+from ..._mass import Mass
 from .._atlas import BoundaryAtlas
 from .._capabilities import (
     ClosestPointProvider,
@@ -35,7 +36,11 @@ from .._sampling import (
     RejectionSamplingPlan,
     SamplingResult,
 )
-from .._validity import combine_validity, representation_validity
+from .._validity import (
+    combine_validity,
+    GeometryValidityEvidence,
+    representation_validity,
+)
 from ..design._schema import (
     _ParameterCollector,
     DesignState,
@@ -121,7 +126,7 @@ class _TranslationKernel(GeometryKernel):
     def field_certificate(self) -> FieldCertificate:
         return self.child.field_certificate.translated()
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         return representation_validity(self.child, state)
 
     def _offset(self, state: DesignState) -> Array:
@@ -139,7 +144,7 @@ class _TranslationKernel(GeometryKernel):
             jnp.asarray(points) - self._offset(state),
         )
 
-    def closest_point(self, state: DesignState, points: Array, /):
+    def closest_point(self, state: DesignState, points: Array, /) -> ClosestPointResult:
         if not isinstance(self.child, ClosestPointProvider):
             raise TypeError("Translated child lacks a closest-point provider.")
         offset = self._offset(state)
@@ -164,7 +169,9 @@ class _TranslationKernel(GeometryKernel):
             exact_to_physical=result.exact_to_physical,
         )
 
-    def contact_curvature(self, state: DesignState, points: Array, /):
+    def contact_curvature(
+        self, state: DesignState, points: Array, /
+    ) -> ContactCurvatureResult:
         if not isinstance(self.child, ContactCurvatureProvider):
             raise TypeError("Translated child lacks a contact-curvature provider.")
         result = self.child.contact_curvature(
@@ -193,10 +200,10 @@ class _TranslationKernel(GeometryKernel):
     def boundary_measure(self, state: DesignState, /) -> Array:
         return self.child.boundary_measure(state)
 
-    def interior_mass(self, state: DesignState, /):
+    def interior_mass(self, state: DesignState, /) -> Mass:
         return self.child.interior_mass(state)
 
-    def boundary_mass(self, state: DesignState, /):
+    def boundary_mass(self, state: DesignState, /) -> Mass:
         return self.child.boundary_mass(state)
 
     def sample_interior(
@@ -327,7 +334,7 @@ class _UnionKernel(GeometryKernel):
             tuple(child.field_certificate for child in self.children)
         )
 
-    def geometry_validity(self, state, /):
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
         return combine_validity(
             tuple(representation_validity(child, state) for child in self.children),
             contract_id="sharp_union",
@@ -391,7 +398,7 @@ class _UnionKernel(GeometryKernel):
         bounds = self.bounds(state)
         plan_ = RejectionSamplingPlan() if plan is None else plan
 
-        def proposal(proposal_key, count):
+        def proposal(proposal_key: Key[Array, ""], count: int) -> Array:
             return jr.uniform(
                 proposal_key,
                 shape=(count, self.ambient_dimension),
@@ -400,7 +407,7 @@ class _UnionKernel(GeometryKernel):
                 dtype=bounds.dtype,
             )
 
-        def accept(points):
+        def accept(points: Array) -> Array:
             return self.contains(state, points)
 
         return bounded_rejection_sample(

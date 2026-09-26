@@ -15,7 +15,7 @@ from ..._trainable import NonTrainableState
 from ...discretization import CellComplexTopology, OrientedEdgePathPlan
 from ...operators.quantum import BasisStateSubspace, HilbertRegisterLayout
 from ...solver import LocalHamiltonian, LocalHamiltonianTerm
-from ...topology import CellSubcomplex, compute_homology, PrimeField
+from ...topology import CellSubcomplex, compute_homology, HomologyResult, PrimeField
 
 
 _PAULI_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=jnp.complex128)
@@ -297,7 +297,7 @@ def z2_loop_operator(
     )
 
 
-def z2_homology(model: Z2GaugeModel, /):
+def z2_homology(model: Z2GaugeModel, /) -> HomologyResult:
     """Compute exact GF(2) homology for topological-sector labeling."""
     if not isinstance(model, Z2GaugeModel):
         raise TypeError("model must be Z2GaugeModel.")

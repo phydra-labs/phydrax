@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Literal, overload
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -27,6 +28,18 @@ from ...rendering import (
     render_camera_stack,
 )
 from ._common import PTVScenarioKind, SyntheticEvidence
+
+
+@overload
+def _finite_vector(
+    value: Sequence[float], length: Literal[3], /, *, name: str
+) -> tuple[float, float, float]: ...
+
+
+@overload
+def _finite_vector(
+    value: Sequence[float], length: int, /, *, name: str
+) -> tuple[float, ...]: ...
 
 
 def _finite_vector(

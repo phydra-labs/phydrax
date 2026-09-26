@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ._chart import CoordinateChart
 from ._complex import (
     AlmostComplexStructure,
     validate_almost_complex_structure,
@@ -81,7 +82,7 @@ class HermitianStructure(StrictModule):
         self.complex_structure = complex_structure
 
     @property
-    def chart(self):
+    def chart(self) -> CoordinateChart:
         return self.metric.chart
 
     def fundamental_form(self) -> DifferentialForm:
@@ -181,7 +182,7 @@ class KahlerStructure(StrictModule):
         return self.hermitian.complex_structure
 
     @property
-    def chart(self):
+    def chart(self) -> CoordinateChart:
         return self.hermitian.chart
 
     def fundamental_form(self) -> DifferentialForm:

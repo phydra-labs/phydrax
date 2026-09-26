@@ -95,7 +95,7 @@ class IncidentWavePlan(StrictModule, NonTrainableState):
             raise ValueError("IncidentWavePlan requires WaveComponent entries.")
         depth_ = float(depth)
         gravity_ = float(gravity)
-        current_ = tuple(float(value) for value in current)
+        current_ = (float(current[0]), float(current[1]))
         ramp = float(ramp_time)
         if (
             depth_ <= 0.0
@@ -254,7 +254,7 @@ def _dispersion_root(
         direction
     )
 
-    def residual(k):
+    def residual(k: float) -> float:
         intrinsic = angular_frequency - k * projected_current
         return gravity * k * math.tanh(k * depth) - intrinsic**2
 

@@ -195,7 +195,7 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
         expansion_operator: Callable[[SphericalSpectralSurface], ArrayLike],
         /,
         *,
-        center: ArrayLike = (0.0, 0.0, 0.0),
+        center: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         excluded: ArrayLike | None = None,
         search_complete: ArrayLike = False,
     ) -> ApparentHorizonResult:

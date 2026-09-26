@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -89,10 +90,10 @@ def _stable_signed_product_primal(value: Array, log_scale: Array, /) -> Array:
 
 
 def _apply_linear_stable_signed_product(value: Array, log_scale: Array, /) -> Array:
-    def inverse_scale(argument):
+    def inverse_scale(argument: Array) -> Array:
         return _stable_signed_product_primal(argument, -log_scale)
 
-    def solve(_inverse_scale, right_hand_side):
+    def solve(_inverse_scale: Callable[[Array], Array], right_hand_side: Array) -> Array:
         return _stable_signed_product_primal(right_hand_side, log_scale)
 
     return jax.lax.custom_linear_solve(
@@ -110,7 +111,9 @@ def _stable_signed_product(value: Array, log_scale: Array, /) -> Array:
 
 
 @_stable_signed_product.defjvp
-def _stable_signed_product_jvp(primals, tangents):
+def _stable_signed_product_jvp(
+    primals: tuple[Array, Array], tangents: tuple[Array, Array]
+) -> tuple[Array, Array]:
     value, log_scale = primals
     value_tangent, log_scale_tangent = tangents
     primal = _stable_signed_product(value, log_scale)
@@ -129,7 +132,9 @@ def _stable_log_abs(value: Array, /) -> Array:
 
 
 @_stable_log_abs.defjvp
-def _stable_log_abs_jvp(primals, tangents):
+def _stable_log_abs_jvp(
+    primals: tuple[Array], tangents: tuple[Array]
+) -> tuple[Array, Array]:
     (value,) = primals
     (value_tangent,) = tangents
     primal = _stable_log_abs(value)
@@ -170,7 +175,9 @@ def _zero_multiplier_linear_product(
 
 
 @_zero_multiplier_linear_product.defjvp
-def _zero_multiplier_linear_product_jvp(primals, tangents):
+def _zero_multiplier_linear_product_jvp(
+    primals: tuple[Array, Array, Array], tangents: tuple[Array, Array, Array]
+) -> tuple[Array, Array]:
     _, value, log_scale = primals
     multiplier_tangent, _, _ = tangents
     primal = jnp.zeros_like(value)
@@ -212,7 +219,10 @@ def _zero_multiplier_trilinear_product(
 
 
 @_zero_multiplier_trilinear_product.defjvp
-def _zero_multiplier_trilinear_product_jvp(primals, tangents):
+def _zero_multiplier_trilinear_product_jvp(
+    primals: tuple[Array, Array, Array, Array],
+    tangents: tuple[Array, Array, Array, Array],
+) -> tuple[Array, Array]:
     _, left, value, log_scale = primals
     multiplier_tangent, _, _, _ = tangents
     primal = jnp.zeros_like(value)
@@ -257,7 +267,9 @@ def _stable_signed_bilinear_product(
 
 
 @_stable_signed_bilinear_product.defjvp
-def _stable_signed_bilinear_product_jvp(primals, tangents):
+def _stable_signed_bilinear_product_jvp(
+    primals: tuple[Array, Array, Array], tangents: tuple[Array, Array, Array]
+) -> tuple[Array, Array]:
     left, right, log_scale = primals
     left_tangent, right_tangent, log_scale_tangent = tangents
     primal = _stable_signed_bilinear_product(left, right, log_scale)

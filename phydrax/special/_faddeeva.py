@@ -191,7 +191,7 @@ def _wofz(z: Array, /) -> Array:
 
 
 @_wofz.defjvp
-def _wofz_jvp(primals, tangents):
+def _wofz_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
     (z,) = primals
     (z_tangent,) = tangents
     value = _wofz(z)
@@ -278,7 +278,7 @@ def _dawsn(x: Array, /) -> Array:
 
 
 @_dawsn.defjvp
-def _dawsn_jvp(primals, tangents):
+def _dawsn_jvp(primals: tuple[Array], tangents: tuple[Array]) -> tuple[Array, Array]:
     (x,) = primals
     (x_tangent,) = tangents
     value = _dawsn(x)
@@ -337,7 +337,9 @@ def _voigt_profile(x: Array, sigma: Array, gamma: Array, /) -> Array:
 
 
 @_voigt_profile.defjvp
-def _voigt_profile_jvp(primals, tangents):
+def _voigt_profile_jvp(
+    primals: tuple[Array, Array, Array], tangents: tuple[Array, Array, Array]
+) -> tuple[Array, Array]:
     x, sigma, gamma = primals
     x_tangent, sigma_tangent, gamma_tangent = tangents
     value = _voigt_profile(x, sigma, gamma)

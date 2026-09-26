@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from .._exponential_family import (
     FiniteSupportNaturalSolvePlan,
@@ -24,7 +25,7 @@ def save_compressible_kinetic_iree(
     plan: PositiveCompressibleKineticPlan,
     path: str | Path,
     state_template: CompressibleKineticPopulationState,
-    relaxation_rate,
+    relaxation_rate: ArrayLike,
     /,
     *,
     policy: IREEExportPolicy | None = None,
@@ -70,7 +71,7 @@ def save_compressible_kinetic_iree(
         portable=True,
     )
 
-    def collision(*arrays):
+    def collision(*arrays: Array) -> tuple[Array, ...]:
         populations = tuple(arrays[:population_count])
         dual, stabilizer, local_rate = arrays[population_count:]
         spatial_shape = populations[0].shape[:-1]

@@ -71,7 +71,7 @@ class ConstrainedMeanFieldGameStatus(IntEnum):
     INVALID_LAW_MIXTURE = 15
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a non-empty string.")
     return value

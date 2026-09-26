@@ -227,7 +227,7 @@ def solve_multiterminal_coherent(
         raise TypeError("problem must be MultiTerminalCoherentProblem.")
     contact_count = len(problem.contacts)
 
-    def one_energy(energy):
+    def one_energy(energy: Array) -> tuple[Array, Array, Array, Array, Array]:
         spectral_energy = energy + 1.0j * problem.numerical_broadening_joule
         prepared_leads = tuple(
             prepare_periodic_lead_embedding(
@@ -431,7 +431,7 @@ def solve_dephasing_probes(
         problem.temperatures_kelvin,
     )
 
-    def one(transmission, occupation):
+    def one(transmission: Array, occupation: Array) -> tuple[Array, Array, Array]:
         return _probe_linear_solve(
             _landauer_laplacian(transmission),
             plan.probe_indices,

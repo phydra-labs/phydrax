@@ -1,18 +1,20 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import combinations
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+import numpy.typing as npt
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...atomistic.sampling import CollectiveVariableKind, CollectiveVariablePlan
-from ...units import ANGSTROM, conversion_factor
+from ...units import ANGSTROM, conversion_factor, UnitDefinition
 from ._binding import PreparedProteinBinding
 from ._construct import ProteinAtomKey
 
@@ -87,13 +89,13 @@ class PreparedProteinQualification(StrictModule):
         self,
         binding: PreparedProteinBinding,
         *,
-        bond_bounds,
-        bounds_unit=ANGSTROM,
-        clash_distance=0.8,
-        minimum_chiral_volume=0.1,
-        peptide_tolerance=0.35,
-        maximum_clash_pairs=100_000,
-        torsion_criteria=(),
+        bond_bounds: npt.ArrayLike,
+        bounds_unit: UnitDefinition = ANGSTROM,
+        clash_distance: float = 0.8,
+        minimum_chiral_volume: float = 0.1,
+        peptide_tolerance: float = 0.35,
+        maximum_clash_pairs: int = 100_000,
+        torsion_criteria: Iterable[ProteinTorsionCriterion] = (),
     ) -> None:
         """Prepare explicit per-native-bond bounds and conservative clash screening.
 
@@ -225,7 +227,7 @@ class PreparedProteinQualification(StrictModule):
             }
         )
 
-    def evaluate(self, positions):
+    def evaluate(self, positions: ArrayLike) -> ProteinGeometryEvidence:
         x = jnp.asarray(positions)
         bonds = x[self.bond_indices[:, 0]] - x[self.bond_indices[:, 1]]
         lengths = jnp.sqrt(jnp.sum(bonds * bonds, axis=-1))

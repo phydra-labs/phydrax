@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import equinox as eqx
 
@@ -147,7 +148,7 @@ class ROMDeploymentBundle(StrictModule, NonTrainableState):
         return record
 
     @classmethod
-    def from_record(cls, record: Mapping[str, object], /) -> "ROMDeploymentBundle":
+    def from_record(cls, record: Mapping[str, Any], /) -> "ROMDeploymentBundle":
         references = record["references"]
         if not isinstance(references, Sequence) or isinstance(references, str):
             raise TypeError("Serialized ROM references must be a sequence.")

@@ -32,6 +32,21 @@ from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
 
 WaveDarkMatterDifferentiability: TypeAlias = Literal["smooth_fixed_grid", "none"]
+_WaveStepCarry: TypeAlias = tuple[Array, Array, Array, Array, tuple[Array, ...]]
+_WaveStepOutput: TypeAlias = tuple[
+    tuple[Array, ...],
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class WaveDarkMatterState(StrictModule):
@@ -489,10 +504,16 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
             require_schedule_start=True,
         )
 
+    def _tensor_evaluation(self, /) -> TensorSpectralDiscretization:
+        evaluation = self.dealiasing.evaluation
+        # Dealiasing retains this tensor grid, and prepared pairs share one family.
+        assert isinstance(evaluation, TensorSpectralDiscretization)
+        return evaluation
+
     def _evaluation_wavefunction(self, psi: Array, /) -> tuple[Array, Array]:
         coefficients = self.discretization.project(psi)
         embedded = self.dealiasing.embed(coefficients)
-        values = self.dealiasing.evaluation.reconstruct(embedded, real_output=False)
+        values = self._tensor_evaluation().reconstruct(embedded, real_output=False)
         return coefficients, values
 
     def _poisson_modal(self, psi: Array, /) -> tuple[Array, Array, Array, Array, Array]:
@@ -795,7 +816,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, Array]:
         _, evaluation_psi, _, _, potential_coefficients = self._poisson_modal(psi)
-        potential = self.dealiasing.evaluation.reconstruct(
+        potential = self._tensor_evaluation().reconstruct(
             self.dealiasing.embed(potential_coefficients),
             real_output=True,
         )
@@ -846,7 +867,7 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
     def _smooth_final_psi(self, initial_psi: Array, /) -> Array:
         intervals = jnp.stack((self.scale_factors[:-1], self.scale_factors[1:]), axis=-1)
 
-        def step(psi, interval):
+        def step(psi: Array, interval: Array) -> tuple[Array, None]:
             candidate, _, _ = self._candidate(psi, interval[0], interval[1])
             return candidate, None
 
@@ -873,7 +894,9 @@ class PreparedPeriodicWaveDarkMatter(StrictModule, NonTrainableState):
         initial_norm = initial_snapshot[1]
         intervals = jnp.stack((self.scale_factors[:-1], self.scale_factors[1:]), axis=-1)
 
-        def step(carry, interval):
+        def step(
+            carry: _WaveStepCarry, interval: Array
+        ) -> tuple[_WaveStepCarry, _WaveStepOutput]:
             current_psi, current_scale, active, accepted_count, current_snapshot = carry
             candidate_psi, kinetic_phase, potential_phase = self._candidate(
                 current_psi,

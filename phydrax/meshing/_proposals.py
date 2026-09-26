@@ -7,6 +7,7 @@ from __future__ import annotations
 import heapq
 import time
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import Any, ClassVar, Literal, TypeAlias
 
 import equinox as eqx
@@ -602,7 +603,7 @@ def _protected_vertices(
     return fixed
 
 
-def _payload_bytes(value) -> int:
+def _payload_bytes(value: object) -> int:
     return sum(
         leaf.nbytes
         for leaf in jax.tree_util.tree_leaves(value)
@@ -629,7 +630,11 @@ def _limit_issues(result: CellMeshingResult, limits: MeshingLimits) -> tuple[str
     )
 
 
-def _check_binding(source, proposal, policy) -> None:
+def _check_binding(
+    source: CellMeshingResult,
+    proposal: MeshProposal,
+    policy: MeshProposalSafetyPolicy,
+) -> None:
     if not isinstance(source, CellMeshingResult):
         raise TypeError("source must be CellMeshingResult.")
     if not isinstance(
@@ -682,7 +687,12 @@ def _grade_sizes(values: np.ndarray, edges: np.ndarray, growth: float) -> np.nda
     return np.exp(sizes)
 
 
-def _project_metric(scope, raw, edges, policy) -> MeshMetricField:
+def _project_metric(
+    scope: MeshingScope,
+    raw: np.ndarray,
+    edges: np.ndarray,
+    policy: MeshProposalSafetyPolicy,
+) -> MeshMetricField:
     symmetric = 0.5 * raw + 0.5 * np.swapaxes(raw, -1, -2)
     eigenvalues, eigenvectors = np.linalg.eigh(symmetric)
     lower, upper = 1.0 / policy.maximum_size**2, 1.0 / policy.minimum_size**2
@@ -730,14 +740,18 @@ def _project_metric(scope, raw, edges, policy) -> MeshMetricField:
     )
 
 
-def _coordinate_projector(source, proposal, policy):
+def _coordinate_projector(
+    source: CellMeshingResult,
+    proposal: MeshCoordinateProposal,
+    policy: MeshProposalSafetyPolicy,
+) -> tuple[Array, Callable[[Array], Array]]:
     points = jnp.asarray(source.mesh.coordinates)
     movable = np.zeros(points.shape[0], dtype=np.bool_)
     movable[_scope_rows(source, proposal.scope)] = True
     fixed = jnp.asarray(~movable | _protected_vertices(source, policy))
     bounds = policy.coordinate_bounds
 
-    def project(values):
+    def project(values: Array) -> Array:
         if bounds is not None:
             values = jnp.clip(values, bounds[0], bounds[1])
         delta = values - points
@@ -752,10 +766,15 @@ def _coordinate_projector(source, proposal, policy):
     return fixed, project
 
 
-def _safe_marks(source, scores, policy):
+def _safe_marks(
+    source: CellMeshingResult,
+    connectivity: PolygonalConnectivity,
+    scores: np.ndarray,
+    policy: MeshProposalSafetyPolicy,
+) -> np.ndarray:
     mesh = source.mesh
     cells = np.asarray(mesh.blocks[0].global_ids)
-    cell_edges = np.asarray(mesh.connectivity.cell_edges)[:, :3]
+    cell_edges = np.asarray(connectivity.cell_edges)[:, :3]
     forbidden_edges = np.zeros(mesh.entity_set(1).count, dtype=np.bool_)
     for scope in policy.protected_scopes:
         if scope.entity_dimension > 0:
@@ -809,7 +828,13 @@ class MeshProposalProjection(StrictModule, NonTrainableState):
     projection_id: str = eqx.field(static=True)
 
     def __init__(
-        self, proposal, policy, marked_cell_ids, size_field, metric, target_coordinates
+        self,
+        proposal: MeshProposal,
+        policy: MeshProposalSafetyPolicy,
+        marked_cell_ids: ArrayLike,
+        size_field: ResolvedSizeField | None,
+        metric: MeshMetricField | None,
+        target_coordinates: Array | None,
     ) -> None:
         self.proposal, self.policy = proposal, policy
         self.marked_cell_ids = jnp.asarray(marked_cell_ids, dtype=jnp.int64)
@@ -921,11 +946,13 @@ def project_mesh_proposal(
             scores = np.max(
                 edge_scores[np.asarray(connectivity.cell_edges)[:, :3]], axis=1
             )
-        marks = _safe_marks(source, scores, policy)
+        marks = _safe_marks(source, connectivity, scores, policy)
     return MeshProposalProjection(proposal, policy, marks, sizes, metric, target)
 
 
-def _entity_vertex_signatures(mesh: CellMesh, dimension: int):
+def _entity_vertex_signatures(
+    mesh: CellMesh, dimension: int
+) -> tuple[tuple[int, ...], ...]:
     vertices = [{int(identifier)} for identifier in np.asarray(mesh.vertex_global_ids)]
     for degree in range(1, dimension + 1):
         upper = [set() for _ in range(mesh.entity_set(degree).count)]
@@ -941,7 +968,11 @@ def _entity_vertex_signatures(mesh: CellMesh, dimension: int):
     return tuple(tuple(sorted(values)) for values in vertices)
 
 
-def _preservation_issues(source, candidate, projection):
+def _preservation_issues(
+    source: CellMeshingResult,
+    candidate: CellMeshingResult,
+    projection: MeshProposalProjection,
+) -> tuple[str, ...]:
     policy = projection.policy
     issues = []
     if candidate.coordinate_contract.spatial_id != source.coordinate_contract.spatial_id:
@@ -1031,14 +1062,14 @@ class MeshProposalTransaction(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        source,
-        projection,
-        trusted_result,
-        safety_audit,
-        compliance,
-        transition,
-        transfer,
-        optimization,
+        source: CellMeshingResult,
+        projection: MeshProposalProjection,
+        trusted_result: CellMeshingResult,
+        safety_audit: CellMeshAuditReport,
+        compliance: MeshingComplianceReport,
+        transition: CellMeshTransition | None,
+        transfer: FiniteElementTransferBundle | None,
+        optimization: MeshOptimizationResult | None,
     ) -> None:
         _check_binding(source, projection.proposal, projection.policy)
         if (

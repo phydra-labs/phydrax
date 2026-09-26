@@ -132,7 +132,7 @@ class PreparedConstantIsotropicMobility(AbstractPreparedHydrodynamicMobility):
         value = self.coordinate_space.validate(jnp.asarray(positions))
         del value
 
-        def action(vector):
+        def action(vector: Array) -> Array:
             return self.plan.mobility * self.coordinate_space.validate(vector)
 
         return FunctionLinearOperator(
@@ -287,7 +287,7 @@ class PreparedFreeSpaceRPYMobility(AbstractPreparedHydrodynamicMobility):
         safe_blocks = identity_pair[..., None, None] * self_mobility * identity
         blocks = jnp.where(configuration_valid, blocks, safe_blocks)
 
-        def action(vector):
+        def action(vector: Array) -> Array:
             value = self.coordinate_space.validate(vector)
             return contract("ijab,jb->ia", blocks, value)
 

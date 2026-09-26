@@ -626,7 +626,7 @@ class SpatialNoiseBasis(StrictModule):
             raise ValueError(f"rank must lie in [1, {count}].")
         tolerance = max(
             float(psd_tolerance),
-            256.0 * np.finfo(np.dtype(precision_.construction_dtype)).eps,
+            256.0 * float(np.finfo(np.dtype(precision_.construction_dtype)).eps),
         )
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("psd_tolerance must be finite and non-negative.")
@@ -727,7 +727,7 @@ class SpatialNoiseBasis(StrictModule):
             raise ValueError(f"rank must lie in [1, {count}].")
         threshold = max(
             float(tolerance),
-            256.0 * np.finfo(np.dtype(precision_.construction_dtype)).eps,
+            256.0 * float(np.finfo(np.dtype(precision_.construction_dtype)).eps),
         )
         if not np.isfinite(threshold) or threshold < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
@@ -767,7 +767,7 @@ class SpatialNoiseBasis(StrictModule):
         if not bool(jnp.isfinite(sample)):
             raise ValueError("kernel must return finite covariance values.")
 
-        def matrix_element(left_index, right_index):
+        def matrix_element(left_index: Array, right_index: Array) -> Array:
             value = jnp.asarray(
                 kernel(point_array[left_index], point_array[right_index]),
                 dtype=precision_.construction_dtype,
@@ -880,7 +880,7 @@ class SpatialNoiseBasis(StrictModule):
         probes_count = min(count, probes_count)
         threshold = max(
             float(tolerance),
-            256.0 * np.finfo(np.dtype(precision_.construction_dtype)).eps,
+            256.0 * float(np.finfo(np.dtype(precision_.construction_dtype)).eps),
         )
         if not np.isfinite(threshold) or threshold < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
@@ -896,7 +896,7 @@ class SpatialNoiseBasis(StrictModule):
             raise ValueError("Quadrature weights must be finite and positive.")
         root = jnp.sqrt(jnp.asarray(weights_host).reshape((-1,)))
 
-        def weighted_matvec(vector):
+        def weighted_matvec(vector: Array) -> Array:
             state = (root * vector).reshape(basis_shape)
             result = jnp.asarray(
                 covariance_operator(state),

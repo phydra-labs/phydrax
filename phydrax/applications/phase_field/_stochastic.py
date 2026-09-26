@@ -157,7 +157,7 @@ class PhaseFieldNoisePlan(StrictModule, NonTrainableState):
         end: ArrayLike,
         /,
         *,
-        dtype=jnp.float64,
+        dtype: np.dtype | type = jnp.float64,
     ) -> PhaseFieldNoiseEvidence:
         lower = jnp.asarray(start)
         upper = jnp.asarray(end, dtype=lower.dtype)

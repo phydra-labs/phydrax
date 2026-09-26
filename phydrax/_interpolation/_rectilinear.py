@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import get_args, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +24,8 @@ RectilinearBoundaryMode: TypeAlias = Literal[
     "clamp",
     "constant",
 ]
+# Plain-string view for validating user-supplied modes.
+_RECTILINEAR_BOUNDARY_MODES: tuple[str, ...] = get_args(RectilinearBoundaryMode)
 AxisBound: TypeAlias = tuple[float, float] | None
 
 
@@ -132,7 +134,7 @@ def rectilinear_stencil(
     if dimensions <= 0 or len(modes) != dimensions:
         raise ValueError("axis_nodes and boundary must contain the same nonzero axes.")
     invalid_modes = tuple(
-        mode for mode in modes if mode not in ("periodic", "reflect", "clamp", "constant")
+        mode for mode in modes if mode not in _RECTILINEAR_BOUNDARY_MODES
     )
     if invalid_modes:
         raise ValueError(f"Unsupported rectilinear boundary modes: {invalid_modes}.")

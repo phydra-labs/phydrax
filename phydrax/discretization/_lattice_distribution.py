@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -946,7 +946,9 @@ class LatticeDecompositionPlan(StrictModule, NonTrainableState):
                     neighbors[global_id, axis, orientation] = neighbor_id
                     neighbor_valid[global_id, axis, orientation] = True
                     if neighbor_id != global_id:
-                        adjacency.add(tuple(sorted((global_id, neighbor_id))))
+                        adjacency.add(
+                            (min(global_id, neighbor_id), max(global_id, neighbor_id))
+                        )
         adjacency_array = np.asarray(sorted(adjacency), dtype=np.int32).reshape((-1, 2))
         halo_sets: list[set[int]] = [set() for _ in range(part_count)]
         for left, right in adjacency_array:
@@ -1170,7 +1172,8 @@ class PreparedLatticeStencilExecution(StrictModule, NonTrainableState):
         )
 
     def pack(self, local_owned: ArrayLike, /) -> PackedLatticeHalo:
-        parity = None if self.plan.parity < 0 else self.plan.parity
+        # Plan parity is normalized by LatticeHaloPlan._parity to -1, 0, or 1.
+        parity = None if self.plan.parity < 0 else cast(LatticeParity, self.plan.parity)
         return self.plan.decomposition.halo.pack(local_owned, parity=parity)
 
     def pack_rank(
@@ -1179,7 +1182,8 @@ class PreparedLatticeStencilExecution(StrictModule, NonTrainableState):
         partition: ArrayLike,
         /,
     ) -> PackedLatticeHalo:
-        parity = None if self.plan.parity < 0 else self.plan.parity
+        # Plan parity is normalized by LatticeHaloPlan._parity to -1, 0, or 1.
+        parity = None if self.plan.parity < 0 else cast(LatticeParity, self.plan.parity)
         return self.plan.decomposition.halo.pack_rank(
             local_owned,
             partition,

@@ -15,7 +15,10 @@ from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..equations._chemical_mechanism import PreparedChemicalMechanism
+from ..equations._chemical_mechanism import (
+    ChemicalRateEvaluation,
+    PreparedChemicalMechanism,
+)
 from ..equations._chemical_rates import ChemicalRateRuntime
 from ..equations._gas_dynamics import (
     HomogeneousMixtureCompressibleNavierStokesSystem,
@@ -198,7 +201,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
         substep = (end_time - start_time) / self.plan.subcycles
         integration_residual = jnp.asarray(0.0, dtype=incoming.dtype)
 
-        def body(_, carry):
+        def body(_: Array, carry: tuple[Array, Array]) -> tuple[Array, Array]:
             candidate, maximum_residual = carry
             evaluation = self._evaluate(candidate, args)
             initial_rate = (
@@ -214,7 +217,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
                 species_start + substep * initial_rate
             )
 
-            def fixed_point(_, current):
+            def fixed_point(_: Array, current: Array) -> Array:
                 current_evaluation = self._evaluate(current, args)
                 current_rate = (
                     current_evaluation.species_amount_rate
@@ -301,7 +304,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
             diagnostics=diagnostics,
         )
 
-    def _evaluate(self, state, args):
+    def _evaluate(self, state: Array, args: object) -> ChemicalRateEvaluation:
         system = self.transport.dynamics.system
         mass_density = state[..., self.species_indices]
         concentration = mass_density / self.plan.mechanism.schema.molar_masses

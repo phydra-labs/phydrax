@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jaxtyping import Array, Key, PyTree
 
 from phydrax.ein import contract
 
@@ -95,7 +95,7 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         flat = jnp.asarray(configuration, dtype=self.compute_dtype).reshape((-1,))
         dimension = flat.shape[0]
 
-        def log_components(coordinates):
+        def log_components(coordinates: Array) -> Array:
             amplitude = model(coordinates.reshape(shape))
             if not isinstance(amplitude, LogAmplitude):
                 raise TypeError(
@@ -110,7 +110,7 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         jacobian = jax.jacrev(log_components)
         component_gradient = jacobian(flat)
 
-        def diagonal_component(direction):
+        def diagonal_component(direction: Array) -> Array:
             _, directional_jacobian = jax.jvp(jacobian, (flat,), (direction,))
             return contract("ad,d->a", directional_jacobian, direction)
 
@@ -445,7 +445,9 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         )
         return jnp.where(jnp.all(valid), log_probability, -jnp.inf)
 
-    def payload(self, key, current, proposed, /):
+    def payload(
+        self, key: Key[Array, ""], current: PyTree[Any], proposed: PyTree[Any], /
+    ) -> tuple[()]:
         del key, current, proposed
         return ()
 

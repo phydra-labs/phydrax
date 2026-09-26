@@ -148,7 +148,9 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
             + extent * (integer.astype(extent.dtype) + 0.5) / self.address_plan.resolution
         )
 
-    def interpolation_stencil(self, points: jax.Array):
+    def interpolation_stencil(
+        self, points: jax.Array
+    ) -> tuple[SparseVoxelLookup, jax.Array, jax.Array]:
         values = jnp.asarray(points)
         if values.ndim != 2 or values.shape[1] != self.dimension:
             raise ValueError(f"points must have shape (count, {self.dimension}).")

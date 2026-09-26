@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from math import isfinite
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -26,6 +27,9 @@ from ...linalg import (
     solve,
     verify_dense_properties,
 )
+
+
+_LeadCarry: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class PeriodicPrincipalLayerLeadPlan(StrictModule, NonTrainableState):
@@ -123,7 +127,7 @@ def prepare_periodic_lead_embedding(
     identity = jnp.eye(dimension, dtype=jnp.complex128)
     spectral = energy_.astype(jnp.complex128) + 1.0j * eta
 
-    def body(index, state):
+    def body(index: Array, state: _LeadCarry) -> _LeadCarry:
         onsite_bulk, onsite_surface, forward, backward, first_converged = state
         green = _dense_solve(spectral * identity - onsite_bulk, identity)
         forward_green = forward @ green

@@ -72,7 +72,13 @@ class _AbstractBridgePolicy(StrictModule, NonTrainableState, abc.ABC):
             }
         )
 
-    def evidence(self, source, target, scale_separation, supported=True):
+    def evidence(
+        self,
+        source: ArrayLike,
+        target: ArrayLike,
+        scale_separation: ArrayLike,
+        supported: ArrayLike = True,
+    ) -> SuperconductingFidelityBridgeEvidence:
         source_ = jnp.asarray(source)
         target_ = jnp.asarray(target, dtype=source_.dtype)
         separation = jnp.asarray(scale_separation, dtype=jnp.real(source_).dtype)

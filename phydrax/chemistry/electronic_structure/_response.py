@@ -315,7 +315,7 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
         position_shape = coordinate.shape
         coordinate_count = coordinate.size
 
-        def residual_flat(current_density, current_positions):
+        def residual_flat(current_density: Array, current_positions: Array) -> Array:
             density = current_density.reshape(density_shape)
             positions_ = current_positions.reshape(position_shape)
             return (
@@ -353,7 +353,7 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
             )
         )
 
-        def gradient_flat(current_density, current_positions):
+        def gradient_flat(current_density: Array, current_positions: Array) -> Array:
             return self._stationary_gradient(
                 calculation,
                 state,

@@ -125,7 +125,9 @@ class InterfaceExchange(StrictModule):
         return -value, value
 
 
-def _exponential_difference(log_left, log_right, difference):
+def _exponential_difference(
+    log_left: Array, log_right: Array, difference: Array
+) -> Array:
     """Use a separately evaluated affinity, including at exact equilibrium."""
     return jnp.where(
         difference >= 0,
@@ -158,7 +160,7 @@ class ThermionicInterface(StrictModule):
 
     def __init__(
         self,
-        prefactor,
+        prefactor: ArrayLike,
         *,
         temperature_range: tuple[float, float],
         energy_reference: str,

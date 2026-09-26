@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 import equinox as eqx
@@ -140,7 +141,9 @@ def _empty_subcomplex(complex: CellSubcomplex, /) -> CellSubcomplex:
     )
 
 
-def _prefixes(filtration: CellFiltration, /):
+def _prefixes(
+    filtration: CellFiltration, /
+) -> tuple[tuple[CellSubcomplex, ...], np.ndarray]:
     canonical = tuple(
         np.asarray(value if filtration.direction == "sublevel" else -value)
         for value in filtration.values
@@ -221,7 +224,9 @@ def _modular_rank(matrix: np.ndarray, field: PrimeField, /) -> int:
     return row
 
 
-def _intervals(dimensions, maps, field: PrimeField, /):
+def _intervals(
+    dimensions: Sequence[int], maps: Sequence[np.ndarray], field: PrimeField, /
+) -> list[tuple[int, int]]:
     node_count = len(dimensions)
     ranks = np.zeros((node_count, node_count), dtype=np.int32)
     for start in range(node_count):
@@ -332,7 +337,7 @@ def compute_extended_persistence(
             levels,
         )
     )
-    buckets: dict[str, list[tuple[int, float, float, int, int]]] = {
+    buckets: dict[ExtendedComponentKind, list[tuple[int, float, float, int, int]]] = {
         "ordinary": [],
         "relative": [],
         "extended_positive": [],
@@ -348,6 +353,7 @@ def compute_extended_persistence(
             for index, values in enumerate(adjacent)
         ]
         for birth, death in _intervals(dimensions, maps, coefficients):
+            kind: ExtendedComponentKind
             if death < center:
                 kind = "ordinary"
             elif birth > center:

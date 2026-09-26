@@ -10,7 +10,7 @@ import os
 from collections.abc import Sequence
 from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
@@ -59,7 +59,7 @@ _UNSPECIFIED_PARENT = object()
 _STORE_VERIFIED_PARENT = object()
 
 
-def _identifier(value: str, name: str, /) -> str:
+def _identifier(value: object, name: str, /) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string.")
     normalized = value.strip()
@@ -85,7 +85,7 @@ def _identifiers(
     return tuple(sorted(normalized))
 
 
-def _fingerprint_id(value: str | None, name: str, /) -> str | None:
+def _fingerprint_id(value: object, name: str, /) -> str | None:
     if value is None:
         return None
     normalized = _identifier(value, name)
@@ -1629,11 +1629,11 @@ class DarkMatterRestartSnapshot(StrictModule, NonTrainableState):
         component_state: Any,
         /,
         *,
-        stable_ids: ArrayLike = (),
-        active_mask: ArrayLike = (),
-        incarnations: ArrayLike = (),
+        stable_ids: ArrayLike | Sequence[int] = (),
+        active_mask: ArrayLike | Sequence[bool] = (),
+        incarnations: ArrayLike | Sequence[int] = (),
         lineage_ids: ArrayLike = np.empty((0, 2), dtype=np.int64),
-        prng_root: ArrayLike = (),
+        prng_root: ArrayLike | tuple[()] = (),
         event_epoch: ArrayLike = 0,
         time: ArrayLike,
         accepted_step: ArrayLike,
@@ -1693,10 +1693,11 @@ class DarkMatterRestartSnapshot(StrictModule, NonTrainableState):
                 "Restart stable identity, mask, incarnation, or lineage changed."
             )
         root_input = jnp.asarray(prng_root)
+        # A nonempty root cannot be the empty-tuple absence marker.
         root = (
             jnp.zeros((0,), dtype=jnp.uint32)
             if root_input.size == 0
-            else jnp.asarray(jr.key_data(prng_root), dtype=jnp.uint32)
+            else jnp.asarray(jr.key_data(cast(ArrayLike, prng_root)), dtype=jnp.uint32)
         )
         if root.shape not in ((0,), (2,)):
             raise ValueError("Restart PRNG root must be absent or one canonical JAX key.")

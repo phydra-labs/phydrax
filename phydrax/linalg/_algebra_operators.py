@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import jax
@@ -16,7 +17,9 @@ from ._operators import AbstractLinearOperator, FunctionLinearOperator
 from ._spaces import ArraySpace
 
 
-def apply_real_map_componentwise(action, value: ArrayLike, /) -> Array:
+def apply_real_map_componentwise(
+    action: Callable[[Array], ArrayLike], value: ArrayLike, /
+) -> Array:
     """Extend one real-coordinate action to a native-complex value."""
     array = jnp.asarray(value)
     if not jnp.iscomplexobj(array):
@@ -52,12 +55,12 @@ def lift_real_operator_to_algebra(
     )
     axis = algebra_space.algebra_axis
 
-    def action(value):
+    def action(value: Array) -> Array:
         coordinates = jnp.moveaxis(value, axis, 0)
         applied = jax.vmap(operator.mv)(coordinates)
         return jnp.moveaxis(applied, 0, axis)
 
-    def transpose_action(value):
+    def transpose_action(value: Array) -> Array:
         coordinates = jnp.moveaxis(value, axis, 0)
         applied = jax.vmap(operator.transpose_mv)(coordinates)
         return jnp.moveaxis(applied, 0, axis)
@@ -97,10 +100,10 @@ def complexify_real_operator(
     source = ArraySpace(operator.source.shape, dtype=dtype)
     target = ArraySpace(operator.target.shape, dtype=dtype)
 
-    def action(value):
+    def action(value: Array) -> Array:
         return apply_real_map_componentwise(operator.mv, value)
 
-    def transpose_action(value):
+    def transpose_action(value: Array) -> Array:
         return apply_real_map_componentwise(operator.transpose_mv, value)
 
     return FunctionLinearOperator(

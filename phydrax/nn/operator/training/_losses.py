@@ -198,7 +198,10 @@ class AbstractOperatorLossTerm(ABC):
 
     name: str
     weight: float
-    accumulation_kind: ClassVar[OperatorAccumulationKind] = "single_batch"
+
+    @property
+    def accumulation_kind(self) -> OperatorAccumulationKind:
+        return "single_batch"
 
     @abstractmethod
     def __call__(
@@ -606,7 +609,7 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
     target_field: str | None = None
     relative: bool = False
     squared: bool = True
-    reduction: Literal["none", "mean", "sum"] = "mean"
+    reduction: Literal["mean", "sum"] = "mean"
     epsilon: float = 1e-12
     space: Literal["execution", "physical"] = "physical"
 

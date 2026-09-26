@@ -318,6 +318,21 @@ def test_general_krylov_stability_uses_public_restarted_arnoldi_contract():
     assert evidence.analyzer_id == "general-krylov-stability"
 
 
+def test_self_adjoint_krylov_stability_reports_leading_unstable_mode():
+    problem = phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, _: jnp.asarray([-2.0, -1.0, 0.5]) * state - coordinate,
+        problem_id="self-adjoint-krylov-diagonal",
+    )
+    analyzer = phx.continuation.SelfAdjointKrylovStabilityAnalyzer(mode_count=1)
+
+    evidence = analyzer.analyze(problem, jnp.zeros((3,)), jnp.asarray(0.0))
+
+    assert bool(evidence.successful)
+    assert not evidence.full_spectrum
+    np.testing.assert_allclose(float(evidence.leading_real_part), 0.5, atol=1e-8)
+    assert int(evidence.unstable_count) == 1
+
+
 def test_rejected_correctors_contract_step_deterministically():
     problem = phx.continuation.ParameterContinuationProblem(
         lambda state, parameter, _: state**2 + parameter + 1.0,

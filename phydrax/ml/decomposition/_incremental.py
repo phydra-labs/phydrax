@@ -8,7 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._differentiation import (
     DerivativeContract,
@@ -42,7 +42,7 @@ class IncrementalPCAModel(AbstractFittedModel):
         model: SubspaceModel,
         /,
         *,
-        total_weight,
+        total_weight: ArrayLike,
         chunks_seen: int,
     ) -> None:
         self.subspace = model
@@ -103,13 +103,13 @@ class IncrementalPCAModel(AbstractFittedModel):
     def _prediction_contract(self) -> DerivativeContract:
         return self.subspace._prediction_contract()
 
-    def transform(self, x, /) -> Array:
+    def transform(self, x: ArrayLike, /) -> Array:
         return self.subspace.transform(x)
 
-    def inverse_transform(self, scores, /) -> Array:
+    def inverse_transform(self, scores: ArrayLike, /) -> Array:
         return self.subspace.inverse_transform(scores)
 
-    def project(self, x, /) -> Array:
+    def project(self, x: ArrayLike, /) -> Array:
         return self.subspace.project(x)
 
     def projector(self, /) -> Array:
@@ -138,7 +138,7 @@ def _wrap_incremental(
     result: FitResult,
     /,
     *,
-    total_weight,
+    total_weight: ArrayLike,
     chunks_seen: int,
 ) -> FitResult:
     base = result.as_trainable()

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -608,7 +609,8 @@ def _polyhedral_face_cells(
             isinstance(entry, tuple) and len(entry) == 2 and isinstance(entry[0], str)
         )
         if not descriptor:
-            normalized.append(tuple(entry))
+            # Not a (kind, values) descriptor, so the entry is a vertex-id sequence.
+            normalized.append(tuple(cast(Sequence[ArrayLike], entry)))
             continue
         kind_value, values = entry
         kind = str(kind_value)

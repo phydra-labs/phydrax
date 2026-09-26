@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -260,7 +262,7 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
         )
         force_residual = (
             jnp.asarray(jnp.nan, dtype=position.dtype)
-            if coarse_force is None
+            if coarse_force is None or force is None
             else jnp.max(
                 jnp.abs(
                     jnp.sum(coarse_force, axis=0)
@@ -273,7 +275,7 @@ class PreparedMolecularCoarseMap(StrictModule, NonTrainableState):
         )
         momentum_residual = (
             jnp.asarray(jnp.nan, dtype=position.dtype)
-            if coarse_momentum is None
+            if coarse_momentum is None or momentum is None
             else jnp.max(
                 jnp.abs(
                     jnp.sum(coarse_momentum, axis=0)
@@ -351,7 +353,9 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
         if force.shape != fine_batch.positions.shape:
             raise ValueError("fine_forces must match fine_batch positions.")
 
-        def mapped_batch(batch: AtomisticBatch, labels: Array):
+        def mapped_batch(
+            batch: AtomisticBatch, labels: Array
+        ) -> tuple[AtomisticBatch, Array]:
             evaluations = tuple(
                 mapping.evaluate(batch.positions[index], forces=labels[index])
                 for index in range(batch.case_count)
@@ -361,7 +365,11 @@ class CoarseForceMatchingProblem(StrictModule, NonTrainableState):
                     "A fine configuration could not be mapped unambiguously."
                 )
             positions = jnp.stack(tuple(value.positions for value in evaluations))
-            projected = jnp.stack(tuple(value.forces for value in evaluations))
+            # Mapping with supplied forces always returns projected forces.
+            mapped_forces = cast(
+                tuple[Array, ...], tuple(value.forces for value in evaluations)
+            )
+            projected = jnp.stack(mapped_forces)
             count = batch.case_count
             coarse = mapping.coarse_system.plan
             cells = None

@@ -38,7 +38,7 @@ Material = SemiconductorMaterial | DielectricMaterial
 Region = MeshZone | MeshPatch
 
 
-def _region(region, role):
+def _region(region: Region, role: MeshZoneRole) -> Region:
     if not isinstance(region, (MeshZone, MeshPatch)):
         raise TypeError("Device regions must be native MeshZone or MeshPatch bindings.")
     if isinstance(region, MeshZone) and region.role != role:
@@ -89,7 +89,7 @@ class GateContact(StrictModule):
         region: Region,
         /,
         *,
-        potential_offset=0.0,
+        potential_offset: ArrayLike = 0.0,
         voltage_unit: UnitDefinition = VOLT,
     ) -> None:
         self.name = _text(name, "terminal name")
@@ -100,7 +100,9 @@ class GateContact(StrictModule):
         self.potential_offset = offset
 
 
-def _nodal_density(value, unit, count, name):
+def _nodal_density(
+    value: ArrayLike, unit: UnitDefinition, count: int, name: str
+) -> Array:
     array = _si(value, unit, PER_CUBIC_METER)
     if array.shape not in ((), (count,)):
         raise ValueError(f"{name} must be scalar or one value per support node.")
@@ -110,7 +112,12 @@ def _nodal_density(value, unit, count, name):
     return jnp.broadcast_to(array, (count,))
 
 
-def _resolve_dopants(support, baseline, attributes, name):
+def _resolve_dopants(
+    support: TransportSupport,
+    baseline: Array,
+    attributes: tuple[MeshAttribute, ...],
+    name: str,
+) -> Array:
     count = support.positions.shape[0]
     resolved = baseline
     assigned = np.zeros(count, dtype=np.bool_)
@@ -146,7 +153,12 @@ def _resolve_dopants(support, baseline, attributes, name):
     return resolved
 
 
-def _require_pins(support, semiconductor, potential, ohmic) -> None:
+def _require_pins(
+    support: TransportSupport,
+    semiconductor: np.ndarray,
+    potential: np.ndarray,
+    ohmic: np.ndarray,
+) -> None:
     """Reject disconnected gauge modes before a root solve is attempted."""
     count = support.positions.shape[0]
     edges = tuple(zip(np.asarray(support.tail), np.asarray(support.head), strict=True))
@@ -156,7 +168,7 @@ def _require_pins(support, semiconductor, potential, ohmic) -> None:
     ):
         parent = np.arange(count)
 
-        def root(index, parent=parent):
+        def root(index: int, parent: np.ndarray = parent) -> int:
             while parent[index] != index:
                 parent[index] = parent[parent[index]]
                 index = parent[index]
@@ -241,7 +253,7 @@ class DevicePlan(StrictModule):
         ionization: LocalImpactIonization | None = None,
         electrothermal: bool = False,
         carrier_energy: bool = False,
-        temperature=300.0,
+        temperature: ArrayLike = 300.0,
         density_unit: UnitDefinition = PER_CUBIC_METER,
         temperature_unit: UnitDefinition = KELVIN,
     ) -> None:
@@ -356,10 +368,13 @@ class DevicePlan(StrictModule):
                 )
             if model.thermodynamics is None:
                 legacy_bands = True
+                band_gap, affinity = model.band_gap, model.electron_affinity
+                # Intrinsic-density materials always resolve both band constants.
+                assert band_gap is not None and affinity is not None
                 current_band = (
                     float(intrinsic),
-                    float(model.band_gap),
-                    float(model.electron_affinity),
+                    float(band_gap),
+                    float(affinity),
                 )
                 if legacy_band_reference is not None and not np.allclose(
                     current_band, legacy_band_reference, rtol=1e-12, atol=0
@@ -428,7 +443,8 @@ class DevicePlan(StrictModule):
         for interface, material_pair in zip(
             interfaces, self.interface_materials, strict=True
         ):
-            if interface.electron_law is None:
+            electron_law, hole_law = interface.electron_law, interface.hole_law
+            if electron_law is None or hole_law is None:
                 continue
             left_material, right_material = (
                 models[material_pair[0]],
@@ -446,8 +462,8 @@ class DevicePlan(StrictModule):
             references = (
                 left_material.thermodynamics.energy_reference,
                 right_material.thermodynamics.energy_reference,
-                interface.electron_law.energy_reference,
-                interface.hole_law.energy_reference,
+                electron_law.energy_reference,
+                hole_law.energy_reference,
             )
             if len(set(references)) != 1:
                 raise ValueError(
@@ -606,9 +622,9 @@ class DevicePlan(StrictModule):
 
     def neutrality_potential(
         self,
-        temperature,
-        donor_density=None,
-        acceptor_density=None,
+        temperature: ArrayLike,
+        donor_density: ArrayLike | None = None,
+        acceptor_density: ArrayLike | None = None,
     ) -> Array:
         """Potential in V making the local common electronic Fermi energy zero."""
         temperatures = jnp.broadcast_to(
@@ -663,7 +679,7 @@ class DevicePlan(StrictModule):
             - jnp.min(self.support.positions, axis=0)
         )
 
-    def _mobilities(self, total_density):
+    def _mobilities(self, total_density: Array) -> tuple[Array, Array]:
         electrons, holes = jnp.zeros_like(total_density), jnp.zeros_like(total_density)
         for index, model in enumerate(self.material_models):
             if isinstance(model, SemiconductorMaterial):

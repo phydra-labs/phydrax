@@ -129,10 +129,10 @@ class RadiationSource:
     def require_rights(
         self,
         *,
-        commercial_use=False,
-        redistribution=False,
-        training_use=False,
-        export=False,
+        commercial_use: bool = False,
+        redistribution: bool = False,
+        training_use: bool = False,
+        export: bool = False,
     ) -> None:
         """Re-admit every retained parent for each requested downstream use."""
         for manifest in self.rights:

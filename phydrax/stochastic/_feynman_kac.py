@@ -677,7 +677,7 @@ def _source_generator_nodes(
     flat_values = values.reshape((-1,) + problem.output_shape)
     flat_controls = controls.reshape((-1,) + problem.output_shape + problem.noise_shape)
 
-    def evaluate(time, state, value, control):
+    def evaluate(time: Array, state: Array, value: Array, control: Array) -> Array:
         result = jnp.asarray(problem.generator(time, state, value, control, problem.args))
         if result.shape != problem.output_shape:
             raise ValueError("BSDE generator returned an incompatible output shape.")
@@ -985,7 +985,7 @@ def _normal_draws(
             dtype=jnp.uint32,
         )
 
-    def one_query(query_index):
+    def one_query(query_index: Array) -> Array:
         return jax.vmap(
             lambda path_index: jr.normal(
                 derive_key(key, _PATH_ADDRESS, query_index, path_index),
@@ -1062,14 +1062,14 @@ def sample_feynman_kac_paths(
     state_size = prod(problem.state_shape)
     noise_size = prod(problem.noise_shape)
 
-    def step(current, inputs):
+    def step(current: Array, inputs: tuple[Array, Array, Array]) -> tuple[Array, Array]:
         time, step_dt, noise_increment = inputs
         point_times = jnp.broadcast_to(time[:, None], (query_count, path_count)).reshape(
             (-1,)
         )
         flat_states = current.reshape((-1,) + problem.state_shape)
 
-        def coefficients(point_time, point_state):
+        def coefficients(point_time: Array, point_state: Array) -> tuple[Array, Array]:
             drift = jnp.asarray(problem.drift(point_time, point_state, problem.args))
             diffusion = jnp.asarray(
                 problem.diffusion(point_time, point_state, problem.args)

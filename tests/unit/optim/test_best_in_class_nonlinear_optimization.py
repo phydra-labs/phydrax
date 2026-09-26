@@ -261,6 +261,33 @@ def test_pounders_demotes_model_success_when_physical_stationarity_fails():
     assert int(result.method_evidence.interpolation_rank) < 6
 
 
+@pytest.mark.parametrize(
+    "method",
+    [opt.DoglegLeastSquares(), opt.POUNDERS(initial_radius=0.5)],
+    ids=["dogleg", "pounders"],
+)
+def test_least_squares_step_without_termination_uses_default_policy(method):
+    target = jnp.asarray([1.0, 0.5])
+
+    def residual(parameters):
+        return parameters - target
+
+    parameters = jnp.asarray([0.2, 0.2])
+    state = method.prepare_state(residual, parameters)
+    next_parameters, next_state, objective = method.step(
+        residual,
+        parameters,
+        state,
+        termination=None,
+    )
+
+    assert int(next_state.iteration) == 1
+    assert bool(jnp.isfinite(objective))
+    assert float(jnp.linalg.norm(residual(next_parameters))) < float(
+        jnp.linalg.norm(residual(parameters))
+    )
+
+
 def test_physical_stationarity_certificate_never_steps_outside_narrow_bounds():
     evaluated = []
 

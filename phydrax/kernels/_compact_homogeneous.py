@@ -386,7 +386,10 @@ class GeodesicRadialKernel(StrictModule):
             distance = jnp.linalg.norm(angles)
             branch = jnp.isfinite(margin) & (margin > self.branch_tolerance)
         else:
-            tangent, residual = self.stiefel_log(first, second)
+            stiefel_log = self.stiefel_log
+            # Construction rejects the Stiefel space without a log provider.
+            assert stiefel_log is not None
+            tangent, residual = stiefel_log(first, second)
             tangent = jnp.asarray(tangent)
             residual = jnp.asarray(residual)
             margin = self.branch_tolerance - residual

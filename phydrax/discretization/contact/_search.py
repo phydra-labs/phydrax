@@ -23,7 +23,7 @@ from ._stencils import (
     ContactStencilBatch,
     ContactStencilKind,
 )
-from ._surface import PreparedCollisionScene
+from ._surface import ContactPairPolicy, PreparedCollisionScene
 
 
 ContactSearchScene = PreparedCollisionScene | ContactParticipantScene
@@ -368,7 +368,7 @@ def _primitive_allowed(
     right_feature: int,
     static: np.ndarray,
     participants: np.ndarray,
-    pair_policy,
+    pair_policy: ContactPairPolicy,
     exclusions: set[tuple[int, int]],
     /,
 ) -> bool:

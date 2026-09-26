@@ -11,9 +11,9 @@ from enum import IntEnum
 from math import prod
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -106,7 +106,7 @@ class VariablePatchFillPatchResult(StrictModule):
     result_id: str = eqx.field(static=True)
 
     def require_complete(self, /) -> None:
-        if isinstance(self.complete, jax.core.Tracer):
+        if isinstance(self.complete, jax_core.Tracer):
             raise RuntimeError("FillPatch completeness must be checked outside tracing.")
         if not bool(self.complete):
             raise ValueError("Variable patch FillPatch has unresolved active values.")

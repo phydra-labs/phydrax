@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from math import lcm
+from typing import Any, Literal, TypeVar
 
 import jax.numpy as jnp
 from jaxtyping import Array
@@ -22,14 +24,19 @@ from phydrax.nn.operator.data import OperatorBatch, OperatorOutputSpec
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
 
-def _ordered_intersection(left, right, /, *, name: str):
+_T = TypeVar("_T")
+
+
+def _ordered_intersection(
+    left: Iterable[_T], right: Iterable[_T], /, *, name: str
+) -> tuple[_T, ...]:
     values = tuple(value for value in left if value in frozenset(right))
     if not values:
         raise ValueError(f"Fidelity child operators have no shared {name}.")
     return values
 
 
-def _optional_intersection(left, right, /):
+def _optional_intersection(left: Sequence[_T], right: Sequence[_T], /) -> tuple[_T, ...]:
     if not left:
         return tuple(right)
     if not right:
@@ -37,7 +44,7 @@ def _optional_intersection(left, right, /):
     return _ordered_intersection(left, right, name="spatial dimension")
 
 
-def _combined_requirement(left, right, /, *, optional, name: str):
+def _combined_requirement(left: _T, right: _T, /, *, optional: _T, name: str) -> _T:
     if left == right:
         return left
     if left == optional:
@@ -208,7 +215,9 @@ def _intersect_training(
     )
 
 
-def _fidelity_correction_contract(model):
+def _fidelity_correction_contract(
+    model: FidelityCorrectionOperator,
+) -> ConfiguredOperatorContract:
     baseline = model.baseline_operator.operator_contract
     correction = model.correction_operator.operator_contract
     return ConfiguredOperatorContract(
@@ -230,7 +239,9 @@ def _fidelity_correction_contract(model):
     )
 
 
-def _output_spec_signature(spec: OperatorOutputSpec, /):
+def _output_spec_signature(
+    spec: OperatorOutputSpec, /
+) -> tuple[int | Literal["scalar"], tuple[str, ...], dict[str, Any] | None]:
     classification = spec.classification
     return (
         spec.channels,

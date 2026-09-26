@@ -75,9 +75,9 @@ def event_first_hit(
         jnp.asarray(initial_state), events.batch_shape + events.state_shape
     )
     after = events.post_states.reshape((-1,) + events.state_shape)
-    post_target = jax.vmap(target)(after).reshape(events.times.shape)
-    initial_target = jax.vmap(target)(
-        initial.reshape((-1,) + events.state_shape)
+    post_target = jnp.asarray(jax.vmap(target)(after)).reshape(events.times.shape)
+    initial_target = jnp.asarray(
+        jax.vmap(target)(initial.reshape((-1,) + events.state_shape))
     ).reshape(events.batch_shape)
     eligible = events.valid & (events.times >= start) & (events.times <= end)
     post_hit = jnp.min(jnp.where(eligible & post_target, events.times, jnp.inf), axis=-1)

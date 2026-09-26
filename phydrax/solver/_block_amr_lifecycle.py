@@ -13,12 +13,14 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 
 from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import TensorGridPlan, TopologyEpoch, UniformCellAxisSpec
+from ..discretization._cell_complex import PolyhedralConnectivity
 from ..discretization.amr import (
     BlockAMRResourcePlan,
     EmbeddedLevelSetBody,
@@ -111,7 +113,7 @@ class MultivaluedBlockAMRCheckpointPlan(StrictModule, NonTrainableState):
         component_names: Sequence[str],
         /,
         *,
-        dtype: str | np.dtype = np.float64,
+        dtype: DTypeLike = np.float64,
     ) -> None:
         names = tuple(str(value) for value in component_names)
         dtype_ = np.dtype(dtype)
@@ -230,6 +232,7 @@ def _cut_plan_record(plan: MultivaluedBlockAMRCheckpointPlan, /) -> dict[str, An
 def _state_arrays(state: MovingCutCellState, dtype: np.dtype, /) -> dict[str, np.ndarray]:
     complex_ = state.complex
     connectivity = complex_.mesh.connectivity
+    assert isinstance(connectivity, PolyhedralConnectivity)
     return {
         "content": np.asarray(state.content, dtype=dtype),
         "component_active": np.asarray(complex_.component_active, dtype=np.bool_),

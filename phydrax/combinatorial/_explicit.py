@@ -163,19 +163,22 @@ class ExplicitDecisionSpace(AbstractCombinatorialSpace):
     def structure_id(self) -> str:
         return self._structure_id
 
-    def decision_spec(self, /) -> ExplicitDecision:
-        leaves = tuple(
-            jax.ShapeDtypeStruct(shape, np.dtype(dtype))
-            for shape, dtype in zip(
-                self.decision_shapes,
-                self.decision_dtypes,
-                strict=True,
+    def decision_spec(self, /) -> PyTree[jax.ShapeDtypeStruct]:
+        shapes = self.decision_shapes
+        dtypes = self.decision_dtypes
+        tree_definition = self.decision_tree_definition
+
+        def template() -> ExplicitDecision:
+            leaves = tuple(
+                jnp.zeros(shape, dtype=np.dtype(dtype))
+                for shape, dtype in zip(shapes, dtypes, strict=True)
             )
-        )
-        return ExplicitDecision(
-            jax.ShapeDtypeStruct((), jnp.int32),
-            self.decision_tree_definition.unflatten(leaves),
-        )
+            return ExplicitDecision(
+                jnp.zeros((), dtype=jnp.int32),
+                tree_definition.unflatten(leaves),
+            )
+
+        return jax.eval_shape(template)
 
     def feature_spec(self, /) -> PyTree[jax.ShapeDtypeStruct]:
         leaves = tuple(
@@ -354,7 +357,9 @@ class ExhaustiveLinearOracle(AbstractLinearCombinatorialMethod):
         feature_catalogs = jax.tree_util.tree_leaves(space.features)
         cost_leaves = jax.tree_util.tree_leaves(costs)
 
-        def body(batch_index, state):
+        def body(
+            batch_index: Array, state: tuple[Array, Array, Array, Array, Array]
+        ) -> tuple[Array, Array, Array, Array, Array]:
             best, second, best_index, has_best, has_second = state
             raw_indices = batch_index * width + jnp.arange(width, dtype=jnp.int32)
             in_range = raw_indices < count

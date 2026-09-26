@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite
 from typing import Any, Literal, NamedTuple, TypeAlias
 
@@ -17,7 +18,7 @@ import jax.random as jr
 from blackjax.mcmc.proposal import safe_energy_diff, static_binomial_sampling
 from blackjax.mcmc.trajectory import hmc_energy
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._strict import StrictModule
 from ..nonlinear import (
@@ -29,10 +30,20 @@ from ..nonlinear import (
     NonlinearTermination,
     solve_causal_recurrence,
 )
+from ._interleaved_nuts import HamiltonianMetric
 
 
 CausalHMCLinearization: TypeAlias = Literal["dense-exact", "pair-hutchinson"]
 CausalHMCFailurePolicy: TypeAlias = Literal["raise", "sequential"]
+# (position, momentum) phase-space pair carried through each trajectory block.
+_Phase: TypeAlias = tuple[PyTree[Array], PyTree[Array]]
+# (converged, fallback, iterations, max residual, accepted, rejected, evaluations).
+_BlockRecord: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
+_LogDensity: TypeAlias = Callable[[PyTree[Any]], Array]
+_Integrator: TypeAlias = Callable[
+    [integrators.IntegratorState, ArrayLike], integrators.IntegratorState
+]
+_BlockBuilder: TypeAlias = Callable[[Array, _Phase, dict[str, Array]], Array]
 
 
 class CausalHMCConfig(StrictModule):
@@ -185,13 +196,13 @@ class CausalHMCInfo(NamedTuple):
 
 
 def _sequential_block(
-    integrator,
-    phase,
-    logdensity_fn,
-    step_size,
+    integrator: _Integrator,
+    phase: _Phase,
+    logdensity_fn: _LogDensity,
+    step_size: ArrayLike,
     block_length: int,
     /,
-):
+) -> _Phase:
     position, momentum = phase
     logdensity, gradient = jax.value_and_grad(logdensity_fn)(position)
     initial = integrators.IntegratorState(position, momentum, logdensity, gradient)
@@ -205,27 +216,27 @@ def _sequential_block(
 
 
 def _pair_hutchinson_builder(
-    logdensity_fn,
+    logdensity_fn: _LogDensity,
     inverse_mass_matrix: Array,
-    step_size: Array,
+    step_size: ArrayLike,
     /,
-):
+) -> _BlockBuilder:
     inverse_mass = jnp.asarray(inverse_mass_matrix)
 
-    def build(_, previous, driver):
+    def build(_: object, previous: _Phase, driver: dict[str, Array]) -> Array:
         position, momentum = previous
         flat_position, unravel = ravel_pytree(position)
         flat_momentum, _ = ravel_pytree(momentum)
         probes = driver["probes"]
 
-        def flat_logdensity(value):
+        def flat_logdensity(value: Array) -> Array:
             return logdensity_fn(unravel(value))
 
         gradient_fn = jax.grad(flat_logdensity)
         gradient = gradient_fn(flat_position)
 
-        def hessian_diagonal(location):
-            def one_probe(probe):
+        def hessian_diagonal(location: Array) -> Array:
+            def one_probe(probe: Array) -> Array:
                 _, action = jax.jvp(
                     gradient_fn,
                     (location,),
@@ -259,16 +270,16 @@ def _pair_hutchinson_builder(
 
 
 def _causal_block(
-    logdensity_fn,
-    metric,
-    inverse_mass_matrix,
-    step_size,
-    phase,
+    logdensity_fn: _LogDensity,
+    metric: HamiltonianMetric,
+    inverse_mass_matrix: Array,
+    step_size: ArrayLike,
+    phase: _Phase,
     block_length: int,
-    probe_key,
+    probe_key: Array,
     config: CausalHMCConfig,
     /,
-):
+) -> tuple[_Phase, _BlockRecord]:
     integrator = integrators.velocity_verlet(logdensity_fn, metric.kinetic_energy)
     dimension = jnp.asarray(inverse_mass_matrix).shape[0]
     if config.linearization == "pair-hutchinson":
@@ -298,7 +309,7 @@ def _causal_block(
         drivers = jnp.arange(block_length, dtype=jnp.int32)
         method = CausalNewton()
 
-    def transition(_, previous, driver):
+    def transition(_: Array, previous: _Phase, driver: PyTree[Array]) -> _Phase:
         del driver
         position, momentum = previous
         logdensity, gradient = jax.value_and_grad(logdensity_fn)(position)
@@ -373,7 +384,10 @@ def build_causal_hmc_kernel(
     /,
     *,
     divergence_threshold: float = 1000.0,
-):
+) -> Callable[
+    [Array, blackjax_hmc.HMCState, _LogDensity, ArrayLike, ArrayLike, int],
+    tuple[blackjax_hmc.HMCState, CausalHMCInfo],
+]:
     """Build a BlackJAX-compatible fixed-trajectory causal HMC kernel."""
 
     if not isinstance(config, CausalHMCConfig):
@@ -383,13 +397,13 @@ def build_causal_hmc_kernel(
         raise ValueError("divergence_threshold must be positive and finite.")
 
     def kernel(
-        rng_key,
-        state,
-        logdensity_fn,
-        step_size,
-        inverse_mass_matrix,
-        num_integration_steps,
-    ):
+        rng_key: Array,
+        state: blackjax_hmc.HMCState,
+        logdensity_fn: _LogDensity,
+        step_size: ArrayLike,
+        inverse_mass_matrix: ArrayLike,
+        num_integration_steps: int,
+    ) -> tuple[blackjax_hmc.HMCState, CausalHMCInfo]:
         inverse_mass = jnp.asarray(inverse_mass_matrix)
         if inverse_mass.ndim not in (1, 2):
             raise ValueError(

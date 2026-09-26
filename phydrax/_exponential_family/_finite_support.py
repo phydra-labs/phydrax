@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import math
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -35,6 +36,10 @@ from ._contracts import (
     NaturalCoordinates,
     StatisticBatch,
 )
+
+
+# natural values, active, factorization failed, line search failed, iteration counts
+_NaturalSolveState: TypeAlias = tuple[Array, Array, Array, Array, Array]
 
 
 class FiniteSupportNaturalSolvePlan(StrictModule):
@@ -305,7 +310,7 @@ class FiniteSupportExponentialFamily(AbstractExponentialFamily):
 
     def _sample(
         self,
-        key,
+        key: Key[Array, ""],
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,
@@ -379,7 +384,7 @@ def solve_finite_support_mean(
         covariance = second - means[..., :, None] * means[..., None, :]
         return probabilities, means, covariance
 
-    def body(_, state):
+    def body(_: Array, state: _NaturalSolveState) -> _NaturalSolveState:
         (
             current,
             current_active,

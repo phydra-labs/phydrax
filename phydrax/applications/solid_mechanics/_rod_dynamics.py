@@ -1260,7 +1260,7 @@ def _project_inextensible_positions(
     plan = rod.plan
     inverse_mass = 1.0 / plan.node_masses
 
-    def project_segment(segment_index, current):
+    def project_segment(segment_index: Array, current: Array) -> Array:
         left = plan.segment_node_ids[segment_index, 0]
         right = plan.segment_node_ids[segment_index, 1]
         vector = current[right] - current[left]
@@ -1273,7 +1273,7 @@ def _project_inextensible_positions(
         current = current.at[left].add(left_update)
         return current.at[right].add(-right_update)
 
-    def project_sweep(_, current):
+    def project_sweep(_: Array, current: Array) -> Array:
         return jax.lax.fori_loop(0, plan.segment_count, project_segment, current)
 
     return jax.lax.fori_loop(0, iterations, project_sweep, positions)
@@ -1289,7 +1289,7 @@ def _project_inextensible_velocities(
     plan = rod.plan
     inverse_mass = 1.0 / plan.node_masses
 
-    def project_segment(segment_index, current):
+    def project_segment(segment_index: Array, current: Array) -> Array:
         left = plan.segment_node_ids[segment_index, 0]
         right = plan.segment_node_ids[segment_index, 1]
         vector = positions[right] - positions[left]
@@ -1303,7 +1303,7 @@ def _project_inextensible_velocities(
         current = current.at[left].add((inverse_mass[left] / weight_sum) * impulse)
         return current.at[right].add(-(inverse_mass[right] / weight_sum) * impulse)
 
-    def project_sweep(_, current):
+    def project_sweep(_: Array, current: Array) -> Array:
         return jax.lax.fori_loop(0, plan.segment_count, project_segment, current)
 
     return jax.lax.fori_loop(0, iterations, project_sweep, velocities)

@@ -4,16 +4,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from contextlib import ExitStack
 from itertools import islice
+from typing import Required, TypedDict
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
-from ..discretization import AbstractPreparedParticleNeighborhood
+from ..discretization import AbstractPreparedParticleNeighborhood, PeriodicCell
 from ._alchemical import (
     ControlledHamiltonianEvaluation,
     PreparedControlledHamiltonian,
@@ -32,7 +35,15 @@ from ._reporter import AtomisticReporterPlan
 from ._sites import AtomisticSiteDomain
 
 
-def _chunked_frames(stream, capacity: int, /):
+class _RerunCellKwargs(TypedDict, total=False):
+    cell: Required[PeriodicCell | None]
+    cell_vectors: Array
+    fractional_positions: Array
+
+
+def _chunked_frames(
+    stream: Iterable[AtomisticFrame], capacity: int, /
+) -> Iterator[AtomisticFrame]:
     iterator = iter(stream)
     while True:
         chunk = tuple(islice(iterator, capacity))
@@ -53,15 +64,15 @@ class AtomisticRerunPlan(StrictModule):
 
     def __init__(
         self,
-        source,
-        potential,
-        neighborhood,
+        source: AbstractAtomisticTrajectorySourcePlan,
+        potential: PreparedAtomisticPotentialProgram | PreparedControlledHamiltonian,
+        neighborhood: AbstractPreparedParticleNeighborhood,
         /,
         *,
-        force_groups=(),
-        state_indices=None,
+        force_groups: Iterable[int] = (),
+        state_indices: Iterable[int] | None = None,
         chunk_size: int = 64,
-        reporter=None,
+        reporter: AtomisticReporterPlan | None = None,
     ) -> None:
         if not isinstance(source, AbstractAtomisticTrajectorySourcePlan):
             raise TypeError("source must be an atomistic trajectory source plan.")
@@ -123,7 +134,7 @@ class AtomisticRerunPlan(StrictModule):
             }
         )
 
-    def _context_kwargs(self, frame, /):
+    def _context_kwargs(self, frame: AtomisticFrame, /) -> _RerunCellKwargs:
         cell = self.potential.system.cell
         if frame.cell_vectors is None:
             return {"cell": cell}
@@ -138,7 +149,15 @@ class AtomisticRerunPlan(StrictModule):
             ),
         }
 
-    def _reported_frame(self, frame, evaluations, group_energies, /):
+    def _reported_frame(
+        self,
+        frame: AtomisticFrame,
+        evaluations: tuple[
+            AtomisticPotentialEvaluation | ControlledHamiltonianEvaluation, ...
+        ],
+        group_energies: tuple[tuple[Array, ...], ...],
+        /,
+    ) -> AtomisticFrame:
         reporter = self.reporter
         if reporter is None:
             raise RuntimeError("Rerun reporter is not configured.")

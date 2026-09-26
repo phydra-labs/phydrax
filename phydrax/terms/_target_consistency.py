@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, SupportsFloat
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
 from .._term import AbstractSamplingTerm
@@ -36,7 +36,7 @@ class TargetConsistencyTerm(AbstractSamplingTerm):
         source: IntegrationSource,
         /,
         *,
-        weight: ArrayLike = 1.0,
+        weight: SupportsFloat = 1.0,
         label: str | None = None,
     ) -> None:
         if not field:

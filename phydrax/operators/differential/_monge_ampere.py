@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from phydrax.domain import DomainFunction
 
@@ -19,6 +20,10 @@ from ...metrix import (
     RiemannianMetric,
 )
 from ._domain_ops import _factor_and_dim, _resolve_var
+
+
+if TYPE_CHECKING:
+    from ...nn._keys import EvalKey
 
 
 Operation = Literal["monge-ampere", "positivity"]
@@ -40,12 +45,12 @@ class _KahlerPotentialCallable(StrictModule):
         potential: DomainFunction,
         reference_metric: RiemannianMetric,
         convention: ComplexCoordinateConvention,
-        target_log_volume,
+        target_log_volume: Callable[[Array], Array] | None,
         potential_positions: tuple[int, ...],
         coordinate_position: int,
         potential_coordinate_position: int,
         operation: Operation,
-        normalization,
+        normalization: ArrayLike,
         /,
     ) -> None:
         self.potential = potential
@@ -58,10 +63,10 @@ class _KahlerPotentialCallable(StrictModule):
         self.operation = operation
         self.normalization = jnp.asarray(normalization)
 
-    def __call__(self, *args: Any, key=None, **kwargs: Any):
+    def __call__(self, *args: Any, key: EvalKey = None, **kwargs: Any) -> Array:
         bound = [args[position] for position in self.potential_positions]
 
-        def point_potential(point):
+        def point_potential(point: Array) -> Array:
             local = list(bound)
             local[self.potential_coordinate_position] = point
             return self.potential.func(*local, key=key, **kwargs)
@@ -89,8 +94,8 @@ def _kahler_operator(
     operation: Operation,
     /,
     *,
-    target_log_volume=None,
-    normalization=0.0,
+    target_log_volume: Callable[[Array], Array] | None = None,
+    normalization: ArrayLike = 0.0,
     var: str | None,
 ) -> DomainFunction:
     if not isinstance(potential, DomainFunction):
@@ -133,10 +138,10 @@ def domain_monge_ampere_residual(
     potential: DomainFunction,
     reference_metric: RiemannianMetric,
     convention: ComplexCoordinateConvention,
-    target_log_volume: Callable,
+    target_log_volume: Callable[[Array], Array],
     /,
     *,
-    normalization=0.0,
+    normalization: ArrayLike = 0.0,
     var: str | None = None,
 ) -> DomainFunction:
     if not callable(target_log_volume):

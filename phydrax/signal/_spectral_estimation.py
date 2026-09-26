@@ -10,6 +10,7 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -36,7 +37,7 @@ class WelchSpectrumResult(StrictModule):
     plan_id: str = eqx.field(static=True)
 
 
-def _median_bias(count: int, dtype, /) -> Array:
+def _median_bias(count: int, dtype: DTypeLike, /) -> Array:
     pairs = 2.0 * np.arange(1, (int(count) - 1) // 2 + 1, dtype=np.float64)
     bias = 1.0 + np.sum(1.0 / (pairs + 1.0) - 1.0 / pairs)
     return jnp.asarray(bias, dtype=dtype)

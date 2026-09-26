@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -162,7 +164,9 @@ class TwistedKahlerDiracOperator(AbstractPseudofermionDiracOperator):
         ) / self.theory.bosonic_plan.lattice_spacing
 
     @staticmethod
-    def _transpose_action(function, template: Array, cotangent: Array, /) -> Array:
+    def _transpose_action(
+        function: Callable[[Array], Array], template: Array, cotangent: Array, /
+    ) -> Array:
         return jax.linear_transpose(function, template)(cotangent)[0]
 
     def _apply(self, vector: Array, /) -> Array:

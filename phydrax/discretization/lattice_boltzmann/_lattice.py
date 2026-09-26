@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+import numpy.typing as npt
+from jaxtyping import Array
 
 import phydrax.ein as ein
 
@@ -84,9 +85,9 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
     def __init__(
         self,
         name: str,
-        velocities: ArrayLike,
-        weights: ArrayLike,
-        opposite: Sequence[int] | ArrayLike,
+        velocities: npt.ArrayLike,
+        weights: npt.ArrayLike,
+        opposite: npt.ArrayLike,
         /,
         *,
         sound_speed_squared: float = 1.0 / 3.0,
@@ -245,9 +246,9 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
 
 def certified_nearest_neighbor_velocity_set(
     name: str,
-    velocities: ArrayLike,
-    weights: ArrayLike,
-    opposite: Sequence[int] | ArrayLike,
+    velocities: npt.ArrayLike,
+    weights: npt.ArrayLike,
+    opposite: npt.ArrayLike,
     /,
     *,
     sound_speed_squared: float = 1.0 / 3.0,

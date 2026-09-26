@@ -210,7 +210,7 @@ class HydrogeophysicalPlan(StrictModule):
                 "Hydrogeophysical transfer cannot be reused after an unqualified geometry change."
             )
 
-    def _transfer(self, value):
+    def _transfer(self, value: ArrayLike) -> Array:
         value = jnp.asarray(value).reshape(-1)
         source = self.transfer.primal_operator.source
         target = self.transfer.primal_operator.target

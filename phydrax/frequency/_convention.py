@@ -17,7 +17,7 @@ class HarmonicConvention:
     phasor: PhasorConvention = "exp-positive-iwt"
 
     @property
-    def convention_id(self):
+    def convention_id(self) -> str:
         return canonical_fingerprint(
             {
                 "kind": "harmonic-convention",

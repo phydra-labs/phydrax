@@ -12,6 +12,7 @@ from importlib import import_module, util
 from numbers import Integral
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -387,7 +388,7 @@ _CF_UNIT_ALIASES = {
 }
 
 
-def _require_cf_unit(variable, expected: UnitDefinition, name: str, /) -> None:
+def _require_cf_unit(variable: Any, expected: UnitDefinition, name: str, /) -> None:
     raw = variable.attrs.get("units")
     if not isinstance(raw, str):
         raise ValueError(f"CF/Radial variable {name!r} lacks a units attribute.")

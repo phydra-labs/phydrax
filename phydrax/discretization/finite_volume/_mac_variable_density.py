@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -21,7 +23,7 @@ FaceMomentumFlux = tuple[tuple[Array, ...], ...]
 
 
 def _axis_boundary(value: Array, axis: int, index: int, /) -> Array:
-    location = [slice(None)] * value.ndim
+    location: list[slice | int] = [slice(None)] * value.ndim
     location[axis] = index
     return value[tuple(location)]
 
@@ -325,7 +327,7 @@ class PreparedMACVariableDensityOperators(StrictModule, NonTrainableState):
         mass_flux: FaceVelocity,
         component_axis: int,
         derivative_axis: int,
-        side: str,
+        side: Literal["lower", "upper"],
         stage: MACBoundaryStageData,
         /,
     ) -> Array:
@@ -629,22 +631,26 @@ class PreparedMACVariableDensityOperators(StrictModule, NonTrainableState):
                 )
             )
         )
-        kinetic = 0.5 * sum(
-            jnp.sum(measure * component * speed)
-            for measure, component, speed in zip(
-                self.operators.face_dual_measures,
-                momentum,
-                velocity,
-                strict=True,
+        kinetic = 0.5 * jnp.asarray(
+            sum(
+                jnp.sum(measure * component * speed)
+                for measure, component, speed in zip(
+                    self.operators.face_dual_measures,
+                    momentum,
+                    velocity,
+                    strict=True,
+                )
             )
         )
-        advective_kinetic_rate = sum(
-            jnp.sum(measure * speed * component_rate)
-            for measure, speed, component_rate in zip(
-                self.operators.face_dual_measures,
-                velocity,
-                momentum_rate,
-                strict=True,
+        advective_kinetic_rate = jnp.asarray(
+            sum(
+                jnp.sum(measure * speed * component_rate)
+                for measure, speed, component_rate in zip(
+                    self.operators.face_dual_measures,
+                    velocity,
+                    momentum_rate,
+                    strict=True,
+                )
             )
         )
         identity = _maximum_abs(

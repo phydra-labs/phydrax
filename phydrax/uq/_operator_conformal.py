@@ -212,7 +212,7 @@ def _calibration_case_axis(
 
 
 def _require_nonempty_calibration_cases(
-    mask,
+    mask: ArrayLike,
     /,
     *,
     case_axes: tuple[str, ...],

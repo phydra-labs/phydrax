@@ -288,7 +288,7 @@ class FiniteVolumeMultiblockRuntimePlan(StrictModule):
         fallback_accepted = jnp.all(jnp.stack(fallback_valid))
         high_accepted = jnp.all(jnp.stack(high_valid))
 
-        def body(_, bounds):
+        def body(_: Array, bounds: tuple[Array, Array]) -> tuple[Array, Array]:
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             valid = jnp.all(

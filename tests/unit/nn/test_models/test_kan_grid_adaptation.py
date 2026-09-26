@@ -276,3 +276,30 @@ def test_affine_initialized_model_is_preserved_by_regridding():
     expected = jax.vmap(model)(evaluation)
     actual = jax.vmap(adapted)(evaluation)
     assert np.allclose(np.asarray(actual), np.asarray(expected), atol=2e-11)
+
+
+@pytest.mark.parametrize("per_input", [False, True])
+def test_adaptation_rejects_trainable_grids_and_grid_banks(per_input):
+    model = phx.nn.models.KAN(
+        in_size=2,
+        out_size="scalar",
+        width_size=4,
+        depth=2,
+        edge_basis=phx.nn.models.BSplineEdgeBasis(
+            grid=phx.nn.models.TrainableBSplineGrid.open_uniform(3, 6),
+            per_input=per_input,
+        ),
+        skip_connection=False,
+        key=jax.random.key(11),
+    )
+    expected_grid = (
+        phx.nn.models.TrainableBSplineGridBank
+        if per_input
+        else phx.nn.models.TrainableBSplineGrid
+    )
+    assert isinstance(model.layers[0].edge_basis.grid, expected_grid)
+
+    with pytest.raises(ValueError, match="trainable knot grids"):
+        phx.nn.models.adapt_kan_grids(
+            model, jax.random.normal(jax.random.key(12), (32, 2))
+        )

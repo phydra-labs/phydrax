@@ -17,6 +17,7 @@ from jaxtyping import Array, Key, PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..linalg import (
+    AbstractVectorSpace,
     eigen,
     estimate_diagonal,
     FunctionLinearOperator,
@@ -70,12 +71,12 @@ class PreparedEmpiricalNTK(StrictModule):
                 raise TypeError("parameter_geometry must be a ParameterGeometry or None.")
             parameter_geometry.validate(linearization.point)
 
-        def inverse_metric(cotangent):
+        def inverse_metric(cotangent: PyTree[Array]) -> PyTree[Array]:
             if parameter_geometry is None:
                 return cotangent
             return parameter_geometry.egrad_to_rgrad(linearization.point, cotangent)
 
-        def kernel_action(cotangent):
+        def kernel_action(cotangent: PyTree[Array]) -> PyTree[Array]:
             parameter_cotangent = linearization.vjp(cotangent)
             return linearization.jvp(inverse_metric(parameter_cotangent))
 
@@ -98,7 +99,7 @@ class PreparedEmpiricalNTK(StrictModule):
         parameter_gram = None
         if parameter_geometry is None:
 
-            def gram_action(tangent):
+            def gram_action(tangent: PyTree[Array]) -> PyTree[Array]:
                 return linearization.vjp(linearization.jvp(tangent))
 
             parameter_gram = FunctionLinearOperator(
@@ -145,11 +146,11 @@ class PreparedEmpiricalNTK(StrictModule):
         return self.linearization.primal
 
     @property
-    def parameter_space(self):
+    def parameter_space(self) -> AbstractVectorSpace:
         return self.linearization.source
 
     @property
-    def output_space(self):
+    def output_space(self) -> AbstractVectorSpace:
         return self.linearization.target
 
     def jvp(self, tangent: PyTree[Any], /) -> PyTree[Array]:
@@ -172,19 +173,19 @@ class PreparedEmpiricalNTK(StrictModule):
         if self.parameter_geometry is not other.parameter_geometry:
             raise ValueError("Metric cross kernels require the same geometry object.")
 
-        def inverse_metric(cotangent):
+        def inverse_metric(cotangent: PyTree[Array]) -> PyTree[Array]:
             if self.parameter_geometry is None:
                 return cotangent
             return self.parameter_geometry.egrad_to_rgrad(
                 self.linearization.point, cotangent
             )
 
-        def action(cotangent):
+        def action(cotangent: PyTree[Array]) -> PyTree[Array]:
             return self.linearization.jvp(
                 inverse_metric(other.linearization.vjp(cotangent))
             )
 
-        def transpose_action(cotangent):
+        def transpose_action(cotangent: PyTree[Array]) -> PyTree[Array]:
             return other.linearization.jvp(
                 inverse_metric(self.linearization.vjp(cotangent))
             )

@@ -16,7 +16,11 @@ from .._strict import StrictModule
 
 
 if TYPE_CHECKING:
-    from phydrax.conditions import Condition, ConditionRealizationStamp
+    from phydrax.conditions import (
+        Condition,
+        ConditionQuantifier,
+        ConditionRealizationStamp,
+    )
 
     from ._lifecycle import RealizationLifecycleState
 
@@ -104,7 +108,7 @@ class ConditionEvaluationContext(StrictModule):
         return self.condition.condition_id
 
     @property
-    def quantifier(self):
+    def quantifier(self) -> ConditionQuantifier:
         return self.condition.quantifier
 
 

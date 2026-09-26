@@ -25,6 +25,7 @@ from phydrax.equations.trefftz._holomorphic_constraints import (
 )
 from phydrax.nn._contracts import AFFINE, SMOOTH, sum_regularity
 from phydrax.nn._keys import EvalKey
+from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
@@ -433,7 +434,7 @@ class ConditionalHolomorphicDeepONet(AbstractOperatorModel):
         )
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> ConfiguredOperatorContract:
         return self.operator.operator_contract
 
     def conditional_holomorphic_certificate(self) -> ConditionalHolomorphicMapCertificate:
@@ -507,7 +508,7 @@ class ConditionalHarmonicOperator2D(AbstractOperatorModel):
         self.out_size = "scalar"
 
     @property
-    def operator_contract(self):
+    def operator_contract(self) -> ConfiguredOperatorContract:
         return self.potential.operator_contract
 
     def __call__(self, value: Any, /, *, key: EvalKey = None) -> Array:

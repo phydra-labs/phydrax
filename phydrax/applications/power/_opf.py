@@ -22,11 +22,13 @@ from ._network import CompiledNetwork, PowerNetwork, PowerStudy
 from ._power_flow import _compiled, _limit_violation, PowerFlowResult
 
 
-def _mv(matrix, value):
+def _mv(matrix: Array, value: Array) -> Array:
     return contract("ij,j->i", matrix, value)
 
 
-def _dc_matrices(compiled):
+def _dc_matrices(
+    compiled: CompiledNetwork,
+) -> tuple[Array, Array, Array, Array, Array]:
     network = compiled.network
     n, m = len(network.buses), len(network.branches)
     incidence = jnp.zeros((m, n))
@@ -66,7 +68,7 @@ def solve_dc_power_flow(
     network: PowerNetwork | CompiledNetwork,
     *,
     study: PowerStudy | None = None,
-    policy=None,
+    policy: optim.ConvexSolvePolicy | None = None,
 ) -> DCFlowResult:
     """Solve DC balance as one native equality-constrained feasibility LP.
 
@@ -135,7 +137,7 @@ class DCOPFResult(StrictModule):
     approximation: str = eqx.field(static=True, default="lossless-unit-voltage-dc")
 
 
-def _require_dispatchable_islands(compiled) -> None:
+def _require_dispatchable_islands(compiled: CompiledNetwork) -> None:
     for island in compiled.islands:
         if not any(compiled.generators_at_bus[i] for i in island):
             raise ValueError(
@@ -185,7 +187,7 @@ def compile_dc_opf(
         [float("inf")] * n + [g.p_max if g.in_service else 0.0 for g in gens]
     )
     linear = jnp.asarray([0.0] * n + [g.cost[1] if g.in_service else 0.0 for g in gens])
-    options = dict(
+    options: dict[str, Any] = dict(
         equality_matrix=equality,
         equality_rhs=rhs,
         inequality_matrix=inequality,
@@ -211,7 +213,7 @@ def solve_dc_opf(
     network: PowerNetwork | CompiledNetwork | DCOPFCompilation,
     *,
     study: PowerStudy | None = None,
-    policy=None,
+    policy: optim.ConvexSolvePolicy | None = None,
 ) -> DCOPFResult:
     if isinstance(network, DCOPFCompilation) and study is not None:
         raise ValueError("study is already bound in DCOPFCompilation.")
@@ -284,7 +286,7 @@ class ACOPFCompilation(StrictModule):
     reference_rotation: Array
     voltage_size: int = eqx.field(static=True)
 
-    def unpack(self, value):
+    def unpack(self, value: Array) -> tuple[Array, Array]:
         n = len(self.network.network.buses)
         refs = jnp.asarray(self.network.references, dtype=jnp.int32)
         voltage = value[:n].astype(self.reference_rotation.dtype)
@@ -394,7 +396,7 @@ def compile_ac_opf(
     limited = jnp.asarray(limited_ids, dtype=jnp.int32)
     costs = jnp.asarray([g.cost if g.in_service else (0.0, 0.0, 0.0) for g in gens])
 
-    def unpack(value):
+    def unpack(value: Array) -> tuple[Array, Array]:
         voltage = value[:n].astype(rotation.dtype)
         voltage = voltage.at[nonreference].add(1j * value[n:nv])
         voltage = voltage.at[refs].set(value[refs] * rotation[refs])
@@ -402,13 +404,13 @@ def compile_ac_opf(
         q = fixed_q.at[free_q].set(value[nv + len(free_p_ids) :])
         return voltage, p + 1j * q
 
-    def objective(value, args):
+    def objective(value: Array, args: object) -> Array:
         _, generation = unpack(value)
         return jnp.sum(
             costs[:, 0] * generation.real**2 + costs[:, 1] * generation.real + costs[:, 2]
         )
 
-    def constraints(value, args):
+    def constraints(value: Array, args: object) -> Array:
         voltage, generation = unpack(value)
         injection = (
             jnp.zeros(n, dtype=voltage.dtype)
@@ -507,7 +509,7 @@ def compile_ac_opf(
         plan_id="balanced-ac-opf-jacobian",
     )
 
-    def lagrangian(value, packed):
+    def lagrangian(value: Array, packed: tuple[object, Array, Array]) -> Array:
         return packed[1] * objective(value, packed[0]) + jnp.sum(
             packed[2] * constraints(value, packed[0])
         )
@@ -553,8 +555,8 @@ def solve_ac_opf(
     *,
     study: PowerStudy | None = None,
     operating_point: PowerFlowResult | None = None,
-    method=None,
-    termination=None,
+    method: optim.AbstractStructuredNonlinearMethod | None = None,
+    termination: optim.OptimizationTermination | None = None,
     feasibility_tolerance: float = 1e-6,
 ) -> ACOPFResult:
     """Solve a native structured NLP and independently audit original AC equations.
@@ -643,7 +645,9 @@ def solve_ac_opf(
     success = (
         native.optimization.successful & finite & (feasibility <= feasibility_tolerance)
     )
-    objective = compilation.program.objective(native.optimization.parameters, None)
+    objective = jnp.asarray(
+        compilation.program.objective(native.optimization.parameters, None)
+    )
     return ACOPFResult(
         voltage,
         generated,

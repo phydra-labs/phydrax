@@ -45,6 +45,7 @@ from ...discretization.particle._rigid_joints import (
     RigidJointGraphPlan,
 )
 from ...interchange._report import (
+    _AdapterLossCategory,
     AdapterCapability,
     AdapterError,
     AdapterFormatProfile,
@@ -478,7 +479,7 @@ def _loss(
     /,
     *,
     changes_interpretation: bool,
-    category: str = "unsupported",
+    category: _AdapterLossCategory = "unsupported",
     affected_capability_ids: Sequence[str] = (_EXTENSION_CAPABILITY_ID,),
 ) -> AdapterLoss:
     return AdapterLoss(

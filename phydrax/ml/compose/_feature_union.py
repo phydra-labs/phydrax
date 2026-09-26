@@ -16,6 +16,7 @@ from ..._model import AbstractArrayModel, ModelBinding, ValuePort
 from .._batch import MLBatch
 from .._contracts import AbstractRecipe, FitResult
 from .._schema import AbstractFittedModel, FeatureSchema
+from .._sparse_features import FeatureArray
 from ._common import (
     _combine_models,
     _combine_results,
@@ -94,7 +95,10 @@ class FittedFeatureUnion(AbstractFittedModel):
             tuple(model for _, model in self.transformer_list), sequential=False
         )
 
-    def __call__(self, x: Any, /, *, key: Any = None):
+    # Sparse inputs pass through as SparseFeatures; the base model contract declares Array.
+    def __call__(  # ty: ignore[invalid-method-override]
+        self, x: Any, /, *, key: Any = None
+    ) -> FeatureArray:
         keys = _split_key(key, len(self.transformer_list))
         blockwise = self._input_binding.batch_mode == "blockwise"
         outputs = tuple(

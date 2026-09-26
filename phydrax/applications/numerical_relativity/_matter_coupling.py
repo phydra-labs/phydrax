@@ -34,7 +34,7 @@ def _scalar(value: ArrayLike, role: str, /, *, dtype: Any | None = None) -> Arra
     return result
 
 
-def _vector3(value: ArrayLike, role: str, /) -> Array:
+def _vector3(value: ArrayLike | tuple[float, float, float], role: str, /) -> Array:
     result = jnp.asarray(value)
     if result.shape != (3,):
         raise ValueError(f"{role} must have shape (3,).")
@@ -168,7 +168,7 @@ class SourceExchangeLedger(StrictModule):
         energy: ArrayLike,
         momentum: ArrayLike,
         energy_defect: ArrayLike = 0.0,
-        momentum_defect: ArrayLike = (0.0, 0.0, 0.0),
+        momentum_defect: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         /,
     ) -> None:
         energy_ = _scalar(energy, "source energy")

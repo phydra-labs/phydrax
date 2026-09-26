@@ -160,10 +160,10 @@ class MultiLiftingSurfacePlan(StrictModule, NonTrainableState):
     def prepare(self, /) -> PreparedMultiLiftingSurface:
         prepared = tuple(component.surface.prepare() for component in self.components)
 
-        def points(component, value):
+        def points(component: LiftingComponentPlan, value: ArrayLike) -> Array:
             return component.frame.points(value)
 
-        def vectors(component, value):
+        def vectors(component: LiftingComponentPlan, value: ArrayLike) -> Array:
             return component.frame.vectors(value)
 
         bound_start = jnp.concatenate(

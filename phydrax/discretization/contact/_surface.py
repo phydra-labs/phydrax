@@ -925,10 +925,10 @@ def selection_collision_operator(
     target = ArraySpace((indices.size, dimension), dtype=source_space.dtype)
     indices_array = jnp.asarray(indices, dtype=jnp.int32)
 
-    def gather(value):
+    def gather(value: Array) -> Array:
         return value[indices_array]
 
-    def scatter(value):
+    def scatter(value: Array) -> Array:
         return (
             jnp.zeros(source_space.shape, dtype=value.dtype).at[indices_array].add(value)
         )
@@ -956,10 +956,10 @@ def static_collision_operator(
         raise TypeError("source_space must be AbstractVectorSpace.")
     target = ArraySpace((int(vertex_count), int(ambient_dimension)), dtype=dtype)
 
-    def zero(_):
+    def zero(_: object) -> PyTree[Array]:
         return target.zeros()
 
-    def zero_transpose(_):
+    def zero_transpose(_: object) -> PyTree[Array]:
         return source_space.zeros()
 
     return FunctionLinearOperator(

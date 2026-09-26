@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
+from typing import TypeAlias
 
 import equinox as eqx
 import jax
@@ -23,6 +24,39 @@ from ...geometry._triangle_ray import (
     TriangleRayQueryPlan,
 )
 from ._interface import evaluate_refractive_interface, OpticalRayState
+
+
+# Ray bank (8), budgets (8), interaction count, failure flags (5), and history (6).
+_NonSequentialState: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
 
 
 class NonSequentialSurfaceKind(IntEnum):
@@ -562,7 +596,7 @@ def _trace_one(
         history_distances,
     )
 
-    def step(interaction, state):
+    def step(interaction: Array, state: _NonSequentialState) -> _NonSequentialState:
         (
             positions_,
             directions_,

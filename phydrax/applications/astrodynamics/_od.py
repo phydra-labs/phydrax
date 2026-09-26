@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 import phydrax.linalg as la
@@ -33,6 +34,12 @@ _COVARIANCE_POLICY = la.DensePropertyVerificationPolicy(
     require_positive_semidefinite=True,
 )
 
+_ObservationModel: TypeAlias = Callable[[Array, Any], Array]
+_Transition: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
+_Observation: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
+_FilterCarry: TypeAlias = tuple[Array, Array, Array]
+_FilterOutput: TypeAlias = tuple[Array, Array, Array]
+
 
 class OrbitDeterminationResult(StrictModule):
     estimate: Array
@@ -45,7 +52,7 @@ class OrbitDeterminationResult(StrictModule):
 
 
 class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
-    observation_model: Callable
+    observation_model: _ObservationModel
     observed: Array
     covariance: CholeskyCovarianceAction
     maximum_iterations: int = eqx.field(static=True)
@@ -54,14 +61,14 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        observation_model,
-        observed,
-        covariance_cholesky,
+        observation_model: _ObservationModel,
+        observed: npt.ArrayLike,
+        covariance_cholesky: npt.ArrayLike,
         /,
         *,
-        maximum_iterations=12,
-        tolerance=1.0e-10,
-        model_id="batch-od",
+        maximum_iterations: int = 12,
+        tolerance: float = 1.0e-10,
+        model_id: str = "batch-od",
     ) -> None:
         if not callable(observation_model):
             raise TypeError("observation_model must be callable.")
@@ -118,7 +125,7 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
     ) -> OrbitDeterminationResult:
         initial = jnp.asarray(initial_parameters)
 
-        def whitened_residual(parameters, context):
+        def whitened_residual(parameters: Array, context: Any) -> Array:
             predicted = self.observation_model(parameters, context).reshape(-1)
             return self.covariance.whiten(self.observed.reshape(-1) - predicted)
 
@@ -184,23 +191,23 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
 
 
 class SequentialOrbitDeterminationPlan(StrictModule, NonTrainableState):
-    transition: Callable
-    observation: Callable
+    transition: _Transition
+    observation: _Observation
     process_covariance: Array
     measurement_covariance: Array
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        transition,
-        observation,
-        process_covariance,
-        measurement_covariance,
+        transition: _Transition,
+        observation: _Observation,
+        process_covariance: ArrayLike,
+        measurement_covariance: ArrayLike,
         /,
         *,
-        model_id="sequential-od",
-        transition_id,
-        observation_id,
+        model_id: str = "sequential-od",
+        transition_id: str,
+        observation_id: str,
     ) -> None:
         if not callable(transition) or not callable(observation):
             raise TypeError("Sequential OD models must be callable.")
@@ -254,8 +261,14 @@ class SequentialOrbitDeterminationPlan(StrictModule, NonTrainableState):
         )
 
     def filter(
-        self, initial_state, initial_covariance, observations, times, args: Any = None, /
-    ):
+        self,
+        initial_state: ArrayLike,
+        initial_covariance: ArrayLike,
+        observations: ArrayLike,
+        times: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> _FilterOutput:
         state0 = jnp.asarray(initial_state)
         covariance0 = jnp.asarray(initial_covariance)
         observed = jnp.asarray(observations)
@@ -285,7 +298,9 @@ class SequentialOrbitDeterminationPlan(StrictModule, NonTrainableState):
             "Sequential OD inputs must be finite with valid covariance and increasing times.",
         )
 
-        def step(carry, item):
+        def step(
+            carry: _FilterCarry, item: tuple[Array, Array]
+        ) -> tuple[_FilterCarry, _FilterOutput]:
             state, covariance, previous_time = carry
             time, measurement = item
             tolerance = 128.0 * state.size * float(jnp.finfo(state.dtype).eps)

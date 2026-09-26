@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
@@ -251,7 +252,7 @@ def invert_oxygen_content(
     valid = jnp.isfinite(target) & (target >= 0.0) & (target <= maximum)
     safe_target = jnp.where(valid, target, 0.0)
 
-    def bisect(_, bracket):
+    def bisect(_: Array, bracket: tuple[Array, Array]) -> tuple[Array, Array]:
         lower, upper = bracket
         middle = 0.5 * (lower + upper)
         middle_total = (
@@ -383,8 +384,8 @@ class OxygenTransportPlan(StrictModule, NonTrainableState):
         step_size_ms: float,
         /,
         *,
-        inflow_cell_index: ArrayLike = (),
-        outflow_cell_index: ArrayLike = (),
+        inflow_cell_index: npt.ArrayLike = (),
+        outflow_cell_index: npt.ArrayLike = (),
     ) -> None:
         volumes_host = np.asarray(cell_volume_mm3, dtype=np.float64)
         source_host = np.asarray(source_index, dtype=np.int32)

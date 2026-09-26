@@ -39,6 +39,11 @@ VARIABLE_SECTOR_VMC_INVALID_CHAIN: VariableSectorVMCStatus = 1
 VARIABLE_SECTOR_VMC_INVALID_LOCAL_ENERGY: VariableSectorVMCStatus = 2
 VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES: VariableSectorVMCStatus = 3
 VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED: VariableSectorVMCStatus = 4
+# coordinates, active mask, species, log target, valid, accepted, log ratio,
+# proposal valid
+_ChainTransition: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array
+]
 
 
 def variable_sector_vmc_status_name(status: int | Array, /) -> str:
@@ -354,7 +359,7 @@ def _batched_log_target(
     species: Array,
     /,
 ) -> tuple[Array, Array]:
-    def evaluate(coordinate, active, labels):
+    def evaluate(coordinate: Array, active: Array, labels: Array) -> tuple[Array, Array]:
         return _one_log_target(
             prepared, VariableParticleConfiguration(coordinate, active, labels)
         )
@@ -375,7 +380,14 @@ def _transition(
         chain_indices
     )
 
-    def one(coordinate, active, labels, current_log_target, current_valid, key):
+    def one(
+        coordinate: Array,
+        active: Array,
+        labels: Array,
+        current_log_target: Array,
+        current_valid: Array,
+        key: Key[Array, ""],
+    ) -> _ChainTransition:
         proposal_key, acceptance_key = jr.split(key)
         current = VariableParticleConfiguration(coordinate, active, labels)
         proposed = prepared.proposal.sample(proposal_key, current)
@@ -564,7 +576,9 @@ def run_variable_sector_vmc(
     ratios = jnp.stack(ratio_draws, axis=1)
     proposal_valid = jnp.stack(proposal_valid_draws, axis=1)
 
-    def local_energy(coordinate, active, labels):
+    def local_energy(
+        coordinate: Array, active: Array, labels: Array
+    ) -> tuple[Array, Array]:
         result = prepared.operator.local_value(
             prepared.model, VariableParticleConfiguration(coordinate, active, labels)
         )

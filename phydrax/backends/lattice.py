@@ -180,8 +180,11 @@ class LatticeProviderStatus(StrictModule, NonTrainableState):
 
 @runtime_checkable
 class LatticeKernelProvider(Protocol):
-    provider_id: str
-    capabilities: LatticeKernelCapabilities
+    @property
+    def provider_id(self) -> str: ...
+
+    @property
+    def capabilities(self) -> LatticeKernelCapabilities: ...
 
     def gauge_action(
         self, plaquettes: ArrayLike, beta: ArrayLike, owned_mask: ArrayLike, /

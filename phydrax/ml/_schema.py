@@ -358,7 +358,7 @@ def schema_port(
     raise TypeError("schema must be a FeatureSchema or TargetSchema.")
 
 
-def _size_shape(size: int | tuple[int, ...] | str, /) -> tuple[int, ...]:
+def _size_shape(size: int | tuple[int, ...] | Literal["scalar"], /) -> tuple[int, ...]:
     if size == "scalar":
         return ()
     if isinstance(size, int):

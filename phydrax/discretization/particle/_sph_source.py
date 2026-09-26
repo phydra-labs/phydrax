@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
@@ -223,7 +224,9 @@ class SPHParticleSourcePlan(StrictModule, NonTrainableState):
     def emission_capacity(self) -> int:
         return self.site_count * self.maximum_emissions_per_site
 
-    def initialize_source_state(self, dtype=jnp.float64, /) -> SPHParticleSourceState:
+    def initialize_source_state(
+        self, dtype: DTypeLike = jnp.float64, /
+    ) -> SPHParticleSourceState:
         return SPHParticleSourceState(
             jnp.zeros((self.site_count,), dtype=dtype),
             jnp.zeros((), dtype=dtype),

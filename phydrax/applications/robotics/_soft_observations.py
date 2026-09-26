@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
@@ -109,7 +109,7 @@ def _runtime_key_data(key: ArrayLike, /) -> Array:
     return jax.random.key_data(value)
 
 
-def _tree_exact_equal(left, right, /) -> Array:
+def _tree_exact_equal(left: PyTree[ArrayLike], right: PyTree[ArrayLike], /) -> Array:
     left_leaves, left_tree = jax.tree_util.tree_flatten(left)
     right_leaves, right_tree = jax.tree_util.tree_flatten(right)
     if left_tree != right_tree or len(left_leaves) != len(right_leaves):

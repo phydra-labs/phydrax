@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from math import prod
 from typing import Any, Literal, TypeAlias
 
@@ -49,12 +49,75 @@ from ._hybrid_schedule import (
     HybridScheduleResult,
     prepare_hybrid_schedule,
     PreparedHybridSchedule,
+    ScheduledHybridGuard,
 )
 from ._solution_validation import validate_solution_arrays
 
 
 JumpAlgorithm: TypeAlias = Literal["next_reaction", "direct_ssa"]
 GeneratorBoundaryPolicy: TypeAlias = Literal["error", "suppress", "leak"]
+
+_JumpPathResult: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+# (time, state, integrated, counts, event_index, status, active, event_times,
+#  channels, marks, valid, pre_states, post_states)
+_NextReactionCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+# (time, state, counts, event_index, status, active, event_times, channels,
+#  marks, valid, pre_states, post_states)
+_DirectSSACarry: TypeAlias = tuple[
+    Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array, Array
+]
+# (time, state, hazards, counts, event_index, status, numerical_ok, terminal_time,
+#  last_deterministic_time, tape, times, channels, marks, valid, pre_states,
+#  post_states)
+_HybridCarry: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    HybridEventTape | None,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+]
+# (states, valid, status, terminal, numerical_ok, times, channels, marks, valid,
+#  pre_states, post_states, tape)
+_HybridPathResult: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    HybridEventTape | None,
+]
+_StageResetOutput: TypeAlias = tuple[Array, Array, Array, Array]
 
 
 def _time_interval(
@@ -146,7 +209,7 @@ def _next_reaction_one(
     mark_keys: Array,
     args: Any,
     max_events: int,
-) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+) -> _JumpPathResult:
     channels = process.num_channels
     per_channel = thresholds.shape[-1]
     times, event_channels, marks, valid, pre_states, post_states = _empty_event_arrays(
@@ -171,10 +234,10 @@ def _next_reaction_one(
         post_states,
     )
 
-    def condition(carry):
+    def condition(carry: _NextReactionCarry) -> Array:
         return carry[6] & (carry[4] < max_events)
 
-    def body(carry):
+    def body(carry: _NextReactionCarry) -> _NextReactionCarry:
         (
             time,
             state,
@@ -202,7 +265,7 @@ def _next_reaction_one(
         event_time = time + elapsed
         has_event = valid_rates & ~exhausted & jnp.isfinite(elapsed) & (event_time <= end)
 
-        def apply_event(_):
+        def apply_event(_: None) -> _NextReactionCarry:
             mark_index = counts[channel]
             mark_key = mark_keys[channel, mark_index]
             mark = process.sample_mark(mark_key, event_time, state, channel, args)
@@ -225,7 +288,7 @@ def _next_reaction_one(
                 after_states.at[event_index].set(next_state),
             )
 
-        def finish(_):
+        def finish(_: None) -> _NextReactionCarry:
             resolved_status = jnp.where(
                 ~valid_rates,
                 JUMP_INVALID_INTENSITY,
@@ -276,7 +339,7 @@ def _direct_ssa_one(
     mark_keys: Array,
     args: Any,
     max_events: int,
-) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+) -> _JumpPathResult:
     per_channel = mark_keys.shape[1]
     times, event_channels, marks, valid, pre_states, post_states = _empty_event_arrays(
         max_events,
@@ -299,10 +362,10 @@ def _direct_ssa_one(
         post_states,
     )
 
-    def condition(carry):
+    def condition(carry: _DirectSSACarry) -> Array:
         return carry[5] & (carry[3] < max_events)
 
-    def body(carry):
+    def body(carry: _DirectSSACarry) -> _DirectSSACarry:
         (
             time,
             state,
@@ -337,7 +400,7 @@ def _direct_ssa_one(
             & (event_time <= end)
         )
 
-        def apply_event(_):
+        def apply_event(_: None) -> _DirectSSACarry:
             mark_index = counts[channel]
             mark_key = mark_keys[channel, mark_index]
             mark = process.sample_mark(mark_key, event_time, state, channel, args)
@@ -357,7 +420,7 @@ def _direct_ssa_one(
                 after_states.at[event_index].set(next_state),
             )
 
-        def finish(_):
+        def finish(_: None) -> _DirectSSACarry:
             resolved_status = jnp.where(
                 ~valid_rates,
                 JUMP_INVALID_INTENSITY,
@@ -408,7 +471,7 @@ def _next_reaction_paths(
     mark_keys: Array,
     args: Any,
     max_events: int,
-):
+) -> _JumpPathResult:
     return jax.vmap(
         lambda path_thresholds, path_marks: _next_reaction_one(
             process,
@@ -433,7 +496,7 @@ def _direct_ssa_paths(
     mark_keys: Array,
     args: Any,
     max_events: int,
-):
+) -> _JumpPathResult:
     return jax.vmap(
         lambda path_proposals, path_marks: _direct_ssa_one(
             process,
@@ -598,7 +661,7 @@ def _solution_from_paths(
 
 
 def _pooled_path_chunks(
-    runner,
+    runner: Callable[..., tuple[Array, ...]],
     path_arrays: tuple[Array, ...],
     path_count: int,
     lane_count: int | None,
@@ -804,7 +867,7 @@ def finite_state_generator(
     if np.unique(host, axis=0).shape[0] != count:
         raise ValueError("Enumerated finite states must be unique.")
 
-    def one_state(state):
+    def one_state(state: Array) -> tuple[Array, Array]:
         rates = process.intensities(t, state, args)
         channels = jnp.arange(process.num_channels, dtype=jnp.int32)
         next_states = jax.vmap(
@@ -1048,7 +1111,7 @@ def _hybrid_diffusion(
     differential: DifferentialProblem,
     path_sign: Array,
     num_channels: int,
-):
+) -> Callable[[ArrayLike, Array, Any], Array]:
     if any(term.representation != "dense" for term in differential.wiener_terms):
         raise NotImplementedError(
             "Jump-differential solving currently requires dense Wiener coefficients."
@@ -1056,7 +1119,7 @@ def _hybrid_diffusion(
     state_shape = tuple(differential.initial_state.shape)
     state_size = prod(state_shape) if state_shape else 1
 
-    def evaluate(time, augmented_state, args):
+    def evaluate(time: ArrayLike, augmented_state: Array, args: Any) -> Array:
         state = augmented_state[:state_size].reshape(state_shape)
         columns = []
         for term in differential.wiener_terms:
@@ -1099,7 +1162,13 @@ class _ClippedBrownianPath(dfx.AbstractBrownianPath):
     def t1(self) -> Array:  # ty: ignore[invalid-attribute-override]
         return self._t1
 
-    def evaluate(self, t0, t1=None, left=True, use_levy=False):
+    def evaluate(
+        self,
+        t0: ArrayLike,
+        t1: ArrayLike | None = None,
+        left: bool = True,
+        use_levy: bool = False,
+    ) -> Array | dfx.AbstractBrownianIncrement:
         start = jnp.clip(t0, self.t0, self.t1)
         end = None if t1 is None else jnp.clip(t1, self.t0, self.t1)
         return self.path.evaluate(start, end, left=left, use_levy=use_levy)
@@ -1111,18 +1180,20 @@ def _hybrid_terms(
     wiener: WienerRealization | None,
     path_key: Array | None,
     path_sign: Array | None,
-):
+) -> dfx.AbstractTerm:
     differential = problem.differential
     jumps = problem.jumps
     state_shape = tuple(differential.initial_state.shape)
     state_size = prod(state_shape) if state_shape else 1
 
-    def augmented_drift(time, augmented_state, args):
+    def augmented_drift(time: ArrayLike, augmented_state: Array, args: Any) -> Array:
         state = augmented_state[:state_size].reshape(state_shape)
         rates = jumps.intensities(time, state, args)
         rates_valid = jnp.all(jnp.isfinite(rates) & (rates >= 0.0))
         rates = jnp.where(rates_valid, rates, jnp.nan)
-        drift = jnp.asarray(differential.drift(time, state, args)).reshape((state_size,))
+        drift = jnp.asarray(differential.drift(jnp.asarray(time), state, args)).reshape(
+            (state_size,)
+        )
         return jnp.concatenate((drift, rates))
 
     drift_term = dfx.ODETerm(augmented_drift)
@@ -1293,7 +1364,7 @@ def _hybrid_one(
     root_finder: Any,
     max_steps: int,
     max_events: int,
-):
+) -> _HybridPathResult:
     differential = problem.differential
     jumps = problem.jumps
     per_channel = thresholds.shape[-1]
@@ -1339,8 +1410,10 @@ def _hybrid_one(
         post_states,
     )
 
-    def advance_interval(carry, interval_end):
-        def condition(inner):
+    def advance_interval(
+        carry: _HybridCarry, interval_end: Array
+    ) -> tuple[_HybridCarry, tuple[Array, Array]]:
+        def condition(inner: _HybridCarry) -> Array:
             active = (
                 (inner[0] < interval_end)
                 & (inner[5] == JUMP_SUCCESS)
@@ -1348,10 +1421,12 @@ def _hybrid_one(
                 & (inner[4] < max_events)
             )
             if prepared_schedule is not None:
-                active = active & (~inner[9].terminal) & (~inner[9].capacity_exceeded)
+                tape = inner[9]
+                assert tape is not None
+                active = active & (~tape.terminal) & (~tape.capacity_exceeded)
             return active
 
-        def body(inner):
+        def body(inner: _HybridCarry) -> _HybridCarry:
             (
                 time,
                 state,
@@ -1376,10 +1451,12 @@ def _hybrid_one(
             safe_counts = jnp.minimum(counts, per_channel - 1)
             next_thresholds = thresholds[jnp.arange(jumps.num_channels), safe_counts]
 
-            def integrate(_):
+            def integrate(_: None) -> _HybridCarry:
                 state_size = prod(jumps.state_shape) if jumps.state_shape else 1
 
-                def jump_event_condition(t, y, args, **kwargs):
+                def jump_event_condition(
+                    t: Array, y: Array, args: Any, **kwargs: object
+                ) -> Array:
                     del t, args, kwargs
                     return jnp.min(next_thresholds - y[state_size:])
 
@@ -1398,10 +1475,14 @@ def _hybrid_one(
                         )
                     )
 
-                    def make_guard_event_condition(index):
+                    def make_guard_event_condition(
+                        index: int,
+                    ) -> Callable[..., Array]:
                         scheduled = prepared_schedule.plan.events[index]
 
-                        def guard_event_condition(t, y, args, **kwargs):
+                        def guard_event_condition(
+                            t: Array, y: Array, args: Any, **kwargs: object
+                        ) -> Array:
                             del kwargs
                             event_state = y[:state_size].reshape(jumps.state_shape)
                             residual = scheduled.guard.guard(t, event_state, args)
@@ -1509,7 +1590,7 @@ def _hybrid_one(
                         for value in native.event_mask[1:]
                     )
 
-                    def augmented_at_time(query_time):
+                    def augmented_at_time(query_time: Array) -> Array:
                         return native.evaluate(query_time)
 
                     localized_jump = localize_numerical_event(
@@ -1568,7 +1649,7 @@ def _hybrid_one(
                         event_plan = scheduled.event
                         assert event_plan is not None
 
-                        def state_at_time(query_time, args):
+                        def state_at_time(query_time: Array, args: Any) -> Array:
                             del args
                             return augmented_at_time(query_time)[:state_size].reshape(
                                 jumps.state_shape
@@ -1710,7 +1791,7 @@ def _hybrid_one(
                 )
                 if differential.stochastic:
 
-                    def replay_event(_):
+                    def replay_event(_: None) -> tuple[Array, Array]:
                         replay = dfx.diffeqsolve(
                             terms,
                             solver,
@@ -1744,7 +1825,7 @@ def _hybrid_one(
                     jnp.int32
                 )
 
-                def apply_jump(_):
+                def apply_jump(_: None) -> _HybridCarry:
                     mark_index = counts[channel]
                     mark = jumps.sample_mark(
                         mark_keys[channel, mark_index],
@@ -1778,7 +1859,7 @@ def _hybrid_one(
                         after_buffer.at[event_index].set(jumped_state),
                     )
 
-                def no_event(_):
+                def no_event(_: None) -> _HybridCarry:
                     next_status = jnp.where(
                         backend_ok,
                         status,
@@ -1811,14 +1892,16 @@ def _hybrid_one(
                         operand=None,
                     )
 
-                def apply_deterministic(_):
+                def apply_deterministic(_: None) -> _HybridCarry:
                     assert tape is not None
 
-                    def make_branch(scheduled):
+                    def make_branch(
+                        scheduled: ScheduledHybridGuard,
+                    ) -> Callable[[None], _StageResetOutput]:
                         event_plan = scheduled.event
                         assert event_plan is not None
 
-                        def branch(_):
+                        def branch(_: None) -> _StageResetOutput:
                             reset_state = jnp.asarray(
                                 event_plan.reset(
                                     next_time,
@@ -1929,7 +2012,7 @@ def _hybrid_one(
                     operand=None,
                 )
 
-            def reject(_):
+            def reject(_: None) -> _HybridCarry:
                 rejected_status = jnp.where(
                     valid_rates,
                     JUMP_MAX_EVENTS,
@@ -2007,6 +2090,7 @@ def _hybrid_one(
     terminal = jnp.isfinite(final_carry[7])
     if prepared_schedule is not None:
         terminal_tape = final_carry[9]
+        assert terminal_tape is not None
         terminal_slot = jnp.maximum(terminal_tape.event_count - 1, 0)
         terminal_state = terminal_tape.states_after[terminal_slot]
         at_or_after_terminal = terminal & (
@@ -2049,7 +2133,7 @@ def _hybrid_deterministic_paths(
     root_finder: Any,
     max_steps: int,
     max_events: int,
-):
+) -> _HybridPathResult:
     return jax.vmap(
         lambda path_initial, path_thresholds, path_marks: _hybrid_one(
             problem,
@@ -2090,7 +2174,7 @@ def _hybrid_stochastic_paths(
     root_finder: Any,
     max_steps: int,
     max_events: int,
-):
+) -> _HybridPathResult:
     return jax.vmap(
         lambda path_initial, path_thresholds, path_marks, path_key, path_sign: (
             _hybrid_one(
@@ -2341,16 +2425,16 @@ def solve_jump_differential(
         pre_states=before,
         post_states=after,
     )
-    deterministic_events = (
-        None
-        if prepared_schedule is None
-        else _batched_schedule_result(
+    if prepared_schedule is None:
+        deterministic_events = None
+    else:
+        assert deterministic_tape is not None
+        deterministic_events = _batched_schedule_result(
             deterministic_tape,
             prepared_schedule,
             sample_shape,
             state_shape,
         )
-    )
     numerical_successful = events.successful & schedule_numerical
     solution_valid = path_valid & numerical_successful[..., None]
     metadata = {

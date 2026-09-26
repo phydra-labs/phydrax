@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import NumericRevision, SemanticProvenance
@@ -18,6 +20,7 @@ from ..linalg import (
     DenseLinearOperator,
     LeastSquaresProblem,
     LinearSolvePolicy,
+    LinearSolveResult,
     solve,
 )
 from ._reduction import TrialTestReduction
@@ -50,11 +53,11 @@ class RectangularLinearROMProblem(StrictModule, NonTrainableState):
 
     def solve(
         self,
-        right_hand_side,
+        right_hand_side: PyTree[Any],
         /,
         *,
         policy: LinearSolvePolicy | None = None,
-    ):
+    ) -> LinearSolveResult:
         reduced_matrix = self.reduction.project_operator(self.operator)
         reduced_rhs = self.reduction.test.reduced_space.flatten(
             self.reduction.project_covector(right_hand_side)

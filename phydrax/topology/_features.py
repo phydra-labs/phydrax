@@ -50,7 +50,9 @@ class PersistenceFeaturePolicy(StrictModule, NonTrainableState):
         )
 
 
-def _packed_values(diagram: PackedPersistenceDiagram, policy: PersistenceFeaturePolicy):
+def _packed_values(
+    diagram: PackedPersistenceDiagram, policy: PersistenceFeaturePolicy
+) -> tuple[Array, Array, Array, Array]:
     active = diagram.active_mask & (diagram.degrees == policy.degree)
     if not policy.include_essential:
         active = active & diagram.has_finite_death

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 from math import isfinite
-from typing import Any
+from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -49,6 +49,42 @@ from ._constraints import (
     OpenLoopGameConstraints,
 )
 from ._layout import PlayerControlPartition
+
+
+if TYPE_CHECKING:
+    from ._generalized_nash import FiniteHorizonLQOpenLoopGNEProblem
+
+
+_KKTState: TypeAlias = tuple[Array, Array, Array]
+_KKTArgs: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array, Array]
+_VENumericPreparation: TypeAlias = tuple[
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    Array,
+    ConvexProgramResult,
+    Array,
+    VariationalInequalityProblem,
+    _KKTState,
+    _KKTArgs,
+]
 
 
 OPEN_LOOP_VARIATIONAL_GNE = "OPEN_LOOP_VARIATIONAL_GNE"
@@ -720,7 +756,7 @@ def _validate_topology(
 
 
 def _condense_dynamics(
-    problem: FiniteHorizonLQOpenLoopVEProblem, /
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem, /
 ) -> tuple[Array, Array]:
     n = problem.state_size
     variables = problem.horizon * problem.control_size
@@ -750,7 +786,7 @@ def _condense_dynamics(
 
 
 def _condense_costs(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     state_maps: Array,
     state_offsets: Array,
     /,
@@ -872,7 +908,7 @@ def _condense_costs(
 
 
 def _trajectory(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     state_maps: Array,
     state_offsets: Array,
     flat_controls: Array,
@@ -894,7 +930,7 @@ def _trajectory(
 
 
 def _constraint_values(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     state_maps: Array,
     state_offsets: Array,
     flat_controls: Array,
@@ -920,7 +956,7 @@ def _constraint_values(
 
 
 def _constraint_linearization(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     state_maps: Array,
     state_offsets: Array,
     constraint_args: Any,
@@ -1087,7 +1123,7 @@ def _phase_one(
     return solve_quadratic_program(program, policy=plan.phase_one_policy)
 
 
-def _kkt_operator(state, args, /):
+def _kkt_operator(state: _KKTState, args: _KKTArgs, /) -> _KKTState:
     controls, equality_variables, inequality_variables = state
     (
         pseudogradient,
@@ -1132,7 +1168,7 @@ def _numeric_preparation(
     initial_inequality_multipliers: Array | None,
     constraint_args: Any,
     /,
-):
+) -> _VENumericPreparation:
     state_maps, state_offsets = _condense_dynamics(problem)
     (
         player_hessians,
@@ -1175,7 +1211,14 @@ def _numeric_preparation(
         & jnp.all(player_convex, axis=-1)
         & (affinity <= plan.structural_tolerance)
     )
-    safe_lowered = tuple(_safe(value) for value in lowered)
+    safe_lowered = (
+        _safe(lowered[0]),
+        _safe(lowered[1]),
+        _safe(lowered[2]),
+        _safe(lowered[3]),
+        _safe(lowered[4]),
+        _safe(lowered[5]),
+    )
     safe_pseudogradient = _safe(pseudogradient)
     safe_pseudolinear = _safe(pseudolinear)
     phase_result = _phase_one(
@@ -1436,7 +1479,7 @@ def refresh_open_loop_ve(
 
 
 def _player_costs(
-    problem: FiniteHorizonLQOpenLoopVEProblem,
+    problem: FiniteHorizonLQOpenLoopVEProblem | FiniteHorizonLQOpenLoopGNEProblem,
     states: Array,
     controls: Array,
     /,

@@ -62,7 +62,7 @@ def evaluate_force_group(
     if not selected:
         raise ValueError(f"Potential program has no force group {group}.")
 
-    def energy_closure(value):
+    def energy_closure(value: Array) -> tuple[Array, tuple[Array, Array]]:
         context = potential.context(value, neighborhood, **context_kwargs)
         evaluations = tuple(potential.terms[index].energy(context) for index in selected)
         terms = jnp.stack(tuple(item.energy for item in evaluations))
@@ -257,7 +257,7 @@ def respa_step(
     neighborhood = state.neighborhood
     unwrapped = dynamics._unwrapped(state.kinematics, state.cell_vectors)
 
-    def kwargs(current_unwrapped):
+    def kwargs(current_unwrapped: Array) -> dict[str, Any]:
         values: dict[str, Any] = {
             "unwrapped_positions": current_unwrapped,
             "species": state.species,

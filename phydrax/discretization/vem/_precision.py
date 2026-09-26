@@ -8,6 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import (
@@ -77,13 +78,13 @@ class VirtualElementPrecisionPolicy(StrictModule, NonTrainableState):
             },
         )
 
-    def geometry(self, value: Any, /):
+    def geometry(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.geometry_dtype)
 
-    def projection(self, value: Any, /):
+    def projection(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.projection_dtype)
 
-    def accumulation(self, value: Any, /):
+    def accumulation(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
         return (
             array
@@ -91,7 +92,7 @@ class VirtualElementPrecisionPolicy(StrictModule, NonTrainableState):
             else array.astype(self.accumulation_dtype)
         )
 
-    def output(self, value: Any, /):
+    def output(self, value: ArrayLike, /) -> Array:
         return jnp.asarray(value, dtype=self.output_dtype)
 
     def evidence(self) -> PrecisionEvidenceEnvelope:

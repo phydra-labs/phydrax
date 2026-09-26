@@ -79,7 +79,7 @@ class ChamberVolumePlan(StrictModule, NonTrainableState):
                 "kind": "cardiac-chamber-volume-mechanics-plan",
                 "surface_id": surface.surface_id,
                 "orientation_id": orientation_id,
-                "minimum_volume": threshold.hex(),
+                "minimum_volume": float(threshold).hex(),
             }
         )
         selected = generated if plan_id is None else str(plan_id)

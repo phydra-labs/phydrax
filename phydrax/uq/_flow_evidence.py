@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -41,14 +41,14 @@ class FlowNUTSEvidenceResult(StrictModule):
     def __init__(
         self,
         *,
-        log_evidence: Array,
-        bridge_residual: Array,
-        posterior_overlap_ess: Array,
-        proposal_overlap_ess: Array,
-        jackknife_standard_error: Array,
-        nonfinite_count: Array,
-        iterations: int,
-        valid: Array,
+        log_evidence: ArrayLike,
+        bridge_residual: ArrayLike,
+        posterior_overlap_ess: ArrayLike,
+        proposal_overlap_ess: ArrayLike,
+        jackknife_standard_error: ArrayLike,
+        nonfinite_count: ArrayLike,
+        iterations: ArrayLike,
+        valid: ArrayLike,
         status: str,
         block_length: int,
         num_posterior_samples: int,

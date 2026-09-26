@@ -437,7 +437,7 @@ def _distributed_problem(
 
 def _distributed_result(
     value: Array,
-    auxiliary,
+    auxiliary: tuple[Array, ...],
     rhs: Array,
     pairing: DistributedPairing,
     policy: DistributedKrylovPolicy,

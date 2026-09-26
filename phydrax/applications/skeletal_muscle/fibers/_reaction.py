@@ -84,7 +84,13 @@ class Shorten2007FiberReaction(AbstractFiberReaction):
         return self.model.initialize(batch_shape)
 
     def rhs(
-        self, time_ms, values, current_uA_per_cm2, stretch, stretch_rate_per_ms, /
+        self,
+        time_ms: Array,
+        values: Array,
+        current_uA_per_cm2: Array,
+        stretch: Array,
+        stretch_rate_per_ms: Array,
+        /,
     ) -> Array:
         del stretch, stretch_rate_per_ms
         return self.model.rhs(
@@ -92,7 +98,13 @@ class Shorten2007FiberReaction(AbstractFiberReaction):
         )
 
     def admissible(
-        self, time_ms, values, current_uA_per_cm2, stretch, stretch_rate_per_ms, /
+        self,
+        time_ms: Array,
+        values: Array,
+        current_uA_per_cm2: Array,
+        stretch: Array,
+        stretch_rate_per_ms: Array,
+        /,
     ) -> Array:
         rates = self.rhs(
             time_ms, values, current_uA_per_cm2, stretch, stretch_rate_per_ms

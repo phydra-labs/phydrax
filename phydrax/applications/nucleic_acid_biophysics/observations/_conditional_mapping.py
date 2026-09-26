@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 import equinox as eqx
@@ -185,7 +186,7 @@ class ConditionalMutationLaw(StrictModule, NonTrainableState):
         initial_parameters: ArrayLike | None = None,
         /,
         *,
-        requested_use=None,
+        requested_use: Mapping[str, bool] | None = None,
         fit_profile_mask: ArrayLike | None = None,
         max_steps: int = 500,
         gradient_tolerance: float = 1e-6,
@@ -454,7 +455,9 @@ def prepare_conditional_mapping_ladder(
     )
 
 
-def _treatment_contrasts(indices, labels, site_count: int, prefix: str):
+def _treatment_contrasts(
+    indices: Array, labels: tuple[str, ...], site_count: int, prefix: str
+) -> tuple[np.ndarray, tuple[str, ...]]:
     count = len(labels)
     if count <= 1:
         return np.zeros((len(indices), site_count, 0)), ()

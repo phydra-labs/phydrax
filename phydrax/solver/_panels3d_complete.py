@@ -129,7 +129,7 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
         /,
         *,
         body_velocity: ArrayLike | None = None,
-        reference_point: ArrayLike = (0.0, 0.0, 0.0),
+        reference_point: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         potential_rate: ArrayLike | None = None,
         compute_added_mass: bool = False,
     ) -> CompletePanelResult3D:

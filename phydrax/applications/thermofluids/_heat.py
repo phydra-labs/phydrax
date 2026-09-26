@@ -17,6 +17,7 @@ from ...dynamics import (
     DAEComponent,
     DAEDerivativeIncidence,
     DAEEquationBlock,
+    DAEJet,
     DAEPort,
     DAEVariableBlock,
 )
@@ -29,7 +30,7 @@ from ._process import (
 )
 
 
-def _residual_numeric_id(semantic_id: str, parameters, /) -> str:
+def _residual_numeric_id(semantic_id: str, parameters: object, /) -> str:
     return canonical_fingerprint(
         {
             "kind": "thermofluid-residual-binding",
@@ -98,7 +99,14 @@ class HeatConversionLaw(StrictModule, abc.ABC):
         raise NotImplementedError
 
 
-def _conversion_evaluation(power, source, supply, factor, *, heat_pump):
+def _conversion_evaluation(
+    power: ArrayLike,
+    source: ArrayLike,
+    supply: ArrayLike,
+    factor: ArrayLike,
+    *,
+    heat_pump: bool,
+) -> HeatConversionEvaluation:
     power, source, supply, factor = jnp.broadcast_arrays(
         jnp.asarray(power), jnp.asarray(source), jnp.asarray(supply), jnp.asarray(factor)
     )
@@ -142,7 +150,11 @@ class ConstantCOPHeatPumpLaw(HeatConversionLaw):
         self.law_id = canonical_fingerprint({"kind": "constant-cop-heat-pump"})
 
     def evaluate(
-        self, electrical_power, source_temperature, supply_temperature, /
+        self,
+        electrical_power: ArrayLike,
+        source_temperature: ArrayLike,
+        supply_temperature: ArrayLike,
+        /,
     ) -> HeatConversionEvaluation:
         return _conversion_evaluation(
             electrical_power,
@@ -172,7 +184,11 @@ class ResistiveHeatingLaw(HeatConversionLaw):
         self.law_id = canonical_fingerprint({"kind": "resistive-heating"})
 
     def evaluate(
-        self, electrical_power, source_temperature, supply_temperature, /
+        self,
+        electrical_power: ArrayLike,
+        source_temperature: ArrayLike,
+        supply_temperature: ArrayLike,
+        /,
     ) -> HeatConversionEvaluation:
         return _conversion_evaluation(
             electrical_power,
@@ -183,7 +199,9 @@ class ResistiveHeatingLaw(HeatConversionLaw):
         )
 
 
-def _heat_port(name, temperature, flow, orientation):
+def _heat_port(
+    name: str, temperature: str, flow: str, orientation: HeatFlowOrientation
+) -> tuple[DAEPort, ThermofluidPortSpec]:
     return (
         DAEPort(name, (temperature,), (flow,)),
         ThermofluidPortSpec(
@@ -225,7 +243,7 @@ def thermal_capacitance_component(
         for index, flow in enumerate(flow_names)
     )
 
-    def energy_balance(time, jet, args):
+    def energy_balance(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return capacity * jet.value("temperature", 1) - int(orientation) * sum(
             jet.value(flow) for flow in flow_names
@@ -277,13 +295,13 @@ def thermal_conductor_component(
     left = _heat_port("left", "left_temperature", "left_heat_flow", left_orientation)
     right = _heat_port("right", "right_temperature", "right_heat_flow", right_orientation)
 
-    def constitutive(time, jet, args):
+    def constitutive(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return int(left_orientation) * jet.value("left_heat_flow") - conductance_value * (
             jet.value("left_temperature") - jet.value("right_temperature")
         )
 
-    def balance(time, jet, args):
+    def balance(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return int(left_orientation) * jet.value("left_heat_flow") + int(
             right_orientation
@@ -364,7 +382,7 @@ def temperature_boundary_component(
         raise ValueError("temperature must be finite positive Kelvin.")
     port, typed = _heat_port("heat", "temperature", "heat_flow", orientation)
 
-    def residual(time, jet, args):
+    def residual(time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return jet.value("temperature") - target
 
@@ -398,7 +416,7 @@ class _HeatDeliveryResidual(StrictModule):
     law: HeatConversionLaw
     electrical_power: Array
 
-    def __call__(self, time, jet, args):
+    def __call__(self, time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         result = self.law.evaluate(
             self.electrical_power,
@@ -411,7 +429,7 @@ class _HeatDeliveryResidual(StrictModule):
 class _HeatConversionBalance(StrictModule):
     electrical_power: Array
 
-    def __call__(self, time, jet, args):
+    def __call__(self, time: Array, jet: DAEJet, args: object) -> Array:
         del time, args
         return (
             self.electrical_power

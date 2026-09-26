@@ -4,12 +4,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ...discretization import IntegrationDomain
 from ...discretization._local_variational import (
     AbstractPreparedLocalDiscretization,
     LocalVariationalRequest,
     LocalVariationalSelection,
 )
+
+
+if TYPE_CHECKING:
+    from .._finite_element_variational import FiniteElementAction
 
 
 def _jet_kinds(operators: tuple[tuple[str, str], ...], /) -> tuple[str, ...]:
@@ -85,7 +91,7 @@ def select_local_execution(
 
 
 def select_prepared_local_execution(
-    action,
+    action: FiniteElementAction,
     discretization: AbstractPreparedLocalDiscretization,
     domain: IntegrationDomain,
     /,

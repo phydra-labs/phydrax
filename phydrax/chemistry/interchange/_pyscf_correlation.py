@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib
 import importlib.metadata
 import importlib.util
+from typing import Any
 
 import equinox as eqx
 import numpy as np
@@ -27,7 +28,7 @@ def is_pyscf_correlation_available() -> bool:
     return importlib.util.find_spec("pyscf") is not None
 
 
-def require_pyscf_correlation():
+def require_pyscf_correlation() -> tuple[Any, Any, Any, Any, Any]:
     if not is_pyscf_correlation_available():
         raise ImportError(
             "Coupled-cluster execution requires optional dependency 'pyscf'."
@@ -41,7 +42,7 @@ def require_pyscf_correlation():
     )
 
 
-def _mean_field_from_store(store: MolecularOrbitalIntegralStore):
+def _mean_field_from_store(store: MolecularOrbitalIntegralStore) -> Any:
     gto, scf, ao2mo, _, _ = require_pyscf_correlation()
     orbital_count = store.partition.orbital_count
     occupied = tuple(

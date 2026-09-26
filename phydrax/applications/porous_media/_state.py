@@ -6,15 +6,20 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from ..._admissibility import guard_derivative_validity
 from ..._strict import StrictModule
 from ...nonlinear import NonlinearResult
 
 
-def _successful_root_value(value, successful):
+_Tree = TypeVar("_Tree")
+
+
+def _successful_root_value(value: _Tree, successful: ArrayLike) -> _Tree:
     """Keep failed primal candidates inspectable, never differentiate them."""
     return guard_derivative_validity(
         value,
@@ -45,7 +50,7 @@ class PorousState(StrictModule):
     time_s: Array
 
     @property
-    def unknown(self):
+    def unknown(self) -> Array:
         return jnp.concatenate((self.pressure_Pa, self.face_pressure_Pa))
 
 
@@ -56,35 +61,35 @@ class WaterHeatState(StrictModule):
     energy_J: Array
 
     @property
-    def pressure_Pa(self):
+    def pressure_Pa(self) -> Array:
         return self.water.pressure_Pa
 
     @property
-    def face_pressure_Pa(self):
+    def face_pressure_Pa(self) -> Array:
         return self.water.face_pressure_Pa
 
     @property
-    def temperature_K(self):
+    def temperature_K(self) -> Array:
         return self.water.temperature_K
 
     @property
-    def face_temperature_K(self):
+    def face_temperature_K(self) -> Array:
         return self.water.face_temperature_K
 
     @property
-    def water_mass_kg(self):
+    def water_mass_kg(self) -> Array:
         return self.water.water_mass_kg
 
     @property
-    def water_volume_m3(self):
+    def water_volume_m3(self) -> Array:
         return self.water.water_volume_m3
 
     @property
-    def time_s(self):
+    def time_s(self) -> Array:
         return self.water.time_s
 
     @property
-    def unknown(self):
+    def unknown(self) -> Array:
         return jnp.concatenate(
             (self.water.unknown, self.temperature_K, self.face_temperature_K)
         )
@@ -101,7 +106,7 @@ class PorousStepResult(StrictModule):
     successful: Array
 
     @property
-    def status(self):
+    def status(self) -> Array:
         return self.root.status
 
 

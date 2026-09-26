@@ -130,7 +130,7 @@ class ValuationResult(StrictModule):
         )
         if (lower is None) != (upper is None):
             raise ValueError("lower_bound and upper_bound must be supplied together.")
-        if lower is not None:
+        if lower is not None and upper is not None:
             value_ = eqx.error_if(
                 value_,
                 jnp.any(lower > upper)

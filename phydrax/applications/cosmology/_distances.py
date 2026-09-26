@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -71,7 +73,9 @@ class FLRWDistancePlan(StrictModule, NonTrainableState):
             }
         )
 
-    def _integrate_redshift(self, redshift: Array, integrand) -> Array:
+    def _integrate_redshift(
+        self, redshift: Array, integrand: Callable[[Array], Array]
+    ) -> Array:
         mapped = 0.5 * redshift[..., None] * (self.nodes + 1.0)
         values = integrand(mapped)
         return 0.5 * redshift * jnp.sum(self.weights * values, axis=-1)

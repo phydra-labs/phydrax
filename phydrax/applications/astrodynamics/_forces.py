@@ -80,7 +80,9 @@ class PointMassGravity(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args=None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):
@@ -142,7 +144,9 @@ class ConstantAcceleration(AbstractAstrodynamicsForce):
         self.context = context
         self.force_id = identifier
 
-    def evaluate(self, time, state, args=None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         del time, args
         packed = jnp.asarray(state)
         if packed.shape != (6,):
@@ -193,7 +197,9 @@ class CompositeAstrodynamicsForce(AbstractAstrodynamicsForce):
             }
         )
 
-    def evaluate(self, time, state, args=None, /) -> AstrodynamicsForceEvaluation:
+    def evaluate(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None, /
+    ) -> AstrodynamicsForceEvaluation:
         evaluations = tuple(term.evaluate(time, state, args) for term in self.terms)
         statuses = jnp.stack(tuple(value.status for value in evaluations))
         valid = jnp.all(jnp.stack(tuple(value.valid for value in evaluations)))

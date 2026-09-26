@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Self
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..ein import contract
 from ._activation import MaterialActivationState
+from ._path import ToolpathEvent
 from ._schedule import ProcessSchedule
 
 
@@ -28,7 +30,7 @@ class ManufacturingRuntimeState:
     activation: MaterialActivationState
 
     @classmethod
-    def initialize(cls, control_volume_count: int, /, *, time_s: float = 0.0):
+    def initialize(cls, control_volume_count: int, /, *, time_s: float = 0.0) -> Self:
         if control_volume_count <= 0 or not np.isfinite(time_s):
             raise ValueError("Manufacturing runtime initialization is invalid.")
         zeros = jnp.zeros((control_volume_count,))
@@ -116,7 +118,9 @@ class ManufacturingRuntime:
         normalization = jnp.sum(weighted)
         return jnp.where(normalization > 0, weighted / normalization, 0)
 
-    def _integrated_distribution(self, event, lower: float, upper: float) -> Array:
+    def _integrated_distribution(
+        self, event: ToolpathEvent, lower: float, upper: float
+    ) -> Array:
         midpoint = 0.5 * (lower + upper)
         half_width = 0.5 * (upper - lower)
         sample_times = midpoint + half_width * _GAUSS_ABSCISSA
