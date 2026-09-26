@@ -225,6 +225,17 @@ method, and nested helper annotates all parameters and its return type. Only
 `ty: ignore[rule]` suppressions are honored, and only for proven checker or
 third-party stub defects.
 
+The installed distribution is typed too: the wheel carries the PEP 561
+`py.typed` marker, and
+
+```bash
+python -m tools.check_installed_typing
+```
+
+builds the wheel, installs it for Python 3.11, 3.12, and 3.13, and runs the pinned
+ty over consumer fixtures from outside the repository, so annotations are checked
+exactly as users import them.
+
 Constructors are typed by each concrete class. A concrete module that inherits a
 custom constructor from an abstract owner declares a checker-only alias,
 matching Equinox's runtime constructor choice:

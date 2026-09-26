@@ -16,6 +16,10 @@
   contract field of a module. Checks read only kind, rank, extent, and dtype
   metadata: they add no JAX operations and synchronize nothing. See the typing
   guide.
+- The Phydrax wheel ships the PEP 561 `py.typed` marker, so type checkers use its
+  inline annotations. `python -m tools.check_installed_typing` builds the wheel,
+  installs it for Python 3.11–3.13, and checks consumer fixtures against the
+  installed package with the pinned ty.
 - `tools/audit_host_sync.py` reports `bool`/`int`/`float`/`numpy.asarray`/
   `numpy.array`/`jax.device_get` calls in package code, classified as static-shape
   reads, host preparation, explicit safe points, external-provider code, output
