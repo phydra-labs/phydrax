@@ -24,6 +24,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <sys/resource.h>
 #include <unistd.h>
@@ -151,22 +152,32 @@ struct Outcome {
   json::Value result = json::Object{};
 };
 
-inline Outcome run(Handler const& handler, Request const& request) {
-  Outcome outcome;
+// Runs `stage` and classifies its exception into the reported failure kinds.
+template <class Stage>
+Outcome attempt(Stage&& stage) {
   try {
-    outcome.result = handler(request);
-    outcome.result.as_object();
+    stage();
   } catch (Failure const& failure) {
-    outcome = Outcome{false, failure.kind, failure.what(), json::Object{}};
+    return Outcome{false, failure.kind, failure.what(), json::Object{}};
   } catch (std::bad_alloc const&) {
-    outcome = Outcome{false, "resource_exhausted", "Worker allocation failed", json::Object{}};
+    return Outcome{false, "resource_exhausted", "Worker allocation failed", json::Object{}};
   } catch (std::length_error const& error) {
-    outcome = Outcome{false, "resource_exhausted", error.what(), json::Object{}};
+    return Outcome{false, "resource_exhausted", error.what(), json::Object{}};
   } catch (std::invalid_argument const& error) {
-    outcome = Outcome{false, "invalid_request", error.what(), json::Object{}};
+    return Outcome{false, "invalid_request", error.what(), json::Object{}};
   } catch (std::exception const& error) {
-    outcome = Outcome{false, "library_failure", error.what(), json::Object{}};
+    return Outcome{false, "library_failure", error.what(), json::Object{}};
   }
+  return Outcome{};
+}
+
+inline Outcome run(Handler const& handler, Request const& request) {
+  json::Value result;
+  Outcome outcome = attempt([&] {
+    result = handler(request);
+    result.as_object();
+  });
+  if (outcome.ok) outcome.result = std::move(result);
   return outcome;
 }
 
@@ -266,6 +277,15 @@ inline Outcome agree(MPI_Comm comm, Outcome local) {
 }
 
 }  // namespace detail
+
+// Agrees a rank-local stage of a collective handler before its next collective
+// call: when any rank fails, every rank throws the lowest failing rank's Failure.
+template <class Stage>
+void agreed(MPI_Comm comm, Stage&& stage) {
+  detail::Outcome const outcome =
+      detail::agree(comm, detail::attempt(std::forward<Stage>(stage)));
+  if (!outcome.ok) throw Failure(outcome.kind, outcome.error);
+}
 
 // Collective worker: rank zero owns the control channel and broadcasts each
 // request; every rank runs the handler; failures are agreed collectively and

@@ -1166,9 +1166,10 @@ def bvh_hierarchical_sum(
 class BVHPairResult(StrictModule):
     """Bounded overlapping item pairs of two BVHs in lexicographic order.
 
-    `count` is the number of overlapping pairs found; pairs beyond the output
-    capacity are dropped.  `overflow` is set when pairs were dropped or when the
-    traversal stack capacity was exhausted (then `count` is a lower bound).
+    `count` (int64) is the number of overlapping pairs found; pairs beyond the
+    output capacity are dropped.  `overflow` is set when pairs were dropped or
+    when the traversal stack capacity was exhausted (then `count` is a lower
+    bound).
     """
 
     first_items: Array
@@ -1218,6 +1219,10 @@ def bvh_overlap_pairs(
             raise ValueError(f"{name} must be positive, got {value}.")
     if not isinstance(include_touching, bool):
         raise TypeError("include_touching must be a bool.")
+    if not jax.config.read("jax_enable_x64"):
+        raise RuntimeError(
+            "bvh_overlap_pairs counts pairs in int64; enable jax_enable_x64."
+        )
     dtype = jnp.result_type(first.bbox_min.dtype, second.bbox_min.dtype)
     pad = jnp.asarray(padding, dtype=dtype)
     if pad.shape != ():
@@ -1259,7 +1264,7 @@ def bvh_overlap_pairs(
                 include_touching,
             )
         ).reshape((-1,))
-        position = count + jnp.cumsum(hit, dtype=jnp.int32) - 1
+        position = count + jnp.cumsum(hit, dtype=jnp.int64) - 1
         target = jnp.where(hit & (position < capacity), position, capacity)
         first_out = first_out.at[target].set(
             jnp.broadcast_to(safe_first, pair_shape).reshape((-1,)), mode="drop"
@@ -1267,7 +1272,7 @@ def bvh_overlap_pairs(
         second_out = second_out.at[target].set(
             jnp.broadcast_to(safe_second, pair_shape).reshape((-1,)), mode="drop"
         )
-        return first_out, second_out, count + jnp.sum(hit, dtype=jnp.int32)
+        return first_out, second_out, count + jnp.sum(hit, dtype=jnp.int64)
 
     def body(state):
         first_stack, second_stack, top, first_out, second_out, count, exhausted = state
@@ -1321,7 +1326,7 @@ def bvh_overlap_pairs(
         root.astype(jnp.int32),
         jnp.full((capacity,), -1, dtype=jnp.int32),
         jnp.full((capacity,), -1, dtype=jnp.int32),
-        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int64),
         jnp.asarray(False),
     )
     _, _, _, first_out, second_out, count, exhausted = jax.lax.while_loop(

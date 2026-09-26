@@ -5,9 +5,9 @@
 // with ghost triangles and symbolic perturbation, see triangulation2d.hpp).
 #include <cstdint>
 #include <memory>
-#include <new>
 #include <vector>
 
+#include "capi_guard.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "triangulation2d.hpp"
@@ -60,24 +60,14 @@ extern "C" {
 
 int32_t phx_mc_delaunay_2d(int64_t point_count, const double* points, int64_t max_triangles,
                            phx_mc_mesh** mesh) {
-  try {
-    return triangulate_2d(point_count, points, nullptr, false, max_triangles, mesh);
-  } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  } catch (...) {
-    return PHX_MC_INTERNAL_ERROR;
-  }
+  return phx::mc::guarded(
+      [&] { return triangulate_2d(point_count, points, nullptr, false, max_triangles, mesh); });
 }
 
 int32_t phx_mc_regular_2d(int64_t point_count, const double* points, const double* weights,
                           int64_t max_triangles, phx_mc_mesh** mesh) {
-  try {
-    return triangulate_2d(point_count, points, weights, true, max_triangles, mesh);
-  } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  } catch (...) {
-    return PHX_MC_INTERNAL_ERROR;
-  }
+  return phx::mc::guarded(
+      [&] { return triangulate_2d(point_count, points, weights, true, max_triangles, mesh); });
 }
 
 }  // extern "C"

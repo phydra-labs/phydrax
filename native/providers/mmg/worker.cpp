@@ -33,6 +33,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unistd.h>

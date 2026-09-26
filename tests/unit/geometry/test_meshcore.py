@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import importlib.metadata
+
 import numpy as np
 import pytest
 from scipy.spatial import ConvexHull
@@ -54,10 +56,10 @@ def _tet_moments(vertices):
     return volume, volume * np.mean(vertices, axis=0)
 
 
-def test_identity_reports_version_and_source_hash():
+def test_identity_reports_the_phydrax_release_and_source_hash():
     name, version, digest = meshcore_identity().split(" ")
     assert name == "phydrax-meshcore"
-    assert version == "0.1.0"
+    assert version == importlib.metadata.version("phydrax")
     assert len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 

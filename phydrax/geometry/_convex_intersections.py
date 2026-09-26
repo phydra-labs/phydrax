@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 
 from .._geometry_precision import GeometryPrecisionPolicy
-from ._predicates import orient2d, PredicateMode, resolve_host_predicate_mode
+from .._geometry_predicates import orient2d, PredicateMode, resolve_host_predicate_mode
 
 
 class IntersectionStatus(str, Enum):
@@ -608,8 +608,8 @@ def intersect_convex_polygons(
 
 
 __all__ = [
+    "IntersectionResult",
     "IntersectionStatus",
     "PredicateEvidence",
-    "IntersectionResult",
     "intersect_convex_polygons",
 ]

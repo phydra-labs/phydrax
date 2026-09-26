@@ -59,7 +59,7 @@ def test_scalar_gradation_bounds_every_edge_and_ignores_numbering(kind):
     count = points.shape[0]
     values = _anisotropic_metrics(count, 0)
     field = meshing.MeshMetricField(
-        _scope(count), values, minimum_size=0.005, maximum_size=1.0
+        _scope(count), values, minimum_size=0.005, maximum_size=2.0
     )
     policy = meshing.MetricGradationPolicy(1.2, kind=kind)
     graded, evidence = meshing.grade_mesh_metric(
@@ -86,7 +86,7 @@ def test_scalar_gradation_bounds_every_edge_and_ignores_numbering(kind):
     inverse = np.argsort(permutation)
     permuted, _ = meshing.grade_mesh_metric(
         meshing.MeshMetricField(
-            _scope(count), values[permutation], minimum_size=0.005, maximum_size=1.0
+            _scope(count), values[permutation], minimum_size=0.005, maximum_size=2.0
         ),
         policy=policy,
         adjacency=inverse[edges][::-1, ::-1],
@@ -104,7 +104,7 @@ def test_anisotropic_gradation_converges_and_certifies_every_edge():
         _scope(count),
         _anisotropic_metrics(count, 1),
         minimum_size=0.005,
-        maximum_size=1.0,
+        maximum_size=2.0,
     )
     graded, evidence = meshing.grade_mesh_metric(
         field,
@@ -117,14 +117,134 @@ def test_anisotropic_gradation_converges_and_certifies_every_edge():
     difference = np.asarray(graded.values) - np.asarray(field.values)
     assert np.all(np.linalg.eigvalsh(difference) >= -1.0e-8 * np.abs(difference).max())
 
-    stalled, stalled_evidence = meshing.grade_mesh_metric(
-        field,
-        policy=meshing.MetricGradationPolicy(1.3, anisotropic=True, maximum_sweeps=1),
-        adjacency=edges,
-        coordinates=points,
-    )
-    assert not stalled_evidence.converged
+    with pytest.raises(meshing.MetricGradationError) as failure:
+        meshing.grade_mesh_metric(
+            field,
+            policy=meshing.MetricGradationPolicy(1.3, anisotropic=True, maximum_sweeps=1),
+            adjacency=edges,
+            coordinates=points,
+        )
+    stalled_evidence = failure.value.evidence
+    assert stalled_evidence.status is meshing.MetricGradationStatus.SWEEP_LIMIT
     assert stalled_evidence.maximum_violation > 1.0e-9
+
+
+def test_anisotropic_gradation_withholds_growth_beyond_hard_bounds():
+    points, edges = _grid(6)
+    count = points.shape[0]
+    angles = np.random.default_rng(0).uniform(0.0, np.pi, count)
+    cosine, sine = np.cos(angles), np.sin(angles)
+    rotation = np.stack(
+        (np.stack((cosine, -sine), axis=-1), np.stack((sine, cosine), axis=-1)),
+        axis=-2,
+    )
+    # Every metric sits at the minimum size, so each rotated intersection would
+    # request sizes below it.
+    eigenvalues = np.asarray((0.3**-2, 0.9**-2))
+    values = (rotation * eigenvalues) @ np.swapaxes(rotation, -1, -2)
+    field = meshing.MeshMetricField(
+        _scope(count),
+        values,
+        minimum_size=0.3,
+        maximum_size=2.0,
+        maximum_anisotropy=3.0,
+    )
+    policy = meshing.MetricGradationPolicy(1.05, anisotropic=True)
+    with pytest.raises(meshing.MetricGradationError) as failure:
+        meshing.grade_mesh_metric(
+            field,
+            policy=policy,
+            adjacency=edges,
+            coordinates=points,
+        )
+    evidence = failure.value.evidence
+    assert evidence.status is meshing.MetricGradationStatus.BOUNDS_CONFLICT
+    assert evidence.maximum_violation > 1.0
+    with pytest.raises(meshing.MetricGradationError) as normalized:
+        meshing.normalize_mesh_metric(
+            field,
+            policy=meshing.MetricNormalizationPolicy(
+                minimum_size=0.3,
+                maximum_size=2.0,
+                maximum_anisotropy=3.0,
+                gradation=policy,
+            ),
+            adjacency=edges,
+            coordinates=points,
+        )
+    assert normalized.value.evidence.status is (
+        meshing.MetricGradationStatus.BOUNDS_CONFLICT
+    )
+
+
+@pytest.mark.parametrize(
+    ("eigenvalues", "violated"),
+    (
+        ((400.0, 400.0), "minimum_size"),
+        ((0.1, 0.1), "maximum_size"),
+        ((1.0, 25.0), "maximum_anisotropy"),
+    ),
+)
+def test_metric_field_rejects_tensors_outside_declared_bounds(eigenvalues, violated):
+    with pytest.raises(ValueError, match=violated):
+        meshing.MeshMetricField(
+            _scope(2),
+            np.tile(np.diag(eigenvalues), (2, 1, 1)),
+            minimum_size=0.1,
+            maximum_size=2.0,
+            maximum_anisotropy=2.0,
+        )
+
+
+def test_metric_field_admits_only_eigenvalue_roundoff_at_its_bounds():
+    angle = 0.3
+    rotation = np.asarray(
+        ((np.cos(angle), -np.sin(angle)), (np.sin(angle), np.cos(angle)))
+    )
+    # Sizes exactly 1 and 2 at minimum_size 1, maximum_size 2, anisotropy 2.
+    tensor = rotation @ np.diag((1.0, 0.25)) @ rotation.T
+    bounds = {"minimum_size": 1.0, "maximum_size": 2.0, "maximum_anisotropy": 2.0}
+    for scale in (1.0, 1.0 + 4.0 * np.finfo(np.float64).eps):
+        meshing.MeshMetricField(_scope(2), np.tile(scale * tensor, (2, 1, 1)), **bounds)
+    with pytest.raises(ValueError, match="minimum_size"):
+        meshing.MeshMetricField(
+            _scope(2), np.tile((1.0 + 1.0e-9) * tensor, (2, 1, 1)), **bounds
+        )
+
+
+def test_adaptation_routes_accept_only_certified_metric_fields():
+    mesh = phx.discretization.CellMesh.from_triangles(
+        np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
+        np.asarray(((0, 1, 2), (0, 2, 3))),
+    )
+    source = meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
+    vertices = source.mesh.entity_set(0)
+    samples = meshing.MeshMetricSamples(
+        meshing.MeshingScope(
+            source.mesh.mesh_id,
+            source.mesh.numeric_version,
+            meshing.MeshingEntityKind.MESH,
+            0,
+            vertices.entity_set_id,
+            vertices.entity_ids,
+        ),
+        np.tile(np.eye(2), (vertices.entity_ids.shape[0], 1, 1)),
+    )
+    for request in (meshing.MetricMeshAdaptation, meshing.RelocationMeshAdaptation):
+        with pytest.raises(TypeError, match="MeshMetricField"):
+            request(samples)
+    with pytest.raises(TypeError, match="MeshMetricField"):
+        meshing.BackgroundMetricControl(
+            source.mesh, samples, phx.SpatialCoordinateContract.si()
+        )
+    with pytest.raises(TypeError, match="MeshMetricField"):
+        meshing.MmgAdaptationPlan(
+            source,
+            meshing.MmgOptions(),
+            meshing.MeshingLimits(),
+            meshing.CellMeshAuditPolicy(),
+            metric=samples,
+        )
 
 
 def test_metric_combination_dominates_is_idempotent_and_order_independent():
@@ -141,39 +261,69 @@ def test_metric_combination_dominates_is_idempotent_and_order_independent():
         minimum_size=0.005,
         maximum_size=2.0,
     )
-    combined, evidence = meshing.combine_mesh_metrics((first, second))
-    reversed_, _ = meshing.combine_mesh_metrics((second, first))
-    same, _ = meshing.combine_mesh_metrics((first, first))
+    combined = meshing.combine_mesh_metrics((first, second))
+    reversed_ = meshing.combine_mesh_metrics((second, first))
+    same = meshing.combine_mesh_metrics((first, first))
 
-    np.testing.assert_array_equal(
-        np.asarray(combined.values), np.asarray(reversed_.values)
-    )
+    assert combined.successful and combined.evidence.passed
+    values = np.asarray(combined.field.values)
+    np.testing.assert_array_equal(values, np.asarray(reversed_.field.values))
+    assert combined.evidence.evidence_id == reversed_.evidence.evidence_id
+    assert combined.result_id == reversed_.result_id
     for field in (first, second):
-        excess = np.asarray(combined.values) - np.asarray(field.values)
+        excess = values - np.asarray(field.values)
         scale = np.max(np.abs(np.asarray(field.values)))
         assert np.all(np.linalg.eigvalsh(excess) >= -1.0e-9 * scale)
     np.testing.assert_allclose(
-        np.asarray(same.values), np.asarray(first.values), rtol=1.0e-10, atol=0.0
+        np.asarray(same.field.values), np.asarray(first.values), rtol=1.0e-10, atol=0.0
     )
-    assert evidence.passed
+    spectrum = np.linalg.eigvalsh(values)
+    assert np.all(spectrum[:, 1] <= 0.005**-2 * (1.0 + 1.0e-12))
+    assert np.all(spectrum[:, 0] >= 2.0**-2 * (1.0 - 1.0e-12))
 
+
+def test_conflicting_metric_combination_withholds_the_field():
+    count = 9
+    first = meshing.MeshMetricField(
+        _scope(count),
+        _anisotropic_metrics(count, 4),
+        minimum_size=0.005,
+        maximum_size=2.0,
+    )
     restrictive = meshing.MeshMetricField(
         _scope(count),
         np.tile(np.eye(2), (count, 1, 1)),
         minimum_size=0.5,
         maximum_size=2.0,
     )
-    _, conflict = meshing.combine_mesh_metrics((first, restrictive))
-    assert not conflict.passed
-    assert bool(np.asarray(conflict.minimum_size_conflict)[0])
-    disjoint = meshing.MeshMetricField(
+    conflict = meshing.combine_mesh_metrics((first, restrictive))
+    assert not conflict.successful and conflict.field is None
+    assert not conflict.evidence.passed
+    assert conflict.evidence.minimum_size == 0.5
+    assert bool(np.asarray(conflict.evidence.minimum_size_conflict)[0])
+
+    isotropic = meshing.MeshMetricField(
         _scope(count),
         np.tile(np.eye(2), (count, 1, 1)),
+        minimum_size=0.005,
+        maximum_size=2.0,
+        maximum_anisotropy=2.0,
+    )
+    anisotropic = meshing.combine_mesh_metrics((first, isotropic))
+    assert anisotropic.field is None
+    assert np.all(np.asarray(anisotropic.evidence.anisotropy_conflict))
+    assert not np.any(np.asarray(anisotropic.evidence.maximum_size_conflict))
+
+    disjoint = meshing.MeshMetricField(
+        _scope(count),
+        np.tile(np.eye(2) / 3.0**2, (count, 1, 1)),
         minimum_size=3.0,
         maximum_size=4.0,
     )
-    with pytest.raises(ValueError, match="empty intersection"):
-        meshing.combine_mesh_metrics((first, disjoint))
+    incompatible = meshing.combine_mesh_metrics((first, disjoint))
+    assert not incompatible.successful and incompatible.field is None
+    assert incompatible.evidence.size_interval_conflict
+    assert incompatible.evidence.conflict_count == 1
 
 
 def test_log_euclidean_interpolation_is_spd_and_interpolates_determinants():

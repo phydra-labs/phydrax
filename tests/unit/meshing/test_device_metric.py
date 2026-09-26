@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import numpy as np
 import pytest
@@ -212,6 +213,27 @@ def test_device_relocation_moves_vertices_without_topology_change():
     assert np.all(_signed_areas(result.target.mesh) > 0.0)
 
 
+def test_stalled_metric_request_without_operations_preserves_source_but_not_convergence():
+    source = _source()
+    mesh = source.mesh
+    edges = mesh.entity_set(1)
+    protected = _scope(mesh, 1, edges.entity_ids)
+    result = _adapt(
+        source,
+        MetricMeshAdaptation(_metric(source, np.eye(2) / 0.1**2)),
+        maximum_passes=1,
+        relocation=False,
+        protected_scopes=(protected,),
+    )
+
+    assert result.status is MeshAdaptationStatus.STALLED
+    assert not result.status.converged
+    assert result.target.result_id == source.result_id
+    assert result.transition is result.lineage is result.transfer is None
+    assert result.evidence.stalled and not result.evidence.converged
+    assert result.evidence.out_of_range_edges > 0
+
+
 def test_uncertain_device_predicates_escalate_without_applying_the_operation():
     # The slanted sides x = y / 2 and x = 1 + y / 2 are exactly straight, but
     # FILTERED_DEVICE certifies zero orientations only structurally: collapsing
@@ -246,25 +268,39 @@ def test_uncertain_device_predicates_escalate_without_applying_the_operation():
     assert np.isclose(np.sum(areas), 1.0, rtol=0.0, atol=1.0e-14)
 
 
-def test_device_capacity_overflow_refuses_the_call_and_keeps_the_state():
+def _assert_same_arrays(first, second, /):
+    for before, after in zip(
+        jax.tree_util.tree_leaves(first), jax.tree_util.tree_leaves(second), strict=True
+    ):
+        np.testing.assert_array_equal(np.asarray(after), np.asarray(before))
+
+
+def test_device_capacity_failure_is_recorded_refuses_later_calls_and_rejects_commit():
     source = _source()
     request = MetricMeshAdaptation(_metric(source, np.eye(2) / 0.2**2))
     tiny = AdaptiveSimplexPolicy(vertex_capacity=25, cell_capacity=32)
     prepared = prepare_device_metric_adaptation(source, request, policy=_policy(tiny))
     update = adapt_device_metric(prepared.layout, prepared.state)
     report = jax.device_get(update.report)
+    capacity = AdaptiveSimplexStatus.CAPACITY_EXCEEDED
 
-    assert AdaptiveSimplexStatus(int(report.status)) & (
-        AdaptiveSimplexStatus.CAPACITY_EXCEEDED
-    )
+    assert AdaptiveSimplexStatus(int(report.status)) & capacity
     assert report.failed
     assert report.splits == report.collapses == report.flips == report.relocations == 0
-    for before, after in zip(
-        jax.tree_util.tree_leaves(prepared.state),
-        jax.tree_util.tree_leaves(update.state),
-        strict=True,
-    ):
-        np.testing.assert_array_equal(np.asarray(after), np.asarray(before))
+    assert AdaptiveSimplexStatus(int(update.state.status_flags)) & capacity
+    # Every array but the recorded status is rolled back to the input.
+    _assert_same_arrays(
+        prepared.state,
+        eqx.tree_at(lambda state: state.flags, update.state, prepared.state.flags),
+    )
+    refused = adapt_device_metric(prepared.layout, update.state)
+    assert AdaptiveSimplexStatus(int(refused.report.status)) & capacity
+    assert bool(refused.report.failed)
+    assert int(refused.report.passes) == int(refused.report.splits) == 0
+    _assert_same_arrays(update.state, refused.state)
+    with pytest.raises(MeshingFailure) as failure:
+        commit_device_metric_adaptation(prepared, update.state)
+    assert failure.value.category is MeshingFailureCategory.RESOURCE_EXHAUSTED
     with pytest.raises(MeshingFailure) as failure:
         execute_mesh_adaptation(
             prepare_mesh_adaptation(source, request, policy=_policy(tiny))

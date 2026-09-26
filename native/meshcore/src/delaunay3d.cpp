@@ -27,6 +27,7 @@
 #include <new>
 #include <vector>
 
+#include "capi_guard.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -547,24 +548,16 @@ extern "C" {
 
 int32_t phx_mc_delaunay_3d(int64_t point_count, const double* points, int64_t max_tetrahedra,
                            phx_mc_mesh** mesh) {
-  try {
+  return phx::mc::guarded([&] {
     return phx::mc::triangulate_3d(point_count, points, nullptr, false, max_tetrahedra, mesh);
-  } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  } catch (...) {
-    return PHX_MC_INTERNAL_ERROR;
-  }
+  });
 }
 
 int32_t phx_mc_regular_3d(int64_t point_count, const double* points, const double* weights,
                           int64_t max_tetrahedra, phx_mc_mesh** mesh) {
-  try {
+  return phx::mc::guarded([&] {
     return phx::mc::triangulate_3d(point_count, points, weights, true, max_tetrahedra, mesh);
-  } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  } catch (...) {
-    return PHX_MC_INTERNAL_ERROR;
-  }
+  });
 }
 
 }  // extern "C"

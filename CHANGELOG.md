@@ -32,7 +32,9 @@
   and per-layer Bernstein validity plus exact-predicate intersection
   certification; failures carry the offending wall vertices and locations.
   `BoundaryLayerMesh` exposes the certified cells, the exact cap, and
-  `BoundaryLayerEvidence` (thickness measured as exact wall distance).
+  `BoundaryLayerEvidence` (thickness measured as exact wall distance; the
+  `layer_active` mask marks requested layers carried by at least one surviving
+  column, and layers carried by none report NaN thicknesses and growth rates).
   `GmshProvider.fill_boundary_layer_core` fills the core with the cap and outer
   boundary fixed (bitwise node and exact face-conformity checks) and returns
   `boundary-layer`/`core` zones with `wall`, `layer-core-interface`, and `outer`
@@ -46,9 +48,20 @@
   (capacity-bucketed simplex layout with activity masks and packed sibling
   half-facets) and `AdaptiveSimplexState` with module-level compiled
   `refine_adaptive_simplex` / `coarsen_adaptive_simplex` (conformity closure in
-  one `while_loop`, prefix-sum ID issue, capacity refusal leaves the state
-  unchanged, FILTERED_DEVICE child validity) keyed by the static
-  `AdaptiveSimplexLayout` of an `AdaptiveSimplexPolicy` bucket.
+  one `while_loop`, prefix-sum ID issue, FILTERED_DEVICE child validity) keyed
+  by the static `AdaptiveSimplexLayout` of an `AdaptiveSimplexPolicy` bucket.
+  Status flags accumulate in `AdaptiveSimplexState.status_flags` /
+  `DeviceMetricState.status_flags`: a failed call (capacity, closure bound,
+  protected conflict, invalid geometry) rolls every array back but records its
+  terminal flags, every later call on that state is refused on device
+  (collectively on parts), and the commits raise the mapped `MeshingFailure`
+  (RESOURCE_EXHAUSTED, INVALID_SPECIFICATION, QUALITY_REJECTED) instead of
+  committing a failed epoch as unchanged. `NEEDS_HOST_RESOLUTION` is resolved at
+  commit by exact host orientation of every committed cell, which rejects the
+  epoch unless all cells are certified positive; pass-limited coarsening commits
+  as PASS_LIMIT. A source-preserving request whose operations were all rejected,
+  stalled, or pass-limited keeps that status rather than becoming the converged
+  UNCHANGED status.
   `phydrax.meshing.prepare_adaptive_simplex` / `commit_adaptive_simplex` bind a
   certified source to the device and commit one `MeshAdaptationResult` with one
   transfer; the new `MeshAdaptationRoute.DEVICE_BISECTION` commits the meshes,
@@ -56,7 +69,8 @@
   `DEVICE_METRIC_2D` runs the planar metric passes on device.
   `partition_adaptive_simplex`, `refine_adaptive_simplex_parts`, and
   `commit_partitioned_adaptive_simplex` refine owned cells per device inside one
-  `shard_map` with part-independent IDs. `MeshAdaptationPolicy` gains
+  `shard_map` with part-independent IDs; a terminal flag on any part rejects the
+  whole epoch. `MeshAdaptationPolicy` gains
   `device_policy`, and its `predicate_mode` now defaults to EXACT for host routes
   and FILTERED_DEVICE for device routes. Host and device bisection share one set
   of Maubach templates.
@@ -65,13 +79,27 @@
   inactive DOFs), `constrain_masked_dofs`, `evaluate_masked_fv_geometry`,
   `masked_fv_flux_divergence`, and `evaluate_masked_fv_conservation` (capacity-route
   stage ledger); compiled identity is the layout signature, never the active count.
-- `phydrax.discretization.prepare_l2_projection_transfer` builds the Galerkin L2
-  projection of a scalar Lagrange field between non-matching triangle or tetrahedron
-  meshes from a `PreparedCommonRefinement` with overlap simplices: the exact mixed
-  mass on the overlap simplices and one prepared sparse Cholesky of the target mass
-  form the `FiniteElementL2Projection` primal (`M_T^{-1} B`, pullback
-  `B^T M_T^{-1}`, factor status and condition evidence). Constant/linear
-  preservation and conservation are claimed from the certified coverage.
+- Galerkin L2 projection of a scalar Lagrange field between non-matching triangle
+  or tetrahedron meshes. `phydrax.discretization.prepare_l2_projection_target`
+  prepares the `PreparedL2ProjectionTarget` once per target field: the exact target
+  mass, its reverse Cuthill-McKee symbolic Cholesky plan and numeric factor (status
+  and pivot diagnostics), a condition estimate, and the target DOF measures.
+  `prepare_l2_projection_transfer(source, prepared_target, refinement, field_name=...)`
+  assembles only the exact mixed mass on the overlap simplices of a
+  `PreparedCommonRefinement` and forms the `FiniteElementL2Projection` primal
+  (`M_T^{-1} B`, pullback `B^T M_T^{-1}`, payload axes as one multi-right-hand-side
+  block); one target artifact serves every source field and refinement.
+  `refresh_l2_projection_target` refactors moved target geometry with an unchanged
+  DOF structure through the native sparse factorization refresh, reusing the
+  symbolic plan and the module-level compiled factorization, condition, and
+  target-solve kernels. Prepared target and projection constructors are
+  preparation-owned, preventing same-shape masses, factors, or mixed operators
+  from being recombined without their scientific binding. Constant/linear
+  preservation and conservation are claimed from the certified coverage. The
+  `remap` benchmark case warms the original action before its refresh snapshot,
+  then reports cold and refreshed target preparation, both first and warmed
+  actions, actual refresh compilations, factor and plan bytes, and retained
+  mixed-mass bytes.
   `FiniteElementTopologyTransfer.primal` now accepts any unbatched linear operator
   (claims certified through actions, positivity only from sparse coefficients,
   `action_condition` scaling), and `apply`/`pullback` carry payload axes as one
@@ -106,22 +134,33 @@
   and polyhedral face-centroid star simplices; metric-alignment targets use each
   corner's ideal-cell frame.
 - Riemannian mesh metrics are owned by `phydrax/meshing/_metric.py`
-  (`MeshMetricField` moved from sizing). `normalize_mesh_metric(metric, *, policy,
+  (`MeshMetricField` moved from sizing). `MeshMetricField` certifies its declared
+  size and anisotropy bounds at construction on the `verify_dense_properties`
+  spectrum (dtype-epsilon, condition-scaled roundoff only; violations raise) and
+  carries no gradation bound: requested gradation belongs to
+  `MetricGradationPolicy` or provider options (`MmgOptions.gradation` is Mmg's
+  hgrad with or without a metric), and `size_field_metric(field, scope)` takes no
+  gradation. `normalize_mesh_metric(metric, *, policy,
   adjacency, coordinates, vertex_volumes)` takes an explicit
   `MetricNormalizationPolicy` (size and anisotropy bounds, target complexity
   `sum_i V_i sqrt(det M_i)` met by the native bracketed root, gradation, and
   opt-in symmetrization/indefinite projection of untrusted `MeshMetricSamples`)
   and returns `MetricNormalizationEvidence` with every clamp and repair count.
-  `grade_mesh_metric` enforces edge-length-aware physical
-  (`h_q <= h_p + (beta - 1) |pq|`) or metric-space growth by an exact
-  minimum-first relaxation (scalar) or Alauzet grow-and-intersect sweeps
-  (anisotropic) with convergence and per-edge certification evidence; the silent
-  64-sweep cap is gone. Added `combine_mesh_metrics` (canonical
-  simultaneous-reduction intersection with hard-bound conflict evidence),
-  log-Euclidean `interpolate_mesh_metric`, `metric_edge_lengths`, and
-  `lp_metric_from_hessian` (Loseille-Alauzet `L^p` metric with explicit
-  indefinite/zero Hessian handling). All spectral and SPD decisions use
-  `phydrax.linalg`.
+  `grade_mesh_metric` enforces edge-length-aware physical or metric-space growth
+  by an exact minimum-first relaxation (scalar) or Alauzet grow-and-intersect
+  sweeps (anisotropic). `MetricGradationStatus` distinguishes convergence,
+  hard-bound conflict, and sweep exhaustion; success additionally requires the
+  a-posteriori maximum violation to meet tolerance, and
+  `MetricGradationError` withholds an executable field on failure. Added
+  `combine_mesh_metrics` (canonical simultaneous-reduction intersection
+  returning `MetricCombinationResult`, whose field exists only when
+  `MetricCombinationEvidence` reports no hard-bound conflict and whose
+  permutation-independent identity uses canonically sorted input IDs),
+  `interpolate_mesh_metric`, `metric_edge_lengths`, and `lp_metric_from_hessian`
+  (Loseille-Alauzet `L^p` metric with explicit indefinite/zero Hessian
+  handling). All spectral and SPD decisions use `phydrax.linalg`; adaptation
+  requests, `BackgroundMetricControl`, and the Mmg and Omega_h plans accept only
+  a certified `MeshMetricField`.
 - `phydrax.discretization.fem` adds superconvergent patch recovery for P1/P2
   Lagrange fields on simplices: `prepare_gradient_recovery` (fixed-capacity vertex
   patches, two-ring enlargement of singular or ill-conditioned fits, one batched
@@ -145,6 +184,13 @@
   decisions go through the policy's predicates (exact with meshcore, otherwise
   unresolved signs return `UNCERTAIN_PREDICATE`), `PredicateEvidence` reports
   the predicate mode and counts, and polygon areas are correctly rounded.
+  `phydrax-meshcore` is released in lockstep with phydrax (`phydrax[meshcore]`
+  pins the identical version); the loader reports a library of another release
+  or one missing a bound C ABI symbol as `MeshcoreUnavailableError`. No C++
+  exception crosses the C ABI (a refused allocation is `CAPACITY_EXCEEDED`, a
+  rejected argument `INVALID_ARGUMENT`, anything else `INTERNAL_ERROR`) and
+  counts whose row offsets overflow are `INVALID_ARGUMENT`; CTest covers
+  allocator failure and runs under ASan/UBSan with `-DPHX_MC_SANITIZE=ON`.
 - `phydrax.geometry.prepare_common_refinement` certifies the common refinement
   (supermesh) of two `CellMesh` instances of any 2D/3D block mix: convex pieces
   or exactly certified vertex cones per cell, float64 BVH broad phase, batched
@@ -407,6 +453,23 @@
   `BoundaryLayerControl(wall, schedule, route=EXACT_SWEEP, volume_scope=...,
   cap_scope=...)`; `VolumeMeshingSpec.layer_controls` accepts
   `BoundaryLayerControl` values only.
+- Polygon cells are certified without assuming star-shapedness: a planar polygon
+  is `CERTIFIED_VALID` iff its vertices are finite and distinct, every edge
+  clears the scale-aware floor, its boundary is simple, it is counterclockwise,
+  and its area clears the determinant floor;
+  embedded polygons must lie within the new
+  `CellValidityPolicy.relative_planarity_tolerance` of their Newell plane and be
+  simple in projection. `CellGeometrySpec.affine` binds polygon blocks to
+  `CellVertexGeometryElement`. `phydrax.geometry` adds
+  `segment_intersections_2d` (`SegmentIntersectionStatus`/`Result`) and
+  `polygon_simplicity_2d` (`PolygonSimplicityStatus`/`Result`, bounded BVH edge
+  broad phase with candidate-capacity evidence); the predicate owner moves to
+  the private top-level `phydrax._geometry_predicates`.
+  `CellMeshAuditPolicy.self_intersection` now defaults to `REJECT`,
+  `maximum_intersection_candidates` bounds streamed polygon and triangle
+  candidates, polygon loops are ear-clipped exactly for the self-intersection
+  check, and `CellMeshAuditReport` reports `evaluated_checks` and
+  `skipped_checks`.
 - Automatic finite-volume remap consumes the canonical common refinement:
   `prepare_unstructured_conservative_remap(source, target, *, provenance, policy)`
   returns `PreparedUnstructuredConservativeRemap` (refinement, its
@@ -423,7 +486,9 @@
 - External meshing providers run as persistent native library-API workers
   (`native/providers/{mmg,omega_h,tioga,vorocrust}`, moved out of
   `phydrax/meshing/providers/native`; shared protocol headers in
-  `native/providers/common`). Arrays travel through a binary, checksummed,
+  `native/providers/common`; wheels install them as `phydrax/native/providers`
+  and `phydrax.meshing.providers.native_provider_source_path(provider)` locates
+  them in either layout). Arrays travel through a binary, checksummed,
   memory-mappable exchange directory (`phydrax._external_exchange`: one NPY file
   per array plus a canonical manifest of name, dtype, shape, and payload
   SHA-256). `phydrax._external_runtime.NativeWorker` keeps one bounded worker
@@ -432,6 +497,13 @@
   limits, call-count lifetime) and records the worker's exact runtime identity
   once at startup; failures surface as `MeshingFailure` with the worker log tail
   and raw evidence on `__cause__`. No provider spawns a version process per call.
+  Worker calls, `close`, and `abort` are serialized by a reentrant lock, and a
+  provider's session creation, replacement, calls, and close by another taken
+  first, so concurrent callers share one session safely. Collective workers
+  (ParMmg, Omega_h, TIOGA) run every local parse, allocation, provider phase,
+  extraction, and output stage through the same ordered rank agreement before
+  the next collective call, so one rank's failure reaches every peer as the
+  lowest failing rank's error instead of mismatching collectives.
 - Mmg runs only through its library worker (the pymmg/medit executable route and
   the `meshing-mmg` extra are removed). `MmgProvider.adapt(source:
   CellMeshingResult, ...)` returns `MmgAdaptationResult`: multi-block/multi-zone
@@ -440,15 +512,18 @@
   tensors, `MmgLevelSet` discretizes level sets, `MmgLagrangianMotion` moves
   meshes when Mmg is built with ELAS (otherwise refused), declared vertex fields
   are P1-interpolated with `MmgFieldTransfer` evidence, and
-  `-DPHYDRAX_MMG_WITH_PARMMG=ON` builds a collective ParMmg worker.
+  `-DPHYDRAX_MMG_WITH_PARMMG=ON` builds a collective ParMmg worker (ParMmg with
+  its CMake package export: upstream `d2eddc5` or later; the 1.5.0 release
+  installs none).
 - Omega_h: `OmegaHProvider.execute(source: CellMeshingResult, metric, *, options,
   fields, ranks, gather, limits)` preserves blocks, zones, patches, and labels as
   Omega_h class IDs, passes `OmegaHOptions` AdaptOpts targets verbatim, transfers
   declared `OmegaHField`s (LINEAR vertex, CONSERVE cell) with integral evidence,
-  and returns vectorized per-rank `OmegaHPartition` ownership, ghost, and
-  global-ID arrays; the global carrier and `MeshDistribution` are assembled only
-  for serial runs or `gather=True`. `OmegaHProvider(timeout=)` is removed (use
-  `MeshingLimits.maximum_wall_seconds`).
+  and rejects an output metric outside the input field's hard size or anisotropy
+  bounds instead of widening them. It returns vectorized per-rank
+  `OmegaHPartition` ownership, ghost, and global-ID arrays; the global carrier
+  and `MeshDistribution` are assembled only for serial runs or `gather=True`.
+  `OmegaHProvider(timeout=)` is removed (use `MeshingLimits.maximum_wall_seconds`).
 - TIOGA runs as a persistent collective worker: `TiogaProvider.move(previous,
   coordinates)` updates moving parts in the resident `TiogaRegistration` without
   restarting, donor records are parsed vectorized from CSR arrays,
@@ -473,7 +548,23 @@
   only at zero inversions with a passing audit; failures return unmodified
   coordinates with a `MeshOptimizationStatus`, and `MeshOptimizationResult`
   carries the native `MinimizationResult`. `optimize_cell_geometry_coordinates`
-  uses the same route and returns `CellGeometryOptimizationResult`.
+  uses the same route and returns `CellGeometryOptimizationResult`
+  (`optimizer_status`, `converged`).
+- Mesh optimization no longer reports non-convergence as optimized: `OPTIMIZED`
+  requires a converged native minimization, a valid (inversion-free, audited)
+  non-converged iterate is `NONCONVERGED` and not accepted by default, and
+  `TargetMatrixOptimizationPlan(accept_valid_nonconverged=True)` explicitly
+  commits it as `VALID_NONCONVERGED`. `MeshOptimizationResult.accepted` is true
+  exactly for `OPTIMIZED` and `VALID_NONCONVERGED`, the only statuses carrying a
+  certified `result`. Untangling stages follow the same rule
+  (`MeshUntanglingEvidence.optimizer_statuses`, `converged`). Mesh-motion
+  relocation (bounded by `MeshMotionMonitorPolicy.relocation_termination`) fails
+  on non-convergence unless
+  `MeshMotionMonitorPolicy(accept_valid_nonconverged_relocation=True)`, and a
+  non-converged curving relaxation cannot replace the accepted geometry unless
+  `HighOrderCurvingPolicy(accept_valid_nonconverged_relaxation=True)`;
+  `HighOrderCurvingResult` records `relaxation_statuses` and `accepted_round`, and
+  a refused valid candidate rolls back as `ROLLED_BACK_NONCONVERGED`.
 - Size resolution measures proximity gaps with exact BVH nearest queries
   (`normals` replaces supplied gap samples), grades hard growth limits by edge
   length through the metric owner, records the gradation evidence in
@@ -524,7 +615,7 @@
   level (`reduce_packed_bvh_nodes` exposes the level sweep). New queries:
   `bvh_nearest_items` (exact k nearest items), `bvh_hierarchical_sum`
   (Barnes-Hut style cut sums), `bvh_overlap_pairs` (JAX simultaneous traversal
-  with pair capacity and `overflow`), and `bvh_overlap_pairs_host` /
+  with pair capacity, int64 `count`, and `overflow`), and `bvh_overlap_pairs_host` /
   `bvh_overlap_pair_blocks` (complete exact host pairs, sorted or in bounded
   blocks). `query_host_aabb_overlaps` uses the host pair search instead of an
   all-pairs loop, with unchanged statuses, limits, and ordering, and

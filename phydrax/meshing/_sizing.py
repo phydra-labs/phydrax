@@ -751,18 +751,16 @@ def resolve_size_controls(
 
 
 def size_field_metric(
-    field: ResolvedSizeField,
-    scope: MeshingScope,
-    /,
-    *,
-    maximum_gradation: float,
+    field: ResolvedSizeField, scope: MeshingScope, /
 ) -> MeshMetricField:
     """Compile a resolved size field into isotropic metric constraints.
 
     Row ``i`` becomes ``h_i**-2 I`` for the entity ``scope.entity_ids[i]``, which
     must equal the field's sample entity IDs in order. Declared size bounds are
     the resolved extremes, so the metric can be combined with solution-adaptive
-    metrics through :func:`combine_mesh_metrics`.
+    metrics through :func:`combine_mesh_metrics`. The field's hard growth limits
+    are already resolved into the sizes; requested execution gradation belongs to
+    a `MetricGradationPolicy` or the provider options.
     """
     if not isinstance(field, ResolvedSizeField):
         raise TypeError("field must be ResolvedSizeField.")
@@ -782,7 +780,6 @@ def size_field_metric(
         minimum_size=float(np.min(sizes)),
         maximum_size=float(np.max(sizes)),
         maximum_anisotropy=1.0,
-        maximum_gradation=maximum_gradation,
     )
 
 

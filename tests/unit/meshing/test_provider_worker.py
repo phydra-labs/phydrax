@@ -1,4 +1,7 @@
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -40,6 +43,8 @@ for line in sys.stdin:
     print("upstream library noise", flush=True)
     if mode == "sleep":
         time.sleep(60)
+    if mode == "slow":
+        time.sleep(0.5)
     if mode == "reject":
         send({{"error": "no such route", "kind": "unsupported", "ok": False,
               "peak_rss_bytes": 1, "sequence": sequence}})
@@ -147,6 +152,72 @@ def test_worker_failures_surface_as_meshing_failures_with_evidence(
     else:
         assert evidence["kind"] in ("protocol", "resource")
     worker.close()
+
+
+def test_concurrent_calls_share_one_session_in_sequence(tmp_path):
+    worker = _worker(tmp_path, "echo")
+    barrier = threading.Barrier(8)
+
+    def run(index):
+        values = np.full((2, 2), index, dtype=np.float64)
+        barrier.wait()
+        return worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(run, range(8)))
+    worker.close()
+
+    assert worker.launches == 1
+    assert sorted(result.sequence for result in results) == list(range(1, 9))
+    assert len({result.result["pid"] for result in results}) == 1
+    for index, result in enumerate(results):
+        np.testing.assert_array_equal(result.arrays["y"], np.full((2, 2), 2.0 * index))
+
+
+def test_concurrent_calls_replace_exhausted_sessions_without_failure(tmp_path):
+    worker = _worker(tmp_path, "echo", policy=NativeWorkerPolicy(maximum_calls=1))
+    barrier = threading.Barrier(4)
+    values = np.ones((2,), dtype=np.float64)
+
+    def run(_):
+        barrier.wait()
+        return worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(run, range(4)))
+    worker.close()
+
+    assert worker.launches == 4
+    assert len({result.evidence["session_id"] for result in results}) == 4
+    assert all(result.sequence == 1 for result in results)
+
+
+def test_session_close_waits_for_the_call_in_flight(tmp_path):
+    worker = _worker(tmp_path, "slow")
+    session = worker.session()
+    values = np.arange(3, dtype=np.float64)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(
+            session.call,
+            "scale",
+            {},
+            {"x": values},
+            timeout=30.0,
+            maximum_input_bytes=4096,
+            maximum_output_bytes=4096,
+        )
+        while session.call_count == 0:
+            time.sleep(0.001)
+        session.close()
+        result = pending.result()
+
+    assert session.closed
+    np.testing.assert_array_equal(result.arrays["y"], 2.0 * values)
+    replacement = worker.call("scale", {}, {"x": values}, limits=MeshingLimits())
+    worker.close()
+    assert replacement.evidence["session_id"] != result.evidence["session_id"]
+    assert worker.launches == 2
 
 
 def test_missing_worker_is_provider_unavailable(tmp_path):

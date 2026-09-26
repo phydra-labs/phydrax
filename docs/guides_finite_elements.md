@@ -210,25 +210,51 @@ phase-field fracture, and fixed-crack XFEM classification/enrichment.
 
 ### L2 projection between non-matching meshes
 
-`prepare_l2_projection_transfer(source, target, refinement, field_name=...)`
-projects a scalar Lagrange field (continuous or discontinuous, any degree, on
-affine triangles or tetrahedra) onto a second FE space on a different mesh. The
-`refinement` is a successful `prepare_common_refinement(source.mesh,
-target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True))`: the mixed
-mass `B` is integrated exactly on its overlap simplices and the primal is the
-`FiniteElementL2Projection` `M_T^{-1} B`, with the target mass Cholesky factored
-once (factor status, pivot diagnostics, and a condition estimate are retained).
-The pullback is `B^T M_T^{-1}`. Constants and linears are preserved when the
-refinement certifies every target cell covered; the integral is conserved when
-every source cell is covered. Failed or mismatched refinements and unsupported
-elements raise `ValueError`.
+Galerkin L2 projection of a scalar Lagrange field (continuous or discontinuous,
+any degree, on affine triangles or tetrahedra) onto a second FE space on a
+different mesh separates the target from the source:
+
+- `prepare_l2_projection_target(target, field_name=...)` is the sole constructor
+  of `PreparedL2ProjectionTarget`: the exact target mass `M_T`, its reverse
+  Cuthill-McKee symbolic Cholesky plan and bound numeric factor (status and pivot
+  diagnostics), a condition estimate, and the target DOF measures. One target
+  artifact serves every source field and refinement onto that target; direct
+  construction is refused so a same-shape factor from another geometry cannot
+  be substituted.
+- `prepare_l2_projection_transfer(source, prepared_target, refinement,
+  field_name=...)` assembles only the mixed mass `B`, exactly on the overlap
+  simplices of a successful `prepare_common_refinement(source.mesh,
+  target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True))`. The
+  primal is the `FiniteElementL2Projection` `M_T^{-1} B` and the pullback is
+  `B^T M_T^{-1}`; trailing payload axes are solved as one multi-right-hand-side
+  block.
+- `refresh_l2_projection_target(prepared_target, moved_target)` refactors the
+  numeric mass of the same field on moved geometry with an unchanged DOF
+  structure (equal `dof_map_id`), reusing the symbolic plan and the compiled
+  factorization and projection kernels; `structure_id` is unchanged and
+  `target_id` follows the new geometry. A changed DOF structure raises
+  `ValueError`.
+
+Constants and linears are preserved when the refinement certifies every target
+cell covered; the integral is conserved when every source cell is covered.
+Failed or mismatched refinements (including a refinement of the geometry before
+a refresh), unsupported elements, failed target factorizations, and direct
+construction of prepared targets or projection operators raise `ValueError` or
+`TypeError` at their owning boundary.
 
 ```python
+prepared_target = prepare_l2_projection_target(target, field_name="u")
 refinement = prepare_common_refinement(
     source.mesh, target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True)
 )
-transfer = prepare_l2_projection_transfer(source, target, refinement, field_name="u")
+transfer = prepare_l2_projection_transfer(
+    source, prepared_target, refinement, field_name="u"
+)
 target_values = transfer.apply(source_values)
+
+# `moved` is the same FE plan prepared on the target mesh moved with fixed
+# topology: refactor numerically, then prepare transfers from its refinements.
+refreshed = refresh_l2_projection_target(prepared_target, moved)
 ```
 
 

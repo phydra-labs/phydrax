@@ -42,7 +42,6 @@ from ..discretization._adaptive_simplex import (
     AdaptiveSimplexCounter,
     AdaptiveSimplexLayout,
     AdaptiveSimplexParts,
-    AdaptiveSimplexReport,
     AdaptiveSimplexState,
     AdaptiveSimplexStatus,
     coarsen_adaptive_simplex,
@@ -84,6 +83,11 @@ from ._bisection import (
     BisectionHierarchy,
 )
 from ._contracts import MeshingFailure, MeshingFailureCategory
+from ._device_status import (
+    DeviceEpoch,
+    require_applied_status,
+    require_committed_status,
+)
 from ._lineage import MeshTransitionKind
 from ._result import CellMeshingResult
 from ._topology_edit import key_rows
@@ -426,6 +430,7 @@ class _HostEpoch(NamedTuple):
     coarsen_marked: np.ndarray
     vertex_ids: np.ndarray
     vertex_active: np.ndarray
+    coordinates: np.ndarray
     vertex_parents: np.ndarray
     vertex_levels: np.ndarray
     vertex_removal: np.ndarray
@@ -455,12 +460,14 @@ def _host_epoch(state: AdaptiveSimplexState, /) -> _HostEpoch:
         np.asarray(host.coarsen_marked, dtype=np.bool_),
         np.asarray(mesh.vertex_ids, dtype=np.int64),
         np.asarray(mesh.vertex_active, dtype=np.bool_),
+        # Exact widening: host predicates resolve the device coordinates.
+        np.asarray(mesh.coordinates, dtype=np.float64),
         np.asarray(host.vertex_parents, dtype=np.int64),
         np.asarray(host.vertex_levels, dtype=np.int64),
         np.asarray(host.vertex_removal, dtype=np.int64),
         np.asarray(host.cursors, dtype=np.int64),
         np.asarray(host.counters, dtype=np.int64),
-        int(np.asarray(host.clocks)[2]),
+        int(np.asarray(host.status_flags)),
     )
 
 
@@ -653,10 +660,25 @@ def _committed(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /):
 
 
 def _outcome(prepared: PreparedAdaptiveSimplex, host: _HostEpoch, /):
+    require_committed_status(
+        host.flags,
+        host.coordinates,
+        host.cells[host.cell_active],
+        DeviceEpoch.BISECTION,
+    )
     committed = _committed(prepared, host)
     adaptation = prepared.adaptation
     if not committed.refined and not committed.coarsened:
-        return _unchanged(adaptation, committed.evidence, committed.hierarchy)
+        status = (
+            MeshAdaptationStatus.PASS_LIMIT
+            if committed.pass_limited
+            else MeshAdaptationStatus.PARTIAL
+            if committed.partial
+            else MeshAdaptationStatus.UNCHANGED
+        )
+        return _unchanged(
+            adaptation, committed.evidence, committed.hierarchy, status=status
+        )
     match (committed.refined, committed.coarsened):
         case (True, False):
             kind = MeshTransitionKind.REFINE
@@ -703,44 +725,19 @@ def commit_adaptive_simplex(
     The target is assembled, organization inherited by exact IDs, certified,
     and bound to its `CellMeshTransition`, `MeshLineage`, and sparse P1
     transfer exactly as the host bisection route does; the result's
-    ``hierarchy`` prepares the next epoch.
+    ``hierarchy`` prepares the next epoch. The epoch's cumulative
+    ``status_flags`` decide acceptance: a terminal flag raises its
+    `MeshingFailure` (capacity or closure bound: RESOURCE_EXHAUSTED, protected
+    conflict: INVALID_SPECIFICATION, invalid geometry: QUALITY_REJECTED),
+    NEEDS_HOST_RESOLUTION requires every committed cell to be certified
+    positively oriented by exact host predicates (else QUALITY_REJECTED), and
+    a pass-limited coarsening commits with status PASS_LIMIT.
     """
 
     _checked_state(prepared, state)
     started = time.monotonic()
     outcome = _outcome(prepared, _host_epoch(state))
     return _adaptation_result(prepared.adaptation, outcome, started)
-
-
-def _require_applied(report: AdaptiveSimplexReport, /) -> None:
-    """Raise the host-route failure of a refused device call (host boundary)."""
-
-    status = AdaptiveSimplexStatus(int(report.status))
-    if status & AdaptiveSimplexStatus.CAPACITY_EXCEEDED:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Device bisection exceeds its capacity bucket; raise the "
-            "AdaptiveSimplexPolicy capacities.",
-            stage="device-bisection",
-        )
-    if status & AdaptiveSimplexStatus.CLOSURE_LIMIT:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Device bisection closure did not conform within the iteration bound.",
-            stage="bisection-closure",
-        )
-    if status & AdaptiveSimplexStatus.PROTECTED_CONFLICT:
-        raise MeshingFailure(
-            MeshingFailureCategory.INVALID_SPECIFICATION,
-            "The union of admissible bisection closures split a protected edge.",
-            stage="bisection-closure",
-        )
-    if status & AdaptiveSimplexStatus.INVALID_GEOMETRY:
-        raise MeshingFailure(
-            MeshingFailureCategory.QUALITY_REJECTED,
-            "Device bisection certified an inverted or degenerate cell.",
-            stage="device-bisection",
-        )
 
 
 def _execute_device_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
@@ -756,13 +753,12 @@ def _execute_device_bisection_route(prepared: PreparedMeshAdaptation, /) -> _Rou
     refined = refine_adaptive_simplex(
         layout, simplex.state, simplex.cell_marks(np.asarray(request.refine_cell_ids))
     )
-    _require_applied(refined.report)
+    require_applied_status(int(refined.report.status), DeviceEpoch.BISECTION)
     coarsened = coarsen_adaptive_simplex(
         layout,
         refined.state,
         simplex.cell_marks(np.asarray(request.coarsen_cell_ids)),
     )
-    _require_applied(coarsened.report)
     return _outcome(simplex, _host_epoch(coarsened.state))
 
 
@@ -965,6 +961,7 @@ def _merged_epoch(
             for name, fill in (
                 ("vertex_ids", -1),
                 ("vertex_active", False),
+                ("coordinates", 0.0),
                 ("vertex_parents", -1),
                 ("vertex_levels", 0),
                 ("vertex_removal", -1),
@@ -981,7 +978,9 @@ def _merged_epoch(
             prepared_count + identifiers - issued_base,
         )
 
-    flags = 0
+    def mapped_slots(values, slots):
+        return np.where(values >= 0, slots[np.maximum(values, 0)], -1)
+
     for part in range(partitioned.parts.part_count):
         local_vertices, local_cells = int(cursors[part, 0]), int(cursors[part, 1])
         mesh = host.mesh
@@ -992,18 +991,16 @@ def _merged_epoch(
         cell_ids = np.asarray(mesh.cell_ids[part, :local_cells], dtype=np.int64)
         cell_slots = global_slots(cell_ids, base_cell_ids, cell_count, cell_base)
 
-        def vertex_map(values):
-            return np.where(values >= 0, vertex_slots[np.maximum(values, 0)], -1)
-
-        def cell_map(values):
-            return np.where(values >= 0, cell_slots[np.maximum(values, 0)], -1)
-
         issued = vertex_ids >= vertex_base
         target = vertex_slots[issued]
         arrays["vertex_ids"][target] = vertex_ids[issued]
         arrays["vertex_active"][target] = True
-        arrays["vertex_parents"][target] = vertex_map(
-            np.asarray(host.vertex_parents[part, :local_vertices], np.int64)[issued]
+        arrays["coordinates"][target] = np.asarray(
+            mesh.coordinates[part, :local_vertices], dtype=np.float64
+        )[issued]
+        arrays["vertex_parents"][target] = mapped_slots(
+            np.asarray(host.vertex_parents[part, :local_vertices], np.int64)[issued],
+            vertex_slots,
         )
         arrays["vertex_levels"][target] = np.asarray(
             host.vertex_levels[part, :local_vertices]
@@ -1011,33 +1008,45 @@ def _merged_epoch(
         for name, values in (
             ("cell_ids", cell_ids),
             ("cell_active", mesh.cell_active[part, :local_cells]),
-            ("cells", vertex_map(np.asarray(mesh.cells[part, :local_cells], np.int64))),
-            ("tuples", vertex_map(np.asarray(host.tuples[part, :local_cells], np.int64))),
+            (
+                "cells",
+                mapped_slots(
+                    np.asarray(mesh.cells[part, :local_cells], np.int64), vertex_slots
+                ),
+            ),
+            (
+                "tuples",
+                mapped_slots(
+                    np.asarray(host.tuples[part, :local_cells], np.int64), vertex_slots
+                ),
+            ),
             ("tags", host.tags[part, :local_cells]),
             ("blocks", host.blocks[part, :local_cells]),
             ("generations", host.generations[part, :local_cells]),
         ):
             arrays[name][cell_slots] = values
         bisected = np.asarray(host.children[part, :local_cells, 0]) >= 0
-        arrays["children"][cell_slots[bisected]] = cell_map(
-            np.asarray(host.children[part, :local_cells], np.int64)[bisected]
+        arrays["children"][cell_slots[bisected]] = mapped_slots(
+            np.asarray(host.children[part, :local_cells], np.int64)[bisected],
+            cell_slots,
         )
-        arrays["bisection_vertices"][cell_slots[bisected]] = vertex_map(
-            np.asarray(host.bisection_vertices[part, :local_cells], np.int64)[bisected]
+        arrays["bisection_vertices"][cell_slots[bisected]] = mapped_slots(
+            np.asarray(host.bisection_vertices[part, :local_cells], np.int64)[bisected],
+            vertex_slots,
         )
         packed = np.asarray(host.parents[part, :local_cells], dtype=np.int64)
         created = (cell_ids >= cell_base) & (packed >= 0)
         arrays["parents"][cell_slots[created]] = (
             2 * cell_slots[packed[created] // 2] + packed[created] % 2
         )
-        flags |= int(np.asarray(host.clocks)[part, 2])
     return _HostEpoch(
         **arrays,
         cursors=np.asarray(
             (vertex_total, cell_total, cursors[0, 2], cursors[0, 3]), dtype=np.int64
         ),
         counters=np.asarray(host.counters[0], dtype=np.int64),
-        flags=flags,
+        # A terminal flag on any part rejects the whole epoch.
+        flags=int(np.bitwise_or.reduce(np.asarray(host.status_flags, dtype=np.int64))),
     )
 
 
@@ -1048,7 +1057,9 @@ def commit_partitioned_adaptive_simplex(
 
     Part-independent IDs make the merged epoch identical to the single-part
     epoch with the same marks, so the committed target, lineage, hierarchy,
-    and distribution transition are those of `commit_adaptive_simplex`.
+    and distribution transition are those of `commit_adaptive_simplex`. The
+    union of the parts' ``status_flags`` decides acceptance as there: a
+    terminal flag on any part rejects the whole epoch.
     """
 
     if not isinstance(partitioned, PartitionedAdaptiveSimplex):

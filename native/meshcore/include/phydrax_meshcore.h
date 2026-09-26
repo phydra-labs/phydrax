@@ -7,7 +7,9 @@
  * zero or in [2^(2 min_exponent), 2^(2 max_exponent)].  Within that domain every
  * geometric decision is exact.  Every function is deterministic: ties are
  * ordered by input indices.  Functions returning int32_t report a call status;
- * batched functions additionally report one item status per entry.
+ * batched functions additionally report one item status per entry.  No C++
+ * exception crosses the ABI: a failed allocation reports
+ * PHX_MC_CAPACITY_EXCEEDED and any other escaped failure PHX_MC_INTERNAL_ERROR.
  */
 #ifndef PHYDRAX_MESHCORE_H
 #define PHYDRAX_MESHCORE_H
@@ -30,12 +32,12 @@ extern "C" {
 
 enum phx_mc_status {
   PHX_MC_OK = 0,
-  PHX_MC_INVALID_ARGUMENT = 1,       /* null pointer, negative count, bad capacity */
+  PHX_MC_INVALID_ARGUMENT = 1,       /* null pointer, negative or unaddressable count, bad capacity */
   PHX_MC_NONFINITE_INPUT = 2,        /* NaN or infinity in coordinates/weights */
   PHX_MC_RANGE_ERROR = 3,            /* value outside the exact domain */
   PHX_MC_DEGENERATE_INPUT = 4,       /* zero-measure cell, collinear/coplanar point set */
   PHX_MC_INVALID_INPUT = 5,          /* nonconvex polygon, bad index, zero normal */
-  PHX_MC_CAPACITY_EXCEEDED = 6,      /* explicit output/work limit reached */
+  PHX_MC_CAPACITY_EXCEEDED = 6,      /* explicit output/work limit reached, or allocation failed */
   PHX_MC_CONSTRAINT_INTERSECTION = 7,/* constraint segments cross in their interiors */
   PHX_MC_REFINEMENT_LIMIT = 8,       /* valid mesh; quality targets unmet within max_steiner */
   PHX_MC_INTERNAL_ERROR = 9

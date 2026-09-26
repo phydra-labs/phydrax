@@ -29,6 +29,7 @@ import equinox as eqx
 import numpy as np
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._geometry_predicates import orient2d, orient3d, PredicateMode
 from .._meshcore import (
     clip_box_halfplanes,
     clip_box_halfspaces,
@@ -43,7 +44,6 @@ from .._meshcore import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._predicates import orient2d, orient3d, PredicateMode
 
 
 _DEGENERATE_ALL_PAIRS_LIMIT = 512

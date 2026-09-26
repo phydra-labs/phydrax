@@ -121,7 +121,7 @@ def _icosphere(radius, subdivisions):
     for _ in range(subdivisions):
         middle = {}
 
-        def split(first, second):
+        def split(first, second, *, middle=middle):
             key = (min(first, second), max(first, second))
             if key not in middle:
                 value = points[first] + points[second]
@@ -193,6 +193,21 @@ def test_flat_wall_layers_realize_the_exact_schedule():
         result.evidence.achieved_thicknesses, SCHEDULE.thicknesses, rtol=1e-12
     )
     np.testing.assert_allclose(result.evidence.achieved_growth_rates, 1.2, rtol=1e-12)
+    active = np.asarray(result.evidence.layer_active)
+    assert active.dtype == np.bool_
+    np.testing.assert_array_equal(active, (True, True, True))
+    evidence_values = {
+        name: getattr(result.evidence, name)
+        for name in result.evidence.__dataclass_fields__
+        if name != "evidence_id"
+    }
+    with pytest.raises(ValueError, match="invalid shapes"):
+        phx.meshing.BoundaryLayerEvidence(
+            **{
+                **evidence_values,
+                "achieved_thicknesses": np.ones((2,), dtype=np.float64),
+            }
+        )
     assert _cell_counts(result) == {"prism": 3 * triangles.shape[0]}
     heights = np.unique(np.round(np.asarray(result.mesh.coordinates)[:, 2], 12))
     np.testing.assert_allclose(heights, (0.0, 0.01, 0.022, 0.0364))
@@ -442,11 +457,16 @@ def test_opposing_channel_walls_resolve_by_the_explicit_collision_policy(collisi
             assert evidence.reduced_vertex_count == 50
             assert np.max(heights[heights < 0.5 * gap]) < 0.5 * gap
             np.testing.assert_allclose(evidence.achieved_growth_rates, 1.2, rtol=1e-9)
+            assert np.all(np.asarray(evidence.layer_active))
         case phx.meshing.BoundaryLayerCollisionPolicy.TERMINATE_LOCALLY:
             assert evidence.terminated_vertex_count == 50
             assert _cell_counts(result) == {"prism": 2 * 32}
-            assert evidence.achieved_thicknesses[0] == pytest.approx(0.01)
-            assert np.all(np.isnan(evidence.achieved_thicknesses[1:]))
+            achieved = np.asarray(evidence.achieved_thicknesses)
+            active = np.asarray(evidence.layer_active)
+            assert achieved[0] == pytest.approx(0.01)
+            np.testing.assert_array_equal(active, (True, False, False))
+            np.testing.assert_array_equal(np.isnan(achieved), ~active)
+            assert np.all(np.isnan(evidence.achieved_growth_rates))
         case phx.meshing.BoundaryLayerCollisionPolicy.MERGE:
             assert evidence.merged_vertex_count == 50
             assert evidence.minimum_scale == pytest.approx(

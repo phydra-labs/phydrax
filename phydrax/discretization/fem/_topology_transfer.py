@@ -22,16 +22,24 @@ from ...linalg import (
     AbstractLinearOperator,
     ArraySpace,
     estimate_condition_number,
-    factorize_sparse,
     OperatorCapabilities,
     OperatorProperties,
+    prepare_sparse_factorization,
     PreparedSparseFactorization,
+    refresh_sparse_factorization,
+    SparseFactorizationPlan,
     SparseFactorizationPolicy,
     SparseFactorizationStatus,
     SpectralEstimate,
 )
 from ...linalg._operators import _generic_adjoint, _materialize_by_basis
-from ...sparse import EdgeRelation, RowRelation, SparseLinearMap
+from ...sparse import (
+    EdgeRelation,
+    linear_apply,
+    linear_transpose_apply,
+    RowRelation,
+    SparseLinearMap,
+)
 from .._cell_mesh import CellMesh
 from ._generic import FiniteElementDiscretization
 from ._reference import FiniteElementSpec, lagrange_element
@@ -390,72 +398,170 @@ def vertex_interpolation_transfer(
     )
 
 
-@final
-class FiniteElementL2Projection(AbstractLinearOperator):
-    """Galerkin L2 projection ``M_T^{-1} B`` between non-matching FE spaces.
+# Target mass policy: the fill-reducing ordering and symbolic Cholesky pattern are
+# planned once per target DOF structure and reused by every numeric refresh.
+_TARGET_MASS_FACTORIZATION = SparseFactorizationPolicy(
+    "cholesky", ordering="reverse-cuthill-mckee"
+)
+_L2_ARTIFACT_TOKEN = object()
 
-    ``mixed_mass`` is ``B`` (target DOFs by source DOFs, integrals of target times
-    source basis functions over the common refinement) and ``target_mass`` is the
-    target mass ``M_T``. The sparse Cholesky ``factorization`` of ``M_T`` is
-    prepared once; its status, pivot diagnostics, and ``target_mass_condition``
-    (Golub-Kahan estimate) are the solve evidence. ``mv`` solves ``M_T x = B u``
-    and ``transpose_mv`` applies the algebraic transpose ``B^T M_T^{-1}``; trailing
-    payload axes are solved as one multi-right-hand-side block.
+
+@final
+class PreparedL2ProjectionTarget(StrictModule, NonTrainableState):
+    """Prepared target space of Galerkin L2 projections onto one FE field.
+
+    Built by :func:`prepare_l2_projection_target`. Owns the target mass ``M_T`` of
+    the scalar Lagrange field ``field_name`` of ``discretization``, its sparse
+    Cholesky ``factorization`` (the symbolic reverse Cuthill-McKee ordering and
+    fill pattern in ``factorization.plan``, the numeric factor, its status and
+    pivot diagnostics), the Golub-Kahan estimate ``mass_condition``, and
+    ``dof_measures`` (integrals of the target basis functions). One artifact serves
+    every source field and every common refinement onto this target, and payload
+    axes of its transfers are solved as one multi-right-hand-side block.
+
+    ``structure_id`` identifies the target DOF structure and symbolic factor
+    pattern; it is unchanged by :func:`refresh_l2_projection_target`, and the
+    compiled factorization and projection kernels depend only on this structure.
+    ``target_id`` additionally identifies the target geometry and field.
     """
 
-    _fused_block_action_kind = "fused"
-
-    mixed_mass: SparseLinearMap
-    target_mass: SparseLinearMap
+    discretization: FiniteElementDiscretization
+    mass: SparseLinearMap
     factorization: PreparedSparseFactorization
-    target_mass_condition: SpectralEstimate
+    mass_condition: SpectralEstimate
+    dof_measures: Array
+    field_name: str = eqx.field(static=True)
+    structure_id: str = eqx.field(static=True)
+    target_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        mixed_mass: SparseLinearMap,
-        target_mass: SparseLinearMap,
+        discretization: FiniteElementDiscretization,
+        mass: SparseLinearMap,
+        factorization: PreparedSparseFactorization,
+        mass_condition: SpectralEstimate,
+        dof_measures: ArrayLike,
         /,
         *,
-        operator_id: str,
+        field_name: str,
+        _construction_token: object | None = None,
     ):
-        if not isinstance(mixed_mass, SparseLinearMap) or not isinstance(
-            target_mass, SparseLinearMap
-        ):
-            raise TypeError("mixed_mass and target_mass must be SparseLinearMap values.")
+        if _construction_token is not _L2_ARTIFACT_TOKEN:
+            raise TypeError(
+                "PreparedL2ProjectionTarget is constructed by "
+                "prepare_l2_projection_target or refresh_l2_projection_target."
+            )
+        if not isinstance(discretization, FiniteElementDiscretization):
+            raise TypeError("discretization must be a FiniteElementDiscretization.")
+        if not isinstance(mass, SparseLinearMap):
+            raise TypeError("mass must be a SparseLinearMap.")
+        if not isinstance(factorization, PreparedSparseFactorization):
+            raise TypeError("factorization must be a PreparedSparseFactorization.")
+        if not isinstance(mass_condition, SpectralEstimate):
+            raise TypeError("mass_condition must be a SpectralEstimate.")
+        name = str(field_name)
+        dof_map = discretization.dof_maps[discretization._field_index(name)]
+        size = dof_map.global_dof_count
+        measures = jnp.asarray(dof_measures)
         if (
-            mixed_mass.batch_shape
-            or target_mass.batch_shape
-            or len(mixed_mass.input_shape) != 1
-            or len(mixed_mass.output_shape) != 1
-            or target_mass.input_shape != mixed_mass.output_shape
-            or target_mass.output_shape != mixed_mass.output_shape
+            mass.batch_shape
+            or mass.input_shape != (size,)
+            or mass.output_shape != (size,)
+            or factorization.plan.shape != (size, size)
+            or factorization.batch_shape
+            or factorization.plan.kind != "cholesky"
+            or measures.shape != (size,)
         ):
             raise ValueError(
-                "L2 projection needs an unbatched target-by-source mixed mass and a "
-                "square target mass."
+                "The target mass, its Cholesky factorization, and the DOF measures "
+                f"must be unbatched over the {size} DOFs of field {name!r}."
             )
         if not (
-            target_mass.properties.certifies("self_adjoint")
-            and target_mass.properties.certifies("positive_definite")
+            mass.properties.certifies("self_adjoint")
+            and mass.properties.certifies("positive_definite")
         ):
             raise ValueError(
                 "The target mass must certify self-adjoint positive definiteness."
             )
-        identifier = canonical_identifier(operator_id, "operator_id")
-        factorization = factorize_sparse(
-            target_mass,
-            SparseFactorizationPolicy("cholesky", ordering="reverse-cuthill-mckee"),
-        )
         # Preparation boundary: one host decision on the prepared factor status.
         status = SparseFactorizationStatus(int(factorization.status))
         if status is not SparseFactorizationStatus.SUCCESS:
             raise ValueError(
                 f"Target mass Cholesky factorization failed ({status.name})."
             )
-        self.mixed_mass = mixed_mass
-        self.target_mass = target_mass
+        if not isfinite(float(mass_condition.value)):
+            raise ValueError("The target mass condition estimate is not finite.")
+        self.discretization = discretization
+        self.mass = mass
         self.factorization = factorization
-        self.target_mass_condition = _mass_condition(target_mass)
+        self.mass_condition = mass_condition
+        self.dof_measures = measures
+        self.field_name = name
+        self.structure_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-l2-projection-target-structure",
+                "dof_map": dof_map.dof_map_id,
+                "factorization_plan": factorization.plan.plan_id,
+            }
+        )
+        self.target_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-l2-projection-target",
+                "structure": self.structure_id,
+                "target": discretization.prepared_id,
+                "field": name,
+            }
+        )
+
+
+@final
+class FiniteElementL2Projection(AbstractLinearOperator):
+    """Galerkin L2 projection ``M_T^{-1} B`` between non-matching FE spaces.
+
+    ``mixed_mass`` is ``B`` (target DOFs by source DOFs, integrals of target times
+    source basis functions over the common refinement) and ``prepared_target``
+    owns the target mass ``M_T``, its prepared sparse Cholesky factor, and the
+    solve evidence (factor status, pivot diagnostics, condition estimate). ``mv``
+    solves ``M_T x = B u`` and ``transpose_mv`` applies the algebraic transpose
+    ``B^T M_T^{-1}``; trailing payload axes are solved as one
+    multi-right-hand-side block.
+    """
+
+    _fused_block_action_kind = "fused"
+
+    mixed_mass: SparseLinearMap
+    prepared_target: PreparedL2ProjectionTarget
+
+    def __init__(
+        self,
+        mixed_mass: SparseLinearMap,
+        prepared_target: PreparedL2ProjectionTarget,
+        /,
+        *,
+        operator_id: str,
+        _construction_token: object | None = None,
+    ):
+        if _construction_token is not _L2_ARTIFACT_TOKEN:
+            raise TypeError(
+                "FiniteElementL2Projection is constructed by "
+                "prepare_l2_projection_transfer."
+            )
+        if not isinstance(mixed_mass, SparseLinearMap):
+            raise TypeError("mixed_mass must be a SparseLinearMap.")
+        if not isinstance(prepared_target, PreparedL2ProjectionTarget):
+            raise TypeError("prepared_target must be a PreparedL2ProjectionTarget.")
+        if (
+            mixed_mass.batch_shape
+            or len(mixed_mass.input_shape) != 1
+            or mixed_mass.output_shape != prepared_target.mass.output_shape
+        ):
+            raise ValueError(
+                "L2 projection needs an unbatched mixed mass from source DOFs onto "
+                "the prepared target DOFs."
+            )
+        identifier = canonical_identifier(operator_id, "operator_id")
+        self.mixed_mass = mixed_mass
+        self.prepared_target = prepared_target
         self.source = mixed_mass.source
         self.target = mixed_mass.target
         self.properties = OperatorProperties()
@@ -466,10 +572,19 @@ class FiniteElementL2Projection(AbstractLinearOperator):
         self.operator_id = identifier
 
     def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _projection_action(self, jnp.asarray(vector))
+        mixed = _mixed_mass_action(
+            self.mixed_mass.relation, self.mixed_mass.coefficients, jnp.asarray(vector)
+        )
+        return _target_mass_solve(self.prepared_target.factorization, mixed)
 
     def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
-        return _projection_transpose_action(self, jnp.asarray(vector))
+        # M_T is symmetric, so the transpose solve reuses the same factor.
+        solved = _target_mass_solve(
+            self.prepared_target.factorization, jnp.asarray(vector)
+        )
+        return _mixed_mass_transpose_action(
+            self.mixed_mass.relation, self.mixed_mass.coefficients, solved
+        )
 
     def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return _generic_adjoint(self, vector)
@@ -478,24 +593,27 @@ class FiniteElementL2Projection(AbstractLinearOperator):
         return _materialize_by_basis(self)
 
 
-def _solve_target_mass(projection: FiniteElementL2Projection, values: Array, /) -> Array:
+# Module-level compiled kernels. Their arguments carry only structural static
+# metadata (relation sizes, the symbolic factor plan), never numeric identities,
+# so a compilation depends on shapes and structure alone. The level-scheduled
+# triangular solves dominate compilation and are keyed by the target structure
+# and payload width only: every transfer onto a prepared target, and every
+# refresh of it, reuses them; a new transfer compiles only its sparse gathers.
+@eqx.filter_jit
+def _target_mass_solve(
+    factorization: PreparedSparseFactorization, values: Array, /
+) -> Array:
     block = values.reshape((values.shape[0], -1))
-    return projection.factorization.solve(block).value.reshape(values.shape)
+    return factorization.solve(block).value.reshape(values.shape)
 
 
-# Whole-action kernels: one compilation per payload shape instead of one eager
-# dispatch per primitive of the sparse gather and triangular solves.
-@eqx.filter_jit
-def _projection_action(projection: FiniteElementL2Projection, values: Array, /):
-    return _solve_target_mass(projection, jnp.asarray(projection.mixed_mass.mv(values)))
+_mixed_mass_action = eqx.filter_jit(linear_apply)
+_mixed_mass_transpose_action = eqx.filter_jit(linear_transpose_apply)
 
-
-@eqx.filter_jit
-def _projection_transpose_action(projection: FiniteElementL2Projection, values: Array, /):
-    # M_T is symmetric, so the transpose solve reuses the same factor.
-    return projection.mixed_mass.transpose_mv(_solve_target_mass(projection, values))
-
-
+# Numeric Cholesky of the target mass on a fixed symbolic plan. The mass routes
+# are traced here, so the native refresh gathers values through the plan's
+# retained route-to-CSR scatter instead of revalidating the pattern on the host.
+_factor_target_mass = eqx.filter_jit(refresh_sparse_factorization)
 _mass_condition = eqx.filter_jit(estimate_condition_number)
 
 
@@ -607,13 +725,29 @@ def _affine_frames(
     return vertices[:, 0, :], np.swapaxes(vertices[:, 1:, :] - vertices[:, :1, :], -1, -2)
 
 
+@eqx.filter_jit
+def _tabulate_values(element: FiniteElementSpec, points: Array, /) -> Array:
+    return element.tabulate(points)[0]
+
+
 def _oriented_basis(
     element: FiniteElementSpec, orientation: np.ndarray, points: np.ndarray, /
 ) -> np.ndarray:
-    """Basis values ``(..., Q, n)`` at reference points ``(..., Q, d)``."""
+    """Basis values ``(..., Q, n)`` at reference points ``(..., Q, d)``.
 
-    values, _ = element.tabulate(points.reshape((-1, points.shape[-1])))
-    basis = np.asarray(values, dtype=np.float64).reshape(
+    The element tabulation runs as one compiled call instead of an eager dispatch
+    per primitive. Points are padded with the reference origin to a power-of-two
+    count, so overlap sets of varying size (every new refinement) reuse a
+    logarithmic number of compilations; the padded rows are discarded.
+    """
+
+    flat = points.reshape((-1, points.shape[-1]))
+    padded = np.zeros(
+        (1 << max(flat.shape[0] - 1, 0).bit_length(), flat.shape[1]), dtype=np.float64
+    )
+    padded[: flat.shape[0]] = flat
+    values = np.asarray(_tabulate_values(element, padded), dtype=np.float64)
+    basis = values[: flat.shape[0]].reshape(
         points.shape[:-1] + (element.local_dof_count,)
     )
     return basis * orientation[..., None, :]
@@ -768,16 +902,16 @@ def _coalesced_map(
 
 
 def _target_mass(
-    triples: tuple[np.ndarray, np.ndarray, np.ndarray],
-    size: int,
-    /,
-    *,
-    operator_id: str,
-) -> SparseLinearMap:
-    return _coalesced_map(
+    target: FiniteElementDiscretization, field_index: int, /
+) -> tuple[SparseLinearMap, np.ndarray]:
+    """Target mass ``M_T`` and the integrals of every target basis function."""
+
+    measures, triples = _cell_integrals(target, field_index, mass=True)
+    dof_map = target.dof_maps[field_index]
+    mass = _coalesced_map(
         *triples,
-        target_size=size,
-        source_size=size,
+        target_size=dof_map.global_dof_count,
+        source_size=dof_map.global_dof_count,
         properties=OperatorProperties(
             self_adjoint=True,
             positive_definite=True,
@@ -788,8 +922,103 @@ def _target_mass(
                 "positive_semidefinite": "construction",
             },
         ),
-        operator_id=operator_id,
+        # Structural identity: the mass of one DOF map keeps its operator (and
+        # compiled-kernel) identity across numeric geometry refreshes.
+        operator_id=canonical_fingerprint(
+            {"kind": "finite-element-scalar-mass", "dof_map": dof_map.dof_map_id}
+        ),
     )
+    return mass, measures
+
+
+def _factored_target(
+    target: FiniteElementDiscretization,
+    field_name: str,
+    plan: SparseFactorizationPlan | None,
+    /,
+) -> PreparedL2ProjectionTarget:
+    """Assemble, factor, and condition-estimate the target mass on one plan.
+
+    ``plan`` is ``None`` for a cold preparation (symbolic analysis of the fresh
+    pattern) and the retained symbolic plan for a numeric refresh.
+    """
+
+    mass, measures = _target_mass(target, target._field_index(field_name))
+    symbolic = (
+        prepare_sparse_factorization(mass, _TARGET_MASS_FACTORIZATION)
+        if plan is None
+        else plan
+    )
+    return PreparedL2ProjectionTarget(
+        target,
+        mass,
+        _factor_target_mass(symbolic, mass),
+        _mass_condition(mass),
+        measures,
+        field_name=field_name,
+        _construction_token=_L2_ARTIFACT_TOKEN,
+    )
+
+
+def prepare_l2_projection_target(
+    target: FiniteElementDiscretization,
+    /,
+    *,
+    field_name: str,
+) -> PreparedL2ProjectionTarget:
+    """Prepare the target space of Galerkin L2 projections onto one FE field.
+
+    ``field_name`` names a scalar Lagrange field (continuous or discontinuous, any
+    degree) of ``target`` on affine triangles or tetrahedra. The target mass is
+    integrated exactly, its symbolic Cholesky pattern is planned under a reverse
+    Cuthill-McKee ordering, and the numeric factor and condition estimate are
+    computed once. Pass the result to :func:`prepare_l2_projection_transfer` for
+    every source field and common refinement onto this target, and to
+    :func:`refresh_l2_projection_target` when the target geometry moves with an
+    unchanged DOF structure. Unsupported elements, a failed factorization, and a
+    non-finite condition estimate raise ``ValueError``.
+    """
+
+    if not isinstance(target, FiniteElementDiscretization):
+        raise TypeError("target must be a FiniteElementDiscretization.")
+    name = str(field_name)
+    _projection_elements(target, target._field_index(name), "target")
+    return _factored_target(target, name, None)
+
+
+def refresh_l2_projection_target(
+    prepared: PreparedL2ProjectionTarget,
+    target: FiniteElementDiscretization,
+    /,
+) -> PreparedL2ProjectionTarget:
+    """Refactor a prepared L2 projection target for moved target geometry.
+
+    ``target`` must carry the prepared field with the same DOF structure (equal
+    ``dof_map_id``: mesh topology, elements, and DOF routes), for example the same
+    finite-element plan prepared on a moved mesh. Only numeric values change: the
+    target mass is reassembled, the retained symbolic plan is refactored through
+    the native sparse factorization refresh, and the compiled factorization and
+    projection kernels are reused. A changed DOF structure raises ``ValueError``;
+    prepare a new target instead.
+    """
+
+    if not isinstance(prepared, PreparedL2ProjectionTarget):
+        raise TypeError("prepared must be a PreparedL2ProjectionTarget.")
+    if not isinstance(target, FiniteElementDiscretization):
+        raise TypeError("target must be a FiniteElementDiscretization.")
+    name = prepared.field_name
+    index = target._field_index(name)
+    _projection_elements(target, index, "target")
+    previous = prepared.discretization
+    if (
+        target.dof_maps[index].dof_map_id
+        != previous.dof_maps[previous._field_index(name)].dof_map_id
+    ):
+        raise ValueError(
+            "Refreshing an L2 projection target requires an unchanged DOF structure; "
+            "prepare a new target instead."
+        )
+    return _factored_target(target, name, prepared.factorization.plan)
 
 
 def _coverage_bound(refinement: PreparedCommonRefinement, /) -> float:
@@ -832,23 +1061,24 @@ def _coverage_claims(refinement: PreparedCommonRefinement, /) -> tuple[bool, boo
 
 def prepare_l2_projection_transfer(
     source: FiniteElementDiscretization,
-    target: FiniteElementDiscretization,
+    target: PreparedL2ProjectionTarget,
     refinement: PreparedCommonRefinement,
     /,
     *,
     field_name: str,
-    target_field_name: str | None = None,
 ) -> FiniteElementTopologyTransfer:
     """Prepare the Galerkin L2 projection of one FE field onto a non-matching mesh.
 
-    ``refinement`` is the common refinement of ``source.mesh`` and ``target.mesh``
-    prepared with ``CommonRefinementPolicy(overlap_simplices=True)``. Scalar
-    Lagrange fields (continuous or discontinuous, any degree) on affine triangles
-    or tetrahedra are supported; component axes of the field are carried as
-    payload. The mixed mass ``B`` is integrated on the overlap simplices with a
-    rule exact for the product of source and target degrees, and the target mass
-    ``M_T`` is factored once (``FiniteElementL2Projection``). The transfer applies
-    ``M_T^{-1} B`` and pulls duals back through ``B^T M_T^{-1}``.
+    ``target`` is a :func:`prepare_l2_projection_target` artifact and
+    ``refinement`` the common refinement of ``source.mesh`` and the target mesh
+    prepared with ``CommonRefinementPolicy(overlap_simplices=True)``. The source
+    field ``field_name`` is a scalar Lagrange field (continuous or discontinuous,
+    any degree) on affine triangles or tetrahedra; component axes of the field
+    are carried as payload. Only the mixed mass ``B`` is assembled here, exactly
+    on the overlap simplices with a rule for the product of source and target
+    degrees; the prepared target factor is shared (``FiniteElementL2Projection``).
+    The transfer applies ``M_T^{-1} B`` and pulls duals back through
+    ``B^T M_T^{-1}``.
 
     Claims follow the certified coverage: constants (and, for degrees >= 1, linear
     fields) are preserved when every target cell is covered, and the integral is
@@ -859,26 +1089,26 @@ def prepare_l2_projection_transfer(
     unsupported elements raise ``ValueError``.
     """
 
-    if not isinstance(source, FiniteElementDiscretization) or not isinstance(
-        target, FiniteElementDiscretization
-    ):
-        raise TypeError("source and target must be FiniteElementDiscretization values.")
+    if not isinstance(source, FiniteElementDiscretization):
+        raise TypeError("source must be a FiniteElementDiscretization.")
+    if not isinstance(target, PreparedL2ProjectionTarget):
+        raise TypeError("target must be a PreparedL2ProjectionTarget.")
     source_name = str(field_name)
-    target_name = source_name if target_field_name is None else str(target_field_name)
     source_index = source._field_index(source_name)
-    target_index = target._field_index(target_name)
+    space = target.discretization
+    target_index = space._field_index(target.field_name)
     simplices, source_cells, target_cells = _validated_overlaps(
-        refinement, source.mesh, target.mesh
+        refinement, source.mesh, space.mesh
     )
     source_elements = _projection_elements(source, source_index, "source")
-    target_elements = _projection_elements(target, target_index, "target")
+    target_elements = space.elements[target_index]
     points, weights, rule_id = _overlap_quadrature(
         simplices,
         max(element.degree for element in source_elements)
         + max(element.degree for element in target_elements),
     )
     target_routes, target_valid, target_basis = _overlap_basis(
-        target, target_index, target_cells, points
+        space, target_index, target_cells, points
     )
     source_routes, source_valid, source_basis = _overlap_basis(
         source, source_index, source_cells, points
@@ -886,13 +1116,12 @@ def prepare_l2_projection_transfer(
     local = np.swapaxes(weights[:, :, None] * target_basis, 1, 2) @ source_basis
     routed = target_valid[:, :, None] & source_valid[:, None, :]
     source_dofs = source.dof_maps[source_index]
-    target_dofs = target.dof_maps[target_index]
+    target_dofs = space.dof_maps[target_index]
     identity = {
         "refinement": refinement.refinement_id,
         "source": source.prepared_id,
         "source_field": source_name,
-        "target": target.prepared_id,
-        "target_field": target_name,
+        "target": target.target_id,
         "rule": rule_id,
     }
     mixed_mass = _coalesced_map(
@@ -906,31 +1135,18 @@ def prepare_l2_projection_transfer(
             {"kind": "finite-element-mixed-mass", **identity}
         ),
     )
-    target_measures, target_triples = _cell_integrals(target, target_index, mass=True)
-    target_mass = _target_mass(
-        target_triples,
-        target_dofs.global_dof_count,
-        operator_id=canonical_fingerprint(
-            {"kind": "finite-element-scalar-mass", "dof_map": target_dofs.dof_map_id}
-        ),
-    )
     projection = FiniteElementL2Projection(
         mixed_mass,
-        target_mass,
+        target,
         operator_id=canonical_fingerprint(
             {
                 "kind": "finite-element-l2-projection",
                 **identity,
                 "mixed_mass": array_tree_fingerprint(np.asarray(mixed_mass.coefficients)),
-                "target_mass": array_tree_fingerprint(
-                    np.asarray(target_mass.coefficients)
-                ),
             }
         ),
+        _construction_token=_L2_ARTIFACT_TOKEN,
     )
-    condition = float(projection.target_mass_condition.value)
-    if not isfinite(condition):
-        raise ValueError("The target mass condition estimate is not finite.")
     target_covered, source_covered = _coverage_claims(refinement)
     linear = (
         target_covered
@@ -945,10 +1161,11 @@ def prepare_l2_projection_transfer(
         float(np.max(np.sum(np.abs(source_basis), axis=-1))),
     )
     coverage = _coverage_bound(refinement) / (_CLAIM_ULPS * np.finfo(np.float64).eps)
+    condition = float(target.mass_condition.value)
     return FiniteElementTopologyTransfer(
         projection,
         source.mesh.topology_id,
-        target.mesh.topology_id,
+        space.mesh.topology_id,
         preserves_constants=target_covered,
         preserves_linear=linear,
         conservative=source_covered,
@@ -958,13 +1175,16 @@ def prepare_l2_projection_transfer(
         source_measures=_cell_integrals(source, source_index, mass=False)[0]
         if source_covered
         else None,
-        target_measures=target_measures if source_covered else None,
+        target_measures=target.dof_measures if source_covered else None,
     )
 
 
 __all__ = [
     "FiniteElementL2Projection",
     "FiniteElementTopologyTransfer",
+    "PreparedL2ProjectionTarget",
+    "prepare_l2_projection_target",
     "prepare_l2_projection_transfer",
+    "refresh_l2_projection_target",
     "vertex_interpolation_transfer",
 ]

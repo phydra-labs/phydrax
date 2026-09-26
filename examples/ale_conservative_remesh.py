@@ -18,9 +18,9 @@ Relocated and remeshed meshes cover exactly the moved domain, so the density is
 remapped on their certified common refinement: the bound-preserving limited P1
 remap (``UnstructuredSecondOrderRemapPlan``) is the transfer that the loop
 carries forward; the first-order P0 remap and the Galerkin L2 projection of the
-piecewise-constant field (``prepare_l2_projection_transfer``) are compared on
-the same refinement. After a remesh the adapted mesh becomes the new motion and
-monitor reference.
+piecewise-constant field (``prepare_l2_projection_target`` and
+``prepare_l2_projection_transfer``) are compared on the same refinement. After a
+remesh the adapted mesh becomes the new motion and monitor reference.
 
 Run with the native meshing core available (``phydrax[meshcore]`` or
 ``PHYDRAX_MESHCORE_LIBRARY``)::
@@ -142,7 +142,10 @@ def remap(source_mesh: D.CellMesh, target_mesh: D.CellMesh, density, label, /):
     ).apply(density)
     first_order = prepared.plan.apply(density)
     projection = D.prepare_l2_projection_transfer(
-        dg0(source.mesh), dg0(target.mesh), prepared.refinement, field_name="rho"
+        dg0(source.mesh),
+        D.prepare_l2_projection_target(dg0(target.mesh), field_name="rho"),
+        prepared.refinement,
+        field_name="rho",
     )
     projected = projection.apply(density)
     source_volumes = np.asarray(source.cell_volumes)

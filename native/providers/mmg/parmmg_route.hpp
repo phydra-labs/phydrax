@@ -152,33 +152,53 @@ json::Value collective_adapt(phydrax::worker::Request const& request) {
   int rank = 0, size = 1;
   MPI_Comm_rank(comm, &rank);
   MPI_Comm_size(comm, &size);
-  Backend const backend = parse_backend(request.operation);
-  Controls const controls = read_controls(request.parameters);
-  if (backend != Backend::mmg3d || controls.program != Program::remesh)
-    throw Failure("unsupported", "The ParMmg worker performs tetrahedral remeshing only");
-  exchange::Input const input = request.input();
-  Mesh const source = read_mesh(input, backend);
-  Solutions const solutions = read_solutions(input, source, controls.program);
-  ParMmgSession session(comm);
-  if (rank == 0) load_parmmg(session.parmesh, source, solutions);
-  apply_parmmg_controls(session.parmesh, controls);
-  check_parmmg(PMMG_parmmglib_centralized(session.parmesh));
-  Part const part = extract_parmmg(session.parmesh);
-  std::string const name = "rank-" + std::to_string(rank);
-  exchange::Output output = exchange::Output::create_part(request.output_directory, name,
-                                                          request.maximum_output_bytes / size);
-  write_adapted(output, part.adapted);
-  auto const n = static_cast<std::uint64_t>(part.adapted.mesh.vertex_count());
-  output.add<std::int64_t>("global_vertex_ids", {n}, part.global_vertex_ids);
-  output.add<std::int64_t>("vertex_owners", {n}, part.vertex_owners);
-  std::vector<std::int64_t> const targets = required_vertex_targets(source, part.adapted.mesh);
-  output.add<std::int64_t>("required_vertex_targets", {targets.size()}, targets);
-  std::vector<std::uint8_t> owned(part.vertex_owners.size());
-  for (std::size_t vertex = 0; vertex < owned.size(); ++vertex)
-    owned[vertex] = part.vertex_owners[vertex] == rank ? 1 : 0;
-  json::Value interpolation =
-      transfer_fields(backend, input, source, solutions, controls, part.adapted, owned, output);
-  output.finish();
+  std::optional<Backend> backend;
+  std::optional<Controls> controls;
+  std::optional<exchange::Input> input;
+  Mesh source;
+  Solutions solutions;
+  // Every rank agrees local parsing and exchange loading before ParMmg receives
+  // any rank. Otherwise one failed allocation would send that rank to the
+  // worker-level reduction while its peers enter a different collective.
+  phydrax::worker::agreed(comm, [&] {
+    backend = parse_backend(request.operation);
+    controls = read_controls(request.parameters);
+    if (*backend != Backend::mmg3d || controls->program != Program::remesh)
+      throw Failure("unsupported", "The ParMmg worker performs tetrahedral remeshing only");
+    input.emplace(request.input());
+    source = read_mesh(*input, *backend);
+    solutions = read_solutions(*input, source, controls->program);
+  });
+  std::unique_ptr<ParMmgSession> session;
+  // Rank-local initialization and loading are agreed before the centralized
+  // remeshing collective.
+  phydrax::worker::agreed(comm, [&] {
+    session = std::make_unique<ParMmgSession>(comm);
+    if (rank == 0) load_parmmg(session->parmesh, source, solutions);
+    apply_parmmg_controls(session->parmesh, *controls);
+  });
+  int const status = PMMG_parmmglib_centralized(session->parmesh);
+  phydrax::worker::agreed(comm, [&] { check_parmmg(status); });
+  Part part;
+  json::Value interpolation;
+  phydrax::worker::agreed(comm, [&] {
+    part = extract_parmmg(session->parmesh);
+    std::string const name = "rank-" + std::to_string(rank);
+    exchange::Output output = exchange::Output::create_part(request.output_directory, name,
+                                                            request.maximum_output_bytes / size);
+    write_adapted(output, part.adapted);
+    auto const n = static_cast<std::uint64_t>(part.adapted.mesh.vertex_count());
+    output.add<std::int64_t>("global_vertex_ids", {n}, part.global_vertex_ids);
+    output.add<std::int64_t>("vertex_owners", {n}, part.vertex_owners);
+    std::vector<std::int64_t> const targets = required_vertex_targets(source, part.adapted.mesh);
+    output.add<std::int64_t>("required_vertex_targets", {targets.size()}, targets);
+    std::vector<std::uint8_t> owned(part.vertex_owners.size());
+    for (std::size_t vertex = 0; vertex < owned.size(); ++vertex)
+      owned[vertex] = part.vertex_owners[vertex] == rank ? 1 : 0;
+    interpolation = transfer_fields(*backend, *input, source, solutions, *controls,
+                                    part.adapted, owned, output);
+    output.finish();
+  });
   // Collective evidence: counts sum over ranks, the projection distance is the maximum.
   std::int64_t counts[2] = {0, 0}, totals[2] = {0, 0};
   double distance = 0.0, maximum = 0.0;
@@ -206,10 +226,10 @@ json::Value collective_adapt(phydrax::worker::Request const& request) {
     };
   return json::Object{
       {"adapted_metric", adapted_metric_label(part.adapted)},
-      {"backend", backend_name(backend)},
+      {"backend", backend_name(*backend)},
       {"input_metric", metric_label(solutions.metric_width)},
       {"interpolation", std::move(interpolation)},
-      {"memory_megabytes", controls.memory_megabytes},
+      {"memory_megabytes", controls->memory_megabytes},
       {"program", "remesh"},
       {"ranks", size},
   };

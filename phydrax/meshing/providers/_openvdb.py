@@ -190,7 +190,7 @@ class OpenVDBProvider:
     """Extract a real sparse scalar isosurface with OpenVDB 13.
 
     Active voxel values are lowered to FloatGrid brick by brick through the
-    binding's dense-block ingestion (copyFromDense), without densifying the
+    binding's dense-block ingestion (copyFromArray), without densifying the
     domain or issuing per-voxel calls. Inactive voxels and the exterior of the
     Morton box have the declared constant background value; an active sample
     exactly equal to the float32 background is stored as background. The

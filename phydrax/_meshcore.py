@@ -15,7 +15,10 @@ arrays, and native statuses reach the caller (per-item status arrays for batched
 clipping, exceptions for rejected calls).
 
 Library lookup order: the ``PHYDRAX_MESHCORE_LIBRARY`` environment variable
-(path to the shared library), then ``phydrax_meshcore.library_path()``.
+(path to the shared library), then ``phydrax_meshcore.library_path()``.  A
+library is usable only when it exports every C ABI symbol bound here and its
+version equals the installed ``phydrax`` release; anything else is reported as
+:class:`MeshcoreUnavailableError` with the reason.
 """
 
 from __future__ import annotations
@@ -23,8 +26,10 @@ from __future__ import annotations
 import ctypes
 import functools
 import importlib
+import importlib.metadata
 import importlib.util
 import os
+from collections.abc import Callable, Mapping
 from enum import IntEnum
 from pathlib import Path
 from typing import final
@@ -169,21 +174,87 @@ def _library_location(configured: str, /) -> Path | str:
 class MeshcoreLibrary:
     """Loaded meshcore shared library with typed C entry points."""
 
-    __slots__ = ("_functions", "_library", "path")
+    __slots__ = ("_functions", "_library", "build_hash", "path", "version")
 
-    def __init__(self, library: ctypes.CDLL, path: Path, /):
-        functions = {}
-        for name, (restype, argtypes) in _SIGNATURES.items():
-            function = library[name]
-            function.restype = restype
-            function.argtypes = argtypes
-            functions[name] = function
+    def __init__(
+        self,
+        library: ctypes.CDLL,
+        functions: Mapping[str, Callable[..., object]],
+        path: Path,
+        version: str,
+        build_hash: str,
+        /,
+    ):
         self._library = library
         self._functions = functions
         self.path = path
+        self.version = version
+        self.build_hash = build_hash
 
     def __getitem__(self, name: str, /):
         return self._functions[name]
+
+
+def _identity_text(function: Callable[[], object], symbol: str, path: Path, /):
+    """Decode one required non-null ASCII identity string, or return its error."""
+
+    raw = function()
+    if not isinstance(raw, bytes):
+        return None, f"meshcore library {str(path)!r} returned null from {symbol}."
+    try:
+        value = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None, f"meshcore library {str(path)!r} returned non-ASCII {symbol}."
+    if not value:
+        return None, f"meshcore library {str(path)!r} returned an empty {symbol}."
+    return value, None
+
+
+def _bind(library: ctypes.CDLL, path: Path, /) -> MeshcoreLibrary | str:
+    """Bind every C ABI entry point and verify the release, or return the reason."""
+
+    functions = {}
+    missing = []
+    for name, (restype, argtypes) in _SIGNATURES.items():
+        # ctypes reports an unresolved symbol only as AttributeError.
+        try:
+            function = library[name]
+        except AttributeError:
+            missing.append(name)
+            continue
+        function.restype = restype
+        function.argtypes = argtypes
+        functions[name] = function
+    if missing:
+        return (
+            f"meshcore library {str(path)!r} lacks C ABI symbols "
+            f"{', '.join(missing)}; install the phydrax-meshcore release of this phydrax."
+        )
+    version, error = _identity_text(functions["phx_mc_version"], "phx_mc_version", path)
+    if error is not None:
+        return error
+    build_hash, error = _identity_text(
+        functions["phx_mc_build_hash"], "phx_mc_build_hash", path
+    )
+    if error is not None:
+        return error
+    if len(build_hash) != 64 or any(
+        character not in "0123456789abcdef" for character in build_hash
+    ):
+        return f"meshcore library {str(path)!r} returned an invalid phx_mc_build_hash."
+    try:
+        required = importlib.metadata.version("phydrax")
+    except importlib.metadata.PackageNotFoundError:
+        return (
+            "The meshcore release cannot be verified: phydrax distribution "
+            "metadata is not installed."
+        )
+    if version != required:
+        return (
+            f"meshcore library {str(path)!r} is release {version}, but phydrax "
+            f"{required} requires phydrax-meshcore=={required}."
+        )
+    return MeshcoreLibrary(library, functions, path, version, build_hash)
 
 
 @functools.cache
@@ -196,7 +267,7 @@ def _resolve(configured: str, /) -> MeshcoreLibrary | str:
         library = ctypes.CDLL(str(location))
     except OSError as error:
         return f"meshcore library {str(location)!r} cannot be loaded: {error}"
-    return MeshcoreLibrary(library, location)
+    return _bind(library, location)
 
 
 def _current() -> MeshcoreLibrary | str:
@@ -219,12 +290,10 @@ def load_meshcore() -> MeshcoreLibrary:
 
 
 def meshcore_identity() -> str:
-    """Library version and source build hash, e.g. ``phydrax-meshcore 0.1.0 <sha256>``."""
+    """Library release and source build hash: ``phydrax-meshcore <release> <sha256>``."""
 
     library = load_meshcore()
-    version = library["phx_mc_version"]().decode("ascii")
-    build_hash = library["phx_mc_build_hash"]().decode("ascii")
-    return f"phydrax-meshcore {version} {build_hash}"
+    return f"phydrax-meshcore {library.version} {library.build_hash}"
 
 
 def meshcore_exact_domain() -> tuple[int, int]:

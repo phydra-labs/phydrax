@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -75,7 +76,9 @@ class ProviderWorker:
     The executable is the explicit path, else ``environment_variable``, else
     ``default_executable`` on PATH. Runtime identity is probed once per session;
     a failed, closed, or call-exhausted session is replaced by a fresh launch at
-    the next call and ``launches`` counts every session ever started.
+    the next call and ``launches`` counts every session ever started. One
+    reentrant lock serializes session creation, replacement, calls, and close
+    across threads; it is always taken before the session's own lock.
     """
 
     def __init__(
@@ -104,6 +107,7 @@ class ProviderWorker:
             raise TypeError("policy must be NativeWorkerPolicy or None.")
         self.environment = dict(environment or {})
         self.launches = 0
+        self._lock = threading.RLock()
         self._worker: NativeWorker | None = None
 
     def _resolve(self) -> str:
@@ -120,24 +124,25 @@ class ProviderWorker:
         return located
 
     def session(self) -> NativeWorker:
-        worker = self._worker
-        if worker is not None and not worker.closed and not worker.exhausted:
-            return worker
-        if worker is not None:
-            worker.close()
-        executable = self._resolve()
-        self.launches += 1
-        try:
-            self._worker = NativeWorker(
-                executable,
-                launcher=self.launcher,
-                arguments=self.arguments,
-                policy=self.policy,
-                environment=self.environment,
-            )
-        except NativeWorkerError as error:
-            raise _failure(self.provider, "startup", error) from error
-        return self._worker
+        with self._lock:
+            worker = self._worker
+            if worker is not None and not worker.closed and not worker.exhausted:
+                return worker
+            if worker is not None:
+                worker.close()
+            executable = self._resolve()
+            self.launches += 1
+            try:
+                self._worker = NativeWorker(
+                    executable,
+                    launcher=self.launcher,
+                    arguments=self.arguments,
+                    policy=self.policy,
+                    environment=self.environment,
+                )
+            except NativeWorkerError as error:
+                raise _failure(self.provider, "startup", error) from error
+            return self._worker
 
     @property
     def identity(self) -> NativeWorkerIdentity:
@@ -154,18 +159,21 @@ class ProviderWorker:
     ) -> NativeWorkerCall:
         if not isinstance(limits, MeshingLimits):
             raise TypeError("limits must be MeshingLimits.")
-        worker = self.session()
-        try:
-            return worker.call(
-                operation,
-                parameters,
-                arrays,
-                timeout=limits.maximum_wall_seconds,
-                maximum_input_bytes=limits.maximum_data_bytes,
-                maximum_output_bytes=limits.maximum_data_bytes,
-            )
-        except NativeWorkerError as error:
-            raise _failure(self.provider, operation, error) from error
+        # Holding the provider lock across the call keeps a concurrent caller from
+        # replacing or closing this session between its selection and its use.
+        with self._lock:
+            worker = self.session()
+            try:
+                return worker.call(
+                    operation,
+                    parameters,
+                    arrays,
+                    timeout=limits.maximum_wall_seconds,
+                    maximum_input_bytes=limits.maximum_data_bytes,
+                    maximum_output_bytes=limits.maximum_data_bytes,
+                )
+            except NativeWorkerError as error:
+                raise _failure(self.provider, operation, error) from error
 
     def memory_limit_evidence(self) -> str:
         """Enforced-limit label describing how worker memory is bounded."""
@@ -176,9 +184,10 @@ class ProviderWorker:
         )
 
     def close(self) -> None:
-        if self._worker is not None:
-            self._worker.close()
-            self._worker = None
+        with self._lock:
+            if self._worker is not None:
+                self._worker.close()
+                self._worker = None
 
 
 __all__ = ["ProviderWorker"]

@@ -4,7 +4,8 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "phydrax-meshcore"
-version = "0.1.0"
+# Released in lockstep with phydrax, which pins and verifies this exact version.
+version = "0.2.2"
 description = "Exact geometric predicates, clipping moments, and Delaunay kernels for Phydrax (plain C ABI)."
 requires-python = ">=3.11"
 authors = [{email = "leonard@phydra.ai", name = "Phydra Labs"}]

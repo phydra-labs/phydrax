@@ -20,6 +20,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import weakref
 from abc import ABC, abstractmethod
@@ -1139,7 +1140,9 @@ class NativeWorker:
     recorded once at startup; calls reuse the same process until ``close``, a
     fatal failure, or ``NativeWorkerPolicy.maximum_calls``. A launcher such as
     ``("mpiexec", "-n", "4")`` runs a collective worker whose rank zero owns the
-    control channel. This is not a security sandbox.
+    control channel. Calls, ``close``, and ``abort`` are serialized by one
+    reentrant lock, so a concurrent close waits for the call in flight. This is
+    not a security sandbox.
     """
 
     def __init__(
@@ -1189,6 +1192,7 @@ class NativeWorker:
             launch = (str(Path(located).resolve()), *launch[1:])
         with open_regular_file(resolved) as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        self._lock = threading.RLock()
         self.closed = False
         self.final_log = ""
         self.calls: list[dict[str, Any]] = []
@@ -1401,22 +1405,44 @@ class NativeWorker:
             raise ValueError("operation must be a nonempty worker operation name.")
         if not isinstance(parameters, Mapping):
             raise TypeError("parameters must be a JSON mapping.")
-        if self.closed:
-            raise NativeWorkerError(
-                "exited", "Worker session is closed.", evidence={"operation": operation}
-            )
-        if self.exhausted:
-            raise NativeWorkerError(
-                "resource",
-                "Worker session reached maximum_calls.",
-                evidence={"operation": operation, "calls": self._sequence},
-            )
         if not isinstance(arrays, Mapping) or any(
             not isinstance(value, np.ndarray) for value in arrays.values()
         ):
             raise TypeError("arrays must map exchange names to NumPy arrays.")
         if sum(value.nbytes for value in arrays.values()) > maximum_input_bytes:
             raise ValueError("Worker input arrays exceed maximum_input_bytes.")
+        with self._lock:
+            if self.closed:
+                raise NativeWorkerError(
+                    "exited",
+                    "Worker session is closed.",
+                    evidence={"operation": operation},
+                )
+            if self.exhausted:
+                raise NativeWorkerError(
+                    "resource",
+                    "Worker session reached maximum_calls.",
+                    evidence={"operation": operation, "calls": self._sequence},
+                )
+            return self._exchange(
+                operation,
+                parameters,
+                arrays,
+                timeout,
+                maximum_input_bytes,
+                maximum_output_bytes,
+            )
+
+    def _exchange(
+        self,
+        operation: str,
+        parameters: Mapping[str, Any],
+        arrays: Mapping[str, np.ndarray],
+        timeout: float,
+        maximum_input_bytes: int,
+        maximum_output_bytes: int,
+    ) -> NativeWorkerCall:
+        # Caller holds `_lock`: sequence, pipes, and staging belong to one call.
         self._sequence += 1
         sequence = self._sequence
         started = time.monotonic()
@@ -1499,35 +1525,37 @@ class NativeWorker:
 
     def close(self) -> None:
         """End the session gracefully when possible, then release every resource."""
-        if self.closed:
-            return
-        stdin = self._process.stdin
-        if self._process.poll() is None and stdin is not None:
-            self._sequence += 1
-            line = canonical_json({"operation": "close", "sequence": self._sequence})
-            # Shutdown of an already-dead worker is not an error to surface.
-            try:
-                stdin.write(line.encode("ascii") + b"\n")
-                stdin.close()
-                self._process.wait(timeout=5.0)
-            except (BrokenPipeError, subprocess.TimeoutExpired):
-                pass
-        self.abort()
+        with self._lock:
+            if self.closed:
+                return
+            stdin = self._process.stdin
+            if self._process.poll() is None and stdin is not None:
+                self._sequence += 1
+                line = canonical_json({"operation": "close", "sequence": self._sequence})
+                # Shutdown of an already-dead worker is not an error to surface.
+                try:
+                    stdin.write(line.encode("ascii") + b"\n")
+                    stdin.close()
+                    self._process.wait(timeout=5.0)
+                except (BrokenPipeError, subprocess.TimeoutExpired):
+                    pass
+            self.abort()
 
     def abort(self) -> None:
-        if self.closed:
-            return
-        self.closed = True
-        self._logs.flush()
-        tail = self._log_tail()
-        self._finalizer.detach()
-        _kill_process_group(self._process)
-        for stream in (self._process.stdin, self._process.stdout):
-            if stream is not None:
-                stream.close()
-        self.final_log = tail
-        self._logs.close()
-        shutil.rmtree(self._root, ignore_errors=True)
+        with self._lock:
+            if self.closed:
+                return
+            self.closed = True
+            self._logs.flush()
+            tail = self._log_tail()
+            self._finalizer.detach()
+            _kill_process_group(self._process)
+            for stream in (self._process.stdin, self._process.stdout):
+                if stream is not None:
+                    stream.close()
+            self.final_log = tail
+            self._logs.close()
+            shutil.rmtree(self._root, ignore_errors=True)
 
     def __enter__(self) -> NativeWorker:
         return self

@@ -138,6 +138,91 @@ def test_inverted_meshes_fail_without_mutation():
     np.testing.assert_array_equal(failed.coordinates, trapped.coordinates)
 
 
+def test_nonconverged_optimization_commits_only_under_explicit_acceptance():
+    mesh = _mesh((0.75, 0.25))
+
+    def optimize(accept):
+        plan = meshing.TargetMatrixOptimizationPlan(
+            mesh,
+            target_coordinates=_TARGET,
+            fixed_vertices=_BOUNDARY,
+            termination=phx.optim.OptimizationTermination(maximum_steps=1),
+            accept_valid_nonconverged=accept,
+        )
+        return meshing.optimize_cell_mesh(plan, phx.SpatialCoordinateContract.si())
+
+    refused = optimize(False)
+    admitted = optimize(True)
+
+    budget = phx.optim.OptimizationStatus.MAXIMUM_STEPS_REACHED
+    assert refused.status is meshing.MeshOptimizationStatus.NONCONVERGED
+    assert not refused.accepted and refused.result is None
+    assert refused.optimizer_status is budget and refused.inverted_count == 0
+    np.testing.assert_array_equal(refused.coordinates, mesh.coordinates)
+    # The rejected iterate stays in the native evidence for diagnostics only.
+    assert not np.allclose(refused.minimization.parameters, mesh.coordinates[4:])
+    assert admitted.status is meshing.MeshOptimizationStatus.VALID_NONCONVERGED
+    assert admitted.accepted and admitted.optimizer_status is budget
+    assert admitted.result.audit.passed
+    np.testing.assert_array_equal(admitted.result.mesh.coordinates, admitted.coordinates)
+    np.testing.assert_array_equal(
+        np.asarray(admitted.coordinates)[4:], refused.minimization.parameters
+    )
+    assert admitted.final_objective < admitted.initial_objective
+
+
+def test_nonconverged_untangling_stage_is_accepted_only_when_permitted():
+    folded = _mesh((1.3, 0.5))
+
+    def optimize(accept):
+        plan = meshing.TargetMatrixOptimizationPlan(
+            folded,
+            target_coordinates=_TARGET,
+            fixed_vertices=_BOUNDARY,
+            termination=phx.optim.OptimizationTermination(maximum_steps=1),
+            untangling=meshing.MeshUntanglingPolicy(maximum_stages=1),
+            accept_valid_nonconverged=accept,
+        )
+        return meshing.optimize_cell_mesh(plan, phx.SpatialCoordinateContract.si())
+
+    refused = optimize(False)
+    admitted = optimize(True)
+
+    stage = refused.untangling
+    assert refused.status is meshing.MeshOptimizationStatus.UNTANGLING_FAILED
+    assert refused.result is None
+    # The stage removed every inversion and passed the audit but did not converge.
+    assert stage.final_inverted_count == 0 and stage.audit_passed
+    assert not stage.converged and not stage.succeeded
+    assert stage.optimizer_statuses == (
+        phx.optim.OptimizationStatus.MAXIMUM_STEPS_REACHED,
+    )
+    np.testing.assert_array_equal(refused.coordinates, folded.coordinates)
+    assert admitted.untangling.succeeded and not admitted.untangling.converged
+    assert admitted.status is meshing.MeshOptimizationStatus.VALID_NONCONVERGED
+    assert admitted.accepted
+    assert np.all(np.asarray(admitted.result.quality.evaluation.sampled_valid))
+
+
+def test_untangling_uses_its_stage_budget_when_a_valid_iterate_fails_audit():
+    folded = _mesh((1.3, 0.5))
+    plan = meshing.TargetMatrixOptimizationPlan(
+        folded,
+        target_coordinates=_TARGET,
+        fixed_vertices=_BOUNDARY,
+        termination=phx.optim.OptimizationTermination(maximum_steps=1),
+        untangling=meshing.MeshUntanglingPolicy(maximum_stages=2),
+        audit_policy=meshing.CellMeshAuditPolicy(minimum_mean_ratio=1.0),
+    )
+
+    result = meshing.optimize_cell_mesh(plan, phx.SpatialCoordinateContract.si())
+
+    assert result.status is meshing.MeshOptimizationStatus.UNTANGLING_FAILED
+    assert result.untangling.final_inverted_count == 0
+    assert not result.untangling.audit_passed
+    assert len(result.untangling.minimizations) == 2
+
+
 def test_generic_high_order_coordinate_optimizer_preserves_fixed_nodes():
     element = phx.discretization.lagrange_element("triangle", 2)
     coordinates = np.array(element.reference_nodes, copy=True)
@@ -158,7 +243,7 @@ def test_generic_high_order_coordinate_optimizer_preserves_fixed_nodes():
 
     np.testing.assert_array_equal(optimized.coordinates[:3], coordinates[:3])
     np.testing.assert_allclose(optimized.coordinates[3:], target[3:], atol=1e-6)
-    assert int(optimized.minimization.status) == phx.optim.OptimizationStatus.SUCCESS
+    assert optimized.converged
 
 
 # Unit-cube faces (vertex x + 2y + 4z), counterclockwise seen from outside.

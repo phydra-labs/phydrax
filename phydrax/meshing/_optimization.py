@@ -72,10 +72,31 @@ class MeshQualityObjective(StrEnum):
 
 
 class MeshOptimizationStatus(StrEnum):
+    """Outcome of one fixed-topology mesh optimization.
+
+    ``OPTIMIZED``: the native minimization converged and the inversion-free,
+    audited mesh is certified. ``VALID_NONCONVERGED``: the minimization stopped
+    without converging (step or evaluation budget, stagnation, line-search
+    failure, ...), its iterate is inversion free and passes the audit, and the plan
+    explicitly accepts valid non-convergence; the iterate is certified.
+    ``NONCONVERGED``: the same valid but non-converged iterate under a plan that
+    does not accept it; nothing is committed. ``INVERTED_INPUT``: the input is
+    inverted and the plan has no untangling policy. ``UNTANGLING_FAILED``: no
+    untangling stage was accepted. ``AUDIT_FAILED``: the optimized iterate is
+    inverted or fails the mesh audit.
+    """
+
     OPTIMIZED = "optimized"
+    VALID_NONCONVERGED = "valid_nonconverged"
+    NONCONVERGED = "nonconverged"
     INVERTED_INPUT = "inverted_input"
     UNTANGLING_FAILED = "untangling_failed"
     AUDIT_FAILED = "audit_failed"
+
+
+_ACCEPTED_STATUSES = frozenset(
+    (MeshOptimizationStatus.OPTIMIZED, MeshOptimizationStatus.VALID_NONCONVERGED)
+)
 
 
 _SIMPLEX_KINDS = frozenset(("triangle", "tetrahedron"))
@@ -290,8 +311,10 @@ class MeshUntanglingPolicy(StrictModule, NonTrainableState):
 
     Each stage minimizes the regularized shape energy with
     ``delta = sqrt(epsilon (epsilon - tau_min))`` from the current smallest
-    corner determinant ``tau_min``. The stage result is accepted only when the
-    inversion count reaches zero and the mesh audit passes.
+    corner determinant ``tau_min``. A stage is accepted only when the inversion
+    count reaches zero, the mesh audit passes, and its minimization converged or
+    the plan accepts valid non-convergence; otherwise the next stage continues
+    from its iterate.
     """
 
     maximum_stages: int = eqx.field(static=True)
@@ -320,15 +343,57 @@ class MeshUntanglingPolicy(StrictModule, NonTrainableState):
 
 
 class MeshUntanglingEvidence(StrictModule, NonTrainableState):
+    """Native evidence of every untangling stage and the final-stage verdict.
+
+    ``optimizer_statuses`` are the native termination statuses of the stages in
+    order. ``final_inverted_count`` and ``audit_passed`` describe the last stage;
+    ``succeeded`` requires that stage to be inversion free, audited, and
+    converged, or valid under a plan that accepts valid non-convergence.
+    """
+
     minimizations: tuple[MinimizationResult, ...]
     regularizations: tuple[float, ...] = eqx.field(static=True)
+    optimizer_statuses: tuple[OptimizationStatus, ...] = eqx.field(static=True)
     initial_inverted_count: int = eqx.field(static=True)
     final_inverted_count: int = eqx.field(static=True)
     audit_passed: bool = eqx.field(static=True)
+    accept_valid_nonconverged: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        minimizations: tuple[MinimizationResult, ...],
+        regularizations: tuple[float, ...],
+        /,
+        *,
+        initial_inverted_count: int,
+        final_inverted_count: int,
+        audit_passed: bool,
+        accept_valid_nonconverged: bool,
+    ):
+        if not minimizations or len(minimizations) != len(regularizations):
+            raise ValueError("Every untangling stage needs one minimization and delta.")
+        self.minimizations = tuple(minimizations)
+        self.regularizations = tuple(float(value) for value in regularizations)
+        self.optimizer_statuses = tuple(
+            OptimizationStatus(int(np.asarray(value.status))) for value in minimizations
+        )
+        self.initial_inverted_count = int(initial_inverted_count)
+        self.final_inverted_count = int(final_inverted_count)
+        self.audit_passed = bool(audit_passed)
+        self.accept_valid_nonconverged = bool(accept_valid_nonconverged)
+
+    @property
+    def converged(self) -> bool:
+        """Whether the final stage's native minimization converged."""
+        return self.optimizer_statuses[-1] is OptimizationStatus.SUCCESS
 
     @property
     def succeeded(self) -> bool:
-        return self.final_inverted_count == 0 and self.audit_passed
+        return (
+            self.final_inverted_count == 0
+            and self.audit_passed
+            and (self.converged or self.accept_valid_nonconverged)
+        )
 
 
 class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
@@ -340,6 +405,10 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
     ``(lower, upper)`` box enforced by projection; fixed vertices are eliminated
     from the parameters. ``displacement_weight`` scales
     ``sum |x - x_target|**2 / L**2`` with ``L`` the mean target corner size.
+    ``accept_valid_nonconverged`` explicitly admits an inversion-free, audited
+    iterate whose native minimization stopped without converging (status
+    ``VALID_NONCONVERGED``, also for untangling stages); by default such an
+    iterate is ``NONCONVERGED`` and is not committed.
     """
 
     mesh: CellMesh
@@ -352,6 +421,7 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
     untangling: MeshUntanglingPolicy | None
     audit_policy: CellMeshAuditPolicy
     objective: MeshQualityObjective = eqx.field(static=True)
+    accept_valid_nonconverged: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -369,6 +439,7 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
         termination: OptimizationTermination | None = None,
         untangling: MeshUntanglingPolicy | None = MeshUntanglingPolicy(),
         audit_policy: CellMeshAuditPolicy | None = None,
+        accept_valid_nonconverged: bool = False,
     ):
         if not isinstance(mesh, CellMesh):
             raise TypeError("mesh must be CellMesh.")
@@ -379,6 +450,8 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
         audit = CellMeshAuditPolicy() if audit_policy is None else audit_policy
         if not isinstance(audit, CellMeshAuditPolicy):
             raise TypeError("audit_policy must be CellMeshAuditPolicy or None.")
+        if not isinstance(accept_valid_nonconverged, bool):
+            raise TypeError("accept_valid_nonconverged must be bool.")
         method_ = _method(method)
         termination_ = _termination(termination)
         rows, dimension = mesh.coordinates.shape
@@ -427,6 +500,7 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
         self.untangling = untangling
         self.audit_policy = audit
         self.objective = objective
+        self.accept_valid_nonconverged = accept_valid_nonconverged
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "target-matrix-optimization-plan",
@@ -449,6 +523,7 @@ class TargetMatrixOptimizationPlan(StrictModule, NonTrainableState):
                 },
                 "untangling": None if untangling is None else untangling.policy_id,
                 "audit": audit.policy_id,
+                "accept_valid_nonconverged": accept_valid_nonconverged,
             }
         )
 
@@ -630,9 +705,12 @@ def _corner_targets(
 class MeshOptimizationResult(StrictModule, NonTrainableState):
     """Certified optimized mesh or an explicit failure that leaves the mesh intact.
 
-    ``coordinates`` are the optimized coordinates when ``status`` is
-    ``OPTIMIZED`` and the unmodified input coordinates otherwise; ``result`` is
-    ``None`` on failure. ``minimization`` carries native termination evidence.
+    ``result`` is the certified mesh exactly for the accepted statuses
+    (``OPTIMIZED`` and ``VALID_NONCONVERGED``) and ``coordinates`` are then the
+    optimized coordinates; every other status carries no result and the
+    unmodified input coordinates. ``minimization`` carries the native termination
+    evidence (including the rejected iterate of a ``NONCONVERGED`` optimization)
+    and ``optimizer_status`` its portable status.
     """
 
     status: MeshOptimizationStatus = eqx.field(static=True)
@@ -662,8 +740,43 @@ class MeshOptimizationResult(StrictModule, NonTrainableState):
         final_objective: float,
         inverted_count: int,
     ):
-        if (status is MeshOptimizationStatus.OPTIMIZED) != (result is not None):
-            raise ValueError("Only an optimized status carries a certified result.")
+        if not isinstance(status, MeshOptimizationStatus):
+            raise TypeError("status must be MeshOptimizationStatus.")
+        if (status in _ACCEPTED_STATUSES) != (result is not None):
+            raise ValueError("Exactly the accepted statuses carry a certified result.")
+        optimizer_status = (
+            None
+            if minimization is None
+            else OptimizationStatus(int(np.asarray(minimization.status)))
+        )
+        converged = optimizer_status is OptimizationStatus.SUCCESS
+        match status:
+            case MeshOptimizationStatus.OPTIMIZED:
+                if not converged:
+                    raise ValueError("An optimized status requires a converged solve.")
+            case (
+                MeshOptimizationStatus.VALID_NONCONVERGED
+                | MeshOptimizationStatus.NONCONVERGED
+            ):
+                if optimizer_status is None or converged:
+                    raise ValueError(
+                        "A non-converged status requires a non-converged solve."
+                    )
+                if (
+                    status is MeshOptimizationStatus.VALID_NONCONVERGED
+                ) != plan.accept_valid_nonconverged:
+                    raise ValueError(
+                        "Valid non-convergence is accepted exactly when the plan "
+                        "permits it."
+                    )
+            case (
+                MeshOptimizationStatus.INVERTED_INPUT
+                | MeshOptimizationStatus.UNTANGLING_FAILED
+                | MeshOptimizationStatus.AUDIT_FAILED
+            ):
+                pass
+            case _:
+                raise ValueError(f"Unsupported mesh optimization status {status!r}.")
         values = np.asarray(coordinates, dtype=np.float64)
         self.status = status
         self.result = result
@@ -675,14 +788,11 @@ class MeshOptimizationResult(StrictModule, NonTrainableState):
         if minimization is None:
             self.iterations = 0
             self.accepted_steps = 0
-            self.optimizer_status = None
         else:
             diagnostics = minimization.diagnostics
             self.iterations = int(np.asarray(diagnostics.iterations))
             self.accepted_steps = int(np.asarray(diagnostics.accepted_steps))
-            self.optimizer_status = OptimizationStatus(
-                int(np.asarray(minimization.status))
-            )
+        self.optimizer_status = optimizer_status
         self.inverted_count = int(inverted_count)
         self.optimization_id = canonical_fingerprint(
             {
@@ -704,7 +814,8 @@ class MeshOptimizationResult(StrictModule, NonTrainableState):
 
     @property
     def accepted(self) -> bool:
-        return self.status is MeshOptimizationStatus.OPTIMIZED
+        """Whether ``result`` is a certified mesh the caller may commit."""
+        return self.status in _ACCEPTED_STATUSES
 
 
 def _inverted_count(
@@ -746,6 +857,7 @@ def _untangle(
     minimizations = []
     regularizations = []
     count = initial_count
+    audit_passed = False
     for _ in range(policy.maximum_stages):
         minimum = float(np.min(np.asarray(determinants)))
         delta = math.sqrt(epsilon * (epsilon - minimum)) if minimum < epsilon else 0.0
@@ -762,15 +874,23 @@ def _untangle(
         regularizations.append(delta)
         _, determinants = _evaluate_energy(plan.energy, coordinates)
         count = _inverted_count(plan, coordinates, determinants)
-        if count == 0:
+        if count:
+            continue
+        audit_passed = _audit_passed(plan, coordinates, numeric_version)[0]
+        # A valid stage that did not converge is not accepted unless the plan
+        # permits it; an unaudited or refused iterate continues to the next
+        # regularization stage.
+        if audit_passed and (
+            plan.accept_valid_nonconverged or bool(np.asarray(minimization.successful))
+        ):
             break
-    audit_passed = count == 0 and _audit_passed(plan, coordinates, numeric_version)[0]
     return coordinates, MeshUntanglingEvidence(
-        minimizations=tuple(minimizations),
-        regularizations=tuple(regularizations),
+        tuple(minimizations),
+        tuple(regularizations),
         initial_inverted_count=initial_count,
         final_inverted_count=count,
-        audit_passed=audit_passed,
+        audit_passed=count == 0 and audit_passed,
+        accept_valid_nonconverged=plan.accept_valid_nonconverged,
     )
 
 
@@ -784,9 +904,13 @@ def optimize_cell_mesh(
     """Untangle when needed, optimize free coordinates, audit, and certify.
 
     Inverted input fails as ``INVERTED_INPUT`` without an untangling policy and
-    as ``UNTANGLING_FAILED`` when the stages cannot remove every inversion or the
-    untangled mesh fails the audit. A final audit failure returns
-    ``AUDIT_FAILED``. Every failure returns the unmodified input coordinates.
+    as ``UNTANGLING_FAILED`` when no stage is accepted. The optimized iterate is
+    then checked for inversions and audited independently of the native
+    termination status: an inverted or unaudited iterate returns
+    ``AUDIT_FAILED``; a valid iterate is ``OPTIMIZED`` when the minimization
+    converged, ``VALID_NONCONVERGED`` when it did not and the plan accepts valid
+    non-convergence, and ``NONCONVERGED`` otherwise. Every non-accepted status
+    returns the unmodified input coordinates.
     """
     if not isinstance(plan, TargetMatrixOptimizationPlan):
         raise TypeError("plan must be TargetMatrixOptimizationPlan.")
@@ -841,18 +965,23 @@ def optimize_cell_mesh(
         plan.upper[free],
     )
     final_value, final_determinants = _evaluate_energy(plan.energy, optimized)
+    converged = bool(np.asarray(minimization.successful))
     count = _inverted_count(plan, optimized, final_determinants)
     passed, candidate = _audit_passed(plan, optimized, numeric_version)
     if count or not passed:
         return failure(
             MeshOptimizationStatus.AUDIT_FAILED, count, minimization, untangling
         )
+    if not (converged or plan.accept_valid_nonconverged):
+        return failure(MeshOptimizationStatus.NONCONVERGED, 0, minimization, untangling)
     result = certify_cell_mesh(
         candidate, coordinate_contract, audit_policy=plan.audit_policy
     )
     return MeshOptimizationResult(
         plan,
-        MeshOptimizationStatus.OPTIMIZED,
+        MeshOptimizationStatus.OPTIMIZED
+        if converged
+        else MeshOptimizationStatus.VALID_NONCONVERGED,
         optimized,
         result=result,
         minimization=minimization,
@@ -864,10 +993,29 @@ def optimize_cell_mesh(
 
 
 class CellGeometryOptimizationResult(StrictModule):
-    """Optimized geometry coordinates with native termination evidence."""
+    """Optimized geometry coordinates with native termination evidence.
+
+    ``coordinates`` are the final iterate whether or not the minimization
+    converged; ``optimizer_status`` and ``converged`` report the native
+    termination, and consumers decide explicitly whether to accept a
+    non-converged iterate.
+    """
 
     coordinates: Array
     minimization: MinimizationResult
+    optimizer_status: OptimizationStatus = eqx.field(static=True)
+
+    def __init__(self, coordinates: Array, minimization: MinimizationResult, /):
+        if not isinstance(minimization, MinimizationResult):
+            raise TypeError("minimization must be MinimizationResult.")
+        self.coordinates = coordinates
+        self.minimization = minimization
+        self.optimizer_status = OptimizationStatus(int(np.asarray(minimization.status)))
+
+    @property
+    def converged(self) -> bool:
+        """Whether the native minimization terminated successfully."""
+        return self.optimizer_status is OptimizationStatus.SUCCESS
 
 
 def optimize_cell_geometry_coordinates(

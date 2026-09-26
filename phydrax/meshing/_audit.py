@@ -77,8 +77,11 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
 
     Topology checks run on the welded complex in which vertices closer than
     ``coincident_vertex_tolerance`` times the bounding-box diagonal are merged.
-    ``unresolved`` decides certificates, capacities, or predicates that could
-    not be resolved (it cannot be SKIP).
+    ``maximum_coincidence_candidates`` bounds welding and
+    ``maximum_intersection_candidates`` bounds the streamed polygon-edge and
+    triangle-pair broad phases. Exhaustion is unresolved; ``unresolved`` decides
+    whether such capacities or predicates are rejected or recorded (it cannot
+    be SKIP).
     """
 
     unused_entities: CellMeshAuditDisposition = eqx.field(static=True)
@@ -90,6 +93,7 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
     coincident_vertices: CellMeshAuditDisposition = eqx.field(static=True)
     coincident_vertex_tolerance: float = eqx.field(static=True)
     maximum_coincidence_candidates: int = eqx.field(static=True)
+    maximum_intersection_candidates: int = eqx.field(static=True)
     duplicate_cells: CellMeshAuditDisposition = eqx.field(static=True)
     nonmanifold: CellMeshAuditDisposition = eqx.field(static=True)
     inconsistent_orientation: CellMeshAuditDisposition = eqx.field(static=True)
@@ -112,11 +116,12 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
         coincident_vertices: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         coincident_vertex_tolerance: float = 1.0e-12,
         maximum_coincidence_candidates: int = 50_000_000,
+        maximum_intersection_candidates: int = 5_000_000,
         duplicate_cells: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         nonmanifold: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         inconsistent_orientation: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         watertight_boundary: CellMeshAuditDisposition = CellMeshAuditDisposition.SKIP,
-        self_intersection: CellMeshAuditDisposition = CellMeshAuditDisposition.SKIP,
+        self_intersection: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         invalid_geometry: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         unresolved: CellMeshAuditDisposition = CellMeshAuditDisposition.REJECT,
         validity_policy: CellValidityPolicy | None = None,
@@ -126,7 +131,8 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
         aspect = float(maximum_aspect_ratio)
         entries = int(maximum_connectivity_entries)
         tolerance = float(coincident_vertex_tolerance)
-        candidates = int(maximum_coincidence_candidates)
+        coincidence_candidates = int(maximum_coincidence_candidates)
+        intersection_candidates = int(maximum_intersection_candidates)
         dispositions = {
             name: _disposition(value, name)
             for name, value in (
@@ -152,8 +158,10 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
             raise ValueError("maximum_connectivity_entries must be positive.")
         if not np.isfinite(tolerance) or tolerance < 0.0 or tolerance >= 1.0:
             raise ValueError("coincident_vertex_tolerance must lie in [0, 1).")
-        if candidates <= 0:
+        if coincidence_candidates <= 0:
             raise ValueError("maximum_coincidence_candidates must be positive.")
+        if intersection_candidates <= 0:
+            raise ValueError("maximum_intersection_candidates must be positive.")
         if unresolved == CellMeshAuditDisposition.SKIP:
             raise ValueError("Unresolved checks must be rejected or recorded.")
         if not isinstance(validity, CellValidityPolicy):
@@ -166,7 +174,8 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
         self.maximum_connectivity_entries = entries
         self.coincident_vertices = coincident_vertices
         self.coincident_vertex_tolerance = tolerance
-        self.maximum_coincidence_candidates = candidates
+        self.maximum_coincidence_candidates = coincidence_candidates
+        self.maximum_intersection_candidates = intersection_candidates
         self.duplicate_cells = duplicate_cells
         self.nonmanifold = nonmanifold
         self.inconsistent_orientation = inconsistent_orientation
@@ -187,7 +196,8 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
                 "maximum_aspect_ratio": aspect,
                 "maximum_connectivity_entries": entries,
                 "coincident_vertex_tolerance": tolerance,
-                "maximum_coincidence_candidates": candidates,
+                "maximum_coincidence_candidates": coincidence_candidates,
+                "maximum_intersection_candidates": intersection_candidates,
                 "validity_policy": validity.policy_id,
             }
         )
@@ -196,8 +206,11 @@ class CellMeshAuditPolicy(StrictModule, NonTrainableState):
 class CellMeshAuditReport(StrictModule, NonTrainableState):
     """Audit verdict with rejected issues, recorded findings, and evidence.
 
-    ``check_counts`` lists every evaluated check with its finding count in
-    deterministic order; ``unresolved`` names checks that could not be decided.
+    ``evaluated_checks`` and ``skipped_checks`` partition the dispositioned
+    checks by whether the policy evaluated them; ``passed`` certifies nothing
+    about a skipped check. ``check_counts`` lists every evaluated check with its
+    finding count in deterministic order; ``unresolved`` names checks that could
+    not be decided.
     """
 
     mesh_id: str = eqx.field(static=True)
@@ -209,6 +222,8 @@ class CellMeshAuditReport(StrictModule, NonTrainableState):
     issues: tuple[str, ...] = eqx.field(static=True)
     recorded: tuple[str, ...] = eqx.field(static=True)
     unresolved: tuple[str, ...] = eqx.field(static=True)
+    evaluated_checks: tuple[str, ...] = eqx.field(static=True)
+    skipped_checks: tuple[str, ...] = eqx.field(static=True)
     check_counts: tuple[tuple[str, int], ...] = eqx.field(static=True)
     vertex_count: int = eqx.field(static=True)
     entity_counts: tuple[int, ...] = eqx.field(static=True)
@@ -628,13 +643,15 @@ def _unused_counts(mesh: CellMesh, geometry: CellGeometrySpec, /) -> tuple[int, 
 
 def _dispose(
     findings: tuple[tuple[str, int, CellMeshAuditDisposition], ...], /
-) -> tuple[list[str], list[str], tuple[tuple[str, int], ...]]:
+) -> tuple[list[str], list[str], tuple[tuple[str, int], ...], tuple[str, ...]]:
     issues = []
     recorded = []
     counts = []
+    skipped = []
     for name, count, disposition in findings:
         match disposition:
             case CellMeshAuditDisposition.SKIP:
+                skipped.append(name)
                 continue
             case CellMeshAuditDisposition.REJECT:
                 target = issues
@@ -645,7 +662,7 @@ def _dispose(
         counts.append((name, count))
         if count:
             target.append(name)
-    return issues, recorded, tuple(counts)
+    return issues, recorded, tuple(counts), tuple(skipped)
 
 
 def _topology_findings(
@@ -661,6 +678,7 @@ def _topology_findings(
             else policy.coincident_vertex_tolerance
         ),
         candidate_capacity=policy.maximum_coincidence_candidates,
+        intersection_candidate_capacity=policy.maximum_intersection_candidates,
         check_manifold=policy.nonmanifold != skip,
         check_watertight=policy.watertight_boundary != skip,
         check_self_intersection=policy.self_intersection != skip,
@@ -750,15 +768,21 @@ def audit_cell_mesh(
     unresolved = list(unresolved_checks)
     if validity.unresolved_count:
         unresolved.append("geometry_validity")
-    unresolved_disposition = audit_policy.unresolved
-    rejected, recorded, check_counts = _dispose(
-        (
-            ("unused_vertices", unused, audit_policy.unused_entities),
-            ("unused_geometry_nodes", unused_nodes, audit_policy.unused_entities),
-            *topology_findings,
-            ("invalid_geometry", validity.invalid_count, audit_policy.invalid_geometry),
-            *((f"unresolved_{name}", 1, unresolved_disposition) for name in unresolved),
-        )
+    checks = (
+        ("unused_vertices", unused, audit_policy.unused_entities),
+        ("unused_geometry_nodes", unused_nodes, audit_policy.unused_entities),
+        *topology_findings,
+        ("invalid_geometry", validity.invalid_count, audit_policy.invalid_geometry),
+    )
+    dispositioned = (
+        *checks,
+        *((f"unresolved_{name}", 1, audit_policy.unresolved) for name in unresolved),
+    )
+    rejected, recorded, check_counts, skipped_checks = _dispose(dispositioned)
+    evaluated_checks = tuple(
+        name
+        for name, _, disposition in dispositioned
+        if disposition != CellMeshAuditDisposition.SKIP
     )
     issues.extend(rejected)
     quality_report = summarize_cell_quality(quality_evaluation)
@@ -795,6 +819,8 @@ def audit_cell_mesh(
         issues=normalized_issues,
         recorded=recorded_,
         unresolved=unresolved_,
+        evaluated_checks=evaluated_checks,
+        skipped_checks=skipped_checks,
         check_counts=check_counts,
         vertex_count=mesh.coordinates.shape[0],
         entity_counts=entity_counts,
@@ -817,6 +843,8 @@ def audit_cell_mesh(
                 "issues": normalized_issues,
                 "recorded": recorded_,
                 "unresolved": unresolved_,
+                "evaluated_checks": evaluated_checks,
+                "skipped_checks": skipped_checks,
                 "check_counts": check_counts,
                 "entity_counts": entity_counts,
                 "boundary_counts": boundary_counts,

@@ -876,12 +876,183 @@ def _second_order_remap(plan, values):
     return plan.apply(values)
 
 
+def _p1_space(mesh, /):
+    return phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec(
+            "u", phx.discretization.lagrange_element("triangle", 1)
+        ),
+    ).prepare()
+
+
+def _overlap_refinement(source_mesh, target_mesh, /):
+    refinement = phx.geometry.prepare_common_refinement(
+        source_mesh,
+        target_mesh,
+        policy=phx.geometry.CommonRefinementPolicy(overlap_simplices=True),
+    )
+    if not refinement.succeeded:
+        raise RuntimeError(f"L2 projection refinement failed: {refinement.status}.")
+    return refinement
+
+
+def _l2_projection_residuals(source, target, transfer, /) -> dict[str, float]:
+    """Conservation, Galerkin orthogonality, and transpose duality of one transfer."""
+    values = jax.numpy.asarray(
+        _remap_field(np.asarray(source.dof_maps[0].dof_coordinates))
+    )
+    dual = jax.numpy.asarray(
+        np.random.default_rng(0).normal(size=(transfer.target_size,))
+    )
+    projected = transfer.apply(values)
+    source_mass = np.asarray(source.mass.mv(jax.numpy.ones((transfer.source_size,))))
+    target_mass = np.asarray(target.mass.mv(jax.numpy.ones((transfer.target_size,))))
+    integral = float(source_mass @ np.asarray(values))
+    mixed = np.asarray(transfer.primal.mixed_mass.mv(values))
+    galerkin = mixed - np.asarray(target.mass.mv(projected))
+    pairing = float(jax.numpy.vdot(projected, dual))
+    return {
+        "conservation_relative": abs(
+            float(target_mass @ np.asarray(projected)) - integral
+        )
+        / abs(integral),
+        "galerkin_orthogonality_relative": float(
+            np.max(np.abs(galerkin)) / np.max(np.abs(mixed))
+        ),
+        "transpose_duality_relative": abs(
+            pairing - float(jax.numpy.vdot(values, transfer.pullback(dual)))
+        )
+        / float(jax.numpy.linalg.norm(projected) * jax.numpy.linalg.norm(dual)),
+    }
+
+
+_L2_PROJECTION_KERNELS = (
+    "_factor_target_mass",
+    "_mass_condition",
+    "_mixed_mass_action",
+    "_target_mass_solve",
+    "_tabulate_values",
+)
+
+
+def _benchmark_l2_projection(target_mesh, moved_mesh, source_mesh, /) -> dict:
+    """Prepared-target P1 Galerkin L2 projection stages onto a triangle target.
+
+    The target is prepared cold (symbolic and numeric factorization), refreshed
+    for ``moved_mesh`` (same topology, moved interior vertices) on the retained
+    symbolic plan, and shared by the transfers from ``source_mesh``.
+    ``refresh_new_compilations`` counts the compilations the refresh and the
+    refreshed transfer add to the module-level factorization, condition,
+    target-solve, and bucketed tabulation kernels (zero when the refresh reuses
+    every compiled kernel).
+    """
+    from phydrax.discretization.fem import _topology_transfer as projection_kernels
+
+    def kernel_compilations():
+        return {
+            name: getattr(projection_kernels, name)._cached._cache_size()
+            for name in _L2_PROJECTION_KERNELS
+        }
+
+    source, target, moved = map(_p1_space, (source_mesh, target_mesh, moved_mesh))
+    refinements = (
+        _overlap_refinement(source_mesh, target_mesh),
+        _overlap_refinement(source_mesh, moved_mesh),
+    )
+    prepared, target_prepare = _timed(
+        lambda: phx.discretization.prepare_l2_projection_target(target, field_name="u")
+    )
+    transfer, transfer_prepare = _timed(
+        lambda: phx.discretization.prepare_l2_projection_transfer(
+            source, prepared, refinements[0], field_name="u"
+        )
+    )
+    points = np.asarray(source.dof_maps[0].dof_coordinates)
+    block = jax.numpy.asarray(
+        np.stack((_remap_field(points), points[:, 0], np.ones(points.shape[0])), -1)
+    )
+    mixed_mass = transfer.primal.mixed_mass
+    compiled = {
+        "l2_mixed_mass_action_block3": _compiled_cost(
+            projection_kernels._mixed_mass_action,
+            mixed_mass.relation,
+            mixed_mass.coefficients,
+            block,
+        ),
+        "l2_target_solve_block3": _compiled_cost(
+            projection_kernels._target_mass_solve,
+            prepared.factorization,
+            jax.numpy.zeros((transfer.target_size, block.shape[1])),
+        ),
+    }
+    _, action_first = _timed(lambda: jax.block_until_ready(transfer.apply(block)))
+    _, action_warm = _timed(lambda: jax.block_until_ready(transfer.apply(block)))
+    # Snapshot only after every original-target action has compiled and run.
+    before_refresh = kernel_compilations()
+    refreshed, target_refresh = _timed(
+        lambda: phx.discretization.refresh_l2_projection_target(prepared, moved)
+    )
+    refreshed_transfer, refreshed_transfer_prepare = _timed(
+        lambda: phx.discretization.prepare_l2_projection_transfer(
+            source, refreshed, refinements[1], field_name="u"
+        )
+    )
+    _, refreshed_action_first = _timed(
+        lambda: jax.block_until_ready(refreshed_transfer.apply(block))
+    )
+    _, refreshed_action_warm = _timed(
+        lambda: jax.block_until_ready(refreshed_transfer.apply(block))
+    )
+    compilations = {
+        name: count - before_refresh[name]
+        for name, count in kernel_compilations().items()
+    }
+    residuals = (
+        _l2_projection_residuals(source, target, transfer),
+        _l2_projection_residuals(source, moved, refreshed_transfer),
+    )
+    return {
+        "stages_seconds": {
+            "l2_target_prepare": target_prepare,
+            "l2_transfer_prepare": transfer_prepare,
+            "l2_target_refresh": target_refresh,
+            "l2_refreshed_transfer_prepare": refreshed_transfer_prepare,
+            "l2_action_first": action_first,
+            "l2_action_warm": action_warm,
+            "l2_refreshed_action_first": refreshed_action_first,
+            "l2_refreshed_action_warm": refreshed_action_warm,
+        },
+        "compiled": compiled,
+        "refresh_new_compilations": compilations,
+        "counts": {
+            "l2_source_dofs": transfer.source_size,
+            "l2_target_dofs": transfer.target_size,
+            "l2_mixed_mass_entries": mixed_mass.relation.capacity,
+            "l2_target_mass_entries": prepared.mass.relation.capacity,
+            "l2_factor_entries": int(prepared.factorization.diagnostics.factor_nonzeros),
+        },
+        "retained_bytes": {
+            "l2_factor_values": prepared.factorization.factor_values.nbytes,
+            "l2_factorization_plan": _array_bytes(prepared.factorization.plan),
+            "l2_mixed_mass": _array_bytes(mixed_mass),
+            "l2_refinement": refinements[0].evidence.retained_bytes,
+        },
+        "errors": {
+            f"l2_{name}": max(record[name] for record in residuals)
+            for name in residuals[0]
+        },
+    }
+
+
 def benchmark_remap(resolution: int) -> dict[str, object]:
     """Scale P0 and limited P1 conservative remap with about `resolution` cells.
 
     A smooth field moves from a structured quadrilateral mesh to a jittered
     triangle mesh of the unit square; errors are volume-weighted L1 errors of the
-    target averages.
+    target averages. The P1 Galerkin L2 projection onto the same triangle target
+    (from a finer jittered triangle source) reports cold and refreshed target
+    preparation, transfer assembly, first and warmed actions, factor bytes, and
+    retained mixed-mass bytes (``l2_*`` entries).
     """
     cells = max(2, round(resolution**0.5))
     axis = np.linspace(0.0, 1.0, cells + 1)
@@ -893,7 +1064,8 @@ def benchmark_remap(resolution: int) -> dict[str, object]:
     source = phx.discretization.UnstructuredFiniteVolumePlan(
         points, quadrilaterals=quadrilaterals
     ).prepare()
-    triangles = _jittered_unit_square_triangles(max(2, round((resolution / 2) ** 0.5)), 3)
+    triangle_cells = max(2, round((resolution / 2) ** 0.5))
+    triangles = _jittered_unit_square_triangles(triangle_cells, 3)
     target = phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(triangles.coordinates),
         triangles=np.asarray(triangles.blocks[0].vertices),
@@ -928,6 +1100,11 @@ def benchmark_remap(resolution: int) -> dict[str, object]:
     second, second_warm = _timed(
         lambda: jax.block_until_ready(_second_order_remap(plan, values))
     )
+    projection = _benchmark_l2_projection(
+        triangles,
+        _jittered_unit_square_triangles(triangle_cells, 4),
+        _jittered_unit_square_triangles(triangle_cells + 2, 1),
+    )
     scale = float(np.sum(volumes * np.abs(exact)))
     return {
         "resolution": resolution,
@@ -939,12 +1116,17 @@ def benchmark_remap(resolution: int) -> dict[str, object]:
             "second_order_prepare_warm": second_prepare_warm,
             "second_order_cold": second_cold,
             "second_order_warm": second_warm,
+            **projection["stages_seconds"],
         },
+        "compiled": projection["compiled"],
+        "refresh_new_compilations": projection["refresh_new_compilations"],
+        "retained_bytes": projection["retained_bytes"],
         "counts": {
             "source_cells": source.cell_count,
             "target_cells": target.cell_count,
             "entries": remap.refinement.entry_count,
             "limited_cells": int(second.limited_count),
+            **projection["counts"],
         },
         "errors": {
             "first_order_relative_l1": float(
@@ -956,6 +1138,7 @@ def benchmark_remap(resolution: int) -> dict[str, object]:
             "second_order_conservation_residual": float(
                 np.max(np.abs(np.asarray(second.conservation_residual_after)))
             ),
+            **projection["errors"],
         },
     }
 
@@ -1150,18 +1333,18 @@ def benchmark_device_bisection(resolution: int) -> dict[str, object]:
         refine_marks = inside & state.mesh.cell_active
         coarsen_marks = ~inside & state.mesh.cell_active
         refined, refine_seconds = _timed(
-            lambda: jax.block_until_ready(
+            lambda state=state, refine_marks=refine_marks: jax.block_until_ready(
                 simplex.refine_adaptive_simplex(layout, state, refine_marks)
             )
         )
         coarsened, coarsen_seconds = _timed(
-            lambda: jax.block_until_ready(
+            lambda refined=refined, coarsen_marks=coarsen_marks: jax.block_until_ready(
                 simplex.coarsen_adaptive_simplex(layout, refined.state, coarsen_marks)
             )
         )
         state = coarsened.state
         _, assembly_seconds = _timed(
-            lambda: jax.block_until_ready(
+            lambda state=state: jax.block_until_ready(
                 finite_element.assemble_masked_finite_element(plan, state.mesh)
             )
         )
@@ -1481,7 +1664,7 @@ def benchmark_host_bisection(resolution: int) -> dict[str, object]:
     stages, compiled, retained, counts = {}, {}, {}, {}
     for name, mesh in meshes.items():
         source, certify_seconds = _timed(
-            lambda: phx.meshing.certify_cell_mesh(mesh, _contract())
+            lambda mesh=mesh: phx.meshing.certify_cell_mesh(mesh, _contract())
         )
         coordinates = np.asarray(mesh.coordinates)
         centroids = coordinates[np.asarray(mesh.blocks[0].vertices)].mean(axis=1)
@@ -1489,10 +1672,12 @@ def benchmark_host_bisection(resolution: int) -> dict[str, object]:
         marks = np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)[inside]
         request = phx.meshing.MarkedMeshAdaptation(marks)
         prepared, prepare_seconds = _timed(
-            lambda: phx.meshing.prepare_mesh_adaptation(source, request, policy=policy)
+            lambda source=source, request=request: phx.meshing.prepare_mesh_adaptation(
+                source, request, policy=policy
+            )
         )
         result, execute_seconds = _timed(
-            lambda: phx.meshing.execute_mesh_adaptation(prepared)
+            lambda prepared=prepared: phx.meshing.execute_mesh_adaptation(prepared)
         )
         if (
             result.status is not phx.meshing.MeshAdaptationStatus.COMPLETE
@@ -1504,10 +1689,14 @@ def benchmark_host_bisection(resolution: int) -> dict[str, object]:
         values = jax.numpy.asarray(coordinates @ slope)
         compiled[name] = _compiled_cost(_bisection_transfer_apply, transfer, values)
         moved, cold_seconds = _timed(
-            lambda: jax.block_until_ready(_bisection_transfer_apply(transfer, values))
+            lambda transfer=transfer, values=values: jax.block_until_ready(
+                _bisection_transfer_apply(transfer, values)
+            )
         )
         _, warm_seconds = _timed(
-            lambda: jax.block_until_ready(_bisection_transfer_apply(transfer, values))
+            lambda transfer=transfer, values=values: jax.block_until_ready(
+                _bisection_transfer_apply(transfer, values)
+            )
         )
         expected = np.asarray(result.target.mesh.coordinates) @ slope
         if float(np.max(np.abs(np.asarray(moved) - expected))) > 1.0e-12:
@@ -1592,7 +1781,9 @@ def benchmark_repartition(resolution: int) -> dict[str, object]:
     for route in routes:
         policy = phx.meshing.MeshPartitionPolicy(route, parts, maximum_imbalance=1.1)
         distribution, seconds = _timed(
-            lambda: phx.meshing.prepare_mesh_distribution(part, policy=policy)
+            lambda policy=policy: phx.meshing.prepare_mesh_distribution(
+                part, policy=policy
+            )
         )
         evidence = distribution.evidence
         distributions[route] = distribution

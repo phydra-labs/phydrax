@@ -36,6 +36,13 @@ from jaxtyping import Array
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._geometry_predicates import (
+    polygon_simplicity_2d,
+    PolygonSimplicityStatus,
+    PredicateMode,
+    PredicateSign,
+    resolve_host_predicate_mode,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._cell_complex import PolyhedralConnectivity
@@ -54,14 +61,19 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
 
     ``relative_determinant_floor`` scales each cell's Hadamard bound of the
     evaluated determinant; a determinant below the scaled floor is degenerate and
-    therefore INVALID. ``maximum_piece_count`` bounds the active sub-pieces of one
-    block at one subdivision level; exhausting it or the depth leaves the
-    undecided cells UNRESOLVED.
+    therefore INVALID. For polygons it also sets the minimum edge length relative
+    to the polygon diameter, preventing a numerically collapsed edge from being
+    certified solely because the total area remains large. ``maximum_piece_count``
+    bounds the active sub-pieces of one block at one subdivision level; exhausting
+    it or the depth leaves the undecided cells UNRESOLVED.
+    ``relative_planarity_tolerance`` bounds the distance of embedded polygon
+    vertices from their Newell plane relative to the polygon diameter.
     """
 
     maximum_subdivision_depth: int = eqx.field(static=True)
     maximum_piece_count: int = eqx.field(static=True)
     relative_determinant_floor: float = eqx.field(static=True)
+    relative_planarity_tolerance: float = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -70,25 +82,31 @@ class CellValidityPolicy(StrictModule, NonTrainableState):
         maximum_subdivision_depth: int = 8,
         maximum_piece_count: int = 1_000_000,
         relative_determinant_floor: float = 1.0e-12,
+        relative_planarity_tolerance: float = 1.0e-10,
     ):
         depth = int(maximum_subdivision_depth)
         pieces = int(maximum_piece_count)
         floor = float(relative_determinant_floor)
+        planarity = float(relative_planarity_tolerance)
         if depth < 0:
             raise ValueError("maximum_subdivision_depth must be non-negative.")
         if pieces <= 0:
             raise ValueError("maximum_piece_count must be positive.")
         if not math.isfinite(floor) or floor < 0.0 or floor >= 1.0:
             raise ValueError("relative_determinant_floor must lie in [0, 1).")
+        if not math.isfinite(planarity) or planarity < 0.0 or planarity >= 1.0:
+            raise ValueError("relative_planarity_tolerance must lie in [0, 1).")
         self.maximum_subdivision_depth = depth
         self.maximum_piece_count = pieces
         self.relative_determinant_floor = floor
+        self.relative_planarity_tolerance = planarity
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "cell-validity-policy",
                 "maximum_subdivision_depth": depth,
                 "maximum_piece_count": pieces,
                 "relative_determinant_floor": floor,
+                "relative_planarity_tolerance": planarity,
             }
         )
 
@@ -98,7 +116,8 @@ class CellValidityCertificate(StrictModule, NonTrainableState):
 
     ``determinant_lower``/``determinant_upper`` enclose the determinant (signed
     Jacobian determinant for full-dimensional cells, Gram determinant for
-    embedded cells, star-simplex determinants for polygons/polyhedra) over the
+    embedded cells, twice the signed area of planar polygons, the squared vector
+    area of embedded polygons, star-simplex determinants for polyhedra) over the
     final subdivision; ``depth`` is the deepest subdivision level evaluated.
     Cells of ``unsupported_block_names`` are UNRESOLVED with NaN bounds because
     their coordinate element has no polynomial degree contract.
@@ -759,28 +778,125 @@ def _star_status(
     return _BlockCertificate(status, lower, upper, np.zeros((count,), dtype=np.int32))
 
 
-def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /):
+def _polygon_measure(points: np.ndarray, policy: CellValidityPolicy, /) -> tuple:
+    """Determinant enclosure, floor, planarity flags, and planar loops of polygons.
+
+    The determinant is twice the signed shoelace area about the vertex centroid
+    (planar) or the squared Newell vector area (embedded, Gram convention).
+    Embedded loops are measured against their Newell plane through the vertex
+    centroid and projected by dropping the dominant normal axis, which keeps the
+    projected coordinates exact. Returns ``(determinant, margin, threshold,
+    nonplanar, ambiguous_planarity, planar_points)``.
+    """
+
+    cell_count, corner_count, ambient = points.shape
     center = np.mean(points, axis=1, keepdims=True)
     first = points - center
-    second = np.roll(points, -1, axis=1) - center
-    if points.shape[-1] == 2:
-        determinants = first[..., 0] * second[..., 1] - first[..., 1] * second[..., 0]
-        scale = np.linalg.norm(first, axis=-1) * np.linalg.norm(second, axis=-1)
-        total = np.sum(determinants, axis=1)
-    else:
-        normal = np.cross(first, second)
-        determinants = np.sum(normal * normal, axis=-1)
-        scale = (np.linalg.norm(first, axis=-1) * np.linalg.norm(second, axis=-1)) ** 2
-        area = np.sum(normal, axis=1)
-        total = np.sum(area * area, axis=-1)
-    cell_count, corner_count = determinants.shape
-    thresholds = policy.relative_determinant_floor * np.max(scale, axis=1)
-    return _star_status(
-        determinants.reshape(-1),
-        (16.0 * _EPSILON * scale).reshape(-1),
-        np.repeat(np.arange(cell_count), corner_count),
-        thresholds,
-        total,
+    second = np.roll(first, -1, axis=1)
+    scale = np.sum(
+        np.linalg.norm(first, axis=-1) * np.linalg.norm(second, axis=-1), axis=1
+    )
+    rounding = 2.0 * (corner_count + 8) * _EPSILON * scale
+    floor = policy.relative_determinant_floor
+    if ambient == 2:
+        area = np.sum(
+            first[..., 0] * second[..., 1] - first[..., 1] * second[..., 0], axis=1
+        )
+        planar = np.zeros((cell_count,), dtype=np.bool_)
+        return area, rounding, floor * scale, planar, planar, points
+    area = np.sum(np.cross(first, second), axis=1)
+    magnitude = np.linalg.norm(area, axis=-1)
+    guarded = np.maximum(magnitude, np.finfo(np.float64).tiny)
+    # Vertex offsets from the Newell plane; the normal direction inherits the
+    # relative rounding of the area vector.
+    offset = np.max(
+        np.abs(np.sum(first * (area / guarded[:, None])[:, None], axis=-1)), axis=1
+    )
+    slack = np.max(np.linalg.norm(first, axis=-1), axis=1) * (
+        16.0 * _EPSILON + rounding / guarded
+    )
+    diameter = np.linalg.norm(np.max(points, axis=1) - np.min(points, axis=1), axis=-1)
+    allowed = policy.relative_planarity_tolerance * diameter
+    axes = np.asarray(((1, 2), (0, 2), (0, 1)))[np.argmax(np.abs(area), axis=-1)]
+    return (
+        magnitude * magnitude,
+        2.0 * magnitude * rounding + rounding * rounding,
+        floor * scale * scale,
+        offset - slack > allowed,
+        offset + slack > allowed,
+        np.take_along_axis(points, axes[:, None, :], axis=2),
+    )
+
+
+def _certify_polygon_block(points: np.ndarray, policy: CellValidityPolicy, /):
+    """Certify polygon cells without assuming star-shapedness.
+
+    A planar polygon is valid iff its vertices are finite and distinct, its
+    boundary is simple, it is counterclockwise, and twice its area exceeds the
+    policy floor. An embedded polygon must instead lie within
+    ``relative_planarity_tolerance`` of its Newell plane, be simple in its
+    dominant-axis projection, and have a squared vector area above the floor.
+    """
+
+    cell_count, corner_count, ambient = points.shape
+    mode = resolve_host_predicate_mode(PredicateMode.EXACT)
+    finite = np.all(np.isfinite(points), axis=(1, 2))
+    safe = np.where(finite[:, None, None], points, 0.0)
+    coincident = np.all(safe[:, :, None] == safe[:, None, :], axis=-1)
+    repeated = np.any(coincident & ~np.eye(corner_count, dtype=np.bool_), axis=(1, 2))
+    centered = safe - np.mean(safe, axis=1, keepdims=True)
+    following = np.roll(centered, -1, axis=1)
+    edge_vectors = following - centered
+    edge_lengths = np.linalg.norm(edge_vectors, axis=-1)
+    edge_roundoff = (
+        4.0 * _EPSILON * np.linalg.norm(np.abs(centered) + np.abs(following), axis=-1)
+    )
+    diameter = np.linalg.norm(np.max(safe, axis=1) - np.min(safe, axis=1), axis=-1)
+    edge_floor = policy.relative_determinant_floor * diameter[:, None]
+    short_edge = np.any(edge_lengths + edge_roundoff < edge_floor, axis=1)
+    uncertain_edge = np.any(edge_lengths - edge_roundoff <= edge_floor, axis=1)
+    determinant, margin, threshold, nonplanar, ambiguous, planar = _polygon_measure(
+        safe, policy
+    )
+    invalid = ~finite | repeated | nonplanar | short_edge
+    candidates = np.flatnonzero(~invalid)
+    simplicity = np.full((cell_count,), PolygonSimplicityStatus.SIMPLE, dtype=np.int8)
+    # Embedded polygons carry no ambient orientation convention.
+    orientation = np.full((cell_count,), PredicateSign.POSITIVE, dtype=np.int8)
+    if candidates.size:
+        result = polygon_simplicity_2d(planar[candidates], mode=mode)
+        simplicity[candidates] = np.asarray(result.status)
+        if ambient == 2:
+            orientation[candidates] = np.asarray(result.orientation)
+    simple = simplicity == PolygonSimplicityStatus.SIMPLE
+    lower = determinant - margin
+    upper = determinant + margin
+    invalid |= (simplicity == PolygonSimplicityStatus.SELF_INTERSECTING) | (
+        simple & ((orientation == PredicateSign.NEGATIVE) | (upper < threshold))
+    )
+    # A certified simple loop has exactly nonzero area, which meets a zero floor.
+    above = (lower > threshold) | (simple & (threshold == 0.0))
+    unresolved = (
+        ambiguous
+        | (uncertain_edge & ~short_edge)
+        | ~simple
+        | (orientation == PredicateSign.UNCERTAIN)
+        | ~above
+    )
+    status = np.where(
+        invalid,
+        CellValidityStatus.INVALID,
+        np.where(
+            unresolved,
+            CellValidityStatus.UNRESOLVED,
+            CellValidityStatus.CERTIFIED_VALID,
+        ),
+    ).astype(np.int32)
+    return _BlockCertificate(
+        status,
+        np.where(finite, lower, np.nan),
+        np.where(finite, upper, np.nan),
+        np.zeros((cell_count,), dtype=np.int32),
     )
 
 

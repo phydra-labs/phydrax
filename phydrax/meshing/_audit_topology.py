@@ -20,17 +20,22 @@ import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
-from .._bvh import bvh_overlap_pairs_host, prepare_bvh
+from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
+from .._geometry_predicates import (
+    orient2d,
+    orient3d,
+    polygon_simplicity_2d,
+    PolygonSimplicityStatus,
+    PredicateMode,
+    PredicateSign,
+    resolve_host_predicate_mode,
+    segment_intersections_2d,
+    SegmentIntersectionStatus,
+)
 from ..discretization import CellMesh, PolyhedralConnectivity
 from ..discretization._cell_geometry_validity import polyhedral_star_tables
 from ..discretization._reference_cell import reference_cell_topology
 from ..discretization.spatial._morton import morton_encode_integer
-from ..geometry._predicates import (
-    orient2d,
-    orient3d,
-    PredicateMode,
-    resolve_host_predicate_mode,
-)
 
 
 _MORTON_BITS = {1: 62, 2: 31, 3: 21}
@@ -439,33 +444,6 @@ def _project(points: np.ndarray, axes: np.ndarray, /) -> np.ndarray:
     return np.take_along_axis(points, axes, axis=1)
 
 
-def _segments_intersect_2d(
-    a, b, c, d, /, *, proper: bool
-) -> tuple[np.ndarray, np.ndarray]:
-    first, certain_1 = _orient2d(a, b, c)
-    second, certain_2 = _orient2d(a, b, d)
-    third, certain_3 = _orient2d(c, d, a)
-    fourth, certain_4 = _orient2d(c, d, b)
-    certain = certain_1 & certain_2 & certain_3 & certain_4
-    if proper:
-        crosses = (first.astype(np.int16) * second < 0) & (
-            third.astype(np.int16) * fourth < 0
-        )
-        return crosses, certain
-    straddle = (first.astype(np.int16) * second <= 0) & (
-        third.astype(np.int16) * fourth <= 0
-    )
-    collinear = (first == 0) & (second == 0)
-    overlap = np.all(
-        (
-            np.maximum(np.minimum(a, b), np.minimum(c, d))
-            <= np.minimum(np.maximum(a, b), np.maximum(c, d))
-        ),
-        axis=1,
-    )
-    return np.where(collinear, overlap, straddle), certain
-
-
 def _inside_triangle_2d(point, triangle, /, *, strict: bool):
     p, q, r = triangle
     signs = []
@@ -495,28 +473,29 @@ def _coplanar_overlap(first: np.ndarray, second: np.ndarray, shared: np.ndarray,
     hit = np.zeros(first.shape[0], dtype=np.bool_)
     certain = np.ones(first.shape[0], dtype=np.bool_)
     touching = shared == 0
+    mode = resolve_host_predicate_mode(PredicateMode.EXACT)
     for index in range(3):
         for other in range(3):
             adjacent = (index == 0 or (index + 1) % 3 == 0) and (
                 other == 0 or (other + 1) % 3 == 0
             )
-            result, known = _segments_intersect_2d(
-                one[:, index],
-                one[:, (index + 1) % 3],
-                two[:, other],
-                two[:, (other + 1) % 3],
-                proper=False,
+            status = np.asarray(
+                segment_intersections_2d(
+                    one[:, index],
+                    one[:, (index + 1) % 3],
+                    two[:, other],
+                    two[:, (other + 1) % 3],
+                    mode=mode,
+                ).status
             )
-            proper, proper_known = _segments_intersect_2d(
-                one[:, index],
-                one[:, (index + 1) % 3],
-                two[:, other],
-                two[:, (other + 1) % 3],
-                proper=True,
+            # Edges through the shared vertex meet there by construction; only
+            # contact beyond it is an intersection.
+            beyond_shared = (status == SegmentIntersectionStatus.PROPER_CROSSING) | (
+                status == SegmentIntersectionStatus.COLLINEAR_OVERLAP
             )
-            contact = np.where(touching | (not adjacent), result, proper)
-            hit |= contact
-            certain &= known & proper_known
+            contact = status != SegmentIntersectionStatus.DISJOINT
+            hit |= np.where(touching | (not adjacent), contact, beyond_shared)
+            certain &= status != SegmentIntersectionStatus.UNCERTAIN
     for index in range(3):
         inside_two, known_two = _inside_triangle_2d(
             one[:, index], (two[:, 0], two[:, 1], two[:, 2]), strict=True
@@ -613,49 +592,219 @@ def _triangle_pairs_intersect(
     return hit, certain
 
 
-def _surface_triangles(complex_: _Complex, boundary: np.ndarray | None, /) -> np.ndarray:
+_EAR_WORKING_ENTRIES = 1 << 20
+
+
+def _ear_blocked(loops, before, after, alive, predecessor, successor, sign, mode, /):
+    """Candidate ears containing another live vertex, or not decided exactly."""
+
+    count, corner_count, _ = loops.shape
+    apex = loops[:, :, None]
+    left = before[:, :, None]
+    right = after[:, :, None]
+    other = loops[:, None, :]
+    inside = np.ones((count, corner_count, corner_count), dtype=np.bool_)
+    known = np.ones((count, corner_count, corner_count), dtype=np.bool_)
+    for start, stop in ((left, apex), (apex, right), (right, left)):
+        side = orient2d(start, stop, other, mode=mode)
+        inside &= np.asarray(side.signs, dtype=np.int16) * sign[:, :, None] >= 0
+        known &= np.asarray(side.certain)
+    local = np.arange(corner_count)
+    candidate = (
+        alive[:, None, :]
+        & (local[None, None, :] != local[None, :, None])
+        & (local[None, None, :] != predecessor[:, :, None])
+        & (local[None, None, :] != successor[:, :, None])
+    )
+    return np.any(candidate & (inside | ~known), axis=2)
+
+
+def _ear_clip(
+    loops: np.ndarray, orientation: np.ndarray, mode: PredicateMode, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exact ear clipping of simple planar loops ``(count, n, 2)``.
+
+    An ear is a strictly convex live vertex whose closed triangle holds no other
+    live vertex; simple loops always have one (Meisters' two-ears theorem).
+    Returns local triangles ``(count, n - 2, 3)`` and whether every ear decision
+    of a loop was certified; uncertified loops must be discarded.
+    """
+
+    count, corner_count, _ = loops.shape
+    rows = np.arange(count)
+    local = np.arange(corner_count)
+    successor = np.tile((local + 1) % corner_count, (count, 1))
+    predecessor = np.tile((local - 1) % corner_count, (count, 1))
+    alive = np.ones((count, corner_count), dtype=np.bool_)
+    certified = np.ones((count,), dtype=np.bool_)
+    triangles = np.empty((count, corner_count - 2, 3), dtype=np.int64)
+    sign = orientation.astype(np.int16)[:, None]
+    for step in range(corner_count - 3):
+        before = loops[rows[:, None], predecessor]
+        after = loops[rows[:, None], successor]
+        turn = orient2d(before, loops, after, mode=mode)
+        convex = (
+            alive
+            & np.asarray(turn.certain)
+            & (np.asarray(turn.signs, dtype=np.int16) * sign > 0)
+        )
+        ear = convex & ~_ear_blocked(
+            loops, before, after, alive, predecessor, successor, sign, mode
+        )
+        found = np.any(ear, axis=1)
+        certified &= found
+        choice = np.argmax(np.where(found[:, None], ear, alive), axis=1)
+        left = predecessor[rows, choice]
+        right = successor[rows, choice]
+        triangles[:, step] = np.stack((left, choice, right), axis=1)
+        alive[rows, choice] = False
+        successor[rows, left] = right
+        predecessor[rows, right] = left
+    last = np.argmax(alive, axis=1)
+    middle = successor[rows, last]
+    triangles[:, -1] = np.stack((last, middle, successor[rows, middle]), axis=1)
+    return triangles, certified
+
+
+def _polygon_loop_triangles(
+    points: np.ndarray, loops: np.ndarray, candidate_capacity: int, /
+) -> tuple[np.ndarray, int, int, int, bool]:
+    """Exact triangles and bounded simplicity evidence of polygon loops."""
+
+    corner_count = loops.shape[1]
+    mode = resolve_host_predicate_mode(PredicateMode.EXACT)
+    corners = points[loops]
+    centered = corners - np.mean(corners, axis=1, keepdims=True)
+    normal = np.sum(np.cross(centered, np.roll(centered, -1, axis=1)), axis=1)
+    axes = np.asarray(((1, 2), (0, 2), (0, 1)))[np.argmax(np.abs(normal), axis=1)]
+    planar = np.take_along_axis(corners, axes[:, None, :], axis=2)
+    simplicity = polygon_simplicity_2d(
+        planar, mode=mode, maximum_candidate_pairs=candidate_capacity
+    )
+    status = np.asarray(simplicity.status)
+    orientation = np.asarray(simplicity.orientation)
+    ready = orientation != PredicateSign.UNCERTAIN
+    triangles = []
+    undecided = int(np.count_nonzero(status == PolygonSimplicityStatus.UNCERTAIN))
+    undecided += int(
+        np.count_nonzero((status == PolygonSimplicityStatus.SIMPLE) & ~ready)
+    )
+    selected = np.flatnonzero(ready)
+    chunk = max(1, _EAR_WORKING_ENTRIES // (corner_count * corner_count))
+    for start in range(0, selected.size, chunk):
+        rows = selected[start : start + chunk]
+        local, certified = _ear_clip(planar[rows], orientation[rows], mode)
+        undecided += int(np.count_nonzero(~certified))
+        global_rows = loops[rows[certified]]
+        cells = np.arange(global_rows.shape[0])[:, None, None]
+        triangles.append(global_rows[cells, local[certified]].reshape((-1, 3)))
+    intersecting = int(
+        np.count_nonzero(status == PolygonSimplicityStatus.SELF_INTERSECTING)
+    )
+    return (
+        np.concatenate(triangles) if triangles else np.empty((0, 3), dtype=np.int64),
+        intersecting,
+        undecided,
+        simplicity.candidate_pair_count,
+        simplicity.candidate_capacity_exceeded,
+    )
+
+
+def _surface_triangles(
+    points: np.ndarray,
+    complex_: _Complex,
+    boundary: np.ndarray | None,
+    candidate_capacity: int,
+    /,
+) -> tuple[np.ndarray, int, int, int, bool]:
+    """Triangles of the tested surface under one polygon-candidate budget."""
+
     loops = complex_.facets[boundary] if boundary is not None else complex_.cells
     lengths = np.sum(loops >= 0, axis=1)
     triangles = []
+    intersecting = 0
+    undecided = 0
+    candidate_count = 0
+    exceeded = False
     for length in np.unique(lengths):
-        rows = loops[lengths == length]
+        rows = loops[lengths == length][:, :length]
+        if length >= 5:
+            collapsed = _collapsed(rows)
+            polygon_rows = rows[~collapsed]
+            remaining = candidate_capacity - candidate_count
+            if polygon_rows.size and remaining > 0:
+                clipped, crossing, unknown, used, exhausted = _polygon_loop_triangles(
+                    points, polygon_rows, remaining
+                )
+                triangles.append(clipped)
+                intersecting += crossing
+                undecided += unknown
+                candidate_count += used
+                exceeded |= exhausted
+            elif polygon_rows.size:
+                undecided += polygon_rows.shape[0]
+                exceeded = True
+            rows = rows[collapsed]
         for index in range(1, length - 1):
             triangles.append(rows[:, (0, index, index + 1)])
-    return np.concatenate(triangles) if triangles else np.empty((0, 3), dtype=np.int64)
+    return (
+        np.concatenate(triangles) if triangles else np.empty((0, 3), dtype=np.int64),
+        intersecting,
+        undecided,
+        candidate_count,
+        exceeded,
+    )
 
 
 def _self_intersections(
-    points: np.ndarray, complex_: _Complex, boundary: np.ndarray, dimension: int, /
-) -> tuple[int, int]:
-    """Return (intersecting triangle pair count, unresolved pair count).
+    points: np.ndarray,
+    complex_: _Complex,
+    boundary: np.ndarray,
+    dimension: int,
+    candidate_capacity: int,
+    /,
+) -> tuple[int, int, bool]:
+    """Return bounded intersection count, unresolved count, and capacity status."""
 
-    Surfaces embedded in 3-D test their own triangles, volume meshes their
-    welded boundary, and planar meshes their cells (lifted to z = 0, where every
-    pair takes the coplanar overlap route).
-    """
-
-    match (points.shape[1], dimension):
-        case (3, 2) | (2, 2):
-            triangles = _surface_triangles(complex_, None)
-        case (3, 3):
-            triangles = _surface_triangles(complex_, boundary)
-        case _:
-            return 0, 0
     if points.shape[1] == 2:
         points = np.pad(points, ((0, 0), (0, 1)))
+    match (points.shape[1], dimension):
+        case (3, 2):
+            triangles, loops, undecided, used, exceeded = _surface_triangles(
+                points, complex_, None, candidate_capacity
+            )
+        case (3, 3):
+            triangles, loops, undecided, used, exceeded = _surface_triangles(
+                points, complex_, boundary, candidate_capacity
+            )
+        case _:
+            return 0, 0, False
     triangles = triangles[~_collapsed(triangles)]
     if triangles.shape[0] < 2:
-        return 0, 0
+        return loops, undecided, exceeded
     corners = points[triangles]
     bvh = prepare_bvh(np.min(corners, axis=1), np.max(corners, axis=1), dtype=np.float64)
-    first, second = bvh_overlap_pairs_host(bvh, bvh, include_touching=True)
-    keep = first < second
-    first = triangles[first[keep]]
-    second = triangles[second[keep]]
-    if first.shape[0] == 0:
-        return 0, 0
-    hit, certain = _triangle_pairs_intersect(points, first, second)
-    return int(np.count_nonzero(hit & certain)), int(np.count_nonzero(~certain))
+    intersections = loops
+    remaining = candidate_capacity - used
+    for first, second in bvh_overlap_pair_blocks(bvh, bvh, include_touching=True):
+        keep = first < second
+        first = first[keep]
+        second = second[keep]
+        if first.size > remaining:
+            first = first[:remaining]
+            second = second[:remaining]
+            exceeded = True
+        remaining -= first.size
+        if first.size:
+            hit, certain = _triangle_pairs_intersect(
+                points, triangles[first], triangles[second]
+            )
+            intersections += int(np.count_nonzero(hit & certain))
+            undecided += int(np.count_nonzero(~certain))
+        if exceeded:
+            undecided += 1
+            break
+    return intersections, undecided, exceeded
 
 
 # Entry point ---------------------------------------------------------------------
@@ -668,6 +817,7 @@ def audit_welded_topology(
     *,
     coincident_tolerance: float | None,
     candidate_capacity: int,
+    intersection_candidate_capacity: int,
     check_manifold: bool,
     check_watertight: bool,
     check_self_intersection: bool,
@@ -677,6 +827,8 @@ def audit_welded_topology(
     ``coincident_tolerance`` is relative to the bounding-box diagonal; ``None``
     disables welding.
     """
+    if candidate_capacity <= 0 or intersection_candidate_capacity <= 0:
+        raise ValueError("Topology-audit candidate capacities must be positive.")
 
     if coincident_tolerance is None:
         welded, coincident, exceeded = np.arange(points.shape[0]), 0, False
@@ -730,9 +882,15 @@ def audit_welded_topology(
     intersections = 0
     if check_self_intersection:
         boundary = counts[inverse] == 1
-        intersections, uncertain = _self_intersections(
-            points[welded], complex_, boundary, mesh.topological_dimension
+        intersections, uncertain, intersection_exceeded = _self_intersections(
+            points[welded],
+            complex_,
+            boundary,
+            mesh.topological_dimension,
+            intersection_candidate_capacity,
         )
+        if intersection_exceeded:
+            unresolved.append("self_intersection_capacity")
         if uncertain:
             unresolved.append("self_intersection_predicates")
     return WeldedTopologyEvidence(

@@ -21,6 +21,11 @@ exclude = [
   ".DS_Store",
 ]
 
+# Native provider worker sources ship inside the wheel so installed users can
+# build them; phydrax.meshing.providers.native_provider_source_path locates them.
+[tool.hatch.build.targets.wheel.force-include]
+"native/providers" = "phydrax/native/providers"
+
 [project]
 authors = [
   {email = "leonard@phydra.ai", name = "Phydra Labs"}
@@ -172,7 +177,7 @@ layout-interop = [
   "gdstk>=0.9.62,<0.10",
 ]
 meshcore = [
-  "phydrax-meshcore==0.1.0",
+  "phydrax-meshcore==0.2.2",
 ]
 meshing-manifold = [
   "manifold3d>=3.5.2",

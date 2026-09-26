@@ -25,10 +25,10 @@ import numpy as np
 
 from .._bvh import bvh_overlap_pairs_host, prepare_bvh
 from .._fingerprint import canonical_fingerprint
+from .._geometry_predicates import orient2d, PredicateMode, PredicateSign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
-from ..geometry._predicates import orient2d, PredicateMode, PredicateSign
 from ._lineage import EntityLineageKind
 from ._metric import interpolate_mesh_metric, metric_edge_lengths
 from ._topology_edit import entity_keys, EntityRelations, key_rows, SimplexTopologyEdit

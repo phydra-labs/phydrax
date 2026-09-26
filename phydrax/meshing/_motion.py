@@ -35,6 +35,7 @@ from ..discretization import (
     CellValidityPolicy,
     certify_cell_geometry_validity,
 )
+from ..optim import OptimizationTermination
 from ._adaptation import (
     execute_mesh_adaptation,
     MeshAdaptationPolicy,
@@ -93,6 +94,11 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
     cell size and ``None`` disables that criterion. A boundary residual above
     ``maximum_boundary_residual`` rejects the proposal, since neither relocation
     nor remeshing can realize a boundary the motion failed to reach.
+    ``relocation_termination`` bounds the relocation solve (``None``: the
+    :class:`TargetMatrixOptimizationPlan` default). A relocation whose optimizer
+    did not converge is a relocation failure unless
+    ``accept_valid_nonconverged_relocation`` explicitly admits its inversion-free,
+    audited iterate.
     """
 
     relocation_jacobian_ratio: float = eqx.field(static=True)
@@ -103,6 +109,8 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
     remesh_displacement_fraction: float | None = eqx.field(static=True)
     maximum_boundary_residual: float = eqx.field(static=True)
     relocation_objective: MeshQualityObjective = eqx.field(static=True)
+    accept_valid_nonconverged_relocation: bool = eqx.field(static=True)
+    relocation_termination: OptimizationTermination | None
     validity: CellValidityPolicy
     policy_id: str = eqx.field(static=True)
 
@@ -118,6 +126,8 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
         maximum_boundary_residual: float = 1.0e-8,
         relocation_objective: MeshQualityObjective = MeshQualityObjective.SHAPE,
         validity: CellValidityPolicy | None = None,
+        relocation_termination: OptimizationTermination | None = None,
+        accept_valid_nonconverged_relocation: bool = False,
     ):
         relocation_jacobian = _ratio(
             relocation_jacobian_ratio, "relocation_jacobian_ratio"
@@ -151,6 +161,14 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
         validity_ = CellValidityPolicy() if validity is None else validity
         if not isinstance(validity_, CellValidityPolicy):
             raise TypeError("validity must be CellValidityPolicy or None.")
+        if relocation_termination is not None and not isinstance(
+            relocation_termination, OptimizationTermination
+        ):
+            raise TypeError(
+                "relocation_termination must be OptimizationTermination or None."
+            )
+        if not isinstance(accept_valid_nonconverged_relocation, bool):
+            raise TypeError("accept_valid_nonconverged_relocation must be bool.")
         self.relocation_jacobian_ratio = relocation_jacobian
         self.remesh_jacobian_ratio = remesh_jacobian
         self.relocation_quality_ratio = relocation_quality
@@ -159,6 +177,8 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
         self.remesh_displacement_fraction = remesh_displacement
         self.maximum_boundary_residual = residual
         self.relocation_objective = relocation_objective
+        self.accept_valid_nonconverged_relocation = accept_valid_nonconverged_relocation
+        self.relocation_termination = relocation_termination
         self.validity = validity_
         self.policy_id = canonical_fingerprint(
             {
@@ -168,6 +188,19 @@ class MeshMotionMonitorPolicy(StrictModule, NonTrainableState):
                 "displacement": [relocation_displacement, remesh_displacement],
                 "maximum_boundary_residual": residual,
                 "relocation_objective": relocation_objective.value,
+                "accept_valid_nonconverged_relocation": (
+                    accept_valid_nonconverged_relocation
+                ),
+                "relocation_termination": None
+                if relocation_termination is None
+                else [
+                    relocation_termination.absolute_optimality,
+                    relocation_termination.relative_optimality,
+                    relocation_termination.absolute_step,
+                    relocation_termination.relative_step,
+                    relocation_termination.maximum_steps,
+                    relocation_termination.maximum_evaluations,
+                ],
                 "validity": validity_.policy_id,
             }
         )
@@ -499,7 +532,9 @@ def _relocate(
         objective=monitor.policy.relocation_objective,
         target_coordinates=np.asarray(monitor.reference.coordinates),
         fixed_vertices=fixed,
+        termination=monitor.policy.relocation_termination,
         untangling=MeshUntanglingPolicy(),
+        accept_valid_nonconverged=monitor.policy.accept_valid_nonconverged_relocation,
     )
     return optimize_cell_mesh(
         plan, source.coordinate_contract, numeric_version=f"{numeric_version}:relocated"
@@ -574,7 +609,9 @@ def advance_mesh_motion(
             pass
         case decision:
             raise ValueError(f"Unsupported mesh motion decision {decision!r}.")
-    # Every crossing first tries fixed-topology relocation (untangling included).
+    # Every crossing first tries fixed-topology relocation (untangling included);
+    # only an accepted relocation (converged, or explicitly admitted valid
+    # non-convergence) seeds the relocated assessment.
     moved = monitor.moved_mesh(coordinates)
     relocation = _relocate(monitor, source, moved, fixed, version)
     if relocation.accepted:

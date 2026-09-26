@@ -407,22 +407,22 @@ def test_p2_cylinder_curving_is_certified_and_periodic_nodes_follow_the_isometry
     assert np.max(np.abs(nodes[top_nodes] - straight[top_nodes])) > 0.01
 
 
-def test_inverting_curving_rolls_back_and_relaxation_repairs_it():
+def test_inverting_curving_rolls_back_and_converged_relaxation_repairs_it():
     projection = _plate_projection()
     mesh = _plate_mesh((0.8, 0.8))
     association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
-    projected = phx.meshing.curve_cell_mesh(
-        mesh,
-        association,
-        projection,
-        policy=phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=0),
-    )
-    relaxed = phx.meshing.curve_cell_mesh(
-        mesh,
-        association,
-        projection,
-        policy=phx.meshing.HighOrderCurvingPolicy(degree=2, relaxation_rounds=2),
-    )
+
+    def curve(rounds, steps):
+        policy = phx.meshing.HighOrderCurvingPolicy(
+            degree=2,
+            relaxation_rounds=rounds,
+            termination=phx.optim.OptimizationTermination(maximum_steps=steps),
+        )
+        return phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+
+    projected = curve(0, 64)
+    capped = curve(2, 64)
+    relaxed = curve(2, 512)
 
     # Snapping the hole chord onto the arc folds the element at a hole vertex.
     assert projected.status is _STATUS.ROLLED_BACK_INVALID
@@ -430,9 +430,53 @@ def test_inverting_curving_rolls_back_and_relaxation_repairs_it():
     np.testing.assert_array_equal(
         projected.geometry.coordinates, projected.straight.coordinates
     )
+    # Relaxations cut off by the step budget never replace the straight geometry,
+    # even when their candidate would pass the certificate.
+    assert capped.status is _STATUS.ROLLED_BACK_NONCONVERGED
+    assert capped.accepted_round is None and capped.candidate.accepted
+    assert phx.optim.OptimizationStatus.SUCCESS not in capped.relaxation_statuses
+    np.testing.assert_array_equal(
+        capped.geometry.coordinates, capped.straight.coordinates
+    )
     assert relaxed.status is _STATUS.CURVED
+    assert relaxed.relaxation_statuses[relaxed.accepted_round - 1] is (
+        phx.optim.OptimizationStatus.SUCCESS
+    )
     assert relaxed.evidence.certificate.all_certified
     assert relaxed.evidence.minimum_scaled_jacobian > 0.0
+
+
+def test_nonconverged_relaxation_replaces_a_valid_projection_only_when_permitted():
+    projection = _bound(BRepPrimAPI_MakeSphere(1.0).Shape())
+    mesh = _icosphere(1)
+    association = phx.meshing.associate_mesh_vertices(mesh, projection, policy=_POLICY)
+
+    def curve(rounds, accept):
+        policy = phx.meshing.HighOrderCurvingPolicy(
+            degree=2,
+            relaxation_rounds=rounds,
+            termination=phx.optim.OptimizationTermination(maximum_steps=1),
+            accept_valid_nonconverged_relaxation=accept,
+        )
+        return phx.meshing.curve_cell_mesh(mesh, association, projection, policy=policy)
+
+    projected = curve(0, False)
+    retained = curve(1, False)
+    replaced = curve(1, True)
+
+    budget = (phx.optim.OptimizationStatus.MAXIMUM_STEPS_REACHED,)
+    assert projected.status is _STATUS.CURVED and projected.accepted_round == 0
+    # The relaxed candidate is valid but not converged: the projection stays.
+    assert retained.status is _STATUS.CURVED and retained.accepted_round == 0
+    assert retained.candidate.accepted and retained.relaxation_statuses == budget
+    np.testing.assert_array_equal(
+        retained.geometry.coordinates, projected.geometry.coordinates
+    )
+    assert replaced.status is _STATUS.CURVED and replaced.accepted_round == 1
+    assert replaced.relaxation_statuses == budget and replaced.evidence.accepted
+    assert not np.array_equal(
+        replaced.geometry.coordinates, projected.geometry.coordinates
+    )
 
 
 def test_verification_certifies_existing_high_order_geometry():

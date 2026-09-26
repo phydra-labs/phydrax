@@ -1132,7 +1132,6 @@ def _adaptation_metric(
         minimum_size=policy.minimum_size,
         maximum_size=policy.maximum_size,
         maximum_anisotropy=policy.maximum_anisotropy,
-        maximum_gradation=policy.maximum_gradation,
     )
 
 

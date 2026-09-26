@@ -214,6 +214,175 @@ class WorksetSignature(StrictModule, NonTrainableState):
         )
 
 
+def _canonical_int32_routes(
+    routes: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]],
+) -> tuple[tuple[str, np.ndarray], ...]:
+    return tuple(
+        sorted(
+            (str(name), np.asarray(route, dtype=np.int32))
+            for name, route in (routes.items() if isinstance(routes, Mapping) else routes)
+        )
+    )
+
+
+def _workset_index_routes(
+    action_indices: ArrayLike,
+    entity_indices: ArrayLike,
+    owner_cells: ArrayLike,
+    neighbor_cells: ArrayLike,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    actions = np.asarray(action_indices, dtype=np.int32)
+    entities = np.asarray(entity_indices, dtype=np.int32)
+    owners = np.asarray(owner_cells, dtype=np.int32)
+    neighbors = np.asarray(neighbor_cells, dtype=np.int32)
+    if actions.ndim != 1 or entities.ndim != 1:
+        raise ValueError("Workset action/entity indices must be rank-1.")
+    if owners.shape != entities.shape or neighbors.shape != entities.shape:
+        raise ValueError("Workset owner/neighbor routes must match entities.")
+    return actions, entities, owners, neighbors
+
+
+def _workset_gathers(
+    signature: WorksetSignature,
+    gathers: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]],
+    count: int,
+) -> tuple[tuple[str, np.ndarray], ...]:
+    gather_items = _canonical_int32_routes(gathers)
+    if set(name for name, _ in gather_items) != set(
+        name for name, _ in signature.local_widths
+    ):
+        raise ValueError("Workset gathers must match signature field widths.")
+    widths = dict(signature.local_widths)
+    for name, route in gather_items:
+        if route.shape != (count, widths[name]):
+            raise ValueError("Workset gather shape does not match its signature.")
+    return gather_items
+
+
+def _workset_neighbor_gathers(
+    signature: WorksetSignature,
+    neighbor_gathers: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]] | None,
+    gather_items: tuple[tuple[str, np.ndarray], ...],
+    count: int,
+) -> tuple[tuple[str, np.ndarray], ...]:
+    widths = dict(signature.neighbor_local_widths)
+    if neighbor_gathers is None:
+        # Absent neighbor routes are explicit -1 sentinels in the owner layout order.
+        neighbor_items = tuple(
+            (name, np.full((count, widths[name]), -1, dtype=np.int32))
+            for name, _ in gather_items
+        )
+    else:
+        neighbor_items = _canonical_int32_routes(neighbor_gathers)
+    if tuple(name for name, _ in neighbor_items) != tuple(
+        name for name, _ in gather_items
+    ) or any(route.shape != (count, widths[name]) for name, route in neighbor_items):
+        raise ValueError("Neighbor gathers must match neighbor signature layouts.")
+    return neighbor_items
+
+
+def _local_entity_route(values: ArrayLike | None, count: int) -> np.ndarray:
+    return (
+        np.full((count,), -1, dtype=np.int32)
+        if values is None
+        else np.asarray(values, dtype=np.int32)
+    )
+
+
+def _facet_permutation(values: ArrayLike | None, count: int) -> np.ndarray:
+    result = (
+        np.ones((count,), dtype=np.int32)
+        if values is None
+        else np.asarray(values, dtype=np.int32)
+    )
+    if result.ndim not in (1, 2) or result.shape[0] != count:
+        raise ValueError(
+            "Workset facet permutations require one scalar or route per entity."
+        )
+    return result
+
+
+def _workset_facet_routes(
+    count: int,
+    owner_local_entities: ArrayLike | None,
+    neighbor_local_entities: ArrayLike | None,
+    owner_permutations: ArrayLike | None,
+    neighbor_permutations: ArrayLike | None,
+    neighbor_trace_permutations: ArrayLike | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    owner_local = _local_entity_route(owner_local_entities, count)
+    neighbor_local = _local_entity_route(neighbor_local_entities, count)
+    owner_permutation = _facet_permutation(owner_permutations, count)
+    neighbor_permutation = _facet_permutation(neighbor_permutations, count)
+    trace_permutations = (
+        np.empty((count, 0), dtype=np.int32)
+        if neighbor_trace_permutations is None
+        else np.asarray(neighbor_trace_permutations, dtype=np.int32)
+    )
+    if trace_permutations.ndim != 2 or trace_permutations.shape[0] != count:
+        raise ValueError(
+            "Neighbor trace permutations require one point route per entity."
+        )
+    if owner_local.shape != (count,) or neighbor_local.shape != (count,):
+        raise ValueError("Workset local-entity routes are invalid.")
+    return (
+        owner_local,
+        neighbor_local,
+        owner_permutation,
+        neighbor_permutation,
+        trace_permutations,
+    )
+
+
+def _validate_prepared_references(
+    signature: WorksetSignature,
+    reference: PreparedFiniteElementReference | None,
+    neighbor_reference: PreparedFiniteElementReference | None,
+) -> None:
+    if reference is not None and (
+        not isinstance(reference, PreparedFiniteElementReference)
+        or reference.prepared_id not in signature.reference_action_ids
+    ):
+        raise ValueError("Prepared reference does not match the workset signature.")
+    if neighbor_reference is not None and (
+        not isinstance(neighbor_reference, PreparedFiniteElementReference)
+        or neighbor_reference.prepared_id not in signature.reference_action_ids
+    ):
+        raise ValueError("Neighbor reference does not match the workset signature.")
+
+
+def _validate_local_region(
+    signature: WorksetSignature,
+    local_region: PreparedLocalRegion | None,
+    entities: np.ndarray,
+) -> None:
+    if local_region is None:
+        return
+    if not isinstance(local_region, PreparedLocalRegion):
+        raise TypeError("local_region must be PreparedLocalRegion or None.")
+    if (
+        local_region.geometry_actions.action_id != signature.geometry_action_id
+        or tuple(sorted(value.action_id for value in local_region.reference_actions))
+        != signature.reference_action_ids
+        or tuple(local_region.entity_indices) != tuple(entities)
+    ):
+        raise ValueError("Prepared local region does not match its workset.")
+
+
+def _validate_mortar(
+    mortar: FiniteElementMortarPlan | None,
+    mortar_metric: FiniteElementMortarMetricData | None,
+) -> None:
+    if mortar is not None and not isinstance(mortar, FiniteElementMortarPlan):
+        raise TypeError("mortar must be FiniteElementMortarPlan or None.")
+    if mortar_metric is not None and not isinstance(
+        mortar_metric, FiniteElementMortarMetricData
+    ):
+        raise TypeError("mortar_metric must be FiniteElementMortarMetricData or None.")
+    if (mortar is None) != (mortar_metric is None):
+        raise ValueError("Mortar reference and metric data must be supplied together.")
+
+
 class CompiledWorkset(StrictModule, NonTrainableState):
     signature: WorksetSignature
     local_region: PreparedLocalRegion | None
@@ -264,130 +433,31 @@ class CompiledWorkset(StrictModule, NonTrainableState):
     ):
         if not isinstance(signature, WorksetSignature):
             raise TypeError("signature must be WorksetSignature.")
-        actions = np.asarray(action_indices, dtype=np.int32)
-        entities = np.asarray(entity_indices, dtype=np.int32)
-        owners = np.asarray(owner_cells, dtype=np.int32)
-        neighbors = np.asarray(neighbor_cells, dtype=np.int32)
-        if actions.ndim != 1 or entities.ndim != 1:
-            raise ValueError("Workset action/entity indices must be rank-1.")
-        if owners.shape != entities.shape or neighbors.shape != entities.shape:
-            raise ValueError("Workset owner/neighbor routes must match entities.")
-        gather_items = tuple(
-            sorted(
-                (str(name), np.asarray(route, dtype=np.int32))
-                for name, route in (
-                    gathers.items() if isinstance(gathers, Mapping) else gathers
-                )
-            )
+        actions, entities, owners, neighbors = _workset_index_routes(
+            action_indices, entity_indices, owner_cells, neighbor_cells
         )
-        if set(name for name, _ in gather_items) != set(
-            name for name, _ in signature.local_widths
-        ):
-            raise ValueError("Workset gathers must match signature field widths.")
         count = entities.size
-        for name, route in gather_items:
-            width = dict(signature.local_widths)[name]
-            if route.shape != (count, width):
-                raise ValueError("Workset gather shape does not match its signature.")
-        if neighbor_gathers is None:
-            neighbor_items = tuple(
-                (
-                    name,
-                    np.full(
-                        (count, dict(signature.neighbor_local_widths)[name]),
-                        -1,
-                        dtype=np.int32,
-                    ),
-                )
-                for name, _ in gather_items
-            )
-        else:
-            neighbor_items = tuple(
-                sorted(
-                    (str(name), np.asarray(route, dtype=np.int32))
-                    for name, route in (
-                        neighbor_gathers.items()
-                        if isinstance(neighbor_gathers, Mapping)
-                        else neighbor_gathers
-                    )
-                )
-            )
-        if tuple(name for name, _ in neighbor_items) != tuple(
-            name for name, _ in gather_items
-        ) or any(
-            route.shape != (count, dict(signature.neighbor_local_widths)[name])
-            for name, route in neighbor_items
-        ):
-            raise ValueError("Neighbor gathers must match neighbor signature layouts.")
-
-        def route(values, default, dtype):
-            return (
-                np.full((count,), default, dtype=dtype)
-                if values is None
-                else np.asarray(values, dtype=dtype)
-            )
-
-        def permutation(values):
-            result = (
-                np.ones((count,), dtype=np.int32)
-                if values is None
-                else np.asarray(values, dtype=np.int32)
-            )
-            if result.ndim not in (1, 2) or result.shape[0] != count:
-                raise ValueError(
-                    "Workset facet permutations require one scalar or route per entity."
-                )
-            return result
-
-        owner_local = route(owner_local_entities, -1, np.int32)
-        neighbor_local = route(neighbor_local_entities, -1, np.int32)
-        owner_permutation = permutation(owner_permutations)
-        neighbor_permutation = permutation(neighbor_permutations)
-        trace_permutations = (
-            np.empty((count, 0), dtype=np.int32)
-            if neighbor_trace_permutations is None
-            else np.asarray(neighbor_trace_permutations, dtype=np.int32)
+        gather_items = _workset_gathers(signature, gathers, count)
+        neighbor_items = _workset_neighbor_gathers(
+            signature, neighbor_gathers, gather_items, count
         )
-        if trace_permutations.ndim != 2 or trace_permutations.shape[0] != count:
-            raise ValueError(
-                "Neighbor trace permutations require one point route per entity."
-            )
-        if owner_local.shape != (count,) or neighbor_local.shape != (count,):
-            raise ValueError("Workset local-entity routes are invalid.")
-        if reference is not None and (
-            not isinstance(reference, PreparedFiniteElementReference)
-            or reference.prepared_id not in signature.reference_action_ids
-        ):
-            raise ValueError("Prepared reference does not match the workset signature.")
-        if neighbor_reference is not None and (
-            not isinstance(neighbor_reference, PreparedFiniteElementReference)
-            or neighbor_reference.prepared_id not in signature.reference_action_ids
-        ):
-            raise ValueError("Neighbor reference does not match the workset signature.")
-        if local_region is not None:
-            if not isinstance(local_region, PreparedLocalRegion):
-                raise TypeError("local_region must be PreparedLocalRegion or None.")
-            if (
-                local_region.geometry_actions.action_id != signature.geometry_action_id
-                or tuple(
-                    sorted(value.action_id for value in local_region.reference_actions)
-                )
-                != signature.reference_action_ids
-                or tuple(local_region.entity_indices) != tuple(entities)
-            ):
-                raise ValueError("Prepared local region does not match its workset.")
-        if mortar is not None and not isinstance(mortar, FiniteElementMortarPlan):
-            raise TypeError("mortar must be FiniteElementMortarPlan or None.")
-        if mortar_metric is not None and not isinstance(
-            mortar_metric, FiniteElementMortarMetricData
-        ):
-            raise TypeError(
-                "mortar_metric must be FiniteElementMortarMetricData or None."
-            )
-        if (mortar is None) != (mortar_metric is None):
-            raise ValueError(
-                "Mortar reference and metric data must be supplied together."
-            )
+        (
+            owner_local,
+            neighbor_local,
+            owner_permutation,
+            neighbor_permutation,
+            trace_permutations,
+        ) = _workset_facet_routes(
+            count,
+            owner_local_entities,
+            neighbor_local_entities,
+            owner_permutations,
+            neighbor_permutations,
+            neighbor_trace_permutations,
+        )
+        _validate_prepared_references(signature, reference, neighbor_reference)
+        _validate_local_region(signature, local_region, entities)
+        _validate_mortar(mortar, mortar_metric)
         valid_ = (
             np.ones((count,), dtype=np.bool_)
             if valid is None

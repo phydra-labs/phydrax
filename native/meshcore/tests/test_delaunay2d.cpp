@@ -361,7 +361,8 @@ void test_performance() {
   std::printf("delaunay_2d 100k random points: %.3f s, %zu triangles\n", seconds,
               r.cells.size() / 3);
   PHX_CHECK(r.status == PHX_MC_OK);
-#ifdef NDEBUG
+  // The time bound applies to uninstrumented optimized builds only.
+#if defined(NDEBUG) && !defined(PHX_MC_SANITIZE)
   PHX_CHECK(seconds < 1.0);
 #endif
 }

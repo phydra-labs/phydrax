@@ -37,6 +37,7 @@
 #include <utility>
 #include <vector>
 
+#include "capi_guard.hpp"
 #include "expansion.hpp"
 #include "filtered.hpp"
 #include "mesh.hpp"
@@ -1077,7 +1078,8 @@ int32_t constrained_delaunay(int64_t point_count, const double* points, int64_t 
   }
   *mesh = nullptr;
   if (point_count < 0 || point_count > kMaxMeshPoints || (point_count > 0 && points == nullptr) ||
-      segment_count < 0 || (segment_count > 0 && segments == nullptr) || hole_count < 0 ||
+      !addressable(segment_count, 2, sizeof(int32_t)) ||
+      (segment_count > 0 && segments == nullptr) || !addressable(hole_count, 2, sizeof(double)) ||
       (hole_count > 0 && holes == nullptr) || max_steiner < 0 || max_triangles < 0 ||
       !(min_angle_degrees >= 0.0 && min_angle_degrees < 60.0) || !(max_area > 0.0)) {
     return PHX_MC_INVALID_ARGUMENT;
@@ -1159,15 +1161,11 @@ int32_t phx_mc_constrained_delaunay_2d(int64_t point_count, const double* points
                                        int32_t keep_convex_hull, double min_angle_degrees,
                                        double max_area, int64_t max_steiner,
                                        int64_t max_triangles, phx_mc_mesh** mesh) {
-  try {
+  return phx::mc::guarded([&] {
     return phx::mc::constrained_delaunay(point_count, points, segment_count, segments, hole_count,
                                          holes, keep_convex_hull, min_angle_degrees, max_area,
                                          max_steiner, max_triangles, mesh);
-  } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  } catch (...) {
-    return PHX_MC_INTERNAL_ERROR;
-  }
+  });
 }
 
 }  // extern "C"

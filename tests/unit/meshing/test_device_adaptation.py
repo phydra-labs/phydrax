@@ -9,31 +9,42 @@ import sys
 import textwrap
 from pathlib import Path
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._meshcore import meshcore_available
 from phydrax.discretization import (
     AdaptiveSimplexPolicy,
     AdaptiveSimplexStatus,
     CellMesh,
     coarsen_adaptive_simplex,
     refine_adaptive_simplex,
+    refine_adaptive_simplex_parts,
 )
 from phydrax.meshing import (
     BisectionCompatibility,
     commit_adaptive_simplex,
+    commit_partitioned_adaptive_simplex,
     execute_mesh_adaptation,
     MarkedMeshAdaptation,
     MeshAdaptationPolicy,
     MeshAdaptationRoute,
     MeshAdaptationStatus,
     MeshingEntityKind,
+    MeshingFailure,
+    MeshingFailureCategory,
     MeshingScope,
+    MeshPart,
+    MeshPartitionKind,
+    MeshPartitionPolicy,
+    partition_adaptive_simplex,
     prepare_adaptive_simplex,
     prepare_mesh_adaptation,
+    prepare_mesh_distribution,
 )
 
 
@@ -144,6 +155,48 @@ def _corner_cells(mesh: CellMesh) -> np.ndarray:
     return np.sort(_cell_ids(mesh)[np.any(_cells(mesh) == corner, axis=1)])
 
 
+def _guarded_diagonal(source):
+    """Protected-scope of one interior diagonal and the cells holding it."""
+
+    mesh = source.mesh
+    edges = mesh.entity_set(1)
+    keys = np.sort(
+        np.asarray(mesh.vertex_global_ids)[np.asarray(mesh.connectivity.edges)], axis=1
+    )
+    points = np.asarray(mesh.coordinates)
+    offsets = points[keys[:, 1]] - points[keys[:, 0]]
+    diagonal = np.flatnonzero(np.all(np.isclose(offsets, 0.25), axis=1))[4]
+    guarded = keys[diagonal]
+    scope = MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        MeshingEntityKind.MESH,
+        1,
+        edges.entity_set_id,
+        np.asarray([np.asarray(edges.entity_ids)[diagonal]]),
+    )
+    cell_vertices = np.asarray(mesh.vertex_global_ids)[_cells(mesh)]
+    through = np.sort(
+        _cell_ids(mesh)[np.sum(np.isin(cell_vertices, guarded), axis=1) == 2]
+    )
+    return scope, through
+
+
+def _moved_vertex(state, old, new):
+    coordinates = np.asarray(state.mesh.coordinates).copy()
+    coordinates[np.all(coordinates == np.asarray(old), axis=1)] = new
+    return eqx.tree_at(
+        lambda value: value.mesh.coordinates, state, jnp.asarray(coordinates)
+    )
+
+
+def _assert_same_arrays(first, second) -> None:
+    before, after = jax.tree_util.tree_leaves(first), jax.tree_util.tree_leaves(second)
+    assert all(
+        np.array_equal(left, right) for left, right in zip(before, after, strict=True)
+    )
+
+
 @pytest.mark.parametrize(
     "mesh", [_triangle_grid(4, 4), _kuhn_grid(2)], ids=["triangles", "tetrahedra"]
 )
@@ -181,28 +234,8 @@ def test_device_bisection_commits_the_host_meshes(mesh):
 
 def test_protected_marks_are_rejected_like_the_host_route():
     source = _certified(_triangle_grid(4, 4))
-    mesh = source.mesh
-    edges = mesh.entity_set(1)
-    keys = np.sort(
-        np.asarray(mesh.vertex_global_ids)[np.asarray(mesh.connectivity.edges)], axis=1
-    )
-    points = np.asarray(mesh.coordinates)
-    offsets = points[keys[:, 1]] - points[keys[:, 0]]
-    diagonal = np.flatnonzero(np.all(np.isclose(offsets, 0.25), axis=1))[4]
-    guarded = keys[diagonal]
-    scope = MeshingScope(
-        mesh.mesh_id,
-        mesh.numeric_version,
-        MeshingEntityKind.MESH,
-        1,
-        edges.entity_set_id,
-        np.asarray([np.asarray(edges.entity_ids)[diagonal]]),
-    )
-    cell_vertices = np.asarray(mesh.vertex_global_ids)[_cells(mesh)]
-    through = np.sort(
-        _cell_ids(mesh)[np.sum(np.isin(cell_vertices, guarded), axis=1) == 2]
-    )
-    marks = np.union1d(through, np.setdiff1d(_cell_ids(mesh), through)[[0, -1]])
+    scope, through = _guarded_diagonal(source)
+    marks = np.union1d(through, np.setdiff1d(_cell_ids(source.mesh), through)[[0, -1]])
     host = _adapt(
         MeshAdaptationRoute.NATIVE_BISECTION, source, marks, protected_scopes=(scope,)
     )
@@ -214,6 +247,18 @@ def test_protected_marks_are_rejected_like_the_host_route():
         np.asarray(device.evidence.rejected_refinement_ids), through
     )
     _assert_same_target(host, device)
+    for route in (
+        MeshAdaptationRoute.NATIVE_BISECTION,
+        MeshAdaptationRoute.DEVICE_BISECTION,
+    ):
+        rejected = _adapt(route, source, through, protected_scopes=(scope,))
+        assert rejected.status is MeshAdaptationStatus.PARTIAL
+        assert not rejected.status.converged
+        assert rejected.target.result_id == source.result_id
+        assert rejected.transition is rejected.lineage is rejected.transfer is None
+        np.testing.assert_array_equal(
+            np.asarray(rejected.evidence.rejected_refinement_ids), through
+        )
 
 
 def test_uniform_refinement_start_matches_the_host_route():
@@ -276,13 +321,16 @@ def test_repeated_device_refinement_stays_conforming():
     )
     layout, state = prepared.layout, prepared.state
     allowed = int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION)
+    flags = 0
     for _ in range(4):
         points = state.mesh.coordinates[state.mesh.cells]
         near = jnp.min(jnp.linalg.norm(points, axis=2), axis=1) < 1.0e-12
         update = refine_adaptive_simplex(layout, state, near & state.mesh.cell_active)
         assert (int(update.report.status) & ~allowed) == 0
         assert int(update.report.operations) > 0
+        flags |= int(update.report.status)
         state = update.state
+    assert int(state.status_flags) == flags
     width = layout.dimension + 1
     neighbors = np.asarray(state.mesh.facet_neighbors)
     active = np.asarray(state.mesh.cell_active)
@@ -304,27 +352,175 @@ def test_repeated_device_refinement_stays_conforming():
     assert boundary == np.count_nonzero(counts == 1)
 
 
-def test_capacity_overflow_leaves_the_state_unchanged():
-    source = _certified(_triangle_grid(2, 2))
+def _capacity_failure(source):
     policy = _policy(
         MeshAdaptationRoute.DEVICE_BISECTION,
         device_policy=AdaptiveSimplexPolicy(vertex_capacity=10, cell_capacity=12),
     )
     prepared = prepare_adaptive_simplex(source, policy=policy)
-    state = prepared.state
-    update = refine_adaptive_simplex(prepared.layout, state, state.mesh.cell_active)
-    status = AdaptiveSimplexStatus(int(update.report.status))
-    assert status & AdaptiveSimplexStatus.CAPACITY_EXCEEDED
-    assert bool(update.report.failed)
-    before, after = (
-        jax.tree_util.tree_leaves(state),
-        jax.tree_util.tree_leaves(update.state),
+    return prepared, prepared.state, prepared.state.mesh.cell_active
+
+
+def _closure_failure(source):
+    policy = _policy(MeshAdaptationRoute.DEVICE_BISECTION, maximum_closure_iterations=1)
+    prepared = prepare_adaptive_simplex(source, policy=policy)
+    marks = prepared.cell_marks(np.sort(_cell_ids(source.mesh))[:1])
+    return prepared, prepared.state, marks
+
+
+def _geometry_failure(source):
+    prepared = prepare_adaptive_simplex(
+        source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
     )
-    assert all(
-        np.array_equal(left, right) for left, right in zip(before, after, strict=True)
+    # Vertex (0.5, 0) moved above the diagonal (0, 0)-(0.5, 0.5) inverts one cell.
+    state = _moved_vertex(prepared.state, (0.5, 0.0), (0.25, 0.3))
+    return prepared, state, jnp.zeros_like(state.mesh.cell_active)
+
+
+@pytest.mark.parametrize(
+    ("failure", "flag", "category"),
+    [
+        (
+            _capacity_failure,
+            AdaptiveSimplexStatus.CAPACITY_EXCEEDED,
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        ),
+        (
+            _closure_failure,
+            AdaptiveSimplexStatus.CLOSURE_LIMIT,
+            MeshingFailureCategory.RESOURCE_EXHAUSTED,
+        ),
+        (
+            _geometry_failure,
+            AdaptiveSimplexStatus.INVALID_GEOMETRY,
+            MeshingFailureCategory.QUALITY_REJECTED,
+        ),
+    ],
+    ids=["capacity", "closure", "geometry"],
+)
+def test_terminal_failure_is_recorded_refuses_later_calls_and_rejects_commit(
+    failure, flag, category
+):
+    source = _certified(_triangle_grid(2, 2))
+    prepared, state, marks = failure(source)
+    layout = prepared.layout
+    failed = refine_adaptive_simplex(layout, state, marks)
+    assert AdaptiveSimplexStatus(int(failed.report.status)) & flag
+    assert bool(failed.report.failed)
+    assert AdaptiveSimplexStatus(int(failed.state.status_flags)) & flag
+    # Every array but the recorded status is rolled back to the input.
+    _assert_same_arrays(
+        state, eqx.tree_at(lambda value: value.clocks, failed.state, state.clocks)
     )
-    unchanged = commit_adaptive_simplex(prepared, update.state)
-    assert unchanged.status is MeshAdaptationStatus.UNCHANGED
+    for call in (refine_adaptive_simplex, coarsen_adaptive_simplex):
+        refused = call(layout, failed.state, failed.state.mesh.cell_active)
+        report = refused.report
+        assert AdaptiveSimplexStatus(int(report.status)) & flag
+        assert bool(report.failed)
+        assert int(report.accepted) == int(report.operations) == 0
+        assert int(report.iterations) == int(report.vertices) == 0
+        _assert_same_arrays(failed.state, refused.state)
+    with pytest.raises(MeshingFailure) as rejection:
+        commit_adaptive_simplex(prepared, failed.state)
+    assert rejection.value.category is category
+
+
+def test_protected_conflict_on_parts_rejects_the_epoch():
+    source = _certified(_triangle_grid(4, 4))
+    scope, _ = _guarded_diagonal(source)
+    partition = MeshPartitionPolicy(MeshPartitionKind.MORTON, 1)
+    distribution = prepare_mesh_distribution(MeshPart("domain", source), policy=partition)
+    policy = _policy(
+        MeshAdaptationRoute.DEVICE_BISECTION,
+        protected_scopes=(scope,),
+        distribution=distribution,
+        partition_policy=partition,
+    )
+    partitioned = partition_adaptive_simplex(
+        prepare_adaptive_simplex(source, policy=policy)
+    )
+    # Parts have no per-mark admissibility: the union closure splits the edge.
+    update = refine_adaptive_simplex_parts(
+        partitioned.layout,
+        partitioned.parts,
+        partitioned.states,
+        partitioned.cell_marks(_cell_ids(source.mesh)),
+    )
+    conflict = int(AdaptiveSimplexStatus.PROTECTED_CONFLICT)
+    assert np.all(np.asarray(update.report.status) & conflict)
+    assert np.all(np.asarray(update.state.status_flags) & conflict)
+    np.testing.assert_array_equal(
+        np.asarray(update.state.cursors), np.asarray(partitioned.states.cursors)
+    )
+    with pytest.raises(MeshingFailure) as rejection:
+        commit_partitioned_adaptive_simplex(partitioned, update.state)
+    assert rejection.value.category is MeshingFailureCategory.INVALID_SPECIFICATION
+
+
+@pytest.mark.parametrize(
+    ("offset", "certified"),
+    [
+        pytest.param(
+            2.0**-55,
+            True,
+            marks=pytest.mark.skipif(
+                not meshcore_available(), reason="exact orientation requires meshcore"
+            ),
+        ),
+        (0.0, False),
+    ],
+    ids=["positive", "collinear"],
+)
+def test_uncertain_device_orientation_is_resolved_exactly_at_commit(offset, certified):
+    source = _certified(_triangle_grid(2, 2))
+    prepared = prepare_adaptive_simplex(
+        source, policy=_policy(MeshAdaptationRoute.DEVICE_BISECTION)
+    )
+    # Vertex (0.5, 0) on (or one rounding below) the diagonal (0, 0)-(0.5, 0.5):
+    # FILTERED_DEVICE cannot decide that cell's orientation.
+    state = _moved_vertex(prepared.state, (0.5, 0.0), (0.25, 0.25 - offset))
+    update = refine_adaptive_simplex(
+        prepared.layout, state, jnp.zeros_like(state.mesh.cell_active)
+    )
+    assert int(update.report.uncertain_cells) == 1
+    assert int(update.report.invalid_cells) == 0
+    assert not bool(update.report.failed)
+    assert (
+        AdaptiveSimplexStatus(int(update.state.status_flags))
+        is AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION
+    )
+    if certified:
+        result = commit_adaptive_simplex(prepared, update.state)
+        assert result.status is MeshAdaptationStatus.UNCHANGED
+        return
+    with pytest.raises(MeshingFailure) as rejection:
+        commit_adaptive_simplex(prepared, update.state)
+    assert rejection.value.category is MeshingFailureCategory.QUALITY_REJECTED
+
+
+def test_pass_limited_coarsening_commits_an_unconverged_pass_limit():
+    source = _certified(_triangle_grid(2, 2))
+    policy = _policy(
+        MeshAdaptationRoute.DEVICE_BISECTION,
+        device_policy=AdaptiveSimplexPolicy(maximum_coarsening_passes=1),
+    )
+    prepared = prepare_adaptive_simplex(source, policy=policy)
+    layout, state = prepared.layout, prepared.state
+    for _ in range(2):
+        state = refine_adaptive_simplex(layout, state, state.mesh.cell_active).state
+    coarsened = coarsen_adaptive_simplex(layout, state, state.mesh.cell_active)
+    assert AdaptiveSimplexStatus(int(coarsened.report.status)) & (
+        AdaptiveSimplexStatus.PASS_LIMIT
+    )
+    assert int(coarsened.report.operations) > 0
+    assert AdaptiveSimplexStatus(int(coarsened.state.status_flags)) & (
+        AdaptiveSimplexStatus.PASS_LIMIT
+    )
+    result = commit_adaptive_simplex(prepared, coarsened.state)
+    assert result.status is MeshAdaptationStatus.PASS_LIMIT
+    assert result.status.converged is False
+    assert 0 < result.evidence.coarsened_vertices < result.evidence.created_vertices
+    _assert_conforming(result.target.mesh, 1.0)
 
 
 def _compact_poisson(mesh: CellMesh, source_term):
@@ -440,6 +636,7 @@ _PARTS_SCRIPT = textwrap.dedent(
         MarkedMeshAdaptation,
         MeshAdaptationPolicy,
         MeshAdaptationRoute,
+        MeshingFailure,
         MeshPart,
         MeshPartitionKind,
         MeshPartitionPolicy,
@@ -532,11 +729,51 @@ _PARTS_SCRIPT = textwrap.dedent(
         np.array_equal(np.asarray(target.coordinates), np.asarray(host.target.mesh.coordinates)),
     )
     print("distribution", result.distribution is not None)
+
+    # Tight buckets: refining part 0's cells overflows part 0 alone, and the
+    # collective status fails, records, and refuses on every part.
+    tight = partition_adaptive_simplex(
+        prepare_adaptive_simplex(
+            source,
+            policy=MeshAdaptationPolicy(
+                MeshAdaptationRoute.DEVICE_BISECTION,
+                device_policy=AdaptiveSimplexPolicy(growth_factor=1.0),
+                distribution=distribution,
+                partition_policy=partition,
+            ),
+        )
+    )
+    overflow = refine_adaptive_simplex_parts(
+        tight.layout, tight.parts, tight.states, tight.cell_marks(marks)
+    )
+    refused = refine_adaptive_simplex_parts(
+        tight.layout, tight.parts, overflow.state, tight.cell_marks(marks)
+    )
+    print("failure", " ".join(str(int(value)) for value in overflow.report.status))
+    print("flags", " ".join(str(int(value)) for value in overflow.state.status_flags))
+    print(
+        "rolled",
+        np.array_equal(np.asarray(overflow.state.cursors), np.asarray(tight.states.cursors)),
+    )
+    print(
+        "refused",
+        bool(np.all(np.asarray(refused.report.failed)))
+        and int(np.sum(refused.report.operations)) == 0
+        and np.array_equal(
+            np.asarray(refused.state.cursors), np.asarray(overflow.state.cursors)
+        ),
+    )
+    try:
+        commit_partitioned_adaptive_simplex(tight, overflow.state)
+    except MeshingFailure as error:
+        print("rejected", error.category.value)
+    else:
+        print("rejected none")
     """
 )
 
 
-def test_partitioned_closure_crosses_part_boundaries_and_commits_the_host_mesh():
+def test_partitioned_epochs_commit_the_host_mesh_and_fail_collectively():
     environment = dict(os.environ)
     environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
     environment["PYTHONPATH"] = str(Path(phx.__file__).resolve().parents[1])
@@ -553,3 +790,9 @@ def test_partitioned_closure_crosses_part_boundaries_and_commits_the_host_mesh()
     assert grown[0] > 0 and np.count_nonzero(grown[1:]) > 0
     for key in ("single", "lineage", "hierarchy", "host", "coordinates", "distribution"):
         assert lines[key] == "True", key
+    capacity = int(AdaptiveSimplexStatus.CAPACITY_EXCEEDED)
+    for key in ("failure", "flags"):
+        values = np.asarray(lines[key].split(), dtype=np.int64)
+        assert values.size == 4 and np.all(values & capacity), key
+    assert lines["rolled"] == lines["refused"] == "True"
+    assert lines["rejected"] == MeshingFailureCategory.RESOURCE_EXHAUSTED.value

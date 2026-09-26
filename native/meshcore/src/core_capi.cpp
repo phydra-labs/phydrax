@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 
+#include "capi_guard.hpp"
 #include "mesh.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -19,7 +20,9 @@
 
 namespace {
 
+using phx::mc::addressable;
 using phx::mc::coordinate_in_domain;
+using phx::mc::guarded;
 
 int32_t validate_coordinates(int64_t count, int width, const double* const* arrays, int arity) {
   for (int k = 0; k < arity; ++k) {
@@ -39,9 +42,10 @@ int32_t validate_coordinates(int64_t count, int width, const double* const* arra
   return PHX_MC_OK;
 }
 
+// Rejects a negative or unaddressable count before any `count * width` offset.
 int32_t validate_batch(int64_t count, int width, const double* const* arrays, int arity,
                        const void* output) {
-  if (count < 0 || output == nullptr) {
+  if (count < 0 || output == nullptr || !addressable(count, width, sizeof(double))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   for (int k = 0; k < arity; ++k) {
@@ -53,7 +57,7 @@ int32_t validate_batch(int64_t count, int width, const double* const* arrays, in
 }
 
 int32_t validate_ids(int64_t count, int arity, const int64_t* ids) {
-  if (count > 0 && ids == nullptr) {
+  if ((count > 0 && ids == nullptr) || !addressable(count, arity, sizeof(int64_t))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   for (int64_t row = 0; row < count; ++row) {
@@ -88,131 +92,147 @@ void phx_mc_exact_domain(int32_t* min_exponent, int32_t* max_exponent) {
 
 int32_t phx_mc_orient2d(int64_t count, const double* a, const double* b, const double* c,
                         int8_t* signs) {
-  const double* arrays[3] = {a, b, c};
-  const int32_t status = validate_batch(count, 2, arrays, 3, signs);
-  if (status != PHX_MC_OK) {
-    return status;
-  }
-  for (int64_t i = 0; i < count; ++i) {
-    signs[i] = static_cast<int8_t>(phx::mc::orient2d(a + 2 * i, b + 2 * i, c + 2 * i));
-  }
-  return PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    const double* arrays[3] = {a, b, c};
+    const int32_t status = validate_batch(count, 2, arrays, 3, signs);
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    for (int64_t i = 0; i < count; ++i) {
+      signs[i] = static_cast<int8_t>(phx::mc::orient2d(a + 2 * i, b + 2 * i, c + 2 * i));
+    }
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_orient3d(int64_t count, const double* a, const double* b, const double* c,
                         const double* d, int8_t* signs) {
-  const double* arrays[4] = {a, b, c, d};
-  const int32_t status = validate_batch(count, 3, arrays, 4, signs);
-  if (status != PHX_MC_OK) {
-    return status;
-  }
-  for (int64_t i = 0; i < count; ++i) {
-    signs[i] = static_cast<int8_t>(
-        phx::mc::orient3d(a + 3 * i, b + 3 * i, c + 3 * i, d + 3 * i));
-  }
-  return PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    const double* arrays[4] = {a, b, c, d};
+    const int32_t status = validate_batch(count, 3, arrays, 4, signs);
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    for (int64_t i = 0; i < count; ++i) {
+      signs[i] = static_cast<int8_t>(
+          phx::mc::orient3d(a + 3 * i, b + 3 * i, c + 3 * i, d + 3 * i));
+    }
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_incircle(int64_t count, const double* a, const double* b, const double* c,
                         const double* d, int8_t* signs) {
-  const double* arrays[4] = {a, b, c, d};
-  const int32_t status = validate_batch(count, 2, arrays, 4, signs);
-  if (status != PHX_MC_OK) {
-    return status;
-  }
-  for (int64_t i = 0; i < count; ++i) {
-    signs[i] = static_cast<int8_t>(
-        phx::mc::incircle(a + 2 * i, b + 2 * i, c + 2 * i, d + 2 * i));
-  }
-  return PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    const double* arrays[4] = {a, b, c, d};
+    const int32_t status = validate_batch(count, 2, arrays, 4, signs);
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    for (int64_t i = 0; i < count; ++i) {
+      signs[i] = static_cast<int8_t>(
+          phx::mc::incircle(a + 2 * i, b + 2 * i, c + 2 * i, d + 2 * i));
+    }
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_insphere(int64_t count, const double* a, const double* b, const double* c,
                         const double* d, const double* e, int8_t* signs) {
-  const double* arrays[5] = {a, b, c, d, e};
-  const int32_t status = validate_batch(count, 3, arrays, 5, signs);
-  if (status != PHX_MC_OK) {
-    return status;
-  }
-  for (int64_t i = 0; i < count; ++i) {
-    signs[i] = static_cast<int8_t>(
-        phx::mc::insphere(a + 3 * i, b + 3 * i, c + 3 * i, d + 3 * i, e + 3 * i));
-  }
-  return PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    const double* arrays[5] = {a, b, c, d, e};
+    const int32_t status = validate_batch(count, 3, arrays, 5, signs);
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    for (int64_t i = 0; i < count; ++i) {
+      signs[i] = static_cast<int8_t>(
+          phx::mc::insphere(a + 3 * i, b + 3 * i, c + 3 * i, d + 3 * i, e + 3 * i));
+    }
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_orient2d_sos(int64_t count, const double* a, const double* b, const double* c,
                             const int64_t* ids, int8_t* signs) {
-  const double* arrays[3] = {a, b, c};
-  int32_t status = validate_batch(count, 2, arrays, 3, signs);
-  if (status == PHX_MC_OK) {
-    status = validate_ids(count, 3, ids);
-  }
-  if (status != PHX_MC_OK) {
-    return status;
-  }
-  for (int64_t i = 0; i < count; ++i) {
-    const int64_t* r = ids + 3 * i;
-    signs[i] = static_cast<int8_t>(
-        phx::mc::orient2d_sos(a + 2 * i, b + 2 * i, c + 2 * i, r[0], r[1], r[2]));
-  }
-  return PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    const double* arrays[3] = {a, b, c};
+    int32_t status = validate_batch(count, 2, arrays, 3, signs);
+    if (status == PHX_MC_OK) {
+      status = validate_ids(count, 3, ids);
+    }
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    for (int64_t i = 0; i < count; ++i) {
+      const int64_t* r = ids + 3 * i;
+      signs[i] = static_cast<int8_t>(
+          phx::mc::orient2d_sos(a + 2 * i, b + 2 * i, c + 2 * i, r[0], r[1], r[2]));
+    }
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_orient3d_sos(int64_t count, const double* a, const double* b, const double* c,
                             const double* d, const int64_t* ids, int8_t* signs) {
-  const double* arrays[4] = {a, b, c, d};
-  int32_t status = validate_batch(count, 3, arrays, 4, signs);
-  if (status == PHX_MC_OK) {
-    status = validate_ids(count, 4, ids);
-  }
-  if (status != PHX_MC_OK) {
-    return status;
-  }
-  for (int64_t i = 0; i < count; ++i) {
-    const int64_t* r = ids + 4 * i;
-    signs[i] = static_cast<int8_t>(phx::mc::orient3d_sos(a + 3 * i, b + 3 * i, c + 3 * i,
-                                                         d + 3 * i, r[0], r[1], r[2], r[3]));
-  }
-  return PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    const double* arrays[4] = {a, b, c, d};
+    int32_t status = validate_batch(count, 3, arrays, 4, signs);
+    if (status == PHX_MC_OK) {
+      status = validate_ids(count, 4, ids);
+    }
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    for (int64_t i = 0; i < count; ++i) {
+      const int64_t* r = ids + 4 * i;
+      signs[i] = static_cast<int8_t>(phx::mc::orient3d_sos(
+          a + 3 * i, b + 3 * i, c + 3 * i, d + 3 * i, r[0], r[1], r[2], r[3]));
+    }
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_incircle_sos(int64_t count, const double* a, const double* b, const double* c,
                             const double* d, const int64_t* ids, int8_t* signs) {
-  const double* arrays[4] = {a, b, c, d};
-  int32_t status = validate_batch(count, 2, arrays, 4, signs);
-  if (status == PHX_MC_OK) {
-    status = validate_ids(count, 4, ids);
-  }
-  if (status != PHX_MC_OK) {
-    return status;
-  }
-  for (int64_t i = 0; i < count; ++i) {
-    const int64_t* r = ids + 4 * i;
-    signs[i] = static_cast<int8_t>(phx::mc::incircle_sos(a + 2 * i, b + 2 * i, c + 2 * i,
-                                                         d + 2 * i, r[0], r[1], r[2], r[3]));
-  }
-  return PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    const double* arrays[4] = {a, b, c, d};
+    int32_t status = validate_batch(count, 2, arrays, 4, signs);
+    if (status == PHX_MC_OK) {
+      status = validate_ids(count, 4, ids);
+    }
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    for (int64_t i = 0; i < count; ++i) {
+      const int64_t* r = ids + 4 * i;
+      signs[i] = static_cast<int8_t>(phx::mc::incircle_sos(
+          a + 2 * i, b + 2 * i, c + 2 * i, d + 2 * i, r[0], r[1], r[2], r[3]));
+    }
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_insphere_sos(int64_t count, const double* a, const double* b, const double* c,
                             const double* d, const double* e, const int64_t* ids,
                             int8_t* signs) {
-  const double* arrays[5] = {a, b, c, d, e};
-  int32_t status = validate_batch(count, 3, arrays, 5, signs);
-  if (status == PHX_MC_OK) {
-    status = validate_ids(count, 5, ids);
-  }
-  if (status != PHX_MC_OK) {
-    return status;
-  }
-  for (int64_t i = 0; i < count; ++i) {
-    const int64_t* r = ids + 5 * i;
-    signs[i] = static_cast<int8_t>(phx::mc::insphere_sos(a + 3 * i, b + 3 * i, c + 3 * i,
-                                                         d + 3 * i, e + 3 * i, r[0], r[1],
-                                                         r[2], r[3], r[4]));
-  }
-  return PHX_MC_OK;
+  return guarded([&]() -> int32_t {
+    const double* arrays[5] = {a, b, c, d, e};
+    int32_t status = validate_batch(count, 3, arrays, 5, signs);
+    if (status == PHX_MC_OK) {
+      status = validate_ids(count, 5, ids);
+    }
+    if (status != PHX_MC_OK) {
+      return status;
+    }
+    for (int64_t i = 0; i < count; ++i) {
+      const int64_t* r = ids + 5 * i;
+      signs[i] = static_cast<int8_t>(phx::mc::insphere_sos(a + 3 * i, b + 3 * i, c + 3 * i,
+                                                           d + 3 * i, e + 3 * i, r[0], r[1],
+                                                           r[2], r[3], r[4]));
+    }
+    return PHX_MC_OK;
+  });
 }
 
 int32_t phx_mc_mesh_dimension(const phx_mc_mesh* mesh) { return mesh->dimension; }

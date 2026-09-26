@@ -25,6 +25,7 @@ from jaxtyping import Array
 from numpy.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._geometry_predicates import PredicateMode, resolve_host_predicate_mode
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import CellMesh
@@ -40,7 +41,6 @@ from ..discretization.fem import (
     hp_active_cell_mesh,
     refine_tensor_hp_cells,
 )
-from ..geometry._predicates import PredicateMode, resolve_host_predicate_mode
 from ..linalg import determinant_small_linear, SmallLinearSolvePlan
 from ._assembly import MeshPart
 from ._association import BRepAssociationTransfer
@@ -907,13 +907,15 @@ def _evidence_id(evidence: MeshAdaptationEvidence | None, /):
 class MeshAdaptationResult(StrictModule, NonTrainableState):
     """Certified target of one executed adaptation with lineage and evidence.
 
-    ``transition``, ``lineage``, ``stencil``, and ``transfer`` are ``None`` exactly
-    when the status is UNCHANGED; provider routes have unknown vertex lineage and
-    therefore no stencil or transfer. ``transfer`` maps P1 vertex values from the
-    source vertex row order to the target vertex row order. ``metric`` is the
-    target-bound metric of metric routes, ``hierarchy`` the state to pass to the
-    next marked request, and ``elapsed_seconds`` is wall-time evidence outside
-    ``result_id``.
+    ``transition``, ``lineage``, ``stencil``, and ``transfer`` are absent when
+    the certified target remains the exact source. That source-preserving result
+    is ``UNCHANGED`` only when no requested work was refused and no convergence
+    criterion remains unmet; it may instead be ``PARTIAL``, ``STALLED``, or
+    ``PASS_LIMIT``. Provider routes have unknown vertex lineage and therefore no
+    stencil or transfer. ``transfer`` maps P1 vertex values from the source
+    vertex row order to the target vertex row order. ``metric`` is the target-bound
+    metric of metric routes, ``hierarchy`` the state to pass to the next marked
+    request, and ``elapsed_seconds`` is wall-time evidence outside ``result_id``.
     """
 
     status: MeshAdaptationStatus = eqx.field(static=True)
@@ -942,11 +944,19 @@ class MeshAdaptationResult(StrictModule, NonTrainableState):
         elapsed_seconds: float,
         /,
     ):
-        unchanged = outcome.status is MeshAdaptationStatus.UNCHANGED
-        if unchanged != (outcome.transition is None) or (
-            unchanged and outcome.target.result_id != prepared.source.result_id
-        ):
-            raise ValueError("Exactly the UNCHANGED status keeps the source result.")
+        source_preserved = outcome.target.result_id == prepared.source.result_id
+        absent = (
+            outcome.transition is None
+            and outcome.lineage is None
+            and outcome.stencil is None
+            and outcome.transfer is None
+        )
+        if source_preserved != absent:
+            raise ValueError(
+                "A source-preserving adaptation has no transition or transfer evidence."
+            )
+        if outcome.status is MeshAdaptationStatus.UNCHANGED and not source_preserved:
+            raise ValueError("UNCHANGED must preserve the exact source result.")
         if outcome.transition is not None and (
             outcome.transition.target.result_id != outcome.target.result_id
             or outcome.transition.lineage.lineage_id != outcome.lineage.lineage_id
@@ -1201,7 +1211,14 @@ def _execute_bisection_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutco
         or np.asarray(evidence.rejected_coarsening_ids).size > 0
     )
     if not refined and not coarsened:
-        return _unchanged(prepared, evidence, outcome.hierarchy)
+        return _unchanged(
+            prepared,
+            evidence,
+            outcome.hierarchy,
+            status=MeshAdaptationStatus.PARTIAL
+            if partial
+            else MeshAdaptationStatus.UNCHANGED,
+        )
     match (refined, coarsened):
         case (True, False):
             kind = MeshTransitionKind.REFINE
@@ -1242,7 +1259,6 @@ def _target_metric(
         minimum_size=metric.minimum_size,
         maximum_size=metric.maximum_size,
         maximum_anisotropy=metric.maximum_anisotropy,
-        maximum_gradation=metric.maximum_gradation,
     )
 
 
@@ -1284,9 +1300,9 @@ def _execute_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     status = _metric_status(evidence, topology)
     applied = evidence.splits + evidence.collapses + evidence.flips + evidence.relocations
     if applied == 0:
-        # Nothing applied: the target is the source (UNCHANGED); whether the
-        # criterion holds or the run stalled is in the evidence.
-        return _unchanged(prepared, evidence, None)
+        # Preserve the exact source while retaining whether the request was
+        # already satisfied, stalled, or exhausted its pass budget.
+        return _unchanged(prepared, evidence, None, status=status)
     native = _finalize_native(
         prepared, outcome.edit, MeshTransitionKind.REMESH, conservative=False
     )

@@ -194,6 +194,14 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     Thicknesses are measured as increments of the exact distance from each
     column's layer vertices to the wall surface (BVH-nearest point-triangle
     distances); per-layer statistics cover every column that carries the layer.
+    ``layer_active[k]`` is ``True`` iff at least one surviving column carries
+    requested layer ``k``. A requested layer carried by no surviving column has
+    ``layer_active[k] == False`` and NaN achieved, minimum, and maximum
+    thickness; every growth rate touching it
+    (``achieved_growth_rates[k] = achieved_thicknesses[k + 1] /
+    achieved_thicknesses[k]``) is NaN. The explicit ``terminated_vertex_count``,
+    ``reduced_vertex_count``, and ``merged_vertex_count`` record why columns
+    stopped short of or shrank the requested schedule.
     """
 
     requested_thicknesses: tuple[float, ...] = eqx.field(static=True)
@@ -201,6 +209,7 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     minimum_thicknesses: Array
     maximum_thicknesses: Array
     achieved_growth_rates: Array
+    layer_active: Array
     column_count: int = eqx.field(static=True)
     fan_column_count: int = eqx.field(static=True)
     corner_patch_count: int = eqx.field(static=True)
@@ -223,15 +232,56 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
     evidence_id: str = eqx.field(static=True)
 
     def __init__(self, **values):
-        arrays = (
+        requested = tuple(float(value) for value in values["requested_thicknesses"])
+        if (
+            not requested
+            or not np.all(np.isfinite(requested))
+            or np.any(np.asarray(requested) <= 0.0)
+        ):
+            raise ValueError("requested_thicknesses must be finite and positive.")
+        layer_active = np.asarray(values["layer_active"], dtype=np.bool_)
+        if layer_active.shape != (len(requested),):
+            raise ValueError("layer_active must hold one entry per requested layer.")
+        arrays = {
+            name: np.asarray(values[name], dtype=np.float64)
+            for name in (
+                "achieved_thicknesses",
+                "minimum_thicknesses",
+                "maximum_thicknesses",
+                "achieved_growth_rates",
+            )
+        }
+        layer_shape = (len(requested),)
+        if any(arrays[name].shape != layer_shape for name in tuple(arrays)[:3]) or arrays[
+            "achieved_growth_rates"
+        ].shape != (len(requested) - 1,):
+            raise ValueError(
+                "Boundary-layer thickness and growth arrays have invalid shapes."
+            )
+        for name in (
             "achieved_thicknesses",
             "minimum_thicknesses",
             "maximum_thicknesses",
-            "achieved_growth_rates",
-        )
-        for name in arrays:
-            setattr(self, name, jnp.asarray(np.asarray(values[name], dtype=np.float64)))
-        self.requested_thicknesses = tuple(values["requested_thicknesses"])
+        ):
+            array = arrays[name]
+            if np.any(~np.isfinite(array[layer_active])) or np.any(
+                ~np.isnan(array[~layer_active])
+            ):
+                raise ValueError(
+                    f"{name} must be finite on active layers and NaN otherwise."
+                )
+        growth_active = layer_active[:-1] & layer_active[1:]
+        growth = arrays["achieved_growth_rates"]
+        if np.any(~np.isfinite(growth[growth_active])) or np.any(
+            ~np.isnan(growth[~growth_active])
+        ):
+            raise ValueError(
+                "achieved_growth_rates must be finite between active layers and NaN otherwise."
+            )
+        for name, array in arrays.items():
+            setattr(self, name, jnp.asarray(array))
+        self.layer_active = jnp.asarray(layer_active)
+        self.requested_thicknesses = requested
         integers = (
             "column_count",
             "fan_column_count",
@@ -264,8 +314,8 @@ class BoundaryLayerEvidence(StrictModule, NonTrainableState):
                 "kind": "boundary-layer-evidence",
                 "requested": self.requested_thicknesses,
                 "arrays": {
-                    name: array_tree_fingerprint(np.asarray(values[name]))
-                    for name in arrays
+                    **{name: array_tree_fingerprint(arrays[name]) for name in arrays},
+                    "layer_active": array_tree_fingerprint(layer_active),
                 },
                 **{name: int(values[name]) for name in integers},
                 "minimum_visibility": self.minimum_visibility,
@@ -1981,17 +2031,18 @@ def _measured_thicknesses(
     carried = (
         np.arange(1, layers + 1)[:, None] <= columns.count[front.column_vertex][None, :]
     )
+    active = np.any(carried, axis=1)
     increments = np.diff(distance, axis=0)
     mean = np.full((layers,), np.nan)
     minimum = np.full((layers,), np.nan)
     maximum = np.full((layers,), np.nan)
     for layer in range(layers):
-        values = increments[layer, carried[layer]]
-        if values.size:
+        if active[layer]:
+            values = increments[layer, carried[layer]]
             mean[layer] = np.mean(values)
             minimum[layer] = np.min(values)
             maximum[layer] = np.max(values)
-    return mean, minimum, maximum
+    return mean, minimum, maximum, active
 
 
 # ---------------------------------------------------------------- entry points
@@ -2144,7 +2195,7 @@ def _assemble(
             all_points,
         )
     cap_mesh, cap_vertices = _cap_mesh(all_points, cap, cap_arity)
-    mean, minimum, maximum = _measured_thicknesses(
+    mean, minimum, maximum, active = _measured_thicknesses(
         wall, front, columns, resolution.points
     )
     wall_scale = columns.scale[wall.wall_vertices]
@@ -2154,6 +2205,7 @@ def _assemble(
         minimum_thicknesses=minimum,
         maximum_thicknesses=maximum,
         achieved_growth_rates=mean[1:] / mean[:-1],
+        layer_active=active,
         column_count=front.column_vertex.size,
         fan_column_count=front.fan_column_count,
         corner_patch_count=front.corner_patch_count,

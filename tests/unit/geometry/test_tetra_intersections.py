@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from phydrax._geometry_precision import GeometryPrecisionPolicy
+from phydrax._geometry_predicates import PredicateMode
 from phydrax._meshcore import meshcore_available
-from phydrax.geometry._predicates import PredicateMode
 from phydrax.geometry._tetra_intersections import (
     intersect_tetrahedra,
     TetraIntersectionLimits,

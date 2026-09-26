@@ -177,6 +177,7 @@ print(
                 "measured_growth_rates": np.asarray(
                     evidence.achieved_growth_rates
                 ).tolist(),
+                "layer_active": np.asarray(evidence.layer_active).tolist(),
                 "maximum_relative_thickness_error": thickness_error,
                 "columns": evidence.column_count,
                 "fan_columns": evidence.fan_column_count,

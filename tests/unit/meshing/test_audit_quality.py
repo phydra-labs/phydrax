@@ -252,6 +252,7 @@ def test_subdivision_budget_leaves_valid_curved_cell_unresolved():
         mesh, geometry, policy=phx.meshing.CellMeshAuditPolicy(validity_policy=tiny)
     )
     assert "unresolved_geometry_validity" in rejected.issues
+    assert "unresolved_geometry_validity" in rejected.evaluated_checks
     recorded = phx.meshing.audit_cell_mesh(
         mesh,
         geometry,
@@ -261,6 +262,7 @@ def test_subdivision_budget_leaves_valid_curved_cell_unresolved():
     )
     assert recorded.passed
     assert recorded.recorded == ("unresolved_geometry_validity",)
+    assert "unresolved_geometry_validity" in recorded.evaluated_checks
 
 
 def test_twisted_trilinear_hexahedron_is_invalid_despite_positive_corners():
@@ -423,6 +425,64 @@ def test_pinched_vertex_is_non_manifold():
     assert not audit.passed
     assert audit.issues == ("nonmanifold_vertices",)
     assert dict(audit.check_counts)["nonmanifold_vertices"] == 1
+
+
+def test_default_audit_rejects_overlapping_cells_and_reports_skipped_checks():
+    points = np.asarray(
+        ((0.0, 0.0), (2.0, 0.0), (0.0, 2.0), (0.5, 0.5), (2.5, 0.5), (0.5, 2.5))
+    )
+    mesh = phx.discretization.CellMesh(
+        points,
+        (
+            phx.discretization.CellBlock(
+                "cells", "triangle", np.asarray(((0, 1, 2), (3, 4, 5)))
+            ),
+        ),
+    )
+    geometry = phx.discretization.CellGeometrySpec.affine(mesh)
+    rejected = phx.meshing.audit_cell_mesh(mesh, geometry)
+    skipped = phx.meshing.audit_cell_mesh(
+        mesh,
+        geometry,
+        policy=phx.meshing.CellMeshAuditPolicy(
+            self_intersection=phx.meshing.CellMeshAuditDisposition.SKIP
+        ),
+    )
+
+    assert rejected.issues == ("self_intersection",)
+    assert "self_intersection" in rejected.evaluated_checks
+    assert rejected.skipped_checks == ("open_boundary",)
+    assert skipped.passed
+    assert skipped.skipped_checks == ("open_boundary", "self_intersection")
+    assert "self_intersection" not in skipped.evaluated_checks
+    assert "self_intersection" not in dict(skipped.check_counts)
+
+
+def test_concave_polygon_cell_passes_the_self_intersection_audit():
+    # Notched square: the vertex-zero fan folds over itself, the cell does not.
+    points = np.asarray(((0.0, 0.0), (3.0, 0.0), (3.0, 3.0), (1.5, 1.0), (0.0, 3.0)))
+    mesh = phx.discretization.CellMesh(
+        points,
+        (
+            phx.discretization.CellBlock(
+                "cells", "polygon", np.arange(5, dtype=np.int32)[None, :]
+            ),
+        ),
+    )
+    audit = phx.meshing.audit_cell_mesh(
+        mesh, phx.discretization.CellGeometrySpec.affine(mesh)
+    )
+
+    assert audit.passed
+    assert dict(audit.check_counts)["self_intersection"] == 0
+    bounded = phx.meshing.audit_cell_mesh(
+        mesh,
+        phx.discretization.CellGeometrySpec.affine(mesh),
+        policy=phx.meshing.CellMeshAuditPolicy(maximum_intersection_candidates=1),
+    )
+    assert not bounded.passed
+    assert "self_intersection_capacity" in bounded.unresolved
+    assert "unresolved_self_intersection_capacity" in bounded.issues
 
 
 def test_metric_quality_measures_shape_in_metric_space():

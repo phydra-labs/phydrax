@@ -165,19 +165,16 @@ def test_resolved_sizes_compile_into_isotropic_metric_constraints():
         scope.entity_ids,
         phx.meshing.SizeFieldDomain.SAMPLE_CLOUD,
     )
-    metric = phx.meshing.size_field_metric(field, scope, maximum_gradation=1.2)
+    metric = phx.meshing.size_field_metric(field, scope)
     np.testing.assert_allclose(metric.values, np.tile(16.0 * np.eye(2), (2, 1, 1)))
     with pytest.raises(ValueError, match="entity IDs"):
-        phx.meshing.size_field_metric(field, _mesh_scope((4, 6)), maximum_gradation=1.2)
+        phx.meshing.size_field_metric(field, _mesh_scope((4, 6)))
 
 
 def test_metric_normalization_clamps_size_and_anisotropy():
-    metric = phx.meshing.MeshMetricField(
+    metric = phx.meshing.MeshMetricSamples(
         _mesh_scope((1, 2)),
         np.asarray((np.diag((1.0, 10_000.0)), np.diag((0.01, 1.0)))),
-        minimum_size=0.1,
-        maximum_size=2.0,
-        maximum_anisotropy=4.0,
     )
     normalized, evidence = phx.meshing.normalize_mesh_metric(
         metric,

@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._geometry_predicates import orient3d, PredicateMode, PredicateSign
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._cell_mesh import CellMesh
@@ -30,8 +31,6 @@ def _component_tetrahedra_mesh(
     /,
 ) -> tuple[CellMesh, np.ndarray]:
     """Tetrahedral cell mesh of the active cut components and each cell's component."""
-    from ...geometry._predicates import orient3d, PredicateMode, PredicateSign
-
     tetrahedra = np.concatenate(
         tuple(
             np.asarray(component, dtype=np.float64)

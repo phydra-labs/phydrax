@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numeric>
 #include <optional>
 #include <stdexcept>
@@ -186,44 +187,11 @@ std::vector<T> host_copy(oh::Read<T> values) {
 // the same Failure on every rank before the next collective Omega_h call.
 template <class Stage>
 void agreed(oh::CommPtr const& comm, Stage&& stage) {
-  std::string kind, message;
-  try {
-    stage();
-  } catch (worker::Failure const& failure) {
-    kind = failure.kind;
-    message = failure.what();
-  } catch (std::bad_alloc const&) {
-    kind = "resource_exhausted";
-    message = "Worker allocation failed";
-  } catch (std::length_error const& error) {
-    kind = "resource_exhausted";
-    message = error.what();
-  } catch (std::invalid_argument const& error) {
-    kind = "invalid_request";
-    message = error.what();
-  } catch (std::exception const& error) {
-    kind = "library_failure";
-    message = error.what();
-  }
 #ifdef PHYDRAX_WORKER_WITH_MPI
-  MPI_Comm const raw = comm->get_impl();
-  int const size = comm->size();
-  int const candidate = kind.empty() ? size : comm->rank();
-  int failing = size;
-  MPI_Allreduce(&candidate, &failing, 1, MPI_INT, MPI_MIN, raw);
-  if (failing == size) return;
-  for (std::string* text : {&kind, &message}) {
-    unsigned long long length = text->size();
-    MPI_Bcast(&length, 1, MPI_UNSIGNED_LONG_LONG, failing, raw);
-    text->resize(static_cast<std::size_t>(length));
-    if (length != 0)
-      MPI_Bcast(text->data(), static_cast<int>(length), MPI_CHAR, failing, raw);
-  }
-  if (size > 1) message = "rank " + std::to_string(failing) + ": " + message;
-  throw worker::Failure(kind, message);
+  worker::agreed(comm->get_impl(), std::forward<Stage>(stage));
 #else
   (void)comm;
-  if (!kind.empty()) throw worker::Failure(kind, message);
+  stage();
 #endif
 }
 
@@ -563,74 +531,110 @@ void write_partition(oh::Mesh& mesh, AdaptRequest const& adapt, exchange::Output
 }
 
 json::Value adapt_operation(oh::Library& library, worker::Request const& request) {
-  AdaptRequest const adapt = parse(request.parameters);
   oh::CommPtr const world = library.world();
   int const rank = world->rank(), size = world->size();
+  AdaptRequest adapt;
+  agreed(world, [&] { adapt = parse(request.parameters); });
+
   oh::Mesh mesh(&library);
   ImportSummary summary;
   agreed(world, [&] {
     if (rank == 0) summary = import_carrier(library, mesh, request, adapt);
   });
-  mesh.set_comm(world);
-  if (size > 1) mesh.balance();
-  mesh.set_parting(OMEGA_H_GHOSTED);
+  agreed(world, [&] { mesh.set_comm(world); });
+  if (size > 1) agreed(world, [&] { mesh.balance(); });
+  agreed(world, [&] { mesh.set_parting(OMEGA_H_GHOSTED); });
   if (adapt.gradation_rate) {
-    auto const graded = oh::limit_metric_gradation(
-        &mesh, mesh.get_array<oh::Real>(0, "target_metric"), *adapt.gradation_rate);
-    mesh.set_tag(0, "target_metric", graded);
+    agreed(world, [&] {
+      auto const graded = oh::limit_metric_gradation(
+          &mesh, mesh.get_array<oh::Real>(0, "target_metric"),
+          *adapt.gradation_rate);
+      mesh.set_tag(0, "target_metric", graded);
+    });
   }
-  oh::AdaptOpts options(&mesh);
-  agreed(world, [&] { configure(options, adapt); });
 
-  std::vector<std::vector<double>> before(adapt.fields.size());
-  for (std::size_t index = 0; index < adapt.fields.size(); ++index)
+  std::unique_ptr<oh::AdaptOpts> options;
+  agreed(world, [&] {
+    options = std::make_unique<oh::AdaptOpts>(&mesh);
+    configure(*options, adapt);
+  });
+
+  std::vector<std::vector<double>> before;
+  agreed(world, [&] { before.resize(adapt.fields.size()); });
+  for (std::size_t index = 0; index < adapt.fields.size(); ++index) {
     if (adapt.fields[index].transfer == FieldTransfer::conserve)
-      before[index] = owned_integral(mesh, field_tag(index));
+      agreed(world, [&] { before[index] = owned_integral(mesh, field_tag(index)); });
+  }
 
   std::int64_t iterations = 0;
-  while (oh::approach_metric(&mesh, options)) {
-    if (++iterations > adapt.maximum_iterations)
-      throw worker::Failure(
-          "library_failure", "Omega_h did not reach the metric within maximum_iterations");
-    oh::adapt(&mesh, options);
+  while (true) {
+    bool approaching = false;
+    agreed(world, [&] { approaching = oh::approach_metric(&mesh, *options); });
+    if (!approaching) break;
+    ++iterations;
+    if (iterations > adapt.maximum_iterations)
+      agreed(world, [&] {
+        throw worker::Failure(
+            "library_failure",
+            "Omega_h did not reach the metric within maximum_iterations");
+      });
+    agreed(world, [&] { oh::adapt(&mesh, *options); });
   }
-  oh::adapt(&mesh, options);
-  mesh.set_parting(OMEGA_H_ELEM_BASED);
-  if (size > 1) mesh.balance();
-  mesh.set_parting(OMEGA_H_GHOSTED, 1, false);
+  agreed(world, [&] { oh::adapt(&mesh, *options); });
+  agreed(world, [&] { mesh.set_parting(OMEGA_H_ELEM_BASED); });
+  if (size > 1) agreed(world, [&] { mesh.balance(); });
+  agreed(world, [&] { mesh.set_parting(OMEGA_H_GHOSTED, 1, false); });
 
-  auto const qualities = oh::get_minmax(world, mesh.ask_qualities());
-  auto const lengths = oh::get_minmax(world, mesh.ask_lengths());
-  std::uint64_t const global_vertices = static_cast<std::uint64_t>(mesh.nglobal_ents(0));
-  std::uint64_t const global_cells = static_cast<std::uint64_t>(mesh.nglobal_ents(adapt.dimension));
-  std::uint64_t const global_facets = static_cast<std::uint64_t>(oh::get_sum(
-      world, oh::land_each(mesh.owned(adapt.dimension - 1),
-                           oh::each_eq_to(mesh.get_array<oh::I8>(adapt.dimension - 1, "class_dim"),
-                                          static_cast<oh::I8>(adapt.dimension - 1)))));
+  double minimum_quality = 0.0, maximum_quality = 0.0;
+  double minimum_length = 0.0, maximum_length = 0.0;
+  std::uint64_t global_vertices = 0, global_cells = 0, global_facets = 0;
+  agreed(world, [&] {
+    auto const qualities = oh::get_minmax(world, mesh.ask_qualities());
+    auto const lengths = oh::get_minmax(world, mesh.ask_lengths());
+    minimum_quality = qualities.min;
+    maximum_quality = qualities.max;
+    minimum_length = lengths.min;
+    maximum_length = lengths.max;
+    global_vertices = static_cast<std::uint64_t>(mesh.nglobal_ents(0));
+    global_cells = static_cast<std::uint64_t>(mesh.nglobal_ents(adapt.dimension));
+    global_facets = static_cast<std::uint64_t>(oh::get_sum(
+        world, oh::land_each(
+                   mesh.owned(adapt.dimension - 1),
+                   oh::each_eq_to(
+                       mesh.get_array<oh::I8>(adapt.dimension - 1, "class_dim"),
+                       static_cast<oh::I8>(adapt.dimension - 1)))));
+  });
+
   json::Array fields;
-  for (std::size_t index = 0; index < adapt.fields.size(); ++index) {
-    FieldRequest const& field = adapt.fields[index];
-    json::Object record{{"name", field.name}};
-    switch (field.transfer) {
-      case FieldTransfer::linear:
-        record.emplace("method", "OMEGA_H_LINEAR_INTERP");
-        break;
-      case FieldTransfer::conserve:
-        record.emplace("method", "OMEGA_H_CONSERVE");
-        record.emplace("integral_before", json_reals(before[index]));
-        record.emplace("integral_after", json_reals(owned_integral(mesh, field_tag(index))));
-        break;
+  agreed(world, [&] {
+    for (std::size_t index = 0; index < adapt.fields.size(); ++index) {
+      FieldRequest const& field = adapt.fields[index];
+      json::Object record{{"name", field.name}};
+      switch (field.transfer) {
+        case FieldTransfer::linear:
+          record.emplace("method", "OMEGA_H_LINEAR_INTERP");
+          break;
+        case FieldTransfer::conserve:
+          record.emplace("method", "OMEGA_H_CONSERVE");
+          record.emplace("integral_before", json_reals(before[index]));
+          record.emplace("integral_after",
+                         json_reals(owned_integral(mesh, field_tag(index))));
+          break;
+      }
+      fields.push_back(std::move(record));
     }
-    fields.push_back(std::move(record));
-  }
-  if (global_vertices > adapt.maximum_vertices || global_cells > adapt.maximum_cells ||
-      global_cells * static_cast<std::uint64_t>(adapt.dimension + 1) >
-          adapt.maximum_connectivity_entries)
-    throw std::length_error("The adapted mesh exceeds its entity bounds");
+  });
 
   constexpr std::uint64_t root_reserve = 4096;
-  if (request.maximum_output_bytes <= root_reserve)
-    throw std::length_error("The output byte bound cannot hold a partition");
+  agreed(world, [&] {
+    if (global_vertices > adapt.maximum_vertices ||
+        global_cells > adapt.maximum_cells ||
+        global_cells * static_cast<std::uint64_t>(adapt.dimension + 1) >
+            adapt.maximum_connectivity_entries)
+      throw std::length_error("The adapted mesh exceeds its entity bounds");
+    if (request.maximum_output_bytes <= root_reserve)
+      throw std::length_error("The output byte bound cannot hold a partition");
+  });
   agreed(world, [&] {
     if (size == 1) {
       exchange::Output output = request.output();
@@ -640,27 +644,32 @@ json::Value adapt_operation(oh::Library& library, worker::Request const& request
     }
     exchange::Output part = exchange::Output::create_part(
         request.output_directory, "rank-" + std::to_string(rank),
-        (request.maximum_output_bytes - root_reserve) / static_cast<std::uint64_t>(size));
+        (request.maximum_output_bytes - root_reserve) /
+            static_cast<std::uint64_t>(size));
     write_partition(mesh, adapt, part);
     part.finish();
   });
-  if (size > 1 && rank == 0) {
-    exchange::Output output = request.output();
-    for (int part = 0; part < size; ++part) output.declare_part("rank-" + std::to_string(part));
-    output.finish();
-  }
+  agreed(world, [&] {
+    if (size > 1 && rank == 0) {
+      exchange::Output output = request.output();
+      for (int part = 0; part < size; ++part)
+        output.declare_part("rank-" + std::to_string(part));
+      output.finish();
+    }
+  });
   return json::Object{
       {"cell_count", global_cells},
       {"classification",
-       json::Object{{"generated_facet_classes", summary.classification.generated_facet_classes}}},
+       json::Object{{"generated_facet_classes",
+                     summary.classification.generated_facet_classes}}},
       {"facet_count", global_facets},
       {"fields", std::move(fields)},
       {"iterations", iterations},
-      {"maximum_length", lengths.max},
-      {"maximum_quality", qualities.max},
-      {"minimum_length", lengths.min},
-      {"minimum_quality", qualities.min},
-      {"options", effective_options(options, adapt)},
+      {"maximum_length", maximum_length},
+      {"maximum_quality", maximum_quality},
+      {"minimum_length", minimum_length},
+      {"minimum_quality", minimum_quality},
+      {"options", effective_options(*options, adapt)},
       {"ranks", size},
       {"vertex_count", global_vertices},
   };

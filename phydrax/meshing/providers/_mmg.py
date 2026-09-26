@@ -110,10 +110,10 @@ def _name(value: str, what: str, /) -> str:
 class MmgOptions:
     """Mmg operation controls in the source coordinate units.
 
-    With a metric, its declared size bounds and gradation become Mmg's hmin,
-    hmax, and hgrad, so ``minimum_size``, ``maximum_size``, and ``gradation``
-    must stay None; without one they are optional explicit bounds (None keeps
-    Mmg's defaults: sizes from the bounding box, gradation 1.3).
+    With a metric, its declared size bounds become Mmg's hmin and hmax, so
+    ``minimum_size`` and ``maximum_size`` must stay None; without one they are
+    optional explicit bounds (None keeps Mmg's bounding-box sizes). ``gradation``
+    is Mmg's hgrad with or without a metric (None keeps Mmg's default 1.3).
     ``angle_detection`` is the ridge-detection dihedral threshold in degrees
     (None disables detection). ``insertion``/``swapping``/``relocation``/
     ``surface_modification`` switch off Mmg's noinsert/noswap/nomove/nosurf
@@ -399,19 +399,6 @@ def _metric_rows(mesh: CellMesh, metric: MeshMetricField, /) -> np.ndarray:
         raise MeshingFailure(
             MeshingFailureCategory.INVALID_SPECIFICATION,
             "Mmg requires an ambient-coordinate SPD metric at every vertex.",
-        )
-    eigenvalues = np.linalg.eigvalsh(values)
-    if (
-        np.min(eigenvalues) < (1.0 / metric.maximum_size**2) * (1.0 - 1.0e-10)
-        or np.max(eigenvalues) > (1.0 / metric.minimum_size**2) * (1.0 + 1.0e-10)
-        or np.any(
-            np.sqrt(eigenvalues[:, -1] / eigenvalues[:, 0])
-            > metric.maximum_anisotropy * (1.0 + 1.0e-10)
-        )
-    ):
-        raise MeshingFailure(
-            MeshingFailureCategory.INVALID_SPECIFICATION,
-            "Normalize the metric before adaptation: eigenvalues exceed its declared size/anisotropy bounds.",
         )
     return values[order]
 
@@ -781,21 +768,15 @@ def _level_set_parameters(
 def _metric_encoding(
     plan: MmgAdaptationPlan, arrays: dict[str, np.ndarray], parameters: dict[str, Any], /
 ) -> tuple[str, float]:
-    """Metric representation and the gradation Mmg applies."""
+    """Metric representation and the gradation Mmg applies (hgrad of the options)."""
     options = plan.options
+    gradation = (
+        _MMG_DEFAULT_GRADATION if options.gradation is None else float(options.gradation)
+    )
     if plan.metric is None:
-        return "none", (
-            _MMG_DEFAULT_GRADATION
-            if options.gradation is None
-            else float(options.gradation)
-        )
-    if any(
-        value is not None
-        for value in (options.minimum_size, options.maximum_size, options.gradation)
-    ):
-        raise ValueError(
-            "A metric owns Mmg's size bounds and gradation; leave the option sizes None."
-        )
+        return "none", gradation
+    if options.minimum_size is not None or options.maximum_size is not None:
+        raise ValueError("A metric owns Mmg's size bounds; leave the option sizes None.")
     representation, arrays["metric"] = _mmg_metric(
         _metric_rows(plan.source.mesh, plan.metric)
     )
@@ -803,9 +784,8 @@ def _metric_encoding(
     parameters.update(
         minimum_size=float(np.nextafter(plan.metric.minimum_size, 0.0)),
         maximum_size=float(np.nextafter(plan.metric.maximum_size, np.inf)),
-        gradation=float(plan.metric.maximum_gradation),
     )
-    return representation, float(plan.metric.maximum_gradation)
+    return representation, gradation
 
 
 def _motion_encoding(
@@ -964,6 +944,8 @@ class MmgAdaptationPlan:
             raise TypeError("limits must be MeshingLimits.")
         if not isinstance(self.audit_policy, CellMeshAuditPolicy):
             raise TypeError("audit_policy must be CellMeshAuditPolicy.")
+        if self.metric is not None and not isinstance(self.metric, MeshMetricField):
+            raise TypeError("metric must be MeshMetricField or None.")
         if self.level_set is not None and not isinstance(self.level_set, MmgLevelSet):
             raise TypeError("level_set must be MmgLevelSet or None.")
         if self.motion is not None and not isinstance(self.motion, MmgLagrangianMotion):
@@ -1760,7 +1742,7 @@ def _adapter_report(
 
 
 def _adapted_metric(
-    mesh: CellMesh, values: np.ndarray | None, gradation: float, /
+    mesh: CellMesh, values: np.ndarray | None, /
 ) -> MeshMetricField | None:
     if values is None:
         return None
@@ -1787,7 +1769,6 @@ def _adapted_metric(
         maximum_anisotropy=max(
             1.0, float(np.nextafter(np.max(sizes[:, 0] / sizes[:, -1]), np.inf))
         ),
-        maximum_gradation=gradation,
     )
 
 
@@ -2022,7 +2003,7 @@ class MmgProvider:
             required_vertices=encoding.required_vertices,
             retained_required_vertices=retained,
         )
-        metric = _adapted_metric(mesh, output.metric, encoding.gradation)
+        metric = _adapted_metric(mesh, output.metric)
         compliance = _compliance(plan, mesh)
         result = CellMeshingResult(
             mesh,
@@ -2089,12 +2070,15 @@ def _compliance(plan: MmgAdaptationPlan, mesh: CellMesh, /) -> MeshingCompliance
     points = np.asarray(mesh.coordinates)
     edges = _entity_vertices(mesh, 1)
     lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
-    requested = [("hausdorff_distance", plan.options.hausdorff_distance)]
+    # Mmg applies its gradation (hgrad) with or without a metric.
+    requested = [
+        ("hausdorff_distance", plan.options.hausdorff_distance),
+        ("gradation", plan._encoding.gradation),
+    ]
     if plan.metric is not None:
         requested += [
             ("metric_minimum_size", plan.metric.minimum_size),
             ("metric_maximum_size", plan.metric.maximum_size),
-            ("metric_gradation", plan.metric.maximum_gradation),
         ]
     return MeshingComplianceReport(
         plan.plan_id,

@@ -741,7 +741,8 @@ void test_performance() {
   PHX_CHECK(result.status == PHX_MC_OK);
   check_triangulation(points, nullptr, result);
   PHX_CHECK(std::count(result.vertex_map.begin(), result.vertex_map.end(), -1) == 0);
-#ifdef NDEBUG
+  // The time bound applies to uninstrumented optimized builds only.
+#if defined(NDEBUG) && !defined(PHX_MC_SANITIZE)
   PHX_CHECK(seconds < 5.0);
 #endif
 

@@ -269,6 +269,8 @@ def test_overlap_pair_overflow_is_flagged_with_the_true_count() -> None:
     result = bvh_overlap_pairs(bvh, bvh, capacity=5)
 
     assert bool(result.overflow)
+    # Pair counts beyond int32 must not wrap.
+    assert result.count.dtype == jnp.int64
     assert int(result.count) == expected.shape[0]
     retained = np.stack(
         (np.asarray(result.first_items)[:5], np.asarray(result.second_items)[:5]),

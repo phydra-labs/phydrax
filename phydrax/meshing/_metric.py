@@ -17,7 +17,7 @@ import heapq
 import math
 from enum import StrEnum
 from functools import partial
-from typing import NamedTuple
+from typing import final, NamedTuple
 
 import equinox as eqx
 import jax
@@ -126,11 +126,60 @@ def _tensor_properties(values: np.ndarray, /) -> _TensorProperties:
     )
 
 
+class _BoundViolations(NamedTuple):
+    """Row masks of metric tensors outside their declared hard bounds."""
+
+    minimum_size: np.ndarray
+    maximum_size: np.ndarray
+    maximum_anisotropy: np.ndarray
+
+
+def _bound_violations(
+    metric: np.ndarray,
+    minimum_size: float,
+    maximum_size: float,
+    maximum_anisotropy: float,
+    /,
+) -> _BoundViolations:
+    """Verify SPD tensors and mask rows outside their declared hard bounds.
+
+    The bounds are ``1/maximum_size**2 <= lambda <= 1/minimum_size**2`` and
+    ``lambda_max <= maximum_anisotropy**2 lambda_min`` on the
+    `verify_dense_properties` spectrum. Its per-row tolerance, a dtype-epsilon
+    multiple of ``lambda_max``, bounds the backward error of every computed
+    eigenvalue; relative to ``lambda_min`` it grows with the row's condition
+    estimate, so the admitted anisotropy roundoff is condition-scaled. Only
+    violations beyond that roundoff are reported.
+    """
+    evidence = verify_dense_properties(jnp.asarray(metric), policy=_SPD_POLICY)
+    if not np.all(np.asarray(evidence.hermitian)):
+        raise ValueError("Mesh metrics must be symmetric.")
+    if not np.all(np.asarray(evidence.positive_definite)):
+        raise ValueError("Mesh metrics must be positive definite.")
+    eigenvalues = np.asarray(evidence.eigenvalues)
+    tolerance = np.asarray(evidence.tolerance)
+    smallest, largest = eigenvalues[:, 0], eigenvalues[:, -1]
+    return _BoundViolations(
+        largest - tolerance > minimum_size**-2,
+        smallest + tolerance < maximum_size**-2,
+        largest - tolerance > maximum_anisotropy**2 * (smallest + tolerance),
+    )
+
+
 class MeshMetricField(StrictModule, NonTrainableState):
-    """Vertex-associated SPD Riemannian metric with explicit declared bounds.
+    """Vertex-associated SPD Riemannian metric within its declared hard bounds.
 
     Rows follow the scope's entity order. A metric eigenvalue ``lambda`` requests
-    Euclidean edge length ``1 / sqrt(lambda)`` along its eigenvector.
+    Euclidean edge length ``1 / sqrt(lambda)`` along its eigenvector. Construction
+    certifies every row from the :func:`phydrax.linalg.verify_dense_properties`
+    spectrum: ``1 / maximum_size**2 <= lambda_i <= 1 / minimum_size**2`` and
+    ``sqrt(lambda_max / lambda_min) <= maximum_anisotropy``, admitting only
+    eigenvalue roundoff (dtype epsilon scaled by the row's spectrum and
+    condition). Values are stored unchanged; out-of-bound or untrusted tensors
+    enter as :class:`MeshMetricSamples` and are bounded explicitly by
+    :func:`normalize_mesh_metric`. Gradation is not a field property: it is
+    requested by a `MetricGradationPolicy` (or provider options) and certified
+    by `MetricGradationEvidence`.
     """
 
     scope: MeshingScope
@@ -138,7 +187,6 @@ class MeshMetricField(StrictModule, NonTrainableState):
     minimum_size: float = eqx.field(static=True)
     maximum_size: float = eqx.field(static=True)
     maximum_anisotropy: float = eqx.field(static=True)
-    maximum_gradation: float = eqx.field(static=True)
     metric_id: str = eqx.field(static=True)
 
     def __init__(
@@ -150,28 +198,28 @@ class MeshMetricField(StrictModule, NonTrainableState):
         minimum_size: float,
         maximum_size: float,
         maximum_anisotropy: float = 100.0,
-        maximum_gradation: float = 1.3,
     ):
         if not isinstance(scope, MeshingScope):
             raise TypeError("scope must be MeshingScope.")
         minimum = _positive(minimum_size, "minimum_size")
         maximum = _positive(maximum_size, "maximum_size")
         anisotropy = _at_least_one(maximum_anisotropy, "maximum_anisotropy")
-        gradation = _at_least_one(maximum_gradation, "maximum_gradation")
         if minimum > maximum:
             raise ValueError("minimum_size cannot exceed maximum_size.")
         metric = _tensor_array(values, scope.entity_ids.shape[0])
-        evidence = verify_dense_properties(jnp.asarray(metric), policy=_SPD_POLICY)
-        if not np.all(np.asarray(evidence.hermitian)):
-            raise ValueError("Mesh metrics must be symmetric.")
-        if not np.all(np.asarray(evidence.positive_definite)):
-            raise ValueError("Mesh metrics must be positive definite.")
+        violations = _bound_violations(metric, minimum, maximum, anisotropy)
+        for name, rows in zip(violations._fields, violations, strict=True):
+            if np.any(rows):
+                raise ValueError(
+                    f"Mesh metric rows {np.flatnonzero(rows)[:8].tolist()} violate "
+                    f"the declared {name}; bound untrusted tensors explicitly with "
+                    "normalize_mesh_metric."
+                )
         self.scope = scope
         self.values = jnp.asarray(metric)
         self.minimum_size = minimum
         self.maximum_size = maximum
         self.maximum_anisotropy = anisotropy
-        self.maximum_gradation = gradation
         self.metric_id = canonical_fingerprint(
             {
                 "kind": "mesh-metric-field",
@@ -180,7 +228,6 @@ class MeshMetricField(StrictModule, NonTrainableState):
                 "minimum_size": minimum,
                 "maximum_size": maximum,
                 "maximum_anisotropy": anisotropy,
-                "maximum_gradation": gradation,
             }
         )
 
@@ -223,6 +270,14 @@ class MetricGradationKind(StrEnum):
     METRIC = "metric"
 
 
+class MetricGradationStatus(StrEnum):
+    """Termination of one metric-gradation request."""
+
+    CONVERGED = "converged"
+    BOUNDS_CONFLICT = "bounds_conflict"
+    SWEEP_LIMIT = "sweep_limit"
+
+
 class MetricGradationPolicy(StrictModule, NonTrainableState):
     """Scalar or anisotropic gradation with an explicit convergence budget.
 
@@ -230,10 +285,14 @@ class MetricGradationPolicy(StrictModule, NonTrainableState):
     exact minimum-first relaxation and realizes it by uniform log-eigenvalue
     shifts saturated at the field's upper eigenvalue bound, which never
     increases anisotropy. Anisotropic gradation (Alauzet 2010) grows every metric
-    along each incident edge and intersects the grown metric at the neighbor,
-    repeating simultaneous sweeps until no metric grows by more than
+    along each incident edge and intersects the grown metric at the neighbor; an
+    intersection outside the field's hard size or anisotropy bounds is withheld
+    (the hard bounds win, every row keeps dominating its input, and the
+    a-posteriori ``maximum_violation`` reports the growth the bounds prevent).
+    Sweeps repeat until no admissible metric grows by more than
     ``relative_tolerance`` or ``maximum_sweeps`` is exhausted; exhaustion is
-    reported as non-convergence, never hidden.
+    reported as non-convergence, never hidden. The policy owns the requested
+    gradation: metric fields carry no gradation bound.
     """
 
     maximum_gradation: float = eqx.field(static=True)
@@ -281,16 +340,19 @@ class MetricGradationPolicy(StrictModule, NonTrainableState):
 
 
 class MetricGradationEvidence(StrictModule, NonTrainableState):
-    """Convergence and a-posteriori edge certification of one gradation.
+    """Termination and a-posteriori edge certification of one gradation.
 
-    ``maximum_violation`` is measured independently after termination over every
-    directed edge: the relative excess of a size over its growth bound (scalar) or
-    the largest eigenvalue of ``M_q**(-1/2) G_(p->q) M_q**(-1/2)`` minus one
-    (anisotropic), clipped at zero.
+    ``CONVERGED`` requires ``maximum_violation <= relative_tolerance``.
+    ``BOUNDS_CONFLICT`` means the hard size or anisotropy bounds withheld every
+    remaining update; ``SWEEP_LIMIT`` means admissible updates remained at the
+    execution bound. ``maximum_violation`` is measured independently after
+    termination over every directed edge: the relative excess of a size over its
+    growth bound (scalar) or the largest eigenvalue of
+    ``M_q**(-1/2) G_(p->q) M_q**(-1/2)`` minus one (anisotropic), clipped at zero.
     """
 
     policy_id: str = eqx.field(static=True)
-    converged: bool = eqx.field(static=True)
+    status: MetricGradationStatus = eqx.field(static=True)
     iterations: int = eqx.field(static=True)
     updates: int = eqx.field(static=True)
     modified_count: int = eqx.field(static=True)
@@ -302,7 +364,7 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
         policy: MetricGradationPolicy,
         /,
         *,
-        converged: bool,
+        status: MetricGradationStatus,
         iterations: int,
         updates: int,
         modified_count: int,
@@ -310,8 +372,10 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
     ):
         if not isinstance(policy, MetricGradationPolicy):
             raise TypeError("policy must be MetricGradationPolicy.")
+        if not isinstance(status, MetricGradationStatus):
+            raise TypeError("status must be MetricGradationStatus.")
         self.policy_id = policy.policy_id
-        self.converged = bool(converged)
+        self.status = status
         self.iterations = int(iterations)
         self.updates = int(updates)
         self.modified_count = int(modified_count)
@@ -320,12 +384,30 @@ class MetricGradationEvidence(StrictModule, NonTrainableState):
             {
                 "kind": "metric-gradation-evidence",
                 "policy": policy.policy_id,
-                "converged": self.converged,
+                "status": self.status.value,
                 "iterations": self.iterations,
                 "updates": self.updates,
                 "modified_count": self.modified_count,
                 "maximum_violation": self.maximum_violation,
             }
+        )
+
+    @property
+    def converged(self) -> bool:
+        return self.status is MetricGradationStatus.CONVERGED
+
+
+class MetricGradationError(ValueError):
+    """A metric-gradation request could not satisfy its scientific contract."""
+
+    def __init__(self, evidence: MetricGradationEvidence, /):
+        if not isinstance(evidence, MetricGradationEvidence):
+            raise TypeError("evidence must be MetricGradationEvidence.")
+        self.evidence = evidence
+        super().__init__(
+            "Metric gradation failed "
+            f"({evidence.status.value}, maximum violation "
+            f"{evidence.maximum_violation:.17g})."
         )
 
 
@@ -894,6 +976,22 @@ def _maximum_growth(metrics: Array, candidates: Array, /) -> Array:
     return reduced.eigenvalues[..., -1]
 
 
+def _within_bounds(metrics: Array, bounds: Array, /) -> Array:
+    """Rows whose spectrum respects the hard bounds ``(lower, upper, anisotropy)``.
+
+    The roundoff allowance is half the `MeshMetricField` certification tolerance
+    (``64 eps lambda_max``), so every admitted row also passes that certification.
+    """
+    values = HermitianSpectrum(metrics).eigenvalues
+    slack = 32.0 * jnp.finfo(values.dtype).eps * values[..., -1]
+    smallest, largest = values[..., 0], values[..., -1]
+    return (
+        (smallest + slack >= bounds[0])
+        & (largest - slack <= bounds[1])
+        & (largest - slack <= bounds[2] ** 2 * (smallest + slack))
+    )
+
+
 @partial(jax.jit, static_argnames=("kind", "maximum_sweeps"))
 def _anisotropic_gradation_kernel(
     metrics: Array,
@@ -904,6 +1002,7 @@ def _anisotropic_gradation_kernel(
     slot_valid: Array,
     log_growth: Array,
     tolerance: Array,
+    bounds: Array,
     *,
     kind: str,
     maximum_sweeps: int,
@@ -926,7 +1025,12 @@ def _anisotropic_gradation_kernel(
         )
         candidates = jnp.concatenate((current[:, None], grown[slots]), axis=1)
         combined = _canonical_intersection(candidates, candidate_valid)
-        accept = _maximum_growth(current, combined) > 1.0 + tolerance
+        # Only admissible growth is accepted, so every row keeps dominating its
+        # input; an intersection outside the hard bounds is withheld and the
+        # a-posteriori violation reports the gradation the bounds prevent.
+        accept = (_maximum_growth(current, combined) > 1.0 + tolerance) & (
+            _within_bounds(combined, bounds)
+        )
         updated = jnp.where(accept[:, None, None], combined, current)
         return (
             updated,
@@ -979,7 +1083,7 @@ def _incoming_slots(targets: np.ndarray, rows: int, /) -> tuple[np.ndarray, np.n
 
 
 def _grade_eigenpairs(
-    minimum_size: float,
+    bounds: tuple[float, float, float],
     eigenvalues: np.ndarray,
     eigenvectors: np.ndarray,
     edges: np.ndarray,
@@ -995,24 +1099,25 @@ def _grade_eigenpairs(
         graded, pops, updates = _grade_scalar_sizes(
             sizes, edges, lengths, growth, policy.kind
         )
-        realized = _realize_mean_sizes(eigenvalues, graded, 1.0 / minimum_size**2)
+        realized = _realize_mean_sizes(eigenvalues, graded, bounds[0] ** -2)
         achieved = np.exp(-0.5 * np.mean(np.log(realized), axis=1))
+        violation = _scalar_violation(achieved, edges, lengths, growth, policy.kind)
         evidence = MetricGradationEvidence(
             policy,
-            converged=True,
+            status=MetricGradationStatus.CONVERGED
+            if violation <= policy.relative_tolerance
+            else MetricGradationStatus.BOUNDS_CONFLICT,
             iterations=pops,
             updates=updates,
             modified_count=int(np.count_nonzero(graded < sizes)),
-            maximum_violation=_scalar_violation(
-                achieved, edges, lengths, growth, policy.kind
-            ),
+            maximum_violation=violation,
         )
         return _compose(realized, eigenvectors), evidence
     sources = np.concatenate((edges[:, 0], edges[:, 1]))
     targets = np.concatenate((edges[:, 1], edges[:, 0]))
     slots, slot_valid = _incoming_slots(targets, rows)
     initial = _compose(eigenvalues, eigenvectors)
-    final, sweeps, updates, converged, violation = _anisotropic_gradation_kernel(
+    final, sweeps, updates, fixed_point, violation = _anisotropic_gradation_kernel(
         jnp.asarray(initial),
         jnp.asarray(sources, dtype=jnp.int32),
         jnp.asarray(targets, dtype=jnp.int32),
@@ -1021,18 +1126,28 @@ def _grade_eigenpairs(
         jnp.asarray(slot_valid),
         jnp.asarray(math.log(policy.maximum_gradation)),
         jnp.asarray(policy.relative_tolerance),
+        jnp.asarray((bounds[1] ** -2, bounds[0] ** -2, bounds[2]), dtype=jnp.float64),
         kind=policy.kind.value,
         maximum_sweeps=policy.maximum_sweeps,
     )
     graded = np.asarray(final)
     modified = np.any(graded != initial, axis=(1, 2))
+    maximum_violation = float(np.asarray(violation))
+    reached_fixed_point = bool(np.asarray(fixed_point))
+    status = (
+        MetricGradationStatus.CONVERGED
+        if maximum_violation <= policy.relative_tolerance
+        else MetricGradationStatus.BOUNDS_CONFLICT
+        if reached_fixed_point
+        else MetricGradationStatus.SWEEP_LIMIT
+    )
     evidence = MetricGradationEvidence(
         policy,
-        converged=bool(np.asarray(converged)),
+        status=status,
         iterations=int(np.asarray(sweeps)),
         updates=int(np.asarray(updates)),
         modified_count=int(np.count_nonzero(modified)),
-        maximum_violation=float(np.asarray(violation)),
+        maximum_violation=maximum_violation,
     )
     return graded, evidence
 
@@ -1061,15 +1176,21 @@ def grade_mesh_metric(
     points = _points(coordinates, rows, dimension)
     eigenvalues, eigenvectors = _host_spectrum(_tensor_properties(values).symmetric)
     graded, evidence = _grade_eigenpairs(
-        metric.minimum_size, eigenvalues, eigenvectors, edges, points, policy
+        (metric.minimum_size, metric.maximum_size, metric.maximum_anisotropy),
+        eigenvalues,
+        eigenvectors,
+        edges,
+        points,
+        policy,
     )
+    if not evidence.converged:
+        raise MetricGradationError(evidence)
     field = MeshMetricField(
         metric.scope,
         graded,
         minimum_size=metric.minimum_size,
         maximum_size=metric.maximum_size,
         maximum_anisotropy=metric.maximum_anisotropy,
-        maximum_gradation=policy.maximum_gradation,
     )
     return field, evidence
 
@@ -1124,32 +1245,21 @@ def normalize_mesh_metric(
         volumes=volumes,
     )
     values = _compose(bounded.eigenvalues, eigenvectors)
-    bounds = {
-        "minimum_size": policy.minimum_size,
-        "maximum_size": policy.maximum_size,
-        "maximum_anisotropy": policy.maximum_anisotropy,
-    }
-    # The declared gradation bound is the enforced one, else the input field's;
-    # untrusted samples without gradation keep the field's documented default.
-    if isinstance(metric, MeshMetricField):
-        bounds["maximum_gradation"] = metric.maximum_gradation
     gradation = None
     final_complexity = bounded.scaled_complexity
     if policy.gradation is not None:
         if adjacency is None or coordinates is None:
             raise ValueError("Metric gradation requires adjacency and coordinates.")
         values, gradation = _grade_eigenpairs(
-            policy.minimum_size,
+            (policy.minimum_size, policy.maximum_size, policy.maximum_anisotropy),
             bounded.eigenvalues,
             eigenvectors,
             _edges(adjacency, rows),
             _points(coordinates, rows, raw.shape[-1]),
             policy.gradation,
         )
-        bounds["maximum_gradation"] = policy.gradation.maximum_gradation
         if volumes is not None:
             final_complexity = _complexity(_host_spectrum(values)[0], volumes)
-    field = MeshMetricField(metric.scope, values, **bounds)
     evidence = MetricNormalizationEvidence(
         policy,
         metric.metric_id if isinstance(metric, MeshMetricField) else metric.samples_id,
@@ -1166,19 +1276,40 @@ def normalize_mesh_metric(
         final_complexity=final_complexity,
         gradation=gradation,
     )
+    if gradation is not None and not gradation.converged:
+        raise MetricGradationError(gradation)
+    field = MeshMetricField(
+        metric.scope,
+        values,
+        minimum_size=policy.minimum_size,
+        maximum_size=policy.maximum_size,
+        maximum_anisotropy=policy.maximum_anisotropy,
+    )
     return field, evidence
 
 
 class MetricCombinationEvidence(StrictModule, NonTrainableState):
-    """Per-row conflicts between the combined metric and the declared hard bounds.
+    """Conflicts between one metric intersection and the combined hard bounds.
 
+    The combined bounds are the most restrictive declared ones: the largest input
+    ``minimum_size``, the smallest input ``maximum_size``, and the smallest input
+    ``maximum_anisotropy``. ``size_interval_conflict`` reports mutually exclusive
+    declared size intervals before a tensor intersection exists. Otherwise,
     ``minimum_size_conflict`` marks rows whose intersection demands sizes below
-    the most restrictive declared minimum size; ``anisotropy_conflict`` marks rows
-    exceeding the most restrictive declared anisotropy.
+    ``minimum_size``, ``maximum_size_conflict`` rows allowing sizes above
+    ``maximum_size`` (excluded in exact arithmetic because the intersection
+    dominates every input), and ``anisotropy_conflict`` rows exceeding
+    ``maximum_anisotropy``. All row decisions admit only the eigenvalue roundoff
+    certified by the `MeshMetricField` bound check.
     """
 
     input_ids: tuple[str, ...] = eqx.field(static=True)
+    minimum_size: float = eqx.field(static=True)
+    maximum_size: float = eqx.field(static=True)
+    maximum_anisotropy: float = eqx.field(static=True)
+    size_interval_conflict: bool = eqx.field(static=True)
     minimum_size_conflict: Array
+    maximum_size_conflict: Array
     anisotropy_conflict: Array
     conflict_count: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
@@ -1187,23 +1318,49 @@ class MetricCombinationEvidence(StrictModule, NonTrainableState):
         self,
         input_ids: tuple[str, ...],
         minimum_size_conflict: ArrayLike,
+        maximum_size_conflict: ArrayLike,
         anisotropy_conflict: ArrayLike,
         /,
+        *,
+        minimum_size: float,
+        maximum_size: float,
+        maximum_anisotropy: float,
+        size_interval_conflict: bool = False,
     ):
-        minimum = np.asarray(minimum_size_conflict, dtype=np.bool_)
-        anisotropy = np.asarray(anisotropy_conflict, dtype=np.bool_)
-        if minimum.ndim != 1 or anisotropy.shape != minimum.shape:
+        masks = tuple(
+            np.asarray(value, dtype=np.bool_)
+            for value in (
+                minimum_size_conflict,
+                maximum_size_conflict,
+                anisotropy_conflict,
+            )
+        )
+        if masks[0].ndim != 1 or any(mask.shape != masks[0].shape for mask in masks):
             raise ValueError("Combination conflicts must be aligned row masks.")
+        if not isinstance(size_interval_conflict, (bool, np.bool_)):
+            raise TypeError("size_interval_conflict must be bool.")
         self.input_ids = tuple(str(value) for value in input_ids)
-        self.minimum_size_conflict = jnp.asarray(minimum)
-        self.anisotropy_conflict = jnp.asarray(anisotropy)
-        self.conflict_count = int(np.count_nonzero(minimum | anisotropy))
+        self.minimum_size = _positive(minimum_size, "minimum_size")
+        self.maximum_size = _positive(maximum_size, "maximum_size")
+        self.maximum_anisotropy = _at_least_one(maximum_anisotropy, "maximum_anisotropy")
+        self.size_interval_conflict = bool(size_interval_conflict)
+        self.minimum_size_conflict = jnp.asarray(masks[0])
+        self.maximum_size_conflict = jnp.asarray(masks[1])
+        self.anisotropy_conflict = jnp.asarray(masks[2])
+        self.conflict_count = int(self.size_interval_conflict) + int(
+            np.count_nonzero(masks[0] | masks[1] | masks[2])
+        )
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "metric-combination-evidence",
                 "inputs": self.input_ids,
-                "minimum_size_conflict": array_tree_fingerprint(minimum),
-                "anisotropy_conflict": array_tree_fingerprint(anisotropy),
+                "minimum_size": self.minimum_size,
+                "maximum_size": self.maximum_size,
+                "maximum_anisotropy": self.maximum_anisotropy,
+                "size_interval_conflict": self.size_interval_conflict,
+                "minimum_size_conflict": array_tree_fingerprint(masks[0]),
+                "maximum_size_conflict": array_tree_fingerprint(masks[1]),
+                "anisotropy_conflict": array_tree_fingerprint(masks[2]),
             }
         )
 
@@ -1212,15 +1369,57 @@ class MetricCombinationEvidence(StrictModule, NonTrainableState):
         return self.conflict_count == 0
 
 
+@final
+class MetricCombinationResult(StrictModule, NonTrainableState):
+    """Outcome of :func:`combine_mesh_metrics`.
+
+    ``field`` is the combined metric exactly when ``successful``: any hard-bound
+    conflict in ``evidence`` withholds it, so a contradictory intersection can
+    never be executed by an adaptation route.
+    """
+
+    field: MeshMetricField | None
+    evidence: MetricCombinationEvidence
+    successful: bool = eqx.field(static=True)
+    result_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        field: MeshMetricField | None,
+        evidence: MetricCombinationEvidence,
+        /,
+    ):
+        if field is not None and not isinstance(field, MeshMetricField):
+            raise TypeError("field must be MeshMetricField or None.")
+        if not isinstance(evidence, MetricCombinationEvidence):
+            raise TypeError("evidence must be MetricCombinationEvidence.")
+        if (field is not None) != evidence.passed:
+            raise ValueError(
+                "A combined field exists exactly when the combination has no conflict."
+            )
+        self.field = field
+        self.evidence = evidence
+        self.successful = evidence.passed
+        self.result_id = canonical_fingerprint(
+            {
+                "kind": "metric-combination-result",
+                "field": None if field is None else field.metric_id,
+                "evidence": evidence.evidence_id,
+            }
+        )
+
+
 def combine_mesh_metrics(
     metrics: tuple[MeshMetricField, ...], /
-) -> tuple[MeshMetricField, MetricCombinationEvidence]:
+) -> MetricCombinationResult:
     """Intersect metrics on one scope by canonical simultaneous reduction.
 
-    The result dominates every input (it requests the smallest size in every
-    direction), is idempotent, and is independent of input order. Declared bounds
-    combine to the most restrictive interval; an empty hard size interval raises,
-    and per-row conflicts with the combined bounds are reported.
+    The intersection dominates every input (it requests the smallest size in
+    every direction), is idempotent, and is independent of input order. Declared
+    bounds combine to the most restrictive interval. An empty hard size interval,
+    sizes below the combined minimum, or anisotropy beyond the combined bound are
+    explicit conflicts: the result retains evidence but withholds its executable
+    field.
     """
     fields = tuple(metrics)
     if not fields or not all(isinstance(field, MeshMetricField) for field in fields):
@@ -1232,33 +1431,46 @@ def combine_mesh_metrics(
         raise ValueError("Combined metrics must share one tensor dimension.")
     minimum = max(field.minimum_size for field in fields)
     maximum = min(field.maximum_size for field in fields)
-    if minimum > maximum:
-        raise ValueError(
-            "Declared hard metric size intervals have an empty intersection."
-        )
     anisotropy = min(field.maximum_anisotropy for field in fields)
+    input_ids = tuple(sorted(field.metric_id for field in fields))
+    if minimum > maximum:
+        empty = np.zeros((scope.entity_ids.shape[0],), dtype=np.bool_)
+        evidence = MetricCombinationEvidence(
+            input_ids,
+            empty,
+            empty,
+            empty,
+            minimum_size=minimum,
+            maximum_size=maximum,
+            maximum_anisotropy=anisotropy,
+            size_interval_conflict=True,
+        )
+        return MetricCombinationResult(None, evidence)
     candidates = jnp.stack(tuple(field.values for field in fields), axis=1)
     combined = np.asarray(
         _canonical_intersection_kernel(
             candidates, jnp.ones(candidates.shape[:2], dtype=jnp.bool_)
         )
     )
-    eigenvalues, _ = _host_spectrum(_tensor_properties(combined).symmetric)
-    tolerance = 64.0 * np.finfo(np.float64).eps
     evidence = MetricCombinationEvidence(
-        tuple(field.metric_id for field in fields),
-        eigenvalues[:, -1] > (1.0 + tolerance) / minimum**2,
-        eigenvalues[:, -1] > (1.0 + tolerance) * anisotropy**2 * eigenvalues[:, 0],
-    )
-    field = MeshMetricField(
-        scope,
-        combined,
+        input_ids,
+        *_bound_violations(combined, minimum, maximum, anisotropy),
         minimum_size=minimum,
         maximum_size=maximum,
         maximum_anisotropy=anisotropy,
-        maximum_gradation=min(field.maximum_gradation for field in fields),
     )
-    return field, evidence
+    field = (
+        MeshMetricField(
+            scope,
+            combined,
+            minimum_size=minimum,
+            maximum_size=maximum,
+            maximum_anisotropy=anisotropy,
+        )
+        if evidence.passed
+        else None
+    )
+    return MetricCombinationResult(field, evidence)
 
 
 @jax.jit
@@ -1505,10 +1717,13 @@ __all__ = [
     "MeshMetricField",
     "MeshMetricSamples",
     "MetricCombinationEvidence",
+    "MetricCombinationResult",
     "MetricComplexityStatus",
+    "MetricGradationError",
     "MetricGradationEvidence",
     "MetricGradationKind",
     "MetricGradationPolicy",
+    "MetricGradationStatus",
     "MetricNormalizationEvidence",
     "MetricNormalizationPolicy",
     "combine_mesh_metrics",

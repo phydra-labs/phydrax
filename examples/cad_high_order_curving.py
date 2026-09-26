@@ -142,6 +142,8 @@ def curve(mesh, association, projection, degree, exact_volume):
         "status": curved.status.value,
         "geometry_nodes": curved.geometry.coordinates.shape[0],
         "relaxation_rounds": len(curved.minimizations),
+        "relaxation_statuses": [status.name for status in curved.relaxation_statuses],
+        "accepted_round": curved.accepted_round,
         "certificate": certificate_summary(certificate),
         "node_residual": {
             "straight": straight.maximum_residual,

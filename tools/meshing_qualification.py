@@ -561,7 +561,7 @@ def qualify_volume(
             ),
             contract,
         )
-        with phx.meshing.MmgProvider() as provider:
+        with phx.meshing.MmgProvider(executable=worker) as provider:
             metric = phx.meshing.MeshMetricField(
                 provider.vertex_scope(source.mesh),
                 np.tile(np.eye(3) * 16.0, (4, 1, 1)),
@@ -589,9 +589,8 @@ def qualify_volume(
         )
         result = provider.plan(surface, specification).execute()
     elif provider_name == "vorocrust":
-        result = phx.meshing.VoroCrustProvider(executable, worker).execute(
-            surface, phx.meshing.VoroCrustOptions(1.0)
-        )
+        with phx.meshing.VoroCrustProvider(executable, worker) as provider:
+            result = provider.execute(surface, phx.meshing.VoroCrustOptions(1.0))
     else:
         from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
@@ -665,6 +664,7 @@ def qualify_poisson() -> dict[str, object]:
         raise RuntimeError("Poisson reconstruction failed sphere qualification.")
     return {
         "provider": result.provider.name,
+        "version": result.runtime.actual_version,
         "maximum_radius_error": error,
         "audit_passed": result.audit.passed,
     }
@@ -1512,7 +1512,9 @@ def qualify_forest_amr() -> dict[str, object]:
     for _ in range(plan.maximum_level - 1):
         marks = np.zeros((topology.signature.leaf_capacity,), dtype=np.int8)
         marks[topology.locate_cells([plan.maximum_level], point)] = 1
-        refined, stage = _measured(lambda: compiler.adapt(topology, marks))
+        refined, stage = _measured(
+            lambda topology=topology, marks=marks: compiler.adapt(topology, marks)
+        )
         if not refined.status.successful:
             raise RuntimeError(f"Forest refinement failed: {refined.status.message}")
         closures += refined.evidence.balance_refinements
@@ -1685,9 +1687,9 @@ def qualify_forest_amr() -> dict[str, object]:
 
 
 _OMEGA_H_WORKER_HINT = (
-    "Build native/providers/omega_h against an MPI-enabled Omega_h CMake package "
-    "(docs/guides_meshing.md), then pass --worker, set PHYDRAX_OMEGA_H_WORKER, or "
-    "put phydrax-omega-h-worker on PATH."
+    "Build native/providers/omega_h against an Omega_h CMake package (MPI-enabled "
+    "for omega-h-distributed; docs/guides_meshing.md), then pass --worker, set "
+    "PHYDRAX_OMEGA_H_WORKER, or put phydrax-omega-h-worker on PATH."
 )
 
 
@@ -2481,6 +2483,7 @@ def _layer_evidence(evidence, /) -> dict[str, object]:
         "minimum_thicknesses": np.asarray(evidence.minimum_thicknesses).tolist(),
         "maximum_thicknesses": np.asarray(evidence.maximum_thicknesses).tolist(),
         "measured_growth_rates": np.asarray(evidence.achieved_growth_rates).tolist(),
+        "layer_active": np.asarray(evidence.layer_active).tolist(),
         "columns": evidence.column_count,
         "fan_columns": evidence.fan_column_count,
         "corner_patches": evidence.corner_patch_count,
@@ -3398,9 +3401,12 @@ def qualify_remap_p1() -> dict[str, object]:
     )
     if not fem_refinement.succeeded:
         raise RuntimeError(f"L2 projection refinement failed: {fem_refinement.status}.")
+    prepared_target, target_record = _measured(
+        lambda: discretization.prepare_l2_projection_target(fem_target, field_name="u")
+    )
     transfer, transfer_record = _measured(
         lambda: discretization.prepare_l2_projection_transfer(
-            fem_source, fem_target, fem_refinement, field_name="u"
+            fem_source, prepared_target, fem_refinement, field_name="u"
         )
     )
     source_dofs = np.asarray(fem_source.dof_maps[0].dof_coordinates)
@@ -3422,7 +3428,6 @@ def qualify_remap_p1() -> dict[str, object]:
         )
     )
     source_integral = float(np.dot(source_weights, fem_smooth))
-    projection = transfer.primal
     fem = {
         "flags": {
             "preserves_constants": transfer.preserves_constants,
@@ -3441,8 +3446,8 @@ def qualify_remap_p1() -> dict[str, object]:
         "smooth_nodal_maximum_error": float(
             np.max(np.abs(np.asarray(projected[2]) - _remap_field(target_dofs)))
         ),
-        "target_mass_condition": float(projection.target_mass_condition.value),
-        "factorization_status": int(projection.factorization.status),
+        "target_mass_condition": float(prepared_target.mass_condition.value),
+        "factorization_status": int(prepared_target.factorization.status),
     }
     if (
         not (
@@ -3520,6 +3525,7 @@ def qualify_remap_p1() -> dict[str, object]:
             "p0_apply": p0_record,
             "limited_p1_apply": p1_record,
             "l2_refinement": fem_refinement_record,
+            "l2_target_prepare": target_record,
             "l2_transfer_prepare": transfer_record,
             "l2_apply": projection_record,
             "refinement_retained_bytes": evidence.retained_bytes,

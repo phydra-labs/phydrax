@@ -14,10 +14,11 @@ mean-ratio distortion of the Jacobian relative to the straight-sided element
 (sampled at the Bernstein control-point lattice of the Jacobian determinant),
 a displacement term, and the squared distance of constrained nodes from the
 tangent space at their current foot points. Constrained nodes are re-projected
-between accepted rounds, periodic target nodes follow their source nodes
-through the declared isometry, and a candidate is accepted only when the
-Bernstein certificate proves every cell valid and every constrained node lies
-within the residual tolerance; otherwise the result rolls back.
+between rounds, periodic target nodes follow their source nodes through the
+declared isometry, and a candidate is accepted only when the Bernstein
+certificate proves every cell valid, every constrained node lies within the
+residual tolerance, and its relaxation converged (or the policy explicitly
+accepts valid non-converged relaxations); otherwise the result rolls back.
 """
 
 from __future__ import annotations
@@ -45,8 +46,12 @@ from ..discretization import (
 from ..discretization.fem import lagrange_element
 from ..ein import contract
 from ..geometry.brep._projection import BRepProjectionStatus, PreparedBRepProjection
-from ..linalg import determinant_small_linear, inverse_small_linear, SmallLinearSolvePlan
-from ..optim import MinimizationResult, OptimizationTermination
+from ..linalg import (
+    determinant_small_linear,
+    inverse_small_linear,
+    SmallLinearSolvePlan,
+)
+from ..optim import MinimizationResult, OptimizationStatus, OptimizationTermination
 from ._association import (
     _entity_rows,
     _incidence_pairs,
@@ -65,16 +70,21 @@ class HighOrderCurvingStatus(StrEnum):
     """Outcome of one curving.
 
     ``CURVED``: the returned geometry is certified valid with every constrained
-    node within the residual tolerance. ``ROLLED_BACK_INVALID``: no candidate was
-    certified valid; the straight geometry is returned. ``ROLLED_BACK_RESIDUAL``:
-    valid candidates missed the residual tolerance. ``UNRESOLVED_ASSOCIATION``:
-    some geometry node has an ambiguous or unclassified B-Rep class, so no
-    curving was attempted.
+    node within the residual tolerance, and came from the CAD projection or a
+    converged (or explicitly admitted non-converged) relaxation.
+    ``ROLLED_BACK_INVALID``: no candidate was certified valid; the straight
+    geometry is returned. ``ROLLED_BACK_RESIDUAL``: valid candidates missed the
+    residual tolerance. ``ROLLED_BACK_NONCONVERGED``: the last candidate was valid
+    within the tolerance but its relaxation did not converge and the policy does
+    not accept valid non-converged relaxations. ``UNRESOLVED_ASSOCIATION``: some
+    geometry node has an ambiguous or unclassified B-Rep class, so no curving was
+    attempted.
     """
 
     CURVED = "curved"
     ROLLED_BACK_INVALID = "rolled_back_invalid"
     ROLLED_BACK_RESIDUAL = "rolled_back_residual"
+    ROLLED_BACK_NONCONVERGED = "rolled_back_nonconverged"
     UNRESOLVED_ASSOCIATION = "unresolved_association"
 
 
@@ -104,7 +114,10 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
     ``regularization`` is the Escobar determinant regularization of the
     distortion, which keeps inverted starting configurations finite.
     ``residual_tolerance`` is the absolute acceptance bound of constrained-node
-    CAD residuals.
+    CAD residuals. A relaxation whose native minimization did not converge
+    cannot replace the accepted geometry unless
+    ``accept_valid_nonconverged_relaxation`` explicitly permits it; the next
+    round still continues from its iterate.
     """
 
     degree: int = eqx.field(static=True)
@@ -114,6 +127,7 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
     displacement_weight: float = eqx.field(static=True)
     regularization: float = eqx.field(static=True)
     residual_tolerance: float = eqx.field(static=True)
+    accept_valid_nonconverged_relaxation: bool = eqx.field(static=True)
     validity: CellValidityPolicy
     termination: OptimizationTermination
     policy_id: str = eqx.field(static=True)
@@ -130,6 +144,7 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
         residual_tolerance: float = 1.0e-7,
         validity: CellValidityPolicy | None = None,
         termination: OptimizationTermination | None = None,
+        accept_valid_nonconverged_relaxation: bool = False,
     ):
         if isinstance(degree, bool) or not isinstance(degree, (int, np.integer)):
             raise TypeError("degree must be an integer.")
@@ -151,6 +166,8 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
             raise TypeError("validity must be CellValidityPolicy or None.")
         if not isinstance(termination_, OptimizationTermination):
             raise TypeError("termination must be OptimizationTermination or None.")
+        if not isinstance(accept_valid_nonconverged_relaxation, bool):
+            raise TypeError("accept_valid_nonconverged_relaxation must be bool.")
         self.degree = int(degree)
         self.relaxation_rounds = int(relaxation_rounds)
         self.distortion_weight = _positive(distortion_weight, "distortion_weight")
@@ -160,6 +177,7 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
         )
         self.regularization = _positive(regularization, "regularization")
         self.residual_tolerance = _positive(residual_tolerance, "residual_tolerance")
+        self.accept_valid_nonconverged_relaxation = accept_valid_nonconverged_relaxation
         self.validity = validity_
         self.termination = termination_
         self.policy_id = canonical_fingerprint(
@@ -172,6 +190,9 @@ class HighOrderCurvingPolicy(StrictModule, NonTrainableState):
                 "displacement_weight": self.displacement_weight,
                 "regularization": self.regularization,
                 "residual_tolerance": self.residual_tolerance,
+                "accept_valid_nonconverged_relaxation": (
+                    accept_valid_nonconverged_relaxation
+                ),
                 "validity": validity_.policy_id,
                 "termination": [
                     termination_.absolute_optimality,
@@ -265,7 +286,10 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
     ``evidence`` certifies the returned ``geometry``; ``candidate`` is the
     evidence of the last evaluated curved candidate (the rejection reason after
     a rollback). ``minimizations`` carry the native optimizer evidence of every
-    relaxation round.
+    relaxation round and ``relaxation_statuses`` their termination statuses.
+    ``accepted_round`` is ``0`` when the geometry is the CAD projection, ``k``
+    when it is the candidate of relaxation round ``k``, and ``None`` unless the
+    status is ``CURVED``.
     """
 
     status: HighOrderCurvingStatus = eqx.field(static=True)
@@ -274,6 +298,8 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
     evidence: CurvedGeometryEvidence
     candidate: CurvedGeometryEvidence | None
     minimizations: tuple[MinimizationResult, ...]
+    relaxation_statuses: tuple[OptimizationStatus, ...] = eqx.field(static=True)
+    accepted_round: int | None = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
     def __init__(
@@ -284,18 +310,28 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
         evidence: CurvedGeometryEvidence,
         candidate: CurvedGeometryEvidence | None,
         minimizations: tuple[MinimizationResult, ...],
+        accepted_round: int | None,
         /,
     ):
         if not isinstance(status, HighOrderCurvingStatus):
             raise TypeError("status must be HighOrderCurvingStatus.")
         if status is HighOrderCurvingStatus.CURVED and not evidence.accepted:
             raise ValueError("A curved result requires accepted evidence.")
+        if (status is HighOrderCurvingStatus.CURVED) != (accepted_round is not None):
+            raise ValueError("Exactly a curved result names its accepted round.")
+        if accepted_round is not None and not 0 <= accepted_round <= len(minimizations):
+            raise ValueError("accepted_round must name the projection or a round.")
         self.status = status
         self.geometry = geometry
         self.straight = straight
         self.evidence = evidence
         self.candidate = candidate
         self.minimizations = tuple(minimizations)
+        self.relaxation_statuses = tuple(
+            OptimizationStatus(int(np.asarray(value.status)))
+            for value in self.minimizations
+        )
+        self.accepted_round = accepted_round
         self.result_id = canonical_fingerprint(
             {
                 "kind": "high-order-curving-result",
@@ -304,6 +340,8 @@ class HighOrderCurvingResult(StrictModule, NonTrainableState):
                 "coordinates": array_tree_fingerprint(np.asarray(geometry.coordinates)),
                 "evidence": evidence.evidence_id,
                 "candidate": None if candidate is None else candidate.evidence_id,
+                "relaxation_statuses": [int(value) for value in self.relaxation_statuses],
+                "accepted_round": accepted_round,
             }
         )
 
@@ -872,6 +910,7 @@ def curve_cell_mesh(
             straight_evidence,
             None,
             (),
+            None,
         )
     pairs = _periodic_nodes(mesh, straight, tuple(periodic))
     fixed = classes.fixed.copy()
@@ -900,9 +939,10 @@ def curve_cell_mesh(
     candidate = _evidence(
         mesh, CellGeometrySpec(*layout, coordinates), classes, projection, blocks, policy
     )
-    accepted = (coordinates, candidate) if candidate.accepted else None
+    # The CAD projection needs no relaxation; it is accepted on its own when valid.
+    accepted = (coordinates, candidate, 0) if candidate.accepted else None
     minimizations = []
-    for _ in range(policy.relaxation_rounds):
+    for round_ in range(1, policy.relaxation_rounds + 1):
         energy = _CurvingEnergy(
             blocks=blocks,
             constrained_rows=jnp.asarray(constrained_rows, dtype=jnp.int32),
@@ -940,8 +980,10 @@ def curve_cell_mesh(
             blocks,
             policy,
         )
-        if candidate.accepted:
-            accepted = (coordinates, candidate)
+        if candidate.accepted and (
+            relaxed.converged or policy.accept_valid_nonconverged_relaxation
+        ):
+            accepted = (coordinates, candidate, round_)
     if accepted is not None:
         return HighOrderCurvingResult(
             HighOrderCurvingStatus.CURVED,
@@ -950,14 +992,24 @@ def curve_cell_mesh(
             accepted[1],
             candidate,
             tuple(minimizations),
+            accepted[2],
         )
-    status = (
-        HighOrderCurvingStatus.ROLLED_BACK_RESIDUAL
-        if candidate.certificate.all_certified
-        else HighOrderCurvingStatus.ROLLED_BACK_INVALID
-    )
+    # Without an accepted geometry, a valid last candidate within the residual
+    # tolerance was refused only because its relaxation did not converge.
+    if candidate.accepted:
+        status = HighOrderCurvingStatus.ROLLED_BACK_NONCONVERGED
+    elif candidate.certificate.all_certified:
+        status = HighOrderCurvingStatus.ROLLED_BACK_RESIDUAL
+    else:
+        status = HighOrderCurvingStatus.ROLLED_BACK_INVALID
     return HighOrderCurvingResult(
-        status, straight, straight, straight_evidence, candidate, tuple(minimizations)
+        status,
+        straight,
+        straight,
+        straight_evidence,
+        candidate,
+        tuple(minimizations),
+        None,
     )
 
 

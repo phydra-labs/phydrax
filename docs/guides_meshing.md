@@ -74,12 +74,27 @@ Geometric validity is certified by
 `phydrax.discretization.certify_cell_geometry_validity`: the Jacobian
 determinant of every mapped cell (Pk simplices, Qk quadrilaterals and
 hexahedra, prisms, rational pyramids through collapsed coordinates, and
-star-decomposed polygons/polyhedra) is converted to Bernstein form and
+star-decomposed polyhedra) is converted to Bernstein form and
 adaptively subdivided until it is proven above the policy floor
 (`CERTIFIED_VALID`), proven below it (`INVALID`), or the `CellValidityPolicy`
 budget is exhausted (`UNRESOLVED`). A twisted trilinear hexahedron with positive
 corners but an inverted interior is therefore invalid, and curved geometry is
-certified rather than rejected.
+certified rather than rejected. A polyhedron that is not star-shaped about its
+center stays `UNRESOLVED`; that is not a validity disproof.
+
+Polygon cells are certified without assuming star-shapedness. A planar polygon
+is `CERTIFIED_VALID` iff its vertices are finite and distinct, every edge clears
+`relative_determinant_floor` times the polygon diameter, its boundary is simple
+(`polygon_simplicity_2d`: non-adjacent edges are disjoint and adjacent edges meet
+only at their shared vertex), it is counterclockwise, and twice its signed area
+exceeds the policy floor. An embedded polygon must instead lie within
+`CellValidityPolicy.relative_planarity_tolerance` of its Newell plane (relative
+to the polygon diameter), be simple in its dominant-axis projection, and have a
+squared vector area above the floor. Repeated vertices, self-intersecting
+boundaries, clockwise planar loops, and nonplanar embedded loops are `INVALID`;
+an undecided simplicity, orientation, planarity, or area decision leaves the cell
+`UNRESOLVED`, never valid. The segment and polygon predicates are documented
+with the [exact predicates](api/geometry.md#exact-predicates-triangulations-and-diagrams).
 
 `CellMeshAuditPolicy` assigns each audit check a `CellMeshAuditDisposition`
 (`REJECT`, `RECORD`, or `SKIP`). Topology checks run on the welded complex in
@@ -87,12 +102,39 @@ which vertices within `coincident_vertex_tolerance` of each other (relative to
 the bounding-box diagonal, found through a Morton-sorted grid) are merged:
 coincident vertices, collapsed and duplicate cells, non-manifold facets, edges,
 and vertices (disconnected cell stars), inconsistent facet orientation,
-watertight boundary, and optional triangle self-intersection through BVH
-candidate pairs and exact-or-filtered orientation predicates. Unresolved
-certificates, capacities, and predicates are reported in `unresolved` and are
-rejected or recorded, never silently accepted. Supplied geometry or semantic
-evidence that cannot survive canonical reordering is rejected, not silently
-rebound. Association residual tolerances remain provider-owned.
+watertight boundary, and self-intersection of the cells of planar and surface
+meshes or the welded boundary of volume meshes, through BVH candidate pairs and
+exact-or-filtered orientation predicates. By default every check is `REJECT`
+except `watertight_boundary`, which is `SKIP`.
+
+Each report partitions its dispositioned checks into `evaluated_checks` and
+`skipped_checks`, by finding name in check order (`unused_vertices`,
+`unused_geometry_nodes`, `coincident_vertices`, `collapsed_cells`,
+`duplicate_cells`, `nonmanifold_facets`, `nonmanifold_edges`,
+`nonmanifold_vertices`, `inconsistent_orientation`, `open_boundary`,
+`self_intersection`, `invalid_geometry`); a default report skips only
+`open_boundary`. `check_counts` gives the finding count of every evaluated check
+and every `unresolved_*` entry. `audit.passed` is `True` iff `issues` is empty:
+no evaluated `REJECT` check found anything, the geometry, quality, and evidence
+bindings held, the quality thresholds and association requirement were met, and
+no rejected check was unresolved. It certifies nothing about a skipped check,
+and `RECORD` findings appear in `recorded` without failing the audit.
+
+Uncertain predicates are never reported as a pass: self-intersection pairs whose
+predicates stay uncertain are not counted as clean but name
+`self_intersection_predicates` in `unresolved`, as do unresolved validity
+certificates (`geometry_validity`), an exceeded weld candidate capacity
+(`coincident_vertex_capacity`), and an exhausted intersection candidate budget
+(`self_intersection_capacity`). Each becomes an `unresolved_<name>` finding under
+`CellMeshAuditPolicy.unresolved` (`REJECT` by default; `SKIP` is refused). Under
+`RECORD` the audit may pass, but the check stays named in `unresolved` and
+`recorded`. Connectivity above `maximum_connectivity_entries` is rejected with
+`connectivity_capacity_exceeded`; `maximum_coincidence_candidates` bounds
+welding and `maximum_intersection_candidates` bounds the streamed polygon-edge
+and triangle-pair broad phases. Exhaustion fails closed without materializing an
+unbounded pair table. Supplied geometry or semantic evidence that cannot survive
+canonical reordering is rejected, not silently rebound. Association residual
+tolerances remain provider-owned.
 
 `evaluate_finite_volume_quality` reports skewness and non-orthogonality of every
 interior face of a full-dimensional mesh.
@@ -134,21 +176,40 @@ exactly. `size_field_metric` compiles a resolved field into isotropic metric
 constraints bound to the same entity IDs.
 
 `MeshMetricField` represents an SPD anisotropic metric whose eigenvalues are
-inverse squared target lengths. `normalize_mesh_metric` applies an explicit
-`MetricNormalizationPolicy`: size and anisotropy bounds, a target complexity
-`sum_i V_i sqrt(det M_i)` over vertex volumes solved by the native bracketed root,
-and optional gradation. Untrusted `MeshMetricSamples` are symmetrized or
-projected only when the policy requests it, and `MetricNormalizationEvidence`
-counts every repair and clamp. `grade_mesh_metric` bounds growth with the
-physical law `h_q <= h_p + (beta - 1) |pq|` or the metric-space law
-`h_q <= h_p beta**l_p(pq)`: scalar gradation is an exact minimum-first relaxation,
-anisotropic gradation grows each metric along every edge and intersects it at the
-neighbor (Alauzet 2010), and the evidence certifies every edge after
-termination. `combine_mesh_metrics` intersects metrics by canonical simultaneous
-reduction (order independent) and reports conflicts with the declared hard
-bounds. `interpolate_mesh_metric` is log-Euclidean, `metric_edge_lengths` returns
-Riemannian edge lengths, and `lp_metric_from_hessian` builds the Loseille-Alauzet
-`L^p` metric from a recovered Hessian
+inverse squared target lengths. Construction certifies every row against the
+declared hard bounds, `1 / maximum_size**2 <= lambda <= 1 / minimum_size**2` and
+`sqrt(lambda_max / lambda_min) <= maximum_anisotropy`, on the
+`phydrax.linalg.verify_dense_properties` spectrum; only eigenvalue roundoff
+(dtype epsilon times the row spectrum, hence condition-scaled at `lambda_min`) is
+admitted, and a violating tensor raises `ValueError` instead of being repaired.
+A field carries no gradation bound: requested gradation belongs to a
+`MetricGradationPolicy` (certified by `MetricGradationEvidence`) or to provider
+options such as `MmgOptions.gradation` and `OmegaHOptions.gradation_rate`.
+`normalize_mesh_metric` applies an explicit `MetricNormalizationPolicy`: size and
+anisotropy bounds, a target complexity `sum_i V_i sqrt(det M_i)` over vertex
+volumes solved by the native bracketed root, and optional gradation. Untrusted
+tensors enter as `MeshMetricSamples`, are symmetrized or projected only when the
+policy requests it, and `MetricNormalizationEvidence` counts every repair and
+clamp. `grade_mesh_metric` bounds growth with the physical law
+`h_q <= h_p + (beta - 1) |pq|` or the metric-space law
+`h_q <= h_p beta**l_p(pq)`: scalar gradation is an exact minimum-first
+relaxation and anisotropic gradation uses Alauzet grow-and-intersect sweeps.
+`MetricGradationStatus` distinguishes `CONVERGED`, `BOUNDS_CONFLICT`, and
+`SWEEP_LIMIT`; convergence requires the independently measured
+`maximum_violation` to meet `relative_tolerance`. `grade_mesh_metric` and
+`normalize_mesh_metric` raise `MetricGradationError` carrying that evidence
+instead of returning an executable field when hard bounds or the sweep budget
+prevent the requested gradation.
+`combine_mesh_metrics` intersects metrics by canonical simultaneous reduction
+(order independent) and returns a `MetricCombinationResult`: the combined field
+exists exactly when `successful`, while `MetricCombinationEvidence` reports an
+empty intersection of the declared size intervals or every tensor row that
+conflicts with the most restrictive declared bounds, so a contradictory metric
+can never reach an adaptation route. Adaptation requests,
+`BackgroundMetricControl`, and the Mmg and Omega_h plans accept only a certified
+`MeshMetricField`. `interpolate_mesh_metric` is log-Euclidean,
+`metric_edge_lengths` returns Riemannian edge lengths, and `lp_metric_from_hessian`
+builds the Loseille-Alauzet `L^p` metric from a recovered Hessian
 (`phydrax.discretization.fem.recover_hessian`). These operations prepare
 requests; they do not certify that an external generator met them.
 
@@ -186,7 +247,15 @@ terminations, never below the first layer), `REDUCE_THICKNESS` (never below
 fronts share their midsurface). Failures carry the wall vertices and locations.
 `BoundaryLayerMesh` holds the certified layer cells, the exact cap (quadrilateral
 cap faces are closed by transition pyramids), and `BoundaryLayerEvidence` with
-thicknesses measured as exact distances to the wall.
+thicknesses measured as exact distances to the wall. Per-layer statistics cover
+the surviving columns that carry each layer; `layer_active[k]` is `True` iff at
+least one column carries requested layer `k`. A layer carried by no column (for
+example after `TERMINATE_LOCALLY` stops every column early) has
+`layer_active[k] == False`, NaN achieved, minimum, and maximum thickness, and NaN
+for every growth rate touching it (`achieved_growth_rates[k]` is the ratio of
+achieved thicknesses `k + 1` and `k`). Read layer support from `layer_active`,
+not from NaNs; `terminated_vertex_count`, `reduced_vertex_count`, and
+`merged_vertex_count` state why columns stopped short of or shrank the schedule.
 `GmshProvider.fill_boundary_layer_core` tetrahedralizes between a closed cap and
 the remaining boundary while keeping both fixed: fixed nodes are verified
 bitwise and core faces must match the fixed triangles exactly; the merged mesh
@@ -400,14 +469,23 @@ Knupp shape measure, shape plus size, metric alignment with a `MeshMetricField`,
 or the Frobenius Gram-determinant energy; every objective rejects inverted
 corners. Fixed vertices are eliminated from the parameters and stay
 bit-identical; coordinate boxes are enforced by projection. Inverted input runs
-the explicit Escobar untangling stages of `MeshUntanglingPolicy`, accepted only
-when the inversion count reaches zero and the audit passes. Every failure returns
-the unmodified coordinates with a `MeshOptimizationStatus`, and
-`MeshOptimizationResult.minimization` carries the native termination evidence.
-`optimize_cell_geometry_coordinates` runs the same route for user-defined
-high-order objectives; the objective must encode the required curved-element
-validity. Derivatives of numerical objectives do not differentiate topology
-changes or host-side acceptance.
+the explicit Escobar untangling stages of `MeshUntanglingPolicy`; a stage is
+accepted only when the inversion count reaches zero, the audit passes, and its
+minimization converged. The optimized iterate is checked for inversions and
+audited independently of the native termination status, and non-convergence is
+never reported as optimized: a valid iterate is `OPTIMIZED` only when the
+minimization converged, `VALID_NONCONVERGED` (accepted, certified) when it did
+not and the plan sets `accept_valid_nonconverged=True` (which also admits
+non-converged untangling stages), and `NONCONVERGED` (not accepted) otherwise.
+`MeshOptimizationResult.result` is present exactly when `accepted`; every other
+status returns the unmodified coordinates, and
+`MeshOptimizationResult.minimization` carries the native termination evidence,
+including the rejected iterate. `optimize_cell_geometry_coordinates` runs the
+same route for user-defined high-order objectives; the objective must encode the
+required curved-element validity, and `CellGeometryOptimizationResult` reports
+`optimizer_status`/`converged` for the caller's explicit acceptance decision.
+Derivatives of numerical objectives do not differentiate topology changes or
+host-side acceptance.
 
 `MeshMotionMonitor` assesses a moved fixed-topology coordinate proposal against its
 reference mesh: the certified Bernstein lower bound of every cell Jacobian relative to
@@ -417,7 +495,10 @@ the smallest reference cell, and the caller's boundary residual.
 (`ACCEPT_MOTION`, `RELOCATE`, `REMESH`, or `REJECT`); uncertified cells always request
 relocation first because an inverted mesh cannot seed a remesh.
 `advance_mesh_motion` certifies accepted motion, relocates or untangles the free
-vertices through `optimize_cell_mesh` toward the reference shapes on any crossing, and
+vertices through `optimize_cell_mesh` toward the reference shapes on any crossing
+(bounded by `MeshMotionMonitorPolicy.relocation_termination`; a relocation that
+does not converge fails unless `accept_valid_nonconverged_relocation=True` admits
+its valid iterate), and
 escalates a still-failing proposal to a `MetricMeshAdaptation` (default metric: the
 isotropic reference cell size) through the explicit `MeshAdaptationPolicy` route;
 without a policy the advance returns the unexecuted request (candidate mesh and
@@ -475,15 +556,27 @@ edge are found by one reverse-reachability fixed point over the union closure
 and rejected, as on the host. Coarsening passes remove every unprotected
 bisection vertex whose star is exactly the marked, class-uniform children of
 its bisections, restore the parents under their original IDs, and retire the
-children. Capacity overflow, the closure bound, a protected conflict, and a
-certified-invalid child are refusals: the returned state is the input state and
-`AdaptiveSimplexReport.status` carries the `AdaptiveSimplexStatus` flags.
-Children are checked with FILTERED_DEVICE orientation predicates; unresolved
-signs set `NEEDS_HOST_RESOLUTION` and are resolved by the host certification at
-commit.
+children. Every call records its `AdaptiveSimplexStatus` flags in
+`AdaptiveSimplexState.status_flags`, which accumulate over the prepared epoch.
+Capacity overflow, the closure bound, a protected conflict, and a
+certified-invalid child are terminal failures: the call rolls back every mesh,
+topology, and numerical array but still records its flags, and every later
+refine or coarsen call on that state is refused on device (state unchanged,
+`AdaptiveSimplexReport.status` holding the terminal flags, zero operation
+counts); recovery needs a new prepared epoch, for resources with larger
+capacities. Children are checked with FILTERED_DEVICE orientation predicates;
+unresolved signs set `NEEDS_HOST_RESOLUTION`, which stays applied.
 
 `commit_adaptive_simplex(prepared, state)` performs one device-to-host transfer
-and runs the host edit assembly: canonical `CellMesh`, organization inherited by
+and decides acceptance from the cumulative flags: a terminal flag raises
+`MeshingFailure` (capacity or closure bound: RESOURCE_EXHAUSTED; protected
+conflict: INVALID_SPECIFICATION; invalid geometry: QUALITY_REJECTED),
+`NEEDS_HOST_RESOLUTION` requires exact host orientation predicates to certify
+every committed cell positive (otherwise, or when meshcore is unavailable to
+resolve a sign, QUALITY_REJECTED at stage `device-commit`), and a coarsening
+stopped at its pass bound commits the valid partial topology with status
+PASS_LIMIT (not converged). An accepted epoch runs the host edit assembly:
+canonical `CellMesh`, organization inherited by
 exact IDs, certification, `CellMeshTransition`, complete `MeshLineage`, sparse
 P1 transfer, `BisectionEvidence`, and the next `BisectionHierarchy`, returned
 as the `MeshAdaptationResult` the solver transaction consumes. Cell lineage
@@ -504,7 +597,9 @@ cells until the global fixed point and new IDs are global ranks, independent of
 the ownership. `commit_partitioned_adaptive_simplex` merges the parts by global
 ID and commits exactly the single-device result; ownership moves to the target
 only through the adaptation's `MeshDistributionTransition`. Part epochs refine
-only; a round that would split a protected edge fails for all parts.
+only; a round that would exceed any part's capacity or split a protected edge
+fails for all parts, the refusal of later calls is collective, and a terminal
+flag recorded on any part rejects the whole epoch at commit.
 
 The `DEVICE_METRIC_2D` route runs split, collapse, flip, and relocation passes of
 the planar metric adaptation as compiled fixed-capacity device passes: fixed-width
@@ -521,8 +616,12 @@ of the policy's capacity bucket; `adapt_device_metric(layout, state)` runs up to
 `maximum_passes` passes in one compiled executable per `DeviceMetricLayout` and
 returns a `DeviceMetricReport` (`AdaptiveSimplexStatus` flags, operation and
 rejection counts, unit-mesh measurements); capacity overflow and invalid
-geometry return the input state. `commit_device_metric_adaptation` performs one
-transfer and returns the `MeshAdaptationResult` with `DeviceMetricEvidence`; a
+geometry roll the arrays back, record the terminal flag in
+`DeviceMetricState.status_flags`, and refuse every later call on that state.
+`commit_device_metric_adaptation` applies the same acceptance as
+`commit_adaptive_simplex` (terminal flags raise, `NEEDS_HOST_RESOLUTION` is
+resolved by exact host orientation of the committed cells), performs one
+transfer, and returns the `MeshAdaptationResult` with `DeviceMetricEvidence`; a
 run that applied nothing is UNCHANGED, with convergence or stall in the
 evidence (as for `NATIVE_METRIC_2D`).
 
@@ -604,9 +703,15 @@ element, sampled at the Bernstein control-point lattice of the determinant, a
 displacement term, and the distance of constrained nodes from their tangent
 spaces. Constrained nodes are re-projected after every round. A candidate is
 accepted only when `certify_cell_geometry_validity` certifies every cell and every
-constrained residual is within `residual_tolerance`; otherwise the result rolls
-back to the straight geometry with the rejected candidate's evidence
-(`HighOrderCurvingStatus`). `PeriodicCoupling` vertex pairs make target-side
+constrained residual is within `residual_tolerance`. The initial CAD projection
+is accepted on its own when valid; a relaxation whose minimization did not
+converge cannot replace the accepted geometry unless
+`HighOrderCurvingPolicy(accept_valid_nonconverged_relaxation=True)` permits it.
+`HighOrderCurvingResult.relaxation_statuses` records every relaxation's native
+termination status and `accepted_round` names the accepted candidate (0 for the
+projection). Without an accepted candidate the result rolls back to the straight
+geometry with the rejected candidate's evidence (`HighOrderCurvingStatus`,
+including `ROLLED_BACK_NONCONVERGED`). `PeriodicCoupling` vertex pairs make target-side
 high-order nodes the declared isometry of their source-side nodes
 (`PeriodicCoupling.match_points` pairs the nodes). `verify_curved_geometry`
 certifies an existing high-order geometry, such as a Gmsh high-order output,
@@ -717,7 +822,7 @@ projected fields; a learned proposer imitates them but is always re-certified.
 | fTetWild | `phydrax[meshing-ftetwild]` | Robust surface-to-tetrahedron generation; sampled boundary-envelope evidence |
 | Poisson | `phydrax[meshing-poisson]`, Python below 3.13 | Open3D screened Poisson reconstruction from oriented points |
 | OpenVDB | Native `openvdb` Python binding; conda-forge provides it | Existing sparse voxel field to isosurface, with explicit background semantics |
-| Omega_h | MPI-enabled Omega_h plus the packaged persistent worker | Collective simplex metric adaptation with class preservation, field transfer, ownership, and ghost residence |
+| Omega_h | Omega_h, built either serially or with MPI, plus the packaged persistent worker | Simplex metric adaptation with class preservation, field transfer, ownership, and ghost residence |
 | VoroCrust | Source-built mesher plus the packaged persistent extraction worker | Surface sampling and explicit face-defined Voronoi cells |
 | TIOGA | MPI-enabled TIOGA plus the packaged persistent collective worker | Overset hole cutting, moving-part updates, and donor/receptor interpolation between affine cell parts |
 
@@ -732,22 +837,33 @@ nearest-neighbor transfer. Only explicitly declared fields are transferred, each
 with method evidence: Mmg locates every output vertex in the source simplices
 and interpolates P1 barycentrically (projection outside the source is counted
 and bounded), and Omega_h applies its own linear or conservative transfer with
-integrals reported before and after. fTetWild's boundary check samples vertices and
-centroids and is not a continuous Hausdorff certificate. Poisson reconstruction
-does not invent CAD associations. OpenVDB must know how inactive and
-out-of-domain voxels are extended.
+integrals reported before and after. Omega_h output metrics are checked against
+the input field's hard size and anisotropy bounds after provider gradation; a
+violation rejects the provider result instead of widening those declarations.
+fTetWild's boundary check samples vertices and centroids and is not a continuous
+Hausdorff certificate. Poisson reconstruction does not invent CAD associations.
+OpenVDB must know how inactive and out-of-domain voxels are extended.
 
-Native provider workers live under `native/providers` in the source tree and
-source distribution: one standalone CMake project per provider (`mmg`,
-`omega_h`, `tioga`, `vorocrust`) plus the shared header-only protocol in
-`native/providers/common`. Each builds one persistent worker executable against
-a separately installed upstream library; importing `phydrax` neither compiles
-nor launches them. Build and link each worker with the same C++ compiler and,
-where applicable, the same MPI implementation as its upstream library. Install
-the executables into one prefix and either put its `bin` directory on `PATH`,
-set the provider's worker variable (`PHYDRAX_MMG_WORKER`,
-`PHYDRAX_OMEGA_H_WORKER`, `PHYDRAX_TIOGA_WORKER`, `PHYDRAX_VOROCRUST_WORKER`),
-or pass the executable explicitly.
+Native provider worker sources ship with every distribution: under
+`native/providers` in the source tree and source distribution, and inside the
+installed package in a wheel. `native_provider_source_path(provider)` (from
+`phydrax.meshing.providers`, for `"mmg"`, `"omega_h"`, `"tioga"`, or
+`"vorocrust"`) returns the provider's standalone CMake project in either layout;
+its sibling `common` directory holds the shared header-only protocol. Each
+project builds one persistent worker executable against a separately installed
+upstream library; importing `phydrax` neither compiles nor launches them. Build
+and link each worker with the same C++ compiler and, where applicable, the same
+MPI implementation as its upstream library. Install the executables into one
+prefix and either put its `bin` directory on `PATH`, set the provider's worker
+variable (`PHYDRAX_MMG_WORKER`, `PHYDRAX_OMEGA_H_WORKER`,
+`PHYDRAX_TIOGA_WORKER`, `PHYDRAX_VOROCRUST_WORKER`), or pass the executable
+explicitly. The build commands below resolve the source directory with:
+
+```console
+source_of() {
+  python -c "import sys; from phydrax.meshing.providers import native_provider_source_path; print(native_provider_source_path(sys.argv[1]))" "$1"
+}
+```
 
 A provider launches its worker lazily and reuses that process across calls
 until `close()` (providers are context managers), a failure, or the worker
@@ -766,7 +882,7 @@ with the worker log tail; the raw worker evidence is kept on `__cause__`.
 For an installed Mmg 5.8 CMake package (shared libraries):
 
 ```console
-cmake -S <phydrax>/native/providers/mmg -B build/phydrax-mmg \
+cmake -S "$(source_of mmg)" -B build/phydrax-mmg \
   -DCMAKE_PREFIX_PATH=/path/to/mmg-install
 cmake --build build/phydrax-mmg
 cmake --install build/phydrax-mmg --prefix /path/to/phydrax-native
@@ -781,17 +897,21 @@ tensor, and the evidence names the representation. `MmgLevelSet` discretizes a
 vertex level set into interior/exterior labels per region and a contour patch.
 `MmgLagrangianMotion` requires Mmg built with `-DUSE_ELAS=ON` against the ISCD
 LinearElasticity library; without it the worker refuses with
-`UNSUPPORTED_CAPABILITY`. Mmg 5.8.0's `MMG2D_Set_vectorSols` stores 2D vector
-solutions one vertex slot away from where its Lagrangian code reads them; the
-worker writes the layout the motion code reads. Configure with
+`UNSUPPORTED_CAPABILITY`. Mmg's install records no runtime path to
+LinearElasticity, so configure such an Mmg with
+`-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON`. Mmg 5.8.0's `MMG2D_Set_vectorSols`
+stores 2D vector solutions one vertex slot away from where its Lagrangian code
+reads them; the worker writes the layout the motion code reads. Configure with
 `-DPHYDRAX_MMG_WITH_PARMMG=ON` and ParMmg (plus its own Mmg install) on
 `CMAKE_PREFIX_PATH` to build the collective `phydrax-parmmg-worker` for
-tetrahedral remeshing under an MPI launcher.
+tetrahedral remeshing under an MPI launcher. The worker imports ParMmg's CMake
+package: the ParMmg 1.5.0 release installs none, so build ParMmg at upstream
+commit `d2eddc5` (1.5.0 plus its package export) or later.
 
 For an installed Omega_h CMake package:
 
 ```console
-cmake -S <phydrax>/native/providers/omega_h -B build/phydrax-omega-h \
+cmake -S "$(source_of omega_h)" -B build/phydrax-omega-h \
   -DCMAKE_CXX_COMPILER=/path/to/mpicxx \
   -DOmega_h_DIR=/path/to/omega-h/lib/cmake/Omega_h
 cmake --build build/phydrax-omega-h
@@ -821,7 +941,7 @@ cmake -S /path/to/tioga -B /path/to/tioga-build \
   -DTIOGA_HAS_NODEGID=ON -DBUILD_SHARED_LIBS=ON
 cmake --build /path/to/tioga-build
 cmake --install /path/to/tioga-build
-cmake -S <phydrax>/native/providers/tioga -B build/phydrax-tioga \
+cmake -S "$(source_of tioga)" -B build/phydrax-tioga \
   -DCMAKE_PREFIX_PATH=/path/to/tioga-install \
   -DPHYDRAX_TIOGA_REVISION=<exact-release-or-git-commit> \
   -DPHYDRAX_TIOGA_ENABLE_UNIQUEID=<ON|OFF, matching TIOGA_ENABLE_UNIQUEID>
@@ -847,7 +967,7 @@ cmake -S /path/to/vorocrust -B /path/to/vorocrust-build \
   -DVOROCRUST_TPL_USE_LAPACK=OFF \
   -DVOROCRUST_TPL_BUILD_OPENBLAS=OFF
 cmake --build /path/to/vorocrust-build --target vc_mesh libVCMesh
-cmake -S <phydrax>/native/providers/vorocrust -B build/phydrax-vorocrust \
+cmake -S "$(source_of vorocrust)" -B build/phydrax-vorocrust \
   -DVOROCRUST_SOURCE_DIR=/path/to/vorocrust \
   -DVOROCRUST_BUILD_DIR=/path/to/vorocrust-build \
   -DPHYDRAX_VOROCRUST_REVISION=<exact-release-or-git-commit>

@@ -23,8 +23,9 @@ inside the epoch; replaced cell slots are packed in order before each topology
 round, so slot order stays (provisional) ID order. An operation whose predicate
 is uncertain is not applied and the call reports NEEDS_HOST_RESOLUTION; an
 operation whose vertex ball exceeds the static cavity width is not evaluated and
-is counted. Capacity overflow or a certified invalid cell refuses the whole
-call: the input state is returned with the flag.
+is counted. Capacity overflow or a certified invalid cell fails the whole call:
+every array is rolled back, but the terminal flag is recorded in the state's
+cumulative status, and every later call on that state is refused on device.
 
 `commit_device_metric_adaptation` performs one device-to-host transfer,
 reconstructs the host working state, and assembles the target through the host
@@ -47,6 +48,12 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
+from .._geometry_predicates import (
+    orient2d,
+    PredicateMode,
+    PredicateSign,
+    resolve_host_predicate_mode,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._adaptive_simplex import (
@@ -59,14 +66,8 @@ from ..discretization._adaptive_simplex import (
     masked_simplex_signature,
     MaskedSimplexMesh,
 )
-from ..geometry._predicates import (
-    orient2d,
-    PredicateMode,
-    PredicateSign,
-    resolve_host_predicate_mode,
-)
 from ..linalg import hermitian_exp, hermitian_log
-from ._contracts import MeshingFailure, MeshingFailureCategory
+from ._device_status import DeviceEpoch, require_committed_status
 from ._lineage import MeshTransitionKind
 from ._local_metric import (
     _assemble,
@@ -215,8 +216,9 @@ class DeviceMetricState(StrictModule, NonTrainableState):
     (cell slot, source cell row) pairs padded by ``(C, 0)``. ``cursors`` hold the
     allocated vertex/cell slots, live record/pair counts and the next provisional
     vertex/cell IDs; ``controls`` the pass bound and enabled phases; ``counters``
-    the operation and rejection totals since preparation; ``flags`` the union of
-    applied status flags and the convergence and stall of the last call.
+    the operation and rejection totals since preparation; ``flags`` the
+    cumulative status flags (`status_flags`) and the convergence and stall of
+    the last call.
     """
 
     mesh: MaskedSimplexMesh
@@ -318,16 +320,29 @@ class DeviceMetricState(StrictModule, NonTrainableState):
         self.counters = arrays["counters"]
         self.flags = arrays["flags"]
 
+    @property
+    def status_flags(self) -> Array:
+        """Cumulative `AdaptiveSimplexStatus` flags of the epoch (traceable).
+
+        A failed call rolls back every other array but still records its
+        terminal flags, after which every call on the state is refused.
+        """
+
+        return self.flags[..., _STATUS]
+
 
 @final
 class DeviceMetricReport(StrictModule):
     """Traceable evidence of one `adapt_device_metric` call.
 
     ``status`` holds `AdaptiveSimplexStatus` flags: CAPACITY_EXCEEDED and
-    INVALID_GEOMETRY refuse the call (the returned state is the input state and
-    the operation counts are zero), PASS_LIMIT marks a call stopped at
+    INVALID_GEOMETRY fail the call (every array of the returned state is the
+    input's, the operation counts are zero, and the flag is recorded in the
+    state's cumulative status), PASS_LIMIT marks a call stopped at
     ``maximum_passes`` before the unit mesh, NEEDS_HOST_RESOLUTION an uncertain
-    FILTERED_DEVICE predicate (the operation was not applied). Operation and
+    FILTERED_DEVICE predicate (the operation was not applied). A call on a
+    state that already recorded a terminal flag is refused: the state is
+    returned unchanged and ``status`` holds those terminal flags. Operation and
     rejection counts cover this call; rejections tally candidate evaluations
     (``rejected_cavity``: vertex balls wider than the static cavity width).
     Measurements cover the unprotected edges (all edges when every edge is
@@ -1991,6 +2006,26 @@ def _report(
 
 def _adapt(layout: DeviceMetricLayout, state: DeviceMetricState, /) -> DeviceMetricUpdate:
     source = _work(state)
+    return jax.lax.cond(
+        (source.flags[_STATUS] & _FAILURES) != 0,
+        lambda: _refused_call(layout, state, source),
+        lambda: _adapted(layout, source),
+    )
+
+
+def _refused_call(
+    layout: DeviceMetricLayout, state: DeviceMetricState, source: _Work, /
+) -> DeviceMetricUpdate:
+    """A call on an epoch that already failed: nothing runs, the state is kept."""
+
+    status = (source.flags[_STATUS] & _FAILURES).astype(jnp.int32)
+    report = _report(source, source, status, jnp.bool_(False), _geometry(source), layout)
+    return DeviceMetricUpdate(state, report)
+
+
+def _adapted(layout: DeviceMetricLayout, source: _Work, /) -> DeviceMetricUpdate:
+    """Bounded metric passes, rolled back (flags kept) when the call fails."""
+
     maximum = source.controls[_MAXIMUM_PASSES]
 
     def proceed(carry):
@@ -2031,6 +2066,16 @@ def _adapt(layout: DeviceMetricLayout, state: DeviceMetricState, /) -> DeviceMet
         .set(stalled.astype(jnp.int32))
     )
     result = _select(failed, source, work)
+    # A failed call rolls back numerical/topological arrays but keeps all
+    # attempted-call status, convergence, and stall evidence.
+    result = result._replace(
+        flags=result.flags.at[_STATUS]
+        .set(work.flags[_STATUS])
+        .at[_CONVERGED]
+        .set(work.flags[_CONVERGED])
+        .at[_STALLED]
+        .set(work.flags[_STALLED])
+    )
     report = _report(
         source,
         result,
@@ -2338,15 +2383,22 @@ def _outcome(
     )
 
     adaptation = prepared.adaptation
+    mesh = host.mesh
+    require_committed_status(
+        int(np.asarray(host.status_flags)),
+        np.asarray(mesh.coordinates, dtype=np.float64),
+        np.asarray(mesh.cells, dtype=np.int64)[np.asarray(mesh.cell_active)],
+        DeviceEpoch.METRIC,
+    )
     mode = _host_mode()
     state = _host_state(prepared, host)
     evidence = _evidence(prepared, host, _host_topology(state, mode))
     applied = evidence.splits + evidence.collapses + evidence.flips + evidence.relocations
-    if applied == 0:
-        # Nothing applied: the target is the source; the evidence carries the
-        # convergence, stall, and pass counts.
-        return _unchanged(adaptation, evidence, None)
     status = _metric_status(evidence, evidence.topology_operations)
+    if applied == 0:
+        # Preserve the source while exposing an unmet criterion as STALLED or
+        # PASS_LIMIT rather than the converged UNCHANGED status.
+        return _unchanged(adaptation, evidence, None, status=status)
     edit, metric = _assemble(state, prepared.anchor.source, mode)
     native = _finalize_native(
         adaptation, edit, MeshTransitionKind.REMESH, conservative=False
@@ -2374,7 +2426,10 @@ def commit_device_metric_adaptation(
     vertices and cells receive IDs in the host order, and the lineage
     (SPLIT_FROM, COLLAPSED_INTO, RELOCATED, REFINED_FROM, SWAPPED_FROM), the
     vertex stencil, organization inheritance, certification, and the P1
-    transfer are exactly those of NATIVE_METRIC_2D.
+    transfer are exactly those of NATIVE_METRIC_2D. A terminal flag in the
+    epoch's cumulative status raises its `MeshingFailure`, and
+    NEEDS_HOST_RESOLUTION requires every committed cell to be certified
+    positively oriented by exact host predicates (else QUALITY_REJECTED).
     """
 
     from ._adaptation import _adaptation_result
@@ -2387,31 +2442,11 @@ def commit_device_metric_adaptation(
     return _adaptation_result(prepared.adaptation, _outcome(prepared, host), started)
 
 
-def _require_applied(report: DeviceMetricReport, /) -> None:
-    """Raise the route failure of a refused device call (host boundary)."""
-
-    status = AdaptiveSimplexStatus(int(report.status))
-    if status & AdaptiveSimplexStatus.CAPACITY_EXCEEDED:
-        raise MeshingFailure(
-            MeshingFailureCategory.RESOURCE_EXHAUSTED,
-            "Device metric adaptation exceeds its capacity bucket; raise the "
-            "AdaptiveSimplexPolicy capacities.",
-            stage="device-metric",
-        )
-    if status & AdaptiveSimplexStatus.INVALID_GEOMETRY:
-        raise MeshingFailure(
-            MeshingFailureCategory.QUALITY_REJECTED,
-            "Device metric adaptation certified an inverted or degenerate cell.",
-            stage="device-metric",
-        )
-
-
 def _execute_device_metric_route(prepared: PreparedMeshAdaptation, /) -> _RouteOutcome:
     """Prepare the device epoch, run the compiled passes once, and commit."""
 
     metric = _prepared_metric(prepared)
     update = adapt_device_metric(metric.layout, metric.state)
-    _require_applied(update.report)
     return _outcome(metric, jax.device_get(update.state))
 
 

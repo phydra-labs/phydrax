@@ -18,8 +18,11 @@ conformity closure (every cell with a split edge is bisected, iteration by
 iteration), the same vertex and cell ID issue order, and the same coarsening
 families. Slot order equals global-ID order and slots are never reused inside
 one prepared epoch, so ranks by slot are ranks by ID and every issue order is a
-prefix sum. A failed call (capacity, closure limit, protected conflict, invalid
-geometry) returns the input state unchanged with its status flags.
+prefix sum. Every call records its `AdaptiveSimplexStatus` flags in the state,
+where they accumulate over the prepared epoch. A failed call (capacity, closure
+limit, protected conflict, invalid geometry) rolls back every mesh, topology,
+and numerical array but still records its terminal flags; every later call on
+that state is refused on device until a new epoch is prepared.
 """
 
 from __future__ import annotations
@@ -39,9 +42,9 @@ from jax.sharding import Mesh, PartitionSpec
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._geometry_predicates import orient2d, orient3d, PredicateMode, PredicateSign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..geometry._predicates import orient2d, orient3d, PredicateMode, PredicateSign
 
 
 _CELL_KINDS = {2: "triangle", 3: "tetrahedron"}
@@ -279,13 +282,18 @@ def _vertex_half_facets(
 
 
 class AdaptiveSimplexStatus(IntFlag):
-    """Outcome flags of one device adaptation call.
+    """Outcome flags of one device adaptation call, accumulated per epoch.
 
     ``CAPACITY_EXCEEDED``, ``CLOSURE_LIMIT``, ``PROTECTED_CONFLICT`` and
-    ``INVALID_GEOMETRY`` are failures: the returned state is the input state.
-    ``PASS_LIMIT`` (coarsening stopped at its pass bound) and
-    ``NEEDS_HOST_RESOLUTION`` (some filtered device predicate is uncertain) are
-    applied outcomes that the host commit resolves or reports.
+    ``INVALID_GEOMETRY`` are terminal failures: the returned state keeps the
+    input topology and arrays but records the flags in
+    `AdaptiveSimplexState.status_flags`, and every later call on it is refused
+    (``report.failed``) until a new epoch is prepared (for resources, with
+    larger capacities). ``PASS_LIMIT`` (coarsening stopped at its pass bound)
+    and ``NEEDS_HOST_RESOLUTION`` (some filtered device predicate is uncertain)
+    are applied outcomes: the commit reports a pass-limited epoch as
+    ``PASS_LIMIT`` and resolves uncertain orientation with exact host
+    predicates or rejects the epoch.
     """
 
     COMPLETE = 0
@@ -471,10 +479,9 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
     ``vertex_levels``, the coarsening pass of removal (``-1`` while alive), and
     protection. ``protected_codes`` are sorted edge codes ``low * V + high`` of
     vertex slots. ``cursors`` hold the next vertex/cell slot and global ID,
-    ``clocks`` the cumulative closure level, coarsening pass, and the union of
-    applied (non-failure) status flags, ``counters`` the evidence totals since
-    preparation, and ``refine_rejected`` / ``coarsen_marked`` the cumulative
-    mark evidence.
+    ``clocks`` the cumulative closure level, coarsening pass, and status flags
+    (`status_flags`), ``counters`` the evidence totals since preparation, and
+    ``refine_rejected`` / ``coarsen_marked`` the cumulative mark evidence.
     """
 
     mesh: MaskedSimplexMesh
@@ -585,6 +592,18 @@ class AdaptiveSimplexState(StrictModule, NonTrainableState):
         self.clocks = arrays["clocks"]
         self.counters = arrays["counters"]
 
+    @property
+    def status_flags(self) -> Array:
+        """Cumulative `AdaptiveSimplexStatus` flags of the epoch (traceable).
+
+        Applied calls add ``PASS_LIMIT`` and ``NEEDS_HOST_RESOLUTION``; a failed
+        call rolls back every mesh, topology, and numerical array but still
+        records its flags, after which every call on the state is refused.
+        Stacked part states hold one entry per part.
+        """
+
+        return self.clocks[..., 2]
+
 
 @final
 class AdaptiveSimplexReport(StrictModule):
@@ -595,9 +614,12 @@ class AdaptiveSimplexReport(StrictModule):
     whose own closure would split a protected edge, or the coarsening marks
     that stay active. ``operations`` counts bisections or restored parents,
     ``iterations`` closure iterations or coarsening passes, ``vertices``
-    created or removed vertices. Geometry evidence covers the active cells of
-    the returned state: FILTERED_DEVICE orientation predicates (uncertain and
-    certified-invalid counts) and the minimum shape quality.
+    created or removed vertices. Geometry evidence covers the attempted
+    candidate: on success that is the returned state's active cells; on failure
+    it records why the candidate was rejected while the state arrays roll back.
+    A call on a state whose `status_flags` hold a terminal failure is refused:
+    the state is returned unchanged, ``status`` holds those terminal flags, and
+    the accepted, operation, iteration, and vertex counts are zero.
     """
 
     status: Array
@@ -1244,8 +1266,8 @@ def _shape_quality(points: Array, dimension: int, /) -> Array:
     return 12.0 * (0.5 * volume) ** (2.0 / 3.0) / squared
 
 
-def _geometry_evidence(work: _Work, dimension: int, /):
-    """FILTERED_DEVICE orientation and shape quality of the active cells."""
+def _geometry_evidence(work: _Work, dimension: int, axis: str | None, /):
+    """FILTERED_DEVICE orientation and shape quality of the active cells (all parts)."""
 
     points = work.coordinates[work.cells]
     active = work.cell_active
@@ -1261,10 +1283,15 @@ def _geometry_evidence(work: _Work, dimension: int, /):
         uncertain = jnp.zeros(active.shape, dtype=jnp.bool_)
         invalid = active & ~jnp.any(normal != 0.0, axis=1)
     quality = jnp.where(active, _shape_quality(points, dimension), jnp.inf)
+    uncertain = jnp.sum(uncertain, dtype=jnp.int32)
+    invalid = jnp.sum(invalid, dtype=jnp.int32)
+    quality = jnp.min(quality)
+    if axis is None:
+        return uncertain, invalid, quality
     return (
-        jnp.sum(uncertain, dtype=jnp.int32),
-        jnp.sum(invalid, dtype=jnp.int32),
-        jnp.min(quality),
+        jax.lax.psum(uncertain, axis),
+        jax.lax.psum(invalid, axis),
+        jax.lax.pmin(quality, axis),
     )
 
 
@@ -1283,19 +1310,16 @@ def _finished(
     vertices: Array,
     axis: str | None = None,
 ) -> AdaptiveSimplexUpdate:
-    uncertain, invalid, quality = _geometry_evidence(work, dimension)
-    if axis is not None:
-        uncertain = jax.lax.psum(uncertain, axis)
-        invalid = jax.lax.psum(invalid, axis)
-        quality = jax.lax.pmin(quality, axis)
+    uncertain, invalid, quality = _geometry_evidence(work, dimension, axis)
     status = (
         status
         | jnp.where(invalid > 0, int(AdaptiveSimplexStatus.INVALID_GEOMETRY), 0)
         | jnp.where(uncertain > 0, int(AdaptiveSimplexStatus.NEEDS_HOST_RESOLUTION), 0)
     ).astype(jnp.int32)
     failed = (status & _FAILURES) != 0
-    work = work._replace(clocks=work.clocks.at[2].set(work.clocks[2] | status))
+    # A failed call rolls back to the source arrays but keeps its status evidence.
     result = _select(failed, source, work)
+    result = result._replace(clocks=result.clocks.at[2].set(source.clocks[2] | status))
     zero = jnp.zeros((), dtype=jnp.int32)
     report = AdaptiveSimplexReport(
         status=status,
@@ -1312,11 +1336,63 @@ def _finished(
     return AdaptiveSimplexUpdate(_state(result), report)
 
 
+def _terminal(work: _Work, axis: str | None, /) -> Array:
+    """Terminal failure flags already recorded by the epoch (on any part)."""
+
+    return (_global_flags(work.clocks[2], axis) & _FAILURES).astype(jnp.int32)
+
+
+def _refused(
+    state: AdaptiveSimplexState,
+    work: _Work,
+    requested: Array,
+    rejected: Array,
+    dimension: int,
+    axis: str | None = None,
+    /,
+) -> AdaptiveSimplexUpdate:
+    """A call on an epoch that already failed: nothing runs, the state is kept."""
+
+    uncertain, invalid, quality = _geometry_evidence(work, dimension, axis)
+    zero = jnp.zeros((), dtype=jnp.int32)
+    report = AdaptiveSimplexReport(
+        status=_terminal(work, axis),
+        requested=requested,
+        accepted=zero,
+        rejected=rejected,
+        operations=zero,
+        iterations=zero,
+        vertices=zero,
+        uncertain_cells=uncertain,
+        invalid_cells=invalid,
+        minimum_quality=quality,
+    )
+    return AdaptiveSimplexUpdate(state, report)
+
+
 def _refine(
     layout: AdaptiveSimplexLayout, state: AdaptiveSimplexState, marks: Array, /
 ) -> AdaptiveSimplexUpdate:
     work = _work(state)
     marks = marks & work.cell_active
+    return jax.lax.cond(
+        _terminal(work, None) != 0,
+        lambda: _refused(
+            state,
+            work,
+            jnp.sum(marks, dtype=jnp.int32),
+            jnp.zeros_like(marks),
+            layout.dimension,
+        ),
+        lambda: _refined(layout, work, marks),
+    )
+
+
+def _refined(
+    layout: AdaptiveSimplexLayout, work: _Work, marks: Array, /
+) -> AdaptiveSimplexUpdate:
+    """Protected admissibility, closure, and evidence of one applied refinement."""
+
     analysed = jnp.any(work.protected_codes != _CODE_SENTINEL) & jnp.any(marks)
     rejected, analysis_status = jax.lax.cond(
         analysed,
@@ -1497,6 +1573,21 @@ def _coarsen(
     work = _work(state)
     raw = marks & (work.cell_ids >= 0)
     marks = raw & work.cell_active
+    # Every mark of a refused call stays active, hence rejected.
+    return jax.lax.cond(
+        _terminal(work, None) != 0,
+        lambda: _refused(
+            state, work, jnp.sum(marks, dtype=jnp.int32), raw, layout.dimension
+        ),
+        lambda: _coarsened(layout, work, raw, marks),
+    )
+
+
+def _coarsened(
+    layout: AdaptiveSimplexLayout, work: _Work, raw: Array, marks: Array, /
+) -> AdaptiveSimplexUpdate:
+    """Bounded coarsening passes and evidence of one applied coarsening."""
+
     zero = jnp.zeros((), dtype=jnp.int32)
     start = _Coarsening(work, marks, zero, zero, zero, jnp.any(marks))
     limit = layout.maximum_coarsening_passes
@@ -1573,7 +1664,9 @@ def refine_adaptive_simplex(
 
     Marks whose own closure would split a protected edge are rejected (reported
     in ``report.rejected``); the others are bisected once and closed. Capacity
-    overflow, the closure bound, and invalid children leave the state unchanged.
+    overflow, the closure bound, and invalid children roll the state back and
+    record their terminal flags in ``state.status_flags``; a state holding a
+    terminal flag refuses every later call.
     """
 
     return _compiled_refine(layout, state, _checked(layout, state, marks))
@@ -1587,7 +1680,8 @@ def coarsen_adaptive_simplex(
     Pass by pass, every unprotected bisection vertex whose star is exactly the
     marked children of its bisections is removed and their parents restored
     under their original IDs; restored parents join the marks of later passes.
-    Coarsened slots are retired and never reused inside the prepared epoch.
+    Coarsened slots are retired and never reused inside the prepared epoch. A
+    state holding a terminal flag refuses the call (every mark stays rejected).
     """
 
     return _compiled_coarsen(layout, state, _checked(layout, state, marks))
@@ -1620,6 +1714,58 @@ class AdaptiveSimplexParts(StrictModule, NonTrainableState):
         return self.mesh.devices.size
 
 
+def _refined_part(
+    layout: AdaptiveSimplexLayout,
+    work: _Work,
+    mask: Array,
+    requested: Array,
+    axis: str,
+    /,
+) -> AdaptiveSimplexUpdate:
+    """Collective closure and evidence of one applied part refinement."""
+
+    closure = _closure(work, mask, layout, True, axis)
+    increments = jnp.zeros((_COUNTERS,), dtype=jnp.int64)
+    increments = increments.at[
+        jnp.asarray(
+            (
+                AdaptiveSimplexCounter.REQUESTED_REFINEMENTS,
+                AdaptiveSimplexCounter.ACCEPTED_REFINEMENTS,
+                AdaptiveSimplexCounter.BISECTIONS,
+                AdaptiveSimplexCounter.CLOSURE_ITERATIONS,
+                AdaptiveSimplexCounter.CREATED_VERTICES,
+            )
+        )
+    ].set(
+        jnp.stack(
+            (
+                requested,
+                requested,
+                closure.bisections,
+                closure.iterations,
+                closure.created,
+            )
+        ).astype(jnp.int64)
+    )
+    result = closure.work._replace(
+        clocks=closure.work.clocks.at[0].add(closure.iterations),
+        counters=closure.work.counters + increments,
+    )
+    return _finished(
+        work,
+        result,
+        closure.status,
+        layout.dimension,
+        requested=requested,
+        accepted=requested,
+        rejected=jnp.zeros_like(mask),
+        operations=closure.bisections,
+        iterations=closure.iterations,
+        vertices=closure.created,
+        axis=axis,
+    )
+
+
 def _refine_parts(
     layout: AdaptiveSimplexLayout,
     parts: AdaptiveSimplexParts,
@@ -1634,46 +1780,14 @@ def _refine_parts(
         state = jax.tree_util.tree_map(lambda value: value[0], state_block)
         work = _work(state)
         mask = marks_block[0] & work.cell_active
-        closure = _closure(work, mask, layout, True, axis)
         requested = jax.lax.psum(jnp.sum(mask, dtype=jnp.int32), axis)
-        increments = jnp.zeros((_COUNTERS,), dtype=jnp.int64)
-        increments = increments.at[
-            jnp.asarray(
-                (
-                    AdaptiveSimplexCounter.REQUESTED_REFINEMENTS,
-                    AdaptiveSimplexCounter.ACCEPTED_REFINEMENTS,
-                    AdaptiveSimplexCounter.BISECTIONS,
-                    AdaptiveSimplexCounter.CLOSURE_ITERATIONS,
-                    AdaptiveSimplexCounter.CREATED_VERTICES,
-                )
-            )
-        ].set(
-            jnp.stack(
-                (
-                    requested,
-                    requested,
-                    closure.bisections,
-                    closure.iterations,
-                    closure.created,
-                )
-            ).astype(jnp.int64)
-        )
-        result = closure.work._replace(
-            clocks=closure.work.clocks.at[0].add(closure.iterations),
-            counters=closure.work.counters + increments,
-        )
-        update = _finished(
-            work,
-            result,
-            closure.status,
-            layout.dimension,
-            requested=requested,
-            accepted=requested,
-            rejected=jnp.zeros_like(mask),
-            operations=closure.bisections,
-            iterations=closure.iterations,
-            vertices=closure.created,
-            axis=axis,
+        # The refusal is collective: every part sees the union of recorded flags.
+        update = jax.lax.cond(
+            _terminal(work, axis) != 0,
+            lambda: _refused(
+                state, work, requested, jnp.zeros_like(mask), layout.dimension, axis
+            ),
+            lambda: _refined_part(layout, work, mask, requested, axis),
         )
         return jax.tree_util.tree_map(lambda value: value[None], update)
 
@@ -1701,8 +1815,10 @@ def refine_adaptive_simplex_parts(
     and cell IDs are global ranks, identical to the single-part issue whatever
     the ownership; split edges on shared part boundaries select the neighbor
     part's cells until the global fixed point. A round that would exceed any
-    part's capacity or split a protected edge fails for all parts (states
-    unchanged); there is no per-mark protected admissibility on parts.
+    part's capacity or split a protected edge fails for all parts (arrays
+    rolled back, terminal flags recorded on every part); there is no per-mark
+    protected admissibility on parts. A terminal flag recorded on any part
+    refuses every later call on all parts.
     """
 
     if not isinstance(layout, AdaptiveSimplexLayout):

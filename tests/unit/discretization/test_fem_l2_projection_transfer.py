@@ -96,24 +96,27 @@ def _smooth(points):
     return np.sin(3.0 * points[:, 0]) * np.exp(points[:, 1]) + points[:, 0] ** 2
 
 
+def _transfer(source, target, refinement):
+    prepared = phx.discretization.prepare_l2_projection_target(target, field_name="u")
+    return phx.discretization.prepare_l2_projection_transfer(
+        source, prepared, refinement, field_name="u"
+    )
+
+
 @pytest.fixture(scope="module")
 def planar():
     source_mesh = _triangles(7, perturb=0.3, seed=1)
     target_mesh = _triangles(5, perturb=0.3, seed=2)
     source = _space(source_mesh, "triangle")
     target = _space(target_mesh, "triangle")
-    transfer = phx.discretization.prepare_l2_projection_transfer(
-        source, target, _refinement(source_mesh, target_mesh), field_name="u"
-    )
+    transfer = _transfer(source, target, _refinement(source_mesh, target_mesh))
     return source, target, transfer
 
 
 def test_projection_onto_the_same_space_is_the_identity():
     mesh = _triangles(4, perturb=0.25, seed=3)
     space = _space(mesh, "triangle", 2)
-    transfer = phx.discretization.prepare_l2_projection_transfer(
-        space, space, _refinement(mesh, mesh), field_name="u"
-    )
+    transfer = _transfer(space, space, _refinement(mesh, mesh))
     values = jnp.asarray(_smooth(_dofs(space)))
     np.testing.assert_allclose(transfer.apply(values), values, atol=1e-12)
 
@@ -132,9 +135,7 @@ def test_linear_source_is_reproduced_by_a_higher_degree_target():
     target_mesh = _triangles(3, perturb=0.3, seed=5)
     source = _space(source_mesh, "triangle")
     target = _space(target_mesh, "triangle", 2)
-    transfer = phx.discretization.prepare_l2_projection_transfer(
-        source, target, _refinement(source_mesh, target_mesh), field_name="u"
-    )
+    transfer = _transfer(source, target, _refinement(source_mesh, target_mesh))
     linear = lambda x: 1.0 + x[:, 0] - 0.25 * x[:, 1]
     projected = transfer.apply(jnp.asarray(linear(_dofs(source))))
     np.testing.assert_allclose(projected, linear(_dofs(target)), atol=1e-12)
@@ -177,9 +178,109 @@ def test_projection_conserves_the_integral_and_pullback_is_the_transpose(planar)
 def test_projection_reports_its_target_mass_solve_evidence(planar):
     projection = planar[2].primal
     assert isinstance(projection, phx.discretization.FiniteElementL2Projection)
-    assert int(projection.factorization.status) == 0
-    assert float(projection.factorization.diagnostics.minimum_pivot) > 0.0
-    assert 1.0 <= float(projection.target_mass_condition.value) < 100.0
+    prepared = projection.prepared_target
+    assert isinstance(prepared, phx.discretization.PreparedL2ProjectionTarget)
+    assert int(prepared.factorization.status) == 0
+    assert float(prepared.factorization.diagnostics.minimum_pivot) > 0.0
+    assert 1.0 <= float(prepared.mass_condition.value) < 100.0
+    np.testing.assert_allclose(
+        prepared.dof_measures, _integrals(planar[1]), rtol=1e-13, atol=1e-16
+    )
+    with pytest.raises(TypeError, match="prepare_l2_projection_target"):
+        phx.discretization.PreparedL2ProjectionTarget(
+            prepared.discretization,
+            prepared.mass,
+            prepared.factorization,
+            prepared.mass_condition,
+            prepared.dof_measures,
+            field_name=prepared.field_name,
+        )
+    with pytest.raises(TypeError, match="prepare_l2_projection_transfer"):
+        phx.discretization.FiniteElementL2Projection(
+            projection.mixed_mass, prepared, operator_id="forged"
+        )
+
+
+def test_one_prepared_target_serves_every_source_and_payload_block():
+    target_mesh = _triangles(4, perturb=0.3, seed=10)
+    target = _space(target_mesh, "triangle")
+    prepared = phx.discretization.prepare_l2_projection_target(target, field_name="u")
+    linear = lambda x: 0.25 + x[:, 0] - 1.5 * x[:, 1]
+    for n, degree, seed in ((6, 1, 11), (3, 2, 12)):
+        source_mesh = _triangles(n, perturb=0.3, seed=seed)
+        source = _space(source_mesh, "triangle", degree)
+        transfer = phx.discretization.prepare_l2_projection_transfer(
+            source, prepared, _refinement(source_mesh, target_mesh), field_name="u"
+        )
+        points = _dofs(source)
+        block = jnp.stack(
+            (linear(points), _smooth(points), jnp.ones(points.shape[0])), -1
+        )
+        projected = transfer.apply(block)
+        np.testing.assert_allclose(projected[:, 0], linear(_dofs(target)), atol=1e-12)
+        np.testing.assert_allclose(projected[:, 2], 1.0, atol=1e-12)
+        np.testing.assert_allclose(
+            projected[:, 1], transfer.apply(block[:, 1]), rtol=1e-13, atol=1e-15
+        )
+        np.testing.assert_allclose(
+            _integrals(target) @ np.asarray(projected),
+            _integrals(source) @ np.asarray(block),
+            rtol=1e-12,
+            atol=1e-14,
+        )
+
+
+def test_refreshed_target_matches_a_cold_preparation_of_the_moved_geometry():
+    source_mesh = _triangles(6, perturb=0.3, seed=13)
+    target_mesh = _triangles(4, perturb=0.3, seed=14)
+    moved_mesh = _triangles(4, perturb=0.3, seed=15)
+    source = _space(source_mesh, "triangle")
+    target, moved = _space(target_mesh, "triangle"), _space(moved_mesh, "triangle")
+    prepared = phx.discretization.prepare_l2_projection_target(target, field_name="u")
+    refreshed = phx.discretization.refresh_l2_projection_target(prepared, moved)
+    cold = phx.discretization.prepare_l2_projection_target(moved, field_name="u")
+    assert refreshed.structure_id == prepared.structure_id == cold.structure_id
+    assert refreshed.target_id == cold.target_id != prepared.target_id
+    np.testing.assert_array_equal(
+        refreshed.factorization.factor_values, cold.factorization.factor_values
+    )
+    refinement = _refinement(source_mesh, moved_mesh)
+    transfer = phx.discretization.prepare_l2_projection_transfer(
+        source, refreshed, refinement, field_name="u"
+    )
+    assert transfer.preserves_linear and transfer.conservative
+    values = jnp.asarray(_smooth(_dofs(source)))
+    np.testing.assert_array_equal(
+        transfer.apply(values),
+        phx.discretization.prepare_l2_projection_transfer(
+            source, cold, refinement, field_name="u"
+        ).apply(values),
+    )
+    linear = lambda x: 1.0 - x[:, 0] + 2.0 * x[:, 1]
+    np.testing.assert_allclose(
+        transfer.apply(jnp.asarray(linear(_dofs(source)))),
+        linear(_dofs(moved)),
+        atol=1e-12,
+    )
+    # The refreshed target no longer joins refinements of the old geometry.
+    with pytest.raises(ValueError, match="does not join"):
+        phx.discretization.prepare_l2_projection_transfer(
+            source, refreshed, _refinement(source_mesh, target_mesh), field_name="u"
+        )
+
+
+def test_refresh_rejects_a_changed_target_structure():
+    mesh = _triangles(3, perturb=0.2, seed=16)
+    prepared = phx.discretization.prepare_l2_projection_target(
+        _space(mesh, "triangle"), field_name="u"
+    )
+    refresh = phx.discretization.refresh_l2_projection_target
+    with pytest.raises(ValueError, match="unchanged DOF structure"):
+        refresh(prepared, _space(mesh, "triangle", 2))
+    with pytest.raises(ValueError, match="unchanged DOF structure"):
+        refresh(prepared, _space(_triangles(4, perturb=0.2, seed=16), "triangle"))
+    with pytest.raises(TypeError, match="PreparedL2ProjectionTarget"):
+        refresh(_space(mesh, "triangle"), _space(mesh, "triangle"))
 
 
 def test_target_coverage_preserves_constants_without_claiming_conservation():
@@ -187,11 +288,10 @@ def test_target_coverage_preserves_constants_without_claiming_conservation():
     target_mesh = _triangles(3, lower=0.25, upper=0.75)
     source = _space(source_mesh, "triangle")
     target = _space(target_mesh, "triangle", discontinuous=True)
-    transfer = phx.discretization.prepare_l2_projection_transfer(
+    transfer = _transfer(
         source,
         target,
         _refinement(source_mesh, target_mesh, coverage=CommonRefinementCoverage.TARGET),
-        field_name="u",
     )
     assert transfer.preserves_constants and transfer.preserves_linear
     assert not transfer.conservative
@@ -207,9 +307,7 @@ def test_tetrahedral_projection_reproduces_linears_and_conserves():
     source_mesh, target_mesh = _tetrahedra(3), _tetrahedra(2)
     source = _space(source_mesh, "tetrahedron")
     target = _space(target_mesh, "tetrahedron")
-    transfer = phx.discretization.prepare_l2_projection_transfer(
-        source, target, _refinement(source_mesh, target_mesh), field_name="u"
-    )
+    transfer = _transfer(source, target, _refinement(source_mesh, target_mesh))
     assert transfer.preserves_linear and transfer.conservative
     linear = lambda x: 1.0 + x[:, 0] - 2.0 * x[:, 1] + 0.5 * x[:, 2]
     np.testing.assert_allclose(
@@ -231,7 +329,10 @@ def test_invalid_refinements_and_elements_are_rejected():
         _triangles(2, perturb=0.2, seed=7),
         _triangles(4, perturb=0.2, seed=8),
     )
-    source, target = _space(first, "triangle"), _space(second, "triangle")
+    source = _space(first, "triangle")
+    target = phx.discretization.prepare_l2_projection_target(
+        _space(second, "triangle"), field_name="u"
+    )
     prepare = phx.discretization.prepare_l2_projection_transfer
     with pytest.raises(ValueError, match="does not join"):
         prepare(source, target, _refinement(first, third), field_name="u")
@@ -246,9 +347,15 @@ def test_invalid_refinements_and_elements_are_rejected():
     with pytest.raises(ValueError, match="successful common refinement"):
         prepare(
             source,
-            _space(shrunk, "triangle"),
+            phx.discretization.prepare_l2_projection_target(
+                _space(shrunk, "triangle"), field_name="u"
+            ),
             _refinement(first, shrunk),
             field_name="u",
+        )
+    with pytest.raises(TypeError, match="PreparedL2ProjectionTarget"):
+        prepare(
+            source, _space(second, "triangle"), _refinement(first, second), field_name="u"
         )
     vector = phx.discretization.FiniteElementPlan(
         first,
@@ -258,3 +365,5 @@ def test_invalid_refinements_and_elements_are_rejected():
     ).prepare()
     with pytest.raises(ValueError, match="scalar Lagrange elements"):
         prepare(vector, target, _refinement(first, second), field_name="u")
+    with pytest.raises(ValueError, match="scalar Lagrange elements"):
+        phx.discretization.prepare_l2_projection_target(vector, field_name="u")

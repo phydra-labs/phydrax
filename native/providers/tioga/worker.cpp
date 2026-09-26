@@ -19,9 +19,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <exception>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -78,23 +78,6 @@ struct Communicator {
   int rank;
   int size;
 };
-
-// Runs rank-local work and agrees on its outcome. A local failure is rethrown;
-// when only a peer failed this returns false so the peer's error is reported.
-template <class Local>
-bool collectively(Communicator const& world, Local&& local) {
-  std::exception_ptr failure;
-  try {
-    local();
-  } catch (...) {
-    failure = std::current_exception();
-  }
-  int const mine = failure ? 1 : 0;
-  int any = 0;
-  MPI_Allreduce(&mine, &any, 1, MPI_INT, MPI_MAX, world.comm);
-  if (failure) std::rethrow_exception(failure);
-  return any == 0;
-}
 
 std::int64_t integer_parameter(Value const& parameters, char const* name,
                                std::int64_t minimum, std::int64_t maximum) {
@@ -374,18 +357,16 @@ void write_rank_output(worker::Request const& request, Registration& state,
 // resident only after every rank completed every step.
 Value connect_and_report(worker::Request const& request, std::unique_ptr<Registration> working,
                          std::unique_ptr<Registration>& resident, Communicator const& world) {
-  working->assembler->performConnectivity();
+  worker::agreed(world.comm, [&] { working->assembler->performConnectivity(); });
   working->state = request.sequence;
-  if (!collectively(world, [&] { write_rank_output(request, *working, world); }))
-    return Object{};
-  if (!collectively(world, [&] {
-        if (world.rank != 0) return;
-        auto root = request.output();
-        for (int rank = 0; rank < world.size; ++rank)
-          root.declare_part("rank-" + std::to_string(rank));
-        root.finish();
-      }))
-    return Object{};
+  worker::agreed(world.comm, [&] { write_rank_output(request, *working, world); });
+  worker::agreed(world.comm, [&] {
+    if (world.rank != 0) return;
+    auto root = request.output();
+    for (int rank = 0; rank < world.size; ++rank)
+      root.declare_part("rank-" + std::to_string(rank));
+    root.finish();
+  });
   Value result = Object{{"registration", working->registration}, {"state", working->state}};
   resident = std::move(working);
   return result;
@@ -393,26 +374,33 @@ Value connect_and_report(worker::Request const& request, std::unique_ptr<Registr
 
 Value register_parts(worker::Request const& request, std::unique_ptr<Registration>& resident,
                      Communicator const& world) {
-  auto const input = request.input();
-  Layout const layout = validate_registration(input, request.parameters, world.size);
-  // A new registration replaces the resident one on every rank.
-  resident.reset();
-  auto working = std::make_unique<Registration>();
-  working->registration = request.sequence;
-  working->part_nodes = layout.part_nodes;
-  working->part_cells = layout.part_cells;
-  if (!collectively(world, [&] {
-        for (std::int64_t part = world.rank; part < layout.parts; part += world.size)
-          working->blocks.push_back(build_block(input, layout, static_cast<int>(part)));
-        working->assembler = std::make_unique<TIOGA::tioga>();
-        working->assembler->setCommunicator(world.library, world.rank, world.size);
-        int fringe = layout.fringe, exclusion = layout.exclusion;
-        working->assembler->setNfringe(&fringe);
-        working->assembler->setMexclude(&exclusion);
-        for (auto& block : working->blocks) register_block(*working->assembler, *block);
-        working->assembler->profile();
-      }))
-    return Object{};
+  std::optional<exchange::Input> input;
+  Layout layout;
+  worker::agreed(world.comm, [&] {
+    input.emplace(request.input());
+    layout = validate_registration(*input, request.parameters, world.size);
+  });
+  // A new registration replaces the resident one on every rank only after the
+  // request was admitted collectively.
+  std::unique_ptr<Registration> working;
+  worker::agreed(world.comm, [&] {
+    resident.reset();
+    working = std::make_unique<Registration>();
+    working->registration = request.sequence;
+    working->part_nodes = layout.part_nodes;
+    working->part_cells = layout.part_cells;
+  });
+  worker::agreed(world.comm, [&] {
+    for (std::int64_t part = world.rank; part < layout.parts; part += world.size)
+      working->blocks.push_back(build_block(*input, layout, static_cast<int>(part)));
+    working->assembler = std::make_unique<TIOGA::tioga>();
+    working->assembler->setCommunicator(world.library, world.rank, world.size);
+    int fringe = layout.fringe, exclusion = layout.exclusion;
+    working->assembler->setNfringe(&fringe);
+    working->assembler->setMexclude(&exclusion);
+    for (auto& block : working->blocks) register_block(*working->assembler, *block);
+    working->assembler->profile();
+  });
   return connect_and_report(request, std::move(working), resident, world);
 }
 
@@ -420,40 +408,51 @@ Value move_parts(worker::Request const& request, std::unique_ptr<Registration>& 
                  Communicator const& world) {
   std::int64_t const registration = request.parameters.at("registration").as_int();
   std::int64_t const state = request.parameters.at("state").as_int();
-  if (!resident || resident->registration != registration)
-    throw worker::Failure("invalid_request",
-                          "The TIOGA registration is not resident in this worker session");
-  if (resident->state != state)
-    throw worker::Failure("invalid_request",
-                          "The TIOGA registration moved since the supplied assembly state");
-  auto const input = request.input();
-  auto const& moved = input.require("moved_parts", DType::int64, {-1});
-  auto const* part = moved.data<std::int64_t>();
-  std::int64_t const parts = static_cast<std::int64_t>(resident->part_nodes.size());
-  std::vector<std::int64_t> starts(static_cast<std::size_t>(parts), -1);
-  std::int64_t nodes = 0;
-  for (std::uint64_t index = 0; index < moved.count(); ++index) {
-    if (part[index] < 0 || part[index] >= parts || (index > 0 && part[index] <= part[index - 1]))
-      throw std::invalid_argument("Moved TIOGA parts must be unique ascending part indices");
-    starts[static_cast<std::size_t>(part[index])] = nodes;
-    nodes += resident->part_nodes[static_cast<std::size_t>(part[index])];
-  }
-  if (moved.count() == 0) throw std::invalid_argument("A TIOGA motion requires moved parts");
-  auto const& coordinates = input.require("coordinates", DType::float64, {nodes, 3});
-  require_finite(coordinates);
+  std::vector<std::int64_t> starts;
+  std::vector<double> moved_coordinates;
+  worker::agreed(world.comm, [&] {
+    if (!resident || resident->registration != registration)
+      throw worker::Failure(
+          "invalid_request",
+          "The TIOGA registration is not resident in this worker session");
+    if (resident->state != state)
+      throw worker::Failure(
+          "invalid_request",
+          "The TIOGA registration moved since the supplied assembly state");
+    auto const input = request.input();
+    auto const& moved = input.require("moved_parts", DType::int64, {-1});
+    auto const* part = moved.data<std::int64_t>();
+    std::int64_t const parts = static_cast<std::int64_t>(resident->part_nodes.size());
+    starts.assign(static_cast<std::size_t>(parts), -1);
+    std::int64_t nodes = 0;
+    for (std::uint64_t index = 0; index < moved.count(); ++index) {
+      if (part[index] < 0 || part[index] >= parts ||
+          (index > 0 && part[index] <= part[index - 1]))
+        throw std::invalid_argument(
+            "Moved TIOGA parts must be unique ascending part indices");
+      starts[static_cast<std::size_t>(part[index])] = nodes;
+      nodes += resident->part_nodes[static_cast<std::size_t>(part[index])];
+    }
+    if (moved.count() == 0)
+      throw std::invalid_argument("A TIOGA motion requires moved parts");
+    auto const& coordinates =
+        input.require("coordinates", DType::float64, {nodes, 3});
+    require_finite(coordinates);
+    auto const* first = coordinates.data<double>();
+    moved_coordinates.assign(first, first + coordinates.count());
+  });
   // Any failure from here on leaves no resident registration on every rank.
   std::unique_ptr<Registration> working = std::move(resident);
-  if (!collectively(world, [&] {
-        auto const* xyz = coordinates.data<double>();
-        for (auto& block : working->blocks) {
-          std::int64_t const start = starts[static_cast<std::size_t>(block->part)];
-          if (start < 0) continue;
-          std::copy(xyz + 3 * start, xyz + 3 * start + block->xyz.size(), block->xyz.begin());
-          register_block(*working->assembler, *block);
-        }
-        working->assembler->profile();
-      }))
-    return Object{};
+  worker::agreed(world.comm, [&] {
+    auto const* xyz = moved_coordinates.data();
+    for (auto& block : working->blocks) {
+      std::int64_t const start = starts[static_cast<std::size_t>(block->part)];
+      if (start < 0) continue;
+      std::copy(xyz + 3 * start, xyz + 3 * start + block->xyz.size(), block->xyz.begin());
+      register_block(*working->assembler, *block);
+    }
+    working->assembler->profile();
+  });
   return connect_and_report(request, std::move(working), resident, world);
 }
 

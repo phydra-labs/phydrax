@@ -75,10 +75,13 @@ positively oriented cell rows, packed sibling half-facets; slot order equals
 global-ID order). `AdaptiveSimplexState` adds the Maubach labels and bisection
 forest; `refine_adaptive_simplex`, `coarsen_adaptive_simplex`, and
 `refine_adaptive_simplex_parts` are module-level compiled entry points keyed by
-the static `AdaptiveSimplexLayout`. Refusals return the input state with
-`AdaptiveSimplexStatus` flags in the `AdaptiveSimplexReport`. Preparation and
-commit live in `phydrax.meshing` (`prepare_adaptive_simplex`,
-`commit_adaptive_simplex`).
+the static `AdaptiveSimplexLayout`. Every call records its `AdaptiveSimplexStatus`
+flags in `AdaptiveSimplexState.status_flags`, accumulated over the prepared
+epoch; a failed call rolls every other array back but records its terminal
+flags, and every later call on that state is refused on device
+(`AdaptiveSimplexReport.failed`, zero operation counts). Preparation and commit
+live in `phydrax.meshing` (`prepare_adaptive_simplex`,
+`commit_adaptive_simplex`, which rejects an epoch holding a terminal flag).
 
 ::: phydrax.discretization.MaskedSimplexMesh
 

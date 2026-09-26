@@ -463,6 +463,37 @@ geometry decisions: convex-polygon and tetrahedron intersections and
 triangle-ray preparation use exact predicates when meshcore is installed and
 otherwise report unresolved decisions as `UNCERTAIN_PREDICATE`.
 
+`segment_intersections_2d(a, b, c, d, mode=...)` classifies closed segments as
+`SegmentIntersectionStatus` `DISJOINT`, `PROPER_CROSSING`, `ENDPOINT_CONTACT`
+(one common point that is an endpoint), `COLLINEAR_OVERLAP` (a common piece of
+positive length), or `UNCERTAIN`.
+`polygon_simplicity_2d(vertices, mode=..., maximum_candidate_pairs=...)`
+certifies `(..., n, 2)` vertex loops as `PolygonSimplicityStatus` `SIMPLE`,
+`SELF_INTERSECTING`, or `UNCERTAIN`: non-adjacent edges must be disjoint and
+adjacent edges may meet only at their shared vertex, so repeated vertices,
+touching vertices, and doubled-back edges are self-intersections. Candidate edge
+pairs stream from a BVH broad phase over exact edge boxes. The result carries the
+certified orientation, offending and unresolved pair counts, the processed
+candidate count, and whether the capacity was exhausted; exhaustion leaves every
+unproved loop uncertain. Both are host algorithms (`FILTERED` or `EXACT`) whose
+classes are exact wherever every contributing sign is certified.
+
+`phydrax-meshcore` is released in lockstep with Phydrax: `phydrax[meshcore]`
+pins the identical version, and a library that is another release, lacks any
+bound C ABI symbol, or returns a null/malformed release or build identity is
+reported as `MeshcoreUnavailableError` with the reason. No C++ exception crosses
+its C ABI: a refused allocation is the call status `CAPACITY_EXCEEDED`.
+To build and test the library from source, and to repeat the tests under
+AddressSanitizer and UndefinedBehaviorSanitizer:
+
+```console
+cmake -S native/meshcore -B build/meshcore
+cmake --build build/meshcore && ctest --test-dir build/meshcore
+cmake -S native/meshcore -B build/meshcore-sanitize -DPHX_MC_SANITIZE=ON \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build/meshcore-sanitize && ctest --test-dir build/meshcore-sanitize
+```
+
 `DelaunayTriangulation` (2D/3D) and `ConstrainedDelaunayTriangulation`
 (segment recovery, hole carving, Ruppert/Chew refinement bounded by
 `max_steiner`) are exact, deterministic, and canonically ordered; ties are

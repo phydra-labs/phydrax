@@ -28,7 +28,7 @@ from typing import Any, cast
 import numpy as np
 
 from .._geometry_precision import GeometryPrecisionPolicy
-from ._predicates import orient3d, PredicateMode, resolve_host_predicate_mode
+from .._geometry_predicates import orient3d, PredicateMode, resolve_host_predicate_mode
 
 
 class TetraIntersectionStatus(str, Enum):

@@ -629,6 +629,18 @@ differentiates it by the implicit function theorem.
 
 ---
 
+::: phydrax.discretization.PreparedL2ProjectionTarget
+
+---
+
+::: phydrax.discretization.prepare_l2_projection_target
+
+---
+
+::: phydrax.discretization.refresh_l2_projection_target
+
+---
+
 ::: phydrax.discretization.prepare_l2_projection_transfer
 
 ---

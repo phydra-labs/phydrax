@@ -41,6 +41,7 @@
 #include <utility>
 #include <vector>
 
+#include "capi_guard.hpp"
 #include "clip_common.hpp"
 #include "phydrax_meshcore.h"
 #include "predicates.hpp"
@@ -1042,7 +1043,9 @@ int32_t tetrahedron_batch(int64_t count, const double* first, const double* seco
                           int32_t vertex_capacity, int32_t simplex_capacity, double* simplices,
                           int32_t* simplex_counts, double* volumes, double* first_moments,
                           int32_t* item_status) {
-  if (count < 0 || vertex_capacity < 1) {
+  if (count < 0 || vertex_capacity < 1 || simplex_capacity < 0 ||
+      !addressable(count, 12, sizeof(double)) ||
+      !addressable(count, 12 * static_cast<int64_t>(simplex_capacity), sizeof(double))) {
     return PHX_MC_INVALID_ARGUMENT;
   }
   if (count == 0) {
@@ -1088,14 +1091,10 @@ int32_t phx_mc_tetrahedron_intersection_moments(int64_t count, const double* fir
                                                 const double* second, int32_t vertex_capacity,
                                                 double* volumes, double* first_moments,
                                                 int32_t* item_status) {
-  try {
+  return phx::mc::guarded([&] {
     return phx::mc::tetrahedron_batch(count, first, second, vertex_capacity, 0, nullptr,
                                       nullptr, volumes, first_moments, item_status);
-  } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  } catch (...) {
-    return PHX_MC_INTERNAL_ERROR;
-  }
+  });
 }
 
 int32_t phx_mc_tetrahedron_intersection_simplices(int64_t count, const double* first,
@@ -1103,7 +1102,7 @@ int32_t phx_mc_tetrahedron_intersection_simplices(int64_t count, const double* f
                                                   int32_t simplex_capacity, double* simplices,
                                                   int32_t* simplex_counts, double* volumes,
                                                   double* first_moments, int32_t* item_status) {
-  try {
+  return phx::mc::guarded([&]() -> int32_t {
     if (simplex_capacity < 1) {
       return PHX_MC_INVALID_ARGUMENT;
     }
@@ -1113,11 +1112,7 @@ int32_t phx_mc_tetrahedron_intersection_simplices(int64_t count, const double* f
     return phx::mc::tetrahedron_batch(count, first, second, vertex_capacity, simplex_capacity,
                                       simplices, simplex_counts, volumes, first_moments,
                                       item_status);
-  } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  } catch (...) {
-    return PHX_MC_INTERNAL_ERROR;
-  }
+  });
 }
 
 int32_t phx_mc_polyhedron_clip_moments(int64_t count, int32_t plane_capacity,
@@ -1125,8 +1120,10 @@ int32_t phx_mc_polyhedron_clip_moments(int64_t count, int32_t plane_capacity,
                                        const int32_t* plane_counts, const double* tetrahedra,
                                        int32_t vertex_capacity, double* volumes,
                                        double* first_moments, int32_t* item_status) {
-  try {
-    if (count < 0 || plane_capacity < 0 || vertex_capacity < 1) {
+  return phx::mc::guarded([&]() -> int32_t {
+    if (count < 0 || plane_capacity < 0 || vertex_capacity < 1 ||
+        !phx::mc::addressable(count, 3 * static_cast<int64_t>(plane_capacity), sizeof(double)) ||
+        !phx::mc::addressable(count, 12, sizeof(double))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     if (count == 0) {
@@ -1158,11 +1155,7 @@ int32_t phx_mc_polyhedron_clip_moments(int64_t count, int32_t plane_capacity,
       item_status[item] = status;
     }
     return PHX_MC_OK;
-  } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  } catch (...) {
-    return PHX_MC_INTERNAL_ERROR;
-  }
+  });
 }
 
 int32_t phx_mc_clip_box_halfspaces(int64_t count, const double* box_lower,
@@ -1174,9 +1167,13 @@ int32_t phx_mc_clip_box_halfspaces(int64_t count, const double* box_lower,
                                    int32_t* face_offsets, int32_t* face_labels,
                                    int32_t* face_vertices, int32_t* face_counts, double* volumes,
                                    double* first_moments, int32_t* item_status) {
-  try {
+  return phx::mc::guarded([&]() -> int32_t {
     if (count < 0 || plane_capacity < 0 || vertex_capacity < 1 || face_capacity < 1 ||
-        face_vertex_capacity < 1) {
+        face_vertex_capacity < 1 ||
+        !phx::mc::addressable(count, 3 * static_cast<int64_t>(plane_capacity), sizeof(double)) ||
+        !phx::mc::addressable(count, 3 * static_cast<int64_t>(vertex_capacity), sizeof(double)) ||
+        !phx::mc::addressable(count, static_cast<int64_t>(face_capacity) + 1, sizeof(int32_t)) ||
+        !phx::mc::addressable(count, face_vertex_capacity, sizeof(int32_t))) {
       return PHX_MC_INVALID_ARGUMENT;
     }
     const int32_t box_status = phx::mc::clip::check_box(box_lower, box_upper, 3);
@@ -1230,11 +1227,7 @@ int32_t phx_mc_clip_box_halfspaces(int64_t count, const double* box_lower,
       item_status[item] = status;
     }
     return PHX_MC_OK;
-  } catch (const std::bad_alloc&) {
-    return PHX_MC_CAPACITY_EXCEEDED;
-  } catch (...) {
-    return PHX_MC_INTERNAL_ERROR;
-  }
+  });
 }
 
 }  // extern "C"

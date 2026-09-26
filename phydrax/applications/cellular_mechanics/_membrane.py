@@ -23,16 +23,18 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._geometry_predicates import (
+    orient2d,
+    PredicateMode,
+    resolve_host_predicate_mode,
+    segment_intersections_2d,
+    SegmentIntersectionStatus,
+)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.lattice_boltzmann import (
     ImmersedBoundaryForcingPlan,
     ImmersedBoundaryForcingResult,
-)
-from ...geometry._predicates import (
-    orient2d,
-    PredicateMode,
-    resolve_host_predicate_mode,
 )
 from ...sparse import EdgeRelation, route_reduce
 
@@ -460,32 +462,6 @@ def _point_in_triangle_2d(
     return bool(np.all(signs >= 0) or np.all(signs <= 0))
 
 
-def _segments_intersect_2d(
-    first_a: np.ndarray,
-    first_b: np.ndarray,
-    second_a: np.ndarray,
-    second_b: np.ndarray,
-    mode: PredicateMode,
-    /,
-) -> bool:
-    starts = np.stack((first_a, first_a, second_a, second_a))
-    ends = np.stack((first_b, first_b, second_b, second_b))
-    points = np.stack((second_a, second_b, first_a, first_b))
-    orientation = orient2d(starts, ends, points, mode=mode)
-    # An unresolved orientation is conservatively treated as contact.
-    if not np.all(orientation.certain):
-        return True
-    signs = orientation.signs.tolist()
-    if signs[0] * signs[1] < 0 and signs[2] * signs[3] < 0:
-        return True
-    return any(
-        sign == 0
-        and bool(np.all(point >= np.minimum(start, end)))
-        and bool(np.all(point <= np.maximum(start, end)))
-        for sign, point, start, end in zip(signs, points, starts, ends, strict=True)
-    )
-
-
 def _segment_triangle_intersection(
     start: np.ndarray,
     end: np.ndarray,
@@ -561,16 +537,17 @@ def _triangles_intersect(
         axis = int(np.argmax(np.abs(first_normal)))
         projected_first = np.delete(first, axis, axis=1)
         projected_second = np.delete(second, axis, axis=1)
-        for first_index in range(3):
-            for second_index in range(3):
-                if _segments_intersect_2d(
-                    projected_first[first_index],
-                    projected_first[(first_index + 1) % 3],
-                    projected_second[second_index],
-                    projected_second[(second_index + 1) % 3],
-                    mode,
-                ):
-                    return True
+        first_edge, second_edge = np.divmod(np.arange(9), 3)
+        contact = segment_intersections_2d(
+            projected_first[first_edge],
+            projected_first[(first_edge + 1) % 3],
+            projected_second[second_edge],
+            projected_second[(second_edge + 1) % 3],
+            mode=mode,
+        )
+        # An unresolved contact class is conservatively treated as contact.
+        if np.any(np.asarray(contact.status) != SegmentIntersectionStatus.DISJOINT):
+            return True
         return _point_in_triangle_2d(
             projected_first[0], projected_second, mode
         ) or _point_in_triangle_2d(projected_second[0], projected_first, mode)

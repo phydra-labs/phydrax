@@ -125,7 +125,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
         for block in mesh.blocks:
             elements[block.name] = (
                 CellVertexGeometryElement(block.cell_kind, block.arity)
-                if block.cell_kind == "polyhedron"
+                if block.cell_kind in ("polygon", "polyhedron")
                 else lagrange_element(block.cell_kind, 1)
             )
         return cls(

@@ -18,7 +18,7 @@ from .._trainable import NonTrainableState
 from .._validation import finite_real_scalar
 from ..discretization import CellMesh
 from . import _organization
-from ._metric import _host_spectrum, MeshMetricField
+from ._metric import MeshMetricField
 from ._scope import MeshingEntityKind, MeshingScope
 
 
@@ -616,8 +616,8 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
 
     `ISOTROPIC` lowers each vertex metric to its smallest directional size
     `1 / sqrt(lambda_max)`, so no metric direction is under-resolved. `ANISOTROPIC`
-    lowers the complete tensor. Metric eigenvalues must already respect the
-    metric's declared size and anisotropy bounds; this control never repairs them.
+    lowers the complete tensor. The `MeshMetricField` certifies its declared size
+    and anisotropy bounds at construction; this control never repairs a metric.
     """
 
     mesh: CellMesh
@@ -664,24 +664,9 @@ class BackgroundMetricControl(StrictModule, NonTrainableState):
             raise ValueError(
                 "Background metric must bind every vertex of its exact mesh revision."
             )
-        values = np.asarray(metric.values, dtype=np.float64)
-        dimension = mesh.ambient_dimension
-        if values.shape[1:] != (dimension, dimension):
+        if metric.values.shape[1:] != (mesh.ambient_dimension, mesh.ambient_dimension):
             raise ValueError(
                 "Background metric tensors must match the mesh ambient dimension."
-            )
-        eigenvalues, _ = _host_spectrum(values)
-        slack = 1.0 + 1.0e-10
-        if (
-            np.min(eigenvalues) * slack < 1.0 / metric.maximum_size**2
-            or np.max(eigenvalues) > slack / metric.minimum_size**2
-            or np.any(
-                eigenvalues[:, -1]
-                > eigenvalues[:, 0] * metric.maximum_anisotropy**2 * slack
-            )
-        ):
-            raise ValueError(
-                "Background metric eigenvalues exceed the metric's declared size or anisotropy bounds."
             )
         maximum_length = (
             None

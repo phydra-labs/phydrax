@@ -58,8 +58,11 @@ certification, and topology-transition contracts.
         - MetricGradationKind
         - MetricGradationPolicy
         - MetricGradationEvidence
+        - MetricGradationStatus
+        - MetricGradationError
         - grade_mesh_metric
         - MetricCombinationEvidence
+        - MetricCombinationResult
         - combine_mesh_metrics
         - interpolate_mesh_metric
         - metric_edge_lengths

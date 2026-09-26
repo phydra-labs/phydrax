@@ -102,6 +102,38 @@ def test_advance_untangles_a_folded_mesh_with_a_bit_identical_boundary():
     assert advance.transition is None
 
 
+def test_advance_escalates_a_nonconverged_relocation_unless_explicitly_admitted():
+    source = _certified(_POINTS, _CELLS)
+    shifted, _ = _shifted_center(source, 0.4)
+
+    def advance(accept):
+        policy = meshing.MeshMotionMonitorPolicy(
+            relocation_termination=phx.optim.OptimizationTermination(maximum_steps=1),
+            accept_valid_nonconverged_relocation=accept,
+        )
+        monitor = meshing.MeshMotionMonitor(source.mesh, policy=policy)
+        return meshing.advance_mesh_motion(
+            monitor, source, shifted, boundary_residual=0.0
+        )
+
+    refused = advance(False)
+    admitted = advance(True)
+
+    assert refused.assessments[0].decision is Decision.RELOCATE
+    assert refused.relocation.status is meshing.MeshOptimizationStatus.NONCONVERGED
+    assert not refused.relocation.accepted
+    # A failed relocation escalates: the certified, unrelocated proposal seeds the
+    # remesh request and is never reassessed as relocated.
+    assert refused.decision is Decision.REMESH and not refused.accepted
+    assert len(refused.assessments) == 1
+    np.testing.assert_array_equal(refused.result.mesh.coordinates, shifted)
+    assert admitted.relocation.status is meshing.MeshOptimizationStatus.VALID_NONCONVERGED
+    assert admitted.relocation.accepted and len(admitted.assessments) == 2
+    np.testing.assert_array_equal(
+        admitted.result.mesh.coordinates, admitted.relocation.coordinates
+    )
+
+
 def test_advance_requests_a_metric_remesh_when_relocation_cannot_recover():
     points, cells = _grid(4)
     source = _certified(points, cells)

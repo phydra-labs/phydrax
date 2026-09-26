@@ -16,14 +16,14 @@ from jaxtyping import Array, ArrayLike
 
 from .._bvh import BVHBuildPolicy, PackedBVH, prepare_bvh, refit_packed_bvh_bounds
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import StrictModule
-from .._trainable import NonTrainableState
-from ._predicates import (
+from .._geometry_predicates import (
     orient2d,
     PredicateMode,
     PredicateResult,
     resolve_host_predicate_mode,
 )
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ._ray_intersection import RayIntersectionResult, RayIntersectionStatus
 
 

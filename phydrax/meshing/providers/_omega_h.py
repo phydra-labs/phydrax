@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from typing import Any, NamedTuple
@@ -45,7 +46,7 @@ from .._contracts import (
     MeshingSourceKind,
 )
 from .._distribution import MeshDistribution, MeshPartitionKind
-from .._metric import MeshMetricField
+from .._metric import _bound_violations, MeshMetricField
 from .._organization import MeshLabel, MeshPatch, MeshZone
 from .._result import CellMeshingResult, MeshingRuntimeInfo
 from .._scope import MeshingEntityKind, MeshingScope
@@ -914,18 +915,39 @@ def _checked_metric(mesh: CellMesh, metric: MeshMetricField, vertex_ids: np.ndar
     values = np.asarray(metric.values, dtype=np.float64)
     if values.shape != (vertex_ids.size, dimension, dimension):
         raise ValueError("Metric matrix dimension must match the Omega_h mesh dimension.")
-    eigenvalues = np.linalg.eigvalsh(values)
-    if (
-        np.any(eigenvalues < metric.maximum_size**-2 * (1 - 1e-12))
-        or np.any(eigenvalues > metric.minimum_size**-2 * (1 + 1e-12))
-        or np.any(
-            np.sqrt(eigenvalues[:, -1] / eigenvalues[:, 0])
-            > metric.maximum_anisotropy * (1 + 1e-12)
-        )
-    ):
-        raise ValueError("Input metrics exceed their declared size/anisotropy bounds.")
     # INRIA lower-triangular row-major packing: xx, xy, yy[, xz, yz, zz].
     return values[:, *np.tril_indices(dimension)]
+
+
+def _require_adapted_metric_bounds(
+    metric: MeshMetricField, values: np.ndarray, /
+) -> None:
+    """Reject a provider metric that weakens the input field's hard bounds."""
+
+    try:
+        violations = _bound_violations(
+            np.asarray(values, dtype=np.float64),
+            metric.minimum_size,
+            metric.maximum_size,
+            metric.maximum_anisotropy,
+        )
+    except ValueError as error:
+        raise MeshingFailure(
+            MeshingFailureCategory.QUALITY_REJECTED,
+            f"Omega_h returned an invalid adapted metric: {error}",
+            provider_code="metric_bounds",
+            stage="output-metric",
+        ) from error
+    counts = tuple(int(np.count_nonzero(mask)) for mask in violations)
+    if any(counts):
+        raise MeshingFailure(
+            MeshingFailureCategory.QUALITY_REJECTED,
+            "Omega_h gradation violated the input metric's hard bounds "
+            f"(minimum size rows {counts[0]}, maximum size rows {counts[1]}, "
+            f"anisotropy rows {counts[2]}).",
+            provider_code="metric_bounds",
+            stage="output-metric",
+        )
 
 
 def _field_rows(mesh: CellMesh, field: OmegaHField, identifiers: np.ndarray, /):
@@ -1618,13 +1640,13 @@ def _gather(
     target_mesh = result.mesh
     vertex_scope = _entity_scope(target_mesh, 0, vertex_ids)
     cell_scope = _entity_scope(target_mesh, dimension, cell_ids)
+    adapted = merged["metric"][vertex_rows]
     target_metric = MeshMetricField(
         vertex_scope,
-        merged["metric"][vertex_rows],
+        adapted,
         minimum_size=metric.minimum_size,
         maximum_size=metric.maximum_size,
         maximum_anisotropy=metric.maximum_anisotropy,
-        maximum_gradation=metric.maximum_gradation,
     )
     transferred = tuple(
         OmegaHTransferredField(
@@ -1694,31 +1716,36 @@ class OmegaHProvider:
         self.environment = dict(environment or {})
         self.policy = policy
         self._workers: dict[int, ProviderWorker] = {}
+        # Guards the per-rank-count registry so concurrent first calls share
+        # one ProviderWorker (and close() reaches every launched session).
+        self._lock = threading.Lock()
 
     def worker(self, ranks: int = 1, /) -> ProviderWorker:
         """The persistent worker session of one rank count (launched lazily)."""
         count = _integer(ranks, "ranks", 1, 1_000_000)
-        worker = self._workers.get(count)
-        if worker is None:
-            if count > 1 and not self.mpi_launcher:
-                raise _failure(
-                    MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-                    "Distributed Omega_h adaptation requires an MPI launcher.",
+        with self._lock:
+            worker = self._workers.get(count)
+            if worker is None:
+                if count > 1 and not self.mpi_launcher:
+                    raise _failure(
+                        MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                        "Distributed Omega_h adaptation requires an MPI launcher.",
+                    )
+                worker = ProviderWorker(
+                    "omega_h",
+                    executable=self.executable,
+                    environment_variable="PHYDRAX_OMEGA_H_WORKER",
+                    default_executable="phydrax-omega-h-worker",
+                    build_hint=(
+                        "Build native/providers/omega_h against an Omega_h CMake "
+                        "package and set PHYDRAX_OMEGA_H_WORKER to "
+                        "phydrax-omega-h-worker."
+                    ),
+                    launcher=() if count == 1 else (*self.mpi_launcher, "-n", str(count)),
+                    policy=self.policy,
+                    environment=self.environment,
                 )
-            worker = ProviderWorker(
-                "omega_h",
-                executable=self.executable,
-                environment_variable="PHYDRAX_OMEGA_H_WORKER",
-                default_executable="phydrax-omega-h-worker",
-                build_hint=(
-                    "Build native/providers/omega_h against an Omega_h CMake package "
-                    "and set PHYDRAX_OMEGA_H_WORKER to phydrax-omega-h-worker."
-                ),
-                launcher=() if count == 1 else (*self.mpi_launcher, "-n", str(count)),
-                policy=self.policy,
-                environment=self.environment,
-            )
-            self._workers[count] = worker
+                self._workers[count] = worker
         return worker
 
     def _identity(self, ranks: int, /) -> tuple[ProviderWorker, Mapping[str, Any], str]:
@@ -1880,6 +1907,7 @@ class OmegaHProvider:
         rank_arrays, merged = _decode_outputs(
             call, source.mesh.topological_dimension, fields, limits, carrier
         )
+        _require_adapted_metric_bounds(metric, merged["metric"])
         field_evidence = tuple(
             OmegaHFieldEvidence(
                 field,
@@ -1966,7 +1994,9 @@ class OmegaHProvider:
 
     def close(self) -> None:
         """End every worker session of this provider."""
-        for worker in self._workers.values():
+        with self._lock:
+            workers = tuple(self._workers.values())
+        for worker in workers:
             worker.close()
 
     def __enter__(self) -> OmegaHProvider:

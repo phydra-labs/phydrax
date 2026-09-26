@@ -40,10 +40,10 @@ from jaxtyping import Array
 from .. import _meshcore
 from .._bvh import bvh_overlap_pair_blocks, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._geometry_predicates import orient2d, orient3d, PredicateMode
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ein import contract
-from ._predicates import orient2d, orient3d, PredicateMode
 
 
 if TYPE_CHECKING:
