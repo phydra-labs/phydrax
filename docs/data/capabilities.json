@@ -1,5 +1,5 @@
 {
-  "catalog_id": "5952379b4ccdc26e0950ad3beede095fb1c148f6169d87faada49052462fe921",
+  "catalog_id": "4e7b4d58b536a779833d79baac55b5b55fc4430ad8ad186b029cac3f1c4d6655",
   "declarations": [
     {
       "capability": "acoustics.vibroacoustic",
@@ -13172,13 +13172,13 @@
     },
     {
       "capability": "rom.affine-steady",
-      "declaration_id": "6164961e2d07dc1fb0223113f34dec92ca1a4aa4257e88957cdeeda1611e1b01",
+      "declaration_id": "38e38474f89dcf6623251b99c5361b57b289981239b9526a47a8ec593f04b0f1",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "2",
+      "domain_maturity": "candidate",
       "evidence": [],
       "examples": [],
       "intended_uses": [
@@ -13223,13 +13223,13 @@
     },
     {
       "capability": "rom.affine-transient",
-      "declaration_id": "5f6431aad897f1c9ac7503c6626f642744229cdb2f07133b657676053f47c70d",
+      "declaration_id": "c966b358f540aac761a64cb29a96199b4998c81fa281500c6418175f9421264b",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "1",
+      "domain_maturity": "experimental",
       "evidence": [],
       "examples": [],
       "intended_uses": [
@@ -13272,13 +13272,13 @@
     },
     {
       "capability": "rom.control-reduction",
-      "declaration_id": "53286f36ff517e1c4f2a1893982415e965a8c40b15112f7162d9a4b69b39c681",
+      "declaration_id": "c9ef5fa00edf5ed436ec22485ff6a95262286a88f74a7cb38ebd5d25332f0e97",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "1",
+      "domain_maturity": "experimental",
       "evidence": [],
       "examples": [],
       "intended_uses": [
@@ -13321,13 +13321,13 @@
     },
     {
       "capability": "rom.geometry-atlas",
-      "declaration_id": "f609ad3ced38fb6b11e3be67507b92dcdfbb185ad390e86355dab83a26942065",
+      "declaration_id": "94ce944f7d0624ce6a24410725599b2ca43e93f7ff4815db8109eef9f5736ba9",
       "dependencies": [],
       "disposition": "internal",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "0",
+      "domain_maturity": "internal",
       "evidence": [],
       "examples": [],
       "intended_uses": [
@@ -13341,13 +13341,13 @@
     },
     {
       "capability": "rom.hyperreduction",
-      "declaration_id": "2216c289af4d5d34a985d4b58bebcac3b6fb13fa07d0f35b1e62576b0f177f5f",
+      "declaration_id": "b8fe936b3aa5ad09cadba3eb1a6527f76240cb5e97e146ea2e889330fc72f169",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "1",
+      "domain_maturity": "experimental",
       "evidence": [],
       "examples": [],
       "intended_uses": [
@@ -13390,13 +13390,13 @@
     },
     {
       "capability": "rom.identified-dynamics",
-      "declaration_id": "2e35657553af72a73cbb77f56a000bb21971db341927219832af2f7c5d6315c8",
+      "declaration_id": "8d2358c9e540dc8d70af271d859337e4403a2aea47a29714bf1c38b5a2a5c75f",
       "dependencies": [],
       "disposition": "candidate",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "2",
+      "domain_maturity": "candidate",
       "evidence": [],
       "examples": [],
       "intended_uses": [
@@ -13440,13 +13440,13 @@
     },
     {
       "capability": "rom.nonlinear-chart",
-      "declaration_id": "5aaaf4cea379b99c66de4174c7b21eb314764db91ed2df396bc597614d37b08c",
+      "declaration_id": "9bc30e0497b7ccafdc232252168d204d2f9d848904ec6a6668b5708a51b9fe1e",
       "dependencies": [],
       "disposition": "internal",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "0",
+      "domain_maturity": "internal",
       "evidence": [],
       "examples": [],
       "intended_uses": [
@@ -13460,13 +13460,13 @@
     },
     {
       "capability": "rom.sensor-estimation",
-      "declaration_id": "273a1e4eb3a27165122209284b028d5daf02398927e9fe13500fb9c3cd195de7",
+      "declaration_id": "b4bc9ce43465864824d0f43ee642b8305cb3330e4fa529709fc26fa439eb2398",
       "dependencies": [],
       "disposition": "internal",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "0",
+      "domain_maturity": "internal",
       "evidence": [],
       "examples": [],
       "intended_uses": [
@@ -13480,13 +13480,13 @@
     },
     {
       "capability": "rom.spectral-submanifold",
-      "declaration_id": "45021f3ed6cb681fe6bdab84cc4540ff9557a1737b154d66b784dda79fab1d59",
+      "declaration_id": "b5ff8e618b7d7801a0cf7593e43131bdc596dabd04853f0d43e5f83d39fc5e50",
       "dependencies": [],
       "disposition": "internal",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "0",
+      "domain_maturity": "internal",
       "evidence": [],
       "examples": [],
       "intended_uses": [
@@ -13500,13 +13500,13 @@
     },
     {
       "capability": "rom.structure-preserving",
-      "declaration_id": "2d1867ef2c920ac7466d6df7ff6ab2bcca6fd427ccd995d837af29346b2b8db7",
+      "declaration_id": "a775703ea4b2c763d1ccc56312da44b0e6675bb863f66c9511df9ca907988c7f",
       "dependencies": [],
       "disposition": "internal",
       "documentation": [
         "docs/guides_reduced_order_modeling.md"
       ],
-      "domain_maturity": "0",
+      "domain_maturity": "internal",
       "evidence": [],
       "examples": [],
       "intended_uses": [

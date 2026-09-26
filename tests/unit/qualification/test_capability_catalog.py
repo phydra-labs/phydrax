@@ -204,3 +204,22 @@ def test_nonreleased_declaration_refuses_released_profile() -> None:
             profiles=(profile,),
             nonclaims=("not-released",),
         )
+
+
+def test_reduced_order_declarations_name_their_maturity():
+    from phydrax.qualification import builtin_capability_catalog
+    from phydrax.rom import rom_capability_catalog
+
+    expected = {
+        entry.profile(provider="phydrax", version="candidate").capability: (
+            entry.maturity.name.lower().replace("_", "-")
+        )
+        for entry in rom_capability_catalog()
+    }
+    declared = {
+        declaration.capability: declaration.domain_maturity
+        for declaration in builtin_capability_catalog().declarations
+        if declaration.owner == "phydrax.rom"
+    }
+
+    assert declared == expected

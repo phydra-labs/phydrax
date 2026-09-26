@@ -46,6 +46,7 @@ from ..linalg import (
     LeastSquaresProblem,
     LinearSolvePolicy,
     LinearSystem,
+    MINRES,
     OperatorProperties,
     PCG,
     PreconditioningPolicy,
@@ -182,9 +183,17 @@ class FieldProjectionMetric(StrictModule):
 
 
 class NeuralTangentSolvePolicy(StrictModule):
-    """Rectangular or Gram formulation for one neural tangent projection."""
+    """Rectangular or Gram formulation for one neural tangent projection.
+
+    `linear_policy` solves the primal projection: a least-squares problem for the
+    rectangular formulation, the damped Gram system for the Gram formulation.
+    `adjoint_linear_policy` solves the self-adjoint damped normal system of the
+    certified implicit adjoint. It defaults to the Gram policy, or for the
+    rectangular formulation to PCG when damping is positive and MINRES otherwise.
+    """
 
     linear_policy: LinearSolvePolicy
+    adjoint_linear_policy: LinearSolvePolicy
     preconditioner: AbstractPreconditionerBuilder | None
     damping: float = eqx.field(static=True)
     maximum_relative_defect: float | None = eqx.field(static=True)
@@ -196,6 +205,7 @@ class NeuralTangentSolvePolicy(StrictModule):
         /,
         *,
         linear_policy: LinearSolvePolicy | None = None,
+        adjoint_linear_policy: LinearSolvePolicy | None = None,
         damping: float = 1e-6,
         maximum_relative_defect: float | None = None,
         preconditioner: AbstractPreconditionerBuilder | None = None,
@@ -249,8 +259,21 @@ class NeuralTangentSolvePolicy(StrictModule):
             raise ValueError(
                 "Supply neural tangent preconditioning through preconditioner, not both policies."
             )
+        if adjoint_linear_policy is None:
+            if formulation == "gram":
+                adjoint_linear_policy = linear_policy
+            else:
+                # The adjoint normal operator J^T J + damping I is self-adjoint; it is
+                # positive definite only when damping is positive.
+                adjoint_linear_policy = LinearSolvePolicy(
+                    PCG() if damping_ > 0.0 else MINRES(),
+                    differentiation=DifferentiationPolicy("mathematical"),
+                )
+        if not isinstance(adjoint_linear_policy, LinearSolvePolicy):
+            raise TypeError("adjoint_linear_policy must be a LinearSolvePolicy or None.")
         self.formulation = formulation
         self.linear_policy = linear_policy
+        self.adjoint_linear_policy = adjoint_linear_policy
         self.preconditioner = preconditioner
         self.damping = damping_
         self.maximum_relative_defect = defect_limit
@@ -782,7 +805,7 @@ def _implicit_tangent_rate_bwd(
             problem_id=f"{field.problem.problem_id}:implicit-adjoint",
         ),
         rate_cotangent,
-        policy=field.policy.linear_policy,
+        policy=field.policy.adjoint_linear_policy,
     )
     multiplier = eqx.error_if(
         adjoint_result.value,

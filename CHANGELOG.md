@@ -300,6 +300,11 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- Randomized PDE compilation validates `loss_mode` against the shared
+  `RandomizedResidualLossMode` alias; uncertainty-source lists in predictive fields,
+  variance decomposition orders, and process retention are parsed against
+  `UncertaintySource` (the `UNCERTAINTY_SOURCES` tuple is removed); and
+  `phydrax.domain` exports `RaggedSeriesWindowSampling`.
 - The supported precision dtype names (`RealPrecisionDType`,
   `ComplexPrecisionDType`, `ScalarPrecisionDType`, `precision_dtype_name`,
   `real_precision_dtype_name`, `complex_precision_dtype`) have one dependency-free
@@ -492,6 +497,27 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- The certified implicit adjoint of Neural Galerkin evolution works with the default
+  rectangular tangent formulation. `NeuralTangentSolvePolicy` gains
+  `adjoint_linear_policy` for the self-adjoint damped normal system; it defaults to
+  the Gram policy, or for the rectangular formulation to PCG with positive damping
+  and MINRES without damping, instead of reusing the least-squares policy.
+- `NormalizedFactorGraphLaw.sample` works when the law is a traced argument of a
+  transformation: `VariableEliminationPlan` records the graph cardinalities, state
+  offsets, and factor scope rows as static host topology, and elimination reads only
+  those instead of converting graph arrays on the host.
+- Durable service restoration and the Kubernetes scheduler check stored JSON types
+  exactly: missing fields, wrong kinds, unsupported literals, and non-integer
+  counts raise `IntegrityError` instead of being coerced or split.
+- Reduced-order-model capability declarations name their maturity
+  (`internal`, `experimental`, `candidate`, ...) instead of storing the enumeration
+  integer; the capability inventory is regenerated.
+- `MACPressureOperatorSpec`, its reports and results, and
+  `TwistedSYMCoordinateEvidence` store their coefficient and coordinate
+  fingerprints as canonical fingerprint strings instead of mutable dictionaries in
+  static fields.
+- `NILSASPlan` stores the canonical memory-mode literal, so an equal NumPy string
+  yields the same plan.
 - Defects exposed by the complete static typing pass are fixed, each with a
   regression test:
   - Calls to attributes or keywords that do not exist now use the owning API:

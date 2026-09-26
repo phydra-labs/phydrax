@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 from phydrax.solver._neural_galerkin import _NeuralGalerkinVectorField
@@ -33,9 +34,17 @@ def _growth_problem():
     )
 
 
-def test_certified_backsolve_gradient_matches_recursive_checkpoint():
+@pytest.mark.parametrize(
+    "tangent",
+    [
+        phx.solver.NeuralTangentSolvePolicy("gram", damping=1e-6),
+        phx.solver.NeuralTangentSolvePolicy("rectangular", damping=1e-6),
+        phx.solver.NeuralTangentSolvePolicy("rectangular", damping=0.0),
+    ],
+    ids=["gram", "rectangular", "rectangular-undamped"],
+)
+def test_certified_backsolve_gradient_matches_recursive_checkpoint(tangent):
     problem = _growth_problem()
-    tangent = phx.solver.NeuralTangentSolvePolicy("gram", damping=1e-6)
     time = jnp.asarray(0.0)
     initial = problem.parameter_subspace.pack()
 

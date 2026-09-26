@@ -19,7 +19,7 @@ import phydrax.axes as cx
 import phydrax.ein as ein
 
 from .._strict import StrictModule
-from .._uncertainty import UNCERTAINTY_SOURCES, UncertaintySource
+from .._uncertainty import UncertaintySource, validate_uncertainty_source
 from ..stochastic._jump import JUMP_MAX_EVENTS, JUMP_SUCCESS, JumpEventBatch
 from ..typing import parse
 from ._conformal import FunctionalConformal, NormalizedConformal, SplitConformal
@@ -1428,11 +1428,10 @@ def process_retention_report(
     sources = tuple(str(source) for source in uncertainty_sources)
     if not sources or len(set(sources)) != len(sources):
         raise ValueError("uncertainty_sources must be non-empty and unique.")
-    invalid_sources = tuple(
-        source for source in sources if source not in UNCERTAINTY_SOURCES
+    sources = tuple(
+        validate_uncertainty_source(source, owner="uncertainty_sources")
+        for source in sources
     )
-    if invalid_sources:
-        raise ValueError(f"Unknown uncertainty sources: {invalid_sources!r}.")
     numerical_paired = numerical_refinement is not None
     if "numerical" in sources and not numerical_paired:
         raise ValueError(

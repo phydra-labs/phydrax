@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import get_args, Literal, TypeAlias
+from typing import Literal, TypeAlias
 
 from .typing import parse
 
@@ -16,7 +16,6 @@ UncertaintySource: TypeAlias = Literal[
     "process",
     "numerical",
 ]
-UNCERTAINTY_SOURCES: tuple[UncertaintySource, ...] = get_args(UncertaintySource)
 
 
 def validate_uncertainty_source(
@@ -30,7 +29,6 @@ def validate_uncertainty_source(
 
 
 __all__ = [
-    "UNCERTAINTY_SOURCES",
     "UncertaintySource",
     "validate_uncertainty_source",
 ]

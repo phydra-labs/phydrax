@@ -218,7 +218,7 @@ def _rom_declarations() -> tuple[CapabilityDeclaration, ...]:
                 profile.capability,
                 "phydrax.rom",
                 disposition,
-                domain_maturity=str(entry.maturity.value),
+                domain_maturity=entry.maturity.name.lower().replace("_", "-"),
                 profiles=()
                 if disposition is CapabilityDisposition.INTERNAL
                 else (profile,),

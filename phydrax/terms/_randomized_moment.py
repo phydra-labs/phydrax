@@ -17,6 +17,7 @@ from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
 from .._precision import PrecisionEvidenceEnvelope
+from .._randomized_residual_modes import RandomizedResidualLossMode
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..conditions._base import AbstractMomentCondition
@@ -31,7 +32,6 @@ from ..integration._execution import resolve_integration
 from ..typing import PRNGKey
 from ._integrated import checked_estimate_field, validate_condition_source
 from ._randomized_quadratic import event_inner, randomized_squared_mean
-from ._randomized_residual import RandomizedResidualLossMode
 
 
 class RandomizedMomentBatch(StrictModule):

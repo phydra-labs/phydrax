@@ -132,7 +132,7 @@ class NILSSPlan(AbstractShadowingSolvePlan):
         maximum_retained_bytes: int = 2 * 1024 * 1024 * 1024,
         maximum_workspace_bytes: int = 4 * 1024 * 1024 * 1024,
     ) -> None:
-        values = validate_shadowing_plan(
+        values, memory = validate_shadowing_plan(
             "nilss",
             state_dimension,
             unstable_dimension,
@@ -157,8 +157,8 @@ class NILSSPlan(AbstractShadowingSolvePlan):
             self.maximum_workspace_bytes,
         ) = values
         self.method = "nilss"
-        self.memory_mode = "store"
-        self.plan_id = shadowing_plan_id("nilss", values, self.memory_mode)
+        self.memory_mode = memory
+        self.plan_id = shadowing_plan_id("nilss", values, memory)
 
     def prepare(
         self,

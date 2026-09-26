@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "132864651813182d2cdcd0020b004c1525fd0144595e4cf64437b360f28b9577",
+  "manifest_id": "2bd93c189bde13a7f89967e4a449fb2fc84c118d4c1e151ff13e50a27600167d",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -16793,6 +16793,7 @@
       "phydrax.domain.RAGGED_SERIES_INDEX_KEY",
       "phydrax.domain.RaggedSeriesDatasetDomain",
       "phydrax.domain.RaggedSeriesSampling",
+      "phydrax.domain.RaggedSeriesWindowSampling",
       "phydrax.domain.ReferenceMeasure",
       "phydrax.domain.ReferenceTransport",
       "phydrax.domain.ReferenceTransportEvidence",

@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from phydrax.domain import DomainFunction
 
 from .._precision import PrecisionEvidenceEnvelope
+from .._randomized_residual_modes import RandomizedResidualLossMode
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..integration import IntegrationPrecisionPolicy
@@ -26,11 +27,6 @@ from ..typing import parse, PRNGKey
 from ._randomized_quadratic import event_inner as _event_inner, randomized_squared_mean
 
 
-RandomizedResidualLossMode: TypeAlias = Literal[
-    "u_statistic",
-    "independent_product",
-    "plug_in",
-]
 RandomizedResidualSamplingMode: TypeAlias = Literal["fixed", "resample"]
 
 
@@ -458,7 +454,6 @@ __all__ = [
     "BatchSampler",
     "RandomizedResidualBatch",
     "RandomizedResidualDiagnostics",
-    "RandomizedResidualLossMode",
     "RandomizedResidualTerm",
     "RandomizedResidualSamples",
     "RandomizedResidualSamplingMode",

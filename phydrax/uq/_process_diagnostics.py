@@ -20,7 +20,7 @@ import phydrax.ein as ein
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._uncertainty import UNCERTAINTY_SOURCES, UncertaintySource
+from .._uncertainty import UncertaintySource, validate_uncertainty_source
 from ..stochastic._process import AbstractMarginalTransitionLaw, semigroup_objective
 from ..typing import PRNGKey
 from ._metrics import energy_score, ensemble_crps
@@ -816,11 +816,10 @@ def predictive_variance_decomposition(
         resolved_order = tuple(str(source) for source in order)
         if len(set(resolved_order)) != len(resolved_order):
             raise ValueError("order must not contain duplicate uncertainty sources.")
-        invalid = tuple(
-            source for source in resolved_order if source not in UNCERTAINTY_SOURCES
+        resolved_order = tuple(
+            validate_uncertainty_source(source, owner="order")
+            for source in resolved_order
         )
-        if invalid:
-            raise ValueError(f"Unknown uncertainty sources: {invalid!r}.")
         if "numerical" in resolved_order:
             raise ValueError(
                 "order covers explicit predictive sample sources only; numerical "

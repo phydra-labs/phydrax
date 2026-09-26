@@ -24,7 +24,7 @@ from email.message import Message
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast, IO, Literal, Mapping, Protocol
+from typing import IO, Literal, Mapping, Protocol
 from urllib.parse import quote, urlsplit
 
 from .._execution_resources import ResourceRequest
@@ -776,8 +776,13 @@ class KubernetesScheduler:
                 return SchedulerStatus(
                     scheduler_job_id, SchedulerState.FAILED, reason, 1, version
                 )
-        # Kubernetes JSON declares ``status.active`` an integer; ``int`` validates it.
-        if int(cast("int | float | str", status.get("active", 0) or 0)) > 0:
+        # Kubernetes declares ``status.active`` an optional nonnegative integer.
+        active = status.get("active", 0)
+        if type(active) is not int or active < 0:
+            raise IntegrityError(
+                "Kubernetes Job status.active must be a nonnegative integer."
+            )
+        if active > 0:
             state = SchedulerState.RUNNING
         else:
             state = SchedulerState.QUEUED

@@ -159,7 +159,7 @@ class MACPressureCoefficientReport(StrictModule, NonTrainableState):
     finite: Array
     structure: MACPressureCoefficientKind = eqx.field(static=True)
     line_axis: int | None = eqx.field(static=True)
-    coefficient_id: dict[str, Any] = eqx.field(static=True)
+    coefficient_id: str = eqx.field(static=True)
 
 
 class MACPressurePreparationEvidence(StrictModule, NonTrainableState):
@@ -188,7 +188,7 @@ class MACPressureExecutionEvidence(StrictModule, NonTrainableState):
     finite: Array
     converged: Array
     preparation_id: str = eqx.field(static=True)
-    coefficient_id: dict[str, Any] = eqx.field(static=True)
+    coefficient_id: str = eqx.field(static=True)
     geometry_epoch: int = eqx.field(static=True)
 
 
@@ -375,7 +375,7 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
     maximum_iterations: int = eqx.field(static=True)
     maximum_resource_bytes: int = eqx.field(static=True)
     geometry_epoch: int = eqx.field(static=True)
-    coefficient_id: dict[str, Any] = eqx.field(static=True)
+    coefficient_id: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
     spec_id: str = eqx.field(static=True)
 
@@ -525,7 +525,7 @@ class MACPressureOperatorSpec(StrictModule, NonTrainableState):
                     )
             case _:
                 assert_never(solve_method)
-        coefficient_id = array_tree_fingerprint(face)
+        coefficient_id = canonical_fingerprint(array_tree_fingerprint(face))
         operator_id = canonical_fingerprint(
             {
                 "kind": "mac-weighted-pressure-operator",
@@ -774,7 +774,10 @@ class PreparedMACPressureOperator(StrictModule, NonTrainableState):
             else self.spec.operators.validate_pressure(value)
         )
         face = self.spec.operators.interpolate_inverse_momentum(cell)
-        if array_tree_fingerprint(face) != self.spec.coefficient_id:
+        if (
+            canonical_fingerprint(array_tree_fingerprint(face))
+            != self.spec.coefficient_id
+        ):
             raise ValueError(
                 "Pressure coefficient differs from the frozen prepared coefficient; prepare again."
             )

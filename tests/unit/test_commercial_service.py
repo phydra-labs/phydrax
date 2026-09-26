@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import platform
+import sqlite3
 import sys
 import threading
 import time
@@ -1161,6 +1162,69 @@ def test_durable_service_restart_rehydrates_results_and_idempotency(tmp_path):
     assert restored.run_record.result_ids == ("result",)
     assert restored.run_record.diagnostic_ids == ("provider-diagnostic",)
     assert restarted.submit("tenant", submission).job_id == queued.job_id
+
+
+@pytest.mark.parametrize(
+    ("path", "tampered"),
+    [
+        (("run_record", "result_ids"), "result"),
+        (("run_record", "checkpoint_id"), 7),
+        (("run_record", "status"), "finished"),
+        (("submission", "numeric_revision_id"), None),
+        (("submission", "retention_seconds"), "60"),
+        (("submission", "analysis_plan", "constraint_ids"), "constraint"),
+    ],
+    ids=[
+        "split-string",
+        "wrong-kind",
+        "unsupported-status",
+        "null",
+        "string-int",
+        "nested",
+    ],
+)
+def test_durable_restart_refuses_tampered_payload_types(tmp_path, path, tampered):
+    database = tmp_path / "service.sqlite"
+    quota = {"tenant": TenantQuota(2, 2, 4096, 0, 1024)}
+    store = SQLiteServiceStore(database)
+    service = InProcessReferenceService(
+        _ServiceValidator(),
+        ScopeTenantAuthorizer(),
+        quota,
+        clock=_Clock(10),
+        durable_store=store,
+    )
+    service.register_provider(
+        "profile",
+        lambda submission, context: ProviderResult(("result",)),
+        support_tuple_id="provider-tuple",
+    )
+    job_id = service.submit("tenant", _service_submission("tamper-request")).job_id
+    service.execute("tenant", job_id)
+    store.close()
+
+    with sqlite3.connect(database) as connection:
+        (raw,) = connection.execute(
+            "SELECT payload_json FROM jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        payload = json.loads(raw)
+        target = payload
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = tampered
+        connection.execute(
+            "UPDATE jobs SET payload_json = ? WHERE job_id = ?",
+            (json.dumps(payload), job_id),
+        )
+
+    with pytest.raises(IntegrityError):
+        InProcessReferenceService(
+            _ServiceValidator(),
+            ScopeTenantAuthorizer(),
+            quota,
+            clock=_Clock(10),
+            durable_store=SQLiteServiceStore(database),
+        )
 
 
 def test_provider_failure_preserves_exact_exception_status_and_message():

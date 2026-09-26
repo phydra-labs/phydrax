@@ -17,7 +17,6 @@ from .._frozendict import frozendict
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._uncertainty import (
-    UNCERTAINTY_SOURCES,
     UncertaintySource,
     validate_uncertainty_source,
 )
@@ -168,11 +167,9 @@ class PredictiveField(StrictModule):
             selected = (sources,)
         else:
             selected = tuple(sources)
-        invalid = tuple(
-            source for source in selected if source not in UNCERTAINTY_SOURCES
+        selected = tuple(
+            validate_uncertainty_source(source, owner="sources") for source in selected
         )
-        if invalid:
-            raise ValueError(f"Unknown uncertainty sources: {invalid!r}.")
         dims = tuple(
             axis.dim for axis in self.sample_axes if axis.source in frozenset(selected)
         )

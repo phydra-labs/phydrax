@@ -79,7 +79,8 @@ def validate_shadowing_plan(
     maximum_retained_bytes: int,
     maximum_workspace_bytes: int,
     /,
-) -> tuple[int, int, int, int, int, float, float, int, int]:
+) -> tuple[tuple[int, int, int, int, int, float, float, int, int], ShadowingMemoryMode]:
+    """Validate one shadowing plan; return its canonical values and memory mode."""
     dimension = int(state_dimension)
     unstable = int(unstable_dimension)
     basis = int(basis_dimension)
@@ -89,7 +90,7 @@ def validate_shadowing_plan(
     rank = float(rank_tolerance)
     retained = int(maximum_retained_bytes)
     workspace = int(maximum_workspace_bytes)
-    parse(memory_mode, ShadowingMemoryMode, "memory_mode")
+    memory = parse(memory_mode, ShadowingMemoryMode, "memory_mode")
     if (
         not method
         or dimension < 1
@@ -106,7 +107,10 @@ def validate_shadowing_plan(
         or workspace <= 0
     ):
         raise ValueError("Shadowing dimensions, tolerances, or resources are invalid.")
-    return dimension, unstable, basis, length, count, penalty, rank, retained, workspace
+    return (
+        (dimension, unstable, basis, length, count, penalty, rank, retained, workspace),
+        memory,
+    )
 
 
 def shadowing_plan_id(

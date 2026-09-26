@@ -11,10 +11,12 @@ import hmac
 import json
 import secrets
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import cast, Literal, Protocol
+from typing import cast, get_args, Literal, Protocol, TypeVar
 from uuid import uuid4
+
+from typing_extensions import TypeForm
 
 from phydrax.execution import ExecutionPlan, ResourceRequest
 from phydrax.lifecycle import (
@@ -34,6 +36,7 @@ from phydrax.qualification._registry import (
 )
 
 from ..logging import emit
+from ..typing import parse
 from ._auth import (
     _bounded_access_token,
     AccessTokenValidator,
@@ -73,6 +76,9 @@ from ._contracts import (
 )
 from ._durability import DurableJobRecord, DurableServiceStore, OutboxMessage
 from ._security import ScopedSecretHandle
+
+
+_T = TypeVar("_T")
 
 
 class SupportDependencyAdmitter(Protocol):
@@ -2239,22 +2245,14 @@ def _analysis_plan_record(plan: AnalysisPlan, /) -> dict[str, object]:
 def _analysis_plan_from_record(record: Mapping[str, object], /) -> AnalysisPlan:
     # AnalysisPlan validates every durable identifier sequence below.
     value = AnalysisPlan(
-        str(record["analysis_plan_id"]),
-        str(record["provider_plan_id"]),
-        str(record["discretization_key"]),
-        tuple(cast("Iterable[str]", record["field_layout_ids"])),
-        material_plan_id=(
-            None
-            if record["material_plan_id"] is None
-            else str(record["material_plan_id"])
-        ),
-        constraint_ids=tuple(cast("Iterable[str]", record["constraint_ids"])),
-        capability_ids=tuple(cast("Iterable[str]", record["capability_ids"])),
-        model_manifest_id=(
-            None
-            if record["model_manifest_id"] is None
-            else str(record["model_manifest_id"])
-        ),
+        _durable_str(record, "analysis_plan_id"),
+        _durable_str(record, "provider_plan_id"),
+        _durable_str(record, "discretization_key"),
+        _durable_str_tuple(record, "field_layout_ids"),
+        material_plan_id=_durable_optional_str(record, "material_plan_id"),
+        constraint_ids=_durable_str_tuple(record, "constraint_ids"),
+        capability_ids=_durable_str_tuple(record, "capability_ids"),
+        model_manifest_id=_durable_optional_str(record, "model_manifest_id"),
     )
     if (
         record.get("kind") != "analysis-plan"
@@ -2282,16 +2280,14 @@ def _run_record_payload(record: RunRecord, /) -> dict[str, object]:
 def _run_record_from_payload(payload: Mapping[str, object], /) -> RunRecord:
     # RunRecord validates the durable status and identifier sequences.
     value = RunRecord(
-        str(payload["run_id"]),
-        str(payload["analysis_plan_id"]),
-        str(payload["numeric_revision_id"]),
-        str(payload["execution_plan_id"]),
-        cast("RunStatus", str(payload["status"])),
-        result_ids=tuple(cast("Iterable[str]", payload["result_ids"])),
-        diagnostic_ids=tuple(cast("Iterable[str]", payload["diagnostic_ids"])),
-        checkpoint_id=(
-            None if payload["checkpoint_id"] is None else str(payload["checkpoint_id"])
-        ),
+        _durable_str(payload, "run_id"),
+        _durable_str(payload, "analysis_plan_id"),
+        _durable_str(payload, "numeric_revision_id"),
+        _durable_str(payload, "execution_plan_id"),
+        _durable_literal(payload, "status", RunStatus),
+        result_ids=_durable_str_tuple(payload, "result_ids"),
+        diagnostic_ids=_durable_str_tuple(payload, "diagnostic_ids"),
+        checkpoint_id=_durable_optional_str(payload, "checkpoint_id"),
     )
     if payload.get("kind") != "run-record" or payload.get("record_id") != value.record_id:
         raise IntegrityError("Durable run-record identity is invalid.")
@@ -2325,45 +2321,41 @@ def _checkpoint_payload(manifest: CheckpointManifest, /) -> dict[str, object]:
 
 
 def _checkpoint_from_payload(payload: Mapping[str, object], /) -> CheckpointManifest:
-    raw_shards = payload["shards"]
+    raw_shards = _durable_field(payload, "shards")
     if not isinstance(raw_shards, list):
         raise IntegrityError("Durable checkpoint shards must be a list.")
     shards: list[CheckpointShard] = []
     for raw in raw_shards:
         if not isinstance(raw, Mapping):
             raise IntegrityError("Durable checkpoint shard is malformed.")
+        raw_metadata = _durable_field(raw, "metadata")
+        if not isinstance(raw_metadata, list) or not all(
+            isinstance(item, list)
+            and len(item) == 2
+            and all(isinstance(part, str) for part in item)
+            for item in raw_metadata
+        ):
+            raise IntegrityError("Durable checkpoint shard metadata is malformed.")
         shard = CheckpointShard(
-            str(raw["shard_id"]),
-            str(raw["payload_digest"]),
-            raw["byte_count"],
-            tuple(raw["layout_ids"]),
-            metadata=tuple(tuple(item) for item in raw["metadata"]),
+            _durable_str(raw, "shard_id"),
+            _durable_str(raw, "payload_digest"),
+            _durable_int(raw, "byte_count"),
+            _durable_str_tuple(raw, "layout_ids"),
+            metadata=tuple((item[0], item[1]) for item in raw_metadata),
         )
         if raw.get("shard_fingerprint") != shard.shard_fingerprint:
             raise IntegrityError("Durable checkpoint shard identity is invalid.")
         shards.append(shard)
-    complete = payload["complete"]
-    if type(complete) is not bool:
-        raise IntegrityError("Durable checkpoint completion flag is invalid.")
-    # CheckpointManifest validates the durable diagnostic identifiers.
     value = CheckpointManifest(
-        str(payload["checkpoint_id"]),
-        str(payload["analysis_plan_id"]),
-        str(payload["numeric_revision_id"]),
-        str(payload["execution_plan_id"]),
+        _durable_str(payload, "checkpoint_id"),
+        _durable_str(payload, "analysis_plan_id"),
+        _durable_str(payload, "numeric_revision_id"),
+        _durable_str(payload, "execution_plan_id"),
         tuple(shards),
-        complete=complete,
-        parent_manifest_id=(
-            None
-            if payload["parent_manifest_id"] is None
-            else str(payload["parent_manifest_id"])
-        ),
-        parent_checkpoint_id=(
-            None
-            if payload["parent_checkpoint_id"] is None
-            else str(payload["parent_checkpoint_id"])
-        ),
-        diagnostic_ids=tuple(cast("Iterable[str]", payload["diagnostic_ids"])),
+        complete=_durable_bool(payload, "complete"),
+        parent_manifest_id=_durable_optional_str(payload, "parent_manifest_id"),
+        parent_checkpoint_id=_durable_optional_str(payload, "parent_checkpoint_id"),
+        diagnostic_ids=_durable_str_tuple(payload, "diagnostic_ids"),
     )
     if (
         payload.get("kind") != "checkpoint-manifest"
@@ -2389,25 +2381,22 @@ def _secret_handle_payload(
 def _secret_handle_from_payload(
     payload: Mapping[str, object], /
 ) -> SecretHandle | ScopedSecretHandle:
-    # The handle constructors validate the durable ``created_at`` timestamp.
-    scopes = payload["scopes"]
-    expires_at = payload["expires_at"]
+    scopes = _durable_str_tuple(payload, "scopes")
+    expires_at = _durable_field(payload, "expires_at")
     if scopes or expires_at is not None:
-        if not isinstance(scopes, list) or type(expires_at) is not int:
-            raise IntegrityError("Durable scoped secret handle is malformed.")
         return ScopedSecretHandle(
-            str(payload["handle_id"]),
-            str(payload["tenant_id"]),
-            frozenset(str(value) for value in scopes),
-            cast("int", payload["created_at"]),
-            expires_at,
-            str(payload["key_version"]),
+            _durable_str(payload, "handle_id"),
+            _durable_str(payload, "tenant_id"),
+            frozenset(scopes),
+            _durable_int(payload, "created_at"),
+            _durable_int(payload, "expires_at"),
+            _durable_str(payload, "key_version"),
         )
     return SecretHandle(
-        str(payload["handle_id"]),
-        str(payload["tenant_id"]),
-        cast("int", payload["created_at"]),
-        str(payload["key_version"]),
+        _durable_str(payload, "handle_id"),
+        _durable_str(payload, "tenant_id"),
+        _durable_int(payload, "created_at"),
+        _durable_str(payload, "key_version"),
     )
 
 
@@ -2454,21 +2443,20 @@ def _artifact_rights_payload(rights: ArtifactRights, /) -> dict[str, object]:
 
 
 def _artifact_rights_from_payload(payload: Mapping[str, object], /) -> ArtifactRights:
-    # ArtifactRights validates the durable size, classification, and flags.
     value = ArtifactRights(
-        str(payload["scientific_artifact_id"]),
-        str(payload["rights_id"]),
-        str(payload["use_policy_id"]),
-        str(payload["license_id"]),
-        str(payload["source_uri"]),
-        str(payload["attribution_id"]),
-        str(payload["content_sha256"]),
-        cast("int", payload["byte_size"]),
-        cast("ArtifactClassification", str(payload["classification"])),
-        cast("bool", payload["allow_redistribution"]),
-        cast("bool", payload["allow_export"]),
-        cast("bool", payload["redistribution_requested"]),
-        cast("bool", payload["export_requested"]),
+        _durable_str(payload, "scientific_artifact_id"),
+        _durable_str(payload, "rights_id"),
+        _durable_str(payload, "use_policy_id"),
+        _durable_str(payload, "license_id"),
+        _durable_str(payload, "source_uri"),
+        _durable_str(payload, "attribution_id"),
+        _durable_str(payload, "content_sha256"),
+        _durable_int(payload, "byte_size"),
+        _durable_literal(payload, "classification", ArtifactClassification),
+        _durable_bool(payload, "allow_redistribution"),
+        _durable_bool(payload, "allow_export"),
+        _durable_bool(payload, "redistribution_requested"),
+        _durable_bool(payload, "export_requested"),
     )
     if payload.get("rights_binding_id") != value.rights_binding_id:
         raise IntegrityError("Durable artifact rights identity is invalid.")
@@ -2513,47 +2501,40 @@ def _artifact_descriptor_payload(descriptor: ArtifactDescriptor, /) -> dict[str,
 def _artifact_descriptor_from_payload(
     payload: Mapping[str, object], /
 ) -> ArtifactDescriptor:
-    encryption = payload["encryption"]
-    rights = payload["rights"]
-    cad = payload["cad"]
-    if (
-        payload.get("kind") != "service-artifact-descriptor"
-        or not isinstance(encryption, Mapping)
-        or not isinstance(rights, Mapping)
-        or (cad is not None and not isinstance(cad, Mapping))
-    ):
+    if payload.get("kind") != "service-artifact-descriptor":
         raise IntegrityError("Durable artifact descriptor is malformed.")
-    if type(encryption["encrypted_at_rest"]) is not bool:
-        raise IntegrityError("Durable artifact encryption flag is invalid.")
-    # ArtifactDescriptor and EncryptionMetadata validate the durable scalars.
+    encryption = _durable_mapping(payload, "encryption")
+    cad = _durable_field(payload, "cad")
+    if cad is not None and not isinstance(cad, Mapping):
+        raise IntegrityError("Durable artifact descriptor is malformed.")
     return ArtifactDescriptor(
-        str(payload["artifact_id"]),
-        str(payload["scientific_artifact_id"]),
-        str(payload["job_id"]),
-        str(payload["tenant_id"]),
-        str(payload["content_sha256"]),
-        cast("int", payload["byte_size"]),
-        str(payload["media_type"]),
-        cast("ArtifactClassification", str(payload["classification"])),
-        cast("int", payload["created_at"]),
-        cast("int", payload["expires_at"]),
-        str(payload["storage_generation"]),
+        _durable_str(payload, "artifact_id"),
+        _durable_str(payload, "scientific_artifact_id"),
+        _durable_str(payload, "job_id"),
+        _durable_str(payload, "tenant_id"),
+        _durable_str(payload, "content_sha256"),
+        _durable_int(payload, "byte_size"),
+        _durable_str(payload, "media_type"),
+        _durable_literal(payload, "classification", ArtifactClassification),
+        _durable_int(payload, "created_at"),
+        _durable_int(payload, "expires_at"),
+        _durable_str(payload, "storage_generation"),
         EncryptionMetadata(
-            str(encryption["algorithm"]),
-            str(encryption["key_id"]),
-            encryption["encrypted_at_rest"],
-            str(encryption["transport_protocol"]),
-            encryption["key_rotated_at"],
+            _durable_str(encryption, "algorithm"),
+            _durable_str(encryption, "key_id"),
+            _durable_bool(encryption, "encrypted_at_rest"),
+            _durable_str(encryption, "transport_protocol"),
+            _durable_int(encryption, "key_rotated_at"),
         ),
-        _artifact_rights_from_payload(rights),
+        _artifact_rights_from_payload(_durable_mapping(payload, "rights")),
         (
             None
             if cad is None
             else CADArtifactMetadata(
-                str(cad["format"]),
-                str(cad["destination_region"]),
-                str(cad["export_classification"]),
-                (None if cad["approval_id"] is None else str(cad["approval_id"])),
+                _durable_str(cad, "format"),
+                _durable_str(cad, "destination_region"),
+                _durable_str(cad, "export_classification"),
+                _durable_optional_str(cad, "approval_id"),
             )
         ),
     )
@@ -2562,34 +2543,27 @@ def _artifact_descriptor_from_payload(
 def _submission_from_payload(payload: Mapping[str, object], /) -> JobSubmission:
     if payload.get("kind") != "job-submission":
         raise IntegrityError("Durable job submission kind is invalid.")
-    analysis = payload["analysis_plan"]
-    execution = payload["execution_plan"]
-    resources = payload["resources"]
-    handles = payload["secret_handles"]
-    resolved = payload["resolved_run_spec"]
-    if (
-        not isinstance(analysis, Mapping)
-        or not isinstance(execution, Mapping)
-        or not isinstance(resources, Mapping)
-        or not isinstance(handles, list)
-        or (resolved is not None and not isinstance(resolved, Mapping))
+    handles = _durable_field(payload, "secret_handles")
+    resolved = _durable_field(payload, "resolved_run_spec")
+    if not isinstance(handles, list) or (
+        resolved is not None and not isinstance(resolved, Mapping)
     ):
         raise IntegrityError("Durable job submission is malformed.")
-    # JobSubmission validates the durable parameters and retention period.
+    # JobSubmission validates that the stored parameters are canonical JSON.
     value = JobSubmission(
-        _analysis_plan_from_record(analysis),
-        ExecutionPlan.from_payload(execution),
-        str(payload["numeric_revision_id"]),
-        str(payload["profile_id"]),
-        cast("Mapping[str, JSONValue]", payload["parameters"]),
-        ResourceRequest.from_payload(resources),
+        _analysis_plan_from_record(_durable_mapping(payload, "analysis_plan")),
+        ExecutionPlan.from_payload(_durable_mapping(payload, "execution_plan")),
+        _durable_str(payload, "numeric_revision_id"),
+        _durable_str(payload, "profile_id"),
+        cast("Mapping[str, JSONValue]", _durable_mapping(payload, "parameters")),
+        ResourceRequest.from_payload(_durable_mapping(payload, "resources")),
         tuple(
             _secret_handle_from_payload(handle)
             for handle in handles
             if isinstance(handle, Mapping)
         ),
-        cast("int", payload["retention_seconds"]),
-        str(payload["request_id"]),
+        _durable_int(payload, "retention_seconds"),
+        _durable_str(payload, "request_id"),
         (None if resolved is None else ResolvedRunSpec.from_record(resolved)),
     )
     if (
@@ -2616,15 +2590,15 @@ def _failure_payload(value: FailureEvidence | None, /) -> dict[str, object] | No
 def _failure_from_payload(payload: object, /) -> FailureEvidence | None:
     if payload is None:
         return None
-    if not isinstance(payload, Mapping) or type(payload["retryable"]) is not bool:
+    if not isinstance(payload, Mapping):
         raise IntegrityError("Durable failure evidence is malformed.")
     return FailureEvidence(
-        str(payload["code"]),
-        str(payload["exception_type"]),
-        str(payload["message"]),
-        payload["retryable"],
-        payload["attempt"],
-        tuple(payload["diagnostic_ids"]),
+        _durable_str(payload, "code"),
+        _durable_str(payload, "exception_type"),
+        _durable_str(payload, "message"),
+        _durable_bool(payload, "retryable"),
+        _durable_int(payload, "attempt"),
+        _durable_str_tuple(payload, "diagnostic_ids"),
     )
 
 
@@ -2638,6 +2612,63 @@ def _optional_nonnegative_int(value: object, name: str, /) -> int | None:
     if value is None:
         return None
     return _required_nonnegative_int(value, name)
+
+
+# Durable payloads are JSON written by this service. Decoding checks every stored
+# JSON type exactly, so a corrupted or tampered record fails as IntegrityError
+# instead of being coerced (``str(None)``) or split (``tuple("abc")``).
+def _durable_field(payload: Mapping[str, object], key: str, /) -> object:
+    if key not in payload:
+        raise IntegrityError(f"Durable field {key!r} is missing.")
+    return payload[key]
+
+
+def _durable_str(payload: Mapping[str, object], key: str, /) -> str:
+    value = _durable_field(payload, key)
+    if not isinstance(value, str):
+        raise IntegrityError(f"Durable {key} must be a string.")
+    return value
+
+
+def _durable_optional_str(payload: Mapping[str, object], key: str, /) -> str | None:
+    value = _durable_field(payload, key)
+    if value is not None and not isinstance(value, str):
+        raise IntegrityError(f"Durable {key} must be a string or null.")
+    return value
+
+
+def _durable_str_tuple(payload: Mapping[str, object], key: str, /) -> tuple[str, ...]:
+    value = _durable_field(payload, key)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise IntegrityError(f"Durable {key} must be a list of strings.")
+    return tuple(value)
+
+
+def _durable_bool(payload: Mapping[str, object], key: str, /) -> bool:
+    value = _durable_field(payload, key)
+    if type(value) is not bool:
+        raise IntegrityError(f"Durable {key} must be a boolean.")
+    return value
+
+
+def _durable_int(payload: Mapping[str, object], key: str, /) -> int:
+    return _required_nonnegative_int(_durable_field(payload, key), key)
+
+
+def _durable_mapping(payload: Mapping[str, object], key: str, /) -> Mapping[str, object]:
+    value = _durable_field(payload, key)
+    if not isinstance(value, Mapping):
+        raise IntegrityError(f"Durable {key} must be an object.")
+    return value
+
+
+def _durable_literal(
+    payload: Mapping[str, object], key: str, form: TypeForm[_T], /
+) -> _T:
+    value = _durable_field(payload, key)
+    if not isinstance(value, str) or value not in get_args(form):
+        raise IntegrityError(f"Durable {key} is not a supported value.")
+    return parse(value, form, key)
 
 
 __all__ = [

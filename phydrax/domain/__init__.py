@@ -101,6 +101,7 @@ from ._ragged_series_dataset import (
     RAGGED_SERIES_INDEX_KEY,
     RaggedSeriesDatasetDomain,
     RaggedSeriesSampling,
+    RaggedSeriesWindowSampling,
 )
 from ._reference import reference_transport
 from ._referenced_density import DensityReference, ReferencedDensityField
@@ -325,6 +326,7 @@ __all__ = [
     "RAGGED_SERIES_INDEX_KEY",
     "RaggedSeriesDatasetDomain",
     "RaggedSeriesSampling",
+    "RaggedSeriesWindowSampling",
     "TrajectoryDatasetDomain",
     "TRAJECTORY_CASE_INDEX_KEY",
     "TRAJECTORY_TIME_INDEX_KEY",

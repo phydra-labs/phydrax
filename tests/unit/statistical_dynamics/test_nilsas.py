@@ -164,3 +164,13 @@ def test_nilsas_enforces_declared_flow_neutral_constraint():
     assert bool(result.successful)
     assert result.approximation == "finite-horizon-time-discrete-flow-adjoint-shadowing"
     np.testing.assert_allclose(result.neutral_constraint_residual, 0.0, atol=1e-10)
+
+
+def test_plan_stores_the_canonical_memory_mode_and_identity():
+    canonical = phx.statistical_dynamics.NILSASPlan(1, 0, 0, 2, 2, memory_mode="store")
+    equal = phx.statistical_dynamics.NILSASPlan(
+        1, 0, 0, 2, 2, memory_mode=np.str_("store")
+    )
+
+    assert type(equal.memory_mode) is str
+    assert equal.plan_id == canonical.plan_id

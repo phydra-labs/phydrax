@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod, sqrt
-from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -200,7 +199,9 @@ class TwistedSYMCoordinateLayout(StrictModule):
             roundtrip_residual=residual,
             finite=jnp.all(jnp.isfinite(values)) & jnp.all(jnp.isfinite(recovered)),
             layout_id=self.layout_id,
-            coordinate_fingerprint=array_tree_fingerprint(np.asarray(values)),
+            coordinate_fingerprint=canonical_fingerprint(
+                array_tree_fingerprint(np.asarray(values))
+            ),
             claim="real-coordinate-layout-preserves-independent-complexified-links",
         )
 
@@ -209,7 +210,7 @@ class TwistedSYMCoordinateEvidence(StrictModule):
     roundtrip_residual: Array
     finite: Array
     layout_id: str = eqx.field(static=True)
-    coordinate_fingerprint: dict[str, Any] = eqx.field(static=True)
+    coordinate_fingerprint: str = eqx.field(static=True)
     claim: str = eqx.field(static=True)
 
 

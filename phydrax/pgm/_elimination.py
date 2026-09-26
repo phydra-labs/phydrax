@@ -41,6 +41,11 @@ class VariableEliminationPlan(StrictModule):
     induced_scopes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     treewidth: int = eqx.field(static=True)
     maximum_workspace_elements: int = eqx.field(static=True)
+    # Host topology captured once at planning, so elimination never reads graph
+    # topology arrays back from the device and traces when the graph is traced.
+    cardinalities: tuple[int, ...] = eqx.field(static=True)
+    state_offsets: tuple[int, ...] = eqx.field(static=True)
+    factor_scope_rows: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
@@ -214,6 +219,20 @@ def plan_variable_elimination(
         induced_scopes=scopes,
         treewidth=treewidth,
         maximum_workspace_elements=maximum,
+        cardinalities=tuple(
+            int(value) for value in np.asarray(graph.cardinalities, dtype=np.int64)
+        ),
+        state_offsets=tuple(
+            int(value)
+            for value in np.asarray(graph.variable_state_offsets, dtype=np.int64)
+        ),
+        factor_scope_rows=tuple(
+            tuple(
+                tuple(int(value) for value in row)
+                for row in np.asarray(scope, dtype=np.int64)
+            )
+            for scope in graph.factor_scopes
+        ),
         plan_id=plan_id,
     )
 
@@ -235,14 +254,15 @@ def _align(
 
 
 def _factor_tables(
-    graph: DiscreteFactorGraph, evidence: Array
+    plan: VariableEliminationPlan, evidence: Array
 ) -> list[tuple[tuple[int, ...], Array]]:
+    graph = plan.graph
     factors: list[tuple[tuple[int, ...], Array]] = []
-    for group_index, scope in enumerate(graph.factor_scopes):
+    for group_index, rows in enumerate(plan.factor_scope_rows):
         tables = factor_group_dense_tables(graph, group_index)
-        for factor, row in enumerate(np.asarray(scope, dtype=np.int32)):
-            factors.append((tuple(row), tables[factor]))
-    offsets = np.asarray(graph.variable_state_offsets)
+        for factor, row in enumerate(rows):
+            factors.append((row, tables[factor]))
+    offsets = plan.state_offsets
     for variable in range(graph.num_variables):
         factors.append(
             (
@@ -260,9 +280,8 @@ def _eliminate(
     *,
     mode: Literal["sum", "max"],
 ) -> Array:
-    graph = plan.graph
-    cards_by_variable = tuple(np.asarray(graph.cardinalities))
-    factors = _factor_tables(graph, evidence)
+    cards_by_variable = plan.cardinalities
+    factors = _factor_tables(plan, evidence)
     constants: list[Array] = []
     for variable in plan.order:
         involved = [(scope, table) for scope, table in factors if variable in scope]
@@ -298,14 +317,14 @@ def _eliminate(
 
 
 def _clamp_evidence(
-    graph: DiscreteFactorGraph,
+    plan: VariableEliminationPlan,
     evidence: Array,
     assignments: Mapping[int, ArrayLike],
 ) -> Array:
     result = evidence
-    offsets = np.asarray(graph.variable_state_offsets)
+    offsets = plan.state_offsets
     for variable, state in assignments.items():
-        start, stop = int(offsets[variable]), int(offsets[variable + 1])
+        start, stop = offsets[variable], offsets[variable + 1]
         mask = jnp.arange(stop - start) == jnp.asarray(state)
         result = result.at[start:stop].set(jnp.where(mask, result[start:stop], -jnp.inf))
     return result
@@ -333,15 +352,15 @@ def variable_elimination(
     log_normalizer = _eliminate(plan, packed, mode="sum")
     valid = jnp.isfinite(log_normalizer)
     probabilities: list[Array] = []
-    for variable, cardinality in enumerate(np.asarray(graph.cardinalities)):
+    for variable, cardinality in enumerate(plan.cardinalities):
         values = jnp.stack(
             [
                 _eliminate(
                     plan,
-                    _clamp_evidence(graph, packed, {variable: state}),
+                    _clamp_evidence(plan, packed, {variable: state}),
                     mode="sum",
                 )
-                for state in range(int(cardinality))
+                for state in range(cardinality)
             ]
         )
         probabilities.append(jnp.where(valid, jnp.exp(values - log_normalizer), 0.0))
@@ -350,15 +369,15 @@ def variable_elimination(
     )
 
     chosen: dict[int, Array] = {}
-    for variable, cardinality in enumerate(np.asarray(graph.cardinalities)):
+    for variable, cardinality in enumerate(plan.cardinalities):
         values = jnp.stack(
             [
                 _eliminate(
                     plan,
-                    _clamp_evidence(graph, packed, {**chosen, variable: state}),
+                    _clamp_evidence(plan, packed, {**chosen, variable: state}),
                     mode="max",
                 )
-                for state in range(int(cardinality))
+                for state in range(cardinality)
             ]
         )
         chosen[variable] = jnp.argmax(values).astype(jnp.int32)
@@ -492,14 +511,14 @@ def junction_tree_calibrate(
         else pack_evidence(graph).values
     )
     clique_probabilities: list[Array] = []
-    cards = np.asarray(graph.cardinalities)
+    cards = plan.elimination.cardinalities
     for clique in plan.cliques:
-        shape = tuple(int(cards[variable]) for variable in clique)
+        shape = tuple(cards[variable] for variable in clique)
         values = []
         for flat_index in range(prod(shape)):
             configuration = np.unravel_index(flat_index, shape)
             clamped = _clamp_evidence(
-                graph,
+                plan.elimination,
                 packed,
                 {variable: state for variable, state in zip(clique, configuration)},
             )
@@ -592,21 +611,19 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
         def one_sample(sample_key: PRNGKey) -> Array:
             chosen: dict[int, Array] = {}
             state = jnp.zeros((self.plan.graph.num_variables,), dtype=jnp.int32)
-            for variable, cardinality in enumerate(
-                np.asarray(self.plan.graph.cardinalities)
-            ):
+            for variable, cardinality in enumerate(self.plan.cardinalities):
                 log_values = jnp.stack(
                     [
                         _eliminate(
                             self.plan,
                             _clamp_evidence(
-                                self.plan.graph,
+                                self.plan,
                                 self.evidence,
                                 {**chosen, variable: candidate},
                             ),
                             mode="sum",
                         )
-                        for candidate in range(int(cardinality))
+                        for candidate in range(cardinality)
                     ]
                 )
                 sample_key, subkey = jr.split(sample_key)
