@@ -47,7 +47,7 @@ from ..discretization.discrete_velocity._smooth_compressible import (
 from ..discretization.discrete_velocity._spatial import (
     PreparedSmoothCompressibleD2V17SpatialDynamics,
 )
-from ..typing import PRNGKey
+from ..typing import parse, PRNGKey
 from ._kinetic_equilibrium import LearnedEnergyEquilibriumBindingPlan
 from ._kinetic_rollout import (
     PreparedSmoothCompressibleRolloutDataset,
@@ -940,8 +940,12 @@ class KineticRolloutTrainingState(StrictModule):
                 "arrays": array_tree_fingerprint(
                     {
                         "model": model,
-                        "training": dataclasses.replace(
-                            training, root_key=jr.key_data(training.root_key)
+                        # Raw key data is fingerprinted without constructing a
+                        # training state, whose contract requires a typed key.
+                        "training": eqx.tree_at(
+                            lambda state: state.root_key,
+                            training,
+                            jr.key_data(training.root_key),
                         ),
                         "best_model": best_model,
                         "best_loss": best_loss_,
@@ -988,8 +992,7 @@ class KineticRolloutTrainingResult(StrictModule):
         attempts_ = tuple(attempts)
         if any(not isinstance(value, KineticRolloutUpdateResult) for value in attempts_):
             raise TypeError("attempts must contain KineticRolloutUpdateResult values.")
-        if termination not in ("maximum_attempts", "curriculum_complete"):
-            raise ValueError("Unknown kinetic-rollout termination.")
+        termination = parse(termination, KineticRolloutTermination, "termination")
         self.state = state
         self.attempts = attempts_
         self.termination = termination
