@@ -12,8 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._dtype_names import complex_precision_dtype, real_precision_dtype_name
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import complex_precision_dtype, real_precision_dtype_name
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DiagonalPairing, EuclideanPairing

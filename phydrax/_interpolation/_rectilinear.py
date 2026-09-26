@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from ._stencil import GatherStencil
 from ._types import InterpolationCapabilities, InterpolationResourcePolicy
 

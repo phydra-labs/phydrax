@@ -9,13 +9,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
-from .._precision import (
-    precision_dtype_name,
-    PrecisionEvidenceEnvelope,
-    PrecisionRequest,
-    PrecisionResolution,
-)
+from .._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 

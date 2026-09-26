@@ -13,8 +13,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key, PyTree
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
-from .._precision import precision_dtype_name, PrecisionRequest
+from .._precision import PrecisionRequest
 from .._strict import StrictModule
 from ..linalg import (
     AbstractRealCoordinateMap,

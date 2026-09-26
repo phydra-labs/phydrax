@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from ._linear_gaussian import degenerate_gaussian_log_prob
 from ._state_space import (

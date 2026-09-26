@@ -14,14 +14,16 @@ import numpy as np
 from jax.typing import DTypeLike
 from jaxtyping import Array
 
-from ...._precision import (
+from ...._dtype_names import (
     complex_precision_dtype,
     ComplexPrecisionDType,
+    real_precision_dtype_name,
+    RealPrecisionDType,
+)
+from ...._precision import (
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
-    real_precision_dtype_name,
-    RealPrecisionDType,
 )
 from ...._trainable import combine_parameters, partition_parameters
 from ..data import FunctionSamples, OperatorBatch, OperatorTargetBatch

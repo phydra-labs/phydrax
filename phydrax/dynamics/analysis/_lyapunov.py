@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from .._evolution import AbstractDifferentiableEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid

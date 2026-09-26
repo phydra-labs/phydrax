@@ -28,13 +28,9 @@ from phydrax.kernels import (
     SumKernel,
 )
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import (
-    precision_dtype_name,
-    PrecisionEvidenceEnvelope,
-    PrecisionRequest,
-    PrecisionResolution,
-)
+from .._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from .._strict import StrictModule
 from ..stochastic import (
     discretize_linear_gaussian,

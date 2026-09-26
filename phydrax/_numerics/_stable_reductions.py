@@ -9,7 +9,7 @@ from typing import Any
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from .._precision import real_precision_dtype_name
+from .._dtype_names import real_precision_dtype_name
 
 
 def log_normalize(

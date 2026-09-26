@@ -12,10 +12,10 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._interpolation._bspline import bspline_stencil
 from .._interpolation._bspline_grid import BSplineGrid
 from .._interpolation._stencil import apply_gather_stencil
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
 

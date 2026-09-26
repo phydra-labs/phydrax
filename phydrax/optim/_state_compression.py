@@ -13,12 +13,12 @@ import jax.numpy as jnp
 import optax
 from jaxtyping import Array, PyTree
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
 from .._precision import (
     dequantize_mx,
     MicroscaledArray,
     MicroscalingFormat,
-    precision_dtype_name,
     PrecisionFormat,
     quantize_mx,
 )

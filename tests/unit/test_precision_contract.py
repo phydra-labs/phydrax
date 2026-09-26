@@ -6,6 +6,11 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from phydrax._dtype_names import (
+    complex_precision_dtype,
+    inexact_result_type,
+    precision_dtype_name,
+)
 from phydrax._numerics import (
     log_normalize,
     LogWeightedAccumulator,
@@ -17,9 +22,6 @@ from phydrax._numerics import (
     weight_ess,
 )
 from phydrax._precision import (
-    complex_precision_dtype,
-    inexact_result_type,
-    precision_dtype_name,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,

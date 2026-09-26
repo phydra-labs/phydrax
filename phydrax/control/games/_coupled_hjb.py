@@ -16,8 +16,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._interpolation import linear_interpolate
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid

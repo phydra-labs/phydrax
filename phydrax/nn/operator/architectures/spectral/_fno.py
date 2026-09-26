@@ -38,7 +38,7 @@ from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
-from ....._precision import inexact_result_type
+from ....._dtype_names import inexact_result_type
 
 
 Factorization = Literal["dense", "cp", "tucker"]

@@ -17,8 +17,8 @@ import jax.random as jr
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._data_plane import EPOCH_ORDER_ALGORITHM, IndexEpochPlan
+from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint
-from .._precision import inexact_result_type
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ._posterior import ParameterSpace

@@ -14,8 +14,8 @@ import numpy as np
 import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._numerics._quadrature_rules import gauss_legendre_data
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._bspline_grid import BSplineGrid, TrainableBSplineGrid

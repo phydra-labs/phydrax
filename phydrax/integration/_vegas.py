@@ -17,9 +17,9 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import linear_interpolate
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 

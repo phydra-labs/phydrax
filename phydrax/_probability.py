@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
-from ._precision import inexact_result_type
+from ._dtype_names import inexact_result_type
 from ._strict import StrictModule
 from .domain._measure import MeasureKind
 

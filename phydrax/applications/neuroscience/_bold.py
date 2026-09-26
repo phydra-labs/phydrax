@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ._regional import _parameter
 

@@ -13,8 +13,8 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._dtype_names import inexact_result_type
 from .._numerics import solve_weighted_least_squares, WeightedLeastSquaresResult
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..linalg._dense_inverse import dense_inverse
 

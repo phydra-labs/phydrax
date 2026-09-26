@@ -24,12 +24,12 @@ from ._classification import (
     ordinal_log_prob_from_cumulative_logits,
     soft_ordinal_cross_entropy_from_cumulative_logits,
 )
+from ._dtype_names import inexact_result_type
 from ._exponential_family import (
     AbstractExponentialFamily,
     CategoricalFamily,
     NaturalCoordinates,
 )
-from ._precision import inexact_result_type
 from ._strict import StrictModule
 
 

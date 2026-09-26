@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics._grid import TimeGrid
 

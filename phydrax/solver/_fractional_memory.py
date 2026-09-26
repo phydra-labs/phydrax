@@ -15,7 +15,7 @@ import jax.scipy as jsp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from ._memory import _solution_valid, _time_grid, MemoryEquationSolution
 

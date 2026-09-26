@@ -37,8 +37,8 @@ from phydrax.domain import (
 
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
+from .._dtype_names import complex_precision_dtype, real_precision_dtype_name
 from .._frozendict import frozendict
-from .._precision import complex_precision_dtype, real_precision_dtype_name
 from ..geometry import BoundaryAtlasProvider, CubatureAtlasProvider
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._plans import FixedQuadraturePlan

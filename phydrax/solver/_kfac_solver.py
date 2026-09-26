@@ -27,10 +27,10 @@ import jax.random as jr
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._iteration import IterationSession
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._training import (
     emit_training_signal_stop as _emit_training_signal_stop,

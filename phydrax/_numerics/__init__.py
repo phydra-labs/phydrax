@@ -2,14 +2,19 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from .._precision import (
+from .._dtype_names import (
     complex_precision_dtype,
     ComplexPrecisionDType,
+    precision_dtype_name,
+    real_precision_dtype_name,
+    RealPrecisionDType,
+    ScalarPrecisionDType,
+)
+from .._precision import (
     dequantize_mx,
     MicroscaledArray,
     MicroscalingElementFormat,
     MicroscalingFormat,
-    precision_dtype_name,
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionFormat,
@@ -18,9 +23,6 @@ from .._precision import (
     PrecisionResourceAssumptions,
     PrecisionRole,
     quantize_mx,
-    real_precision_dtype_name,
-    RealPrecisionDType,
-    ScalarPrecisionDType,
 )
 from .._precision_rewrite import (
     execute_precision_rewrite,

@@ -16,7 +16,7 @@ from jaxtyping import Array
 from ..._differentiation import (
     DerivativeContract,
 )
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from .._batch import MLBatch
 from .._contracts import (

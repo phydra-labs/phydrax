@@ -13,12 +13,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax.typing import DTypeLike
 from jaxtyping import Array, Key, PyTree
 
 from phydrax.ein import contract
 
+from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import real_precision_dtype_name
 from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -65,7 +66,7 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         *,
         trace_method: ElectronicTraceMethod = "exact",
         coordinate_chunk_size: int | None = None,
-        compute_dtype: object = "float64",
+        compute_dtype: DTypeLike = "float64",
     ) -> None:
         if trace_method not in ("exact", "chunked-exact"):
             raise ValueError("trace_method must be 'exact' or 'chunked-exact'.")

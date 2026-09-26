@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
+from ..._dtype_names import precision_dtype_name
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import precision_dtype_name
 from ..._strict import StrictModule
 
 
@@ -102,7 +103,7 @@ class FluxRegister(StrictModule):
         cell_volume: ArrayLike,
         /,
         *,
-        accumulation_dtype: object | None = None,
+        accumulation_dtype: DTypeLike | None = None,
     ) -> Array:
         dtype = (
             None
@@ -127,8 +128,8 @@ class FluxRegister(StrictModule):
         cell_volume: ArrayLike,
         /,
         *,
-        accumulation_dtype: object | None = None,
-        output_dtype: object | None = None,
+        accumulation_dtype: DTypeLike | None = None,
+        output_dtype: DTypeLike | None = None,
     ) -> Array:
         state = jnp.asarray(coarse_state)
         if accumulation_dtype is not None:

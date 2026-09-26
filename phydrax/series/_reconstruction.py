@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._interpolation import (
     BoundsMode,
     cubic_hermite_segment,
@@ -19,7 +20,6 @@ from .._interpolation import (
     local_cubic_slope,
     NearestTiePolicy,
 )
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ._sampled import SampledSeries
 from ._types import (

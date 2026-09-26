@@ -14,7 +14,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
 from .._keys import EvalKey

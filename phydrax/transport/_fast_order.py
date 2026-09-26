@@ -21,7 +21,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.axes as cx
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 
 
 Value = ArrayLike | cx.AxisArray

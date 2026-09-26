@@ -14,8 +14,8 @@ import phydrax.axes as cx
 from phydrax.domain import DomainFunction, PointBatch
 
 from .._doc import DOC_KEY0
+from .._dtype_names import complex_precision_dtype, real_precision_dtype_name
 from .._numerics import LogWeightedAccumulator, weighted_diagnostics
-from .._precision import complex_precision_dtype, real_precision_dtype_name
 from ._batches import (
     PointIntegrationBatch,
     SeparableIntegrationBatch,

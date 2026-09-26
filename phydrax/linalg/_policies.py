@@ -14,8 +14,8 @@ from jax import core as jax_core
 from jax.typing import DTypeLike
 from jaxtyping import Array
 
+from .._dtype_names import precision_dtype_name
 from .._model import register_artifact_value
-from .._precision import precision_dtype_name
 from .._strict import StrictModule
 from ._certificates import StabilityLowerBound
 from ._materialization import MaterializationPolicy

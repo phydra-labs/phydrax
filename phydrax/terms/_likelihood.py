@@ -16,8 +16,8 @@ import phydrax.axes as cx
 from phydrax.domain import DatasetDomain, DomainComponent, DomainFunction, PointSampling
 
 from .._doc import DOC_KEY0
+from .._dtype_names import inexact_result_type
 from .._likelihoods import AbstractLikelihood
-from .._precision import inexact_result_type
 from .._term import AbstractSamplingTerm
 from ._data_metrics import (
     case_sample_count,

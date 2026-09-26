@@ -10,13 +10,13 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._dtype_names import real_precision_dtype_name
 from ..._precision import (
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
     PrecisionResourceAssumptions,
-    real_precision_dtype_name,
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState

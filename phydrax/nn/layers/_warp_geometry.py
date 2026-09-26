@@ -15,12 +15,12 @@ from jaxtyping import Array
 
 import phydrax.ein as ein
 
+from ..._dtype_names import inexact_result_type
 from ..._interpolation import (
     apply_gather_stencil,
     InterpolationResourcePolicy,
     rectilinear_stencil,
 )
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...linalg import inverse as matrix_inverse
 from ...metrix import DENSITY_TENSOR, SCALAR_TENSOR, TensorType

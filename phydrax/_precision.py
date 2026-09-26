@@ -12,24 +12,16 @@ from typing import Any, cast, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 
+from ._dtype_names import (
+    ComplexPrecisionDType,
+    precision_dtype_name,
+    ScalarPrecisionDType,
+)
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 
 
-RealPrecisionDType: TypeAlias = Literal[
-    "float8_e4m3fn",
-    "float8_e5m2",
-    "float8_e4m3fnuz",
-    "float8_e5m2fnuz",
-    "float16",
-    "bfloat16",
-    "float32",
-    "float64",
-]
-ComplexPrecisionDType: TypeAlias = Literal["complex64", "complex128"]
-ScalarPrecisionDType: TypeAlias = RealPrecisionDType | ComplexPrecisionDType
 MicroscalingElementFormat: TypeAlias = Literal[
     "float8_e4m3fn",
     "float8_e5m2",
@@ -52,20 +44,6 @@ PrecisionRole: TypeAlias = Literal[
     "output",
 ]
 
-_PRECISION_DTYPES = frozenset(
-    (
-        "float8_e4m3fn",
-        "float8_e5m2",
-        "float8_e4m3fnuz",
-        "float8_e5m2fnuz",
-        "float16",
-        "bfloat16",
-        "float32",
-        "float64",
-        "complex64",
-        "complex128",
-    )
-)
 _PRECISION_ROLES = frozenset(
     (
         "storage",
@@ -182,59 +160,12 @@ PrecisionFormat: TypeAlias = (
 )
 
 
-def precision_dtype_name(value: Any, /) -> ScalarPrecisionDType:
-    """Return one canonical supported JAX scalar dtype name."""
-    dtype = jnp.dtype(jax.dtypes.canonicalize_dtype(jnp.dtype(value)))
-    name = dtype.name
-    if name not in _PRECISION_DTYPES:
-        raise ValueError(f"Unsupported precision dtype {name!r}.")
-    return name
-
-
-def real_precision_dtype_name(value: Any, /) -> RealPrecisionDType:
-    """Return one canonical supported real floating dtype name."""
-    name = precision_dtype_name(value)
-    if name not in (
-        "float8_e4m3fn",
-        "float8_e5m2",
-        "float8_e4m3fnuz",
-        "float8_e5m2fnuz",
-        "float16",
-        "bfloat16",
-        "float32",
-        "float64",
-    ):
-        raise ValueError(f"Precision dtype {name!r} is not real floating-point.")
-    return name
-
-
-def complex_precision_dtype(value: RealPrecisionDType | Any, /) -> ComplexPrecisionDType:
-    """Return the complex companion used for one real precision dtype."""
-    name = real_precision_dtype_name(value)
-    return "complex128" if name == "float64" else "complex64"
-
-
 def precision_itemsize(value: Any, /) -> int:
     if isinstance(value, MicroscalingFormat):
         raise ValueError(
             "Microscaling formats have fractional payload widths; use storage_bytes."
         )
     return jnp.dtype(precision_dtype_name(value)).itemsize
-
-
-def inexact_result_type(*values: Any) -> np.dtype:
-    """Return the JAX result dtype of ``values``, promoted to an inexact dtype.
-
-    Floating and complex inputs keep their precision (``float32`` stays
-    ``float32``); integer, boolean, and empty inputs use JAX's canonical default
-    floating dtype. Equivalent to ``jnp.result_type(*values, float)``, where the
-    weakly typed Python ``float`` never widens an inexact input.
-    """
-    if values:
-        dtype = jnp.result_type(*values)
-        if jnp.issubdtype(dtype, jnp.inexact):
-            return dtype
-    return jax.dtypes.canonicalize_dtype(jnp.float64)
 
 
 def _identifier(name: str, value: Any, /) -> str:
@@ -961,7 +892,6 @@ def dequantize_mx(
 
 
 __all__ = [
-    "ComplexPrecisionDType",
     "MicroscaledArray",
     "MicroscalingElementFormat",
     "MicroscalingFormat",
@@ -971,12 +901,7 @@ __all__ = [
     "PrecisionResolution",
     "PrecisionResourceAssumptions",
     "PrecisionRole",
-    "RealPrecisionDType",
-    "ScalarPrecisionDType",
-    "complex_precision_dtype",
     "dequantize_mx",
-    "precision_dtype_name",
     "precision_itemsize",
     "quantize_mx",
-    "real_precision_dtype_name",
 ]

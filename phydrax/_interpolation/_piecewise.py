@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from ._stencil import apply_gather_stencil, GatherStencil
 from ._types import (
     BoundsMode,

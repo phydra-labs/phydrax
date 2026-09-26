@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,

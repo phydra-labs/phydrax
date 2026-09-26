@@ -34,7 +34,7 @@ from phydrax.nn.layers._warp_geometry import (
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
-from ....._precision import inexact_result_type
+from ....._dtype_names import inexact_result_type
 
 
 FlowerTransitionMode = Literal["learned", "resolution_consistent"]

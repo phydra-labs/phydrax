@@ -13,8 +13,8 @@ import numpy as np
 from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where

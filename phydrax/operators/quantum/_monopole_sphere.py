@@ -16,8 +16,8 @@ import jax.random as jr
 from jax.typing import DTypeLike
 from jaxtyping import Array, Key
 
+from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import real_precision_dtype_name
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._amplitude import LogAmplitude
@@ -32,7 +32,7 @@ class MonopoleKineticPolicy(StrictModule, NonTrainableState):
     compute_dtype: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
-    def __init__(self, *, compute_dtype: object = "float64") -> None:
+    def __init__(self, *, compute_dtype: DTypeLike = "float64") -> None:
         dtype = real_precision_dtype_name(compute_dtype)
         self.compute_dtype = dtype
         self.method_id = f"monopole-sphere-selected-hessian-diagonal:dtype={dtype}"

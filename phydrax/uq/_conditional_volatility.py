@@ -12,8 +12,8 @@ import jax.numpy as jnp
 from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._numerics import solve_weighted_least_squares
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..optim import minimize, NewtonTrustRegion, OptimizationTermination
 

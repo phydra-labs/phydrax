@@ -11,8 +11,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..series import CoordinateKind, SampledSeries, SeriesPairView, SeriesSupport
 from ._layout import InputLayout, StateLayout

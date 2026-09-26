@@ -12,8 +12,9 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import real_precision_dtype_name
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._precision import PrecisionEvidenceEnvelope, real_precision_dtype_name
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import ArraySpace, DiagonalPairing
 from ._core import (

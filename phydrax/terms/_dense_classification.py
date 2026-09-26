@@ -31,8 +31,8 @@ from .._classification import (
     pointwise_classification_loss,
 )
 from .._doc import DOC_KEY0
+from .._dtype_names import inexact_result_type
 from .._frozendict import frozendict
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..integration._lowering import _coord_weights, component_factor_fields

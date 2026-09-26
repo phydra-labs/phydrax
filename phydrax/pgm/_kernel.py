@@ -12,13 +12,9 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from .._dtype_names import real_precision_dtype_name
 from .._fingerprint import canonical_fingerprint
-from .._precision import (
-    PrecisionEvidenceEnvelope,
-    PrecisionRequest,
-    PrecisionResolution,
-    real_precision_dtype_name,
-)
+from .._precision import PrecisionEvidenceEnvelope, PrecisionRequest, PrecisionResolution
 from .._strict import StrictModule
 
 

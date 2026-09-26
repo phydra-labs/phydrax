@@ -16,8 +16,8 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.domain import ProbabilityDomain
 
+from .._dtype_names import inexact_result_type
 from .._frozendict import frozendict
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..integration._sparse_grid import _smolyak_rule
 from ..operators.interpolation._plans import SmolyakInterpolationRule

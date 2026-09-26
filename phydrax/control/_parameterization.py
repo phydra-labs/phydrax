@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._differentiation import ComponentAuthority
+from .._dtype_names import inexact_result_type
 from .._interpolation import (
     bspline_evaluate,
     BSplineGrid,
@@ -31,7 +32,6 @@ from .._model import (
 )
 from .._model._component import bind_positional_component
 from .._model._ports import require_port_shapes
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..dynamics import TimeGrid

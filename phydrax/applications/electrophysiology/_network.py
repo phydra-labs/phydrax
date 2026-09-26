@@ -20,8 +20,8 @@ from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._admissibility import guard_derivative_validity
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import localize_numerical_event

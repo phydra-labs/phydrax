@@ -18,7 +18,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._precision import inexact_result_type
+from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ...dynamics import DiscreteStepContext, TimeGrid
 from ...linalg import (

@@ -12,9 +12,9 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, PRNGKeyArray
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
 from .._identity import strict_module_payload
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..ml import AbstractRecipe, FeatureSchema, MLBatch, TargetSchema

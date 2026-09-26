@@ -231,6 +231,11 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- The supported precision dtype names (`RealPrecisionDType`,
+  `ComplexPrecisionDType`, `ScalarPrecisionDType`, `precision_dtype_name`,
+  `real_precision_dtype_name`, `complex_precision_dtype`) have one dependency-free
+  owner that also classifies dtypes by exact dtype or category; `phydrax.precision`
+  exports them unchanged. Precision dtype arguments are typed as `DTypeLike`.
 - Static checkers now type every `StrictModule` construction through the concrete
   class's generated or custom `__init__`. The runtime metaclass `__call__`, which
   still performs the abstract/final refusal and the freeze transition, is hidden

@@ -18,7 +18,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 import phydrax.ein as ein
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._trainable import fixed_field
 from ._operators import (
     _array_value,

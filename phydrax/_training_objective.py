@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ._precision import complex_precision_dtype, real_precision_dtype_name
+from ._dtype_names import complex_precision_dtype, real_precision_dtype_name
 
 
 @dataclass(frozen=True, slots=True, init=False)

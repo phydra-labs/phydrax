@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
+from .._dtype_names import inexact_result_type
 from .._execution_array import shard_tree_axis
 from .._execution_runtime import ExecutionGroup
 from .._iteration import (
@@ -26,7 +27,6 @@ from .._iteration import (
     IterationRuntimeState,
     update_iteration,
 )
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ._addressing import derive_key, SampleAddress
 from ._chain import AbstractChainSampleResult

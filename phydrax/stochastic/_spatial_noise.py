@@ -16,13 +16,12 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import precision_dtype_name, real_precision_dtype_name
 from .._precision import (
-    precision_dtype_name,
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
-    real_precision_dtype_name,
 )
 from .._strict import StrictModule
 from ..discretization._tensor import AbstractStrongFormDiscretization

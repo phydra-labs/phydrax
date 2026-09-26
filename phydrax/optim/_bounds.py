@@ -16,7 +16,7 @@ from jax import core
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,
     tree_allfinite as _tree_allfinite,

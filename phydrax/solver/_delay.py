@@ -16,8 +16,8 @@ import optimistix as optx
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._frozendict import frozendict
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from ..integration import (
     GaussLegendreRule,

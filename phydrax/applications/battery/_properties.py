@@ -12,9 +12,9 @@ import numpy as np
 from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._interpolation import apply_gather_stencil, rectilinear_stencil
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ...operators.interpolation import InterpolationResult, linear_interpolate
 

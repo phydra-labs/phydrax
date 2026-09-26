@@ -24,8 +24,8 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ..._dtype_names import inexact_result_type
 from ..._interpolation import bspline_stencil, linear_interpolate
-from ..._precision import inexact_result_type
 from ..._trainable import fixed_field, NonTrainableState
 from ...sparse import EdgeRelation, SparseLinearMap
 from .._batch import MLBatch, WeightPolicy

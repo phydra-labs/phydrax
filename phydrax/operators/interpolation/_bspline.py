@@ -18,10 +18,10 @@ import phydrax.axes as cx
 from phydrax.domain import DomainFunction, PointBatch, SampleLayout
 
 from ..._doc import DOC_KEY0
+from ..._dtype_names import inexact_result_type
 from ..._frozendict import frozendict
 from ..._interpolation import BoundsMode, bspline_evaluate, bspline_stencil, BSplineGrid
 from ..._numerics import solve_weighted_least_squares
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (

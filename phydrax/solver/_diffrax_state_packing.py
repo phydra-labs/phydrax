@@ -13,8 +13,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
-from .._precision import precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (

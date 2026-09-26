@@ -17,13 +17,13 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._interpolation import (
     barycentric_basis,
     barycentric_differentiation_matrix,
 )
 from ..._polynomial._orthogonal import legendre_rule_data
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._reference import FiniteElementSpec

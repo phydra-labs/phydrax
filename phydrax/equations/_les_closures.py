@@ -14,8 +14,8 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 

@@ -15,17 +15,19 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ._differentiation import ComponentAuthority
+from ._dtype_names import (
+    complex_precision_dtype,
+    precision_dtype_name,
+    real_precision_dtype_name,
+    ScalarPrecisionDType,
+)
 from ._fingerprint import canonical_fingerprint
 from ._model._component import ComponentContract, ComponentPrecisionContract
 from ._precision import (
-    complex_precision_dtype,
-    precision_dtype_name,
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
     PrecisionResolution,
-    real_precision_dtype_name,
-    ScalarPrecisionDType,
 )
 from ._strict import StrictModule
 from ._trainable import NonTrainableState

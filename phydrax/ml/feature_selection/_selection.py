@@ -23,8 +23,8 @@ from ..._differentiation import (
     GradientLevel,
     SurfaceDerivative,
 )
+from ..._dtype_names import inexact_result_type
 from ..._model import AbstractArrayModel, ModelBinding
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import fixed_field
 from .._batch import MLBatch

@@ -13,8 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._numerics._quadrature_rules import gauss_legendre_data
-from .._precision import inexact_result_type
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 

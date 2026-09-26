@@ -18,8 +18,8 @@ from jaxtyping import Array, Key
 from phydrax.ein import contract
 
 from ..._doc import DOC_KEY0
+from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import real_precision_dtype_name
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
 from ...atomistic._types import AtomicStructure

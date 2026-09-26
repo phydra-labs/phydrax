@@ -19,8 +19,8 @@ import numpy as np
 import numpy.typing as npt
 from jaxtyping import Array, ArrayLike
 
+from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
-from ..._precision import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, parameter_field
 from ...ein import contract

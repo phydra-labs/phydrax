@@ -14,9 +14,9 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._dtype_names import inexact_result_type
 from .._frozendict import frozendict
 from .._numerics import normalize_anisotropy, normalize_axis_rules, SmolyakAxisRule
-from .._precision import inexact_result_type
 from .._sampling import (
     AntitheticDesign,
     IIDDesign,

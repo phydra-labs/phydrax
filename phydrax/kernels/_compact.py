@@ -13,7 +13,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._precision import inexact_result_type
+from .._dtype_names import inexact_result_type
 from ..discretization.spectral import SphericalSpectralDiscretization
 from ..metrix import SphereLaplacianLevels
 from ._base import _as_real_array, AbstractPositiveDefiniteKernel
