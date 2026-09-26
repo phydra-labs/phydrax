@@ -54,6 +54,8 @@ from ._targets import as_target_domain_function, ComponentTarget, DensityTarget
 
 
 class _ProductCubatureIntegrand(StrictModule):
+    __strict_contract__ = True
+
     integrand: DomainFunction
     component: DomainComponent
     fixed_points: frozendict[str, cx.AxisArray]

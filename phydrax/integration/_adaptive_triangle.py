@@ -49,6 +49,8 @@ from ._targets import as_target_domain_function, ComponentTarget, DensityTarget
 
 
 class _TriangleIntegrand(StrictModule):
+    __strict_contract__ = True
+
     integrand: DomainFunction
     component: DomainComponent
     fixed_points: frozendict[str, cx.AxisArray]

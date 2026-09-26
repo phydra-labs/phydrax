@@ -224,6 +224,8 @@ class TrainingKeys(StrictModule):
     maps lanes internally passes its own `lane` instead.
     """
 
+    __strict_contract__ = True
+
     root: PRNGKey
     attempt_cursor: Array
     accepted_cursor: Array
@@ -802,6 +804,8 @@ class TrainingKernelState(StrictModule):
     MODEL_STATE threaded through the open accumulation window. In lane mode every
     leaf carries the lane axis first.
     """
+
+    __strict_contract__ = True
 
     parameters: Any
     model_state: Any

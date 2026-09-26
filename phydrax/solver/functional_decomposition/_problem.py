@@ -101,6 +101,8 @@ def _scoped_terms(
 class FunctionalDecompositionProblem(StrictModule):
     """Static functional problem over one local-field family and cover."""
 
+    __strict_contract__ = True
+
     cover: SubdomainCover
     family: LocalFieldFamily
     functions: frozendict[str, DomainFunction]

@@ -590,6 +590,8 @@ class StochasticProblem(StrictModule):
 class StochasticResult(StrictModule):
     """Consensus stochastic optimizer result with scenario decomposition evidence."""
 
+    __strict_contract__ = True
+
     parameters: PyTree[Array]
     scenario_parameters: PyTree[Array] | None
     duals: PyTree[Array] | None

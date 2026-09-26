@@ -87,6 +87,8 @@ class _ControlObjective(StrictModule):
 class ControlSearchResult(StrictModule):
     """Best control candidate found by a bounded differential-evolution search."""
 
+    __strict_contract__ = True
+
     problem: ControlProblem
     parameterization: AbstractControlParameterization
     evaluation: ControlResult

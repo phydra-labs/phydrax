@@ -20,7 +20,12 @@
   typed scalar key; seeded internal draws in Lyapunov, covariant-vector, and chaos
   analysis, Riemannian density flows, multistart optimization, process
   tomography, and stochastic immersed forcing create typed keys with
-  `jax.random.key`, producing the same random streams. `jaxtyping.Key` and
+  `jax.random.key`, producing the same random streams. Modules that store a key
+  (training kernel state and keys, stochastic, differential-evolution, control,
+  design, and MAP search results, evolution-strategy payloads and rules, adaptive
+  integrands, and functional-decomposition problems) opt into structural
+  contracts, so their stored key must be one typed scalar key; legacy
+  `uint32[2]` keys raise `TypeError`. `jaxtyping.Key` and
   `jaxtyping.PRNGKeyArray` are refused by lint in package code.
 - Package code imports `Array` from `jax` and `ArrayLike` from `jax.typing`, their
   canonical owners; importing them from `jaxtyping` is refused by lint.

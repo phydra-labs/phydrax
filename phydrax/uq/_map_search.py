@@ -47,6 +47,8 @@ class _PosteriorObjective(StrictModule):
 class MAPSearchResult(StrictModule):
     """Posterior mode candidate and population evidence from differential evolution."""
 
+    __strict_contract__ = True
+
     problem: PosteriorProblem
     position: PyTree[Array]
     parameters: PyTree[Array]

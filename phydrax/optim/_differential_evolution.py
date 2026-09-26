@@ -257,6 +257,8 @@ class DifferentialEvolutionSearch(StrictModule):
 
 
 class DifferentialEvolutionResult(StrictModule):
+    __strict_contract__ = True
+
     population: PyTree[Array]
     population_vectors: Array
     population_objectives: Array

@@ -172,6 +172,8 @@ class DistributionEvolutionPayload(StrictModule):
     so a retried generation samples a fresh population.
     """
 
+    __strict_contract__ = True
+
     objective: Any
     ask_key: PRNGKey
 
@@ -205,6 +207,8 @@ class DistributionEvolutionUpdateRule(AbstractKernelUpdateRule):
     cast to the parameters' real dtype so the method state keeps its dtype.
     Nothing commits on a finite rejection.
     """
+
+    __strict_contract__ = True
 
     rejection_commit_policy: ClassVar[tuple[str, ...]] = ()
     method: AbstractDistributionEvolutionMethod

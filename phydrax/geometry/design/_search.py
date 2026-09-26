@@ -55,6 +55,8 @@ class _DesignValidity(StrictModule):
 class DesignSearchResult(StrictModule):
     """Best design state and convergence evidence from a bounded global search."""
 
+    __strict_contract__ = True
+
     state: DesignState
     residual: Array
     residual_norm: Array

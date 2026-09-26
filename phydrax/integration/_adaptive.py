@@ -125,6 +125,8 @@ def _resolve_interval(
 class DomainAdaptiveIntegrand(StrictModule):
     """Array callback applying component filters and weights at one coordinate."""
 
+    __strict_contract__ = True
+
     integrand: DomainFunction
     component: DomainComponent
     fixed_points: frozendict[str, cx.AxisArray]
