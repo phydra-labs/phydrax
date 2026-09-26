@@ -883,11 +883,13 @@ def finite_observed_law_from_scm(
     *,
     maximum_assignments: int = 1_000_000,
 ) -> FiniteObservedLaw:
-    cardinalities = tuple(np.asarray(compiled.factor_graph.cardinalities))
+    cardinalities = tuple(
+        int(value) for value in compiled.factor_graph._host_topology.cardinalities
+    )
     total = int(np.prod(cardinalities, dtype=np.int64))
     if total > maximum_assignments:
         raise ValueError("Finite SCM law exceeds maximum_assignments.")
-    assignments = enumerate_assignments(compiled.factor_graph.cardinalities)
+    assignments = enumerate_assignments(cardinalities)
     log_scores = factor_graph_log_score(compiled.factor_graph, assignments)
     log_normalizer = jax.scipy.special.logsumexp(log_scores)
     probabilities = jnp.exp(log_scores - log_normalizer).reshape(cardinalities)

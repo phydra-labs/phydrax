@@ -166,13 +166,19 @@ class FactorGraphReverseKernel(StrictModule):
     def sample(self, key: PRNGKey, noisy: Array, initial: GibbsState, /) -> Array:
         if initial.positions.shape[1:] != (self.graph.num_variables,):
             raise ValueError("initial Gibbs state does not match the reverse graph.")
-        values = jnp.asarray(noisy, dtype=jnp.int32)
+        values = jnp.asarray(noisy)
+        if not jnp.issubdtype(values.dtype, jnp.integer):
+            raise TypeError("noisy must contain integer states.")
         expected = (initial.num_chains, self.input_variables.shape[0])
         if values.shape != expected:
             raise ValueError(f"noisy must have shape {expected}; got {values.shape}.")
         input_cardinalities = self.graph.cardinalities[self.input_variables]
-        if bool(jnp.any((values < 0) | (values >= input_cardinalities[jnp.newaxis, :]))):
-            raise ValueError("noisy contains a state outside reverse-input support.")
+        values = eqx.error_if(
+            values,
+            jnp.any((values < 0) | (values >= input_cardinalities[jnp.newaxis, :])),
+            "noisy contains a state outside reverse-input support.",
+        )
+        values = values.astype(jnp.int32)
         positions = initial.positions.at[:, self.input_variables].set(values)
         state = GibbsState(
             positions,

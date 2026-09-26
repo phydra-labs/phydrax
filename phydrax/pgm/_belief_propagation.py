@@ -203,8 +203,8 @@ class PreparedBeliefPropagation(StrictModule):
         static=True
     )
     forest_roots: tuple[int, ...] = eqx.field(static=True)
-    decode_steps: tuple[tuple[int, int, int, tuple[int, ...]], ...] = eqx.field(
-        static=True
+    decode_steps: tuple[tuple[int, int, int, int, tuple[tuple[int, int], ...]], ...] = (
+        eqx.field(static=True)
     )
     forest: bool = eqx.field(static=True)
     forest_steps: int = eqx.field(static=True)
@@ -267,8 +267,9 @@ class MaxProductBeliefPropagationResult(StrictModule):
 BeliefPropagationResult: TypeAlias = (
     SumProductBeliefPropagationResult | MaxProductBeliefPropagationResult
 )
-# Forest decode step: (factor group, local factor, parent variable, child variables).
-_DecodeStep: TypeAlias = tuple[int, int, int, tuple[int, ...]]
+# Forest decode step:
+# (factor group, local factor, parent variable, parent position, (child, position)*).
+_DecodeStep: TypeAlias = tuple[int, int, int, int, tuple[tuple[int, int], ...]]
 # Loopy scan carry: messages, active, initial/last residual, support changes,
 # iterations, status.
 _LoopyCarry: TypeAlias = tuple[Array, Array, Array, Array, Array, Array, Array]
@@ -288,8 +289,7 @@ def _forest_metadata(
     adjacency: list[list[int]] = [[] for _ in range(node_count)]
     factor_lookup: list[tuple[int, int]] = []
     factor_global = 0
-    for group_index, scope in enumerate(graph.factor_scopes):
-        scope_host = np.asarray(scope, dtype=np.int32)
+    for group_index, scope_host in enumerate(graph._host_topology.factor_scopes):
         for local_factor, variables in enumerate(scope_host):
             factor_node = variable_count + factor_global
             factor_lookup.append((group_index, local_factor))
@@ -318,7 +318,7 @@ def _forest_metadata(
                 parent[root_target] = root_source
 
     roots: list[int] = []
-    decode: list[tuple[int, int, int, tuple[int, ...]]] = []
+    decode: list[_DecodeStep] = []
     visited: set[int] = set()
     max_diameter = 0
     if forest:
@@ -354,7 +354,19 @@ def _forest_metadata(
                     node for node in adjacency[factor_node] if node != parent_variable
                 )
                 group_index, local_factor = factor_lookup[factor_node - variable_count]
-                decode.append((group_index, local_factor, parent_variable, children))
+                scope = graph._host_topology.factor_scopes[group_index][local_factor]
+                positions = {
+                    int(variable): position for position, variable in enumerate(scope)
+                }
+                decode.append(
+                    (
+                        group_index,
+                        local_factor,
+                        parent_variable,
+                        positions[parent_variable],
+                        tuple((child, positions[child]) for child in children),
+                    )
+                )
 
             def distances(start: int) -> dict[int, int]:
                 result = {start: 0}
@@ -412,9 +424,9 @@ def prepare_belief_propagation(
     degrees = np.zeros((graph.num_variables,), dtype=np.int32)
     incidents: list[list[tuple[int, int, int]]] = [[] for _ in range(graph.num_variables)]
     offset = 0
-    state_offsets = np.asarray(graph.variable_state_offsets, dtype=np.int32)
+    state_offsets = graph._host_topology.state_offsets
     dense_total = 0
-    for group_index, scope in enumerate(graph.factor_scopes):
+    for group_index, scope_host in enumerate(graph._host_topology.factor_scopes):
         signature = factor_group_cardinality_signature(graph, group_index)
         group = graph.factor_groups[group_index]
         capabilities = factor_group_capabilities(group)
@@ -442,7 +454,7 @@ def prepare_belief_propagation(
         dense_elements = (
             0
             if isinstance(group, EnumeratedFactorGroup)
-            else scope.shape[0] * dense_configurations
+            else scope_host.shape[0] * dense_configurations
         )
         dense_total += dense_elements
         if dense_total > resources_.maximum_dense_elements:
@@ -456,10 +468,9 @@ def prepare_belief_propagation(
             else factor_group_dense_tables(graph, group_index)
         )
         tables.append(table)
-        scope_host = np.asarray(scope, dtype=np.int32)
         group_layout: list[tuple[int, int, int, int]] = []
         for position, cardinality in enumerate(signature):
-            count = scope.shape[0]
+            count = scope_host.shape[0]
             start = offset
             stop = start + count * cardinality
             if stop > resources_.maximum_message_entries:
@@ -504,7 +515,7 @@ def prepare_belief_propagation(
     )
     state_variable_indices = np.repeat(
         np.arange(graph.num_variables, dtype=np.int32),
-        np.asarray(graph.cardinalities, dtype=np.int32),
+        graph._host_topology.cardinalities,
     )
     forest, roots, decode, forest_steps = _forest_metadata(graph)
     plan_id = canonical_fingerprint(
@@ -938,8 +949,8 @@ def _forest_edge_message(
     /,
 ) -> tuple[Array, Array, Array]:
     graph = prepared.graph
-    scope = np.asarray(graph.factor_scopes[group_index], dtype=np.int32)[local_factor]
-    offsets = np.asarray(graph.variable_state_offsets, dtype=np.int32)
+    scope = graph._host_topology.factor_scopes[group_index][local_factor]
+    offsets = graph._host_topology.state_offsets
     incoming = []
     for position, variable_value in enumerate(scope):
         variable = int(variable_value)
@@ -1011,13 +1022,9 @@ def _set_forest_edge_message(
     evidence: Array,
     group_index: int,
     local_factor: int,
-    target_variable: int,
+    target_position: int,
     /,
 ) -> tuple[Array, Array, Array]:
-    scope = np.asarray(prepared.graph.factor_scopes[group_index], dtype=np.int32)[
-        local_factor
-    ]
-    target_position = int(np.flatnonzero(scope == target_variable)[0])
     values, feasible, finite = _forest_edge_message(
         prepared,
         messages,
@@ -1044,33 +1051,43 @@ def _run_forest(
     messages = original
     feasible = jnp.asarray(True)
     finite = jnp.asarray(True)
-    for group_index, local_factor, parent_variable, _children in reversed(
-        prepared.decode_steps
-    ):
+    for (
+        group_index,
+        local_factor,
+        _parent_variable,
+        parent_position,
+        _children,
+    ) in reversed(prepared.decode_steps):
         messages, edge_feasible, edge_finite = _set_forest_edge_message(
             prepared,
             messages,
             state.evidence.values,
             group_index,
             local_factor,
-            parent_variable,
+            parent_position,
         )
         feasible = feasible & edge_feasible
         finite = finite & edge_finite
-    for group_index, local_factor, _parent_variable, children in prepared.decode_steps:
-        for child_variable in children:
+    for (
+        group_index,
+        local_factor,
+        _parent_variable,
+        _parent_position,
+        children,
+    ) in prepared.decode_steps:
+        for _child_variable, child_position in children:
             messages, edge_feasible, edge_finite = _set_forest_edge_message(
                 prepared,
                 messages,
                 state.evidence.values,
                 group_index,
                 local_factor,
-                child_variable,
+                child_position,
             )
             feasible = feasible & edge_feasible
             finite = finite & edge_finite
 
-    offsets = np.asarray(prepared.graph.variable_state_offsets, dtype=np.int32)
+    offsets = prepared.graph._host_topology.state_offsets
     for root in prepared.forest_roots:
         values = state.evidence.values[offsets[root] : offsets[root + 1]]
         for group_index, local_factor, position in prepared.variable_incidents[root]:
@@ -1378,7 +1395,7 @@ def _bethe_log_normalizer(
 
 def _local_modes(graph: DiscreteFactorGraph, values: Array) -> Array:
     modes: list[Array] = []
-    offsets = np.asarray(graph.variable_state_offsets)
+    offsets = graph._host_topology.state_offsets
     for variable in range(graph.num_variables):
         modes.append(jnp.argmax(values[offsets[variable] : offsets[variable + 1]]))
     return (
@@ -1394,9 +1411,13 @@ def _decode_forest_map(
     graph = prepared.graph
     assignment = _local_modes(graph, max_marginals)
     joints, _ = _factor_joint_scores(prepared, state)
-    for group_index, local_factor, parent_variable, children in prepared.decode_steps:
-        scope = np.asarray(graph.factor_scopes[group_index][local_factor], dtype=np.int32)
-        parent_position = int(np.nonzero(scope == parent_variable)[0][0])
+    for (
+        group_index,
+        local_factor,
+        parent_variable,
+        parent_position,
+        children,
+    ) in prepared.decode_steps:
         group = graph.factor_groups[group_index]
         joint = joints[group_index][local_factor]
         parent_state = assignment[parent_variable]
@@ -1415,8 +1436,7 @@ def _decode_forest_map(
             configuration = jnp.stack(jnp.unravel_index(flat_index, signature)).astype(
                 jnp.int32
             )
-        for child in children:
-            child_position = int(np.nonzero(scope == child)[0][0])
+        for child, child_position in children:
             assignment = assignment.at[child].set(configuration[child_position])
     evidence_indices = graph.variable_state_offsets[:-1] + assignment
     score = factor_graph_log_score(graph, assignment) + jnp.sum(

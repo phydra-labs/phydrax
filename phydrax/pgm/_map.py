@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
-import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
 
@@ -107,7 +106,7 @@ def _dual_objective(
         indices,
         prepared.state_variable_indices.shape[0],
     )
-    offsets = np.asarray(graph.variable_state_offsets)
+    offsets = graph._host_topology.state_offsets
     objective = jnp.asarray(0.0, dtype=variable_scores.dtype)
     for variable in range(graph.num_variables):
         objective = objective + _smooth_max(
@@ -185,7 +184,7 @@ def solve_smooth_dual_lp(
         prepared.message_variable_state_indices,
         prepared.state_variable_indices.shape[0],
     )
-    offsets = np.asarray(graph.variable_state_offsets)
+    offsets = graph._host_topology.state_offsets
     assignment = jnp.stack(
         [
             jnp.argmax(variable_scores[offsets[index] : offsets[index + 1]])

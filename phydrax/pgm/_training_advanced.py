@@ -96,7 +96,7 @@ def pseudolikelihood_loss(
     if states.ndim == 1:
         states = states[None, :]
     losses = []
-    for variable, cardinality in enumerate(graph.cardinalities.tolist()):
+    for variable, cardinality in enumerate(graph._host_topology.cardinalities):
         candidates = []
         for state in range(int(cardinality)):
             replaced = states.at[:, variable].set(state)

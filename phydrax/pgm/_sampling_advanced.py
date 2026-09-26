@@ -411,7 +411,9 @@ def joint_block_sweep(
     graph = prepared.graph
     if max(block.variables) >= graph.num_variables:
         raise ValueError("Joint block variable is outside the graph.")
-    cards = tuple(int(graph.cardinalities[index]) for index in block.variables)
+    cards = tuple(
+        int(graph._host_topology.cardinalities[index]) for index in block.variables
+    )
     count = int(np.prod(cards))
     if count > block.maximum_configurations:
         raise ValueError("Joint block conditional exceeds maximum_configurations.")
@@ -633,12 +635,12 @@ def wolff_cluster_step(
         raise ValueError("position must have one state per graph variable.")
     if not np.issubdtype(raw_state.dtype, np.integer):
         raise TypeError("position must contain integers.")
-    cardinalities = np.asarray(graph.cardinalities)
+    cardinalities = graph._host_topology.cardinalities
     if np.any(raw_state < 0) or np.any(raw_state >= cardinalities):
         raise ValueError("position contains values outside graph support.")
     state = raw_state.astype(np.int32, copy=True)
     adjacency: list[list[tuple[int, float]]] = [[] for _ in range(graph.num_variables)]
-    for group, scope in zip(graph.factor_groups, graph.factor_scopes):
+    for group, scope in zip(graph.factor_groups, graph._host_topology.factor_scopes):
         if not isinstance(group, IsingFactorGroup):
             raise TypeError("Wolff updates require IsingFactorGroup factors only.")
         arity = scope.shape[1]
@@ -649,7 +651,7 @@ def wolff_cluster_step(
             weights = np.asarray(group.weights)
             if np.any(weights < 0.0):
                 raise ValueError("Wolff updates require ferromagnetic couplings.")
-            for row, weight in zip(np.asarray(scope), weights):
+            for row, weight in zip(scope, weights):
                 left, right = int(row[0]), int(row[1])
                 adjacency[left].append((right, float(weight)))
                 adjacency[right].append((left, float(weight)))

@@ -502,10 +502,16 @@
   `adjoint_linear_policy` for the self-adjoint damped normal system; it defaults to
   the Gram policy, or for the rectangular formulation to PCG with positive damping
   and MINRES without damping, instead of reusing the least-squares policy.
-- `NormalizedFactorGraphLaw.sample` works when the law is a traced argument of a
-  transformation: `VariableEliminationPlan` records the graph cardinalities, state
-  offsets, and factor scope rows as static host topology, and elimination reads only
-  those instead of converting graph arrays on the host.
+- Factor-graph numerical execution accepts graphs, prepared belief-propagation and
+  Gibbs plans, elimination/junction plans, and normalized laws as traced arguments.
+  `DiscreteFactorGraph` owns immutable host topology for shape/routing decisions
+  alongside fixed device routes; elimination no longer duplicates that topology,
+  forest decoding stores scope positions at preparation, and Gibbs, MAP,
+  pseudolikelihood, causal enumeration and discrete reverse kernels no longer
+  convert traced structure or data to Python/NumPy. Same-structure numeric parameter
+  refreshes reuse compiled programs. Invalid assignments remain outside support;
+  invalid evidence and reverse observations raise `equinox.EquinoxRuntimeError` in
+  eager and compiled execution.
 - Durable service restoration and the Kubernetes scheduler check stored JSON types
   exactly: missing fields, wrong kinds, unsupported literals, and non-integer
   counts raise `IntegrityError` instead of being coerced or split.

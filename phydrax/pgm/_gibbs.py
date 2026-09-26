@@ -252,8 +252,8 @@ class GibbsSampleResult(AbstractChainSampleResult):
 
 def _automatic_colors(graph: DiscreteFactorGraph, /) -> np.ndarray:
     conflicts: list[set[int]] = [set() for _ in range(graph.num_variables)]
-    for scope in graph.factor_scopes:
-        for row in np.asarray(scope, dtype=np.int32):
+    for scope in graph._host_topology.factor_scopes:
+        for row in scope:
             for left_index, left in enumerate(row):
                 for right in row[left_index + 1 :]:
                     conflicts[int(left)].add(int(right))
@@ -280,8 +280,8 @@ def _validate_colors(graph: DiscreteFactorGraph, colors: np.ndarray, /) -> None:
     unique = np.unique(colors)
     if unique.size and not np.array_equal(unique, np.arange(unique.size)):
         raise ValueError("colors must be contiguous from zero.")
-    for scope in graph.factor_scopes:
-        for row in np.asarray(scope, dtype=np.int32):
+    for scope in graph._host_topology.factor_scopes:
+        for row in scope:
             selected = colors[row]
             if len({int(value) for value in selected}) != len(selected):
                 raise ValueError(
@@ -387,8 +387,8 @@ def prepare_chromatic_gibbs(
     incident_lists: list[list[tuple[int, int, int]]] = [
         [] for _ in range(graph.num_variables)
     ]
-    for group_index, scope in enumerate(graph.factor_scopes):
-        for factor, row in enumerate(np.asarray(scope, dtype=np.int32)):
+    for group_index, scope in enumerate(graph._host_topology.factor_scopes):
+        for factor, row in enumerate(scope):
             for position, variable in enumerate(row):
                 incident_lists[int(variable)].append((group_index, factor, position))
     incidents = tuple(tuple(values) for values in incident_lists)
@@ -471,7 +471,7 @@ def _conditional_logits(
     variable: int,
     /,
 ) -> Array:
-    cardinality = int(np.asarray(prepared.graph.cardinalities)[variable])
+    cardinality = int(prepared.graph._host_topology.cardinalities[variable])
     values: list[Array] = []
     for candidate in range(cardinality):
         score = jnp.asarray(0.0, dtype=prepared.precision.accumulation_dtype)

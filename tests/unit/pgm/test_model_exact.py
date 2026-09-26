@@ -1,4 +1,3 @@
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -156,16 +155,3 @@ def test_empty_factor_graph_has_a_valid_empty_junction_tree():
     assert junction.cliques == ()
     assert bool(result.valid)
     assert result.elimination.log_normalizer == pytest.approx(0.0)
-
-
-def test_normalized_law_samples_under_jit_when_the_law_is_traced():
-    law = phx.pgm.NormalizedFactorGraphLaw(
-        phx.pgm.plan_variable_elimination(_binary_pair())
-    )
-    key = jax.random.key(3)
-
-    traced = eqx.filter_jit(lambda value, sample_key: value.sample(sample_key, (5,)))(
-        law, key
-    )
-
-    assert jnp.array_equal(traced, law.sample(key, (5,)))

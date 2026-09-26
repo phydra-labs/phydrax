@@ -1,0 +1,511 @@
+{
+  "cases": [
+    {
+      "bp": {
+        "closed": {
+          "compilation": {
+            "compilation_seconds": 0.251213083,
+            "lowering_seconds": 0.071243958
+          },
+          "compiler": {
+            "argument_bytes": 772,
+            "bytes_accessed": 58362,
+            "flops": 9172,
+            "generated_code_bytes": 0,
+            "output_bytes": 2230,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 2528,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 772,
+          "logical_output_bytes": 2094,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 0.654042,
+            "mean_ms": 0.42548339999999996,
+            "median_ms": 0.412458,
+            "min_ms": 0.287417,
+            "samples_ms": [
+              0.654042,
+              0.412458,
+              0.45587500000000003,
+              0.317625,
+              0.287417
+            ],
+            "std_ms": 0.12963649894161752
+          }
+        },
+        "dynamic": {
+          "compilation": {
+            "compilation_seconds": 0.284361709,
+            "lowering_seconds": 0.05362
+          },
+          "compiler": {
+            "argument_bytes": 2244,
+            "bytes_accessed": 58970,
+            "flops": 9716,
+            "generated_code_bytes": 0,
+            "output_bytes": 2230,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 2736,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 4752,
+          "logical_output_bytes": 2094,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 1.191875,
+            "mean_ms": 0.6901832,
+            "median_ms": 0.5121249999999999,
+            "min_ms": 0.37066699999999997,
+            "samples_ms": [
+              1.191875,
+              0.924208,
+              0.45204099999999997,
+              0.5121249999999999,
+              0.37066699999999997
+            ],
+            "std_ms": 0.315267918213319
+          }
+        }
+      },
+      "factors": 16,
+      "gibbs": {
+        "chains": 4,
+        "closed": {
+          "compilation": {
+            "compilation_seconds": 1.199979833,
+            "lowering_seconds": 0.555341458
+          },
+          "compiler": {
+            "argument_bytes": 272,
+            "bytes_accessed": 67338,
+            "flops": 15075,
+            "generated_code_bytes": 0,
+            "output_bytes": 444,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 16960,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 304,
+          "logical_output_bytes": 364,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 0.746917,
+            "mean_ms": 0.605975,
+            "median_ms": 0.6533329999999999,
+            "min_ms": 0.44075000000000003,
+            "samples_ms": [
+              0.746917,
+              0.462625,
+              0.7262500000000001,
+              0.44075000000000003,
+              0.6533329999999999
+            ],
+            "std_ms": 0.12994000637063247
+          }
+        },
+        "dynamic": {
+          "compilation": {
+            "compilation_seconds": 1.441031583,
+            "lowering_seconds": 0.425705291
+          },
+          "compiler": {
+            "argument_bytes": 1488,
+            "bytes_accessed": 67914,
+            "flops": 15363,
+            "generated_code_bytes": 0,
+            "output_bytes": 444,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 16960,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 3900,
+          "logical_output_bytes": 364,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 0.521292,
+            "mean_ms": 0.45080020000000004,
+            "median_ms": 0.44875,
+            "min_ms": 0.35595899999999997,
+            "samples_ms": [
+              0.491667,
+              0.35595899999999997,
+              0.436333,
+              0.44875,
+              0.521292
+            ],
+            "std_ms": 0.05629839362326425
+          }
+        }
+      },
+      "host_topology_bytes": 260,
+      "host_topology_hash_ns": 327.6625,
+      "passed": true,
+      "variables": 16
+    },
+    {
+      "bp": {
+        "closed": {
+          "compilation": {
+            "compilation_seconds": 0.213200875,
+            "lowering_seconds": 0.089385375
+          },
+          "compiler": {
+            "argument_bytes": 3076,
+            "bytes_accessed": 246078,
+            "flops": 37044,
+            "generated_code_bytes": 0,
+            "output_bytes": 8374,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 9824,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 3076,
+          "logical_output_bytes": 8238,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 1.095584,
+            "mean_ms": 0.6985086,
+            "median_ms": 0.6847920000000001,
+            "min_ms": 0.3795,
+            "samples_ms": [
+              1.095584,
+              0.6847920000000001,
+              0.626417,
+              0.7062499999999999,
+              0.3795
+            ],
+            "std_ms": 0.2301654332601661
+          }
+        },
+        "dynamic": {
+          "compilation": {
+            "compilation_seconds": 0.25111,
+            "lowering_seconds": 0.053625459
+          },
+          "compiler": {
+            "argument_bytes": 8964,
+            "bytes_accessed": 248414,
+            "flops": 39220,
+            "generated_code_bytes": 0,
+            "output_bytes": 8374,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 10416,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 18960,
+          "logical_output_bytes": 8238,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 0.7985829999999999,
+            "mean_ms": 0.5990916,
+            "median_ms": 0.541167,
+            "min_ms": 0.43324999999999997,
+            "samples_ms": [
+              0.541167,
+              0.7985829999999999,
+              0.7077910000000001,
+              0.514667,
+              0.43324999999999997
+            ],
+            "std_ms": 0.13386454862673688
+          }
+        }
+      },
+      "factors": 64,
+      "gibbs": {
+        "chains": 4,
+        "closed": {
+          "compilation": {
+            "compilation_seconds": 6.442805542,
+            "lowering_seconds": 1.929653917
+          },
+          "compiler": {
+            "argument_bytes": 1040,
+            "bytes_accessed": 407572,
+            "flops": 57843,
+            "generated_code_bytes": 0,
+            "output_bytes": 1212,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 84224,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 1072,
+          "logical_output_bytes": 1132,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 3.241083,
+            "mean_ms": 2.0226081999999996,
+            "median_ms": 1.846625,
+            "min_ms": 1.228958,
+            "samples_ms": [
+              3.241083,
+              1.228958,
+              2.165167,
+              1.631208,
+              1.846625
+            ],
+            "std_ms": 0.681035783625912
+          }
+        },
+        "dynamic": {
+          "compilation": {
+            "compilation_seconds": 6.989985708,
+            "lowering_seconds": 2.737611375
+          },
+          "compiler": {
+            "argument_bytes": 5904,
+            "bytes_accessed": 409876,
+            "flops": 58995,
+            "generated_code_bytes": 0,
+            "output_bytes": 1212,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 84224,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 15420,
+          "logical_output_bytes": 1132,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 1.751917,
+            "mean_ms": 1.5570086,
+            "median_ms": 1.5972499999999998,
+            "min_ms": 1.3630840000000002,
+            "samples_ms": [
+              1.5972499999999998,
+              1.365,
+              1.751917,
+              1.3630840000000002,
+              1.707792
+            ],
+            "std_ms": 0.16541967315842449
+          }
+        }
+      },
+      "host_topology_bytes": 1028,
+      "host_topology_hash_ns": 335.2917,
+      "passed": true,
+      "variables": 64
+    },
+    {
+      "bp": {
+        "closed": {
+          "compilation": {
+            "compilation_seconds": 0.261187083,
+            "lowering_seconds": 0.063753666
+          },
+          "compiler": {
+            "argument_bytes": 12292,
+            "bytes_accessed": 982038,
+            "flops": 148020,
+            "generated_code_bytes": 0,
+            "output_bytes": 32950,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 39008,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 12292,
+          "logical_output_bytes": 32814,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 0.9953329999999999,
+            "mean_ms": 0.8927584,
+            "median_ms": 0.897458,
+            "min_ms": 0.798042,
+            "samples_ms": [
+              0.843417,
+              0.929542,
+              0.9953329999999999,
+              0.897458,
+              0.798042
+            ],
+            "std_ms": 0.06826776430673555
+          }
+        },
+        "dynamic": {
+          "compilation": {
+            "compilation_seconds": 0.266022291,
+            "lowering_seconds": 0.055735875
+          },
+          "compiler": {
+            "argument_bytes": 35844,
+            "bytes_accessed": 991286,
+            "flops": 156724,
+            "generated_code_bytes": 0,
+            "output_bytes": 32950,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 41136,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 75792,
+          "logical_output_bytes": 32814,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 1.324583,
+            "mean_ms": 1.0598332,
+            "median_ms": 0.925375,
+            "min_ms": 0.883958,
+            "samples_ms": [
+              1.324583,
+              0.921125,
+              0.883958,
+              0.925375,
+              1.244125
+            ],
+            "std_ms": 0.18563780995088258
+          }
+        }
+      },
+      "factors": 256,
+      "gibbs": {
+        "chains": 4,
+        "closed": {
+          "compilation": {
+            "compilation_seconds": 38.92365825,
+            "lowering_seconds": 10.654763416
+          },
+          "compiler": {
+            "argument_bytes": 4112,
+            "bytes_accessed": 3975556,
+            "flops": 228915,
+            "generated_code_bytes": 0,
+            "output_bytes": 4284,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 1122560,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 4144,
+          "logical_output_bytes": 4204,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 2.841459,
+            "mean_ms": 2.3978752,
+            "median_ms": 2.3007079999999998,
+            "min_ms": 2.073292,
+            "samples_ms": [
+              2.6874580000000003,
+              2.086459,
+              2.841459,
+              2.3007079999999998,
+              2.073292
+            ],
+            "std_ms": 0.3138154087290171
+          }
+        },
+        "dynamic": {
+          "compilation": {
+            "compilation_seconds": 49.031080792,
+            "lowering_seconds": 5.765944334
+          },
+          "compiler": {
+            "argument_bytes": 23568,
+            "bytes_accessed": 3984772,
+            "flops": 233523,
+            "generated_code_bytes": 0,
+            "output_bytes": 4284,
+            "source": "jax-compiled-executable",
+            "temporary_bytes": 1122560,
+            "unavailable_reason": "Backend did not provide compiler estimates."
+          },
+          "logical_input_bytes": 61500,
+          "logical_output_bytes": 4204,
+          "steady_ms": {
+            "count": 5,
+            "max_ms": 5.401375,
+            "mean_ms": 4.6783833999999995,
+            "median_ms": 4.4805,
+            "min_ms": 4.371042,
+            "samples_ms": [
+              5.401375,
+              4.4805,
+              4.71375,
+              4.371042,
+              4.42525
+            ],
+            "std_ms": 0.3799107117234784
+          }
+        }
+      },
+      "host_topology_bytes": 4100,
+      "host_topology_hash_ns": 346.8208,
+      "passed": true,
+      "variables": 256
+    }
+  ],
+  "environment": {
+    "backend": "cpu",
+    "default_float_dtype": "float64",
+    "devices": [
+      {
+        "kind": "cpu",
+        "platform": "cpu"
+      }
+    ],
+    "fingerprint": "cd9d3f1558e23788ab9daefc5de9cb1c4bca6f3ca3c39fefed31254a355cd939",
+    "jax_version": "0.9.2",
+    "jaxlib_version": "0.9.2",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "2dfd54b70b47fb4962da6d0f72fa3874bb9a953068ea9eb2fcb7fa850a186d25",
+    "performance_environment": [
+      [
+        "OMP_NUM_THREADS",
+        null
+      ],
+      [
+        "OPENBLAS_NUM_THREADS",
+        null
+      ],
+      [
+        "NPROC",
+        null
+      ],
+      [
+        "MKL_NUM_THREADS",
+        null
+      ],
+      [
+        "VECLIB_MAXIMUM_THREADS",
+        null
+      ],
+      [
+        "XLA_FLAGS",
+        null
+      ],
+      [
+        "JAX_PLATFORMS",
+        null
+      ],
+      [
+        "JAX_PLATFORM_NAME",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        null
+      ],
+      [
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        null
+      ],
+      [
+        "JAX_COMPILATION_CACHE_DIR",
+        null
+      ]
+    ],
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8",
+    "x64_enabled": true
+  },
+  "passed": true,
+  "repeats": 5,
+  "sizes": [
+    16,
+    64,
+    256
+  ]
+}

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import prod
 
 import equinox as eqx
@@ -12,6 +13,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -24,7 +26,7 @@ from ._model import (
 from ._types import ExactFactorGraphResult, ExactFactorGraphStatus, FactorGraphProvenance
 
 
-def enumerate_assignments(cardinalities: Array, /) -> Array:
+def enumerate_assignments(cardinalities: Sequence[int] | ArrayLike, /) -> Array:
     """Enumerate mixed-radix assignments in deterministic lexicographic order."""
     cards = tuple(np.asarray(cardinalities).tolist())
     total = prod(cards)
@@ -59,16 +61,16 @@ def prepare_exact_factor_graph(
     limit = int(max_configurations)
     if limit < 1:
         raise ValueError("max_configurations must be positive.")
-    cards = tuple(np.asarray(graph.cardinalities).tolist())
+    cards = tuple(int(value) for value in graph._host_topology.cardinalities)
     total = prod(cards)
     if total > limit:
         raise ValueError(
             f"Exact factor-graph enumeration requires {total} configurations, exceeding max_configurations={limit}."
         )
-    assignments = enumerate_assignments(graph.cardinalities)
+    assignments = enumerate_assignments(graph._host_topology.cardinalities)
     routes = []
     tables = []
-    for index, scope in enumerate(graph.factor_scopes):
+    for index, scope in enumerate(graph._host_topology.factor_scopes):
         signature = factor_group_cardinality_signature(graph, index)
         stride = prod(signature)
         strides = []
