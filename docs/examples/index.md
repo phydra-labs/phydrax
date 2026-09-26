@@ -353,6 +353,27 @@ python benchmarks/robotics_analytic_wrap.py
 python benchmarks/robotics_mjx_muscle_projection.py
 ```
 
+## Meshing
+
+```text
+python examples/meshing_native.py
+python examples/adaptive_bisection_heat.py
+python examples/adaptive_device_simplex.py
+python examples/anisotropic_metric_adaptation.py
+python examples/ale_conservative_remesh.py
+python examples/cad_high_order_curving.py
+python examples/boundary_layer_core_mesh.py
+python examples/delaunay_voronoi.py
+python -m tools.meshing_qualification --scenario bisection
+python -m tools.meshing_benchmarks --case host-bisection --resolution 64 --repeats 1
+```
+
+The [meshing guide](../guides_meshing.md#workflows) describes what each script
+certifies. Triangulation, supermesh, and remap routes need the meshcore library
+(`phydrax[meshcore]` or `PHYDRAX_MESHCORE_LIBRARY`); the CAD-curving and
+boundary-layer core scripts need Gmsh and OCP. Qualification scenarios whose
+external dependency is absent print an explicit `missing-dependency` record.
+
 ## Medical imaging and neurofluid transport
 
 ```text

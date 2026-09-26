@@ -63,7 +63,7 @@ def test_p_transfer_roles_remain_distinct():
     candidate = _topology(((3, 2), (1, 1), (2, 2), (3, 2), (0, 0), (0, 0)))
     primal = np.asarray((((1.0, 0.0), (0.0, 1.0), (0.5, 0.5)),))
     pairing_adjoint = np.asarray((((1.0, 0.0, 0.25), (0.0, 1.0, 0.75)),))
-    mass_projection = np.asarray((((1.0, 0.0), (0.0, 1.0), (0.25, 0.75)),))
+    l2_coupling = np.asarray((((1.0, 0.0), (0.0, 1.0), (0.25, 0.75)),))
     transfer = FiniteElementHPTransferPlan(
         "quad-mesh",
         "quad-mesh",
@@ -78,11 +78,12 @@ def test_p_transfer_roles_remain_distinct():
         source_plan_id=accepted.plan_id,
         target_plan_id=candidate.plan_id,
         pairing_adjoint=pairing_adjoint,
-        mass_projection=mass_projection,
+        l2_mass=2.0 * np.eye(3)[None, :, :],
+        l2_coupling=2.0 * l2_coupling,
     )
     source = jnp.zeros((6, 2)).at[1].set(jnp.asarray((2.0, 4.0)))
     primal_value = eqx.filter_jit(transfer.apply_primal)(source)
-    projected_value = eqx.filter_jit(transfer.apply_mass_projection)(source)
+    projected_value = eqx.filter_jit(transfer.apply_l2_projection)(source)
 
     np.testing.assert_allclose(np.asarray(primal_value[1]), (2.0, 4.0, 3.0))
     np.testing.assert_allclose(np.asarray(projected_value[1]), (2.0, 4.0, 3.5))

@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._meshcore import meshcore_available
 from phydrax.discretization import FiniteVolumePrecisionPolicy, TopologyEpoch
 from phydrax.solver import (
     FiniteVolumeConservativeContentState,
@@ -629,6 +630,8 @@ def test_topology_event_journal_numeric_storage_is_jit_safe_arrays():
     assert summary[4].dtype == jnp.float32
 
 
+@pytest.mark.meshcore
+@pytest.mark.skipif(not meshcore_available(), reason="phydrax-meshcore unavailable")
 def test_scheduler_builds_certified_remap_before_committing_event():
     source = phx.discretization.UnstructuredFiniteVolumePlan(
         np.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))),
@@ -715,11 +718,12 @@ def test_scheduler_builds_certified_remap_before_committing_event():
         target_geometry=target,
         candidate_epoch=successor,
         candidate_artifacts=successor_artifacts,
-        remap_tolerance=1e-10,
+        remap_policy=phx.geometry.CommonRefinementPolicy(coverage_tolerance=1e-10),
         source_content=source_content,
         transfer=transfer,
     )
     assert result.committed
+    assert result.automatic_remap.status is phx.geometry.CommonRefinementStatus.SUCCESS
     assert result.result_epoch == successor
     assert isinstance(result.content_state, FiniteVolumeConservativeContentState)
     assert result.content_state.topology_epoch_id == successor.epoch_id
@@ -801,5 +805,10 @@ def test_scheduler_builds_certified_remap_before_committing_event():
         source_content=source_content,
     )
     assert not failed.committed
+    assert failed.failure is TopologyEventStatus.FAILED_COVERAGE
+    assert failed.automatic_remap.plan is None
+    assert (
+        failed.automatic_remap.status is phx.geometry.CommonRefinementStatus.COVERAGE_GAP
+    )
     assert failed.journal.current_epoch_id == initial.epoch_id
     assert result.journal.current_epoch_id == successor.epoch_id

@@ -44,6 +44,17 @@ arXiv:2501.06933v3), distributed under CC BY 4.0. The external repository's
 source code, datasets, model weights, checkpoints, constants, and benchmark
 outputs are not redistributed or adapted here.
 
+The native meshing core (`native/meshcore`, distributed as `phydrax-meshcore`)
+is an independent implementation of published algorithms: the adaptive
+floating-point expansion arithmetic and robust predicates of J. R. Shewchuk
+(Discrete & Computational Geometry 18:305-363, 1997), Simulation of Simplicity
+(Edelsbrunner and Muecke, ACM Transactions on Graphics 9:66-104, 1990) with
+lifted-coordinate perturbations for Delaunay and regular triangulations
+(Devillers and Teillaud), half-space polytope clipping informed by r3d (Powell
+and Abel, Journal of Computational Physics 297:340-357, 2015), and Delaunay
+refinement after Ruppert, Chew, and Shewchuk. No upstream source code,
+including the public-domain `predicates.c`, is redistributed.
+
 This distribution includes adapted numerical methods and implementation ideas
 from the following open-source projects:
 

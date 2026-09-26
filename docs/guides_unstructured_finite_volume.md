@@ -211,6 +211,16 @@ It reports vertex velocity, face-normal grid velocity, swept face volume, cell-v
 change, and the discrete geometric-conservation-law defect. Geometry evaluation and
 topology events are intentionally host-side and occur between accepted steps.
 
+Without a `motion_policy` (or with the `PRESCRIBED` route) the motion callable maps
+every vertex. Any other `FiniteElementMeshMotionRoute` makes the callable prescribe only
+the boundary vertices; the interior follows the shared finite-element motion route
+(`monitor(time, points, args)` drives `MMPDE`). Vertex velocity is the exact time JVP of
+the realized vertices either way, so the discrete GCL holds by construction, and trial
+epochs are accepted through the shared `MotionValidityPlan` corner-Jacobian check.
+`VariablePatchGeometryPlan` takes the same `motion_policy`: its coordinate map then
+prescribes the level-zero grid boundary and every patch vertex interpolates the routed
+level-zero Q1 grid.
+
 `UnstructuredConservativeRemapPlan` is an explicit CSR common-refinement artifact. It
 validates complete source/target coverage and applies conservative cell-integral
 transfer. A remesh is therefore a new topology and geometry plus an auditable remap,
@@ -320,19 +330,56 @@ Remap continues to transfer the complete extensive VOF state. Phase
 appearance, donor exhaustion, PLIC branch changes, and overlap-graph changes
 remain declared discrete derivative events.
 
-## Automatic topology artifacts
+## Automatic common refinement and second-order remap
 
-Host-only automatic remap generation combines deterministic exhaustive AABB overlap
-search with certified convex-polygon or affine-tetrahedron intersections. The generated
-CSR artifact records helper statuses, predicate evidence, source/target coverage, stable
-pair IDs, resource limits, and conservation evidence. Uncertain predicates, unsupported
-cell types, incomplete coverage, or resource exhaustion produce a typed failure and no
-usable remap plan.
-For a frozen route graph, `apply_fixed_combinatorics` accepts dynamic intersection
-measures and source/target volumes. JVP/VJP therefore cover smooth coordinate changes
-that preserve every intersection route. A changed intersection graph, remesh choice,
-or failed coverage certificate is a discrete event and has no fabricated ordinary
-gradient.
+`prepare_unstructured_conservative_remap(source, target, provenance=..., policy=...)`
+intersects the two discretizations' cell meshes with the canonical
+`phydrax.geometry.prepare_common_refinement` (exact meshcore predicates and clipping;
+`CommonRefinementPolicy` sets coverage mode, relative coverage tolerance, and the
+candidate/accepted/memory limits). The returned `PreparedUnstructuredConservativeRemap`
+carries the `PreparedCommonRefinement`, its `CommonRefinementStatus` and evidence, a
+`reason`, and `plan` (an `UnstructuredConservativeRemapPlan`) only on `SUCCESS`.
+Geometric failures, coverage gaps, double coverage, and resource refusal are returned
+as statuses without a plan; a certified refinement that does not cover the
+finite-volume cell volumes within tolerance reports `COVERAGE_GAP` or
+`DOUBLE_COVERAGE` rather than raising from the plan constructor.
+
+```python
+remap = phx.discretization.prepare_unstructured_conservative_remap(
+    source, target, provenance="remesh"
+)
+if not remap.succeeded:
+    raise RuntimeError(remap.reason)
+first_order = remap.plan.apply(averages)
+second = phx.discretization.UnstructuredSecondOrderRemapPlan(
+    remap.plan, remap.refinement, source
+)
+result = second.apply(averages)  # values, limiter and conservation evidence
+```
+
+`UnstructuredSecondOrderRemapPlan` reconstructs `u_s + phi_s g_s . (x - c_s)` about
+each source cell's certified decomposition centroid `c_s`. The weighted least-squares
+gradient uses all cells sharing a vertex with `s`, so boundary and corner cells keep a
+full-rank stencil; its normal equations are prepared once with batched
+`phydrax.linalg` small solves (rank and condition evidence is retained; rank-deficient
+or ill-conditioned stencils raise) and applied as a `phydrax.sparse.SparseLinearMap`.
+The reconstruction is integrated exactly with the overlap first moments,
+`I_st = V_st u_s + phi_s g_s . (m_st - c_s V_st)`, so linear fields are remapped
+exactly and every source cell keeps its content for any `phi_s`.
+`UnstructuredRemapLimiter.BARTH_JESPERSEN` picks the largest `phi_s` keeping every
+overlap average within the extrema of the source stencil, hence every target average
+within its neighborhood bounds. The global residual left by coverage tolerance and
+rounding is redistributed into target cells in proportion to their bounded slack
+(target volume without a limiter); the result reports residual before and after,
+redistributed content, whether the slack sufficed, and limiter activation count,
+fraction, and minimum factor. `apply` is pure JAX and differentiates with respect to
+the field values and the stored overlap/centroid geometry for fixed combinatorics.
+
+For a frozen route graph, the first-order `apply_fixed_combinatorics` accepts dynamic
+intersection measures and source/target volumes. JVP/VJP therefore cover smooth
+coordinate changes that preserve every intersection route. A changed intersection
+graph, remesh choice, or failed coverage certificate is a discrete event and has no
+fabricated ordinary gradient.
 
 `FiniteVolumeStageEpochTransition` is the FV-owned physical payload for DCD segmented
 execution after SSPRK stages 1 or 2. `PreparedUnstructuredSSPRK3Runtime` transfers
@@ -389,7 +436,11 @@ tangential Marangoni gradient without duck-typed field extraction.
 `FiniteVolumeTopologyEventScheduler` coalesces remesh, AMR, and overset requests at
 accepted-step boundaries. Transactions require typed candidate epoch, remap coverage,
 metrics/evidence status, and conservation evidence; absent evidence never defaults to
-success. A committed event advances the epoch journal atomically.
+success. Given `source_geometry` and `target_geometry` without a remap, a transaction
+prepares the automatic remap under `remap_policy`; the result's `automatic_remap`
+exposes its status and evidence, and a failed refinement fails the event with
+`FAILED_RESOURCE_LIMIT` or `FAILED_COVERAGE`. A committed event advances the epoch
+journal atomically.
 
 ## Scope
 

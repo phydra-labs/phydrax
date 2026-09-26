@@ -522,9 +522,9 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             report=report,
             plan_id=plan_id,
             evidence=evidence,
-            redistribution_owner_cells=tuple(redistribution_owner_cells),
-            redistribution_neighbor_cells=tuple(redistribution_neighbor_cells),
-            redistribution_route_indices=tuple(redistribution_route_indices),
+            redistribution_owner_cells=tuple(redistribution_owner_cells.tolist()),
+            redistribution_neighbor_cells=tuple(redistribution_neighbor_cells.tolist()),
+            redistribution_route_indices=tuple(redistribution_route_indices.tolist()),
             redistribution_block_id=block_id,
         )
         return cls(None, None, None, _prepared=prepared)

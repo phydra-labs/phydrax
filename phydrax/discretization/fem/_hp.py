@@ -16,6 +16,12 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import (
+    DensePropertyVerificationPolicy,
+    prepare_local_block_factorization,
+    solve_local_blocks_detailed,
+    verify_dense_properties,
+)
 
 
 FiniteElementHPCellKind = Literal["quadrilateral", "hexahedron"]
@@ -448,8 +454,151 @@ def finite_element_hp_workset_plan(
     )
 
 
+class FiniteElementHPProjectionEvidence(StrictModule, NonTrainableState):
+    """Rank, conditioning, and solve evidence of the local target-mass systems."""
+
+    target_slots: Array
+    dof_counts: Array
+    numerical_rank: Array
+    condition_estimate: Array
+    positive_definite: Array
+    failed: Array
+    successful: bool = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        target_slots: ArrayLike,
+        dof_counts: ArrayLike,
+        numerical_rank: ArrayLike,
+        condition_estimate: ArrayLike,
+        positive_definite: ArrayLike,
+        failed: ArrayLike,
+        /,
+    ):
+        slots = np.asarray(target_slots, dtype=np.int32)
+        counts = np.asarray(dof_counts, dtype=np.int32)
+        rank = np.asarray(numerical_rank, dtype=np.int32)
+        condition = np.asarray(condition_estimate, dtype=np.float64)
+        definite = np.asarray(positive_definite, dtype=np.bool_)
+        failed_ = np.asarray(failed, dtype=np.bool_)
+        if (
+            slots.ndim != 1
+            or slots.size == 0
+            or any(
+                value.shape != slots.shape
+                for value in (counts, rank, condition, definite, failed_)
+            )
+            or np.unique(slots).size != slots.size
+            or np.any(counts < 1)
+            or np.any(rank < 0)
+            or np.any(rank > counts)
+        ):
+            raise ValueError("hp L2 projection evidence arrays are invalid.")
+        self.target_slots = jnp.asarray(slots)
+        self.dof_counts = jnp.asarray(counts)
+        self.numerical_rank = jnp.asarray(rank)
+        self.condition_estimate = jnp.asarray(condition)
+        self.positive_definite = jnp.asarray(definite)
+        self.failed = jnp.asarray(failed_)
+        self.successful = bool(
+            not np.any(failed_) and np.all(definite) and np.all(rank == counts)
+        )
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-hp-l2-projection-evidence",
+                "target_slots": array_tree_fingerprint(slots),
+                "dof_counts": array_tree_fingerprint(counts),
+                "rank": array_tree_fingerprint(rank),
+                "condition": array_tree_fingerprint(condition),
+                "positive_definite": array_tree_fingerprint(definite),
+                "failed": array_tree_fingerprint(failed_),
+            }
+        )
+
+
+def _route_ordinals(group: np.ndarray, group_count: int, /) -> np.ndarray:
+    """Position of every route among the routes sharing its target group."""
+
+    order = np.argsort(group, kind="stable")
+    starts = np.searchsorted(group[order], np.arange(group_count))
+    ordinals = np.empty(group.shape, dtype=np.int64)
+    ordinals[order] = np.arange(group.size) - starts[group[order]]
+    return ordinals
+
+
+def _local_l2_projection(
+    target: np.ndarray,
+    target_count: np.ndarray,
+    valid: np.ndarray,
+    mass: np.ndarray,
+    coupling: np.ndarray,
+    /,
+) -> tuple[np.ndarray, FiniteElementHPProjectionEvidence]:
+    """Solve ``M_t P_r = B_r`` with one target mass summed over incoming routes.
+
+    Route-local mass contributions integrate target basis pairs over each route's
+    integration cell, so every target cell's mass is the sum over its routes. Each
+    target mass is factored once and applied to all incoming route couplings.
+    """
+
+    routes = np.flatnonzero(valid)
+    slots, group = np.unique(target[routes], return_inverse=True)
+    counts = np.zeros(slots.shape, dtype=np.int32)
+    counts[group] = target_count[routes]
+    if np.any(counts[group] != target_count[routes]):
+        raise ValueError("Routes into one hp target cell disagree on its DOF count.")
+    group_mass = np.zeros((slots.size,) + mass.shape[1:], dtype=mass.dtype)
+    np.add.at(group_mass, group, mass[routes])
+    ordinals = _route_ordinals(group, slots.size)
+    projection = np.zeros(coupling.shape, dtype=np.result_type(mass, coupling))
+    rank = np.zeros(slots.shape, dtype=np.int32)
+    condition = np.full(slots.shape, np.inf, dtype=np.float64)
+    definite = np.zeros(slots.shape, dtype=np.bool_)
+    failed = np.ones(slots.shape, dtype=np.bool_)
+    source_width = coupling.shape[2]
+    policy = DensePropertyVerificationPolicy(require_positive_definite=True)
+    for size in np.unique(counts):
+        members = np.flatnonzero(counts == size)
+        member_index = np.full(slots.shape, -1, dtype=np.int64)
+        member_index[members] = np.arange(members.size)
+        blocks = jnp.asarray(group_mass[members, :size, :size])
+        properties = verify_dense_properties(blocks, policy=policy)
+        factorization = prepare_local_block_factorization(blocks, positive_definite=True)
+        bucket = np.flatnonzero(counts[group] == size)
+        rows = member_index[group[bucket]]
+        columns = ordinals[bucket]
+        width = int(np.max(columns)) + 1
+        right = np.zeros(
+            (members.size, size, width, source_width), dtype=projection.dtype
+        )
+        right[rows, :, columns, :] = coupling[routes[bucket], :size, :]
+        solved = solve_local_blocks_detailed(
+            factorization,
+            jnp.asarray(right.reshape((members.size, size, width * source_width))),
+        )
+        values = np.asarray(solved.value).reshape(right.shape)
+        projection[routes[bucket], :size, :] = values[rows, :, columns, :]
+        rank[members] = np.asarray(properties.numerical_rank)
+        condition[members] = np.asarray(properties.condition_estimate)
+        definite[members] = np.asarray(properties.positive_definite)
+        failed[members] = np.asarray(solved.failed_blocks) | ~np.asarray(
+            properties.successful
+        )
+    return projection, FiniteElementHPProjectionEvidence(
+        slots, counts, rank, condition, definite, failed
+    )
+
+
 class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
-    """Padded p/h routes with distinct primal, dual, adjoint, and projection maps."""
+    """Padded p/h routes with distinct nodal, dual, adjoint, and L2 maps.
+
+    ``primal`` is nodal interpolation: each route evaluates the source polynomial
+    at the target nodes it owns. ``l2_projection`` is the local Galerkin L2
+    projection ``M_t^{-1} B`` built from route-local target-mass contributions
+    and source-target couplings; its mass solves retain rank and conditioning
+    evidence in ``l2_evidence``.
+    """
 
     source_slots: Array
     target_slots: Array
@@ -459,7 +608,8 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
     primal: Array
     raw_dual_pullback: Array
     pairing_adjoint: Array | None
-    mass_projection: Array | None
+    l2_projection: Array | None
+    l2_evidence: FiniteElementHPProjectionEvidence | None
     source_plan_id: str = eqx.field(static=True)
     target_plan_id: str = eqx.field(static=True)
     source_topology_id: str = eqx.field(static=True)
@@ -468,7 +618,7 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
     source_capacity: int = eqx.field(static=True)
     target_capacity: int = eqx.field(static=True)
     has_pairing_adjoint: bool = eqx.field(static=True)
-    has_mass_projection: bool = eqx.field(static=True)
+    has_l2_projection: bool = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
     def __init__(
@@ -489,7 +639,8 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
         target_plan_id: str,
         valid: ArrayLike | None = None,
         pairing_adjoint: ArrayLike | None = None,
-        mass_projection: ArrayLike | None = None,
+        l2_mass: ArrayLike | None = None,
+        l2_coupling: ArrayLike | None = None,
     ):
         source_id = str(source_topology_id)
         target_id = str(target_topology_id)
@@ -556,7 +707,8 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
                 "hp primal transfer must be zero outside active padded blocks."
             )
         adjoint = None if pairing_adjoint is None else np.asarray(pairing_adjoint)
-        projection = None if mass_projection is None else np.asarray(mass_projection)
+        if (l2_mass is None) != (l2_coupling is None):
+            raise ValueError("hp L2 projection requires both local mass and coupling.")
         if adjoint is not None and (
             adjoint.shape != (source.size, source_width, target_width)
             or not np.issubdtype(adjoint.dtype, np.inexact)
@@ -564,13 +716,28 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
             or np.any(adjoint[~np.swapaxes(support, 1, 2)] != 0.0)
         ):
             raise ValueError("hp pairing adjoint is invalid.")
-        if projection is not None and (
-            projection.shape != primal_.shape
-            or not np.issubdtype(projection.dtype, np.inexact)
-            or np.any(~np.isfinite(projection))
-            or np.any(projection[~support] != 0.0)
-        ):
-            raise ValueError("hp physical mass projection is invalid.")
+        projection = None
+        evidence = None
+        if l2_mass is not None:
+            mass = np.asarray(l2_mass)
+            coupling = np.asarray(l2_coupling)
+            target_support = (
+                np.arange(target_width)[None, :, None] < target_count[:, None, None]
+            ) & (np.arange(target_width)[None, None, :] < target_count[:, None, None])
+            if (
+                mass.shape != (source.size, target_width, target_width)
+                or coupling.shape != primal_.shape
+                or not np.issubdtype(mass.dtype, np.inexact)
+                or not np.issubdtype(coupling.dtype, np.inexact)
+                or np.any(~np.isfinite(mass))
+                or np.any(~np.isfinite(coupling))
+                or np.any(mass[~target_support] != 0.0)
+                or np.any(coupling[~support] != 0.0)
+            ):
+                raise ValueError("hp local L2 mass or coupling data are invalid.")
+            projection, evidence = _local_l2_projection(
+                target, target_count, valid_, mass, coupling
+            )
         self.source_slots = jnp.asarray(source)
         self.target_slots = jnp.asarray(target)
         self.valid = jnp.asarray(valid_)
@@ -579,7 +746,8 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
         self.primal = jnp.asarray(primal_)
         self.raw_dual_pullback = jnp.swapaxes(self.primal, 1, 2)
         self.pairing_adjoint = None if adjoint is None else jnp.asarray(adjoint)
-        self.mass_projection = None if projection is None else jnp.asarray(projection)
+        self.l2_projection = None if projection is None else jnp.asarray(projection)
+        self.l2_evidence = evidence
         self.source_topology_id = source_id
         self.target_topology_id = target_id
         self.transfer_kind = kind
@@ -588,7 +756,7 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
         self.source_capacity = source_capacity_
         self.target_capacity = target_capacity_
         self.has_pairing_adjoint = adjoint is not None
-        self.has_mass_projection = projection is not None
+        self.has_l2_projection = projection is not None
         self.transfer_id = canonical_fingerprint(
             {
                 "kind": "finite-element-hp-transfer",
@@ -608,9 +776,10 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
                 "pairing_adjoint": (
                     None if adjoint is None else array_tree_fingerprint(adjoint)
                 ),
-                "mass_projection": (
+                "l2_projection": (
                     None if projection is None else array_tree_fingerprint(projection)
                 ),
+                "l2_evidence": None if evidence is None else evidence.evidence_id,
             }
         )
 
@@ -675,10 +844,16 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
     def apply_primal(self, source_values: ArrayLike, /) -> Array:
         return self._forward(self.primal, source_values)
 
-    def apply_mass_projection(self, source_values: ArrayLike, /) -> Array:
-        if self.mass_projection is None:
-            raise ValueError("This hp transfer has no physical mass projection.")
-        return self._forward(self.mass_projection, source_values)
+    def apply_l2_projection(self, source_values: ArrayLike, /) -> Array:
+        """Apply the local Galerkin L2 projection after certified mass solves."""
+
+        if self.l2_projection is None or self.l2_evidence is None:
+            raise ValueError("This hp transfer has no local L2 projection.")
+        if not self.l2_evidence.successful:
+            raise ValueError(
+                "This hp transfer's local target-mass solves failed; see l2_evidence."
+            )
+        return self._forward(self.l2_projection, source_values)
 
     def pullback_raw(self, target_dual: ArrayLike, /) -> Array:
         return self._reverse(self.raw_dual_pullback, target_dual)
@@ -693,6 +868,7 @@ __all__ = [
     "FiniteElementHPCellKind",
     "FiniteElementHPLineage",
     "FiniteElementHPLineageKind",
+    "FiniteElementHPProjectionEvidence",
     "FiniteElementHPTopology",
     "FiniteElementHPTransferKind",
     "FiniteElementHPTransferPlan",

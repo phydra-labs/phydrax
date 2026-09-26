@@ -3,7 +3,7 @@
 #
 
 from ._affine import AffineSimplexEvidence, AffineSimplexMap
-from ._bvh import TriangleBVH
+from ._bvh import TriangleBVH, WindingNumberResult, WindingNumberRoute
 from ._ddg import DDGOperators, discrete_operators
 from ._io import (
     mesh_region_from_source,
@@ -45,4 +45,6 @@ __all__ = [
     "TriangleSurface",
     "TriangleTopology",
     "triangle_arrays",
+    "WindingNumberResult",
+    "WindingNumberRoute",
 ]

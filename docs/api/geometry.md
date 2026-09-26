@@ -171,9 +171,20 @@ scientific metrics on the sharp geometry.
 
 `TriangleMesh` and `SegmentMesh` own canonical validated arrays and topology.
 `TriangleTopology` provides half-edge twins, boundary loops, manifold checks, and
-connected components. `TriangleBVH` and `TriangleMeshQueryIndex` accelerate closest
-point queries. `MeshRegion` and `PlanarMeshRegion` lower watertight 3D meshes and
-planar triangulations to the common geometry kernel.
+connected components. `TriangleBVH` and `TriangleMeshQueryIndex` answer exact
+closest-point and k-nearest-face queries by branch-and-bound traversal with a
+per-query stack of `max_depth + 2` entries; `TriangleBVH(mesh, policy=...)` takes a
+`BVHBuildPolicy` (median, Morton radix tree, or binned SAH) and `refit(vertices)`
+moves the fixed hierarchy to differentiable vertex positions with one update per
+tree level. `winding_number(points)` is exact: leaves whose box contains the query
+sum triangle solid angles and every other subtree is replaced by the closing fan of
+its boundary (Jacobson et al. 2013). `fast_winding_number(points, opening_angle=beta)`
+is the approximate first-order dipole route of Barill et al. (2018); both return a
+`WindingNumberResult` whose `route` and `approximate` fields name the evaluation.
+`MeshRegion` and `PlanarMeshRegion` lower watertight 3D meshes and planar
+triangulations to the common geometry kernel; `MeshRegion` refits its prepared
+`TriangleBVH` to the current design vertices for distance, closest-point, and
+inside queries instead of forming query-by-face arrays.
 
 `discrete_operators(...)` constructs matrix-free DDG incidence, mass, Laplacian,
 and gradient operators from the same topology. Mesh adapters accept native
@@ -253,6 +264,23 @@ part of this fixed-topology contract. A realization exposes the current
 vertices, faces, atlas, and a differentiable seam residual. The validity region
 requires unchanged topology, positive surface Jacobians, and compatible seams;
 `BRepSeamCompatibility` makes the last condition an explicit design constraint.
+
+`prepare_brep_projection(model, source)` binds OCCT closest-point queries to the
+exact revision of a `BRepModel`: `source` is the in-memory shape the model was
+extracted from or its persisted CAD file, and its digest must equal
+`model.source_digest` (the in-memory digest excludes cached tessellations). The
+`PreparedBRepProjection` projects batches onto explicit vertices, edges, and
+faces (`project`), reports `(u, v)` or `t` parameters, residuals, oriented face
+normals and tangent frames, and a `BRepProjectionStatus`: `SEAM` for periodic
+seams and singular poles, `AMBIGUOUS` for distinct tied minima or continua such
+as a sphere center, `FAILED` when no closest point exists. Trimmed faces are
+honored through the OCCT face classifier. `classify` returns the
+lowest-dimensional entity within a tolerance (BVH candidates, optional admissible
+entity groups), `locate_solids` the containing solid, and `contains`,
+`containers`, and `members` expose the closure relation. A `PlanarEmbedding`
+binds a face-only revision to two-dimensional coordinates. Each query is one host
+call into OCCT extrema (the external-provider boundary); calls are grouped per
+entity so projectors and classifiers are prepared once.
 
 ## Physical CAD identity and selection
 
@@ -402,8 +430,9 @@ margins fail or whose sampled `ImplicitRegionTopology` changed; other states
 report inconclusive validity.
 
 `FiniteElementMeshMotionPlan` is owned by `phydrax.discretization`; it consumes any
-structural fixed-route boundary provider, performs graph-harmonic interior motion,
-and returns a safe `FiniteElementRuntimeData` plus signed-Jacobian evidence.
+structural fixed-route boundary provider, extends it to the interior along an explicit
+`FiniteElementMeshMotionRoute`, and returns a safe `FiniteElementRuntimeData` plus
+signed corner-Jacobian evidence.
 
 See [Differentiable fixed-topology geometry](../guides_differentiable_geometry.md)
 for contracts, nonclaims, and a complete workflow.
@@ -418,6 +447,93 @@ input/output counts, algorithm parameters, watertightness, winding consistency,
 recentering, warnings, and an input digest. Invalid reconstruction raises
 `ReconstructionFailure` with the same report; approximation is never hidden behind
 a primitive constructor.
+
+## Exact predicates, triangulations, and diagrams
+
+`orient2d`, `orient3d`, `incircle`, and `insphere` return a `PredicateResult`
+(int8 `signs` in `PredicateSign`, boolean `certain`). `PredicateMode.FILTERED`
+(host NumPy) and `PredicateMode.FILTERED_DEVICE` (pure JAX, jittable) certify
+signs with Shewchuk's static error bounds for the input dtype and report
+`UNCERTAIN` otherwise; a certified sign is never wrong. `PredicateMode.EXACT`
+resolves every uncertain entry with the native `phydrax-meshcore` library
+(adaptive expansion arithmetic; optional extra `phydrax[meshcore]`, or
+`PHYDRAX_MESHCORE_LIBRARY`) and raises `MeshcoreUnavailableError` when it is
+absent. `GeometryPrecisionPolicy(predicate_mode=...)` selects the route of host
+geometry decisions: convex-polygon and tetrahedron intersections and
+triangle-ray preparation use exact predicates when meshcore is installed and
+otherwise report unresolved decisions as `UNCERTAIN_PREDICATE`.
+
+`segment_intersections_2d(a, b, c, d, mode=...)` classifies closed segments as
+`SegmentIntersectionStatus` `DISJOINT`, `PROPER_CROSSING`, `ENDPOINT_CONTACT`
+(one common point that is an endpoint), `COLLINEAR_OVERLAP` (a common piece of
+positive length), or `UNCERTAIN`.
+`polygon_simplicity_2d(vertices, mode=..., maximum_candidate_pairs=...)`
+certifies `(..., n, 2)` vertex loops as `PolygonSimplicityStatus` `SIMPLE`,
+`SELF_INTERSECTING`, or `UNCERTAIN`: non-adjacent edges must be disjoint and
+adjacent edges may meet only at their shared vertex, so repeated vertices,
+touching vertices, and doubled-back edges are self-intersections. Candidate edge
+pairs stream from a BVH broad phase over exact edge boxes. The result carries the
+certified orientation, offending and unresolved pair counts, the processed
+candidate count, and whether the capacity was exhausted; exhaustion leaves every
+unproved loop uncertain. Both are host algorithms (`FILTERED` or `EXACT`) whose
+classes are exact wherever every contributing sign is certified.
+
+`phydrax-meshcore` is released in lockstep with Phydrax: `phydrax[meshcore]`
+pins the identical version, and a library that is another release, lacks any
+bound C ABI symbol, or returns a null/malformed release or build identity is
+reported as `MeshcoreUnavailableError` with the reason. No C++ exception crosses
+its C ABI: a refused allocation is the call status `CAPACITY_EXCEEDED`.
+To build and test the library from source, and to repeat the tests under
+AddressSanitizer and UndefinedBehaviorSanitizer:
+
+```console
+cmake -S native/meshcore -B build/meshcore
+cmake --build build/meshcore && ctest --test-dir build/meshcore
+cmake -S native/meshcore -B build/meshcore-sanitize -DPHX_MC_SANITIZE=ON \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build/meshcore-sanitize && ctest --test-dir build/meshcore-sanitize
+```
+
+`DelaunayTriangulation` (2D/3D) and `ConstrainedDelaunayTriangulation`
+(segment recovery, hole carving, Ruppert/Chew refinement bounded by
+`max_steiner`) are exact, deterministic, and canonically ordered; ties are
+resolved by index-ordered symbolic perturbation. `VoronoiDiagram` and
+`PowerDiagram` clip each generator's bisector halfspaces to a box and optional
+convex domain with exactly classified clipping and store the cells as
+`DiagramCells` CSR with measures and centroids. Each result carries
+`TriangulationEvidence` (route, native status, library identity, counts).
+
+## Common refinement (supermesh)
+
+`prepare_common_refinement(source, target, policy=CommonRefinementPolicy())`
+certifies the overlap of two `CellMesh` instances of one dimension (2D or 3D,
+any mix of triangle, quadrilateral, polygon, tetrahedron, hexahedron, prism,
+pyramid, and polyhedron blocks) and requires meshcore. Triangles, tetrahedra,
+and convex polygons are single convex pieces; every other cell is the cone of
+its canonically triangulated boundary (faces fanned from their smallest vertex,
+so neighbors agree on shared faces) from one of its vertices, accepted only when
+all nondegenerate cone simplices share one exact orientation. Float64 BVHs over
+the cell boxes enumerate candidate pairs; meshcore clips every piece pair with
+exactly classified vertices in batches of bounded working set.
+
+`PreparedCommonRefinement` stores CSR rows grouped by target cell
+(`target_offsets`, `source_cells` ascending per row, `volumes`,
+`first_moments` = integral of x, optional `second_moments` = integral of x x^T,
+optional `simplex_offsets`/`simplices`: an exact signed simplex partition of
+every overlap for quadrature), the certified cell measures and first moments of
+both meshes, cell global IDs, and mesh identities. Nothing is repaired:
+`CommonRefinementStatus` reports uncertified cells (`INVALID_GEOMETRY`),
+unresolved filtered predicates or coordinates outside the exact domain
+(`PREDICATE_UNCERTAIN`), native clip failures, `DOUBLE_COVERAGE`,
+`COVERAGE_GAP` against the `CommonRefinementCoverage` requirement (`COMPLETE`,
+`TARGET`, `SOURCE`, `PARTIAL`), and `RESOURCE_LIMIT` refusals of the candidate,
+accepted-pair, and memory limits. Cell `i` is covered when its covered measure
+differs from its measure `m_i` by at most
+`coverage_tolerance * m_i + 256 eps h_i^d` (`h_i` the cell box diagonal).
+`CommonRefinementEvidence` carries per-cell defects and tolerances, gap and
+double-coverage counts, candidate/accepted/piece-pair counts, and retained and
+working bytes. Finite-volume remap, block-AMR cut-cell transitions, and
+finite-element L2 projection transfers consume this one artifact.
 
 ## Core API
 
@@ -565,3 +681,27 @@ a primitive constructor.
 ---
 
 ::: phydrax.geometry.ReconstructionReport
+
+---
+
+::: phydrax.geometry.prepare_common_refinement
+
+---
+
+::: phydrax.geometry.PreparedCommonRefinement
+
+---
+
+::: phydrax.geometry.CommonRefinementPolicy
+
+---
+
+::: phydrax.geometry.CommonRefinementCoverage
+
+---
+
+::: phydrax.geometry.CommonRefinementStatus
+
+---
+
+::: phydrax.geometry.CommonRefinementEvidence

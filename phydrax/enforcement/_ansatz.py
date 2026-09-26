@@ -29,7 +29,7 @@ from phydrax.domain import (
     Interior,
 )
 
-from .._bvh import beam_select_leaf_items, build_point_bvh
+from .._bvh import beam_select_leaf_items, BVHBuildPolicy, prepare_bvh
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._model import TRIAL_SPACE_CERTIFICATE_KEY
@@ -231,7 +231,13 @@ def _enforcement_weight_fn(
     beam_width = 16  # beam_width * leaf_size == 512 candidates
     eps = 1e-12
 
-    bvh = build_point_bvh(np.asarray(P), leaf_size=leaf_size, dtype=jnp.float64)
+    points_host = np.asarray(P)
+    bvh = prepare_bvh(
+        points_host,
+        points_host,
+        policy=BVHBuildPolicy(leaf_size=leaf_size),
+        dtype=jnp.float64,
+    )
     steps = int(bvh.max_depth + 2)
 
     def _select_candidates(q: Array, /) -> tuple[Array, Array]:

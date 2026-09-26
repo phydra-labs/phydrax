@@ -48,16 +48,12 @@ def test_morton_query_pallas_leaf_kernel_matches_jax() -> None:
         4,
         2,
         2,
-        maximum_leaf_occupancy=2,
-        target_top_nodes=1,
     ).query(source, target)
     accelerated = MortonNeighborQueryPlan(
         address,
         4,
         2,
         2,
-        maximum_leaf_occupancy=2,
-        target_top_nodes=1,
         distance_backend="pallas",
         pallas_interpret=True,
     ).query(source, target)

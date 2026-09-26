@@ -365,10 +365,7 @@ def _query_neighbors_morton(
     complete = jnp.all(jnp.stack([result.evidence.complete for result in results]))
     finite = jnp.all(
         jnp.stack(
-            [
-                result.evidence.finite & result.evidence.topology_successful
-                for result in results
-            ]
+            [result.evidence.finite & result.evidence.sources_valid for result in results]
         )
     )
     successful = jnp.all(jnp.stack([result.evidence.successful for result in results]))

@@ -164,7 +164,7 @@ def test_native_implicit_provider_enforces_limits_and_hard_size_compliance():
     )
 
 
-def test_native_implicit_provider_enforces_wall_deadline_in_worker():
+def test_native_implicit_provider_enforces_wall_deadline():
     limits = phx.meshing.MeshingLimits(maximum_wall_seconds=1.0e-6)
     geometry, _, specification = _implicit_case(
         size_strength=phx.meshing.SizeControlStrength.SOFT,
@@ -175,3 +175,34 @@ def test_native_implicit_provider_enforces_wall_deadline_in_worker():
     with pytest.raises(phx.meshing.MeshingFailure) as error:
         plan.execute()
     assert error.value.category is phx.meshing.MeshingFailureCategory.TIMED_OUT
+
+
+def test_native_implicit_provider_volume_gradient_matches_finite_differences():
+    geometry, _, specification = _implicit_case(
+        size_strength=phx.meshing.SizeControlStrength.SOFT
+    )
+    plan = _plan_case(geometry, specification)
+    radius_index = geometry.schema.index(
+        phx.geometry.ParameterId("admission-sphere", "radius")
+    )
+
+    def enclosed_volume(radius):
+        result = plan.execute(geometry.state.replace_at(radius_index, radius))
+        faces = result.geometry.geometry_dofs[0]
+        corners = result.geometry.coordinates[faces]
+        return (
+            jnp.sum(
+                jnp.sum(corners[:, 0] * jnp.cross(corners[:, 1], corners[:, 2]), axis=-1)
+            )
+            / 6.0
+        )
+
+    radius = jnp.asarray(0.75)
+    step = 1.0e-4
+    derivative = jax.grad(enclosed_volume)(radius)
+    central = (enclosed_volume(radius + step) - enclosed_volume(radius - step)) / (
+        2.0 * step
+    )
+
+    assert jnp.isfinite(derivative)
+    np.testing.assert_allclose(derivative, central, rtol=1.0e-5)

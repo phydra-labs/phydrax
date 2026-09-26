@@ -4,9 +4,11 @@
 
 """Deterministic, host-only broad phase for conservative geometry coupling.
 
-This module deliberately does not use the JAX nearest-neighbor BVH.  Coupling
-requires an exhaustive set of AABB candidates: dropping a pair because it is
-not among a nearest-item beam is not a safe failure mode.
+Coupling requires the complete set of AABB candidates: dropping a pair because
+it is not among a nearest-item beam is not a safe failure mode.  Candidates come
+from the exact host simultaneous traversal of two float64 packed BVHs, which
+enumerates every overlapping pair in bounded blocks so resource limits are
+enforced before the result is materialized.
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ from enum import Enum
 from typing import Any, Iterable
 
 import numpy as np
+
+from .._bvh import bvh_overlap_pair_blocks, PackedBVH, prepare_bvh
 
 
 class OverlapSearchStatus(str, Enum):
@@ -374,6 +378,7 @@ class HostAabbOverlapBvh:
     max_candidates: int | None = None
     max_memory_bytes: int | None = None
     max_time_seconds: float | None = None
+    packed_bvh: PackedBVH | None = None
 
     @property
     def item_bbox_min(self) -> np.ndarray:
@@ -520,6 +525,7 @@ def build_host_aabb_overlap_bvh(
         OverlapSearchStatus.SUCCESS,
         "",
         *resolved_limits,
+        prepare_bvh(lower, upper, dtype=np.float64) if lower.shape[0] > 0 else None,
     )
 
 
@@ -530,6 +536,25 @@ def _empty_result(
     return AabbOverlapQueryResult(
         status, empty, empty, empty, empty, identity, 0, 0, elapsed, message
     )
+
+
+def _limit_status(
+    count: int, max_candidates: int | None, max_memory_bytes: int | None, /
+) -> OverlapSearchStatus | None:
+    """First limit crossed while candidates accumulate one at a time.
+
+    Four ID arrays are materialized in the result; 8 bytes per scalar is a lower
+    bound, so the 32-byte-per-row estimate fails closed for object IDs too.
+    """
+    candidate_exceeded = max_candidates is not None and count > max_candidates
+    memory_exceeded = max_memory_bytes is not None and count * 32 > max_memory_bytes
+    if not (candidate_exceeded or memory_exceeded):
+        return None
+    candidate_row = math.inf if max_candidates is None else max_candidates + 1
+    memory_row = math.inf if max_memory_bytes is None else max_memory_bytes // 32 + 1
+    if candidate_row <= memory_row:
+        return OverlapSearchStatus.CANDIDATE_LIMIT
+    return OverlapSearchStatus.MEMORY_LIMIT
 
 
 def query_host_aabb_overlaps(
@@ -649,81 +674,66 @@ def query_host_aabb_overlaps(
         extra=(bvh.content_identity,),
     )
 
-    records: list[tuple[Any, Any, Any, Any]] = []
-    checks = 0
-    # This is intentionally an exhaustive broad-phase loop.  No nearest-item
-    # beam or fixed-width truncation is used.
-    for si in range(source_lower.shape[0]):
-        smin = source_lower[si]
-        smax = source_upper[si]
-        for ti in range(bvh.size):
-            checks += 1
-            if effective_time is not None and (checks == 1 or checks % 256 == 0):
-                if time.perf_counter() - started >= effective_time:
-                    return _empty_result(
-                        OverlapSearchStatus.TIME_LIMIT,
-                        query_identity,
-                        "time limit exceeded",
-                        elapsed=time.perf_counter() - started,
-                    )
-            tmin = bvh.bbox_min[ti]
-            tmax = bvh.bbox_max[ti]
-            scale = np.maximum(
-                1.0,
-                np.maximum(
-                    np.abs(smin),
-                    np.maximum(np.abs(smax), np.maximum(np.abs(tmin), np.abs(tmax))),
-                ),
+    source_items: list[np.ndarray] = []
+    target_items: list[np.ndarray] = []
+    count = 0
+    if source_lower.shape[0] > 0 and bvh.packed_bvh is not None:
+        if effective_time is not None and time.perf_counter() - started >= effective_time:
+            return _empty_result(
+                OverlapSearchStatus.TIME_LIMIT,
+                query_identity,
+                "time limit exceeded",
+                elapsed=time.perf_counter() - started,
             )
-            tol = atol + rtol * scale
-            extent = np.minimum(smax, tmax) - np.maximum(smin, tmin)
-            if include_zero_measure:
-                hit = bool(np.all(extent >= -tol))
-            else:
-                # Tolerance protects positive-measure boundaries from roundoff,
-                # but touching/measure-zero boxes stay out of ordinary remaps.
-                hit = bool(np.all(extent > 0.0) and np.all(extent >= -tol))
-            if not hit:
-                continue
-            next_count = len(records) + 1
-            if effective_candidates is not None and next_count > effective_candidates:
+        # Tolerances only widen zero-measure inclusion; positive-measure overlap
+        # is strict on every axis.
+        blocks = bvh_overlap_pair_blocks(
+            prepare_bvh(source_lower, source_upper, dtype=np.float64),
+            bvh.packed_bvh,
+            include_touching=include_zero_measure,
+            absolute_tolerance=atol if include_zero_measure else 0.0,
+            relative_tolerance=rtol if include_zero_measure else 0.0,
+        )
+        for block_source, block_target in blocks:
+            count += block_source.shape[0]
+            status = _limit_status(count, effective_candidates, effective_memory)
+            if status is not None:
                 return _empty_result(
-                    OverlapSearchStatus.CANDIDATE_LIMIT,
+                    status,
                     query_identity,
-                    "candidate limit exceeded",
+                    "candidate limit exceeded"
+                    if status is OverlapSearchStatus.CANDIDATE_LIMIT
+                    else "memory limit exceeded",
                     elapsed=time.perf_counter() - started,
                 )
-            # Four ID arrays are materialized in the result.  8 bytes per scalar
-            # is a lower bound, so this estimate fails closed for object IDs too.
-            estimated_memory = next_count * 32
-            if effective_memory is not None and estimated_memory > effective_memory:
+            if (
+                effective_time is not None
+                and time.perf_counter() - started >= effective_time
+            ):
                 return _empty_result(
-                    OverlapSearchStatus.MEMORY_LIMIT,
+                    OverlapSearchStatus.TIME_LIMIT,
                     query_identity,
-                    "memory limit exceeded",
+                    "time limit exceeded",
                     elapsed=time.perf_counter() - started,
                 )
-            records.append((sgids[si], bvh.global_ids[ti], slids[si], bvh.local_ids[ti]))
+            source_items.append(block_source)
+            target_items.append(block_target)
 
-    records.sort(key=lambda row: tuple(_id_sort_key(value) for value in row))
-    if records:
-        source_global = _freeze_array(
-            np.asarray([row[0] for row in records], dtype=sgids.dtype)
-        )
-        target_global = _freeze_array(
-            np.asarray([row[1] for row in records], dtype=bvh.global_ids.dtype)
-        )
-        source_local = _freeze_array(
-            np.asarray([row[2] for row in records], dtype=slids.dtype)
-        )
-        target_local = _freeze_array(
-            np.asarray([row[3] for row in records], dtype=bvh.local_ids.dtype)
-        )
-    else:
-        source_global = _freeze_array(np.empty((0,), dtype=sgids.dtype))
-        target_global = _freeze_array(np.empty((0,), dtype=bvh.global_ids.dtype))
-        source_local = _freeze_array(np.empty((0,), dtype=slids.dtype))
-        target_local = _freeze_array(np.empty((0,), dtype=bvh.local_ids.dtype))
+    # Both sides are stored in canonical unique-ID order, so ordering rows by
+    # (source index, target index) is the canonical record order.
+    source_index = (
+        np.concatenate(source_items) if source_items else np.empty((0,), dtype=np.int64)
+    )
+    target_index = (
+        np.concatenate(target_items) if target_items else np.empty((0,), dtype=np.int64)
+    )
+    order = np.lexsort((target_index, source_index))
+    source_index = source_index[order]
+    target_index = target_index[order]
+    source_global = _freeze_array(sgids[source_index])
+    target_global = _freeze_array(bvh.global_ids[target_index])
+    source_local = _freeze_array(slids[source_index])
+    target_local = _freeze_array(bvh.local_ids[target_index])
     elapsed = time.perf_counter() - started
     return AabbOverlapQueryResult(
         OverlapSearchStatus.SUCCESS,
@@ -732,8 +742,8 @@ def query_host_aabb_overlaps(
         source_local,
         target_local,
         query_identity,
-        len(records),
-        len(records) * 32,
+        count,
+        count * 32,
         elapsed,
         "",
     )

@@ -36,15 +36,13 @@ def test_morton_neighborhood_prepares_native_resources_and_stable_pairs() -> Non
         0.3,
         6,
         box,
-        maximum_leaf_occupancy=2,
-        coarsening_factor=2,
-        target_top_nodes=1,
+        maximum_candidates=4,
     ).prepare(particles)
     state = prepared.build(jnp.asarray([[0.82], [0.08], [0.56], [0.31]]))
 
     assert prepared.backend == "morton_tree"
     assert prepared.resource_evidence_id == prepared.preparation.report_id
-    assert dict(prepared.preparation.resource_counts)["leaf_capacity"] == 2
+    assert dict(prepared.preparation.resource_counts)["candidate_capacity"] == 4
     assert bool(state.successful)
     assert int(jnp.sum(state.cell_counts)) == 4
     assert _stable_pairs(state) == [(10, 20), (10, 40), (20, 30), (30, 40)]
@@ -66,8 +64,7 @@ def test_morton_neighborhood_matches_cell_list_with_periodic_masks() -> None:
         0.2,
         6,
         box,
-        maximum_leaf_occupancy=2,
-        target_top_nodes=1,
+        maximum_candidates=4,
     ).prepare(particles)
     cell = phx.discretization.CellListParticleNeighborhoodPlan(
         0.2,
@@ -94,8 +91,7 @@ def test_morton_neighborhood_pair_overflow_fails_closed() -> None:
         0.5,
         2,
         box,
-        maximum_leaf_occupancy=2,
-        target_top_nodes=1,
+        maximum_candidates=4,
     ).prepare(particles)
     state = prepared.build(jnp.asarray([[0.1], [0.11], [0.12], [0.13]]))
     assert bool(state.pair_overflow)
@@ -113,9 +109,7 @@ def test_morton_neighborhood_build_is_filter_jittable() -> None:
         0.3,
         24,
         box,
-        maximum_leaf_occupancy=2,
-        coarsening_factor=2,
-        target_top_nodes=1,
+        maximum_candidates=8,
     ).prepare(particles)
     position = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
     eager = prepared.build(position)

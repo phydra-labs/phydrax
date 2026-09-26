@@ -2054,8 +2054,6 @@ class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
             count,
             per_offset_capacity,
             inclusive=True,
-            maximum_leaf_occupancy=16,
-            target_top_nodes=32,
         )
         lengths = jnp.asarray(self.box_size, dtype=position.dtype)
         wrapped = jnp.mod(position, lengths)

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -16,6 +17,7 @@ from OCP.BRepAdaptor import (
     BRepAdaptor_Curve2d,  # ty: ignore[unresolved-import]
     BRepAdaptor_Surface,  # ty: ignore[unresolved-import]
 )
+from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy  # ty: ignore[unresolved-import]
 from OCP.BRepMesh import BRepMesh_IncrementalMesh  # ty: ignore[unresolved-import]
 from OCP.BRepTools import (
     BRepTools,  # ty: ignore[unresolved-import]
@@ -44,7 +46,12 @@ from OCP.TopAbs import (
 )
 from OCP.TopExp import TopExp_Explorer  # ty: ignore[unresolved-import]
 from OCP.TopLoc import TopLoc_Location  # ty: ignore[unresolved-import]
-from OCP.TopoDS import TopoDS, TopoDS_Shape  # ty: ignore[unresolved-import]
+from OCP.TopoDS import (  # ty: ignore[unresolved-import]
+    TopoDS,
+    TopoDS_Iterator,
+    TopoDS_Shape,
+)
+from OCP.TopTools import TopTools_FormatVersion_VERSION_1  # ty: ignore[unresolved-import]
 
 from ..._fingerprint import canonical_fingerprint
 from ..._physical import SpatialCoordinateContract
@@ -398,17 +405,23 @@ def _write_native_brep(shape: Any, destination: Path) -> None:
 
 
 def _shape_digest(shape: Any) -> str:
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix="phydrax-brep-",
-        suffix=".brep",
-    )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    try:
-        _write_native_brep(shape, temporary)
-        return _file_digest(temporary)
-    finally:
-        temporary.unlink(missing_ok=True)
+    # The digest identifies exact geometry and topology only. It serializes a
+    # geometry copy without cached query triangulations and with OCCT's mutable
+    # Modified/Checked bookkeeping flags (cleared by tessellation) canonicalized,
+    # so a shape keeps its digest after `model_from_occt_shape` meshes it.
+    copy = BRepBuilderAPI_Copy(shape, True, False).Shape()
+    pending = [copy]
+    while pending:
+        current = pending.pop()
+        current.Modified(False)
+        current.Checked(False)
+        children = TopoDS_Iterator(current, False, False)
+        while children.More():
+            pending.append(children.Value())
+            children.Next()
+    stream = io.BytesIO()
+    BRepTools.Write_s(copy, stream, False, False, TopTools_FormatVersion_VERSION_1)
+    return hashlib.sha256(stream.getvalue()).hexdigest()
 
 
 def _import_policy_id(source_format: str, /) -> str:

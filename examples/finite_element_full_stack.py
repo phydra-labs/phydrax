@@ -34,10 +34,16 @@ compiled_sipg = phx.equations.compile_finite_element_problem(sipg, dg)
 affine_state = dg.project("u", lambda points, args: points[..., 0] + points[..., 1])
 sipg_defect = jnp.linalg.norm(compiled_sipg.full_residual(affine_state))
 
-refined, adaptation, transfer = phx.discretization.refine_triangles_local(
-    mesh, jnp.asarray([10])
+adaptation = phx.meshing.execute_mesh_adaptation(
+    phx.meshing.prepare_mesh_adaptation(
+        phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si()),
+        phx.meshing.MarkedMeshAdaptation(jnp.asarray([10])),
+        policy=phx.meshing.MeshAdaptationPolicy(
+            phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+        ),
+    )
 )
-transfer_defect = jnp.max(jnp.abs(transfer.primal @ jnp.ones((4,)) - 1.0))
+transfer_defect = jnp.max(jnp.abs(adaptation.transfer.apply(jnp.ones((4,))) - 1.0))
 
 cg_field = phx.discretization.FiniteElementFieldSpec(
     "eta", phx.discretization.lagrange_element("triangle", 1)
@@ -70,8 +76,8 @@ if (
 print(
     {
         "sipg_affine_defect": float(sipg_defect),
-        "refined_cells": refined.blocks[0].cell_count,
-        "adaptation_id": adaptation.adaptation_id,
+        "refined_cells": adaptation.target.mesh.blocks[0].cell_count,
+        "adaptation_id": adaptation.result_id,
         "transfer_constant_defect": float(transfer_defect),
         "allen_cahn_energy_before": float(phase_result.evidence.energy_before),
         "allen_cahn_energy_after": float(phase_result.evidence.energy_after),

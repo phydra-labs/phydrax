@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Sequence
 
 import equinox as eqx
@@ -241,6 +242,48 @@ def morton_decode_integer(codes: jax.Array, dimension: int, depth: int) -> jax.A
     return jnp.stack(coordinates, axis=-1)
 
 
+def hilbert_encode_integer(integer_coordinates: jax.Array, depth: int) -> jax.Array:
+    """Encode integer coordinates as canonical Hilbert-curve indices.
+
+    Uses Skilling's transpose construction (AIP Conf. Proc. 707, 2004): an
+    inverse-undo pass and Gray encoding produce the transposed index, whose bits
+    are interleaved most-significant first with axis 0 leading. Consecutive
+    indices are face-adjacent grid cells, which Morton order does not guarantee.
+    """
+    coordinates = jnp.asarray(integer_coordinates, dtype=jnp.uint64)
+    if coordinates.ndim < 1 or coordinates.shape[-1] not in (1, 2, 3):
+        raise ValueError("integer_coordinates must have trailing dimension 1, 2, or 3.")
+    dimension = coordinates.shape[-1]
+    depth_value = operator.index(depth)
+    if depth_value < 1 or dimension * depth_value > _MAX_CODE_BITS:
+        raise ValueError("The requested Hilbert depth exceeds the uint64 code budget.")
+    axes = [coordinates[..., axis] for axis in range(dimension)]
+    for bit in range(depth_value - 1, 0, -1):
+        high = jnp.uint64(1 << bit)
+        low = jnp.uint64((1 << bit) - 1)
+        for axis in range(dimension):
+            exchange = (axes[0] ^ axes[axis]) & low
+            inverted = (axes[axis] & high) != 0
+            first = jnp.where(inverted, axes[0] ^ low, axes[0] ^ exchange)
+            if axis:
+                axes[axis] = jnp.where(inverted, axes[axis], axes[axis] ^ exchange)
+            axes[0] = first
+    for axis in range(1, dimension):
+        axes[axis] = axes[axis] ^ axes[axis - 1]
+    flips = jnp.zeros(coordinates.shape[:-1], dtype=jnp.uint64)
+    for bit in range(depth_value - 1, 0, -1):
+        high = jnp.uint64(1 << bit)
+        flips = jnp.where(
+            (axes[-1] & high) != 0, flips ^ jnp.uint64((1 << bit) - 1), flips
+        )
+    axes = [value ^ flips for value in axes]
+    code = jnp.zeros(coordinates.shape[:-1], dtype=jnp.uint64)
+    for bit in range(depth_value - 1, -1, -1):
+        for axis in range(dimension):
+            code = (code << jnp.uint64(1)) | ((axes[axis] >> jnp.uint64(bit)) & 1)
+    return code
+
+
 def _morton_encode_host(coordinates: tuple[int, ...], dimension: int, depth: int) -> int:
     code = 0
     for bit in range(depth):
@@ -342,6 +385,7 @@ __all__ = [
     "MortonCellGeometry",
     "MortonEncoding",
     "canonical_morton_order",
+    "hilbert_encode_integer",
     "morton_decode_integer",
     "morton_encode_integer",
 ]

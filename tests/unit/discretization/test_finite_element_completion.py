@@ -385,11 +385,6 @@ def test_solver_material_checkpoint_and_distributed_contracts(tmp_path):
 
 def test_adaptivity_embedding_partition_and_io_contracts(tmp_path):
     discretization = _scalar_discretization()
-    triangle_mesh = phx.discretization.CellMesh.from_triangles(
-        jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
-        jnp.asarray(((0, 1, 2),), dtype=jnp.int32),
-    )
-    _, refinement = phx.discretization.fem.refine_triangles_uniform(triangle_mesh)
     estimate = phx.discretization.residual_jump_estimate(
         jnp.ones((4,)),
         jnp.full((4,), 0.25),
@@ -434,7 +429,6 @@ def test_adaptivity_embedding_partition_and_io_contracts(tmp_path):
         jnp.arange(5.0),
     )
 
-    assert refinement.adaptation_id
     assert estimate.global_estimate > 0.0
     assert embedded.quadrature_id
     assert enrichment.evaluate(jnp.asarray([[0.25, 0.5]])).shape == (1, 2)

@@ -88,11 +88,12 @@ def _hybrid_specification(
     whole = provider.whole_scope(source, 3)
     swept_scope = _scope(provider, source, 3, (swept,))
     core_scope = _scope(provider, source, 3, (core,))
-    control = phx.meshing.SweptLayerControl(
+    control = phx.meshing.BoundaryLayerControl(
         _scope(provider, source, 2, (source_face,)),
-        _scope(provider, source, 2, (target_face,)),
-        swept_scope,
         schedule,
+        route=phx.meshing.BoundaryLayerRoute.EXACT_SWEEP,
+        volume_scope=swept_scope,
+        cap_scope=_scope(provider, source, 2, (target_face,)),
     )
     regions = (
         phx.meshing.RegionControl(

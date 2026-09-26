@@ -37,8 +37,8 @@ class LogicalPatchBox(StrictModule, NonTrainableState):
         /,
     ):
         level_ = int(level)
-        lower_ = tuple(lower)
-        upper_ = tuple(upper)
+        lower_ = tuple(int(value) for value in lower)
+        upper_ = tuple(int(value) for value in upper)
         if level_ < 0 or not lower_ or len(lower_) != len(upper_):
             raise ValueError("Logical patch box level and bounds must be valid.")
         if any(

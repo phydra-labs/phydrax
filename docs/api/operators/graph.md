@@ -62,10 +62,10 @@ return ordinary `DomainFunction`s, so they can be used directly as operators in
 `query_neighbors` returns fixed-width `RowRelation` routes, minimum-image
 relative vectors, squared distances, distances, counts, and
 `QueryNeighborhoodEvidence`. The default implementation is the dense exact
-authority. Supplying a `MortonNeighborQueryPlan` selects compact Morton
-execution while preserving logical indices, source masks, target masks,
-stable equal-distance ordering, optional self exclusion, and per-axis
-periodicity.
+authority. Supplying a `MortonNeighborQueryPlan` selects coarse Morton-cell
+execution with a bounded candidate buffer per target while preserving logical
+indices, source masks, target masks, stable equal-distance ordering, optional
+self exclusion, and per-axis periodicity.
 
 ```python
 address = phx.discretization.spatial.MortonAddressPlan(
@@ -89,8 +89,10 @@ neighborhood = phx.graph.query_neighbors(
 )
 ```
 
-Candidate capacity is a completeness bound, not an approximation knob.
-Overflow makes affected routes invalid and sets `evidence.successful` false.
+Candidate capacity is a completeness bound, not an approximation knob. A
+target whose visited cells overflow the buffer, or whose k-th distance cannot
+be certified against the visited region, returns no routes and sets
+`evidence.complete` and `evidence.successful` false.
 The Pallas distance realization is explicit and retains a native JVP; the
 portable JAX realization remains the default.
 

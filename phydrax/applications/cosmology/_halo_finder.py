@@ -107,8 +107,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
     maximum_links: int = eqx.field(static=True)
     maximum_particles_per_cell: int = eqx.field(static=True)
     morton_maximum_depth: int = eqx.field(static=True)
-    morton_maximum_nodes: int | None = eqx.field(static=True)
-    morton_leaf_occupancy: int = eqx.field(static=True)
+    morton_maximum_candidates: int | None = eqx.field(static=True)
     cell_shape: tuple[int, int, int] = eqx.field(static=True)
     cell_strides: Array
     neighbor_offsets: Array
@@ -125,8 +124,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         maximum_links: int | None = None,
         maximum_particles_per_cell: int = 64,
         morton_maximum_depth: int = 21,
-        morton_maximum_nodes: int | None = None,
-        morton_leaf_occupancy: int = 32,
+        morton_maximum_candidates: int | None = None,
     ):
         lengths = tuple(float(value) for value in box_size)
         linking = float(linking_length)
@@ -134,8 +132,9 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         links = 0 if maximum_links is None else int(maximum_links)
         cell_occupancy = int(maximum_particles_per_cell)
         morton_depth = int(morton_maximum_depth)
-        morton_nodes = None if morton_maximum_nodes is None else int(morton_maximum_nodes)
-        morton_occupancy = int(morton_leaf_occupancy)
+        morton_candidates = (
+            None if morton_maximum_candidates is None else int(morton_maximum_candidates)
+        )
         if (
             len(lengths) != 3
             or any(not np.isfinite(value) or value <= 0.0 for value in lengths)
@@ -150,8 +149,10 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
             )
         if realization != "direct" and links <= 0:
             raise ValueError("Non-direct FoF realizations require maximum_links.")
-        if cell_occupancy <= 0 or morton_occupancy <= 0:
-            raise ValueError("FoF cell and Morton occupancies must be positive.")
+        if cell_occupancy <= 0 or (
+            morton_candidates is not None and morton_candidates <= 0
+        ):
+            raise ValueError("FoF cell occupancy and Morton candidates must be positive.")
         if morton_depth < 1 or morton_depth > 21:
             raise ValueError("morton_maximum_depth must lie in [1, 21].")
         shape = tuple(max(int(np.floor(length / linking)), 1) for length in lengths)
@@ -164,8 +165,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
         self.maximum_links = links
         self.maximum_particles_per_cell = cell_occupancy
         self.morton_maximum_depth = morton_depth
-        self.morton_maximum_nodes = morton_nodes
-        self.morton_leaf_occupancy = morton_occupancy
+        self.morton_maximum_candidates = morton_candidates
         self.cell_shape = shape
         self.cell_strides = jnp.asarray(strides, dtype=jnp.int32)
         self.neighbor_offsets = jnp.asarray(offsets)
@@ -179,8 +179,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
                 "maximum_links": links,
                 "maximum_particles_per_cell": cell_occupancy,
                 "morton_maximum_depth": morton_depth,
-                "morton_maximum_nodes": morton_nodes,
-                "morton_leaf_occupancy": morton_occupancy,
+                "morton_maximum_candidates": morton_candidates,
             }
         )
 
@@ -336,8 +335,11 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
             particle_count,
             self.maximum_links,
             inclusive=True,
-            maximum_nodes=self.morton_maximum_nodes,
-            maximum_leaf_occupancy=self.morton_leaf_occupancy,
+            maximum_candidates=(
+                None
+                if self.morton_maximum_candidates is None
+                else min(self.morton_maximum_candidates, particle_count)
+            ),
         ).query(
             position,
             position,
@@ -354,7 +356,7 @@ class PeriodicFoFFinderPlan(StrictModule, NonTrainableState):
             query.evidence.required_pairs,
             query.evidence.pair_capacity,
             query.evidence.pair_overflow,
-            query.evidence.topology_successful,
+            query.evidence.sources_valid & query.evidence.complete,
         )
 
     def find(

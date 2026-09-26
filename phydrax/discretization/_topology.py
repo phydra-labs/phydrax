@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import TypeAlias
 
@@ -30,6 +31,38 @@ def _bool_array(name: str, value: ArrayLike, shape: tuple[int, ...], /) -> Array
     if array.shape != shape:
         raise ValueError(f"{name} must have shape {shape}; got {array.shape}.")
     return jnp.asarray(array)
+
+
+def _row_order(rows: np.ndarray, /) -> np.ndarray:
+    """Return the stable lexicographic order of rank-2 integer rows.
+
+    Rows whose per-column value spans fit one mixed-radix int64 key sort in a
+    single stable pass; wider rows fall back to a column-wise lexicographic sort.
+    """
+
+    if rows.size == 0:
+        return np.arange(rows.shape[0], dtype=np.int64)
+    lows = np.min(rows, axis=0).astype(np.int64)
+    spans = np.max(rows, axis=0).astype(np.int64) - lows + 1
+    if math.prod(int(span) for span in spans) > np.iinfo(np.int64).max:
+        return np.lexsort(rows.T[::-1])
+    key = np.zeros((rows.shape[0],), dtype=np.int64)
+    for column, low, span in zip(rows.T, lows, spans, strict=True):
+        key *= span
+        key += column.astype(np.int64) - low
+    return np.argsort(key, kind="stable")
+
+
+def _row_run_starts(ordered: np.ndarray, /) -> np.ndarray:
+    starts = np.ones((ordered.shape[0],), dtype=np.bool_)
+    np.any(ordered[1:] != ordered[:-1], axis=1, out=starts[1:])
+    return starts
+
+
+def _has_duplicate_rows(rows: np.ndarray, /) -> bool:
+    """Return whether any two rows of a rank-2 integer array are equal."""
+
+    return not np.all(_row_run_starts(rows[_row_order(rows)]))
 
 
 class EntitySubset(StrictModule, NonTrainableState):
@@ -107,7 +140,8 @@ class EntitySet(StrictModule, NonTrainableState):
         active_ids = identifiers[active]
         if np.any(active_ids < 0):
             raise ValueError("Active entity IDs must be non-negative.")
-        if np.unique(active_ids).size != active_ids.size:
+        ordered_ids = np.sort(active_ids)
+        if np.any(ordered_ids[1:] == ordered_ids[:-1]):
             raise ValueError("Active entity IDs must be unique.")
         subsets_ = tuple(subsets)
         if not all(isinstance(subset, EntitySubset) for subset in subsets_):
@@ -323,8 +357,8 @@ class OrientedIncidence(StrictModule, NonTrainableState):
             raise ValueError("Active incidence signs must be ±1.")
         source = np.asarray(relation.source_indices)[valid]
         target = np.asarray(relation.target_indices)[valid]
-        pairs = np.stack((source, target), axis=1) if source.size else np.empty((0, 2))
-        if pairs.shape[0] and np.unique(pairs, axis=0).shape[0] != pairs.shape[0]:
+        pairs = np.stack((source, target), axis=1)
+        if _has_duplicate_rows(pairs):
             raise ValueError("Active incidence pairs must be unique.")
         lower_ids = np.asarray(lower.entity_ids, dtype=np.int64)[source]
         upper_ids = np.asarray(upper.entity_ids, dtype=np.int64)[target]
@@ -332,15 +366,8 @@ class OrientedIncidence(StrictModule, NonTrainableState):
             (lower_ids, upper_ids, active_coefficients.astype(np.int64)),
             axis=1,
         )
-        if canonical_incidence.shape[0]:
-            order = np.lexsort(
-                (
-                    canonical_incidence[:, 2],
-                    canonical_incidence[:, 1],
-                    canonical_incidence[:, 0],
-                )
-            )
-            canonical_incidence = canonical_incidence[order]
+        # Unique pairs make every lexicographic row order the same order.
+        canonical_incidence = canonical_incidence[_row_order(canonical_incidence)]
         self.degree = degree_
         self.lower_entity_set_id = lower.entity_set_id
         self.upper_entity_set_id = upper.entity_set_id

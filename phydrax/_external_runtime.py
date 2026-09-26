@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import math
 import os
 import select
+import shutil
 import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -30,6 +34,7 @@ import jax.core
 import jax.numpy as jnp
 import numpy as np
 
+from ._external_exchange import read_exchange, write_exchange
 from ._external_resource import read_bounded_resource, ResourceLimits
 from ._external_worker import (
     _DEFAULT_BYTES,
@@ -298,10 +303,12 @@ def _stage_inputs(
 
 def _kill_process_group(process: subprocess.Popen) -> None:
     # A child may have exited while its descendants still hold resources.
+    # Darwin reports EPERM instead of ESRCH when only an unreaped zombie
+    # remains in the group; wait() below reaps it.
     if os.name == "posix":
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
     elif process.poll() is None:
         process.kill()
@@ -984,6 +991,579 @@ def run_opendss(
         worker.close()
 
 
+# Persistent native workers ----------------------------------------------------------
+
+# Every control line of a native worker carries this prefix followed by one
+# canonical JSON object (native/providers/common/phydrax_worker.hpp). Other
+# stdout lines are upstream library noise and are retained as log evidence.
+_WORKER_PREFIX = b"@phydrax-worker "
+_WORKER_REJECTIONS = (
+    "invalid_request",
+    "unsupported",
+    "resource_exhausted",
+    "library_failure",
+)
+# Rejections after which the native library state is not trusted for reuse.
+_WORKER_FATAL_REJECTIONS = ("resource_exhausted", "library_failure")
+
+NativeWorkerFailureKind: type = Literal[
+    "unavailable", "startup", "timeout", "resource", "protocol", "exited", "rejected"
+]
+
+
+class NativeWorkerError(RuntimeError):
+    """Failure of one persistent native worker, retaining bounded evidence.
+
+    ``kind`` is the runtime failure class; for ``"rejected"`` the worker's own
+    rejection class is ``evidence["worker_kind"]``.
+    """
+
+    def __init__(
+        self, kind: NativeWorkerFailureKind, message: str, /, *, evidence: Mapping
+    ):
+        self.kind = kind
+        self.evidence = dict(evidence)
+        super().__init__(message)
+
+
+@dataclass(frozen=True, slots=True)
+class NativeWorkerPolicy:
+    """Lifetime and resource bounds of one persistent native worker session.
+
+    Memory is enforced as an address-space limit where the host honors one
+    (Linux) and otherwise audited against the collective peak resident size the
+    worker reports after each call; the session records which applies.
+    """
+
+    startup_timeout_seconds: float = 60.0
+    maximum_memory_bytes: int = 16 * 1024**3
+    maximum_log_bytes: int = 16 * 1024**2
+    maximum_message_bytes: int = 1024**2
+    maximum_calls: int = 10_000
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "startup_timeout_seconds",
+            _positive_timeout(self.startup_timeout_seconds),
+        )
+        for name in (
+            "maximum_memory_bytes",
+            "maximum_log_bytes",
+            "maximum_message_bytes",
+            "maximum_calls",
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"{name} must be a positive integer.")
+
+    @property
+    def policy_id(self) -> str:
+        return canonical_fingerprint(
+            {
+                "kind": "native-worker-policy",
+                "startup_timeout_seconds": self.startup_timeout_seconds,
+                "maximum_memory_bytes": self.maximum_memory_bytes,
+                "maximum_log_bytes": self.maximum_log_bytes,
+                "maximum_message_bytes": self.maximum_message_bytes,
+                "maximum_calls": self.maximum_calls,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NativeWorkerIdentity:
+    """Exact runtime identity, probed once when the worker session starts."""
+
+    executable: str
+    executable_sha256: str
+    command: tuple[str, ...]
+    reported: Mapping[str, Any]
+    ranks: int
+    memory_enforcement: str
+    identity_id: str
+    session_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class NativeWorkerCall:
+    """One completed worker operation with verified read-only output arrays."""
+
+    operation: str
+    sequence: int
+    result: Mapping[str, Any]
+    arrays: Mapping[str, np.ndarray]
+    parts: Mapping[str, Mapping[str, np.ndarray]]
+    evidence: Mapping[str, Any]
+
+
+def _terminate_worker(process: subprocess.Popen, logs: BinaryIO, root: str) -> None:
+    _kill_process_group(process)
+    for stream in (process.stdin, process.stdout):
+        if stream is not None:
+            stream.close()
+    logs.close()
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def _worker_environment(
+    policy: ExternalExecutionPolicy,
+    overrides: Mapping[str, str],
+    root: str,
+    memory: int,
+) -> dict[str, str]:
+    disallowed = sorted(set(overrides).difference(policy.allowed_environment_variables))
+    if disallowed and not policy.inherit_environment:
+        raise ValueError(
+            "Environment overrides exceed the execution allowlist: "
+            + ", ".join(disallowed)
+        )
+    environment = (
+        dict(os.environ)
+        if policy.inherit_environment
+        else {
+            key: os.environ[key]
+            for key in policy.allowed_environment_variables
+            if key in os.environ
+        }
+    )
+    environment.update({"HOME": root, "TMPDIR": root, "TMP": root, "TEMP": root})
+    environment.update(overrides)
+    environment["PHYDRAX_WORKER_MEMORY_LIMIT_BYTES"] = str(memory)
+    return environment
+
+
+class NativeWorker:
+    """Persistent trusted-local native worker speaking the exchange protocol.
+
+    The executable bytes are digested and the worker's self-reported identity is
+    recorded once at startup; calls reuse the same process until ``close``, a
+    fatal failure, or ``NativeWorkerPolicy.maximum_calls``. A launcher such as
+    ``("mpiexec", "-n", "4")`` runs a collective worker whose rank zero owns the
+    control channel. Calls, ``close``, and ``abort`` are serialized by one
+    reentrant lock, so a concurrent close waits for the call in flight. This is
+    not a security sandbox.
+    """
+
+    def __init__(
+        self,
+        executable: str | os.PathLike[str],
+        /,
+        *,
+        launcher: Sequence[str] = (),
+        arguments: Sequence[str] = (),
+        policy: NativeWorkerPolicy | None = None,
+        environment: Mapping[str, str] | None = None,
+        execution_policy: ExternalExecutionPolicy | None = None,
+    ):
+        _host_only()
+        if os.name != "posix":
+            raise OSError("Persistent native workers require a POSIX host.")
+        self.policy = NativeWorkerPolicy() if policy is None else policy
+        if not isinstance(self.policy, NativeWorkerPolicy):
+            raise TypeError("policy must be NativeWorkerPolicy or None.")
+        execution = (
+            ExternalExecutionPolicy() if execution_policy is None else execution_policy
+        )
+        if not isinstance(execution, ExternalExecutionPolicy):
+            raise TypeError("execution_policy must be ExternalExecutionPolicy or None.")
+        launch = tuple(str(value) for value in launcher)
+        extra = tuple(str(value) for value in arguments)
+        if any(not value or "\x00" in value for value in (*launch, *extra)):
+            raise ValueError(
+                "Worker launcher and arguments must be nonempty argv tokens."
+            )
+        path = Path(executable).expanduser()
+        if not path.is_file() or not os.access(path, os.X_OK):
+            raise NativeWorkerError(
+                "unavailable",
+                f"Worker executable is unavailable: {executable}",
+                evidence={"executable": str(executable)},
+            )
+        resolved = str(path.resolve(strict=True))
+        if launch:
+            located = shutil.which(launch[0])
+            if located is None:
+                raise NativeWorkerError(
+                    "unavailable",
+                    f"Worker launcher is unavailable: {launch[0]}",
+                    evidence={"launcher": list(launch)},
+                )
+            launch = (str(Path(located).resolve()), *launch[1:])
+        with open_regular_file(resolved) as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        self._lock = threading.RLock()
+        self.closed = False
+        self.final_log = ""
+        self.calls: list[dict[str, Any]] = []
+        self._sequence = 0
+        self._buffer = bytearray()
+        self._root = tempfile.mkdtemp(prefix="phydrax-worker-")
+        self._logs = (Path(self._root) / ".phydrax-worker.log").open("w+b")
+        command = (*launch, resolved, *extra)
+        # Evidence of the operation in flight, merged into every failure record.
+        self._context: dict[str, Any] = {"command": list(command), "stage": "startup"}
+        environment_ = _worker_environment(
+            execution,
+            dict(environment or {}),
+            self._root,
+            self.policy.maximum_memory_bytes,
+        )
+        # Popen reports exec failures only by raising; release the session first.
+        try:
+            self._process = subprocess.Popen(
+                command,
+                cwd=self._root,
+                env=environment_,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=self._logs,
+                start_new_session=True,
+            )
+        except OSError as error:
+            self._logs.close()
+            shutil.rmtree(self._root, ignore_errors=True)
+            raise NativeWorkerError(
+                "unavailable",
+                f"Worker could not be launched: {error}",
+                evidence={"command": list(command)},
+            ) from error
+        self._finalizer = weakref.finalize(
+            self, _terminate_worker, self._process, self._logs, self._root
+        )
+        started = time.monotonic()
+        hello = self._receive(started + self.policy.startup_timeout_seconds, "startup")
+        record = hello.get("hello")
+        if (
+            set(hello) != {"hello", "ok"}
+            or hello["ok"] is not True
+            or not isinstance(record, dict)
+            or set(record) != {"identity", "memory_enforcement", "ranks"}
+            or not isinstance(record["identity"], dict)
+            or type(record["ranks"]) is not int
+            or record["ranks"] < 1
+            or record["memory_enforcement"]
+            not in ("address-space-rlimit", "peak-rss-audit")
+        ):
+            self._fail("protocol", "Worker sent an invalid hello record.", {})
+        identity_id = canonical_fingerprint(
+            {
+                "kind": "native-worker-identity",
+                "executable_sha256": digest,
+                "reported": record["identity"],
+                "ranks": record["ranks"],
+            }
+        )
+        self.identity = NativeWorkerIdentity(
+            resolved,
+            digest,
+            command,
+            record["identity"],
+            record["ranks"],
+            record["memory_enforcement"],
+            identity_id,
+            canonical_fingerprint(
+                {
+                    "kind": "native-worker-session",
+                    "identity": identity_id,
+                    "command": list(command),
+                    "policy": self.policy.policy_id,
+                    "execution_policy": execution.policy_id,
+                    "process": self._process.pid,
+                    "started_ns": time.time_ns(),
+                }
+            ),
+        )
+        emit(
+            "DEBUG",
+            "provider.worker.started",
+            "Native provider worker started",
+            executable=Path(resolved).name,
+            ranks=record["ranks"],
+            session_id=self.identity.session_id,
+            elapsed_seconds=time.monotonic() - started,
+        )
+
+    @property
+    def call_count(self) -> int:
+        return self._sequence
+
+    @property
+    def exhausted(self) -> bool:
+        """Whether the session reached its bounded call lifetime."""
+        return self._sequence >= self.policy.maximum_calls
+
+    def _log_tail(self) -> str:
+        self._logs.flush()
+        size = os.fstat(self._logs.fileno()).st_size
+        self._logs.seek(max(0, size - 16384))
+        tail = self._logs.read(16384).decode("utf-8", errors="replace")
+        self._logs.seek(0, os.SEEK_END)
+        return tail
+
+    def _fail(
+        self, kind: NativeWorkerFailureKind, message: str, evidence: Mapping[str, Any]
+    ):
+        self.abort()
+        record = {
+            **self._context,
+            **evidence,
+            "kind": kind,
+            "returncode": self._process.returncode,
+            "log": self.final_log,
+        }
+        raise NativeWorkerError(kind, message, evidence=record)
+
+    def _receive(self, deadline: float, stage: str) -> dict[str, Any]:
+        stdout = self._process.stdout
+        assert stdout is not None
+        descriptor = stdout.fileno()
+        while True:
+            newline = self._buffer.find(b"\n")
+            if newline >= 0:
+                line = bytes(self._buffer[:newline])
+                del self._buffer[: newline + 1]
+                if line.startswith(_WORKER_PREFIX):
+                    return self._decode(line[len(_WORKER_PREFIX) :], stage)
+                self._logs.write(line + b"\n")
+                continue
+            if len(self._buffer) > self.policy.maximum_message_bytes:
+                self._fail("resource", "Worker control line exceeds its byte bound.", {})
+            if os.fstat(self._logs.fileno()).st_size > self.policy.maximum_log_bytes:
+                self._fail("resource", "Worker logs exceed maximum_log_bytes.", {})
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._fail(
+                    "timeout",
+                    f"Worker {stage} exceeded its deadline.",
+                    {"stage": stage},
+                )
+            ready, _, _ = select.select([descriptor], [], [], min(remaining, 0.05))
+            if ready:
+                chunk = os.read(descriptor, 65536)
+                if not chunk:
+                    self._process.wait()
+                    self._fail(
+                        "startup" if stage == "startup" else "exited",
+                        f"Worker exited during {stage} with status "
+                        f"{self._process.returncode}.",
+                        {"stage": stage},
+                    )
+                self._buffer.extend(chunk)
+
+    def _decode(self, data: bytes, stage: str) -> dict[str, Any]:
+        def pairs(items):
+            record = {}
+            for key, value in items:
+                if key in record:
+                    raise ValueError(f"duplicate field {key!r}")
+                record[key] = value
+            return record
+
+        # A malformed control line is a protocol failure, never a partial result.
+        try:
+            value = json.loads(data.decode("utf-8"), object_pairs_hook=pairs)
+        except (UnicodeDecodeError, ValueError) as error:
+            self._fail("protocol", f"Worker sent malformed control JSON: {error}", {})
+        if not isinstance(value, dict):
+            self._fail("protocol", f"Worker {stage} record is not an object.", {})
+        return value
+
+    def _send(self, request: Mapping[str, Any], stage: str) -> None:
+        stdin = self._process.stdin
+        assert stdin is not None
+        line = canonical_json(request).encode("ascii") + b"\n"
+        if len(line) > self.policy.maximum_message_bytes:
+            raise ValueError("Worker request exceeds maximum_message_bytes.")
+        # A worker that died closes its pipe; report that as a worker exit.
+        try:
+            stdin.write(line)
+            stdin.flush()
+        except BrokenPipeError:
+            self._process.wait()
+            self._fail(
+                "exited",
+                f"Worker exited before {stage} with status {self._process.returncode}.",
+                {"stage": stage},
+            )
+
+    def call(
+        self,
+        operation: str,
+        parameters: Mapping[str, Any],
+        arrays: Mapping[str, np.ndarray],
+        /,
+        *,
+        timeout: float,
+        maximum_input_bytes: int,
+        maximum_output_bytes: int,
+    ) -> NativeWorkerCall:
+        """Run one operation; any failure raises NativeWorkerError with evidence."""
+        _host_only(parameters, arrays)
+        timeout = _positive_timeout(timeout)
+        if not isinstance(operation, str) or not operation or operation == "close":
+            raise ValueError("operation must be a nonempty worker operation name.")
+        if not isinstance(parameters, Mapping):
+            raise TypeError("parameters must be a JSON mapping.")
+        if not isinstance(arrays, Mapping) or any(
+            not isinstance(value, np.ndarray) for value in arrays.values()
+        ):
+            raise TypeError("arrays must map exchange names to NumPy arrays.")
+        if sum(value.nbytes for value in arrays.values()) > maximum_input_bytes:
+            raise ValueError("Worker input arrays exceed maximum_input_bytes.")
+        with self._lock:
+            if self.closed:
+                raise NativeWorkerError(
+                    "exited",
+                    "Worker session is closed.",
+                    evidence={"operation": operation},
+                )
+            if self.exhausted:
+                raise NativeWorkerError(
+                    "resource",
+                    "Worker session reached maximum_calls.",
+                    evidence={"operation": operation, "calls": self._sequence},
+                )
+            return self._exchange(
+                operation,
+                parameters,
+                arrays,
+                timeout,
+                maximum_input_bytes,
+                maximum_output_bytes,
+            )
+
+    def _exchange(
+        self,
+        operation: str,
+        parameters: Mapping[str, Any],
+        arrays: Mapping[str, np.ndarray],
+        timeout: float,
+        maximum_input_bytes: int,
+        maximum_output_bytes: int,
+    ) -> NativeWorkerCall:
+        # Caller holds `_lock`: sequence, pipes, and staging belong to one call.
+        self._sequence += 1
+        sequence = self._sequence
+        started = time.monotonic()
+        directory = Path(self._root) / f"call-{sequence}"
+        input_directory, output_directory = directory / "input", directory / "output"
+        input_directory.mkdir(parents=True)
+        output_directory.mkdir()
+        inputs = write_exchange(
+            input_directory, arrays, maximum_bytes=maximum_input_bytes
+        )
+        request = {
+            "input": str(input_directory),
+            "maximum_input_bytes": maximum_input_bytes,
+            "maximum_output_bytes": maximum_output_bytes,
+            "operation": operation,
+            "output": str(output_directory),
+            "parameters": dict(parameters),
+            "sequence": sequence,
+        }
+        evidence: dict[str, Any] = {
+            "operation": operation,
+            "sequence": sequence,
+            "session_id": self.identity.session_id,
+            "input_manifest_sha256": inputs.manifest_sha256,
+            "parameters_id": canonical_fingerprint(dict(parameters)),
+        }
+        self._context = evidence
+        self._send(request, operation)
+        response = self._receive(started + timeout, operation)
+        peak = response.get("peak_rss_bytes")
+        if response.get("sequence") != sequence or type(peak) is not int:
+            self._fail(
+                "protocol", "Worker response does not match its request.", evidence
+            )
+        evidence.update(peak_rss_bytes=peak, elapsed_seconds=time.monotonic() - started)
+        if response.get("ok") is not True:
+            if (
+                set(response) != {"error", "kind", "ok", "peak_rss_bytes", "sequence"}
+                or response["kind"] not in _WORKER_REJECTIONS
+                or not isinstance(response["error"], str)
+            ):
+                self._fail("protocol", "Worker sent an invalid rejection.", evidence)
+            evidence.update(worker_kind=response["kind"], error=response["error"])
+            self.calls.append({**evidence, "status": "rejected"})
+            if response["kind"] in _WORKER_FATAL_REJECTIONS:
+                self._fail("rejected", response["error"], evidence)
+            shutil.rmtree(directory)
+            raise NativeWorkerError("rejected", response["error"], evidence=evidence)
+        if set(response) != {
+            "elapsed_seconds",
+            "ok",
+            "peak_rss_bytes",
+            "result",
+            "sequence",
+        }:
+            self._fail("protocol", "Worker sent an invalid response.", evidence)
+        if peak > self.policy.maximum_memory_bytes:
+            self._fail("resource", "Worker peak memory exceeds its limit.", evidence)
+        # Unverifiable output is a protocol failure, never a partial result.
+        try:
+            contents = read_exchange(output_directory, maximum_bytes=maximum_output_bytes)
+        except (OSError, ValueError) as error:
+            self._fail("protocol", f"Worker output is invalid: {error}", evidence)
+        # Unlinking keeps the verified memory maps valid on POSIX hosts.
+        shutil.rmtree(directory)
+        evidence.update(
+            output_manifest_sha256=contents.manifest.manifest_sha256,
+            output_bytes=contents.manifest.total_bytes,
+            worker_elapsed_seconds=response["elapsed_seconds"],
+        )
+        self.calls.append({**evidence, "status": "complete"})
+        return NativeWorkerCall(
+            operation,
+            sequence,
+            response["result"],
+            contents.arrays,
+            contents.parts,
+            evidence,
+        )
+
+    def close(self) -> None:
+        """End the session gracefully when possible, then release every resource."""
+        with self._lock:
+            if self.closed:
+                return
+            stdin = self._process.stdin
+            if self._process.poll() is None and stdin is not None:
+                self._sequence += 1
+                line = canonical_json({"operation": "close", "sequence": self._sequence})
+                # Shutdown of an already-dead worker is not an error to surface.
+                try:
+                    stdin.write(line.encode("ascii") + b"\n")
+                    stdin.close()
+                    self._process.wait(timeout=5.0)
+                except (BrokenPipeError, subprocess.TimeoutExpired):
+                    pass
+            self.abort()
+
+    def abort(self) -> None:
+        with self._lock:
+            if self.closed:
+                return
+            self.closed = True
+            self._logs.flush()
+            tail = self._log_tail()
+            self._finalizer.detach()
+            _kill_process_group(self._process)
+            for stream in (self._process.stdin, self._process.stdout):
+                if stream is not None:
+                    stream.close()
+            self.final_log = tail
+            self._logs.close()
+            shutil.rmtree(self._root, ignore_errors=True)
+
+    def __enter__(self) -> NativeWorker:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
 # External model tiers ---------------------------------------------------------------
 
 ExternalTransport: type = Literal["copy", "dlpack"]
@@ -1511,6 +2091,12 @@ __all__ = [
     "ExternalIsolation",
     "ExternalPrimalStage",
     "ExternalTensorSpec",
+    "NativeWorker",
+    "NativeWorkerCall",
+    "NativeWorkerError",
+    "NativeWorkerFailureKind",
+    "NativeWorkerIdentity",
+    "NativeWorkerPolicy",
     "OpenDSSRunResult",
     "PinnedExecutable",
     "pin_energy_executable",

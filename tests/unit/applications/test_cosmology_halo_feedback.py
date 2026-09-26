@@ -80,7 +80,7 @@ def test_fof_realizations_are_deterministic_and_equivalent():
             realization=realization,
             maximum_links=None if realization == "direct" else 15,
             maximum_particles_per_cell=4,
-            morton_leaf_occupancy=2,
+            morton_maximum_candidates=4,
         ).find(ids, positions, velocities, masses, active)
 
     direct = evaluate("direct")
@@ -103,7 +103,7 @@ def test_fof_realizations_are_deterministic_and_equivalent():
         4,
         realization="morton_plane",
         maximum_links=15,
-        morton_leaf_occupancy=2,
+        morton_maximum_candidates=4,
     ).find(
         ids[permutation],
         positions[permutation],
@@ -146,7 +146,7 @@ def test_fof_group_and_link_capacity_fail_closed():
         4,
         realization="morton_plane",
         maximum_links=1,
-        morton_leaf_occupancy=2,
+        morton_maximum_candidates=4,
     ).find(
         ids,
         jnp.asarray(
@@ -187,7 +187,7 @@ def test_non_direct_fof_realizations_are_filter_jittable():
             realization=realization,
             maximum_links=6,
             maximum_particles_per_cell=4,
-            morton_leaf_occupancy=2,
+            morton_maximum_candidates=4,
         )
         result = eqx.filter_jit(plan.find)(
             ids,

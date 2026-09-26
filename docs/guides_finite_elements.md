@@ -177,11 +177,23 @@ triangle or quadrilateral block.
 
 ## Local adaptation and applications
 
-`dorfler_mark`/`maximum_mark`, `refine_triangles_local`, complete-family
-coarsening, P1 primal/dual transfers, local DWR indicators, and
-`FiniteElementTopologyTransaction` provide a single-device accepted topology
-transaction. Failed material transfer or certification preserves the accepted
-state.
+`dorfler_mark`/`maximum_mark`, residual/jump and local DWR indicators select
+cells; `phydrax.meshing.prepare_mesh_adaptation` with the `NATIVE_BISECTION`
+route refines them conformingly and coarsens complete bisection patches. The
+`MeshAdaptationResult` carries the sparse P1 `FiniteElementTopologyTransfer` and
+lineage that `FiniteElementTopologyTransaction.execute(accepted, mesh,
+adaptation)` consumes as a single-device accepted topology transaction. Failed
+material transfer or certification preserves the accepted state.
+
+`FiniteElementTopologyTransfer` stores the primal coefficient map (target DOFs by
+source DOFs) either as one `SparseLinearMap` with O(targets x stencil width)
+memory or as a linear operator whose action couples every DOF. `apply` is the
+primal transfer, `pullback` is its algebraic transpose for residual and load
+duals, and an optional `hilbert_adjoint` carries the inner-product adjoint;
+trailing payload axes pass through both. Constant, linear, positivity, and
+conservation claims are certified when the transfer is constructed (positivity
+only from sparse coefficients); `vertex_interpolation_transfer` builds the
+fixed-width row-stencil form used by local refinement.
 
 Tensor hp adaptation uses `FiniteElementHPTopology` as an allocated refinement
 forest and `FiniteElementHPEpoch` as the immutable prepared snapshot. Isotropic
@@ -195,6 +207,55 @@ Executable application namespaces live under `phydrax.applications`:
 phase-field Allen-Cahn/Cahn-Hilliard, finite-strain crystal plasticity,
 fixed-capacity barrier contact with conservative continuous step safety,
 phase-field fracture, and fixed-crack XFEM classification/enrichment.
+
+### L2 projection between non-matching meshes
+
+Galerkin L2 projection of a scalar Lagrange field (continuous or discontinuous,
+any degree, on affine triangles or tetrahedra) onto a second FE space on a
+different mesh separates the target from the source:
+
+- `prepare_l2_projection_target(target, field_name=...)` is the sole constructor
+  of `PreparedL2ProjectionTarget`: the exact target mass `M_T`, its reverse
+  Cuthill-McKee symbolic Cholesky plan and bound numeric factor (status and pivot
+  diagnostics), a condition estimate, and the target DOF measures. One target
+  artifact serves every source field and refinement onto that target; direct
+  construction is refused so a same-shape factor from another geometry cannot
+  be substituted.
+- `prepare_l2_projection_transfer(source, prepared_target, refinement,
+  field_name=...)` assembles only the mixed mass `B`, exactly on the overlap
+  simplices of a successful `prepare_common_refinement(source.mesh,
+  target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True))`. The
+  primal is the `FiniteElementL2Projection` `M_T^{-1} B` and the pullback is
+  `B^T M_T^{-1}`; trailing payload axes are solved as one multi-right-hand-side
+  block.
+- `refresh_l2_projection_target(prepared_target, moved_target)` refactors the
+  numeric mass of the same field on moved geometry with an unchanged DOF
+  structure (equal `dof_map_id`), reusing the symbolic plan and the compiled
+  factorization and projection kernels; `structure_id` is unchanged and
+  `target_id` follows the new geometry. A changed DOF structure raises
+  `ValueError`.
+
+Constants and linears are preserved when the refinement certifies every target
+cell covered; the integral is conserved when every source cell is covered.
+Failed or mismatched refinements (including a refinement of the geometry before
+a refresh), unsupported elements, failed target factorizations, and direct
+construction of prepared targets or projection operators raise `ValueError` or
+`TypeError` at their owning boundary.
+
+```python
+prepared_target = prepare_l2_projection_target(target, field_name="u")
+refinement = prepare_common_refinement(
+    source.mesh, target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True)
+)
+transfer = prepare_l2_projection_transfer(
+    source, prepared_target, refinement, field_name="u"
+)
+target_values = transfer.apply(source_values)
+
+# `moved` is the same FE plan prepared on the target mesh moved with fixed
+# topology: refactor numerically, then prepare transfers from its refinements.
+refreshed = refresh_l2_projection_target(prepared_target, moved)
+```
 
 
 ## Smoothed finite elements

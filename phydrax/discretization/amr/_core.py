@@ -344,6 +344,100 @@ class BlockLevelState(StrictModule):
         return jnp.where(mask, self.values, jnp.zeros((), dtype=self.values.dtype))
 
 
+def _lattice_linear(logical: np.ndarray, lattice: Sequence[int], /) -> np.ndarray:
+    """Row-major int64 lattice keys of in-range ``(n, d)`` logical rows."""
+    rows = np.asarray(logical, dtype=np.int64)
+    if rows.shape[0] == 0:
+        return np.zeros((0,), dtype=np.int64)
+    return np.ravel_multi_index(tuple(rows.T), tuple(lattice)).astype(np.int64)
+
+
+def _sorted_membership(sorted_keys: np.ndarray, keys: np.ndarray, /) -> np.ndarray:
+    """Slots of ``keys`` in a strictly increasing key array, ``-1`` when absent."""
+    query = np.asarray(keys, dtype=np.int64)
+    if sorted_keys.size == 0:
+        return np.full(query.shape, -1, dtype=np.int64)
+    position = np.searchsorted(sorted_keys, query).clip(max=sorted_keys.size - 1)
+    return np.where(sorted_keys[position] == query, position, -1)
+
+
+def _canonical_block_routes(
+    logical: np.ndarray,
+    lattice: Sequence[int],
+    periodic: Sequence[bool],
+    capacity: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Face-neighbor slots and coarse/fine interface flags of canonical blocks.
+
+    ``logical`` is the active prefix in strictly increasing lattice order, so each
+    face lookup is a binary search over that prefix and no level lattice is ever
+    materialized.  Returns ``(capacity, d, 2)`` int32 slots (``-1`` when absent)
+    and Boolean flags marking in-domain faces whose same-level neighbor is absent.
+    """
+    rows = np.asarray(logical, dtype=np.int64)
+    count, dimension = rows.shape
+    extents = np.asarray(lattice, dtype=np.int64)
+    linear = _lattice_linear(rows, lattice)
+    neighbors = np.full((capacity, dimension, 2), -1, dtype=np.int32)
+    interfaces = np.zeros((capacity, dimension, 2), dtype=np.bool_)
+    for axis in range(dimension):
+        for side, delta in enumerate((-1, 1)):
+            shifted = rows.copy()
+            shifted[:, axis] += delta
+            if periodic[axis]:
+                shifted[:, axis] %= extents[axis]
+            inside = (shifted[:, axis] >= 0) & (shifted[:, axis] < extents[axis])
+            slots = _sorted_membership(
+                linear, _lattice_linear(np.where(inside[:, None], shifted, 0), lattice)
+            )
+            found = inside & (slots >= 0)
+            neighbors[:count, axis, side] = np.where(found, slots, -1)
+            interfaces[:count, axis, side] = inside & ~found
+    return neighbors, interfaces
+
+
+def canonical_block_metadata(
+    plan: BlockHierarchyPlan,
+    level: int,
+    logical_indices: Sequence[Sequence[int]],
+    /,
+) -> BlockMetadata:
+    """Canonical sorted fixed-capacity metadata for one level's active blocks."""
+    level_plan = plan.levels[level]
+    capacity = level_plan.maximum_blocks
+    dimension = len(level_plan.block_shape)
+    lattice = plan.block_lattice_shapes[level]
+    rows = np.asarray(tuple(logical_indices), dtype=np.int64).reshape(-1, dimension)
+    if rows.shape[0] > capacity:
+        raise ValueError("Internal topology metadata construction exceeded capacity.")
+    linear = _lattice_linear(rows, lattice)
+    order = np.argsort(linear, kind="stable")
+    rows = rows[order]
+    count = rows.shape[0]
+    active = np.zeros((capacity,), dtype=np.bool_)
+    active[:count] = True
+    block_ids = np.full((capacity,), -1, dtype=np.int32)
+    block_ids[:count] = plan.block_id_offsets[level] + linear[order]
+    parent_ids = np.full((capacity,), -1, dtype=np.int32)
+    logical_array = np.full((capacity, dimension), -1, dtype=np.int32)
+    logical_array[:count] = rows
+    if level > 0 and count:
+        children = np.asarray(plan.children_per_parent[level - 1], dtype=np.int64)
+        parent_ids[:count] = plan.block_id_offsets[level - 1] + _lattice_linear(
+            rows // children, plan.block_lattice_shapes[level - 1]
+        )
+    neighbors, _ = _canonical_block_routes(rows, lattice, plan.periodic_axes, capacity)
+    return BlockMetadata(
+        level_plan,
+        active=active,
+        block_ids=block_ids,
+        parent_ids=parent_ids,
+        logical_indices=logical_array,
+        neighbor_slots=neighbors,
+    )
+
+
 class BlockHierarchyTopology(StrictModule, NonTrainableState):
     """One immutable sparse realized block topology and canonical epoch.
 
@@ -374,11 +468,10 @@ class BlockHierarchyTopology(StrictModule, NonTrainableState):
         if not isinstance(plan, BlockHierarchyPlan) or len(metadata) != len(plan.levels):
             raise TypeError("Block hierarchy topology must match one hierarchy plan.")
         dimension = len(plan.grid.shape)
-        topology_levels: list[list[int]] = []
         partition_levels: list[list[int]] = []
-        active_logical_by_level: list[dict[tuple[int, ...], int]] = []
+        linear_by_level: list[np.ndarray] = []
+        logical_by_level: list[np.ndarray] = []
         boxes_by_level: list[tuple[LogicalPatchBox, ...]] = []
-        active_rows_by_level: list[tuple[tuple[int, ...], ...]] = []
         interfaces: list[Array] = []
         for level_index, (level_plan, level_metadata, lattice) in enumerate(
             zip(plan.levels, metadata, plan.block_lattice_shapes, strict=True)
@@ -391,31 +484,26 @@ class BlockHierarchyTopology(StrictModule, NonTrainableState):
             count = int(np.count_nonzero(active))
             if np.any(active[count:]) or np.any(~active[:count]):
                 raise ValueError("Active AMR slots must be the canonical compact prefix.")
-            active_rows = tuple(tuple(row) for row in logical[:count])
-            if len(set(active_rows)) != count or any(
-                any(
-                    value < 0 or value >= extent
-                    for value, extent in zip(row, lattice, strict=True)
-                )
-                for row in active_rows
+            active_logical = logical[:count]
+            if np.any(active_logical < 0) or np.any(
+                active_logical >= np.asarray(lattice, dtype=np.int64)
             ):
                 raise ValueError(
                     "Active logical block indices must be unique and in range."
                 )
-            expected_ids = np.asarray(
-                [plan.block_id(level_index, row) for row in active_rows],
-                dtype=np.int32,
-            )
-            order = np.argsort(expected_ids, kind="stable")
-            if not np.array_equal(order, np.arange(count)) or not np.array_equal(
-                ids[:count], expected_ids
+            linear = _lattice_linear(active_logical, lattice)
+            if np.unique(linear).size != count:
+                raise ValueError(
+                    "Active logical block indices must be unique and in range."
+                )
+            if np.any(np.diff(linear) <= 0) or not np.array_equal(
+                ids[:count], plan.block_id_offsets[level_index] + linear
             ):
                 raise ValueError(
                     "AMR block IDs and slots must use canonical lattice order."
                 )
-            logical_to_slot = {row: slot for slot, row in enumerate(active_rows)}
-            active_logical_by_level.append(logical_to_slot)
-            active_rows_by_level.append(active_rows)
+            linear_by_level.append(linear)
+            logical_by_level.append(active_logical)
             boxes_by_level.append(
                 tuple(
                     LogicalPatchBox(
@@ -433,120 +521,77 @@ class BlockHierarchyTopology(StrictModule, NonTrainableState):
                             )
                         ),
                     )
-                    for row in active_rows
+                    for row in active_logical
                 )
             )
+            parents = np.asarray(level_metadata.parent_ids, dtype=np.int32)[:count]
             if level_index == 0:
-                expected_base = set(np.ndindex(lattice))
-                if set(active_rows) != expected_base:
+                if count != prod(lattice):
                     raise ValueError(
                         "Level zero must provide complete base-grid coverage."
                     )
-                if np.any(np.asarray(level_metadata.parent_ids)[:count] != -1):
+                if np.any(parents != -1):
                     raise ValueError("Level-zero AMR blocks cannot have parents.")
-            else:
-                parent_map = active_logical_by_level[level_index - 1]
-                children = plan.children_per_parent[level_index - 1]
-                parents = np.asarray(level_metadata.parent_ids, dtype=np.int32)
-                for slot, row in enumerate(active_rows):
-                    parent_logical = tuple(
-                        value // child for value, child in zip(row, children, strict=True)
-                    )
-                    if parent_logical not in parent_map:
+            elif count:
+                children = np.asarray(
+                    plan.children_per_parent[level_index - 1], dtype=np.int32
+                )
+                parent_linear = _lattice_linear(
+                    active_logical // children,
+                    plan.block_lattice_shapes[level_index - 1],
+                )
+                missing = (
+                    _sorted_membership(linear_by_level[level_index - 1], parent_linear)
+                    < 0
+                )
+                rejected = missing | (
+                    parents != plan.block_id_offsets[level_index - 1] + parent_linear
+                )
+                if np.any(rejected):
+                    if missing[np.argmax(rejected)]:
                         raise ValueError(
                             "Fine AMR blocks require active aligned parents."
                         )
-                    expected_parent = plan.block_id(level_index - 1, parent_logical)
-                    if int(parents[slot]) != expected_parent:
-                        raise ValueError(
-                            "Fine AMR parent IDs must use canonical identity."
-                        )
-            expected_neighbors = np.full(
-                (level_plan.maximum_blocks, dimension, 2), -1, dtype=np.int32
+                    raise ValueError("Fine AMR parent IDs must use canonical identity.")
+            expected_neighbors, level_interfaces = _canonical_block_routes(
+                active_logical,
+                lattice,
+                plan.periodic_axes,
+                level_plan.maximum_blocks,
             )
-            for slot, row in enumerate(active_rows):
-                for axis in range(dimension):
-                    for side, delta in enumerate((-1, 1)):
-                        neighbor = list(row)
-                        neighbor[axis] += delta
-                        if plan.periodic_axes[axis]:
-                            neighbor[axis] %= lattice[axis]
-                        neighbor_tuple = tuple(neighbor)
-                        if (
-                            0 <= neighbor[axis] < lattice[axis]
-                            and neighbor_tuple in logical_to_slot
-                        ):
-                            expected_neighbors[slot, axis, side] = logical_to_slot[
-                                neighbor_tuple
-                            ]
             if not np.array_equal(
                 np.asarray(level_metadata.neighbor_slots), expected_neighbors
             ):
                 raise ValueError(
                     "AMR neighbor slots must match canonical topology routes."
                 )
-            level_interfaces = np.zeros(
-                (level_plan.maximum_blocks, dimension, 2), dtype=np.bool_
-            )
-            for slot, row in enumerate(active_rows):
-                for axis in range(dimension):
-                    for side, delta in enumerate((-1, 1)):
-                        neighbor = list(row)
-                        neighbor[axis] += delta
-                        inside = 0 <= neighbor[axis] < lattice[axis]
-                        if plan.periodic_axes[axis]:
-                            neighbor[axis] %= lattice[axis]
-                            inside = True
-                        if inside and tuple(neighbor) not in logical_to_slot:
-                            level_interfaces[slot, axis, side] = True
             interfaces.append(jnp.asarray(level_interfaces))
-            topology_levels.append(ids[:count].tolist())
             partition_levels.append(ids.tolist())
 
         covered_cells: list[Array] = []
-        for level_index, (level_plan, active_rows) in enumerate(
-            zip(plan.levels, active_rows_by_level, strict=True)
-        ):
+        for level_index, level_plan in enumerate(plan.levels):
             mask = np.zeros(
                 (level_plan.maximum_blocks,) + level_plan.block_shape,
                 dtype=np.bool_,
             )
-            if level_index + 1 < len(plan.levels):
-                ratio = plan.levels[level_index].refinement_ratio
-                fine_boxes = boxes_by_level[level_index + 1]
-                for slot, row in enumerate(active_rows):
-                    origin = tuple(
-                        index * size
-                        for index, size in zip(row, level_plan.block_shape, strict=True)
-                    )
-                    for local in np.ndindex(level_plan.block_shape):
-                        lower = tuple(
-                            (start + value) * ratio
-                            for start, value in zip(origin, local, strict=True)
-                        )
-                        upper = tuple(value + ratio for value in lower)
-                        child_offsets = tuple(
-                            np.ndindex(
-                                tuple(
-                                    stop - start
-                                    for start, stop in zip(lower, upper, strict=True)
-                                )
-                            )
-                        )
-                        mask[(slot,) + local] = all(
-                            any(
-                                box.contains_cell(
-                                    tuple(
-                                        start + offset
-                                        for start, offset in zip(
-                                            lower, point, strict=True
-                                        )
-                                    )
-                                )
-                                for box in fine_boxes
-                            )
-                            for point in child_offsets
-                        )
+            active_logical = logical_by_level[level_index]
+            count = active_logical.shape[0]
+            if level_index + 1 < len(plan.levels) and count:
+                # Fine block extents are multiples of the refinement ratio, so the
+                # ratio**d children of one coarse cell always share one fine block.
+                block = np.asarray(level_plan.block_shape, dtype=np.int64)
+                local = np.indices(level_plan.block_shape).reshape(dimension, -1).T
+                cells = active_logical[:, None, :] * block + local[None, :, :]
+                fine_rows = (cells * level_plan.refinement_ratio) // np.asarray(
+                    plan.levels[level_index + 1].block_shape, dtype=np.int64
+                )
+                fine_linear = _lattice_linear(
+                    fine_rows.reshape(-1, dimension),
+                    plan.block_lattice_shapes[level_index + 1],
+                )
+                mask[:count] = (
+                    _sorted_membership(linear_by_level[level_index + 1], fine_linear) >= 0
+                ).reshape((count,) + level_plan.block_shape)
             covered_cells.append(jnp.asarray(mask))
         topology_id = canonical_fingerprint(
             {

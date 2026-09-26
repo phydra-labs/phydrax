@@ -10,7 +10,10 @@ prepared on the host before a remap is committed.  The intersection polytope is
 formed by enumerating vertices of the eight half-spaces (four from each input
 cell).  Every numerical decision is conservative: malformed cells, uncertain
 predicates, and exhausted limits return a typed non-success result rather than a
-plausible but unverifiable volume.
+plausible but unverifiable volume.  Orientation and plane-triple singularity
+decisions are certified by the geometric predicates of the precision policy
+(exact with meshcore; otherwise filtered, with unresolved signs reported as
+``UNCERTAIN_PREDICATE``).
 """
 
 from __future__ import annotations
@@ -23,6 +26,9 @@ from itertools import combinations
 from typing import Any, cast
 
 import numpy as np
+
+from .._geometry_precision import GeometryPrecisionPolicy
+from .._geometry_predicates import orient3d, PredicateMode, resolve_host_predicate_mode
 
 
 class TetraIntersectionStatus(str, Enum):
@@ -101,6 +107,7 @@ class TetraIntersectionEvidence:
     source_volume: float = 0.0
     target_volume: float = 0.0
     volume_only: bool = False
+    predicate_mode: PredicateMode | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +257,7 @@ def _empty_result(
     predicate_uncertain: bool = False,
     volume_only: bool = False,
     candidate_count: int = 0,
+    predicate_mode: PredicateMode | None = None,
 ) -> TetraIntersectionResult:
     return TetraIntersectionResult(
         status=status,
@@ -265,6 +273,7 @@ def _empty_result(
             source_volume=source_volume,
             target_volume=target_volume,
             volume_only=volume_only,
+            predicate_mode=predicate_mode,
         ),
     )
 
@@ -285,17 +294,6 @@ def _coerce_tetrahedron(
 
 def _det3(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
     return float(np.dot(a, np.cross(b, c)))
-
-
-def _det3_longdouble(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.longdouble:
-    aa = np.asarray(a, dtype=np.longdouble)
-    bb = np.asarray(b, dtype=np.longdouble)
-    cc = np.asarray(c, dtype=np.longdouble)
-    return (
-        aa[0] * (bb[1] * cc[2] - bb[2] * cc[1])
-        - aa[1] * (bb[0] * cc[2] - bb[2] * cc[0])
-        + aa[2] * (bb[0] * cc[1] - bb[1] * cc[0])
-    )
 
 
 def _edge_scale(vertices: np.ndarray) -> float:
@@ -321,36 +319,34 @@ def _tetra_volume(vertices: np.ndarray) -> float:
 def _validate_tetrahedron(
     vertices: np.ndarray,
     tolerance: TetraIntersectionTolerance,
+    mode: PredicateMode,
 ) -> tuple[TetraIntersectionStatus | None, float, float, bool]:
     scale = _edge_scale(vertices)
     if not math.isfinite(scale) or scale == 0.0:
         return TetraIntersectionStatus.DEGENERATE_TETRAHEDRON, 0.0, scale, False
-    a = vertices[1] - vertices[0]
-    b = vertices[2] - vertices[0]
-    c = vertices[3] - vertices[0]
-    determinant = _det3(a, b, c)
-    determinant_ld = _det3_longdouble(a, b, c)
-    if not math.isfinite(determinant) or not np.isfinite(determinant_ld):
-        return TetraIntersectionStatus.NONFINITE_INPUT, 0.0, scale, False
-    max_term = max(
-        float(abs(a[i] * b[j] * c[k]))
-        for i, j, k in ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0))
+    determinant = _det3(
+        vertices[1] - vertices[0],
+        vertices[2] - vertices[0],
+        vertices[3] - vertices[0],
     )
-    roundoff = np.finfo(np.float64).eps * max(1.0, max_term) * 32.0
-    if (
-        abs(determinant) <= roundoff
-        and determinant != 0.0
-        and np.sign(determinant) != np.sign(float(determinant_ld))
-    ):
-        return TetraIntersectionStatus.UNCERTAIN_PREDICATE, 0.0, scale, True
+    if not math.isfinite(determinant):
+        return TetraIntersectionStatus.NONFINITE_INPUT, 0.0, scale, False
     determinant_tolerance = max(
         tolerance.absolute, tolerance.relative * max(scale**3, 1.0e-300)
     )
-    if determinant_ld < -determinant_tolerance:
-        return TetraIntersectionStatus.INVERTED_TETRAHEDRON, 0.0, scale, False
-    if abs(determinant_ld) <= determinant_tolerance:
+    # The tolerance is a volume admissibility threshold; the orientation sign
+    # itself comes from the certified predicate.
+    if abs(determinant) <= determinant_tolerance:
         return TetraIntersectionStatus.DEGENERATE_TETRAHEDRON, 0.0, scale, False
-    return None, float(abs(determinant_ld) / 6.0), scale, False
+    orientation = orient3d(vertices[0], vertices[1], vertices[2], vertices[3], mode=mode)
+    if not bool(orientation.certain):
+        return TetraIntersectionStatus.UNCERTAIN_PREDICATE, 0.0, scale, True
+    sign = int(orientation.signs)
+    if sign < 0:
+        return TetraIntersectionStatus.INVERTED_TETRAHEDRON, 0.0, scale, False
+    if sign == 0:
+        return TetraIntersectionStatus.DEGENERATE_TETRAHEDRON, 0.0, scale, False
+    return None, abs(determinant) / 6.0, scale, False
 
 
 def _tetra_planes(vertices: np.ndarray) -> tuple[_Plane, ...]:
@@ -389,7 +385,8 @@ def _inside(
 def _triple_intersection(
     planes: tuple[_Plane, ...],
     indices: tuple[int, int, int],
-    scale: float,
+    orientation: int,
+    certain: bool,
 ) -> tuple[np.ndarray | None, bool]:
     matrix = np.stack([planes[index].normal for index in indices], axis=0)
     rhs = np.asarray([planes[index].offset for index in indices], dtype=np.float64)
@@ -406,24 +403,10 @@ def _triple_intersection(
             np.finfo(np.float64).eps * 128.0 * normal_scale
         ):
             return None, False
-    determinant = _det3(matrix[0], matrix[1], matrix[2])
-    determinant_ld = _det3_longdouble(matrix[0], matrix[1], matrix[2])
-    max_term = max(
-        float(abs(matrix[0, i] * matrix[1, j] * matrix[2, k]))
-        for i, j, k in (
-            (0, 1, 2),
-            (0, 2, 1),
-            (1, 0, 2),
-            (1, 2, 0),
-            (2, 0, 1),
-            (2, 1, 0),
-        )
-    )
-    roundoff = np.finfo(np.float64).eps * max(max_term, 1.0e-300) * 64.0
-    if determinant_ld == 0:
-        return None, False
-    if not np.isfinite(determinant_ld) or abs(determinant) <= roundoff:
+    if not certain:
         return None, True
+    if orientation == 0:
+        return None, False
     try:
         point = np.linalg.solve(matrix, rhs)
     except np.linalg.LinAlgError:
@@ -571,32 +554,47 @@ def intersect_tetrahedra(
     tolerance: Any = None,
     limits: Any = None,
     volume_only: bool = False,
+    precision: GeometryPrecisionPolicy | None = None,
 ) -> TetraIntersectionResult:
     """Intersect two positively oriented affine tetrahedra on the host.
 
     The operation is deterministic under vertex permutation.  It returns
     ``DISJOINT`` for separated cells and ``ZERO_MEASURE_CONTACT`` for a face,
     edge, or vertex contact.  No tolerance-based volume or row normalization is
-    performed.
+    performed.  ``precision.predicate_mode`` certifies orientation and
+    plane-triple decisions (``EXACT`` uses meshcore when installed; otherwise
+    unresolved filtered signs return ``UNCERTAIN_PREDICATE``).
     """
 
+    policy = GeometryPrecisionPolicy() if precision is None else precision
+    if not isinstance(policy, GeometryPrecisionPolicy):
+        raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
+    mode = resolve_host_predicate_mode(policy.predicate_mode)
     pair_id = stable_tetra_pair_id(source_id, target_id)
     try:
         tolerance_ = _resolve_tolerance(tolerance)
         limits_ = _resolve_limits(limits)
     except (TypeError, ValueError, OverflowError):
         return _empty_result(
-            TetraIntersectionStatus.UNSUPPORTED, source_id, target_id, pair_id
+            TetraIntersectionStatus.UNSUPPORTED,
+            source_id,
+            target_id,
+            pair_id,
+            predicate_mode=mode,
         )
     source, source_status = _coerce_tetrahedron(source_vertices)
     target, target_status = _coerce_tetrahedron(target_vertices)
     if source_status is not None:
-        return _empty_result(source_status, source_id, target_id, pair_id)
+        return _empty_result(
+            source_status, source_id, target_id, pair_id, predicate_mode=mode
+        )
     if target_status is not None:
-        return _empty_result(target_status, source_id, target_id, pair_id)
+        return _empty_result(
+            target_status, source_id, target_id, pair_id, predicate_mode=mode
+        )
     assert source is not None and target is not None
     source_failure, source_volume, source_scale, source_uncertain = _validate_tetrahedron(
-        source, tolerance_
+        source, tolerance_, mode
     )
     if source_failure is not None:
         return _empty_result(
@@ -606,9 +604,10 @@ def intersect_tetrahedra(
             pair_id,
             source_volume=source_volume,
             predicate_uncertain=source_uncertain,
+            predicate_mode=mode,
         )
     target_failure, target_volume, target_scale, target_uncertain = _validate_tetrahedron(
-        target, tolerance_
+        target, tolerance_, mode
     )
     if target_failure is not None:
         return _empty_result(
@@ -619,6 +618,7 @@ def intersect_tetrahedra(
             source_volume=source_volume,
             target_volume=target_volume,
             predicate_uncertain=target_uncertain,
+            predicate_mode=mode,
         )
     scale = max(source_scale, target_scale)
     source_planes = _tetra_planes(source)
@@ -641,10 +641,29 @@ def intersect_tetrahedra(
                     source_volume=source_volume,
                     target_volume=target_volume,
                     candidate_count=candidate_attempts,
+                    predicate_mode=mode,
                 )
     uncertain = False
-    for indices in combinations(range(len(planes)), 3):
-        point, point_uncertain = _triple_intersection(planes, indices, scale)
+    triples = tuple(combinations(range(len(planes)), 3))
+    triple_normals = np.asarray(
+        [[planes[index].normal for index in indices] for indices in triples],
+        dtype=np.float64,
+    )
+    # det[n_i; n_j; n_k] is orient3d(0, n_i, n_j, n_k) on the constructed normals.
+    triple_orientation = orient3d(
+        np.zeros(3, dtype=np.float64),
+        triple_normals[:, 0],
+        triple_normals[:, 1],
+        triple_normals[:, 2],
+        mode=mode,
+    )
+    for triple_index, indices in enumerate(triples):
+        point, point_uncertain = _triple_intersection(
+            planes,
+            indices,
+            int(triple_orientation.signs[triple_index]),
+            bool(triple_orientation.certain[triple_index]),
+        )
         uncertain = uncertain or point_uncertain
         if point is None:
             continue
@@ -662,6 +681,7 @@ def intersect_tetrahedra(
                     target_volume=target_volume,
                     predicate_uncertain=uncertain,
                     candidate_count=candidate_attempts,
+                    predicate_mode=mode,
                 )
     if uncertain:
         return _empty_result(
@@ -673,6 +693,7 @@ def intersect_tetrahedra(
             target_volume=target_volume,
             predicate_uncertain=True,
             candidate_count=candidate_attempts,
+            predicate_mode=mode,
         )
     if not candidates:
         return _empty_result(
@@ -683,6 +704,7 @@ def intersect_tetrahedra(
             source_volume=source_volume,
             target_volume=target_volume,
             candidate_count=candidate_attempts,
+            predicate_mode=mode,
         )
     candidates.sort(key=lambda point: tuple(float(value) for value in point))
     if len(candidates) > limits_.max_vertices:
@@ -694,6 +716,7 @@ def intersect_tetrahedra(
             source_volume=source_volume,
             target_volume=target_volume,
             candidate_count=candidate_attempts,
+            predicate_mode=mode,
         )
     vertices = np.asarray(candidates, dtype=np.float64)
     vertices.setflags(write=False)
@@ -710,6 +733,7 @@ def intersect_tetrahedra(
             target_volume=target_volume,
             predicate_uncertain=False,
             candidate_count=candidate_attempts,
+            predicate_mode=mode,
         )
     volume, volume_error = _compensated_volume(vertices, faces)
     volume_tolerance = max(
@@ -739,6 +763,7 @@ def intersect_tetrahedra(
             source_volume=source_volume,
             target_volume=target_volume,
             volume_only=bool(volume_only),
+            predicate_mode=mode,
         ),
     )
 

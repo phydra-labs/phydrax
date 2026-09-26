@@ -12,16 +12,30 @@ from jaxtyping import Array, ArrayLike
 from phydrax import ein
 
 from ..._fingerprint import canonical_fingerprint
+from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import (
     FiniteElementFieldSpec,
     FiniteElementPlan,
     lagrange_element,
-    refine_triangles_local,
 )
-from ...discretization.fem import FiniteElementHPTransaction
+from ...discretization.fem import (
+    FiniteElementHPTransaction,
+    FiniteElementTopologyTransfer,
+)
 from ...linalg import ArraySpace
+from ...meshing import (
+    BisectionCompatibility,
+    BisectionHierarchy,
+    certify_cell_mesh,
+    execute_mesh_adaptation,
+    MarkedMeshAdaptation,
+    MeshAdaptationPolicy,
+    MeshAdaptationResult,
+    MeshAdaptationRoute,
+    prepare_mesh_adaptation,
+)
 from ...solver import (
     FiniteElementAcceptedState,
     FiniteElementHPTopologyResult,
@@ -50,8 +64,11 @@ class PhaseFieldAdaptivityEvidence(StrictModule):
 
 
 class PhaseFieldAdaptiveEpoch(StrictModule, NonTrainableState):
+    """One accepted phase-field epoch; ``hierarchy`` continues its bisection labels."""
+
     method: PreparedAllenCahnFEM | PreparedCahnHilliardFEM
     state: AllenCahnAcceptedState | CahnHilliardAcceptedState
+    hierarchy: BisectionHierarchy | None
     epoch_index: int = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
 
@@ -61,22 +78,28 @@ class PhaseFieldAdaptiveEpoch(StrictModule, NonTrainableState):
         state: AllenCahnAcceptedState | CahnHilliardAcceptedState,
         epoch_index: int = 0,
         /,
+        *,
+        hierarchy: BisectionHierarchy | None = None,
     ):
         index = int(epoch_index)
         if not isinstance(method, (PreparedAllenCahnFEM, PreparedCahnHilliardFEM)):
             raise TypeError("Adaptive phase-field method has an invalid type.")
         if not isinstance(state, (AllenCahnAcceptedState, CahnHilliardAcceptedState)):
             raise TypeError("Adaptive phase-field state has an invalid type.")
+        if hierarchy is not None and not isinstance(hierarchy, BisectionHierarchy):
+            raise TypeError("hierarchy must be BisectionHierarchy or None.")
         if index < 0:
             raise ValueError("Adaptive phase-field epoch index must be nonnegative.")
         self.method = method
         self.state = state
+        self.hierarchy = hierarchy
         self.epoch_index = index
         self.epoch_id = canonical_fingerprint(
             {
                 "kind": "phase-field-adaptive-epoch",
                 "method": method.method_id,
                 "epoch_index": index,
+                "hierarchy": None if hierarchy is None else hierarchy.hierarchy_id,
             }
         )
 
@@ -99,24 +122,34 @@ def _integration_weights(discretization, field_index: int, /) -> Array:
 class PhaseFieldAdaptationResult(StrictModule, NonTrainableState):
     accepted: PhaseFieldAdaptiveEpoch
     candidate: PhaseFieldAdaptiveEpoch
-    adaptation: object
-    transfer: object
+    adaptation: MeshAdaptationResult | None
+    transfer: FiniteElementTopologyTransfer | None
     evidence: PhaseFieldAdaptivityEvidence
     committed: Array
 
 
 class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
+    """Gradient-marked native bisection with transfer and acceptance evidence.
+
+    ``coordinate_contract`` certifies the phase-field mesh for adaptation;
+    ``compatibility`` decides incompatible initial bisection labels.
+    """
+
     gradient_threshold: float = eqx.field(static=True)
     mass_tolerance: float = eqx.field(static=True)
     energy_tolerance: float = eqx.field(static=True)
+    coordinate_contract: SpatialCoordinateContract
+    compatibility: BisectionCompatibility = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         gradient_threshold: float,
+        coordinate_contract: SpatialCoordinateContract,
         mass_tolerance: float = 1.0e-10,
         energy_tolerance: float = 1.0e-6,
+        compatibility: BisectionCompatibility = BisectionCompatibility.REJECT,
     ):
         values = tuple(
             float(value)
@@ -124,13 +157,21 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
         )
         if any(not np.isfinite(value) or value < 0.0 for value in values):
             raise ValueError("Phase-field adaptivity thresholds must be nonnegative.")
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
+            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
+        if not isinstance(compatibility, BisectionCompatibility):
+            raise TypeError("compatibility must be BisectionCompatibility.")
         self.gradient_threshold, self.mass_tolerance, self.energy_tolerance = values
+        self.coordinate_contract = coordinate_contract
+        self.compatibility = compatibility
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "phase-field-adaptivity-plan",
                 "gradient_threshold": values[0],
                 "mass_tolerance": values[1],
                 "energy_tolerance": values[2],
+                "coordinate_contract": coordinate_contract.spatial_id,
+                "compatibility": compatibility.value,
             }
         )
 
@@ -171,19 +212,30 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
         method = epoch.method
         state = epoch.state
         mesh = method.discretization.mesh
-        if len(mesh.blocks) != 1 or mesh.blocks[0].cell_kind != "triangle":
-            raise ValueError(
-                "Local phase-field refinement currently requires one T3 block."
-            )
+        if any(block.cell_kind != "triangle" for block in mesh.blocks):
+            raise ValueError("Local phase-field refinement requires T3 blocks.")
         indicator = self.indicator(epoch)
+        cell_ids = np.concatenate(
+            [np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks]
+        )
         marked = (
             np.asarray(marked_cell_ids, dtype=np.int64)
             if marked_cell_ids is not None
-            else np.asarray(mesh.blocks[0].global_ids)[
-                np.asarray(indicator) > self.gradient_threshold
-            ]
+            else cell_ids[np.asarray(indicator) > self.gradient_threshold]
         )
-        if marked.size == 0:
+        adaptation = None
+        if marked.size:
+            adaptation = execute_mesh_adaptation(
+                prepare_mesh_adaptation(
+                    certify_cell_mesh(mesh, self.coordinate_contract),
+                    MarkedMeshAdaptation(marked, hierarchy=epoch.hierarchy),
+                    policy=MeshAdaptationPolicy(
+                        MeshAdaptationRoute.NATIVE_BISECTION,
+                        compatibility=self.compatibility,
+                    ),
+                )
+            )
+        if adaptation is None or adaptation.transition is None:
             evidence = PhaseFieldAdaptivityEvidence(
                 indicator,
                 jnp.zeros(indicator.shape, dtype=jnp.bool_),
@@ -198,9 +250,10 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
                 jnp.asarray(True),
             )
             return PhaseFieldAdaptationResult(
-                epoch, epoch, None, None, evidence, jnp.asarray(False)
+                epoch, epoch, adaptation, None, evidence, jnp.asarray(False)
             )
-        target_mesh, adaptation, transfer = refine_triangles_local(mesh, marked)
+        target_mesh = adaptation.target.mesh
+        transfer = adaptation.transfer
         element = lagrange_element("triangle", 1)
         if isinstance(method, PreparedAllenCahnFEM):
             if not isinstance(state, AllenCahnAcceptedState):
@@ -210,12 +263,12 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
                 FiniteElementFieldSpec(method.field_name, element),
             ).prepare()
             successor_noise = (
-                None if method.noise is None else method.noise.transfer(transfer.primal)
+                None if method.noise is None else method.noise.transfer(transfer)
             )
             candidate_method = method.plan.prepare(
                 discretization, method.field_name, noise=successor_noise
             )
-            phase = transfer.primal @ state.phase
+            phase = transfer.apply(state.phase)
             candidate_state = candidate_method.initialize(phase)
         elif isinstance(method, PreparedCahnHilliardFEM):
             if not isinstance(state, CahnHilliardAcceptedState):
@@ -231,7 +284,7 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
                 None
                 if method.noise is None
                 else method.noise.transfer(
-                    transfer.primal,
+                    transfer,
                     conservation_weights=_integration_weights(discretization, 0),
                 )
             )
@@ -241,8 +294,8 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
                 method.chemical_field,
                 noise=successor_noise,
             )
-            concentration = transfer.primal @ state.concentration
-            chemical = transfer.primal @ state.chemical_potential
+            concentration = transfer.apply(state.concentration)
+            chemical = transfer.apply(state.chemical_potential)
             initialized = candidate_method.initialize(
                 concentration, chemical_potential=chemical
             )
@@ -257,7 +310,10 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
         else:
             raise TypeError("Unsupported adaptive phase-field method.")
         candidate_epoch = PhaseFieldAdaptiveEpoch(
-            candidate_method, candidate_state, epoch.epoch_index + 1
+            candidate_method,
+            candidate_state,
+            epoch.epoch_index + 1,
+            hierarchy=adaptation.hierarchy,
         )
         mass_defect = jnp.abs(candidate_state.mass - state.mass)
         energy_defect = candidate_state.energy - state.energy
@@ -272,7 +328,7 @@ class PhaseFieldAdaptivityPlan(StrictModule, NonTrainableState):
         selected = candidate_epoch if bool(successful) else epoch
         evidence = PhaseFieldAdaptivityEvidence(
             indicator,
-            jnp.isin(jnp.asarray(mesh.blocks[0].global_ids), jnp.asarray(marked)),
+            jnp.isin(jnp.asarray(cell_ids), jnp.asarray(marked)),
             state.mass,
             candidate_state.mass,
             mass_defect,

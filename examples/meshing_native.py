@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Certify, refine, transfer, and solve on a native mesh without external providers."""
+"""Certify, adapt, transfer, and solve on a native mesh without external providers."""
 
 import json
 
@@ -16,18 +16,23 @@ mesh = phx.discretization.CellMesh.from_triangles(
     np.asarray(((0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), dtype=np.int32),
 )
 certified = phx.meshing.certify_cell_mesh(mesh, phx.SpatialCoordinateContract.si())
-transition, _ = phx.meshing.refine_triangle_mesh(
-    certified.mesh,
-    np.asarray(certified.mesh.blocks[0].global_ids)[:1],
-    certified.coordinate_contract,
+adaptation = phx.meshing.execute_mesh_adaptation(
+    phx.meshing.prepare_mesh_adaptation(
+        certified,
+        phx.meshing.MarkedMeshAdaptation(
+            np.asarray(certified.mesh.blocks[0].global_ids)[:1]
+        ),
+        policy=phx.meshing.MeshAdaptationPolicy(
+            phx.meshing.MeshAdaptationRoute.NATIVE_BISECTION
+        ),
+    )
 )
-stencil = transition.vertex_stencil
-if stencil is None:
-    raise RuntimeError("Triangle refinement did not provide a vertex transfer stencil")
-transferred = stencil.apply(
-    mesh.vertex_global_ids, mesh.coordinates[:, 0] + mesh.coordinates[:, 1]
+if adaptation.transfer is None:
+    raise RuntimeError("Native bisection did not provide a vertex transfer.")
+transferred = adaptation.transfer.apply(
+    certified.mesh.coordinates[:, 0] + certified.mesh.coordinates[:, 1]
 )
-target = transition.target.mesh
+target = adaptation.target.mesh
 expected = target.coordinates[:, 0] + target.coordinates[:, 1]
 transfer_error = float(jnp.max(jnp.abs(transferred - expected)))
 field = phx.discretization.FiniteElementFieldSpec(
@@ -54,9 +59,10 @@ print(
         {
             "source_cells": mesh.blocks[0].cell_count,
             "target_cells": target.blocks[0].cell_count,
+            "status": adaptation.status.value,
             "transfer_error": transfer_error,
             "solution_error": error,
-            "audit_passed": transition.target.audit.passed,
+            "audit_passed": adaptation.target.audit.passed,
         },
         indent=2,
     )

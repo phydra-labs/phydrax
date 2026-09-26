@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -53,6 +54,16 @@ def test_mesh_cotangent_weights_for_right_triangle():
     assert lookup[(0, 2)] == lookup[(2, 0)] == 0.5
     assert abs(lookup[(1, 2)]) < 1e-7
     assert abs(lookup[(2, 1)]) < 1e-7
+
+
+def test_mesh_cotangent_weights_refuse_degenerate_face():
+    vertices = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    faces = jnp.array([[0, 1, 2]], dtype=jnp.int32)
+
+    with pytest.raises(ValueError, match="degenerate"):
+        phx.graph.mesh_cotangent_weights(vertices, faces)
+    with pytest.raises(ValueError, match="degenerate"):
+        phx.graph.mesh_to_cotangent_graph(vertices, faces)
 
 
 def test_mesh_to_cotangent_graph_attaches_mass_and_weights():

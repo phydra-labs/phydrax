@@ -254,7 +254,7 @@ class HPEigenspaceTransfer(StrictModule, NonTrainableState):
 
     def transfer_modes(self, modes: ArrayLike, /) -> Array:
         values = jnp.asarray(modes)
-        return jax.vmap(self.transfer.apply_mass_projection, in_axes=-1, out_axes=-1)(
+        return jax.vmap(self.transfer.apply_l2_projection, in_axes=-1, out_axes=-1)(
             values
         )
 
@@ -317,7 +317,7 @@ class FrozenHPAdjointSchedule(StrictModule, NonTrainableState):
     def forward(self, value: ArrayLike, /) -> tuple[Array, ...]:
         states = [jnp.asarray(value)]
         for transfer in self.transfers:
-            states.append(transfer.apply_mass_projection(states[-1]))
+            states.append(transfer.apply_primal(states[-1]))
         return tuple(states)
 
     def reverse(self, terminal_dual: ArrayLike, /) -> Array:

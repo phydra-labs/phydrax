@@ -202,13 +202,16 @@ separate quantities.
 ## Accepted hp/AMR evolution
 
 `PhaseFieldAdaptivityPlan` computes interface-gradient indicators and performs atomic
-local T3 refinement using native adaptation maps and primal transfer. Cahn–Hilliard
+local T3 newest-vertex bisection through `phydrax.meshing.prepare_mesh_adaptation`
+(explicit `coordinate_contract`, `BisectionCompatibility` policy) with the sparse
+primal topology transfer of the adaptation result; the epoch carries the
+`BisectionHierarchy` for later refinements. Cahn–Hilliard
 transfers preserve the original mass reference and cumulative boundary source.
 Transfer mass, energy, resolution, and finite-state evidence determine whether the
 candidate epoch commits.
 
 `PhaseFieldHPTransactionPlan` specializes the native fixed-capacity hp transaction,
-mass projection, constraint, mortar, and rollback substrate. Structural changes occur
+local L2 projection, constraint, mortar, and rollback substrate. Structural changes occur
 only after an accepted physical step.
 
 `PhaseFieldAdaptiveEpoch` binds method, accepted state, and epoch identity. Failed

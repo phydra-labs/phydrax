@@ -18,7 +18,7 @@ from benchmarks._runtime import (
     measure_lower_and_compile,
     measure_repeated,
 )
-from phydrax._bvh import build_packed_bvh, point_select_leaf_items
+from phydrax._bvh import BVHBuildPolicy, point_select_leaf_items, prepare_bvh
 
 
 def _case(node_count: int, query_count: int, repeats: int) -> dict[str, object]:
@@ -32,7 +32,7 @@ def _case(node_count: int, query_count: int, repeats: int) -> dict[str, object]:
         axis=-1,
     )
     upper = lower + jnp.asarray((0.75, 1.0, 1.0))
-    bvh = build_packed_bvh(lower, upper, 0.5 * (lower + upper), leaf_size=2)
+    bvh = prepare_bvh(lower, upper, policy=BVHBuildPolicy(leaf_size=2))
     points = jnp.stack(
         (
             jnp.linspace(0.25, item_count - 0.25, query_count),

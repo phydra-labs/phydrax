@@ -33,15 +33,12 @@ from ._precision import ParticleRealization
 
 
 class MortonTreeParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
-    """Exact fixed-capacity radius pairs over compact Morton execution leaves."""
+    """Exact fixed-capacity radius pairs over coarse Morton cell spans."""
 
     search_radius: float = eqx.field(static=True)
     maximum_pairs: int = eqx.field(static=True)
     maximum_depth: int = eqx.field(static=True)
-    maximum_nodes: int | None = eqx.field(static=True)
-    maximum_leaf_occupancy: int = eqx.field(static=True)
-    coarsening_factor: int = eqx.field(static=True)
-    target_top_nodes: int = eqx.field(static=True)
+    maximum_candidates: int | None = eqx.field(static=True)
     distance_backend: SpatialDistanceBackend = eqx.field(static=True)
     pallas_interpret: bool = eqx.field(static=True)
     box: ParticleBox
@@ -56,10 +53,7 @@ class MortonTreeParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         box: ParticleBox,
         *,
         maximum_depth: int = 21,
-        maximum_nodes: int | None = None,
-        maximum_leaf_occupancy: int = 32,
-        coarsening_factor: int = 8,
-        target_top_nodes: int = 1024,
+        maximum_candidates: int | None = None,
         distance_backend: SpatialDistanceBackend = "jax",
         pallas_interpret: bool = False,
         name: str = "morton-tree-particle-neighborhood",
@@ -68,14 +62,13 @@ class MortonTreeParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         radius = float(search_radius)
         pair_capacity = int(maximum_pairs)
         depth = int(maximum_depth)
-        nodes = None if maximum_nodes is None else int(maximum_nodes)
-        leaf_occupancy = int(maximum_leaf_occupancy)
-        coarse = int(coarsening_factor)
-        top_nodes = int(target_top_nodes)
+        candidates = None if maximum_candidates is None else int(maximum_candidates)
         if not np.isfinite(radius) or radius <= 0:
             raise ValueError("search_radius must be finite and positive.")
         if pair_capacity <= 0:
             raise ValueError("maximum_pairs must be positive.")
+        if candidates is not None and candidates <= 0:
+            raise ValueError("maximum_candidates must be positive when supplied.")
         if not isinstance(box, ParticleBox):
             raise TypeError("box must be a ParticleBox.")
         if box.ambient_dimension not in (1, 2, 3):
@@ -90,10 +83,7 @@ class MortonTreeParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         self.search_radius = radius
         self.maximum_pairs = pair_capacity
         self.maximum_depth = depth
-        self.maximum_nodes = nodes
-        self.maximum_leaf_occupancy = leaf_occupancy
-        self.coarsening_factor = coarse
-        self.target_top_nodes = top_nodes
+        self.maximum_candidates = candidates
         self.distance_backend = distance_backend
         self.pallas_interpret = bool(pallas_interpret)
         self.box = box
@@ -107,10 +97,7 @@ class MortonTreeParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
                 "search_radius": radius,
                 "maximum_pairs": pair_capacity,
                 "maximum_depth": depth,
-                "maximum_nodes": nodes,
-                "maximum_leaf_occupancy": leaf_occupancy,
-                "coarsening_factor": coarse,
-                "target_top_nodes": top_nodes,
+                "maximum_candidates": candidates,
                 "distance_backend": distance_backend,
                 "pallas_interpret": bool(pallas_interpret),
                 "box": box.box_id,
@@ -169,10 +156,11 @@ class PreparedMortonTreeParticleNeighborhood(AbstractPreparedParticleNeighborhoo
             particles.capacity,
             plan.maximum_pairs,
             inclusive=False,
-            maximum_nodes=plan.maximum_nodes,
-            maximum_leaf_occupancy=plan.maximum_leaf_occupancy,
-            coarsening_factor=plan.coarsening_factor,
-            target_top_nodes=plan.target_top_nodes,
+            maximum_candidates=(
+                None
+                if plan.maximum_candidates is None
+                else min(plan.maximum_candidates, particles.capacity)
+            ),
             distance_backend=plan.distance_backend,
             pallas_interpret=plan.pallas_interpret,
         )
@@ -185,7 +173,6 @@ class PreparedMortonTreeParticleNeighborhood(AbstractPreparedParticleNeighborhoo
                 "pair_capacity": plan.maximum_pairs,
             }
         )
-        schedule = query_plan.schedule_plan
         preparation = PreparationReport(
             capabilities=(
                 DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
@@ -193,18 +180,15 @@ class PreparedMortonTreeParticleNeighborhood(AbstractPreparedParticleNeighborhoo
                 DiscretizationCapability.MATRIX_FREE,
             ),
             diagnostics=(
-                "Morton planes and pair capacity are fixed",
-                "point ordering is deterministic by stable physical ID",
+                "cell level is the finest wider than the search radius",
+                "point ordering is deterministic by Morton code and stable ID",
                 "pair selection is a frozen branchwise decision",
-                "capacity and nonperiodic-domain failures fail closed",
+                "candidate, pair, and nonperiodic-domain failures fail closed",
                 "public particle state remains in logical order",
             ),
             resource_counts={
                 "particle_capacity": particles.capacity,
-                "plane_count": schedule.plane_count,
-                "leaf_capacity": schedule.plane_capacities[0],
-                "node_capacity": schedule.node_capacity,
-                "maximum_leaf_occupancy": schedule.maximum_leaf_occupancy,
+                "candidate_capacity": query_plan.maximum_candidates,
                 "pair_capacity": plan.maximum_pairs,
             },
         )
@@ -285,23 +269,20 @@ class PreparedMortonTreeParticleNeighborhood(AbstractPreparedParticleNeighborhoo
             result.evidence.invalid_targets,
         )
         cell_overflow_count = jnp.maximum(
-            result.evidence.required_nodes - result.evidence.node_capacity, 0
-        )
-        cell_overflow = (~result.evidence.topology_successful) & (
-            domain_violation_count == 0
+            result.evidence.required_candidates - result.evidence.candidate_capacity, 0
         )
         return ParticleNeighborhoodState(
             pair_relation,
             box=self.box,
             storage_to_logical=result.storage_to_logical,
             logical_to_storage=result.logical_to_storage,
-            cell_ids=result.logical_leaf_slots,
-            cell_counts=result.leaf_counts,
-            cell_offsets=result.leaf_offsets,
+            cell_ids=result.logical_cell_slots,
+            cell_counts=result.cell_counts,
+            cell_offsets=result.cell_offsets,
             candidate_pair_count=result.evidence.required_pairs,
             pair_count=pair_count,
-            maximum_cell_occupancy=result.evidence.maximum_leaf_occupancy,
-            cell_overflow=cell_overflow,
+            maximum_cell_occupancy=result.evidence.maximum_cell_occupancy,
+            cell_overflow=~result.evidence.complete,
             cell_overflow_count=cell_overflow_count,
             pair_overflow=result.evidence.pair_overflow,
             pair_overflow_count=pair_overflow_count,

@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from phydrax.discretization.spatial import (
+    hilbert_encode_integer,
     morton_decode_integer,
     morton_encode_integer,
     MortonAddressPlan,
@@ -67,3 +68,20 @@ def test_morton_encoding_jits() -> None:
     encoded = encode(jnp.asarray([[0.25, 0.75], [0.75, 0.25]]))
     assert bool(encoded.successful)
     np.testing.assert_array_equal(plan.decode(encoded.codes), encoded.integer_coordinates)
+
+
+@pytest.mark.parametrize("dimension,depth", [(1, 5), (2, 4), (3, 3)])
+def test_hilbert_codes_enumerate_the_grid_with_face_adjacent_steps(
+    dimension: int, depth: int
+) -> None:
+    resolution = 1 << depth
+    grid = np.stack(
+        np.meshgrid(*([np.arange(resolution)] * dimension), indexing="ij"), axis=-1
+    ).reshape(-1, dimension)
+    codes = np.asarray(hilbert_encode_integer(jnp.asarray(grid), depth))
+    np.testing.assert_array_equal(np.sort(codes), np.arange(resolution**dimension))
+    walk = grid[np.argsort(codes)]
+    np.testing.assert_array_equal(walk[0], np.zeros((dimension,)))
+    np.testing.assert_array_equal(np.sum(np.abs(np.diff(walk, axis=0)), axis=1), 1)
+    with pytest.raises(ValueError, match="code budget"):
+        hilbert_encode_integer(jnp.asarray(grid), 63 // dimension + 1)
