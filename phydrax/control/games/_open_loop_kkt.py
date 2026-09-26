@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import IntEnum
-from math import isfinite, prod
+from math import prod
 from typing import Any, TypeAlias
 
 import equinox as eqx
@@ -28,6 +28,7 @@ import phydrax.ein as ein
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...dynamics import DiscreteStepContext, TimeGrid
 from ...nonlinear import (
     NonlinearTermination,
@@ -318,13 +319,6 @@ def _identifier(value: str, name: str, /) -> str:
     return value
 
 
-def _positive_tolerance(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _real_array(value: ArrayLike, name: str, /) -> Array:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
@@ -429,9 +423,9 @@ def plan_open_loop_game_kkt(
     if not isinstance(problem, NonlinearOpenLoopGameProblem):
         raise TypeError("problem must be NonlinearOpenLoopGameProblem.")
     tolerances = (
-        _positive_tolerance(feasibility_tolerance, "feasibility_tolerance"),
-        _positive_tolerance(kkt_tolerance, "kkt_tolerance"),
-        _positive_tolerance(
+        positive_finite_float(feasibility_tolerance, "feasibility_tolerance"),
+        positive_finite_float(kkt_tolerance, "kkt_tolerance"),
+        positive_finite_float(
             constraint_qualification_tolerance,
             "constraint_qualification_tolerance",
         ),

@@ -30,6 +30,7 @@ from ..._training_kernel import (
     TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
+from ..._validation import positive_finite_float
 from ...geometry import regularized_heaviside_values
 
 
@@ -150,7 +151,7 @@ class ProbabilisticStefanParameters(StrictModule, NonTrainableState):
         if liquid_sign not in (-1, 1):
             raise ValueError("liquid_sign must be -1 or 1.")
         self.liquid_sign = int(liquid_sign)
-        self.interface_width = _positive_float(interface_width, "interface_width")
+        self.interface_width = positive_finite_float(interface_width, "interface_width")
         change = float(maximum_phase_change)
         penalty = float(jump_penalty)
         if not math.isfinite(change) or change < 0.0:
@@ -433,13 +434,6 @@ def _level_set_call(level_set: Callable[[Array], Array], point: Array, /) -> Arr
     scalar = jnp.asarray(value)
     if scalar.shape != () or jnp.iscomplexobj(scalar):
         raise ValueError("Probabilistic Stefan level_set must return one real scalar.")
-    return scalar
-
-
-def _positive_float(value: float, name: str, /) -> float:
-    scalar = float(value)
-    if not math.isfinite(scalar) or scalar <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
     return scalar
 
 

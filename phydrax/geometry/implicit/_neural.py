@@ -23,6 +23,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._model._array import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, partition_parameters
+from ..._validation import positive_finite_float
 from ...typing import PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
@@ -1003,13 +1004,6 @@ def _points(value: Any, bounds: np.ndarray, name: str, /) -> Array:
     return jnp.asarray(host)
 
 
-def _positive(value: Any, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 @final
 class NeuralImplicitRegion(GeometrySource):
     r"""Region bounded by the zero set of a neural field, with sampled evidence.
@@ -1092,7 +1086,7 @@ class NeuralImplicitRegion(GeometrySource):
         exterior = _points(exterior_points, bounds_, "exterior_points")
         if sign_margin is None:
             raise ValueError("Neural implicit evidence requires sign_margin.")
-        margin = _positive(sign_margin, "sign_margin")
+        margin = positive_finite_float(sign_margin, "sign_margin")
         if evaluation_error is None:
             raise ValueError("Neural implicit evidence requires evaluation_error.")
         error = float(evaluation_error)
@@ -1117,7 +1111,7 @@ class NeuralImplicitRegion(GeometrySource):
         gradient = (
             None
             if gradient_margin is None
-            else _positive(gradient_margin, "gradient_margin")
+            else positive_finite_float(gradient_margin, "gradient_margin")
         )
         if topology is not None and not isinstance(topology, ImplicitRegionTopology):
             raise TypeError("topology must be an ImplicitRegionTopology or None.")

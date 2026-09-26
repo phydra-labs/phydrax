@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -284,22 +283,6 @@ class CorrelatedGaussianPlan(StrictModule, NonTrainableState):
         )
 
 
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    normalized = int(value)
-    if normalized < 1:
-        raise ValueError(f"{name} must be positive.")
-    return normalized
-
-
-def _finite_positive(value: float, name: str, /) -> float:
-    normalized = float(value)
-    if not math.isfinite(normalized) or normalized <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return normalized
-
-
 def _unit(value: str, name: str, /) -> str:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string.")
@@ -346,12 +329,12 @@ class MeanSquareDisplacementPlan(StrictModule, NonTrainableState):
         distance_unit: str = "m",
         time_unit: str = "s",
     ) -> None:
-        samples = _positive_integer(sample_count, "sample_count")
-        dimension = _positive_integer(spatial_dimension, "spatial_dimension")
-        lag = _positive_integer(max_lag, "max_lag")
+        samples = positive_integer(sample_count, "sample_count")
+        dimension = positive_integer(spatial_dimension, "spatial_dimension")
+        lag = positive_integer(max_lag, "max_lag")
         if lag >= samples:
             raise ValueError("max_lag must be smaller than sample_count.")
-        step = _finite_positive(time_step, "time_step")
+        step = positive_finite_float(time_step, "time_step")
         distance = _unit(distance_unit, "distance_unit")
         time = _unit(time_unit, "time_unit")
         self.sample_count = samples
@@ -459,11 +442,11 @@ class AutocorrelationPlan(StrictModule, NonTrainableState):
         time_unit: str = "s",
         signal_unit: str = "1",
     ) -> None:
-        samples = _positive_integer(sample_count, "sample_count")
-        lag = _positive_integer(max_lag, "max_lag")
+        samples = positive_integer(sample_count, "sample_count")
+        lag = positive_integer(max_lag, "max_lag")
         if lag >= samples:
             raise ValueError("max_lag must be smaller than sample_count.")
-        step = _finite_positive(time_step, "time_step")
+        step = positive_finite_float(time_step, "time_step")
         if not isinstance(normalized, bool):
             raise TypeError("normalized must be a boolean.")
         time = _unit(time_unit, "time_unit")
@@ -602,11 +585,11 @@ class FluorescenceCorrelationPlan(StrictModule, NonTrainableState):
         time_unit: str = "s",
         intensity_unit: str = "count/s",
     ) -> None:
-        samples = _positive_integer(sample_count, "sample_count")
-        lag = _positive_integer(max_lag, "max_lag")
+        samples = positive_integer(sample_count, "sample_count")
+        lag = positive_integer(max_lag, "max_lag")
         if lag >= samples:
             raise ValueError("max_lag must be smaller than sample_count.")
-        step = _finite_positive(time_step, "time_step")
+        step = positive_finite_float(time_step, "time_step")
         time = _unit(time_unit, "time_unit")
         intensity = _unit(intensity_unit, "intensity_unit")
         self.sample_count = samples
@@ -735,11 +718,11 @@ class PairCorrelationPlan(StrictModule, NonTrainableState):
         *,
         time_unit: str = "s",
     ) -> None:
-        samples = _positive_integer(sample_count, "sample_count")
-        lag = _positive_integer(max_lag, "max_lag")
+        samples = positive_integer(sample_count, "sample_count")
+        lag = positive_integer(max_lag, "max_lag")
         if lag >= samples:
             raise ValueError("max_lag must be smaller than sample_count.")
-        step = _finite_positive(time_step, "time_step")
+        step = positive_finite_float(time_step, "time_step")
         time = _unit(time_unit, "time_unit")
         self.sample_count = samples
         self.max_lag = lag
@@ -942,7 +925,7 @@ class DiffusionModelPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "lag_times must be a one-dimensional array with two or more entries."
             )
-        dimension = _positive_integer(spatial_dimension, "spatial_dimension")
+        dimension = positive_integer(spatial_dimension, "spatial_dimension")
         if not isinstance(model, str):
             raise TypeError("model must be a string.")
         model_ = model
@@ -1199,10 +1182,10 @@ class BrightnessConditionedTransportPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "brightness_edges must contain at least two one-dimensional edges."
             )
-        capacity = _positive_integer(sample_capacity, "sample_capacity")
-        dimension = _positive_integer(spatial_dimension, "spatial_dimension")
-        step = _finite_positive(time_step, "time_step")
-        count = _positive_integer(minimum_count, "minimum_count")
+        capacity = positive_integer(sample_capacity, "sample_capacity")
+        dimension = positive_integer(spatial_dimension, "spatial_dimension")
+        step = positive_finite_float(time_step, "time_step")
+        count = positive_integer(minimum_count, "minimum_count")
         brightness = _unit(brightness_unit, "brightness_unit")
         distance = _unit(distance_unit, "distance_unit")
         time = _unit(time_unit, "time_unit")
@@ -1644,7 +1627,7 @@ class DwellTimeLikelihoodPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, sample_capacity: int, /, *, time_unit: str = "s") -> None:
-        capacity = _positive_integer(sample_capacity, "sample_capacity")
+        capacity = positive_integer(sample_capacity, "sample_capacity")
         time = _unit(time_unit, "time_unit")
         self.sample_capacity = capacity
         self.time_unit = time
@@ -2111,6 +2094,7 @@ class MeasurementComparisonPlan(StrictModule, NonTrainableState):
         )
 
 
+from ._validation import positive_finite_float, positive_integer
 from ._variable_projection import LinearNuisancePlan, NuisanceProjectionResult
 
 

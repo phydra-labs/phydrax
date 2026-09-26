@@ -24,7 +24,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState
 from ..optim import AbstractRiskMeasure, CVaRRisk, EntropicRisk, MeanVarianceRisk
-from ..typing import parse
+from ..typing import Bool, Dim, Inexact, parse, Size
 from ._dynamics import DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
 from ._problem import ControlProblem
@@ -45,17 +45,23 @@ _SamplingHistory: TypeAlias = tuple[
 ]
 
 
+class _ModelDim(Dim, minimum=1):
+    """Number of flattened model slots (cases or realizations)."""
+
+
 class SamplingMPCRealizations(StrictModule, NonTrainableState):
     """Fixed-capacity physical model realizations for one sampling MPC plan."""
 
+    __strict_contract__ = True
+
     parameters: PyTree[Array]
-    weights: Array
-    support_mask: Array
+    weights: Inexact[_ModelDim]
+    support_mask: Bool[_ModelDim]
     realization_ids: tuple[str, ...] = eqx.field(static=True)
     posterior_id: str = eqx.field(static=True)
     campaign_id: str = eqx.field(static=True)
     policy: SamplingMPCRealizationPolicy = eqx.field(static=True)
-    count: int = eqx.field(static=True)
+    count: Size[_ModelDim] = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
     def __init__(
@@ -146,14 +152,16 @@ class SamplingMPCPlan(StrictModule):
     each model slot without changing the generic control problem API.
     """
 
+    __strict_contract__ = True
+
     problem: ControlProblem
     parameterization: AbstractControlParameterization
     bounds: Bounds | None
     risk_measure: AbstractRiskMeasure | None = fixed_field()
     realizations: SamplingMPCRealizations | None
     realization_binding: SamplingMPCRealizationBinding | None = eqx.field(static=True)
-    model_weights: Array = fixed_field()
-    model_support: Array = fixed_field()
+    model_weights: Inexact[_ModelDim] = fixed_field()
+    model_support: Bool[_ModelDim] = fixed_field()
     candidate_count: int = eqx.field(static=True)
     iteration_count: int = eqx.field(static=True)
     elite_count: int = eqx.field(static=True)
@@ -164,7 +172,7 @@ class SamplingMPCPlan(StrictModule):
     aggregation: SamplingMPCAggregation = eqx.field(static=True)
     warm_start_terminal: SamplingMPCWarmStartTerminal = eqx.field(static=True)
     model_shape: tuple[int, ...] = eqx.field(static=True)
-    model_count: int = eqx.field(static=True)
+    model_count: Size[_ModelDim] = eqx.field(static=True)
     knot_count: int = eqx.field(static=True)
     parameter_shape: tuple[int, ...] = eqx.field(static=True)
     control_shape: tuple[int, ...] = eqx.field(static=True)

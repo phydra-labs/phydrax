@@ -15,6 +15,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
 from ..typing import parse
 from ._evidence import QualificationEvidence, QualificationMatrix
 from ._registry import SupportTuple
@@ -39,14 +40,6 @@ _STAGE_IDS = frozenset(
 )
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 def _identifiers(
     values: Sequence[str],
     name: str,
@@ -56,7 +49,7 @@ def _identifiers(
 ) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    normalized = tuple(_identifier(value, name) for value in values)
+    normalized = tuple(canonical_identifier(value, name) for value in values)
     if not allow_empty and not normalized:
         raise ValueError(f"{name} must not be empty.")
     if len(set(normalized)) != len(normalized):
@@ -88,10 +81,10 @@ class ScientificMetricCriterion:
     criterion_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        metric_id = _identifier(self.metric_id, "metric_id")
-        direction = _identifier(self.direction, "metric direction")
-        unit_id = _identifier(self.unit_id, "unit_id")
-        aggregation = _identifier(self.aggregation, "metric aggregation")
+        metric_id = canonical_identifier(self.metric_id, "metric_id")
+        direction = canonical_identifier(self.direction, "metric direction")
+        unit_id = canonical_identifier(self.unit_id, "unit_id")
+        aggregation = canonical_identifier(self.aggregation, "metric aggregation")
         direction = parse(direction, MetricDirection, "direction")
         aggregation = parse(aggregation, MetricAggregation, "aggregation")
         lower = _bound(self.lower, "metric lower bound")
@@ -198,14 +191,14 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
         *,
         frozen_criteria_ids: Sequence[str],
     ) -> None:
-        capability = _identifier(capability_name, "capability_name")
+        capability = canonical_identifier(capability_name, "capability_name")
         if not isinstance(support, SupportTuple):
             raise TypeError("support must be a SupportTuple.")
         if support.capability != capability:
             raise ValueError("Claim capability_name must match support.capability.")
         observables = _identifiers(observable_ids, "observable_ids")
         conditions = _identifiers(condition_domain_ids, "condition_domain_ids")
-        campaign = _identifier(campaign_id, "campaign_id")
+        campaign = canonical_identifier(campaign_id, "campaign_id")
         stages = _identifiers(required_stage_ids, "required_stage_ids")
         unknown_stages = set(stages) - _STAGE_IDS
         if unknown_stages:
@@ -239,7 +232,7 @@ class ScientificClaimProfile(StrictModule, NonTrainableState):
                 "Scientific claim criteria must be frozen in campaign criteria_ids: "
                 + ", ".join(unfrozen_criteria)
             )
-        abstention = _identifier(abstention_policy_id, "abstention_policy_id")
+        abstention = canonical_identifier(abstention_policy_id, "abstention_policy_id")
         triggers = _identifiers(invalidation_triggers, "invalidation_triggers")
 
         self.capability_name = capability

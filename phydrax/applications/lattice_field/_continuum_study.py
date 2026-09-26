@@ -21,6 +21,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...linalg import (
     DenseLinearOperator,
     eigen,
@@ -43,13 +44,6 @@ def _identifier(value: str, name: str, /) -> str:
     return identifier
 
 
-def _finite_positive(value: float, name: str, /) -> float:
-    resolved = float(value)
-    if not isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return resolved
-
-
 class ScaleSettingCondition(StrictModule, NonTrainableState):
     """Physical reference divided by a measured dimensionless inverse scale."""
 
@@ -68,9 +62,9 @@ class ScaleSettingCondition(StrictModule, NonTrainableState):
         physical_reference_uncertainty: float = 0.0,
         minimum_signal_to_noise: float = 3.0,
     ) -> None:
-        reference = _finite_positive(physical_reference, "physical_reference")
+        reference = positive_finite_float(physical_reference, "physical_reference")
         uncertainty = float(physical_reference_uncertainty)
-        signal = _finite_positive(minimum_signal_to_noise, "minimum_signal_to_noise")
+        signal = positive_finite_float(minimum_signal_to_noise, "minimum_signal_to_noise")
         scheme_id = _identifier(scheme, "scheme")
         if not isfinite(uncertainty) or uncertainty < 0.0:
             raise ValueError(
@@ -236,21 +230,21 @@ class ContinuumSystematicVariation(StrictModule, NonTrainableState):
         minimum_physical_extent: float | None = None,
         variation_id: str | None = None,
     ) -> None:
-        cutoff = _finite_positive(cutoff_power, "cutoff_power")
+        cutoff = positive_finite_float(cutoff_power, "cutoff_power")
         volume = (
             None
             if finite_volume_power is None
-            else _finite_positive(finite_volume_power, "finite_volume_power")
+            else positive_finite_float(finite_volume_power, "finite_volume_power")
         )
         maximum = (
             None
             if maximum_lattice_spacing is None
-            else _finite_positive(maximum_lattice_spacing, "maximum_lattice_spacing")
+            else positive_finite_float(maximum_lattice_spacing, "maximum_lattice_spacing")
         )
         minimum = (
             None
             if minimum_physical_extent is None
-            else _finite_positive(minimum_physical_extent, "minimum_physical_extent")
+            else positive_finite_float(minimum_physical_extent, "minimum_physical_extent")
         )
         resolved_id = (
             canonical_fingerprint(

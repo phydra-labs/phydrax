@@ -30,6 +30,7 @@ from ..._training_kernel import (
     TrainingKeys,
 )
 from ..._training_objective import _ObjectiveContribution
+from ..._validation import positive_finite_float
 from ...geometry import regularized_delta_values, regularized_heaviside_values
 from ...sampling.collocation import CausalTimeSlabSchedule
 from ...typing import PRNGKey
@@ -411,8 +412,8 @@ def implicit_level_set_stefan_loss(
 ) -> StefanLoss:
     """Evaluate a fixed-ambient-domain Stefan PINN with a learned level set."""
 
-    width = _positive_float(interface_width, "interface_width")
-    floor = _positive_float(gradient_floor, "gradient_floor")
+    width = positive_finite_float(interface_width, "interface_width")
+    floor = positive_finite_float(gradient_floor, "gradient_floor")
     temperature = lambda point: _scalar_call(model.temperature, point, key)
     level_set = lambda point: _scalar_call(model.level_set, point, key)
 
@@ -735,13 +736,6 @@ def _positive_scalar(value: ArrayLike, name: str, /) -> Array:
     scalar = _finite_scalar(value, name)
     if float(scalar) <= 0.0:
         raise ValueError(f"{name} must be positive.")
-    return scalar
-
-
-def _positive_float(value: float, name: str, /) -> float:
-    scalar = float(value)
-    if not math.isfinite(scalar) or scalar <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
     return scalar
 
 

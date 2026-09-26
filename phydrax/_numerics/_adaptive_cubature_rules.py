@@ -22,6 +22,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
 from ..typing import parse
 from ._quadrature_rules import QuadratureRuleData
 
@@ -129,7 +130,7 @@ class AdaptiveCubatureRuleData(StrictModule, NonTrainableState):
         embedded = _optional_degree(embedded_degree, "embedded_degree")
         if degree is not None and embedded is not None and embedded >= degree:
             raise ValueError("embedded_degree must be lower than exact_degree.")
-        maximum_bytes = _positive_integer(maximum_rule_bytes, "maximum_rule_bytes")
+        maximum_bytes = positive_integer(maximum_rule_bytes, "maximum_rule_bytes")
         storage_bytes = int(
             points_host.nbytes
             + weights_host.nbytes
@@ -182,15 +183,6 @@ class _GenzMalikHostTable(NamedTuple):
     split_weights: np.ndarray
 
 
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 1:
-        raise ValueError(f"{name} must be positive.")
-    return result
-
-
 def _optional_degree(value: int | None, name: str, /) -> int | None:
     if value is None:
         return None
@@ -203,7 +195,7 @@ def _optional_degree(value: int | None, name: str, /) -> int | None:
 
 
 def _dimension(value: int, /) -> int:
-    return _positive_integer(value, "Adaptive cubature dimension")
+    return positive_integer(value, "Adaptive cubature dimension")
 
 
 def _degree(value: int, /) -> int:
@@ -490,8 +482,8 @@ def genz_malik_rule_data(
     """Prepare one published embedded Genz--Malik rule on ``[-1, 1]^d``."""
     dimension_ = _dimension(dimension)
     degree_ = _degree(degree)
-    maximum_points_ = _positive_integer(maximum_points, "maximum_points")
-    maximum_bytes = _positive_integer(maximum_rule_bytes, "maximum_rule_bytes")
+    maximum_points_ = positive_integer(maximum_points, "maximum_points")
+    maximum_bytes = positive_integer(maximum_rule_bytes, "maximum_rule_bytes")
     count = _genz_malik_point_count(dimension_, degree_)
     if count > maximum_points_:
         raise ValueError(
@@ -537,8 +529,8 @@ def tensor_product_cubature_rule_data(
     """Prepare one tensor product of embedded one-dimensional rules."""
     if len(rules) < 1 or len(source_ids) != len(rules):
         raise ValueError("Tensor cubature requires one source ID per nonempty axis rule.")
-    maximum_points_ = _positive_integer(maximum_points, "maximum_points")
-    maximum_bytes = _positive_integer(maximum_rule_bytes, "maximum_rule_bytes")
+    maximum_points_ = positive_integer(maximum_points, "maximum_points")
+    maximum_bytes = positive_integer(maximum_rule_bytes, "maximum_rule_bytes")
     for axis, rule in enumerate(rules):
         if rule.embedded_weights is None:
             raise ValueError(

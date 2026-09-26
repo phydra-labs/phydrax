@@ -24,6 +24,7 @@ from phydrax.operators.periodic import PeriodicSpectrumResult
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...discretization._reciprocal import ReciprocalMeshPlan
 from ...ein import contract
 from ...linalg import (
@@ -44,13 +45,6 @@ _ELECTRON_CHARGE_SI = -1.602176634e-19
 _VELOCITY_UNIT = derived_unit("m/s", ((METER, 1), (SECOND, -1)))
 
 
-def _positive_scalar(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _relative_symmetry_residual(value: Array, /) -> Array:
     scale = jnp.maximum(jnp.max(jnp.abs(value), initial=0.0), jnp.finfo(value.dtype).tiny)
     return jnp.max(jnp.abs(value - value.T), initial=0.0) / scale
@@ -63,7 +57,7 @@ class ConstantRelaxationTime(StrictModule, NonTrainableState):
     mechanism_id: str = eqx.field(static=True)
 
     def __init__(self, seconds: float, /, *, mechanism_id: str) -> None:
-        relaxation = _positive_scalar(seconds, "relaxation time")
+        relaxation = positive_finite_float(seconds, "relaxation time")
         mechanism = str(mechanism_id).strip()
         if not mechanism:
             raise ValueError("A physical relaxation mechanism identity is required.")
@@ -103,9 +97,9 @@ class PeriodicBoltzmannPlan(StrictModule, NonTrainableState):
         velocities = np.asarray(band_velocities_m_per_s)
         weights = np.asarray(k_weights, dtype=np.float64)
         chemical = float(chemical_potential_joule)
-        temperature = _positive_scalar(temperature_kelvin, "temperature_kelvin")
-        volume = _positive_scalar(cell_volume_m3, "cell_volume_m3")
-        rank_tolerance_ = _positive_scalar(rank_tolerance, "rank_tolerance")
+        temperature = positive_finite_float(temperature_kelvin, "temperature_kelvin")
+        volume = positive_finite_float(cell_volume_m3, "cell_volume_m3")
+        rank_tolerance_ = positive_finite_float(rank_tolerance, "rank_tolerance")
         if not isinstance(relaxation_time, ConstantRelaxationTime):
             raise TypeError("relaxation_time must be ConstantRelaxationTime.")
         if isinstance(spin_degeneracy, bool) or not isinstance(

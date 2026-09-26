@@ -21,6 +21,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._numerics import solve_weighted_least_squares
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ...._validation import positive_finite_float
 from ....qualification import ScientificCampaign
 from ....typing import parse
 from ....uq import DenseCovariance, fit_laplace, ParameterSpace, PosteriorProblem
@@ -46,13 +47,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be a non-empty canonical identifier.")
     return value
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _role_case_ids(campaign: ScientificCampaign, role_name: str, /) -> tuple[str, ...]:
@@ -412,7 +406,7 @@ class GlobalSubstitutionBaseline(AbstractProteinStabilityPredictor):
         self.assay_channel = _identifier(assay_channel, "assay channel")
         self.condition_id = _identifier(condition_id, "condition ID")
         self.sign_convention = _identifier(sign_convention, "sign convention")
-        self.ridge = _positive(ridge, "ridge")
+        self.ridge = positive_finite_float(ridge, "ridge")
         self.model_id = canonical_fingerprint(
             {
                 "kind": "global-substitution-baseline",
@@ -606,8 +600,10 @@ class RegularizedEnvironmentModel(AbstractProteinStabilityPredictor):
         self.assay_channel = _identifier(assay_channel, "assay channel")
         self.condition_id = _identifier(condition_id, "condition ID")
         self.sign_convention = _identifier(sign_convention, "sign convention")
-        self.family_effect_scale = _positive(family_effect_scale, "family_effect_scale")
-        self.ridge = _positive(ridge, "ridge")
+        self.family_effect_scale = positive_finite_float(
+            family_effect_scale, "family_effect_scale"
+        )
+        self.ridge = positive_finite_float(ridge, "ridge")
         self.model_id = canonical_fingerprint(
             {
                 "kind": "regularized-environment-model",
@@ -934,7 +930,7 @@ class RegularizedPairInteractionModel(StrictModule):
             }
         )
         self.single_model_id = _identifier(single_model_id, "single_model_id")
-        self.ridge = _positive(ridge, "ridge")
+        self.ridge = positive_finite_float(ridge, "ridge")
         self.assay_channel = _identifier(assay_channel, "assay channel")
         self.condition_id = _identifier(condition_id, "condition ID")
         self.sign_convention = _identifier(sign_convention, "sign convention")
@@ -1544,7 +1540,7 @@ def _fit_linear(
     *,
     ridge: float,
 ) -> tuple[Array | None, Array | None, Array | None, int, tuple[str, ...]]:
-    ridge_ = _positive(ridge, "ridge")
+    ridge_ = positive_finite_float(ridge, "ridge")
     if (
         design.ndim != 2
         or target.shape != design.shape[:1]
@@ -1756,7 +1752,7 @@ def fit_regularized_environment_model(
             -1,
             **metadata,
         )
-    family_scale = _positive(family_effect_scale, "family_effect_scale")
+    family_scale = positive_finite_float(family_effect_scale, "family_effect_scale")
     families = tuple(sorted({item.domain_family_id for item in selected_features}))
     rows = jnp.stack(tuple(transform.transform(item) for item in selected_features))
     family_rows = jnp.asarray(

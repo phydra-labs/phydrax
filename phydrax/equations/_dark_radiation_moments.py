@@ -20,6 +20,7 @@ from phydrax.ein import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_finite_float
 from ..applications.relativistic_scattering._unit_contract import (
     LocalRelativisticFramePlan,
 )
@@ -31,13 +32,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not isinstance(value, str) or not value or value.strip() != value:
         raise ValueError(f"{name} must be a non-empty stripped string.")
     return value
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _nonnegative(value: float, name: str, /) -> float:
@@ -294,11 +288,11 @@ class CosmologicalMultigroupM1System(StrictModule, NonTrainableState):
             np.all(np.diff(np.asarray(edges)) > 0.0)
         ):
             raise ValueError("Dark-radiation group_edges must be finite and increasing.")
-        physical = _positive(physical_light_speed, "physical_light_speed")
+        physical = positive_finite_float(physical_light_speed, "physical_light_speed")
         reduced = (
             physical
             if reduced_light_speed is None
-            else _positive(reduced_light_speed, "reduced_light_speed")
+            else positive_finite_float(reduced_light_speed, "reduced_light_speed")
         )
         if reduced > physical:
             raise ValueError("Reduced light speed cannot exceed physical light speed.")
@@ -1180,7 +1174,7 @@ class DarkRadiationVETPlan(StrictModule, NonTrainableState):
         direction = jnp.asarray(directions)
         weight = jnp.asarray(weights, dtype=direction.dtype)
         iterations = int(maximum_iterations)
-        tolerance = _positive(residual_tolerance, "residual_tolerance")
+        tolerance = positive_finite_float(residual_tolerance, "residual_tolerance")
         if direction.ndim != 2 or direction.shape[-1] != 3:
             raise ValueError("VET directions must have shape (angle, 3).")
         if weight.shape != direction.shape[:1] or iterations <= 0:

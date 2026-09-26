@@ -22,6 +22,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_finite_float
 from ._sites import AtomisticInteractionSiteState
 
 
@@ -42,13 +43,6 @@ def _enum_value(value: object, enum_type: type[_EnumT], name: str, /) -> _EnumT:
         choices = ", ".join(member.value for member in enum_type)
         raise ValueError(f"{name} must be one of: {choices}.")
     return matches[0]
-
-
-def _finite_positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 class PermanentMultipoleSiteData(StrictModule, NonTrainableState):
@@ -217,7 +211,7 @@ class PolarizationOperatorPlan(StrictModule, NonTrainableState):
         minimum_distance: float = 1.0e-8,
         periodic_plan: MultipolePMEPlan | None = None,
     ) -> None:
-        distance = _finite_positive(minimum_distance, "minimum_distance")
+        distance = positive_finite_float(minimum_distance, "minimum_distance")
         if periodic_plan is not None and not isinstance(periodic_plan, MultipolePMEPlan):
             raise TypeError("periodic_plan must be MultipolePMEPlan or None.")
         self.minimum_distance, self.periodic_plan = distance, periodic_plan
@@ -339,7 +333,7 @@ class PolarizationPreconditionerPlan(StrictModule, NonTrainableState):
         diagonal_floor: float = 1.0e-12,
     ) -> None:
         kind_ = _enum_value(kind, PolarizationPreconditionerKind, "kind")
-        floor = _finite_positive(diagonal_floor, "diagonal_floor")
+        floor = positive_finite_float(diagonal_floor, "diagonal_floor")
         self.kind, self.diagonal_floor = kind_, floor
         self.plan_id = canonical_fingerprint(
             {
@@ -458,13 +452,13 @@ class PolarizationSolverPlan(StrictModule, NonTrainableState):
     ) -> None:
         kind_ = _enum_value(kind, PolarizationSolverKind, "kind")
         iterations, order = int(maximum_iterations), int(tcg_order)
-        tolerance_ = _finite_positive(tolerance, "tolerance")
+        tolerance_ = positive_finite_float(tolerance, "tolerance")
         force = (
             tolerance_
             if force_tolerance is None
-            else _finite_positive(force_tolerance, "force_tolerance")
+            else positive_finite_float(force_tolerance, "force_tolerance")
         )
-        breakdown = _finite_positive(breakdown_tolerance, "breakdown_tolerance")
+        breakdown = positive_finite_float(breakdown_tolerance, "breakdown_tolerance")
         if iterations <= 0 or order <= 0:
             raise ValueError("maximum_iterations and tcg_order must both be positive.")
         (

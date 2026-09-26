@@ -16,6 +16,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...._validation import normalized_identifier
 from ....linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -41,15 +42,6 @@ class CohortCaseStatus(IntEnum):
     INCOMPLETE_SOLVE = 1
     INVALID_PHYSICS = 2
     TOPOLOGY_MISMATCH = 3
-
-
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    resolved = value.strip()
-    if not resolved:
-        raise ValueError(f"{name} must be non-empty.")
-    return resolved
 
 
 _LINKABLE_IDENTITY = re.compile(
@@ -85,7 +77,7 @@ class DeidentifiedCohortIdentity:
         deidentification_receipt_id: str,
         /,
     ) -> None:
-        group = _identifier(group_id, "deidentified group_id")
+        group = normalized_identifier(group_id, "deidentified group_id")
         collapsed = "".join(
             character for character in group.lower() if character.isalnum()
         )
@@ -95,8 +87,12 @@ class DeidentifiedCohortIdentity:
             raise ValueError(
                 "Cohort group identities must not contain PHI or linkable identity markers."
             )
-        policy = _identifier(deidentification_policy_id, "deidentification_policy_id")
-        receipt = _identifier(deidentification_receipt_id, "deidentification_receipt_id")
+        policy = normalized_identifier(
+            deidentification_policy_id, "deidentification_policy_id"
+        )
+        receipt = normalized_identifier(
+            deidentification_receipt_id, "deidentification_receipt_id"
+        )
         object.__setattr__(self, "group_id", group)
         object.__setattr__(self, "deidentification_policy_id", policy)
         object.__setattr__(self, "deidentification_receipt_id", receipt)
@@ -154,12 +150,16 @@ class CardiovascularTruthCase:
     acquisition_order: float = 0.0
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "case_id", _identifier(self.case_id, "case_id"))
+        object.__setattr__(
+            self, "case_id", normalized_identifier(self.case_id, "case_id")
+        )
         if not isinstance(self.subject_identity, DeidentifiedCohortIdentity):
             raise TypeError("subject_identity must be a DeidentifiedCohortIdentity.")
-        object.__setattr__(self, "site_id", _identifier(self.site_id, "site_id"))
         object.__setattr__(
-            self, "topology_id", _identifier(self.topology_id, "topology_id")
+            self, "site_id", normalized_identifier(self.site_id, "site_id")
+        )
+        object.__setattr__(
+            self, "topology_id", normalized_identifier(self.topology_id, "topology_id")
         )
         object.__setattr__(self, "parameters", _parameter_record(self.parameters))
         mass = float(self.probability_mass)
@@ -168,7 +168,7 @@ class CardiovascularTruthCase:
         object.__setattr__(self, "probability_mass", mass)
         if not isinstance(self.status, CohortCaseStatus):
             raise TypeError("status must be a CohortCaseStatus.")
-        tags = tuple(_identifier(tag, "ood tag") for tag in self.ood_tags)
+        tags = tuple(normalized_identifier(tag, "ood tag") for tag in self.ood_tags)
         if not isinstance(self.case_manifest, CardiovascularCaseManifest):
             raise TypeError("case_manifest must be a CardiovascularCaseManifest.")
         if self.case_manifest.case_id != self.case_id:
@@ -199,7 +199,9 @@ class CardiovascularTruthCase:
             manifest = (
                 None
                 if self.execution_manifest_id is None
-                else _identifier(self.execution_manifest_id, "execution_manifest_id")
+                else normalized_identifier(
+                    self.execution_manifest_id, "execution_manifest_id"
+                )
             )
             if manifest is None:
                 raise ValueError("Complete truth cases require an execution manifest ID.")
@@ -284,7 +286,7 @@ def batch_fixed_topology_cohort(
     resolved_topology = (
         complete[0].topology_id
         if topology_id is None
-        else _identifier(topology_id, "topology_id")
+        else normalized_identifier(topology_id, "topology_id")
     )
     if any(case.topology_id != resolved_topology for case in complete):
         raise ValueError("Complete cases must share the declared fixed topology.")
@@ -388,7 +390,8 @@ class SiteSplitPolicy:
 
     def __post_init__(self) -> None:
         sites = tuple(
-            _identifier(site, "held-out site ID") for site in self.held_out_site_ids
+            normalized_identifier(site, "held-out site ID")
+            for site in self.held_out_site_ids
         )
         if not sites or len(set(sites)) != len(sites):
             raise ValueError("held_out_site_ids must be non-empty and unique.")
@@ -412,7 +415,9 @@ class OODSplitPolicy:
     seed: int = 0
 
     def __post_init__(self) -> None:
-        tags = tuple(_identifier(tag, "held-out OOD tag") for tag in self.held_out_tags)
+        tags = tuple(
+            normalized_identifier(tag, "held-out OOD tag") for tag in self.held_out_tags
+        )
         if not tags or len(set(tags)) != len(tags):
             raise ValueError("held_out_tags must be non-empty and unique.")
         calibration = float(self.calibration_fraction)
@@ -464,7 +469,7 @@ class CardiovascularCohortSplit:
             raise ValueError(
                 "Cohort split partitions must contain disjoint non-empty IDs."
             )
-        _identifier(self.split_id, "split_id")
+        normalized_identifier(self.split_id, "split_id")
 
     @property
     def all_ids(self) -> tuple[str, ...]:

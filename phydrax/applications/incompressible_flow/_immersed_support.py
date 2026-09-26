@@ -16,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
 from ...discretization.finite_volume._distributed_marker_transfer import (
     DistributedMACMarkerTransfer,
 )
@@ -170,14 +171,6 @@ IMMERSED_DNS_SUPPORT_TUPLES = (
     LBM_BODY_SUPPORT_TUPLE,
     RESOLVED_CFD_DEM_SUPPORT_TUPLE,
 )
-
-
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
 
 
 def _rigid_projection(
@@ -371,10 +364,10 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
         regime, owner_id, bound_markers, bound_geometry, contact_capable = (
             _owner_contract(owner)
         )
-        marker_id = _identifier(marker_set_id, "marker_set_id")
-        geometry = _identifier(geometry_id, "geometry_id")
-        route = _identifier(route_id, "route_id")
-        topology = _identifier(topology_epoch_id, "topology_epoch_id")
+        marker_id = canonical_identifier(marker_set_id, "marker_set_id")
+        geometry = canonical_identifier(geometry_id, "geometry_id")
+        route = canonical_identifier(route_id, "route_id")
+        topology = canonical_identifier(topology_epoch_id, "topology_epoch_id")
         epoch = int(geometry_epoch)
         if epoch < 0:
             raise ValueError("geometry_epoch must be non-negative.")
@@ -385,7 +378,7 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
         motion_epoch = (
             topology
             if motion_epoch_id is None
-            else _identifier(motion_epoch_id, "motion_epoch_id")
+            else canonical_identifier(motion_epoch_id, "motion_epoch_id")
         )
         if bound_markers is not None and marker_id != bound_markers:
             raise ValueError("marker_set_id does not match the prepared immersed owner.")

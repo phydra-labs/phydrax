@@ -20,6 +20,7 @@ import phydrax.ein as ein
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...dynamics import TimeGrid
 from ...linalg import (
     DenseLinearOperator,
@@ -68,7 +69,6 @@ from ._variational import (
     _maximum_abs,
     _owned_indices,
     _player_costs,
-    _positive_tolerance,
     _rank,
     _real_array,
     _safe,
@@ -642,11 +642,11 @@ def plan_open_loop_gne(
     if not isinstance(audit_best_responses, bool):
         raise TypeError("audit_best_responses must be a bool.")
     tolerances = (
-        _positive_tolerance(structural_tolerance, "structural_tolerance"),
-        _positive_tolerance(convexity_tolerance, "convexity_tolerance"),
-        _positive_tolerance(regularity_tolerance, "regularity_tolerance"),
-        _positive_tolerance(feasibility_tolerance, "feasibility_tolerance"),
-        _positive_tolerance(kkt_tolerance, "kkt_tolerance"),
+        positive_finite_float(structural_tolerance, "structural_tolerance"),
+        positive_finite_float(convexity_tolerance, "convexity_tolerance"),
+        positive_finite_float(regularity_tolerance, "regularity_tolerance"),
+        positive_finite_float(feasibility_tolerance, "feasibility_tolerance"),
+        positive_finite_float(kkt_tolerance, "kkt_tolerance"),
     )
     method_ = (
         SemismoothNewton(

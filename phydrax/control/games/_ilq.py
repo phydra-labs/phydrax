@@ -25,6 +25,7 @@ from ..._fingerprint import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...dynamics import DiscreteStepContext, DiscreteTransitionEvidence
 from .._lqr import AffineFeedbackPolicy
 from .._trajectory import (
@@ -414,17 +415,10 @@ def _finite_nonnegative(value: float, name: str, /) -> float:
     return result
 
 
-def _finite_positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _optional_finite_positive(value: float | None, name: str, /) -> float | None:
     if value is None:
         return None
-    return _finite_positive(value, name)
+    return positive_finite_float(value, name)
 
 
 def _optional_finite_nonnegative(value: float | None, name: str, /) -> float | None:
@@ -590,23 +584,25 @@ def plan_ilq_feedback_game(
     residual = _finite_nonnegative(residual_tolerance, "residual_tolerance")
     step = _finite_nonnegative(step_tolerance, "step_tolerance")
     dynamics = _finite_nonnegative(dynamics_tolerance, "dynamics_tolerance")
-    state_guard = _finite_positive(maximum_scaled_state_step, "maximum_scaled_state_step")
-    control_guard = _finite_positive(
+    state_guard = positive_finite_float(
+        maximum_scaled_state_step, "maximum_scaled_state_step"
+    )
+    control_guard = positive_finite_float(
         maximum_scaled_control_step, "maximum_scaled_control_step"
     )
-    alpha = _finite_positive(initial_alpha, "initial_alpha")
+    alpha = positive_finite_float(initial_alpha, "initial_alpha")
     if alpha > 1.0:
         raise ValueError("initial_alpha must not exceed one.")
-    contraction = _finite_positive(alpha_contraction, "alpha_contraction")
+    contraction = positive_finite_float(alpha_contraction, "alpha_contraction")
     if contraction >= 1.0:
         raise ValueError("alpha_contraction must be strictly less than one.")
-    armijo_value = _finite_positive(armijo, "armijo")
+    armijo_value = positive_finite_float(armijo, "armijo")
     if armijo_value >= 1.0:
         raise ValueError("armijo must be strictly less than one.")
     initial_regularization = _finite_nonnegative(
         initial_proximal_regularization, "initial_proximal_regularization"
     )
-    growth = _finite_positive(
+    growth = positive_finite_float(
         proximal_regularization_growth, "proximal_regularization_growth"
     )
     if growth <= 1.0:

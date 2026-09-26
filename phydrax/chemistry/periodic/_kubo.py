@@ -25,6 +25,7 @@ from phydrax.operators.periodic import PeriodicSpectrumResult
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...discretization._reciprocal import ReciprocalMeshPlan
 from ...ein import contract
 from ...linalg import HermitianSpectrum
@@ -40,13 +41,6 @@ _VELOCITY_UNIT = derived_unit("m/s", ((METER, 1), (SECOND, -1)))
 
 def _adjoint(value: Array, /) -> Array:
     return jnp.swapaxes(jnp.conj(value), -1, -2)
-
-
-def _positive_scalar(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _fermi(energy: Array, chemical_potential: float, temperature: float, /) -> Array:
@@ -84,7 +78,7 @@ class KuboLinewidth(StrictModule, NonTrainableState):
     mechanism_id: str = eqx.field(static=True)
 
     def __init__(self, energy_width_joule: float, /, *, mechanism_id: str) -> None:
-        width = _positive_scalar(energy_width_joule, "energy_width_joule")
+        width = positive_finite_float(energy_width_joule, "energy_width_joule")
         mechanism = str(mechanism_id).strip()
         if not mechanism:
             raise ValueError("A physical linewidth mechanism identity is required.")
@@ -132,9 +126,9 @@ class PeriodicKuboPlan(StrictModule, NonTrainableState):
             else np.asarray(degeneracy_mask)
         )
         chemical = float(chemical_potential_joule)
-        temperature = _positive_scalar(temperature_kelvin, "temperature_kelvin")
-        volume = _positive_scalar(cell_volume_m3, "cell_volume_m3")
-        tolerance = _positive_scalar(
+        temperature = positive_finite_float(temperature_kelvin, "temperature_kelvin")
+        volume = positive_finite_float(cell_volume_m3, "cell_volume_m3")
+        tolerance = positive_finite_float(
             degeneracy_tolerance_joule, "degeneracy_tolerance_joule"
         )
         if isinstance(spin_degeneracy, bool) or not isinstance(
@@ -430,8 +424,8 @@ def finite_frequency_kubo_response(
         raise TypeError("plan must be PeriodicKuboPlan.")
     if not isinstance(linewidth, KuboLinewidth):
         raise TypeError("linewidth must be KuboLinewidth.")
-    sum_tolerance = _positive_scalar(f_sum_tolerance, "f_sum_tolerance")
-    passive_tolerance = _positive_scalar(passivity_tolerance, "passivity_tolerance")
+    sum_tolerance = positive_finite_float(f_sum_tolerance, "f_sum_tolerance")
+    passive_tolerance = positive_finite_float(passivity_tolerance, "passivity_tolerance")
     frequencies = np.asarray(angular_frequencies_rad_per_s, dtype=np.float64)
     if (
         frequencies.ndim != 1
@@ -520,7 +514,7 @@ def conserved_collinear_spin_evidence(
 ) -> ConservedCollinearSpinEvidence:
     """Test ``[diag(E_k), Sz_k]=0`` before admitting collinear spin response."""
 
-    tolerance_ = _positive_scalar(tolerance, "tolerance")
+    tolerance_ = positive_finite_float(tolerance, "tolerance")
     energies = jnp.asarray(energies_joule)
     spin = jnp.asarray(spin_z_matrices)
     source = str(source_id).strip()

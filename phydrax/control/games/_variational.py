@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from math import isfinite
 from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
@@ -22,6 +21,7 @@ import phydrax.ein as ein
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...dynamics import TimeGrid
 from ...nonlinear import (
     NonlinearTermination,
@@ -515,13 +515,6 @@ def _exact_array(
     return array
 
 
-def _positive_tolerance(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _case_all_finite(value: Array, case_rank: int, /) -> Array:
     axes = tuple(range(case_rank, value.ndim))
     return jnp.all(jnp.isfinite(value), axis=axes) if axes else jnp.isfinite(value)
@@ -645,15 +638,15 @@ def plan_open_loop_ve(
             "Nash formulation."
         )
     tolerances = (
-        _positive_tolerance(structural_tolerance, "structural_tolerance"),
-        _positive_tolerance(convexity_tolerance, "convexity_tolerance"),
-        _positive_tolerance(monotonicity_tolerance, "monotonicity_tolerance"),
-        _positive_tolerance(regularity_tolerance, "regularity_tolerance"),
-        _positive_tolerance(feasibility_tolerance, "feasibility_tolerance"),
-        _positive_tolerance(kkt_tolerance, "kkt_tolerance"),
-        _positive_tolerance(natural_residual_tolerance, "natural_residual_tolerance"),
+        positive_finite_float(structural_tolerance, "structural_tolerance"),
+        positive_finite_float(convexity_tolerance, "convexity_tolerance"),
+        positive_finite_float(monotonicity_tolerance, "monotonicity_tolerance"),
+        positive_finite_float(regularity_tolerance, "regularity_tolerance"),
+        positive_finite_float(feasibility_tolerance, "feasibility_tolerance"),
+        positive_finite_float(kkt_tolerance, "kkt_tolerance"),
+        positive_finite_float(natural_residual_tolerance, "natural_residual_tolerance"),
     )
-    step = _positive_tolerance(natural_step, "natural_step")
+    step = positive_finite_float(natural_step, "natural_step")
     method_ = (
         SemismoothNewton(
             feasibility="preserve-box",

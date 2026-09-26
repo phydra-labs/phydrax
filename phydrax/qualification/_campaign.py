@@ -13,6 +13,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
 from ..typing import parse
 
 
@@ -25,14 +26,6 @@ CampaignRoleName: TypeAlias = Literal[
 ]
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 def _identifiers(
     values: Sequence[str],
     name: str,
@@ -42,7 +35,7 @@ def _identifiers(
 ) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    normalized = tuple(_identifier(value, name) for value in values)
+    normalized = tuple(canonical_identifier(value, name) for value in values)
     if not allow_empty and not normalized:
         raise ValueError(f"{name} must not be empty.")
     if len(set(normalized)) != len(normalized):
@@ -64,22 +57,26 @@ class ScientificCase:
     parent_case_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "case_id", _identifier(self.case_id, "case_id"))
+        object.__setattr__(self, "case_id", canonical_identifier(self.case_id, "case_id"))
         object.__setattr__(
             self,
             "independent_unit_id",
-            _identifier(self.independent_unit_id, "independent_unit_id"),
+            canonical_identifier(self.independent_unit_id, "independent_unit_id"),
         )
         object.__setattr__(
-            self, "construct_id", _identifier(self.construct_id, "construct_id")
+            self, "construct_id", canonical_identifier(self.construct_id, "construct_id")
         )
         object.__setattr__(
-            self, "condition_id", _identifier(self.condition_id, "condition_id")
+            self, "condition_id", canonical_identifier(self.condition_id, "condition_id")
         )
         object.__setattr__(
-            self, "preparation_id", _identifier(self.preparation_id, "preparation_id")
+            self,
+            "preparation_id",
+            canonical_identifier(self.preparation_id, "preparation_id"),
         )
-        object.__setattr__(self, "batch_id", _identifier(self.batch_id, "batch_id"))
+        object.__setattr__(
+            self, "batch_id", canonical_identifier(self.batch_id, "batch_id")
+        )
         object.__setattr__(
             self,
             "source_manifest_ids",
@@ -136,7 +133,7 @@ class CampaignRole:
     case_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        name = _identifier(self.name, "campaign role name")
+        name = canonical_identifier(self.name, "campaign role name")
         name = parse(name, CampaignRoleName, "campaign role name")
         object.__setattr__(self, "name", name)
         object.__setattr__(

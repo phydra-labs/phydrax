@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from math import isfinite
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -20,6 +19,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...linalg import (
     AbstractLinearOperator,
     ConjugateGradient,
@@ -57,13 +57,6 @@ ReducedRodMaterial: TypeAlias = (
 ReducedRodMassSolver: TypeAlias = Literal["dense_cholesky", "matrix_free_cg"]
 
 
-def _positive_finite(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 class ReducedRodDenseCholeskyPlan(StrictModule, NonTrainableState):
     """Fixed dense reduced-mass Cholesky policy and fail-closed tolerances."""
 
@@ -82,10 +75,10 @@ class ReducedRodDenseCholeskyPlan(StrictModule, NonTrainableState):
         condition_limit: float = 1.0e8,
         roundtrip_tolerance: float = 1.0e-6,
     ) -> None:
-        symmetry = _positive_finite(symmetry_tolerance, "symmetry_tolerance")
-        pivot = _positive_finite(pivot_tolerance, "pivot_tolerance")
-        condition = _positive_finite(condition_limit, "condition_limit")
-        roundtrip = _positive_finite(roundtrip_tolerance, "roundtrip_tolerance")
+        symmetry = positive_finite_float(symmetry_tolerance, "symmetry_tolerance")
+        pivot = positive_finite_float(pivot_tolerance, "pivot_tolerance")
+        condition = positive_finite_float(condition_limit, "condition_limit")
+        roundtrip = positive_finite_float(roundtrip_tolerance, "roundtrip_tolerance")
         if condition <= 1.0:
             raise ValueError("condition_limit must be greater than one.")
         self.symmetry_tolerance = symmetry
@@ -130,12 +123,12 @@ class ReducedRodMatrixFreeCGPlan(StrictModule, NonTrainableState):
         condition_limit: float = 1.0e8,
         roundtrip_tolerance: float = 1.0e-5,
     ) -> None:
-        relative = _positive_finite(relative_tolerance, "relative_tolerance")
-        absolute = _positive_finite(absolute_tolerance, "absolute_tolerance")
-        symmetry = _positive_finite(symmetry_tolerance, "symmetry_tolerance")
-        positivity = _positive_finite(positivity_tolerance, "positivity_tolerance")
-        condition = _positive_finite(condition_limit, "condition_limit")
-        roundtrip = _positive_finite(roundtrip_tolerance, "roundtrip_tolerance")
+        relative = positive_finite_float(relative_tolerance, "relative_tolerance")
+        absolute = positive_finite_float(absolute_tolerance, "absolute_tolerance")
+        symmetry = positive_finite_float(symmetry_tolerance, "symmetry_tolerance")
+        positivity = positive_finite_float(positivity_tolerance, "positivity_tolerance")
+        condition = positive_finite_float(condition_limit, "condition_limit")
+        roundtrip = positive_finite_float(roundtrip_tolerance, "roundtrip_tolerance")
         iterations = int(maximum_iterations)
         spectral = None if spectral_iterations is None else int(spectral_iterations)
         if iterations < 1 or (spectral is not None and spectral < 1):

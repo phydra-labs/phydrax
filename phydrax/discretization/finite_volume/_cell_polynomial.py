@@ -18,17 +18,9 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._total_degree import TotalDegreePolynomialFeatures
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_integer
 from ._geometry_protocol import FiniteVolumeStageMetrics
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 1:
-        raise ValueError(f"{name} must be positive.")
-    return result
 
 
 def _monomials(values: np.ndarray, exponents: np.ndarray, /) -> np.ndarray:
@@ -261,7 +253,7 @@ class CellPolynomialReconstructionPlan(StrictModule, NonTrainableState):
         rcond: float = 1e-12,
         condition_limit: float = 1e8,
     ) -> None:
-        degree_ = _positive_integer(degree, "degree")
+        degree_ = positive_integer(degree, "degree")
         oversampling_ = int(oversampling)
         if oversampling_ < 0:
             raise ValueError("oversampling must be nonnegative.")

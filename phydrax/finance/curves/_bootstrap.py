@@ -17,6 +17,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...linalg import DenseLinearOperator, FactorizationPolicy, factorize, RankPolicy
 from ...optim import (
     least_squares,
@@ -36,13 +37,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not identifier:
         raise ValueError(f"{name} must be a non-empty string.")
     return identifier
-
-
-def _positive(value: float, name: str, /) -> float:
-    number = float(value)
-    if not isfinite(number) or number <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return number
 
 
 def _time(value: float, name: str, /) -> float:
@@ -115,8 +109,10 @@ class DepositBootstrapInstrument(StrictModule):
         self.discount_curve_id = _identifier(discount_curve_id, "discount_curve_id")
         self.start_time = start
         self.end_time = end
-        self.accrual_fraction = _positive(accrual_fraction, "accrual_fraction")
-        self.quote_weight = _positive(quote_weight, "quote_weight")
+        self.accrual_fraction = positive_finite_float(
+            accrual_fraction, "accrual_fraction"
+        )
+        self.quote_weight = positive_finite_float(quote_weight, "quote_weight")
 
 
 class ZeroRateBootstrapInstrument(StrictModule):
@@ -135,11 +131,11 @@ class ZeroRateBootstrapInstrument(StrictModule):
         maturity: float,
         quote_weight: float = 1.0,
     ) -> None:
-        maturity_ = _positive(maturity, "maturity")
+        maturity_ = positive_finite_float(maturity, "maturity")
         self.instrument_id = _identifier(instrument_id, "instrument_id")
         self.curve_id = _identifier(curve_id, "curve_id")
         self.maturity = maturity_
-        self.quote_weight = _positive(quote_weight, "quote_weight")
+        self.quote_weight = positive_finite_float(quote_weight, "quote_weight")
 
 
 class ForwardRateBootstrapInstrument(StrictModule):
@@ -170,8 +166,10 @@ class ForwardRateBootstrapInstrument(StrictModule):
         self.projection_curve_id = _identifier(projection_curve_id, "projection_curve_id")
         self.start_time = start
         self.end_time = end
-        self.accrual_fraction = _positive(accrual_fraction, "accrual_fraction")
-        self.quote_weight = _positive(quote_weight, "quote_weight")
+        self.accrual_fraction = positive_finite_float(
+            accrual_fraction, "accrual_fraction"
+        )
+        self.quote_weight = positive_finite_float(quote_weight, "quote_weight")
 
 
 class ParSwapBootstrapInstrument(StrictModule):
@@ -213,7 +211,7 @@ class ParSwapBootstrapInstrument(StrictModule):
         self.instrument_id = _identifier(instrument_id, "instrument_id")
         self.discount_curve_id = _identifier(discount_curve_id, "discount_curve_id")
         self.projection_curve_id = _identifier(projection_curve_id, "projection_curve_id")
-        self.quote_weight = _positive(quote_weight, "quote_weight")
+        self.quote_weight = positive_finite_float(quote_weight, "quote_weight")
 
 
 class BasisSwapBootstrapInstrument(StrictModule):
@@ -262,7 +260,7 @@ class BasisSwapBootstrapInstrument(StrictModule):
         self.pay_projection_curve_id = _identifier(
             pay_projection_curve_id, "pay_projection_curve_id"
         )
-        self.quote_weight = _positive(quote_weight, "quote_weight")
+        self.quote_weight = positive_finite_float(quote_weight, "quote_weight")
 
 
 class SurvivalProbabilityBootstrapInstrument(StrictModule):
@@ -283,8 +281,8 @@ class SurvivalProbabilityBootstrapInstrument(StrictModule):
     ) -> None:
         self.instrument_id = _identifier(instrument_id, "instrument_id")
         self.survival_curve_id = _identifier(survival_curve_id, "survival_curve_id")
-        self.maturity = _positive(maturity, "maturity")
-        self.quote_weight = _positive(quote_weight, "quote_weight")
+        self.maturity = positive_finite_float(maturity, "maturity")
+        self.quote_weight = positive_finite_float(quote_weight, "quote_weight")
 
 
 class HazardRateBootstrapInstrument(StrictModule):
@@ -306,7 +304,7 @@ class HazardRateBootstrapInstrument(StrictModule):
         self.instrument_id = _identifier(instrument_id, "instrument_id")
         self.survival_curve_id = _identifier(survival_curve_id, "survival_curve_id")
         self.maturity = _time(maturity, "maturity")
-        self.quote_weight = _positive(quote_weight, "quote_weight")
+        self.quote_weight = positive_finite_float(quote_weight, "quote_weight")
 
 
 BootstrapInstrument: TypeAlias = (
@@ -478,15 +476,21 @@ class BootstrapSolverPolicy(StrictModule):
         rank_tolerance: float = 1e-10,
         initial_damping: float = 1e-6,
     ) -> None:
-        self.absolute_optimality = _positive(absolute_optimality, "absolute_optimality")
-        self.relative_optimality = _positive(relative_optimality, "relative_optimality")
+        self.absolute_optimality = positive_finite_float(
+            absolute_optimality, "absolute_optimality"
+        )
+        self.relative_optimality = positive_finite_float(
+            relative_optimality, "relative_optimality"
+        )
         steps = int(maximum_steps)
         if steps < 1:
             raise ValueError("maximum_steps must be positive.")
         self.maximum_steps = steps
-        self.repricing_tolerance = _positive(repricing_tolerance, "repricing_tolerance")
-        self.rank_tolerance = _positive(rank_tolerance, "rank_tolerance")
-        self.initial_damping = _positive(initial_damping, "initial_damping")
+        self.repricing_tolerance = positive_finite_float(
+            repricing_tolerance, "repricing_tolerance"
+        )
+        self.rank_tolerance = positive_finite_float(rank_tolerance, "rank_tolerance")
+        self.initial_damping = positive_finite_float(initial_damping, "initial_damping")
 
 
 def _validate_plan_inputs(

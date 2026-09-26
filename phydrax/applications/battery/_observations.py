@@ -25,6 +25,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
 from ...artifacts import ArtifactManifest
 
 
@@ -55,16 +56,8 @@ class BatteryDiagnosticRole(str, Enum):
     EIS = "eis"
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 def _identifiers(values: tuple[str, ...], name: str, /) -> tuple[str, ...]:
-    resolved = tuple(_identifier(value, name) for value in values)
+    resolved = tuple(canonical_identifier(value, name) for value in values)
     if not resolved or len(set(resolved)) != len(resolved):
         raise ValueError(f"{name}s must be non-empty and unique.")
     return resolved
@@ -141,10 +134,10 @@ class BatterySourceUnits:
     units_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        time = _identifier(self.time, "source time unit")
-        current = _identifier(self.current, "source current unit")
-        voltage = _identifier(self.voltage, "source voltage unit")
-        temperature = _identifier(self.temperature, "source temperature unit")
+        time = canonical_identifier(self.time, "source time unit")
+        current = canonical_identifier(self.current, "source current unit")
+        voltage = canonical_identifier(self.voltage, "source voltage unit")
+        temperature = canonical_identifier(self.temperature, "source temperature unit")
         sign = _source_sign(self.current_sign)
         object.__setattr__(self, "time", time)
         object.__setattr__(self, "current", current)
@@ -268,7 +261,7 @@ class BatteryTimeSeriesRecord(StrictModule, NonTrainableState):
         preprocessing_id: str,
     ) -> None:
         identifiers = tuple(
-            _identifier(value, name)
+            canonical_identifier(value, name)
             for value, name in (
                 (record_id, "record_id"),
                 (experiment_id, "experiment_id"),
@@ -519,7 +512,7 @@ class BatteryDiagnosticRecord(StrictModule, NonTrainableState):
         valid_mask: ArrayLike,
     ) -> None:
         identifiers = tuple(
-            _identifier(value, name)
+            canonical_identifier(value, name)
             for value, name in (
                 (record_id, "record_id"),
                 (experiment_id, "experiment_id"),
@@ -543,9 +536,12 @@ class BatteryDiagnosticRecord(StrictModule, NonTrainableState):
             raise ValueError("diagnostic_role must be 'rpt' or 'eis'.")
         diagnostic = BatteryDiagnosticRole(diagnostic_role)
         channels = _identifiers(tuple(channel_names), "channel_name")
-        units = tuple(_identifier(value, "channel_unit") for value in channel_units)
+        units = tuple(
+            canonical_identifier(value, "channel_unit") for value in channel_units
+        )
         source_units = tuple(
-            _identifier(value, "source_channel_unit") for value in source_channel_units
+            canonical_identifier(value, "source_channel_unit")
+            for value in source_channel_units
         )
         if len(channels) != len(units) or len(channels) != len(source_units):
             raise ValueError(

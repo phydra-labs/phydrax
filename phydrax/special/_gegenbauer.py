@@ -6,20 +6,11 @@
 
 from __future__ import annotations
 
-from numbers import Integral
-
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
-
-def _nonnegative_degree(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    degree = int(value)
-    if degree < 0:
-        raise ValueError(f"{name} must be nonnegative.")
-    return degree
+from .._validation import nonnegative_integer
 
 
 def _promote_arguments(alpha: ArrayLike, x: ArrayLike, /) -> tuple[Array, Array]:
@@ -101,14 +92,14 @@ def gegenbauer_c(n: int, alpha: ArrayLike, x: ArrayLike, /) -> Array:
     ``alpha == 0`` the standard generating-function convention is retained:
     ``C_0^0 = 1`` and ``C_n^0 = 0`` for every positive ``n``.
     """
-    degree = _nonnegative_degree(n, "n")
+    degree = nonnegative_integer(n, "n")
     alpha_array, x_array = _promote_arguments(alpha, x)
     return _mask_domain(_gegenbauer_value(degree, alpha_array, x_array), alpha_array)
 
 
 def gegenbauer_vander(alpha: ArrayLike, x: ArrayLike, degree: int, /) -> Array:
     """Evaluate all standard Gegenbauer modes through ``degree`` modes-last."""
-    degree_ = _nonnegative_degree(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     alpha_array, x_array = _promote_arguments(alpha, x)
 
     values = [jnp.ones_like(x_array)]
@@ -134,7 +125,7 @@ def gegenbauer_alpha_derivative(n: int, alpha: ArrayLike, x: ArrayLike, /) -> Ar
     recurrence. In particular, the derivative at the exact standard-family
     collapse ``alpha == 0`` remains nonzero for positive degree.
     """
-    degree = _nonnegative_degree(n, "n")
+    degree = nonnegative_integer(n, "n")
     alpha_array, x_array = _promote_arguments(alpha, x)
     _, derivative = _gegenbauer_value_and_alpha_derivative(degree, alpha_array, x_array)
     return _mask_domain(derivative, alpha_array)

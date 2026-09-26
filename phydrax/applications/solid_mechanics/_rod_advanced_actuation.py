@@ -18,6 +18,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...linalg import ArraySpace, FunctionLinearOperator
 from ._rod_dynamics import RodState
 from ._rod_materials import (
@@ -73,13 +74,6 @@ def _identifier(value: str, owner: str, /) -> str:
     if not identifier:
         raise ValueError(f"{owner} must be nonempty.")
     return identifier
-
-
-def _positive_finite(value: float, owner: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{owner} must be finite and positive.")
-    return result
 
 
 def _finite_pair(value: tuple[float, float], owner: str, /) -> tuple[float, float]:
@@ -284,14 +278,14 @@ class ReducedTubeChamberPlan(StrictModule, NonTrainableState):
             raise ValueError("Every chamber span must have one positive area.")
         if any(station.offset_material.dtype != areas.dtype for station in stations):
             raise TypeError("Chamber stations and areas must share a dtype.")
-        dead = _positive_finite(dead_volume, "dead_volume")
+        dead = positive_finite_float(dead_volume, "dead_volume")
         minimum, maximum = _finite_pair(volume_bounds, "volume_bounds")
         ambient = float(ambient_pressure)
         if minimum <= 0.0 or not isfinite(ambient) or ambient < 0.0:
             raise ValueError(
                 "Volume bounds must be positive and ambient pressure nonnegative."
             )
-        minimum_span = _positive_finite(minimum_span_length, "minimum_span_length")
+        minimum_span = positive_finite_float(minimum_span_length, "minimum_span_length")
         manifest = _identifier(source_manifest_id, "source_manifest_id")
         calibration = _identifier(calibration_id, "calibration_id")
         self.stations = stations
@@ -642,9 +636,9 @@ class RegulatedReducedTubePressurePlan(StrictModule, NonTrainableState):
         minimum, maximum = _finite_pair(pressure_bounds, "pressure_bounds")
         if minimum < 0.0:
             raise ValueError("Regulated tube pressure does not support vacuum.")
-        rise = _positive_finite(maximum_rise_rate, "maximum_rise_rate")
-        fall = _positive_finite(maximum_fall_rate, "maximum_fall_rate")
-        tolerance = _positive_finite(power_tolerance, "power_tolerance")
+        rise = positive_finite_float(maximum_rise_rate, "maximum_rise_rate")
+        fall = positive_finite_float(maximum_fall_rate, "maximum_fall_rate")
+        tolerance = positive_finite_float(power_tolerance, "power_tolerance")
         self.chamber = chamber
         self.minimum_pressure = minimum
         self.maximum_pressure = maximum
@@ -931,16 +925,16 @@ class SealedReducedTubePressurePlan(StrictModule, NonTrainableState):
             leakage=leakage,
             thermal_networks=thermal_networks,
         )
-        pressure = _positive_finite(
+        pressure = positive_finite_float(
             reference_absolute_pressure, "reference_absolute_pressure"
         )
-        volume = _positive_finite(reference_volume, "reference_volume")
+        volume = positive_finite_float(reference_volume, "reference_volume")
         exponent_ = float(exponent)
         if pressure <= chamber.ambient_pressure:
             raise ValueError("Reference gas pressure must exceed ambient pressure.")
         if not isfinite(exponent_) or exponent_ < 0.0:
             raise ValueError("exponent must be finite and nonnegative.")
-        tolerance = _positive_finite(power_tolerance, "power_tolerance")
+        tolerance = positive_finite_float(power_tolerance, "power_tolerance")
         self.chamber = chamber
         self.reference_absolute_pressure = pressure
         self.reference_volume = volume
@@ -1542,8 +1536,8 @@ class VariableStiffnessActuationPlan(StrictModule, NonTrainableState):
         _validate_psd("minimum_stiffness", minimum)
         _validate_psd("maximum_stiffness", maximum)
         _validate_psd("maximum_stiffness - minimum_stiffness", maximum - minimum)
-        rise = _positive_finite(maximum_rise_rate, "maximum_rise_rate")
-        fall = _positive_finite(maximum_fall_rate, "maximum_fall_rate")
+        rise = positive_finite_float(maximum_rise_rate, "maximum_rise_rate")
+        fall = positive_finite_float(maximum_fall_rate, "maximum_fall_rate")
         manifest = _identifier(source_manifest_id, "source_manifest_id")
         calibration = _identifier(calibration_id, "calibration_id")
         self.minimum_stiffness = jnp.asarray(minimum)
@@ -1936,7 +1930,7 @@ class AffineMagneticActuationPlan(StrictModule, NonTrainableState):
             raise ValueError("Current bounds and slew limits are invalid.")
         manifest = _identifier(source_manifest_id, "source_manifest_id")
         calibration = _identifier(calibration_id, "calibration_id")
-        power_tolerance_ = _positive_finite(power_tolerance, "power_tolerance")
+        power_tolerance_ = positive_finite_float(power_tolerance, "power_tolerance")
         self.uniform_field_per_current = jnp.asarray(uniform)
         self.field_gradient_per_current = jnp.asarray(gradient)
         self.field_origin = jnp.asarray(origin)

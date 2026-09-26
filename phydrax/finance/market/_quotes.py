@@ -17,6 +17,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import normalized_identifier
 from ..core import Currency, FinancialTimestamp, FXPair
 from ._lineage import DataLineage
 from ._status import MarketStatus
@@ -28,15 +29,6 @@ class QuoteTiePolicy(str, Enum):
     REJECT = "reject"
     EARLIEST_VINTAGE = "earliest_vintage"
     LATEST_VINTAGE = "latest_vintage"
-
-
-def _nonempty(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    result = value.strip()
-    if not result:
-        raise ValueError(f"{name} must be non-empty.")
-    return result
 
 
 def _optional_text(value: str, name: str, /) -> str:
@@ -79,8 +71,8 @@ class QuoteKey(StrictModule, NonTrainableState):
         currency: Currency | None = None,
         fx_pair: FXPair | None = None,
     ) -> None:
-        reference = _nonempty(reference_id, "reference_id")
-        field_ = _nonempty(field, "field").lower()
+        reference = normalized_identifier(reference_id, "reference_id")
+        field_ = normalized_identifier(field, "field").lower()
         venue_ = _optional_text(venue, "venue")
         if currency is not None and not isinstance(currency, Currency):
             raise TypeError("currency must be a Currency or None.")

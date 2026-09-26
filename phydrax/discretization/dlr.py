@@ -27,6 +27,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._validation import positive_finite_float
 from ..integration import GaussLegendreRule
 from ..linalg import (
     DenseLinearOperator,
@@ -212,13 +213,6 @@ class DLRTransformResult(StrictModule):
     evidence: DLRTransformEvidence
 
 
-def _positive_finite(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def thermal_tau_kernel(
     tau: ArrayLike,
     frequencies: ArrayLike,
@@ -235,7 +229,7 @@ def thermal_tau_kernel(
     at zero frequency.
     """
 
-    beta_ = _positive_finite(beta, "beta")
+    beta_ = positive_finite_float(beta, "beta")
     statistics_ = parse(statistics, ThermalStatistics, "statistics")
     tau_ = jnp.asarray(tau)
     omega = jnp.asarray(frequencies)
@@ -270,7 +264,7 @@ def matsubara_frequencies(
 ) -> Array:
     """Map integer labels to physical Matsubara angular frequencies."""
 
-    beta_ = _positive_finite(beta, "beta")
+    beta_ = positive_finite_float(beta, "beta")
     statistics_ = parse(statistics, ThermalStatistics, "statistics")
     labels = jnp.asarray(indices)
     shift = 1 if statistics_ == "fermionic" else 0
@@ -319,8 +313,8 @@ def plan_dlr_basis(
 ) -> DLRBasisPlan:
     """Plan bounded generation without allocating a candidate kernel."""
 
-    beta_ = _positive_finite(beta, "beta")
-    cutoff_ = _positive_finite(cutoff, "cutoff")
+    beta_ = positive_finite_float(beta, "beta")
+    cutoff_ = positive_finite_float(cutoff, "cutoff")
     statistics_ = parse(statistics, ThermalStatistics, "statistics")
     if policy is not None and any(
         value is not None

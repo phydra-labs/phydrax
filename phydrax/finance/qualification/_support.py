@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Final
 
+from ..._validation import canonical_identifier
 from ...qualification._registry import SupportTuple
 
 
@@ -15,14 +16,6 @@ _VALUATION_ROUTES: Final = frozenset(
 _ADVANCED_ROUTES: Final = frozenset(
     {"martingale-transport", "rough", "deep", "operator", "tensor"}
 )
-
-
-def _text(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
 
 
 def _common(
@@ -35,9 +28,9 @@ def _common(
     precision: str,
 ) -> SupportTuple:
     values: dict[str, str | int | bool] = {
-        "route": _text(route, "route"),
-        "backend": _text(backend, "backend"),
-        "precision": _text(precision, "precision"),
+        "route": canonical_identifier(route, "route"),
+        "backend": canonical_identifier(backend, "backend"),
+        "precision": canonical_identifier(precision, "precision"),
     }
     values.update(coordinates)
     return SupportTuple(capability, values)
@@ -57,9 +50,11 @@ def market_resolution_support(
         "finance.market-resolution",
         route,
         {
-            "calendar": _text(calendar, "calendar"),
-            "temporal_policy": _text(temporal_policy, "temporal_policy"),
-            "missing_data_policy": _text(missing_data_policy, "missing_data_policy"),
+            "calendar": canonical_identifier(calendar, "calendar"),
+            "temporal_policy": canonical_identifier(temporal_policy, "temporal_policy"),
+            "missing_data_policy": canonical_identifier(
+                missing_data_policy, "missing_data_policy"
+            ),
         },
         backend=backend,
         precision=precision,
@@ -83,9 +78,9 @@ def curve_support(
         "finance.curve-calibration",
         route,
         {
-            "curve_kind": _text(curve_kind, "curve_kind"),
-            "interpolation": _text(interpolation, "interpolation"),
-            "extrapolation": _text(extrapolation, "extrapolation"),
+            "curve_kind": canonical_identifier(curve_kind, "curve_kind"),
+            "interpolation": canonical_identifier(interpolation, "interpolation"),
+            "extrapolation": canonical_identifier(extrapolation, "extrapolation"),
             "differentiable": differentiable,
         },
         backend=backend,
@@ -104,7 +99,7 @@ def valuation_support(
     precision: str = "float64",
 ) -> SupportTuple:
     """Describe a supported Q-law valuation route without implying P dynamics."""
-    route_ = _text(route, "route")
+    route_ = canonical_identifier(route, "route")
     if route_ not in _VALUATION_ROUTES:
         raise ValueError(
             "valuation route must be analytic, fourier, pde, simulation, exercise, or bsde."
@@ -113,10 +108,10 @@ def valuation_support(
         "finance.valuation",
         route_,
         {
-            "product": _text(product, "product"),
-            "model": _text(model, "model"),
-            "pricing_law": _text(pricing_law, "pricing_law"),
-            "exercise": _text(exercise, "exercise"),
+            "product": canonical_identifier(product, "product"),
+            "model": canonical_identifier(model, "model"),
+            "pricing_law": canonical_identifier(pricing_law, "pricing_law"),
+            "exercise": canonical_identifier(exercise, "exercise"),
         },
         backend=backend,
         precision=precision,
@@ -137,9 +132,9 @@ def econometrics_support(
         "finance.econometrics",
         route,
         {
-            "estimator": _text(estimator, "estimator"),
-            "target": _text(target, "target"),
-            "physical_law": _text(physical_law, "physical_law"),
+            "estimator": canonical_identifier(estimator, "estimator"),
+            "target": canonical_identifier(target, "target"),
+            "physical_law": canonical_identifier(physical_law, "physical_law"),
         },
         backend=backend,
         precision=precision,
@@ -160,9 +155,9 @@ def portfolio_support(
         "finance.portfolio",
         route,
         {
-            "objective": _text(objective, "objective"),
-            "constraints": _text(constraints, "constraints"),
-            "scenario_law": _text(scenario_law, "scenario_law"),
+            "objective": canonical_identifier(objective, "objective"),
+            "constraints": canonical_identifier(constraints, "constraints"),
+            "scenario_law": canonical_identifier(scenario_law, "scenario_law"),
         },
         backend=backend,
         precision=precision,
@@ -186,9 +181,9 @@ def exposure_xva_support(
         "finance.exposure-xva",
         route,
         {
-            "netting": _text(netting, "netting"),
-            "collateral": _text(collateral, "collateral"),
-            "default_model": _text(default_model, "default_model"),
+            "netting": canonical_identifier(netting, "netting"),
+            "collateral": canonical_identifier(collateral, "collateral"),
+            "default_model": canonical_identifier(default_model, "default_model"),
             "wrong_way_risk": wrong_way_risk,
         },
         backend=backend,
@@ -211,10 +206,10 @@ def execution_support(
         "finance.execution",
         route,
         {
-            "fill_model": _text(fill_model, "fill_model"),
-            "impact_model": _text(impact_model, "impact_model"),
-            "control": _text(control, "control"),
-            "topology": _text(topology, "topology"),
+            "fill_model": canonical_identifier(fill_model, "fill_model"),
+            "impact_model": canonical_identifier(impact_model, "impact_model"),
+            "control": canonical_identifier(control, "control"),
+            "topology": canonical_identifier(topology, "topology"),
         },
         backend=backend,
         precision=precision,
@@ -231,20 +226,20 @@ def advanced_finance_support(
     precision: str = "float64",
 ) -> SupportTuple:
     """Describe an explicitly candidate-only advanced finance route."""
-    route_ = _text(route, "route")
+    route_ = canonical_identifier(route, "route")
     if route_ not in _ADVANCED_ROUTES:
         raise ValueError(
             "advanced route must be martingale-transport, rough, deep, operator, or tensor."
         )
-    ceiling = _text(candidate_ceiling, "candidate_ceiling")
+    ceiling = canonical_identifier(candidate_ceiling, "candidate_ceiling")
     if ceiling != "candidate":
         raise ValueError("Advanced finance support cannot exceed the candidate ceiling.")
     return _common(
         "finance.advanced",
         route_,
         {
-            "representation": _text(representation, "representation"),
-            "law": _text(law, "law"),
+            "representation": canonical_identifier(representation, "representation"),
+            "law": canonical_identifier(law, "law"),
             "maturity": ceiling,
             "live_trading": False,
         },

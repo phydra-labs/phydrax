@@ -28,6 +28,7 @@ from phydrax.ein import contract
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ...._validation import positive_finite_float
 from ....imaging import ImageIndexAffine, MedicalImageAsset
 from ....observation import CoordinateLayout, LinearObservationPlan
 from ....typing import PRNGKey
@@ -38,13 +39,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not identifier:
         raise ValueError(f"{name} must be non-empty.")
     return identifier
-
-
-def _finite_positive(value: float, name: str, /) -> float:
-    scalar = float(value)
-    if not math.isfinite(scalar) or scalar <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return scalar
 
 
 def _finite_nonnegative(value: float, name: str, /) -> float:
@@ -391,18 +385,20 @@ class LGEObservationPlan(StrictModule, NonTrainableState):
         tolerance = 128.0 * np.finfo(motion.dtype).eps
         if not motion_nonnegative or row_error > tolerance:
             raise ValueError("motion_matrix must be non-negative and row-stochastic.")
-        inversion_time = _finite_positive(inversion_time_ms, "inversion_time_ms")
-        repetition_time = _finite_positive(repetition_time_ms, "repetition_time_ms")
+        inversion_time = positive_finite_float(inversion_time_ms, "inversion_time_ms")
+        repetition_time = positive_finite_float(repetition_time_ms, "repetition_time_ms")
         if repetition_time <= inversion_time:
             raise ValueError("repetition_time_ms must exceed inversion_time_ms.")
-        flip_angle = _finite_positive(flip_angle_rad, "flip_angle_rad")
+        flip_angle = positive_finite_float(flip_angle_rad, "flip_angle_rad")
         if flip_angle >= math.pi:
             raise ValueError("flip_angle_rad must be less than pi.")
-        efficiency = _finite_positive(inversion_efficiency, "inversion_efficiency")
+        efficiency = positive_finite_float(inversion_efficiency, "inversion_efficiency")
         if efficiency > 1.0:
             raise ValueError("inversion_efficiency must not exceed one.")
-        relaxivity = _finite_positive(relaxivity_l_per_mmol_s, "relaxivity_l_per_mmol_s")
-        gain = _finite_positive(receiver_gain, "receiver_gain")
+        relaxivity = positive_finite_float(
+            relaxivity_l_per_mmol_s, "relaxivity_l_per_mmol_s"
+        )
+        gain = positive_finite_float(receiver_gain, "receiver_gain")
         noise = _finite_nonnegative(noise_standard_deviation, "noise_standard_deviation")
         identifier = _identifier(acquisition_id, "acquisition_id")
         labels = tuple(

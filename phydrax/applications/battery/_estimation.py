@@ -29,6 +29,7 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
 from ...operators.interpolation import InterpolationResult
 from ...stochastic import (
     GaussianStatePrior,
@@ -107,14 +108,6 @@ def _covariance_matrix(
     return 0.5 * (array + array.T)
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 class GloballyAffineSOCPropertyLaw(StrictModule):
     """An explicit real-line affine law for an exact Gaussian ECM observation.
 
@@ -151,9 +144,9 @@ class GloballyAffineSOCPropertyLaw(StrictModule):
         slope_array = slope_array.astype(dtype)
         _host_finite(intercept_array, "intercept")
         _host_finite(slope_array, "slope")
-        quantity_id = _identifier(quantity, "Property quantity")
-        unit_id = _identifier(value_unit, "Property value unit")
-        source = _identifier(source_id, "Property source ID")
+        quantity_id = canonical_identifier(quantity, "Property quantity")
+        unit_id = canonical_identifier(value_unit, "Property value unit")
+        source = canonical_identifier(source_id, "Property source ID")
         self.intercept = intercept_array
         self.slope = slope_array
         self.quantity = quantity_id

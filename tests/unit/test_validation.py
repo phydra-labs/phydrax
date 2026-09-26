@@ -1,8 +1,12 @@
+import numpy as np
 import pytest
 
 from phydrax._validation import (
     canonical_identifier,
+    nonnegative_integer,
     optional_identifier,
+    positive_finite_float,
+    positive_integer,
     unique_identifiers,
 )
 
@@ -37,3 +41,24 @@ def test_unique_identifiers_classify_element_kind_and_value_failures():
         unique_identifiers(("a", "a"), "labels")
     with pytest.raises(ValueError):
         unique_identifiers(("a", " b"), "labels")
+
+
+def test_positive_finite_float_converts_and_requires_a_finite_positive_value():
+    assert positive_finite_float(2, "scale") == 2.0
+    assert positive_finite_float(np.float32(0.5), "scale") == 0.5
+    for invalid in (0.0, -1.0, float("inf"), float("nan")):
+        with pytest.raises(ValueError):
+            positive_finite_float(invalid, "scale")
+
+
+@pytest.mark.parametrize(
+    ("validate", "smallest"), [(positive_integer, 1), (nonnegative_integer, 0)]
+)
+def test_integer_validators_refuse_booleans_and_non_integral_values(validate, smallest):
+    assert validate(np.int64(smallest), "count") == smallest
+    assert type(validate(np.int64(smallest), "count")) is int
+    for wrong_kind in (True, 1.0, "1"):
+        with pytest.raises(TypeError):
+            validate(wrong_kind, "count")
+    with pytest.raises(ValueError):
+        validate(smallest - 1, "count")

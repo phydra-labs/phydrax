@@ -27,6 +27,7 @@ from phydrax import ein
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ...._validation import canonical_identifier, positive_finite_float
 from ....qualification import ReferenceArtifactManifest, ScientificCampaign
 from ....uq import (
     AbstractPosteriorTerm,
@@ -48,20 +49,12 @@ _AVOGADRO_CONSTANT_PER_MOL = 6.02214076e23
 _RIGHTS_KEYS = frozenset(("commercial_use", "redistribution", "training_use", "export"))
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 def _identifiers(
     values: Sequence[str], name: str, /, *, allow_empty: bool = False
 ) -> tuple[str, ...]:
     if isinstance(values, str) or not isinstance(values, Sequence):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    result = tuple(_identifier(value, name) for value in values)
+    result = tuple(canonical_identifier(value, name) for value in values)
     if not allow_empty and not result:
         raise ValueError(f"{name} must not be empty.")
     if len(set(result)) != len(result):
@@ -72,16 +65,9 @@ def _identifiers(
 def _ordered_identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     if isinstance(values, str) or not isinstance(values, Sequence):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    result = tuple(_identifier(value, name) for value in values)
+    result = tuple(canonical_identifier(value, name) for value in values)
     if not result or len(set(result)) != len(result):
         raise ValueError(f"{name} must be non-empty and unique.")
-    return result
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
     return result
 
 
@@ -267,7 +253,7 @@ class ReporterCalibration(StrictModule, NonTrainableState):
         self.background = background_
         self.delay_parameters = delay
         self.covariance = covariance_
-        self.reporter_id = _identifier(reporter_id, "reporter_id")
+        self.reporter_id = canonical_identifier(reporter_id, "reporter_id")
         self.calibration_case_ids = cases
         self.campaign_id = campaign.campaign_id
         self.source_manifests = tuple(
@@ -320,7 +306,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
             raise ValueError(
                 "Reporter calibration and observation model must share one campaign."
             )
-        sigma = _positive(
+        sigma = positive_finite_float(
             noise_standard_deviation_intensity,
             "noise_standard_deviation_intensity",
         )
@@ -334,7 +320,9 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         self.noise_standard_deviation_intensity = jnp.asarray(sigma)
         self.campaign_id = campaign.campaign_id
         self.noise_basis_case_ids = cases
-        self.intensity_unit_id = _identifier(intensity_unit_id, "intensity_unit_id")
+        self.intensity_unit_id = canonical_identifier(
+            intensity_unit_id, "intensity_unit_id"
+        )
         self.uncertainty_limitations = (
             ("reporter-calibration-parameter-uncertainty-unquantified",)
             if calibration.covariance is None
@@ -542,12 +530,14 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         basis_id = (
             None
             if model_uncertainty_basis_id is None
-            else _identifier(model_uncertainty_basis_id, "model_uncertainty_basis_id")
+            else canonical_identifier(
+                model_uncertainty_basis_id, "model_uncertainty_basis_id"
+            )
         )
         return FluorescencePrediction(
             case_id=trace.case_id,
             trace_id=trace.trace_id,
-            forward_model_id=_identifier(forward_model_id, "forward_model_id"),
+            forward_model_id=canonical_identifier(forward_model_id, "forward_model_id"),
             time_seconds=trace.time_seconds,
             mean_intensity=mean,
             standard_deviation_intensity=standard_deviation,
@@ -650,7 +640,7 @@ class EffectiveDisplacementRateModel(StrictModule, NonTrainableState):
             raise ValueError("Fit did not select an effective mass-action model.")
         if prepared.parameter_plan.parameter_names != (_PARAMETER_NAME,):
             raise ValueError("Effective fit has incompatible parameter semantics.")
-        rate = _positive(float(fit.parameter_values[0]), _PARAMETER_NAME)
+        rate = positive_finite_float(float(fit.parameter_values[0]), _PARAMETER_NAME)
         self.fit = fit
         self.rate_constant_per_molar_second = jnp.asarray(rate)
         self.reactant_construct_ids = prepared.reactant_construct_ids
@@ -751,7 +741,7 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
             raise ValueError("Fit did not select an exhaustive mechanistic model.")
         if template.parameter_plan.parameter_names != ("rate_scale",):
             raise ValueError("Mechanistic fit has incompatible parameter semantics.")
-        scale = _positive(float(fit.parameter_values[0]), "rate_scale")
+        scale = positive_finite_float(float(fit.parameter_values[0]), "rate_scale")
         self.fit = fit
         self.prepared = template.prepared
         self.base_generator = template.base_generator
@@ -918,7 +908,7 @@ class SecondaryKineticParameterPlan:
         priors = _ordered_identifiers(prior_ids, "prior_ids")
         if len(names) != len(priors):
             raise ValueError("Every kinetic parameter requires one declared prior ID.")
-        temperature = _positive(temperature_kelvin, "temperature_kelvin")
+        temperature = positive_finite_float(temperature_kelvin, "temperature_kelvin")
         manifest_values = tuple(source_manifests)
         if not manifest_values or any(
             not isinstance(value, ReferenceArtifactManifest) for value in manifest_values
@@ -938,8 +928,8 @@ class SecondaryKineticParameterPlan:
         if len(manifest_by_id) != len(manifest_values):
             raise ValueError("Kinetic parameter manifests must be unique.")
         manifests = tuple(sorted(manifest_by_id))
-        chemistry_ = _identifier(chemistry, "chemistry")
-        condition = _identifier(condition_domain_id, "condition_domain_id")
+        chemistry_ = canonical_identifier(chemistry, "chemistry")
+        condition = canonical_identifier(condition_domain_id, "condition_domain_id")
         object.__setattr__(self, "parameter_names", names)
         object.__setattr__(self, "chemistry", chemistry_)
         object.__setattr__(self, "temperature_kelvin", temperature)
@@ -1401,8 +1391,8 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mechanistic inference requires two prepared reactants and concentrations."
             )
-        chemistry = _identifier(chemistry_direction, "chemistry_direction")
-        condition = _identifier(condition_id, "condition_id")
+        chemistry = canonical_identifier(chemistry_direction, "chemistry_direction")
+        condition = canonical_identifier(condition_id, "condition_id")
         if (
             parameter_plan.chemistry != chemistry
             or parameter_plan.condition_domain_id != condition

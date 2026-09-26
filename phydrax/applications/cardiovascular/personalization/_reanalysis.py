@@ -15,6 +15,7 @@ from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._frozendict import frozendict
+from ...._validation import positive_finite_float
 from ....operators.mechanics import HyperelasticResponse
 from .._case import CardiovascularCaseManifest
 from .._execution import CardiovascularExecutionManifest
@@ -29,13 +30,6 @@ def _identifier(value: str, name: str, /) -> str:
     resolved = str(value).strip()
     if not resolved:
         raise ValueError(f"{name} must be non-empty.")
-    return resolved
-
-
-def _positive(value: float, name: str, /) -> float:
-    resolved = float(value)
-    if not isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
     return resolved
 
 
@@ -56,7 +50,7 @@ class ElectrophysiologyReanalysisRoute:
             self,
             "electrophysiology",
             ("solver_id", "discretization_id", "cellular_model_id"),
-            {"time_step_ms": _positive(self.time_step_ms, "time_step_ms")},
+            {"time_step_ms": positive_finite_float(self.time_step_ms, "time_step_ms")},
         )
 
 
@@ -96,7 +90,7 @@ class CirculationReanalysisRoute:
             self,
             "circulation",
             ("solver_id", "network_id"),
-            {"time_step_ms": _positive(self.time_step_ms, "time_step_ms")},
+            {"time_step_ms": positive_finite_float(self.time_step_ms, "time_step_ms")},
         )
 
 
@@ -140,10 +134,10 @@ def _finish_route(
         value = _identifier(object.__getattribute__(route, name), name)
         object.__setattr__(route, name, value)
         identities[name] = value
-    residual = _positive(
+    residual = positive_finite_float(
         object.__getattribute__(route, "residual_tolerance"), "residual_tolerance"
     )
-    constraint = _positive(
+    constraint = positive_finite_float(
         object.__getattribute__(route, "constraint_tolerance"), "constraint_tolerance"
     )
     object.__setattr__(route, "residual_tolerance", residual)

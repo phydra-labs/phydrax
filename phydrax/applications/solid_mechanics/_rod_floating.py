@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from math import isfinite
 from typing import Any, Literal, TypeAlias, TypeVar
 
 import equinox as eqx
@@ -20,6 +19,7 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...dynamics import (
     AbstractDiscretePlant,
     ArrayPyTreeSchema,
@@ -71,13 +71,6 @@ from ._rod_reduction import (
 
 FloatingRodTwistConvention: TypeAlias = Literal["body", "spatial"]
 _Tree = TypeVar("_Tree")
-
-
-def _positive_finite(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _quaternion_conjugate(quaternion: Array, /) -> Array:
@@ -150,7 +143,7 @@ class FloatingReducedRodPlan(StrictModule, NonTrainableState):
         if reduction.dimension != 3:
             raise ValueError("Floating reduced rods require a spatial 3-D reduction.")
         convention = parse(convention, FloatingRodTwistConvention, "convention")
-        tolerance = _positive_finite(pose_tolerance, "pose_tolerance")
+        tolerance = positive_finite_float(pose_tolerance, "pose_tolerance")
         if tolerance >= np.pi:
             raise ValueError("pose_tolerance must be smaller than pi.")
         self.reduction = reduction

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, TypeAlias
 
@@ -17,6 +16,7 @@ from jax.typing import ArrayLike
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...discretization import FreeSurfaceGeometryState, JAXPLICStageReconstruction
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ...typing import parse, PRNGKey
@@ -188,8 +188,8 @@ def reference_map_evidence(
 ) -> ReferenceMapEvidence:
     """Return orientation and local-invertibility evidence for a reference map."""
 
-    determinant_floor_ = _positive_float(determinant_floor, "determinant_floor")
-    singular_floor = _positive_float(singular_value_floor, "singular_value_floor")
+    determinant_floor_ = positive_finite_float(determinant_floor, "determinant_floor")
+    singular_floor = positive_finite_float(singular_value_floor, "singular_value_floor")
     jacobian = reference_map_jacobian(map_values, reference)
     determinant = jnp.linalg.det(jacobian)
     singular_values = jnp.linalg.svd(jacobian, compute_uv=False)
@@ -242,8 +242,8 @@ def reference_map_constraint_loss(
 ) -> ReferenceMapConstraintLoss:
     """Penalize map folding and the discrete geometric conservation law."""
 
-    dt = _positive_float(step_size, "step_size")
-    floor = _positive_float(determinant_floor, "determinant_floor")
+    dt = positive_finite_float(step_size, "step_size")
+    floor = positive_finite_float(determinant_floor, "determinant_floor")
     current_jacobian = reference_map_jacobian(current_map, reference)
     next_jacobian = reference_map_jacobian(next_map, reference)
     current_det = jnp.linalg.det(current_jacobian)
@@ -471,13 +471,6 @@ def _point_values(value: ArrayLike, count: int, name: str, /) -> Array:
     if values.ndim < 1 or values.shape[0] != count:
         raise ValueError(f"Operator source {name!r} must start with the point count.")
     return values
-
-
-def _positive_float(value: float, name: str, /) -> float:
-    scalar = float(value)
-    if not math.isfinite(scalar) or scalar <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return scalar
 
 
 __all__ = [

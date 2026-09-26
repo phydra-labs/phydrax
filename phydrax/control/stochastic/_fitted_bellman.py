@@ -19,6 +19,7 @@ from jax.typing import ArrayLike
 
 from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...dynamics import DiscreteStepContext
 from ...linalg import (
     DenseLinearOperator,
@@ -79,13 +80,6 @@ def _nonnegative(value: float, owner: str, /) -> float:
     resolved = float(value)
     if not isfinite(resolved) or resolved < 0.0:
         raise ValueError(f"{owner} must be finite and nonnegative.")
-    return resolved
-
-
-def _positive(value: float, owner: str, /) -> float:
-    resolved = float(value)
-    if not isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{owner} must be finite and positive.")
     return resolved
 
 
@@ -248,7 +242,7 @@ class FittedBellmanPlan(StrictModule):
         self.rank_absolute_tolerance = _nonnegative(
             rank_absolute_tolerance, "rank_absolute_tolerance"
         )
-        self.solve_tolerance = _positive(solve_tolerance, "solve_tolerance")
+        self.solve_tolerance = positive_finite_float(solve_tolerance, "solve_tolerance")
         self.maximum_condition = condition
         self.minimum_training_paths = minimum
         self.plan_id = _identifier(plan_id, "plan_id")

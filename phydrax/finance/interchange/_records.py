@@ -14,20 +14,13 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint, canonical_json
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-
-
-def _text(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
+from ..._validation import canonical_identifier
 
 
 def _names(values: Sequence[str], name: str, /) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of strings.")
-    result = tuple(_text(value, name) for value in values)
+    result = tuple(canonical_identifier(value, name) for value in values)
     if not result:
         raise ValueError(f"{name} must not be empty.")
     if len(set(result)) != len(result):
@@ -63,7 +56,7 @@ class FinanceRecordBatch(StrictModule, NonTrainableState):
         context: Mapping[str, Any] | None = None,
         columns: Sequence[str] | None = None,
     ) -> None:
-        kind = _text(record_kind, "record_kind")
+        kind = canonical_identifier(record_kind, "record_kind")
         if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
             raise TypeError("records must be a sequence of mappings.")
         values = tuple(records)
@@ -71,7 +64,9 @@ class FinanceRecordBatch(StrictModule, NonTrainableState):
             raise TypeError("records must contain only mappings.")
         if values:
             inferred = tuple(
-                sorted(_text(str(name), "column name") for name in values[0])
+                sorted(
+                    canonical_identifier(str(name), "column name") for name in values[0]
+                )
             )
             if not inferred or any(set(record) != set(inferred) for record in values):
                 raise ValueError(

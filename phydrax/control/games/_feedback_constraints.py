@@ -27,6 +27,7 @@ import phydrax.ein as ein
 from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -324,7 +325,7 @@ class FeedbackQuasiNashPlan(StrictModule):
         rank_absolute_tolerance: float = 0.0,
         maximum_condition: float | None = None,
     ) -> None:
-        residual = _positive(residual_tolerance, "residual_tolerance")
+        residual = positive_finite_float(residual_tolerance, "residual_tolerance")
         feasibility = _nonnegative(feasibility_tolerance, "feasibility_tolerance")
         strict = _nonnegative(
             strict_complementarity_tolerance,
@@ -481,13 +482,6 @@ def _optional_array(
     if tuple(array.shape) != shape:
         raise ValueError(f"{name} must have shape {shape}; got {array.shape}.")
     return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not math.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _nonnegative(value: float, name: str, /) -> float:

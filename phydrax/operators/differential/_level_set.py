@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
@@ -16,6 +15,7 @@ from phydrax.domain import DomainFunction, UnaryFieldEvaluator
 from phydrax.geometry import regularized_delta_values, regularized_heaviside_values
 
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ._domain_ops import div, dt, grad
 
 
@@ -76,13 +76,6 @@ def _real_values(value: ArrayLike, name: str, /) -> Array:
     return values
 
 
-def _positive_finite(value: float, name: str, /) -> float:
-    resolved = float(value)
-    if not math.isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return resolved
-
-
 def _field(value: DomainFunction, name: str, /) -> DomainFunction:
     if not isinstance(value, DomainFunction):
         raise TypeError(f"{name} must be a DomainFunction.")
@@ -103,7 +96,7 @@ def regularized_heaviside(
     """
 
     field = _field(level_set, "level_set")
-    width_ = _positive_finite(width, "width")
+    width_ = positive_finite_float(width, "width")
     return DomainFunction(
         domain=field.domain,
         deps=field.deps,
@@ -125,7 +118,7 @@ def regularized_delta(
     """
 
     field = _field(level_set, "level_set")
-    width_ = _positive_finite(width, "width")
+    width_ = positive_finite_float(width, "width")
     return DomainFunction(
         domain=field.domain,
         deps=field.deps,
@@ -185,7 +178,7 @@ def level_set_normal(
     """
 
     field = _field(level_set, "level_set")
-    floor = _positive_finite(gradient_floor, "gradient_floor")
+    floor = positive_finite_float(gradient_floor, "gradient_floor")
     gradient = grad(field, var=var, mode=mode)
     return DomainFunction(
         domain=gradient.domain,
@@ -230,7 +223,7 @@ def level_set_normal_velocity(
     r"""Return the normal interface velocity ``-partial_t(phi) / |grad(phi)|``."""
 
     field = _field(level_set, "level_set")
-    floor = _positive_finite(gradient_floor, "gradient_floor")
+    floor = positive_finite_float(gradient_floor, "gradient_floor")
     magnitude = level_set_gradient_norm(field, var=spatial_var, mode=mode)
     safe_magnitude = DomainFunction(
         domain=magnitude.domain,

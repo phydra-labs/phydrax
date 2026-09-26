@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from typing import Literal, TypeAlias
 
@@ -17,6 +16,7 @@ from ..._differentiation import DerivativeRegularity
 from ..._model import AbstractArrayModel
 from ..._model._array import value_derivative_contract
 from ..._model._component import ModelExecutionContract
+from ..._validation import positive_finite_float
 from ...geometry import regularized_heaviside_values
 from ...typing import parse
 from .._base import _AbstractBaseModel
@@ -86,9 +86,9 @@ class InterfaceFeatureLift(_AbstractBaseModel):
         distance_semantics = parse(
             distance_semantics, InterfaceDistanceSemantics, "distance_semantics"
         )
-        clip = _positive_finite(distance_clip, "distance_clip")
-        width = _positive_finite(side_width, "side_width")
-        floor = _positive_finite(gradient_floor, "gradient_floor")
+        clip = positive_finite_float(distance_clip, "distance_clip")
+        width = positive_finite_float(side_width, "side_width")
+        floor = positive_finite_float(gradient_floor, "gradient_floor")
         flags = (
             bool(include_coordinates),
             bool(include_signed_distance),
@@ -190,13 +190,6 @@ class InterfaceFeatureLift(_AbstractBaseModel):
             value_derivative_contract(regularity),
             randomness=network_randomness(self),
         )
-
-
-def _positive_finite(value: float, name: str, /) -> float:
-    resolved = float(value)
-    if not math.isfinite(resolved) or resolved <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return resolved
 
 
 __all__ = ["InterfaceDistanceSemantics", "InterfaceFeatureLift"]

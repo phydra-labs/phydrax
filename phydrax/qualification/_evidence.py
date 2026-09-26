@@ -13,6 +13,7 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier
 
 
 _MAX_TIMESTAMP = 2**63 - 1
@@ -52,14 +53,6 @@ _PREDICATE_FIELDS = frozenset(
 )
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    if not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty canonical identifier.")
-    return value
-
-
 def _timestamp(value: int, name: str, /) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{name} must be an integer timestamp.")
@@ -77,7 +70,7 @@ def _identifiers(
 ) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, str):
         raise TypeError(f"{name} must be a sequence of identifiers.")
-    normalized = tuple(_identifier(value, name) for value in values)
+    normalized = tuple(canonical_identifier(value, name) for value in values)
     if not allow_empty and not normalized:
         raise ValueError(f"{name} must not be empty.")
     if len(set(normalized)) != len(normalized):
@@ -92,7 +85,7 @@ def _measurements(
         raise TypeError(f"{name} must be a non-empty measurement mapping.")
     normalized: list[tuple[str, float]] = []
     for metric, value in values.items():
-        metric_ = _identifier(metric, f"{name} metric")
+        metric_ = canonical_identifier(metric, f"{name} metric")
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise TypeError(f"{name} values must be real numbers.")
         value_ = float(value)
@@ -114,8 +107,8 @@ class SupportDependency(StrictModule, NonTrainableState):
     dependency_id: str = eqx.field(static=True)
 
     def __init__(self, profile_id: str, support_tuple_id: str, /) -> None:
-        self.profile_id = _identifier(profile_id, "dependency profile ID")
-        self.support_tuple_id = _identifier(
+        self.profile_id = canonical_identifier(profile_id, "dependency profile ID")
+        self.support_tuple_id = canonical_identifier(
             support_tuple_id, "dependency support-tuple ID"
         )
         self.dependency_id = canonical_fingerprint(self._content_record())
@@ -171,11 +164,13 @@ class ObservedResourceRecord(StrictModule, NonTrainableState):
         observed_at: int,
         raw_artifact_ids: Sequence[str],
     ) -> None:
-        self.subject_id = _identifier(subject_id, "resource subject ID")
-        self.build_id = _identifier(build_id, "resource build ID")
-        self.environment_id = _identifier(environment_id, "resource environment ID")
-        self.backend = _identifier(backend, "resource backend")
-        self.topology = _identifier(topology, "resource topology")
+        self.subject_id = canonical_identifier(subject_id, "resource subject ID")
+        self.build_id = canonical_identifier(build_id, "resource build ID")
+        self.environment_id = canonical_identifier(
+            environment_id, "resource environment ID"
+        )
+        self.backend = canonical_identifier(backend, "resource backend")
+        self.topology = canonical_identifier(topology, "resource topology")
         self.measurements = _measurements(measurements, "resource measurements")
         self.observed_at = _timestamp(observed_at, "observed_at")
         self.raw_artifact_ids = _identifiers(
@@ -275,7 +270,7 @@ class ForecastResourceRecord(StrictModule, NonTrainableState):
         bounds: list[tuple[str, tuple[float, float]]] = []
         estimates_by_name = dict(estimates_)
         for metric, values in uncertainty_bounds.items():
-            metric_ = _identifier(metric, "forecast uncertainty metric")
+            metric_ = canonical_identifier(metric, "forecast uncertainty metric")
             if not isinstance(values, Sequence) or isinstance(values, str):
                 raise TypeError("Each forecast uncertainty bound must be a pair.")
             pair = tuple(values)
@@ -302,14 +297,18 @@ class ForecastResourceRecord(StrictModule, NonTrainableState):
         expires = _timestamp(expires_at, "expires_at")
         if expires <= issued:
             raise ValueError("A resource forecast must expire after it is issued.")
-        self.subject_id = _identifier(subject_id, "forecast subject ID")
-        self.build_id = _identifier(build_id, "forecast build ID")
-        self.environment_id = _identifier(environment_id, "forecast environment ID")
-        self.backend = _identifier(backend, "forecast backend")
-        self.topology = _identifier(topology, "forecast topology")
+        self.subject_id = canonical_identifier(subject_id, "forecast subject ID")
+        self.build_id = canonical_identifier(build_id, "forecast build ID")
+        self.environment_id = canonical_identifier(
+            environment_id, "forecast environment ID"
+        )
+        self.backend = canonical_identifier(backend, "forecast backend")
+        self.topology = canonical_identifier(topology, "forecast topology")
         self.estimates = estimates_
         self.uncertainty_bounds = tuple(bounds)
-        self.forecast_model_id = _identifier(forecast_model_id, "forecast model ID")
+        self.forecast_model_id = canonical_identifier(
+            forecast_model_id, "forecast model ID"
+        )
         self.source_record_ids = _identifiers(
             source_record_ids, "forecast source-record IDs"
         )
@@ -434,13 +433,13 @@ class QualificationEvidence(StrictModule, NonTrainableState):
         observed_resource_record_ids: Sequence[str] = (),
         forecast_resource_record_ids: Sequence[str] = (),
     ) -> None:
-        kind = _identifier(evidence_kind, "evidence kind")
+        kind = canonical_identifier(evidence_kind, "evidence kind")
         if kind not in _EVIDENCE_KINDS:
             raise ValueError(
                 "Evidence kind must be one of unit, smoke, performance, scientific, "
                 "reference, operational, or security."
             )
-        outcome_ = _identifier(outcome, "evidence outcome")
+        outcome_ = canonical_identifier(outcome, "evidence outcome")
         if outcome_ not in _EVIDENCE_OUTCOMES:
             raise ValueError("Evidence outcome must be passed, failed, or inconclusive.")
         issued = _timestamp(issued_at, "issued_at")
@@ -450,13 +449,15 @@ class QualificationEvidence(StrictModule, NonTrainableState):
         self.evidence_kind = kind
         self.outcome = outcome_
         self.subject_ids = _identifiers(subject_ids, "evidence subject IDs")
-        self.build_id = _identifier(build_id, "evidence build ID")
-        self.environment_id = _identifier(environment_id, "evidence environment ID")
-        self.backend = _identifier(backend, "evidence backend")
-        self.topology = _identifier(topology, "evidence topology")
-        self.precision = _identifier(precision, "evidence precision")
-        self.reduction = _identifier(reduction, "evidence reduction")
-        self.replay_id = _identifier(replay_id, "evidence replay ID")
+        self.build_id = canonical_identifier(build_id, "evidence build ID")
+        self.environment_id = canonical_identifier(
+            environment_id, "evidence environment ID"
+        )
+        self.backend = canonical_identifier(backend, "evidence backend")
+        self.topology = canonical_identifier(topology, "evidence topology")
+        self.precision = canonical_identifier(precision, "evidence precision")
+        self.reduction = canonical_identifier(reduction, "evidence reduction")
+        self.replay_id = canonical_identifier(replay_id, "evidence replay ID")
         self.criteria_ids = _identifiers(criteria_ids, "evidence criteria IDs")
         self.raw_artifact_ids = _identifiers(
             raw_artifact_ids, "evidence raw-artifact IDs"
@@ -481,10 +482,10 @@ class QualificationEvidence(StrictModule, NonTrainableState):
             "forecast resource-record IDs",
             allow_empty=True,
         )
-        self.reviewer_id = _identifier(reviewer_id, "evidence reviewer ID")
+        self.reviewer_id = canonical_identifier(reviewer_id, "evidence reviewer ID")
         self.issued_at = issued
         self.expires_at = expires
-        self.reason = _identifier(reason, "evidence outcome reason")
+        self.reason = canonical_identifier(reason, "evidence outcome reason")
         self.supersedes_evidence_ids = _identifiers(
             supersedes_evidence_ids,
             "superseded evidence IDs",
@@ -713,8 +714,8 @@ class QualificationCoverageReport(StrictModule, NonTrainableState):
             raise ValueError("A matrix predicate must have exactly one reported outcome.")
         normalized_gaps: list[tuple[str, str, tuple[str, ...]]] = []
         for predicate_id, outcome, reasons in gaps:
-            predicate_id_ = _identifier(predicate_id, "gap predicate ID")
-            outcome_ = _identifier(outcome, "gap outcome")
+            predicate_id_ = canonical_identifier(predicate_id, "gap predicate ID")
+            outcome_ = canonical_identifier(outcome, "gap outcome")
             if outcome_ not in ("failed", "inconclusive"):
                 raise ValueError("A matrix gap must be failed or inconclusive.")
             reasons_ = _identifiers(reasons, "matrix gap reasons")
@@ -730,7 +731,7 @@ class QualificationCoverageReport(StrictModule, NonTrainableState):
         ):
             raise ValueError("Coverage gap outcomes must match predicate outcomes.")
         outcome_ = "failed" if failed else "inconclusive" if inconclusive else "passed"
-        self.matrix_id = _identifier(matrix_id, "qualification matrix ID")
+        self.matrix_id = canonical_identifier(matrix_id, "qualification matrix ID")
         self.evaluated_at = _timestamp(evaluated_at, "evaluated_at")
         self.outcome = outcome_
         self.passed_predicate_ids = passed
@@ -859,7 +860,9 @@ class QualificationMatrix(StrictModule, NonTrainableState):
             raise TypeError("Qualification predicates must be a non-empty mapping.")
         normalized: list[tuple[str, tuple[tuple[str, str], ...]]] = []
         for predicate_id, requirements in predicates.items():
-            predicate_id_ = _identifier(predicate_id, "qualification predicate ID")
+            predicate_id_ = canonical_identifier(
+                predicate_id, "qualification predicate ID"
+            )
             if not isinstance(requirements, Mapping) or not requirements:
                 raise TypeError(
                     "Each qualification predicate must be a non-empty mapping."
@@ -877,8 +880,8 @@ class QualificationMatrix(StrictModule, NonTrainableState):
             predicate = tuple(
                 sorted(
                     (
-                        _identifier(name, "qualification predicate field"),
-                        _identifier(value, f"qualification predicate {name}"),
+                        canonical_identifier(name, "qualification predicate field"),
+                        canonical_identifier(value, f"qualification predicate {name}"),
                     )
                     for name, value in requirements.items()
                 )

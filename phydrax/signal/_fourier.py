@@ -7,7 +7,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import StrEnum
 from math import isfinite
-from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,17 +19,9 @@ from phydrax._spectral._fourier import fourier_resample as _fourier_resample
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 
+from .._validation import nonnegative_integer
 from ._axis import _normalize_axis, _positive_int
 from ._windows import blackman_window, hamming_window, hann_window, tukey_window
-
-
-def _nonnegative_int(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    resolved = int(value)
-    if resolved < 0:
-        raise ValueError(f"{name} must be nonnegative.")
-    return resolved
 
 
 def _is_traced(*values: Array) -> bool:
@@ -172,7 +163,7 @@ class FourierSpectrumPlan(StrictModule, NonTrainableState):
     ) -> None:
         count = _positive_int(sample_count, "sample_count")
         interval = float(sample_interval)
-        padding = _nonnegative_int(padding_count, "padding_count")
+        padding = nonnegative_integer(padding_count, "padding_count")
         alpha = float(tukey_alpha)
         tolerance = float(parseval_tolerance)
         if (

@@ -24,6 +24,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_finite_float
 from ._polarization import (
     PermanentMultipoleSiteData,
     PolarizationPlan,
@@ -39,13 +40,6 @@ def _name(value: str, /) -> str:
     result = str(value).strip()
     if not result:
         raise ValueError("Term name must be non-empty.")
-    return result
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
     return result
 
 
@@ -173,7 +167,10 @@ class Buffered147Potential(StrictModule, NonTrainableState):
         if depth.shape != radius.shape:
             raise ValueError("radii and epsilon must have equal capacity.")
         scale = _pair_scale(pair_scale, radius.size)
-        delta_, gamma_ = _positive(delta, "delta"), _positive(gamma, "gamma")
+        delta_, gamma_ = (
+            positive_finite_float(delta, "delta"),
+            positive_finite_float(gamma, "gamma"),
+        )
         self.radii, self.epsilon, self.pair_scale = (
             jnp.asarray(radius),
             jnp.asarray(depth),
@@ -232,7 +229,7 @@ class ChargePenetrationPotential(StrictModule, NonTrainableState):
         if valence.shape != core.shape or exponent.shape != core.shape:
             raise ValueError("Charge-penetration arrays must have equal capacity.")
         scale = _pair_scale(pair_scale, core.size)
-        constant = _positive(coulomb_constant, "coulomb_constant")
+        constant = positive_finite_float(coulomb_constant, "coulomb_constant")
         self.core_charges, self.valence_charges, self.exponents, self.pair_scale = (
             jnp.asarray(core),
             jnp.asarray(valence),
@@ -527,7 +524,7 @@ class ChargeFluxPotential(StrictModule, NonTrainableState):
         if bonds.shape[0] + angles.shape[0] == 0:
             raise ValueError("Charge flux requires at least one bond or angle route.")
         scale = _pair_scale(pair_scale, capacity)
-        constant = _positive(coulomb_constant, "coulomb_constant")
+        constant = positive_finite_float(coulomb_constant, "coulomb_constant")
         (
             self.reference_charges,
             self.bond_routes,
@@ -955,7 +952,9 @@ class PolarizableForceFieldPlan(StrictModule, NonTrainableState):
         capacities = tuple(term.site_capacity for term in terms_)
         if capacities and any(capacity != capacities[0] for capacity in capacities):
             raise ValueError("All force-field terms must have equal site capacity.")
-        tolerance = _positive(force_balance_tolerance, "force_balance_tolerance")
+        tolerance = positive_finite_float(
+            force_balance_tolerance, "force_balance_tolerance"
+        )
         self.terms, self.polarization = terms_, polarization
         self.force_balance_tolerance = tolerance
         self.site_capacity = -1 if not capacities else capacities[0]

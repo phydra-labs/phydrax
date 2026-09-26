@@ -14,20 +14,12 @@ import equinox as eqx
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import normalized_identifier
 from ..qualification import ReferenceArtifactManifest
 
 
-def _identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string.")
-    result = value.strip()
-    if not result:
-        raise ValueError(f"{name} must be non-empty.")
-    return result
-
-
 def _identifiers(values: Sequence[str], name: str, /) -> tuple[str, ...]:
-    result = tuple(sorted(_identifier(value, name) for value in values))
+    result = tuple(sorted(normalized_identifier(value, name) for value in values))
     if len(result) != len(set(result)):
         raise ValueError(f"{name} values must be unique.")
     return result
@@ -87,9 +79,9 @@ class BasisSetReference(StrictModule, NonTrainableState):
         convention: str = "provider-native",
         artifact: ReferenceArtifactManifest | None = None,
     ) -> None:
-        name_ = _identifier(name, "basis name")
-        source = _identifier(source_id, "basis source_id")
-        convention_ = _identifier(convention, "basis convention")
+        name_ = normalized_identifier(name, "basis name")
+        source = normalized_identifier(source_id, "basis source_id")
+        convention_ = normalized_identifier(convention, "basis convention")
         if convention_ not in ("provider-native", "cartesian", "spherical"):
             raise ValueError(
                 "basis convention must be provider-native, cartesian, or spherical."
@@ -121,7 +113,7 @@ class ElectronicEnvironmentPlan(StrictModule, NonTrainableState):
     def __init__(
         self, kind: str = "vacuum", /, *, parameter_ids: Sequence[str] = ()
     ) -> None:
-        kind_ = _identifier(kind, "environment kind")
+        kind_ = normalized_identifier(kind, "environment kind")
         parameters = _identifiers(parameter_ids, "environment parameter_id")
         self.kind = kind_
         self.parameter_ids = parameters
@@ -167,7 +159,7 @@ class ElectronicModelChemistryPlan(StrictModule, NonTrainableState):
         relativistic = (
             None
             if relativistic_id is None
-            else _identifier(relativistic_id, "relativistic_id")
+            else normalized_identifier(relativistic_id, "relativistic_id")
         )
         if model_artifact is not None and not isinstance(
             model_artifact, ReferenceArtifactManifest

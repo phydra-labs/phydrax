@@ -20,11 +20,12 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import positive_finite_float
 from ...applications.cosmology._halo_models import HaloCatalog
 from ...applications.cosmology._halos import SphericalOverdensityMassDefinition
 from ...qualification import ReferenceArtifactManifest
 from .._report import AdapterLoss, AdapterReport, AdapterStatus
-from ._snapshots import _admit_path, _artifact, _positive_scale
+from ._snapshots import _admit_path, _artifact
 
 
 _PINOCCHIO_APPROXIMATION = "PINOCCHIO-LPT-fragmentation-approximation"
@@ -394,9 +395,9 @@ def read_pinocchio_catalog(
     ids = data[:, 0].astype(np.int64)
     if np.any(ids < 0) or np.any(data[:, 0] != ids) or len(set(ids.tolist())) != count:
         raise ValueError("PINOCCHIO group IDs must be unique non-negative integers.")
-    position_factor = _positive_scale(position_scale, "position_scale")
-    mass_factor = _positive_scale(mass_scale, "mass_scale")
-    velocity_factor = _positive_scale(velocity_scale, "velocity_scale")
+    position_factor = positive_finite_float(position_scale, "position_scale")
+    mass_factor = positive_finite_float(mass_scale, "mass_scale")
+    velocity_factor = positive_finite_float(velocity_scale, "velocity_scale")
     labels = tuple(
         str(value).strip()
         for value in (

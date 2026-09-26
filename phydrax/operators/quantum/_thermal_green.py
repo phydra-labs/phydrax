@@ -21,6 +21,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...discretization.dlr import (
     DLRTransformEvidence,
     fit_dlr_from_matsubara,
@@ -99,7 +100,7 @@ class ImaginaryTimeGreenFunction(StrictModule):
         evidence: GreenRepresentationEvidence | None = None,
         representation_id: str | None = None,
     ) -> None:
-        beta_ = _positive(beta, "beta")
+        beta_ = positive_finite_float(beta, "beta")
         statistics_ = _statistics(statistics)
         tau_ = jnp.asarray(tau)
         values_ = jnp.asarray(values)
@@ -171,7 +172,7 @@ class MatsubaraGreenFunction(StrictModule):
         evidence: GreenRepresentationEvidence | None = None,
         representation_id: str | None = None,
     ) -> None:
-        beta_ = _positive(beta, "beta")
+        beta_ = positive_finite_float(beta, "beta")
         statistics_ = _statistics(statistics)
         indices_ = jnp.asarray(indices)
         values_ = jnp.asarray(values)
@@ -303,7 +304,7 @@ class MatsubaraSelfEnergy(StrictModule):
         mode_axis: tuple[str, ...] = ("local-orbital",),
         representation_id: str | None = None,
     ) -> None:
-        beta_ = _positive(beta, "beta")
+        beta_ = positive_finite_float(beta, "beta")
         indices_ = jnp.asarray(indices)
         values_ = jnp.asarray(values)
         if indices_.ndim != 1 or not jnp.issubdtype(indices_.dtype, jnp.integer):
@@ -832,8 +833,8 @@ class DysonPolicy(StrictModule):
             ("maximum_bytes", maximum_bytes),
         ):
             _positive_int(value, name)
-        rank_ = _positive(rank_tolerance, "rank_tolerance")
-        residual_ = _positive(residual_tolerance, "residual_tolerance")
+        rank_ = positive_finite_float(rank_tolerance, "rank_tolerance")
+        residual_ = positive_finite_float(residual_tolerance, "residual_tolerance")
         self.maximum_samples = int(maximum_samples)
         self.maximum_matrix_dimension = int(maximum_matrix_dimension)
         self.maximum_bytes = int(maximum_bytes)
@@ -892,13 +893,6 @@ def _statistics(value: str, /) -> ThermalStatistics:
     if value not in ("fermionic", "bosonic"):
         raise ValueError("statistics must be 'fermionic' or 'bosonic'.")
     return value
-
-
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
 
 
 def _positive_int(value: int, name: str, /) -> int:
@@ -1363,7 +1357,7 @@ def fermionic_thermal_sector_channel(
 ) -> FermionicThermalSectorChannel:
     """Prepare one fermionic source-to-target channel with global thermal weights."""
 
-    beta_ = _positive(beta, "beta")
+    beta_ = positive_finite_float(beta, "beta")
     source = jnp.asarray(source_energies)
     target = jnp.asarray(target_energies)
     operator = jnp.asarray(annihilation)
@@ -1475,7 +1469,7 @@ def plan_thermal_lehmann(
 ) -> ThermalLehmannPlan:
     """Validate eigensystem shapes and reject oversized transition banks."""
 
-    beta_ = _positive(beta, "beta")
+    beta_ = positive_finite_float(beta, "beta")
     statistics_ = _statistics(statistics)
     policy_ = ThermalLehmannPolicy() if policy is None else policy
     if not isinstance(policy_, ThermalLehmannPolicy):

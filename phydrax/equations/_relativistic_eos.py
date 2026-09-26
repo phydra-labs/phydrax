@@ -19,6 +19,7 @@ from .._interpolation import apply_gather_stencil, rectilinear_stencil
 from .._physical import RelativityScaleContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_finite_float
 from ..units import UnitDefinition
 
 
@@ -420,13 +421,6 @@ def _finite_outputs(*values: Array) -> Array:
     return result
 
 
-def _positive_finite(value: float, name: str, /) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _optional_upper_bound(
     value: float | None, lower: float, name: str, /
 ) -> float | None:
@@ -652,12 +646,12 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
             raise ValueError("density_breaks must be finite, positive, and increasing.")
         if np.any(~np.isfinite(gammas)) or np.any(gammas <= 1.0) or np.any(gammas > 2.0):
             raise ValueError("adiabatic_indices must be finite and lie in (1, 2].")
-        first_constant = _positive_finite(
+        first_constant = positive_finite_float(
             initial_polytropic_constant, "initial_polytropic_constant"
         )
         first_offset = float(initial_specific_energy_offset)
         density_lower = float(minimum_density)
-        tolerance = _positive_finite(
+        tolerance = positive_finite_float(
             cold_constraint_tolerance, "cold_constraint_tolerance"
         )
         if (

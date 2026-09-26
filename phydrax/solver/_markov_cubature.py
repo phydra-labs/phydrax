@@ -20,6 +20,7 @@ from .._fingerprint import canonical_fingerprint
 from .._measure_weights import normalized_weights
 from .._polynomial._total_degree import TotalDegreePolynomialFeatures
 from .._strict import StrictModule
+from .._validation import nonnegative_integer, positive_integer
 from ..coresets import moment_recombine, MomentRecombination
 from ..discretization import TemporalMesh
 from ..integration._rules import GaussianCubatureRule
@@ -75,9 +76,9 @@ class PolynomialRecombination(StrictModule):
         maximum_moment_error: float = 1e-9,
         differentiation: Literal["frozen-selection"] = "frozen-selection",
     ) -> None:
-        degree_ = _nonnegative_integer(degree, "degree")
-        features = _positive_integer(maximum_features, "maximum_features")
-        feature_bytes = _positive_integer(maximum_feature_bytes, "maximum_feature_bytes")
+        degree_ = nonnegative_integer(degree, "degree")
+        features = positive_integer(maximum_features, "maximum_features")
+        feature_bytes = positive_integer(maximum_feature_bytes, "maximum_feature_bytes")
         error = float(maximum_moment_error)
         if not math.isfinite(error) or error < 0.0:
             raise ValueError("maximum_moment_error must be finite and nonnegative.")
@@ -153,10 +154,10 @@ class MarkovCubaturePlan(StrictModule):
         if not isinstance(selected_recombination, PolynomialRecombination):
             raise TypeError("recombination must be PolynomialRecombination.")
         method = parse(method, MarkovCubatureMethod, "method")
-        expanded = _positive_integer(
+        expanded = positive_integer(
             maximum_expanded_particles, "maximum_expanded_particles"
         )
-        substeps = _positive_integer(flow_substeps, "flow_substeps")
+        substeps = positive_integer(flow_substeps, "flow_substeps")
         selected_path = path
         if method == "stratonovich-flow":
             selected_path = (
@@ -673,24 +674,6 @@ def solve_markov_cubature(
         collect_history=plan.collect_history,
         solver_id=solver_id,
     )
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 1:
-        raise ValueError(f"{name} must be positive.")
-    return result
-
-
-def _nonnegative_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 0:
-        raise ValueError(f"{name} must be nonnegative.")
-    return result
 
 
 __all__ = [

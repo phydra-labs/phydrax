@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-from math import isfinite
 from typing import TYPE_CHECKING
 
 import equinox as eqx
@@ -15,6 +14,7 @@ from jax import Array
 from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._validation import positive_finite_float
 from ..core import Currency, FinanceDate
 from ._base import AbstractResolvedContract
 from ._cashflows import CashflowBatch
@@ -35,13 +35,6 @@ def _identifier(value: str, name: str, /) -> str:
     if not identifier:
         raise ValueError(f"{name} must be a non-empty string.")
     return identifier
-
-
-def _positive(value: float, name: str, /) -> float:
-    number = float(value)
-    if not isfinite(number) or number <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return number
 
 
 def _settlement_time(value: ArrayLike, /) -> Array:
@@ -115,10 +108,10 @@ class ResolvedZeroCouponBond(AbstractResolvedContract):
             )
         if maturity_date.ordinal <= valuation_date.ordinal:
             raise ValueError("maturity_date must be later than valuation_date.")
-        maturity = _positive(maturity_time, "maturity_time")
+        maturity = positive_finite_float(maturity_time, "maturity_time")
         contract = _identifier(contract_id, "contract_id")
         discount_id = _identifier(discount_curve_id, "discount_curve_id")
-        face = _positive(face_value, "face_value")
+        face = positive_finite_float(face_value, "face_value")
         self.contract_id = contract
         self.currency = currency
         self.valuation_date = valuation_date

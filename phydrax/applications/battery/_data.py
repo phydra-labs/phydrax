@@ -19,10 +19,10 @@ from jax.typing import ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._validation import canonical_identifier
 from ...artifacts import ArtifactManifest
 from ._observations import (
     _host_vector,
-    _identifier,
     _identifiers,
     _local_manifest,
     BatteryCurrentSign,
@@ -100,7 +100,7 @@ class BatteryRawTimeSeries:
             "protocol_role",
         )
         resolved = tuple(
-            _identifier(value, name)
+            canonical_identifier(value, name)
             for value, name in zip(
                 (
                     self.record_id,
@@ -450,7 +450,7 @@ def preprocess_battery_time_series(
 
 
 def _digest(value: str, name: str, /) -> str:
-    digest = _identifier(value, name)
+    digest = canonical_identifier(value, name)
     if len(digest) != 64 or any(
         character not in "0123456789abcdef" for character in digest
     ):
@@ -541,8 +541,10 @@ class BatteryRecordBinding:
     raw_digest: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "record_id", _identifier(self.record_id, "record_id"))
-        object.__setattr__(self, "cell_id", _identifier(self.cell_id, "cell_id"))
+        object.__setattr__(
+            self, "record_id", canonical_identifier(self.record_id, "record_id")
+        )
+        object.__setattr__(self, "cell_id", canonical_identifier(self.cell_id, "cell_id"))
         object.__setattr__(
             self,
             "content_fingerprint",

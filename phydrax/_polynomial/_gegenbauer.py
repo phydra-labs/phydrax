@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import math
-from numbers import Integral
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -22,6 +21,7 @@ from phydrax import ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer
 from ..typing import parse
 from ._orthogonal import OrthogonalRuleData
 
@@ -30,17 +30,8 @@ GegenbauerNormalization: TypeAlias = Literal["standard", "monic", "orthonormal"]
 _DEFAULT_CONSTRUCTION_BYTES = 512 * 1024**2
 
 
-def _nonnegative_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 0:
-        raise ValueError(f"{name} must be nonnegative.")
-    return result
-
-
 def _positive_integer(value: int, name: str, /) -> int:
-    result = _nonnegative_integer(value, name)
+    result = nonnegative_integer(value, name)
     if result == 0:
         raise ValueError(f"{name} must be positive.")
     return result
@@ -80,7 +71,7 @@ def _gegenbauer_standard_scales(
 ) -> Array:
     """Return standard-mode leading coefficients relative to monic modes."""
     alpha_ = _static_alpha(alpha, "alpha")
-    degree_ = _nonnegative_integer(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     dtype_ = _floating_dtype(dtype)
     scales = np.ones((degree_ + 1,), dtype=np.float64)
     for index in range(1, degree_ + 1):
@@ -93,7 +84,7 @@ def _gegenbauer_monic_scales(
 ) -> Array:
     """Return the unit scales defining the monic Gegenbauer family."""
     _static_alpha(alpha, "alpha")
-    degree_ = _nonnegative_integer(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     return jnp.ones((degree_ + 1,), dtype=_floating_dtype(dtype))
 
 
@@ -102,7 +93,7 @@ def _gegenbauer_orthonormal_scales(
 ) -> Array:
     """Return positive orthonormal-mode leading coefficients over monic modes."""
     alpha_ = _static_alpha(alpha, "alpha")
-    degree_ = _nonnegative_integer(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     dtype_ = _floating_dtype(dtype)
     log_norm = (
         0.5 * math.log(math.pi) + math.lgamma(alpha_ + 0.5) - math.lgamma(alpha_ + 1.0)
@@ -189,8 +180,8 @@ def gegenbauer_differentiation_matrix(
     matrix acts on a leading source-mode axis, and rows are target modes.
     """
     alpha_ = _static_alpha(alpha, "alpha")
-    degree_ = _nonnegative_integer(degree, "degree")
-    order_ = _nonnegative_integer(order, "order")
+    degree_ = nonnegative_integer(degree, "degree")
+    order_ = nonnegative_integer(order, "order")
     dtype_ = _floating_dtype(dtype)
     count = degree_ + 1
     matrix = np.zeros((count, count), dtype=np.dtype(dtype_))
@@ -244,7 +235,7 @@ def gegenbauer_connection_data(
     """Construct the fixed-capacity ``alpha``-to-``beta`` coefficient map."""
     source_alpha = _static_alpha(alpha, "alpha")
     target_alpha = _static_alpha(beta, "beta")
-    degree_ = _nonnegative_integer(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     dtype_ = _floating_dtype(dtype)
     maximum_bytes = _positive_integer(
         maximum_construction_bytes, "maximum_construction_bytes"

@@ -21,6 +21,7 @@ from jax.typing import ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
+from .._validation import nonnegative_integer
 from ..typing import parse
 
 
@@ -33,15 +34,6 @@ def _positive_static_int(value: int, name: str, /) -> int:
     resolved = int(value)
     if resolved <= 0:
         raise ValueError(f"{name} must be positive.")
-    return resolved
-
-
-def _nonnegative_static_int(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    resolved = int(value)
-    if resolved < 0:
-        raise ValueError(f"{name} must be nonnegative.")
     return resolved
 
 
@@ -283,7 +275,7 @@ class STFTPlan:
         reconstructed = output / safe
         if length is None:
             return reconstructed
-        output_size = _nonnegative_static_int(length, "length")
+        output_size = nonnegative_integer(length, "length")
         return reconstructed[:output_size]
 
 

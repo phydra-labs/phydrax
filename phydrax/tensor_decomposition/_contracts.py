@@ -18,6 +18,7 @@ from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from .._validation import nonnegative_integer
 from ..optim import (
     AbstractLeastSquaresMethod,
     LevenbergMarquardt,
@@ -251,7 +252,7 @@ class SymmetricWaringCostEstimate(StrictModule):
         refinement_parameters: int,
     ) -> None:
         values = tuple(
-            _nonnegative_integer(value, name)
+            nonnegative_integer(value, name)
             for value, name in (
                 (tensor_entries, "tensor_entries"),
                 (quotient_basis_size, "quotient_basis_size"),
@@ -492,15 +493,6 @@ def _positive_integer(value: int, name: str, /) -> int:
     result = int(value)
     if result <= 0:
         raise ValueError(f"{name} must be positive.")
-    return result
-
-
-def _nonnegative_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 0:
-        raise ValueError(f"{name} must be nonnegative.")
     return result
 
 

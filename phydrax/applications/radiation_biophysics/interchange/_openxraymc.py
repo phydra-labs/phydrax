@@ -14,6 +14,7 @@ import h5py
 import numpy as np
 
 from ...._fingerprint import canonical_fingerprint
+from ...._validation import positive_integer
 from ....interchange import (
     AdapterFormatProfile,
     AdapterLoss,
@@ -25,7 +26,6 @@ from ....interchange import (
 from ....qualification import ReferenceArtifactManifest
 from .._scores import (
     _identifier,
-    _positive_integer,
     _UNCERTAINTY_KINDS,
     ExternalRadiationRunIdentity,
     ExternalRadiationScoreResult,
@@ -161,8 +161,8 @@ class OpenXRayMCHDF5Profile:
             raise ValueError(
                 "Reported HDF5 uncertainty requires upstream correlation evidence."
             )
-        histories = _positive_integer(self.history_count, "history_count")
-        batches = _positive_integer(self.batch_count, "batch_count")
+        histories = positive_integer(self.history_count, "history_count")
+        batches = positive_integer(self.batch_count, "batch_count")
         producer_attribute = _identifier(self.producer_attribute, "producer_attribute")
         revision_attribute = _identifier(self.revision_attribute, "revision_attribute")
         if producer_attribute == revision_attribute:

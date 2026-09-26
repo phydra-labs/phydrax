@@ -6,7 +6,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
+import phydrax as phx
 from phydrax.control import ControlProblem, PiecewiseConstantControlParameterization
 from phydrax.control._sampling_mpc import (
     plan_sampling_mpc,
@@ -544,3 +546,20 @@ def test_resample_policy_is_key_and_solve_count_reproducible_and_auditable():
         next_solve.evidence.realization_indices[0],
         expected_indices(1),
     )
+
+
+def test_restored_realizations_refuse_a_weight_axis_disagreeing_with_the_ids():
+    realizations = SamplingMPCRealizations(
+        {"gain": jnp.asarray([1.0, 3.0])},
+        ("soft:low", "soft:high"),
+        weights=jnp.asarray([0.25, 0.75]),
+        posterior_id="posterior:calibrated-rod",
+        campaign_id="campaign:held-out-a",
+    )
+    widened = eqx.tree_at(
+        lambda value: value.weights, realizations, jnp.asarray([0.25, 0.5, 0.25])
+    )
+
+    phx.typing.validate(realizations)
+    with pytest.raises(ValueError, match="weights"):
+        phx.typing.validate(widened)

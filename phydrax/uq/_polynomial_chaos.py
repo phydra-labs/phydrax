@@ -7,7 +7,6 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from numbers import Integral
 from typing import Any, Literal
 
 import equinox as eqx
@@ -51,6 +50,7 @@ from .._polynomial import evaluate_tensor_basis, PolynomialMultiIndexSet
 from .._sampling import RandomizedQMCDesign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import positive_integer
 from ..typing import PRNGKey
 from ._distributions import Normal, Uniform
 
@@ -423,10 +423,8 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         precision_ = IntegrationPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, IntegrationPrecisionPolicy):
             raise TypeError("precision must be an IntegrationPrecisionPolicy.")
-        maximum = _positive_integer(
-            maximum_model_evaluations, "maximum_model_evaluations"
-        )
-        maximum_basis = _positive_integer(maximum_basis_bytes, "maximum_basis_bytes")
+        maximum = positive_integer(maximum_model_evaluations, "maximum_model_evaluations")
+        maximum_basis = positive_integer(maximum_basis_bytes, "maximum_basis_bytes")
         covered = tuple(label for group in integration_plan.plans for label in group)
         if len(covered) != len(set(covered)) or set(covered) != set(basis.labels):
             raise ValueError(
@@ -675,8 +673,8 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
             raise TypeError("exact_policy must be a LinearSolvePolicy.")
         if not isinstance(least_squares, LinearSolvePolicy):
             raise TypeError("least_squares_policy must be a LinearSolvePolicy.")
-        maximum_samples_ = _positive_integer(maximum_samples, "maximum_samples")
-        maximum_bytes = _positive_integer(maximum_design_bytes, "maximum_design_bytes")
+        maximum_samples_ = positive_integer(maximum_samples, "maximum_samples")
+        maximum_bytes = positive_integer(maximum_design_bytes, "maximum_design_bytes")
         self.basis = basis
         self.exact_policy = exact
         self.least_squares_policy = least_squares
@@ -1075,15 +1073,6 @@ def _point_leading_dims(
             "Labeled Field coordinate dimensions do not match their broadcast rank."
         )
     return expected
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 1:
-        raise ValueError(f"{name} must be positive.")
-    return result
 
 
 def _restore_coefficients(

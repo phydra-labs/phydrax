@@ -73,6 +73,7 @@ from .._numerics._ssp_runge_kutta import (
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState
 from .._tree_math import tree_where
+from .._validation import positive_finite_float
 from ..discretization import DiscretizationBundle
 from ..lifecycle import commit_candidate, TransactionalCandidate
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
@@ -356,13 +357,6 @@ def _lower_bounds(bounds: Any, shape: tuple[int, ...], /) -> np.ndarray | None:
     return values
 
 
-def _positive_float(value: Any, name: str, /) -> float:
-    number = float(value)
-    if not np.isfinite(number) or number <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return number
-
-
 def _euclidean_norm(value: Array, /) -> Array:
     return jnp.sqrt(jnp.sum(jnp.square(value)))
 
@@ -451,12 +445,12 @@ class LearnedStepCorrection(AbstractAcceptedStepTransform):
         tolerance = (
             None
             if conservation_tolerance is None
-            else _positive_float(conservation_tolerance, "conservation_tolerance")
+            else positive_finite_float(conservation_tolerance, "conservation_tolerance")
         )
         if tolerance is not None and weights is None:
             raise ValueError("conservation_tolerance requires conserved invariants.")
         bounds = _lower_bounds(lower_bounds, shape)
-        maximum = _positive_float(
+        maximum = positive_finite_float(
             maximum_relative_correction, "maximum_relative_correction"
         )
         site = "LearnedStepCorrection"

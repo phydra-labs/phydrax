@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import itertools
 import math
-from numbers import Integral
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -20,6 +19,7 @@ import phydrax.ein as ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import nonnegative_integer, positive_integer
 from ._orthogonal import standard_vandermonde
 
 
@@ -47,10 +47,10 @@ class PolynomialMultiIndexSet(StrictModule, NonTrainableState):
         maximum_features: int = _DEFAULT_MAXIMUM_FEATURES,
         maximum_storage_bytes: int = _DEFAULT_MAXIMUM_BYTES,
     ) -> None:
-        dimension_ = _positive_integer(dimension, "dimension")
-        degree_ = _nonnegative_integer(degree, "degree")
-        maximum = _positive_integer(maximum_features, "maximum_features")
-        maximum_bytes = _positive_integer(maximum_storage_bytes, "maximum_storage_bytes")
+        dimension_ = positive_integer(dimension, "dimension")
+        degree_ = nonnegative_integer(degree, "degree")
+        maximum = positive_integer(maximum_features, "maximum_features")
+        maximum_bytes = positive_integer(maximum_storage_bytes, "maximum_storage_bytes")
         feature_count = math.comb(dimension_ + degree_, degree_)
         if feature_count > maximum:
             raise ValueError(
@@ -103,7 +103,7 @@ def normalized_vandermonde(
 ) -> Array:
     """Evaluate a one-dimensional orthonormal polynomial family."""
     values = jnp.asarray(points, dtype=jnp.float64)
-    degree_ = _nonnegative_integer(degree, "degree")
+    degree_ = nonnegative_integer(degree, "degree")
     if measure == "uniform":
         vandermonde = standard_vandermonde("legendre", values.reshape((-1,)), degree_)
         normalization = jnp.sqrt(2 * jnp.arange(degree_ + 1, dtype=values.dtype) + 1)
@@ -153,24 +153,6 @@ def evaluate_tensor_basis(
             axis=-1,
         )
         result = ein.contract("...k,...k->...k", result, selected)
-    return result
-
-
-def _positive_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 1:
-        raise ValueError(f"{name} must be positive.")
-    return result
-
-
-def _nonnegative_integer(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, Integral):
-        raise TypeError(f"{name} must be an integer.")
-    result = int(value)
-    if result < 0:
-        raise ValueError(f"{name} must be nonnegative.")
     return result
 
 

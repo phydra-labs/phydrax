@@ -16,6 +16,20 @@
   contract field of a module. Checks read only kind, rank, extent, and dtype
   metadata: they add no JAX operations and synchronize nothing. See the typing
   guide.
+- `tools/audit_host_sync.py` reports `bool`/`int`/`float`/`numpy.asarray`/
+  `numpy.array`/`jax.device_get` calls in package code, classified as static-shape
+  reads, host preparation, explicit safe points, external-provider code, output
+  observation, bodies of JAX-transformed functions (resolved by lexical scope),
+  or unclassified.
+- `SamplingMPCRealizations` and `SamplingMPCPlan` opt into structural contracts:
+  their weights, support masks, and model counts share one nominal model axis.
+  `tools/audit_contract_candidates.py` ranks strict modules whose static metadata
+  a contract could state.
+- Private validation helpers that were behaviorally identical copies of shared
+  host validators (canonical and normalized identifiers, finite positive floats,
+  positive and nonnegative integers) were replaced by the shared owners in
+  `phydrax._validation`; accepted values, exception categories, and messages are
+  unchanged.
 - Closed selectors across the package are declared once as `TypeAlias`
   `Literal` aliases and validated with `phydrax.typing.parse`: duplicated option
   tables and inline membership checks were removed, equality chains over a whole

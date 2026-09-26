@@ -27,6 +27,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ..._validation import positive_finite_float
 from ...integration import GaussLegendreRule
 from ...linalg import (
     DenseLinearOperator,
@@ -207,13 +208,6 @@ class PreparedSparseContinuation(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
-def _positive(value: float, name: str, /) -> float:
-    result = float(value)
-    if not isfinite(result) or result <= 0.0:
-        raise ValueError(f"{name} must be finite and positive.")
-    return result
-
-
 def _nonnegative(value: float, name: str, /) -> float:
     result = float(value)
     if not isfinite(result) or result < 0.0:
@@ -352,8 +346,8 @@ def plan_pade_continuation(
     if numerator + denominator + 1 > samples:
         raise ValueError("Padé coefficient count must not exceed maximum_samples.")
     budget = _positive_int(maximum_bytes, "maximum_bytes")
-    rank_ = _positive(rank_tolerance, "rank_tolerance")
-    residual_ = _positive(residual_tolerance, "residual_tolerance")
+    rank_ = positive_finite_float(rank_tolerance, "rank_tolerance")
+    residual_ = positive_finite_float(residual_tolerance, "residual_tolerance")
     causality_ = _nonnegative(causality_tolerance, "causality_tolerance")
     unknowns = numerator + denominator + 1
     required = np.dtype(np.complex128).itemsize * (
@@ -556,7 +550,7 @@ def evaluate_pade(
 
     if not isinstance(prepared, PreparedPadeContinuation):
         raise TypeError("prepared must be a PreparedPadeContinuation.")
-    eta = _positive(broadening, "broadening")
+    eta = positive_finite_float(broadening, "broadening")
     omega = jnp.asarray(frequencies)
     z = omega + 1j * eta
     x = (z - prepared.center) / prepared.scale
@@ -664,12 +658,12 @@ def plan_maximum_entropy(
     """Plan a fixed-work nonnegative maximum-entropy inference."""
 
     _validate_grid(grid)
-    alpha_ = _positive(alpha, "alpha")
-    sum_ = _positive(sum_rule, "sum_rule")
+    alpha_ = positive_finite_float(alpha, "alpha")
+    sum_ = positive_finite_float(sum_rule, "sum_rule")
     iterations = _positive_int(maximum_iterations, "maximum_iterations")
-    gradient_ = _positive(gradient_tolerance, "gradient_tolerance")
-    residual_ = _positive(residual_tolerance, "residual_tolerance")
-    learning_ = _positive(learning_rate, "learning_rate")
+    gradient_ = positive_finite_float(gradient_tolerance, "gradient_tolerance")
+    residual_ = positive_finite_float(residual_tolerance, "residual_tolerance")
+    learning_ = positive_finite_float(learning_rate, "learning_rate")
     samples = _positive_int(maximum_samples, "maximum_samples")
     budget = _positive_int(maximum_bytes, "maximum_bytes")
     required = _inverse_problem_bytes(samples, grid.plan.point_count)
@@ -982,10 +976,10 @@ def plan_sparse_continuation(
     l2 = _nonnegative(l2_regularization, "l2_regularization")
     if l1 == 0.0 and l2 == 0.0:
         raise ValueError("Sparse continuation requires positive L1 or L2 regularization.")
-    sum_ = None if sum_rule is None else _positive(sum_rule, "sum_rule")
+    sum_ = None if sum_rule is None else positive_finite_float(sum_rule, "sum_rule")
     iterations = _positive_int(maximum_iterations, "maximum_iterations")
-    gradient_ = _positive(gradient_tolerance, "gradient_tolerance")
-    residual_ = _positive(residual_tolerance, "residual_tolerance")
+    gradient_ = positive_finite_float(gradient_tolerance, "gradient_tolerance")
+    residual_ = positive_finite_float(residual_tolerance, "residual_tolerance")
     samples = _positive_int(maximum_samples, "maximum_samples")
     budget = _positive_int(maximum_bytes, "maximum_bytes")
     required = _inverse_problem_bytes(samples, grid.plan.point_count)
@@ -1331,7 +1325,7 @@ def plan_scalar_fermionic_maximum_entropy(
     maximum_bytes: int = 512 * 1024**2,
 ) -> ScalarFermionicMaximumEntropyPlan:
     first = float(expected_first_moment)
-    tolerance = _positive(moment_tolerance, "moment_tolerance")
+    tolerance = positive_finite_float(moment_tolerance, "moment_tolerance")
     unit = str(frequency_unit)
     mode = str(mode_label)
     if not isfinite(first) or not unit or not mode:
