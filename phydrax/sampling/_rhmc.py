@@ -15,7 +15,7 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._sampling._addressing import derive_key, SampleAddress
@@ -37,6 +37,7 @@ from ..operators.path_integral._pseudofermion import (
     refresh_pseudofermion,
     TwoFlavorPseudofermionTerm,
 )
+from ..typing import PRNGKey
 
 
 _MOMENTUM_ADDRESS = SampleAddress(
@@ -522,7 +523,7 @@ def initialize_rhmc_state(
     initial_configuration: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> RHMCChainState:
     """Initialize a checkpoint-safe accepted state at semantic step zero."""
     _validate_kernel(kernel)
@@ -1290,7 +1291,7 @@ def _coordinate_metric(
 
 def _sample_momentum(
     kernel: PreparedRHMCKernel,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> Array:
     dtype = jnp.real(kernel.configuration_template).dtype

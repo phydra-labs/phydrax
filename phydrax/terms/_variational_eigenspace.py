@@ -12,7 +12,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -39,6 +38,7 @@ from ..linalg.eigen import (
     solve_reduced_ritz,
 )
 from ..operators.linalg._ops import conjugate
+from ..typing import PRNGKey
 
 
 FormDensity = Callable[[DomainFunction, DomainFunction], DomainFunction]
@@ -94,7 +94,7 @@ def _integration_source(source: IntegrationSource, /, *, role: str) -> Integrati
 
 def _sample_realization(
     source: IntegrationSource,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> IntegrationRealization | None:
     if isinstance(source, CallerIntegration):
@@ -105,7 +105,7 @@ def _sample_realization(
 def _resolve_realization(
     source: IntegrationSource,
     batch: IntegrationRealization | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     role: str,
@@ -394,7 +394,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> IntegrationRealization | None:
         """Resolve one realization according to the typed integration source."""
         return _sample_realization(self.source, key)
@@ -404,7 +404,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> VariationalEigenspaceEvaluation:
@@ -447,7 +447,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -474,7 +474,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
         *,
         count: int | None = None,
         which: EigenTarget = "smallest-algebraic",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> VariationalEigenspaceResult:
@@ -556,7 +556,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> IntegrationRealization | None:
         """Resolve one realization according to the typed integration source."""
         return _sample_realization(self.source, key)
@@ -566,7 +566,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         batch: IntegrationRealization | None,
         **kwargs: Any,
     ) -> _InvariantSubspaceAssembly:
@@ -667,7 +667,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> InvariantSubspaceResidualEvaluation:
@@ -684,7 +684,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -711,7 +711,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
         *,
         count: int | None = None,
         which: EigenTarget = "smallest-algebraic",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> InvariantSubspaceResidualResult:

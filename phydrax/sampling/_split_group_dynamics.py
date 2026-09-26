@@ -15,7 +15,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -30,6 +29,7 @@ from ..metrix import (
     SpecialUnitaryGroup,
     UnitaryGroup,
 )
+from ..typing import PRNGKey
 
 
 _MOMENTUM_ADDRESS = SampleAddress(
@@ -507,7 +507,7 @@ def _kinetic(prepared: PreparedSplitGroupDynamics, momentum: Array) -> Array:
     )
 
 
-def _sample_momentum(prepared: PreparedSplitGroupDynamics, key: Key[Array, ""]) -> Array:
+def _sample_momentum(prepared: PreparedSplitGroupDynamics, key: PRNGKey) -> Array:
     normal = jr.normal(
         key, prepared.target.local_coordinate_shape, dtype=prepared.inverse_mass.dtype
     )
@@ -655,7 +655,7 @@ def transported_group_u_turn(
 def _ghmc_transition(
     prepared: PreparedSplitGroupDynamics,
     state: SplitGroupDynamicsState,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> _RawTransition:
     momentum_key = derive_key(key, _MOMENTUM_ADDRESS, state.step_index)
     accept_key = derive_key(key, _ACCEPT_ADDRESS, state.step_index)
@@ -729,7 +729,7 @@ def _ghmc_transition(
 def _nuts_reference_transition(
     prepared: PreparedSplitGroupDynamics,
     state: SplitGroupDynamicsState,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> _RawTransition:
     """Finite slice-weighted transported NUTS reference trajectory."""
     momentum_key = derive_key(key, _MOMENTUM_ADDRESS, state.step_index)
@@ -861,7 +861,7 @@ def split_group_transition(
     state: SplitGroupDynamicsState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> SplitGroupTransitionResult:
     """Run one frozen GHMC or finite transported-NUTS transition."""
     if not isinstance(prepared, PreparedSplitGroupDynamics):
@@ -911,7 +911,7 @@ def adapt_split_group_metric(
     plan: SplitMetricAdaptationPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> SplitMetricAdaptationResult:
     """Run finite warmup, estimate a diagonal metric, then freeze a new executable."""
     if not isinstance(prepared, PreparedSplitGroupDynamics):

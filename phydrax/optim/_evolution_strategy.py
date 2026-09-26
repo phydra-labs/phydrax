@@ -10,12 +10,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._training_kernel import AbstractKernelUpdateRule, KernelUpdateContext
+from ..typing import PRNGKey
 
 
 class AbstractDistributionEvolutionMethod(abc.ABC):
@@ -24,11 +25,11 @@ class AbstractDistributionEvolutionMethod(abc.ABC):
     population_size: int
 
     @abc.abstractmethod
-    def init(self, key: Key[Array, ""], mean: Any, /) -> Any:
+    def init(self, key: PRNGKey, mean: Any, /) -> Any:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def ask(self, key: Key[Array, ""], state: Any, /) -> tuple[Any, Any]:
+    def ask(self, key: PRNGKey, state: Any, /) -> tuple[Any, Any]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -92,7 +93,7 @@ class OpenEvolutionStrategy(
         self.standard_deviation_decay = decay
         self.minimum_standard_deviation = minimum
 
-    def init(self, key: Key[Array, ""], mean: Any, /) -> OpenEvolutionState:
+    def init(self, key: PRNGKey, mean: Any, /) -> OpenEvolutionState:
         del key
         leaves = jax.tree_util.tree_leaves(mean)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
@@ -106,7 +107,7 @@ class OpenEvolutionStrategy(
 
     def ask(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: OpenEvolutionState,
         /,
     ) -> tuple[Any, OpenEvolutionState]:
@@ -172,7 +173,7 @@ class DistributionEvolutionPayload(StrictModule):
     """
 
     objective: Any
-    ask_key: Key[Array, ""]
+    ask_key: PRNGKey
 
 
 @final
@@ -207,13 +208,13 @@ class DistributionEvolutionUpdateRule(AbstractKernelUpdateRule):
 
     rejection_commit_policy: ClassVar[tuple[str, ...]] = ()
     method: AbstractDistributionEvolutionMethod
-    key: Key[Array, ""]
+    key: PRNGKey
     rule_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         method: AbstractDistributionEvolutionMethod,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         rule_id: str,

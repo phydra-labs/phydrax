@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -32,6 +31,7 @@ from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..ml._classification import ClassificationObjective
 from ..ml._schema import TargetSchema
+from ..typing import PRNGKey
 from ._data_metrics import (
     case_sample_count,
     normalize_case_sampling,
@@ -526,7 +526,7 @@ def _configured_cases_at_time(
 def _sample_cases_at_time(
     domain: TrajectoryDomain,
     num_samples: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     case_time: TrajectoryCaseTime,
     /,
     *,
@@ -900,9 +900,7 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
             raise TypeError("Trajectory case classification domain is not a trajectory.")
         return domain
 
-    def sample(
-        self, *, key: Key[Array, ""] = DOC_KEY0
-    ) -> TrajectoryCaseClassificationBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> TrajectoryCaseClassificationBatch:
         """Draw cases and retain their integer or Boolean labels without encoding."""
         domain = self.domain
         case_indices = _sample_cases_at_time(
@@ -938,7 +936,7 @@ class TrajectoryCaseClassificationTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: TrajectoryCaseClassificationBatch | None = None,
         **kwargs: Any,
@@ -1102,9 +1100,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         assert layout is not None
         return layout
 
-    def sample(
-        self, *, key: Key[Array, ""] = DOC_KEY0
-    ) -> RaggedTimeSeriesClassificationBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> RaggedTimeSeriesClassificationBatch:
         """Draw only valid ragged sites and gather their targets without one-hotting."""
         count = self.sampling.count
         if isinstance(count, tuple):
@@ -1116,7 +1112,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         count: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> RaggedTimeSeriesClassificationBatch:
         domain = self.domain
         key_case, key_time = jr.split(key)
@@ -1178,7 +1174,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         return self._batch(case_indices, time_indices, times, target)
 
     def _sample_case_time_grid(
-        self, *, key: Key[Array, ""]
+        self, *, key: PRNGKey
     ) -> RaggedTimeSeriesClassificationBatch:
         domain = self.domain
         count = self.sampling.count
@@ -1305,7 +1301,7 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: RaggedTimeSeriesClassificationBatch | None = None,
         **kwargs: Any,

@@ -17,9 +17,9 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 JumpStatus: TypeAlias = Literal[
@@ -67,7 +67,7 @@ def _hash_parts(prefix: bytes, *parts: Any) -> str:
     return digest.hexdigest()
 
 
-def _key(value: Key[Array, ""], /, *, owner: str) -> Array:
+def _key(value: PRNGKey, /, *, owner: str) -> Array:
     data = jr.key_data(value)
     if data.shape != (2,):
         raise ValueError(f"{owner} requires one scalar JAX PRNG key.")
@@ -112,7 +112,7 @@ class PoissonClockRealization(StrictModule):
 
     def __init__(
         self,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         num_channels: int,
         /,
         *,
@@ -448,7 +448,7 @@ class AbstractJumpProcess(StrictModule):
     @abstractmethod
     def sample_mark(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         t: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,
@@ -460,7 +460,7 @@ class AbstractJumpProcess(StrictModule):
 
 IntensityFunction = Callable[[ArrayLike, ArrayLike, Any], ArrayLike]
 JumpMap = Callable[[ArrayLike, ArrayLike, ArrayLike, Any], ArrayLike]
-MarkSampler = Callable[[Key[Array, ""], ArrayLike, ArrayLike, ArrayLike, Any], ArrayLike]
+MarkSampler = Callable[[PRNGKey, ArrayLike, ArrayLike, ArrayLike, Any], ArrayLike]
 
 
 class JumpProcess(AbstractJumpProcess):
@@ -533,7 +533,7 @@ class JumpProcess(AbstractJumpProcess):
 
     def sample_mark(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         t: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,

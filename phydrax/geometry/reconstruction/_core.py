@@ -14,11 +14,11 @@ import equinox as eqx
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 from scipy.spatial import Delaunay, QhullError
 
 from ..._mass import Mass
 from ...measurement.lidar import LidarPointProduct
+from ...typing import PRNGKey
 from .._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
@@ -185,7 +185,7 @@ class _ReconstructedGeometryKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         return self.child.sample_interior(
@@ -196,7 +196,7 @@ class _ReconstructedGeometryKernel(GeometryKernel):
         )
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         return self.child.sample_boundary(state, num_points, key=key)
 

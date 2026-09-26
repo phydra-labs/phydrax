@@ -16,7 +16,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -33,6 +32,7 @@ from ..operators.quantum.variable_sector import (
     VariableSectorProposal,
     VariableSectorSpace,
 )
+from ..typing import PRNGKey
 
 
 VariableSectorVMCStatus: TypeAlias = Literal[0, 1, 2, 3, 4]
@@ -223,7 +223,7 @@ class PreparedVariableSectorVMC(StrictModule):
             }
         )
 
-    def initial_state(self, *, key: Key[Array, ""] = jr.key(0)) -> VariableSectorVMCState:
+    def initial_state(self, *, key: PRNGKey = jr.key(0)) -> VariableSectorVMCState:
         log_target, valid = _batched_log_target(
             self,
             self.initial_coordinates,
@@ -388,7 +388,7 @@ def _transition(
         labels: Array,
         current_log_target: Array,
         current_valid: Array,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> _ChainTransition:
         proposal_key, acceptance_key = jr.split(key)
         current = VariableParticleConfiguration(coordinate, active, labels)

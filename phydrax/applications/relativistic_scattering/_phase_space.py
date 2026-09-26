@@ -15,11 +15,11 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._kinematics import minkowski_dot
 
 
@@ -397,7 +397,7 @@ class MultiChannelPhaseSpacePlan(StrictModule, NonTrainableState):
         clipped = jnp.clip(selector_, 0.0, jnp.nextafter(1.0, 0.0))
         return jnp.searchsorted(jnp.cumsum(self.probabilities), clipped)
 
-    def sample_channel_indices(self, key: Key[Array, ""], count: int, /) -> Array:
+    def sample_channel_indices(self, key: PRNGKey, count: int, /) -> Array:
         """Draw a fixed-size set of channel indices from the prepared mixture."""
         count_ = int(count)
         if count_ < 1:

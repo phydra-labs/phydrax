@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
@@ -24,6 +23,7 @@ from .linalg import (
     solve,
     TriangularLinearOperator,
 )
+from .typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -97,7 +97,7 @@ class DiagonalCovarianceAction(StrictModule, NonTrainableState):
         whitened = self.whiten(residual)
         return jnp.real(jnp.vdot(whitened, whitened))
 
-    def sample(self, key: PRNGKeyArray, /) -> Array:
+    def sample(self, key: PRNGKey, /) -> Array:
         normal = jax.random.normal(key, self.variance.shape, dtype=self.variance.dtype)
         return jnp.sqrt(self.variance) * normal
 
@@ -196,7 +196,7 @@ class LowRankDiagonalCovarianceAction(StrictModule, NonTrainableState):
             raise ValueError("Residual must match covariance layout.")
         return jnp.real(jnp.vdot(value, self.solve(value)))
 
-    def sample(self, key: PRNGKeyArray, /) -> Array:
+    def sample(self, key: PRNGKey, /) -> Array:
         diagonal_key, factor_key = jax.random.split(key)
         real_dtype = self.variance.dtype
         diagonal = jax.random.normal(diagonal_key, self.variance.shape, dtype=real_dtype)

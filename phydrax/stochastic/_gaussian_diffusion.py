@@ -12,11 +12,11 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._probability import _leading_shape, AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._process import (
     AbstractMarginalTransitionLaw,
     DiagonalGaussianProcessDistribution,
@@ -162,7 +162,7 @@ class AbstractGaussianDiffusion(AbstractMarginalTransitionLaw):
 
     def perturb(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         /,
         *,

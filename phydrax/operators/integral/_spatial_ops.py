@@ -9,10 +9,10 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
+from ...typing import PRNGKey
 from ..differential._domain_ops import _factor_and_dim
 from ._ctx import _compile_ctx_integrand
 
@@ -98,9 +98,7 @@ def spatial_integral(
     def _eval_g(val: Any) -> Any:
         return nonlinearity(val) if callable(nonlinearity) else val
 
-    def _op(
-        *args: Any, key: Key[jax.Array, ""] | None = None, **kwargs: Any
-    ) -> jax.Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> jax.Array:
         x = args[x_pos]
         if isinstance(x, tuple):
             raise ValueError("spatial_integral does not support coord-separable inputs.")
@@ -220,9 +218,7 @@ def nonlocal_integral(
 
     u_var_idx = u.deps.index(var) if var in u.deps else None
 
-    def _op(
-        *args: Any, key: Key[jax.Array, ""] | None = None, **kwargs: Any
-    ) -> jax.Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> jax.Array:
         x_sp = args[x_pos]
         if isinstance(x_sp, tuple):
             raise ValueError("nonlocal_integral does not support coord-separable inputs.")

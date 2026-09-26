@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -20,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..equations._chemical_mechanism import PreparedChemicalMechanism
 from ..equations._chemical_rates import ChemicalRateKind, ChemicalRateRuntime
+from ..typing import PRNGKey
 from ._jump import AbstractJumpProcess
 
 
@@ -193,7 +193,7 @@ class ChemicalJumpProcess(AbstractJumpProcess):
 
     def sample_mark(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         time: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,

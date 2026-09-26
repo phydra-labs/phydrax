@@ -12,11 +12,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Bool, Float, Key
+from jaxtyping import Bool, Float
 
 from .._doc import DOC_KEY0
 from .._mass import ExactMass, Mass, UnknownMass
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -444,7 +445,7 @@ class AbstractGeometry(JointFactor):
         displacement: Array,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> GeometryTransitionResult:
         """Move interior points while preserving geometry membership."""
         del key
@@ -545,7 +546,7 @@ class AbstractGeometry(JointFactor):
         displacement: Array,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> GeometryTransitionResult:
         """Move boundary points tangentially and retract them to the boundary."""
         del key
@@ -611,7 +612,7 @@ class AbstractGeometry(JointFactor):
         where: Callable[[Array], Bool[Array, ""]],
         *,
         num_samples: int = 4096,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         """Estimate boundary subset measure of {x: where(x)=True}."""
         raise NotImplementedError
@@ -630,7 +631,7 @@ class AbstractGeometry(JointFactor):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         raise NotImplementedError
 
@@ -641,7 +642,7 @@ class AbstractGeometry(JointFactor):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         raise NotImplementedError
 
@@ -652,7 +653,7 @@ class AbstractGeometry(JointFactor):
         *,
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> tuple[tuple[Array, ...], Bool[Array, "..."]]:
         """Internal helper for separable interior sampling."""
         raise NotImplementedError

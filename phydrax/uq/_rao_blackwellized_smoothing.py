@@ -12,10 +12,10 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key
+from ..typing import PRNGKey
 from ._covariance import _solve_covariance_system
 from ._particle import normalize_log_weights
 from ._rao_blackwellized import (
@@ -88,7 +88,7 @@ def _sample_shape(value: tuple[int, ...], /) -> tuple[tuple[int, ...], int]:
 
 
 def rao_blackwellized_backward_simulation(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: RaoBlackwellizedFilterResult,
     /,
     *,
@@ -277,7 +277,7 @@ def rao_blackwellized_backward_simulation(
 
 
 def sample_rao_blackwellized_backward_paths(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: RaoBlackwellizedFilterResult,
     /,
     *,
@@ -290,7 +290,7 @@ def sample_rao_blackwellized_backward_paths(
 
 
 def rao_blackwellized_particle_smoother(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: RaoBlackwellizedFilterResult,
     /,
     *,

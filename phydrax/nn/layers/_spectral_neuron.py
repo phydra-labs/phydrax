@@ -16,7 +16,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -29,6 +28,7 @@ from ..._strict import StrictModule
 from ..._symmetric_coordinates import smat, svec, symmetric_packed_dimension
 from ..._trainable import NonTrainableState
 from ...linalg import HermitianPrecisionPolicy
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, network_randomness
 from .._initializers import _initializer_dict
@@ -172,7 +172,7 @@ class SpectralNeuron(_AbstractBaseModel):
         initialization_radius: float = 5.0,
         dtype: Any = jnp.float32,
         precision: HermitianPrecisionPolicy | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if isinstance(matrix_size, bool) or not isinstance(matrix_size, Integral):
             raise TypeError("SpectralNeuron matrix_size must be an integer.")

@@ -18,13 +18,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ... import ein
 from ..._fingerprint import canonical_fingerprint
 from ..._sampling._addressing import derive_key, SampleAddress
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 _NOISE_ADDRESS = SampleAddress(
@@ -404,7 +404,7 @@ def sample_complex_langevin(
     initial_state: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> ComplexLangevinResult:
     """Run one fixed-length real-noise complex Langevin trajectory."""
     if not isinstance(runtime, PreparedComplexLangevin):

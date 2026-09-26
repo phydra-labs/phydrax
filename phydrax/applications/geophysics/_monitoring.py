@@ -12,12 +12,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...observation import DiagonalCovarianceAction
+from ...typing import PRNGKey
 from ...uq import TemporalDifferencePrior
 from ._workflows import EnsembleInversionResult, EnsembleKalmanInversionPlan
 
@@ -195,7 +195,7 @@ class SequentialMonitoringPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, ensemble: ArrayLike, key: PRNGKeyArray, /) -> MonitoringState:
+    def initialize(self, ensemble: ArrayLike, key: PRNGKey, /) -> MonitoringState:
         members = jnp.asarray(ensemble)
         if members.ndim != 2 or members.shape[0] < 2:
             raise ValueError("Monitoring ensemble requires at least two members.")

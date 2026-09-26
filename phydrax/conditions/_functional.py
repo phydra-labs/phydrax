@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -22,6 +21,7 @@ from .._strict import StrictModule
 from ..domain import DomainFunction, PointBatch
 from ..integration._linear import PreparedLinearReduction
 from ..operators.differential._domain_ops import partial_n
+from ..typing import PRNGKey
 from ._ir import (
     AbstractConditionOperator,
     Condition,
@@ -155,7 +155,7 @@ class PointJetAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         if self.field not in values:
@@ -188,7 +188,7 @@ class PointJetAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         return self._apply(values, key=key, **kwargs)
@@ -198,7 +198,7 @@ class PointJetAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         return self._apply(values, key=key, **kwargs)
@@ -208,7 +208,7 @@ class PointJetAction(AbstractConditionOperator):
         value: object,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del value, key, kwargs
@@ -221,7 +221,7 @@ class PointJetAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del values, key, kwargs
@@ -276,7 +276,7 @@ class LinearReductionAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         if self.field not in values:
@@ -299,7 +299,7 @@ class LinearReductionAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         return self._apply(values, key=key, **kwargs)
@@ -309,7 +309,7 @@ class LinearReductionAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         return self._apply(values, key=key, **kwargs)
@@ -319,7 +319,7 @@ class LinearReductionAction(AbstractConditionOperator):
         value: object,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del value, key, kwargs
@@ -330,7 +330,7 @@ class LinearReductionAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del values, key, kwargs
@@ -454,7 +454,7 @@ class MatrixLinearFunctional(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         del key, kwargs
@@ -465,7 +465,7 @@ class MatrixLinearFunctional(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         del key, kwargs
@@ -476,7 +476,7 @@ class MatrixLinearFunctional(AbstractConditionOperator):
         value: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
         del key, kwargs
@@ -496,7 +496,7 @@ class MatrixLinearFunctional(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del values, key, kwargs
@@ -542,7 +542,7 @@ class LinearFunctional(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         outputs = tuple(
@@ -561,7 +561,7 @@ class LinearFunctional(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         return self._apply(values, key=key, **kwargs)
@@ -571,7 +571,7 @@ class LinearFunctional(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         return self._apply(values, key=key, **kwargs)
@@ -581,7 +581,7 @@ class LinearFunctional(AbstractConditionOperator):
         value: object,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del value, key, kwargs
@@ -594,7 +594,7 @@ class LinearFunctional(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del values, key, kwargs

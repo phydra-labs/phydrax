@@ -6,8 +6,6 @@ from __future__ import annotations
 from typing import Literal, TypeAlias
 
 import equinox as eqx
-from jax import Array
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ...domain import DomainFunction
@@ -17,6 +15,7 @@ from ...stochastic import (
     BSDEProblem,
     evaluate_bsde,
 )
+from ...typing import PRNGKey
 from ..core import PricingLaw
 
 
@@ -96,7 +95,7 @@ def evaluate_exposure_bsde(
     /,
     *,
     control_model: DomainFunction | None = None,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> ExposureBSDEEvaluation:
     """Evaluate a typed BSDE route without introducing a second BSDE solver API."""
 

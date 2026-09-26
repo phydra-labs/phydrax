@@ -270,7 +270,7 @@ def _initial_basis(state: Array, rank: int, supplied: ArrayLike | None, /) -> Ar
         if rank == dimension:
             return jnp.eye(dimension, dtype=dtype)
         basis, _ = _thin_qr(
-            jax.random.normal(jax.random.PRNGKey(0), (dimension, rank), dtype=dtype)
+            jax.random.normal(jax.random.key(0), (dimension, rank), dtype=dtype)
         )
         return basis
     basis = jnp.asarray(supplied)

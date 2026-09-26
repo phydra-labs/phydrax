@@ -101,7 +101,7 @@ def _starts(
     initial = validate_real_inexact_tree(initial_parameters, name="initial_parameters")
     space = PyTreeSpace(initial)
     center = space.flatten(initial)
-    key = jax.random.PRNGKey(policy.seed)
+    key = jax.random.key(policy.seed)
     if policy.generator == "uniform-bounds":
         if problem.bounds is None:
             raise ValueError("uniform-bounds starts require problem.bounds.")

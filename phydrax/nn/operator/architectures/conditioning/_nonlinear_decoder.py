@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -36,6 +35,8 @@ from phydrax.nn.operator.architectures.conditioning._deeponet import (
 )
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
+
+from .....typing import PRNGKey
 
 
 class CoordinateDecoderState(StrictModule):
@@ -86,7 +87,7 @@ class FiLMCoordinateDecoder(StrictModule):
         out_size: int | Literal["scalar"] = "scalar",
         width: int = 128,
         depth: int = 4,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.latent_size = int(latent_size)
         self.coord_dim = int(coord_dim)

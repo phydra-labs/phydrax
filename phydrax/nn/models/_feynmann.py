@@ -9,13 +9,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, compose_regularity, product_regularity
 from .._keys import EvalKey
@@ -322,7 +322,7 @@ class FeynmaNN(_AbstractBaseModel):
         final_activation: Callable | None = None,
         modrelu_bias_init: float = 0.0,
         learn_gates: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         rwf: bool | tuple[float, float] = False,
         keep_output_complex: bool = False,
         scan: bool = False,

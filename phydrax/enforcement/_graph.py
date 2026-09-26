@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.conditions._ir import (
@@ -52,6 +51,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..domain._function import _drop_model_construction_certificates
+from ..typing import PRNGKey
 
 
 def _graph_label_for_component(
@@ -253,7 +253,7 @@ class _GraphRestrictedField(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
@@ -533,7 +533,7 @@ class _GraphValueOverwrite(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):

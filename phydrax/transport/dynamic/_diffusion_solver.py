@@ -11,11 +11,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._diffusion_problem import (
     _proposal_arrays,
     DiffusionBridgePlan,
@@ -68,7 +68,7 @@ def prepare_diffusion_bridge(
     plan: DiffusionBridgePlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> PreparedDiffusionBridge:
     """Lower finite proposals and normalized transition factors to one chain."""
     del key
@@ -256,7 +256,7 @@ def solve_diffusion_bridge(prepared: PreparedDiffusionBridge, /) -> DiffusionBri
 
 def sample_diffusion_bridge(
     result: DiffusionBridgeResult,
-    key: Key[Array, ""],
+    key: PRNGKey,
     sample_shape: tuple[int, ...] = (),
     /,
 ) -> Array:
@@ -272,7 +272,7 @@ def sample_diffusion_bridge(
     keys = jr.split(key, count)
     initial_probabilities = result.physical_marginals[0]
 
-    def one(path_key: Key[Array, ""]) -> Array:
+    def one(path_key: PRNGKey) -> Array:
         first_key, path_key = jr.split(path_key)
         index = jr.categorical(first_key, jnp.log(initial_probabilities))
         indices = [index]

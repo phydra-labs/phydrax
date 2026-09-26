@@ -12,13 +12,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic import HolomorphicPotentialProvider
 from ..._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ..._strict import StrictModule
 from ..._trainable import ArrayRole, NonTrainableState, resolve_array_roles
+from ...typing import PRNGKey
 from ._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 
 
@@ -119,9 +119,7 @@ class HarmonicPotential2D(_AbstractTrialSpaceField):
             representation_id=representation_id,
         )
 
-    def __call__(
-        self, coordinates: Array, /, *, key: Key[Array, ""] | None = None
-    ) -> Array:
+    def __call__(self, coordinates: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = self.potential(_complex_coordinate(coordinates))[self.branch]
         return jnp.real(value)
@@ -188,9 +186,7 @@ class BiharmonicPotential2D(_AbstractTrialSpaceField):
             representation_id=representation_id,
         )
 
-    def __call__(
-        self, coordinates: Array, /, *, key: Key[Array, ""] | None = None
-    ) -> Array:
+    def __call__(self, coordinates: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         z = _complex_coordinate(coordinates)
         values = self.potential(z)
@@ -330,9 +326,7 @@ class PlaneElasticityPotential2D(_AbstractTrialSpaceField):
             representation_id=representation_id,
         )
 
-    def __call__(
-        self, coordinates: Array, /, *, key: Key[Array, ""] | None = None
-    ) -> Array:
+    def __call__(self, coordinates: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         z = _complex_coordinate(coordinates)
         jet = self.potential.jet(z, 2)

@@ -16,7 +16,6 @@ from typing import Any, ClassVar, Literal
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -29,6 +28,7 @@ from ....graph import (
     CochainMetricReduction,
     CochainResidualProgram,
 )
+from ....typing import PRNGKey
 from ..data import (
     OperatorBatch,
     OperatorPrediction,
@@ -213,7 +213,7 @@ class AbstractOperatorLossTerm(ABC):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -228,7 +228,7 @@ class AbstractOperatorLossTerm(ABC):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -346,7 +346,7 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -532,7 +532,7 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -636,7 +636,7 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -750,7 +750,7 @@ class SupervisedOperatorRolloutLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -829,7 +829,7 @@ class ResidualOperatorRolloutLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

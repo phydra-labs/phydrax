@@ -13,11 +13,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key
 
 import phydrax.linalg as la
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 
 
 ProbeDistribution = Literal["rademacher", "normal"]
@@ -227,7 +227,7 @@ class StochasticOperatorSamples(StrictModule):
 
 
 def _probes(
-    key: Key[Array, ""],
+    key: PRNGKey,
     shape: tuple[int, ...],
     dtype: DTypeLike,
     policy: StochasticTracePolicy,
@@ -243,7 +243,7 @@ def stochastic_trace_samples(
     function: Callable[[Array], Array],
     state: ArrayLike,
     covariance_action: Callable[[Array, Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,
@@ -301,7 +301,7 @@ def exact_state_divergence(
 def stochastic_divergence_samples(
     vector_field: Callable[[Array], Array],
     state: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,
@@ -333,7 +333,7 @@ def estimate_stochastic_trace(
     function: Callable[[Array], Array],
     state: ArrayLike,
     covariance_action: Callable[[Array, Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,
@@ -358,7 +358,7 @@ def estimate_kolmogorov_generator(
     drift: Callable[[Array], Array],
     state: ArrayLike,
     covariance_action: Callable[[Array, Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,

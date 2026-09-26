@@ -13,12 +13,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from ..typing import PRNGKey
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -150,7 +151,7 @@ class DatasetDomain(JointFactor):
         num_points: int,
         *,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> PyTree[Array]:
         idx = self.sample_indices(num_points, sampler=sampler, key=key)
         return self.input_rows(idx)
@@ -160,7 +161,7 @@ class DatasetDomain(JointFactor):
         num_points: int,
         *,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         del sampler
         n = int(num_points)

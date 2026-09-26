@@ -12,11 +12,11 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ..sign_problem import (
     ComplexLangevinPlan,
     ComplexLangevinResult,
@@ -162,7 +162,7 @@ def initialize_partial_saddle_fts(
     fields: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> PartialSaddleFTSState:
     if not isinstance(prepared, PreparedPartialSaddleFTS):
         raise TypeError("prepared must be PreparedPartialSaddleFTS.")
@@ -325,7 +325,7 @@ def sample_complex_fts(
     initial_fields: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> ComplexFTSResult:
     if not isinstance(prepared, PreparedComplexFTS):
         raise TypeError("prepared must be PreparedComplexFTS.")

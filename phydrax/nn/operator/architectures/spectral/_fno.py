@@ -16,7 +16,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -40,6 +39,7 @@ from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
 from ....._dtype_names import inexact_result_type
+from .....typing import PRNGKey
 
 
 Factorization = Literal["dense", "cp", "tucker"]
@@ -71,7 +71,7 @@ def _mode_tuple(modes: int | Sequence[int], ndim: int | None = None) -> tuple[in
     return result
 
 
-def _complex_normal(key: Key[Array, ""], shape: tuple[int, ...], scale: float) -> Array:
+def _complex_normal(key: PRNGKey, shape: tuple[int, ...], scale: float) -> Array:
     real_key, imag_key = jr.split(key)
     return scale * (
         jr.normal(real_key, shape=shape) + 1j * jr.normal(imag_key, shape=shape)
@@ -143,7 +143,7 @@ class SpectralConvND(StrictModule):
         n_modes: int | Sequence[int],
         factorization: Factorization = "dense",
         rank: int | float = 0.5,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         resources: SpectralConvolutionResourcePolicy | None = None,
     ) -> None:
         self.in_channels = int(in_channels)
@@ -369,7 +369,7 @@ class MultiScaleSpectralConvND(StrictModule):
         scales: Sequence[float] = (1.0, 0.5),
         factorization: Factorization = "dense",
         rank: int | float = 0.5,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -465,7 +465,7 @@ class _AxialSpectralConvND(StrictModule):
         n_modes: int | Sequence[int],
         factorization: Factorization = "dense",
         rank: int | float = 0.5,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -627,7 +627,7 @@ class _AbstractFNO(AbstractOperatorModel):
         dropout: float | Sequence[float],
         source_key: str | None,
         scan: bool,
-        key: Key[Array, ""],
+        key: PRNGKey,
         axial: bool = False,
     ) -> None:
         self.in_size = in_channels
@@ -1030,7 +1030,7 @@ class FNO(_AbstractFNO):
         dropout: float | Sequence[float] = 0.0,
         source_key: str | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self._init_fno(
             in_channels=in_channels,
@@ -1101,7 +1101,7 @@ class IFNO(_AbstractFNO):
         rank: int | float = 0.5,
         dropout: float = 0.0,
         source_key: str | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.iterations = int(iterations)
         self.tolerance = float(tolerance)
@@ -1248,7 +1248,7 @@ class AxialFactorizedFNO(_AbstractFNO):
         dropout: float | Sequence[float] = 0.0,
         source_key: str | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self._init_fno(
             in_channels=in_channels,
@@ -1285,7 +1285,7 @@ def SpectralConv1d(
     in_channels: int,
     out_channels: int,
     modes: int,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> SpectralConvND:
     return SpectralConvND(
         in_channels=in_channels,
@@ -1301,7 +1301,7 @@ def SpectralConv2d(
     out_channels: int,
     modes_x: int,
     modes_y: int,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> SpectralConvND:
     return SpectralConvND(
         in_channels=in_channels,

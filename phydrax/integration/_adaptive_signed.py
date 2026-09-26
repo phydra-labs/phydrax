@@ -12,11 +12,11 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._api import _requires_random_key, IntegrationRealization, materialize
 from ._batches import PointIntegrationBatch, WeightedSampleBatch
 from ._status import IntegrationStatus
@@ -69,7 +69,7 @@ def _population_active(realization: IntegrationRealization, /) -> Array:
 
 
 def _materialize_source(
-    source: AdaptiveIntegration, key: Key[Array, ""]
+    source: AdaptiveIntegration, key: PRNGKey
 ) -> IntegrationRealization:
     if _requires_random_key(source.initial_plan):
         return materialize(source.target, source.initial_plan, key=key)
@@ -94,7 +94,7 @@ class AdaptiveSignedEstimator(StrictModule):
         raise NotImplementedError
 
     def initialize(
-        self, term: _AdaptiveSignedTerm, /, *, key: Key[Array, ""]
+        self, term: _AdaptiveSignedTerm, /, *, key: PRNGKey
     ) -> AdaptiveSignedPopulation:
         source = term.source
         self.validate_source(source)
@@ -131,7 +131,7 @@ class AdaptiveSignedEstimator(StrictModule):
         population: AdaptiveSignedPopulation,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         iter_: Any,
     ) -> AdaptiveSignedPopulation:
         del functions, iter_

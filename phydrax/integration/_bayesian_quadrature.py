@@ -10,7 +10,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -34,6 +33,7 @@ from ..linalg import (
     prepare,
     solve,
 )
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     BayesianQuadratureDiagnostics,
@@ -357,7 +357,7 @@ class BayesianQuadratureBatch(StrictModule):
 def _materialize_points(
     target: ProbabilityTarget,
     plan: BayesianQuadraturePlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PointIntegrationBatch:
     probability = target.probability
@@ -403,7 +403,7 @@ def materialize_bayesian_quadrature(
     plan: BayesianQuadraturePlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> BayesianQuadratureBatch:
     """Prepare the fixed kernel system before any integrand is evaluated."""
@@ -664,7 +664,7 @@ def integrate_bayesian_quadrature(
     batch: BayesianQuadratureBatch,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

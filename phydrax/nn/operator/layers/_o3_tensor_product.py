@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint
@@ -21,6 +20,8 @@ from phydrax._trainable import NonTrainableState
 from phydrax.ein import contract
 from phydrax.nn.operator.representations import O3Representation
 from phydrax.nn.operator.representations._o3 import _tensor_basis
+
+from ....typing import PRNGKey
 
 
 O3TensorProductConnectionMode = Literal["uvw"]
@@ -356,7 +357,7 @@ class O3TensorProduct(StrictModule):
         *,
         internal_weights: bool = True,
         dtype: DTypeLike = jnp.float64,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(plan, O3TensorProductPlan):
             raise TypeError("plan must be an O3TensorProductPlan.")

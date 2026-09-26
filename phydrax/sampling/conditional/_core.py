@@ -14,12 +14,13 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._sampling import AbstractChainSampleResult, derive_key, SampleAddress
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 _CONDITIONAL_ADDRESS = SampleAddress(
@@ -143,7 +144,7 @@ class AbstractConditionalKernel(StrictModule):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         parameters: Any,
         tails: tuple[Any, ...],
         current: Any,
@@ -157,7 +158,7 @@ class CallableConditionalKernel(AbstractConditionalKernel):
     """Pure callable conditional sampler with explicit state initialization."""
 
     sample_function: Callable[
-        [Key[Array, ""], Any, tuple[Any, ...], Any, Any], tuple[Any, Any]
+        [PRNGKey, Any, tuple[Any, ...], Any, Any], tuple[Any, Any]
     ] = eqx.field(static=True)
     initialize_function: Callable[[PyTree[jax.ShapeDtypeStruct]], Any] = eqx.field(
         static=True
@@ -166,9 +167,7 @@ class CallableConditionalKernel(AbstractConditionalKernel):
 
     def __init__(
         self,
-        sample: Callable[
-            [Key[Array, ""], Any, tuple[Any, ...], Any, Any], tuple[Any, Any]
-        ],
+        sample: Callable[[PRNGKey, Any, tuple[Any, ...], Any, Any], tuple[Any, Any]],
         /,
         *,
         kernel_id: str,
@@ -189,7 +188,7 @@ class CallableConditionalKernel(AbstractConditionalKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         parameters: Any,
         tails: tuple[Any, ...],
         current: Any,
@@ -202,14 +201,14 @@ class CallableConditionalKernel(AbstractConditionalKernel):
 class MetropolisWithinConditionalKernel(AbstractConditionalKernel):
     """Metropolis-within-Gibbs kernel from explicit proposal and local log-target callables."""
 
-    proposal: Callable[[Key[Array, ""], Any, Any], Any] = eqx.field(static=True)
+    proposal: Callable[[PRNGKey, Any, Any], Any] = eqx.field(static=True)
     proposal_log_prob: Callable[[Any, Any, Any], Array] = eqx.field(static=True)
     log_target: Callable[[Any, tuple[Any, ...], Any], Array] = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        proposal: Callable[[Key[Array, ""], Any, Any], Any],
+        proposal: Callable[[PRNGKey, Any, Any], Any],
         proposal_log_prob: Callable[[Any, Any, Any], Array],
         log_target: Callable[[Any, tuple[Any, ...], Any], Array],
         /,
@@ -233,7 +232,7 @@ class MetropolisWithinConditionalKernel(AbstractConditionalKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         parameters: Any,
         tails: tuple[Any, ...],
         current: Any,
@@ -457,7 +456,7 @@ def initialize_conditional_program(
 def conditional_program_step(
     program: PreparedConditionalUpdateProgram,
     state: ConditionalProgramState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> ConditionalProgramState:
     """Advance every validated stage while preserving immutable snapshot semantics."""
@@ -541,7 +540,7 @@ def sample_conditional_program(
     state: ConditionalProgramState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     warmup_steps: int,
     num_draws: int,
     steps_per_draw: int = 1,

@@ -17,7 +17,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -78,6 +77,7 @@ from ..operators.quantum import (
     LogAmplitude,
     sampling_log_weight,
 )
+from ..typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -350,9 +350,7 @@ class VariationalMonteCarloProblem(StrictModule):
             )
         return target
 
-    def initial_state(
-        self, *, key: Key[Array, ""] = jr.key(0)
-    ) -> VariationalMonteCarloState:
+    def initial_state(self, *, key: PRNGKey = jr.key(0)) -> VariationalMonteCarloState:
         markov = self.kernel.initialize(
             self.target_for_model(self.model),
             self.initial_configurations,
@@ -476,7 +474,7 @@ class VariationalMonteCarloState(StrictModule):
         parameter_coordinates: Array,
         markov_state: MarkovState,
         iteration: int | Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         attempt_cursor: int | Array | None = None,
     ) -> None:
         if not isinstance(markov_state, MarkovState):
@@ -616,7 +614,7 @@ def _sample_frozen_model(
     markov_state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     steps_per_draw: int,
     warmup_steps: int,
@@ -640,7 +638,7 @@ def evaluate_variational_monte_carlo(
     markov_state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     steps_per_draw: int = 1,
     warmup_steps: int = 0,
@@ -841,7 +839,7 @@ def _prepare_sr_kernel(
     /,
     *,
     objective_id: str,
-    root_key: Key[Array, ""],
+    root_key: PRNGKey,
     iteration: Array,
     attempt_cursor: Array,
 ) -> tuple[PreparedTrainingKernel, TrainingKernelState]:
@@ -1241,7 +1239,7 @@ def solve_variational_monte_carlo(
     policy: VariationalMonteCarloPolicy,
     /,
     *,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     state: VariationalMonteCarloState | None = None,
 ) -> VariationalMonteCarloResult:
     """Optimize a local-operator amplitude model with persistent-chain SR updates.

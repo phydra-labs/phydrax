@@ -5,11 +5,10 @@
 from typing import Any, TypeAlias
 
 import equinox as eqx
-from jax import Array
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._api import _requires_random_key, IntegrationRealization, materialize
 
 
@@ -95,7 +94,7 @@ def resolve_integration(
     source: IntegrationSource,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     realization: IntegrationRealization | None = None,
 ) -> IntegrationRealization:
     """Resolve one source without conflating sampling and caller-managed state."""

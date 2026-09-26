@@ -11,11 +11,11 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import DiagramGraph
 
 
@@ -305,7 +305,7 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
         )
 
     def transition(
-        self, state: DiagramMonteCarloState, key: Key[Array, ""], /
+        self, state: DiagramMonteCarloState, key: PRNGKey, /
     ) -> DiagramMonteCarloState:
         move_key, choice_key, endpoint_key, acceptance_key = jr.split(key, 4)
         move = jr.categorical(move_key, jnp.log(self.move_probabilities)).astype(
@@ -399,7 +399,7 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
 
     def run(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         initial_index: int = 0,
@@ -408,7 +408,7 @@ class PreparedDiagramMonteCarlo(StrictModule, NonTrainableState):
         keys = jr.split(key, self.steps)
 
         def advance(
-            state: DiagramMonteCarloState, step_key: Key[Array, ""]
+            state: DiagramMonteCarloState, step_key: PRNGKey
         ) -> tuple[DiagramMonteCarloState, None]:
             return self.transition(state, step_key), None
 

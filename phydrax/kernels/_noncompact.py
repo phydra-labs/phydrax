@@ -13,12 +13,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._base import _as_real_array
 from ._finite_feature import AbstractFiniteFeatureKernel
 
@@ -210,7 +210,7 @@ def _multivariate_cauchy_log_density(frequencies: Array, scale: float, /) -> Arr
 
 
 def hyperbolic_feature_proposal(
-    key: PRNGKeyArray,
+    key: PRNGKey,
     dimension: int,
     sample_count: int,
     /,
@@ -248,7 +248,7 @@ def hyperbolic_feature_proposal(
     )
 
 
-def _orthogonal_frames(key: PRNGKeyArray, sample_count: int, dimension: int, /) -> Array:
+def _orthogonal_frames(key: PRNGKey, sample_count: int, dimension: int, /) -> Array:
     raw = jax.random.normal(key, (sample_count, dimension, dimension))
 
     def orthogonal(matrix: Array) -> Array:
@@ -260,7 +260,7 @@ def _orthogonal_frames(key: PRNGKeyArray, sample_count: int, dimension: int, /) 
 
 
 def spd_feature_proposal(
-    key: PRNGKeyArray,
+    key: PRNGKey,
     matrix_dimension: int,
     sample_count: int,
     /,
@@ -473,7 +473,7 @@ class HyperbolicRandomFeatureKernel(AbstractFiniteFeatureKernel):
         features = self.features(points)
         return jnp.sum(features * features, axis=-1)
 
-    def resample(self, key: PRNGKeyArray, /) -> HyperbolicRandomFeatureKernel:
+    def resample(self, key: PRNGKey, /) -> HyperbolicRandomFeatureKernel:
         """Return the same kernel parameters with an explicitly new proposal."""
         proposal = hyperbolic_feature_proposal(
             key,
@@ -625,7 +625,7 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
         features = self.features(points)
         return jnp.sum(features * features, axis=-1)
 
-    def resample(self, key: PRNGKeyArray, /) -> SPDRandomFeatureKernel:
+    def resample(self, key: PRNGKey, /) -> SPDRandomFeatureKernel:
         """Return the same kernel parameters with an explicitly new proposal."""
         proposal = spd_feature_proposal(
             key,

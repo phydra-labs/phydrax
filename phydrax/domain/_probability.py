@@ -12,11 +12,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Bool, Key
+from jaxtyping import Bool
 
 from .._sampling import materialize_design
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._measure import BaseMeasure, ExactMass
 from ._scalar import AbstractScalarDomain
 from ._selection import Fixed, Interior, Selection
@@ -148,9 +149,7 @@ class _ProbabilityLaw(Protocol):
     @property
     def support(self) -> tuple[Array, Array] | None: ...
 
-    def sample(
-        self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()
-    ) -> Array: ...
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array: ...
 
     def icdf(self, probability: Any, /) -> Array: ...
 
@@ -321,7 +320,7 @@ class ProbabilityDomain(AbstractScalarDomain):
         num_points: int,
         *,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Array:
         count = int(num_points)
         if count < 0:

@@ -12,11 +12,12 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
 from ..stochastic._state_space import StateSpaceProblem
+from ..typing import PRNGKey
 from ._bayesian_optimization import GaussianProcessBayesianOptimization
 from ._bellman import BellmanFilterResult
 from ._ensemble_filter import EnsembleFilterResult
@@ -631,7 +632,7 @@ class StateSpaceEstimation(StrictModule):
         search: DifferentialEvolutionSearch | GaussianProcessBayesianOptimization,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         position_bounds: PositionBounds,
         initial_position: PyTree[Array] | None = None,
     ) -> StateSpaceMAPWorkflowResult:
@@ -656,7 +657,7 @@ class StateSpaceEstimation(StrictModule):
         search: DifferentialEvolutionSearch | GaussianProcessBayesianOptimization,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         position_bounds: PositionBounds,
         initial_position: PyTree[Array] | None = None,
         max_steps: int = 500,

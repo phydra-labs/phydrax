@@ -15,7 +15,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -56,8 +55,10 @@ from phydrax.nn.operator.layers._attention import (
     CodomainAttention,
 )
 
+from .....typing import PRNGKey
 
-def _named_key(key: Key[Array, ""], label: str, /) -> Key[Array, ""]:
+
+def _named_key(key: PRNGKey, label: str, /) -> PRNGKey:
     digest = hashlib.sha256(label.encode("utf-8")).digest()
     return jr.fold_in(key, int.from_bytes(digest[:4], "little"))
 
@@ -164,7 +165,7 @@ class CoDABlock(StrictModule):
         feed_forward_multiplier: float,
         factorization: Factorization,
         rank: int | float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.width = int(width)
         self.spatial_ndim = int(spatial_ndim)
@@ -353,7 +354,7 @@ class CoDANO(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.fields = tuple(fields)
         if not self.fields or len({field.name for field in self.fields}) != len(

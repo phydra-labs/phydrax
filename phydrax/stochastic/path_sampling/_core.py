@@ -14,11 +14,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 PATH_PROPAGATION_SUCCESS = 0
@@ -542,9 +542,7 @@ class DynamicsStep(StrictModule):
 class FunctionalDynamicsKernel(StrictModule):
     """Explicit functional path dynamics with no runtime capability discovery."""
 
-    step_fn: Callable[[Key[Array, ""], Array, Array], DynamicsStep] = eqx.field(
-        static=True
-    )
+    step_fn: Callable[[PRNGKey, Array, Array], DynamicsStep] = eqx.field(static=True)
     transition_log_density_fn: Callable[[Array, Array, Array], Array] = eqx.field(
         static=True
     )
@@ -554,7 +552,7 @@ class FunctionalDynamicsKernel(StrictModule):
 
     def __init__(
         self,
-        step: Callable[[Key[Array, ""], Array, Array], DynamicsStep],
+        step: Callable[[PRNGKey, Array, Array], DynamicsStep],
         transition_log_density: Callable[[Array, Array, Array], Array],
         capabilities: DynamicsKernelCapabilities,
         /,
@@ -575,9 +573,7 @@ class FunctionalDynamicsKernel(StrictModule):
         self.time_step = interval
         self.kernel_id = _nonempty_identity(kernel_id, "kernel_id")
 
-    def step(
-        self, key: Key[Array, ""], state: Array, direction: Array, /
-    ) -> DynamicsStep:
+    def step(self, key: PRNGKey, state: Array, direction: Array, /) -> DynamicsStep:
         result = self.step_fn(key, state, direction)
         if not isinstance(result, DynamicsStep):
             raise TypeError("A dynamics step must return DynamicsStep.")

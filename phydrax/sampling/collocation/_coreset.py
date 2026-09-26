@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.coresets import (
@@ -33,6 +32,7 @@ from phydrax.kernels import (
 from ..._doc import DOC_KEY0
 from ..._sampling import DesignLike, resolve_design, UnitDesign
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._adaptive import (
     _collocation_population_metrics,
     _concat_batches,
@@ -219,7 +219,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         term: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> CollocationPopulation:
         batch = term.sample(key=key)
         if not isinstance(batch, PointBatch):
@@ -351,7 +351,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         population: CollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> CollocationPopulation:
         _coreset_diagnostics(population)

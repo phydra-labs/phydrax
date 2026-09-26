@@ -11,7 +11,6 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -42,6 +41,7 @@ from .._numerics import (
     SmolyakTerm,
 )
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     IntegrationEstimate,
@@ -347,7 +347,7 @@ def integrate_sparse_grid(
     realization: SparseGridRealization,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
@@ -532,7 +532,7 @@ def prepare_adaptive_sparse_grid(
     plan: AdaptiveSparseGridPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> AdaptiveSparseGridResult:

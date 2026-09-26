@@ -14,7 +14,6 @@ import jax.random as jr
 import jax.scipy as jsp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -33,6 +32,7 @@ from ._exponential_family import (
     NaturalCoordinates,
 )
 from ._strict import StrictModule
+from .typing import PRNGKey
 
 
 def _align_observation_arrays(
@@ -102,9 +102,7 @@ class AbstractLikelihood(StrictModule):
         raise NotImplementedError
 
     @abstractmethod
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -154,9 +152,7 @@ class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
         location_array, target_array = self.align_observations(location, target)
         return self.family.log_prob(self._natural(location_array), target_array)
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"ScalarNaturalExponentialFamilyLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -253,9 +249,7 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
             aligned_target,
         )
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"CategoricalExponentialFamilyLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -314,9 +308,7 @@ class IndependentBernoulliLikelihood(AbstractLikelihood):
             target_mask=target_mask,
         )
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"IndependentBernoulliLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -442,9 +434,7 @@ class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
             target_array,
         )
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"OrdinalCumulativeLinkLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -486,9 +476,7 @@ class GaussianLikelihood(_AbstractElementwiseLikelihood):
         standardized = (target_array - location_array) / scale
         return -0.5 * standardized**2 - jnp.log(scale) - 0.5 * jnp.log(2.0 * jnp.pi)
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"GaussianLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -542,7 +530,7 @@ class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         location: ArrayLike,
         /,
         *,
@@ -606,9 +594,7 @@ class StudentTLikelihood(_AbstractElementwiseLikelihood):
         )
         return normalizer - 0.5 * (degrees + 1.0) * jnp.log1p(standardized**2 / degrees)
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"StudentTLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -673,9 +659,7 @@ class CircularComplexGaussianLikelihood(AbstractLikelihood):
         variance = self.scale**2
         return -squared_residual / variance - jnp.log(jnp.pi * variance)
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"CircularComplexGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -845,9 +829,7 @@ class ComplexGaussianLikelihood(AbstractLikelihood):
         )
         return jnp.real(self.log_normalizer - 0.5 * quadratic)
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"ComplexGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -938,9 +920,7 @@ class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
         )
         return jnp.logaddexp(nominal, outlier)
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"ContaminatedGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
@@ -1032,9 +1012,7 @@ class CensoredGaussianLikelihood(_AbstractElementwiseLikelihood):
         right = jsp.special.log_ndtr((location_array - upper) / scale)
         return jnp.where(codes < 0, left, jnp.where(codes > 0, right, density))
 
-    def sample(
-        self, key: Key[Array, ""], location: ArrayLike, /, **parameters: Any
-    ) -> Array:
+    def sample(self, key: PRNGKey, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
             raise TypeError(
                 f"CensoredGaussianLikelihood received unknown parameters {tuple(parameters)!r}."

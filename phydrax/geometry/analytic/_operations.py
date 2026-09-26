@@ -17,7 +17,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
@@ -25,6 +24,7 @@ from phydrax._strict import StrictModule
 from ..._mass import EstimatedMass, Mass, scale_mass
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._polynomial._cubature import CubatureReference
+from ...typing import PRNGKey
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import (
     ClosestPointProvider,
@@ -498,7 +498,7 @@ class _RigidTransformKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         rotation, translation = self._parameters(state)
@@ -512,7 +512,7 @@ class _RigidTransformKernel(GeometryKernel):
         )
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         rotation, translation = self._parameters(state)
         result = self.child.sample_boundary(state, num_points, key=key)
@@ -909,7 +909,7 @@ class _ScalingKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         scale, center = self._parameters(state)
@@ -923,7 +923,7 @@ class _ScalingKernel(GeometryKernel):
         )
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         atlas = self.boundary_atlas(state)
         candidate_count = max(8 * int(num_points), 64)
@@ -1142,7 +1142,7 @@ class _SharpCSGKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         bounds = self.bounds(state)
@@ -1164,7 +1164,7 @@ class _SharpCSGKernel(GeometryKernel):
         )
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError("Sharp CSG boundary sampling requires realization.")
@@ -1333,7 +1333,7 @@ class _BlendCSGKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         bounds = self.bounds(state)
@@ -1355,7 +1355,7 @@ class _BlendCSGKernel(GeometryKernel):
         )
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError("Blend boundary sampling requires realization.")

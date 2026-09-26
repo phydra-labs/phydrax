@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from phydrax.ein import contract
 
@@ -44,6 +43,7 @@ from ..discretization.particle._population import (
     ParticleSlotReusePolicy,
 )
 from ..geometry._eroded_domain import AbstractFiniteRadiusWallPlan
+from ..typing import PRNGKey
 
 
 class FiniteParticleTransportReason(IntFlag):
@@ -197,7 +197,7 @@ class FiniteParticleTransportPlan(StrictModule, NonTrainableState):
         population: ParticlePopulationState,
         position: ArrayLike,
         velocity: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
     ) -> FiniteParticleTransportState:
         position_ = jnp.asarray(position)
@@ -233,7 +233,7 @@ class FiniteParticleTransportPlan(StrictModule, NonTrainableState):
         self,
         state: FiniteParticleTransportState,
         step: Array,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         args: Any,
         /,
     ) -> tuple[Array, Array, Array]:

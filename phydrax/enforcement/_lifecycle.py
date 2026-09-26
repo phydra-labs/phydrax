@@ -11,11 +11,10 @@ from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.random as jr
-from jax import Array
-from jaxtyping import Key
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._realization import (
     ConditionEvaluationContext,
     FieldRealizationResult,
@@ -353,8 +352,8 @@ class ParameterizedRealizationSource(AbstractRealizationSource):
 
 
 def address_accepted_step_key(
-    key: Key[Array, ""], accepted_step: int, stream: int = 0, /
-) -> Key[Array, ""]:
+    key: PRNGKey, accepted_step: int, stream: int = 0, /
+) -> PRNGKey:
     """Derive a stable PRNG address without consuming state or counting retries."""
 
     step = int(accepted_step)

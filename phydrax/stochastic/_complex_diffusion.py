@@ -11,13 +11,13 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._event_layout import ComplexEventLayout
 from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..domain._measure import MeasureKind
+from ..typing import PRNGKey
 from ._gaussian_diffusion import (
     DiffusionTerminalReference,
     VariancePreservingDiffusion,
@@ -78,7 +78,7 @@ class ComplexNormalLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> MeasureKind:
         return "lebesgue"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.layout.from_real_coordinates(self.real_law.sample(key, sample_shape))
 
     def contains(self, value: ArrayLike, /) -> Array:
@@ -138,9 +138,7 @@ class ComplexVariancePreservingDiffusion(StrictModule):
     def terminal_time(self) -> float:
         return self.real_process.terminal_time
 
-    def perturb(
-        self, key: Key[Array, ""], clean: ArrayLike, /, *, time: ArrayLike
-    ) -> Array:
+    def perturb(self, key: PRNGKey, clean: ArrayLike, /, *, time: ArrayLike) -> Array:
         packed = self.layout.to_real_coordinates(clean)
         perturbed = self.real_process.perturb(key, packed, t1=time)
         return self.layout.from_real_coordinates(perturbed)

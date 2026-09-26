@@ -13,7 +13,6 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -41,6 +40,7 @@ if TYPE_CHECKING:
         RandomizedResidualSamples,
         RandomizedResidualTerm,
     )
+from ..typing import PRNGKey
 from ._compile import compile_pde_expression
 from ._ir import PDECoordinate, PDEEquation, PDEExpression, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
@@ -364,7 +364,7 @@ def _coordinate_functions(
         def identity(
             value: object,
             *,
-            key: Key[Array, ""] | None = None,
+            key: PRNGKey | None = None,
             iter: object = None,
         ) -> object:
             del key, iter
@@ -382,7 +382,7 @@ def _evaluate_domain_value(
     value: Any,
     labels: tuple[str, ...],
     args: tuple[Any, ...],
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> Array:
     from phydrax.domain import DomainFunction
@@ -431,7 +431,7 @@ class _RandomizedPointCallable(StrictModule):
     node_indices: tuple[tuple[str, int], ...] = eqx.field(static=True)
     labels: tuple[str, ...] = eqx.field(static=True)
 
-    def _node_key(self, key: Key[Array, ""], path: str, /) -> Key[Array, ""]:
+    def _node_key(self, key: PRNGKey, path: str, /) -> PRNGKey:
         if self.plan.node_coupling == "common":
             return key
         index = dict(self.node_indices)[path]
@@ -441,7 +441,7 @@ class _RandomizedPointCallable(StrictModule):
         self,
         node: PDEExpression,
         args: tuple[Any, ...],
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> Array:
         coordinates = _coordinate_functions(
@@ -462,7 +462,7 @@ class _RandomizedPointCallable(StrictModule):
         node: PDEExpression,
         path: str,
         args: tuple[Any, ...],
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> Array:
         from phydrax.domain import DomainFunction
@@ -554,7 +554,7 @@ class _RandomizedPointCallable(StrictModule):
         node: PDEExpression,
         path: str,
         args: tuple[Any, ...],
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> tuple[Array, bool]:
         randomized_path_set = frozenset(self.randomized_paths)
@@ -600,7 +600,7 @@ class _RandomizedPointCallable(StrictModule):
     def __call__(
         self,
         *args: Any,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         iter: object = None,
         **kwargs: Any,
     ) -> Array:
@@ -630,7 +630,7 @@ class _RandomizedPDEEvaluator(StrictModule):
         self,
         functions: Mapping[str, DomainFunction],
         collocation: Any,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> RandomizedResidualSamples:
         from phydrax.domain import DomainFunction, GridBatch, PointBatch
@@ -709,7 +709,7 @@ class _RandomizedCollocationSampler(StrictModule):
     component: DomainComponent
     sampling: SamplingPlan
 
-    def __call__(self, key: Key[Array, ""], /) -> PointBatch | GridBatch | GraphBatch:
+    def __call__(self, key: PRNGKey, /) -> PointBatch | GridBatch | GraphBatch:
         return self.component.sample(self.sampling, key=key)
 
 
@@ -726,7 +726,7 @@ def compile_pde_randomized_term(
     label: str | None = None,
     sampling_mode: Literal["resample", "fixed"] = "resample",
     fixed_batch: PointBatch | GridBatch | None = None,
-    fixed_batch_key: Key[Array, ""] = jr.key(0),
+    fixed_batch_key: PRNGKey = jr.key(0),
 ) -> CompiledRandomizedPDETerm:
     """Compile one scalar IR equation to an estimator-aware sampled term."""
     from phydrax.domain import ComponentSum, DomainComponent

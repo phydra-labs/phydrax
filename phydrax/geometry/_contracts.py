@@ -14,10 +14,10 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from .._mass import ExactMass, known_mass_value, Mass
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._capabilities import (
     ClosestPointProvider,
     ContactCurvatureProvider,
@@ -286,7 +286,7 @@ class AbstractGeometryKernel(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del state, num_points, key, plan
@@ -301,7 +301,7 @@ class AbstractGeometryKernel(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         del state, num_points, key
         raise NotImplementedError(
@@ -480,7 +480,7 @@ class CompiledGeometry(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         self.require(GeometryCapability.INTERIOR_SAMPLING)
@@ -496,7 +496,7 @@ class CompiledGeometry(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         self.require(GeometryCapability.BOUNDARY_SAMPLING)
         return self.kernel.sample_boundary(self.state, num_points, key=key)

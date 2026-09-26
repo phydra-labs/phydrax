@@ -9,11 +9,11 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 from ...particle import (
     ParticleAllocationRequest,
     ParticlePopulationPlan,
@@ -88,7 +88,7 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
         electron_population: ParticlePopulationState,
         electron_charge: PICChargeState,
         electron_particles: PICParticleState,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         step_size: ArrayLike,
         step_index: ArrayLike,
         /,

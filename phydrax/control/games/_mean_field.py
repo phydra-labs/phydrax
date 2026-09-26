@@ -15,7 +15,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ...domain import DomainFunction
@@ -30,6 +29,7 @@ from ...stochastic import (
     MeanFieldBSDEControlAdapter,
     MeanFieldBSDEProblem,
 )
+from ...typing import PRNGKey
 
 
 FROZEN_LAW_BEST_RESPONSE = "FROZEN_LAW_BEST_RESPONSE"
@@ -239,7 +239,7 @@ def solve_frozen_law_best_response(
     control_predictor: Any = None,
     control_mode: BSDEControlMode = "explicit",
     quadrature: BSDEQuadrature = "left",
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
     minimum_effective_sample_size: float = MINIMUM_FROZEN_LAW_EFFECTIVE_SAMPLE_SIZE,
 ) -> FrozenLawBestResponseResult:
     """Evaluate a candidate response while holding the supplied law fixed.

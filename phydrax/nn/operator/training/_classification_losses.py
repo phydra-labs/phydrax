@@ -12,12 +12,12 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ...._classification import (
     classification_probabilities,
     pointwise_classification_loss,
 )
+from ....typing import PRNGKey
 from ..data import (
     FunctionSamples,
     OperatorBatch,
@@ -295,7 +295,7 @@ class OperatorClassificationNLL(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -344,7 +344,7 @@ class OperatorSoftClassificationLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -440,7 +440,7 @@ class OperatorFocalClassificationLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -563,7 +563,7 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

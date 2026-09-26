@@ -10,16 +10,16 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
+from ..typing import PRNGKey
 
 
 def _permutation(
     num_cases: int,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     shuffle: bool = True,
 ) -> Array:
     n = int(num_cases)
@@ -36,7 +36,7 @@ def train_test_split_indices(
     /,
     *,
     test_fraction: float = 0.2,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     shuffle: bool = True,
 ) -> tuple[Array, Array]:
     """Return `(train_indices, test_indices)` for finite empirical cases."""
@@ -59,7 +59,7 @@ def train_calibration_test_split_indices(
     *,
     calibration_fraction: float = 0.2,
     test_fraction: float = 0.2,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     shuffle: bool = True,
 ) -> tuple[Array, Array, Array]:
     """Return disjoint non-empty train, calibration, and test case indices."""
@@ -147,7 +147,7 @@ def kfold_indices(
     num_folds: int,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     shuffle: bool = True,
 ) -> tuple[tuple[Array, Array], ...]:
     """Return `(train_indices, validation_indices)` pairs for K-fold splits."""

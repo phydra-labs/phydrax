@@ -9,10 +9,10 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._atlas import BoundaryAtlas
 
 
@@ -67,7 +67,7 @@ class GeometryMeasurePartition(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         stratum_weights: Array | None = None,
         minimum_per_stratum: int = 0,
     ) -> tuple[Array, Array, Array]:
@@ -236,7 +236,7 @@ class BoundaryAtlasPartition(StrictModule):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         stratum_weights: Array | None = None,
         minimum_per_stratum: int = 0,
     ) -> tuple[Array, Array, Array]:

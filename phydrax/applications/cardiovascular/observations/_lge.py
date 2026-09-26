@@ -22,7 +22,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from phydrax.ein import contract
 
@@ -31,6 +30,7 @@ from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....imaging import ImageIndexAffine, MedicalImageAsset
 from ....observation import CoordinateLayout, LinearObservationPlan
+from ....typing import PRNGKey
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -449,7 +449,7 @@ class LGEObservationPlan(StrictModule, NonTrainableState):
         )
 
     def evaluate(
-        self, tissue: LGETissueState, noise_key: PRNGKeyArray, /
+        self, tissue: LGETissueState, noise_key: PRNGKey, /
     ) -> LGEObservationResult:
         if not isinstance(tissue, LGETissueState):
             raise TypeError("LGEObservationPlan requires an LGETissueState.")

@@ -7,14 +7,13 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import PointBatch, SampleLayout
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     FixedQuadratureDiagnostics,
@@ -63,7 +62,7 @@ def integrate_fixed_probability(
     batch: PointIntegrationBatch,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

@@ -10,9 +10,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._classification import categorical_log_prob_from_logits
+from ..typing import PRNGKey
 from ._contracts import (
     _AbstractAnalyticExponentialFamily,
     _mean_domain_result,
@@ -140,7 +140,7 @@ class CategoricalFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainFunction
@@ -56,6 +56,7 @@ from ..linalg import (
     solve,
 )
 from ..nn.parameters import ParameterSubspace
+from ..typing import PRNGKey
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._hybrid_event import HybridReplayPolicy
@@ -379,7 +380,7 @@ class NeuralGalerkinProblem(StrictModule):
         parameter_subspace: ParameterSubspace | None = None,
         enforcement: EnforcementProgram | None = None,
         args: Any = None,
-        evaluation_key: Key[Array, ""] = DOC_KEY0,
+        evaluation_key: PRNGKey = DOC_KEY0,
         problem_id: str | None = None,
     ) -> None:
         fields = frozendict(functions)
@@ -483,7 +484,7 @@ _ProjectionBatch: TypeAlias = PointIntegrationBatch | SeparableIntegrationBatch
 
 def _component_batches_and_keys(
     metric: FieldProjectionMetric,
-) -> tuple[tuple[_ProjectionBatch, ...], tuple[Key[Array, ""], ...]]:
+) -> tuple[tuple[_ProjectionBatch, ...], tuple[PRNGKey, ...]]:
     target = metric.realization.target
     base = target.base if isinstance(target, DensityTarget) else target
     if not isinstance(base, ComponentTarget):

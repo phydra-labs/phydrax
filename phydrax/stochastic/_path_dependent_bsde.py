@@ -9,9 +9,9 @@ from typing import Any
 
 import equinox as eqx
 from jax import Array
-from jaxtyping import Key
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._bsde import BSDEPathBatch
 
 
@@ -106,7 +106,7 @@ class ReflectedPathDependentBSDEProblem(StrictModule):
     def has_upper_obstacle(self) -> bool:
         return self.upper_obstacle is not None
 
-    def sample(self, key: Key[Array, ""], /) -> BSDEPathBatch:
+    def sample(self, key: PRNGKey, /) -> BSDEPathBatch:
         paths = self.forward_sampler(key)
         if not isinstance(paths, BSDEPathBatch):
             raise TypeError("forward_sampler must return a BSDEPathBatch.")

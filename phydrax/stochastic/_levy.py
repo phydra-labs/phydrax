@@ -17,9 +17,9 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._wiener import WienerRealization
 
 
@@ -41,7 +41,7 @@ def _hash_parts(prefix: bytes, *parts: Any) -> str:
     return digest.hexdigest()
 
 
-def _scalar_key(value: Key[Array, ""], /, *, owner: str) -> Array:
+def _scalar_key(value: PRNGKey, /, *, owner: str) -> Array:
     if jr.key_data(value).shape != (2,):
         raise ValueError(f"{owner} requires one scalar JAX PRNG key.")
     return value
@@ -426,7 +426,7 @@ class LevyProcessRealization(StrictModule):
 
     def __init__(
         self,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         dimension: int,
         /,
         *,
@@ -499,7 +499,7 @@ class LevyProcessRealization(StrictModule):
     def from_process(
         cls,
         process: AbstractLevyProcess,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
         *,
         support: tuple[float, float],

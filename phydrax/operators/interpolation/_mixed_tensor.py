@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -23,6 +22,7 @@ from ..._frozendict import frozendict
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.spectral import PreparedSpectralAxis
+from ...typing import PRNGKey
 
 
 MixedBoundsPolicy = Literal["error", "extrapolate"]
@@ -189,7 +189,7 @@ def interpolate_mixed_tensor(
     plan: MixedTensorReconstructionPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> DomainFunction:
     """Fit a DomainFunction on the prepared mixed canonical tensor grid."""
     if not isinstance(function, DomainFunction):

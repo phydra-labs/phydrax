@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._dtype_names import inexact_result_type
 from .._execution_array import shard_tree_axis
@@ -30,6 +30,7 @@ from .._iteration import (
     update_iteration,
 )
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._addressing import derive_key, SampleAddress
 from ._chain import AbstractChainSampleResult
 from ._proposals import AbstractProposal
@@ -484,7 +485,7 @@ class MetropolisHastings(StrictModule):
         self,
         target: _MarkovTarget,
         state: MarkovState,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> tuple[MarkovState, MarkovTransitionInfo]:
         resolved = _resolve_target(target)
@@ -506,8 +507,8 @@ class MetropolisHastings(StrictModule):
             current_log_target: Array,
             current_cache: PyTree[Array],
             current_valid: Array,
-            proposal_key: Key[Array, ""],
-            acceptance_key: Key[Array, ""],
+            proposal_key: PRNGKey,
+            acceptance_key: PRNGKey,
         ) -> tuple[MarkovTargetState, MarkovTransitionInfo]:
             current_target = MarkovTargetState(
                 position=current,
@@ -592,7 +593,7 @@ def sample_markov(
     state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     steps_per_draw: int = 1,
     warmup_steps: int = 0,

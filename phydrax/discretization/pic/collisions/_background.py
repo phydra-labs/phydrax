@@ -11,11 +11,11 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 from ._coulomb import _isotropic_directions
 from ._types import PICCollisionResult
 
@@ -62,7 +62,7 @@ class BackgroundMCCPlan(StrictModule, NonTrainableState):
         velocity: ArrayLike,
         mass: ArrayLike,
         active_mask: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         step_size: ArrayLike,
         /,
     ) -> PICCollisionResult:

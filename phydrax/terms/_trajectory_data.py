@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -26,6 +25,7 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..domain._trajectory_signal import TrajectorySignal
+from ..typing import PRNGKey
 from ._data_metrics import (
     case_sample_count,
     normalize_case_sampling,
@@ -99,7 +99,7 @@ def _time_selection(
 def _sample_case_indices(
     domain: TrajectoryDatasetDomain,
     n: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     time: TrajectoryCaseTime,
     /,
     *,
@@ -246,7 +246,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Any:
         """Draw a case mini-batch and return aligned model inputs and targets."""
         domain = self.domain
@@ -279,7 +279,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         batch: TrajectoryCaseDataBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         var = self.fields[0]
@@ -295,7 +295,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: TrajectoryCaseDataBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -313,7 +313,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: TrajectoryCaseDataBatch | None = None,
         **kwargs: Any,

@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
@@ -26,6 +25,7 @@ from ....graph._query_batch import (
     query_neighbors,
     QueryNeighborhood,
 )
+from ....typing import PRNGKey
 from ..._keys import EvalKey, split_eval_key
 from ...layers._linear import Linear
 from ...models._mlp import MLP
@@ -147,7 +147,7 @@ class GraphKernelTransfer(StrictModule):
         depth: int = 2,
         coordinate_scale: float = 1.0,
         target_chunk_size: int | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if int(in_channels) <= 0 or int(out_channels) <= 0 or int(coord_dim) <= 0:
             raise ValueError("Transfer channel counts and coord_dim must be positive.")
@@ -339,7 +339,7 @@ class GraphAttentionTransfer(StrictModule):
         coordinate_scale: float = 1.0,
         require_measure: bool = True,
         target_chunk_size: int | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if (
             min(
@@ -587,7 +587,7 @@ class MultiscaleGraphTransfer(StrictModule):
         reference_measure: float = 1.0,
         width: int = 64,
         depth: int = 2,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         transfers_ = tuple(transfers)
         if not transfers_:

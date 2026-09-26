@@ -9,11 +9,11 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey, split_eval_key
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._linear_recurrent_unit import _last_valid_array
@@ -46,7 +46,7 @@ class SelectiveSequenceModel(StrictModule, ParameterOwner):
         execution: SelectiveSequenceExecution = "associative",
         return_mode: SelectiveReturnMode = "sequence",
         dtype: Any = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         resolved_depth = int(depth)
         if resolved_depth <= 0:

@@ -10,7 +10,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -19,6 +18,7 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractScalarTerm
 from ..domain import DomainFunction
+from ..typing import PRNGKey
 
 
 class DiffusionBridgeControlDataset(StrictModule):
@@ -102,7 +102,7 @@ class DiffusionBridgeDriftTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

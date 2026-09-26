@@ -14,9 +14,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._jump import AbstractJumpProcess
 from ._trajectory import StochasticTrajectory
 
@@ -28,7 +28,7 @@ def jump_generator_observable(
     *,
     time: ArrayLike,
     observable: Callable[[Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_mark_samples: int = 1,
     args: Any = None,
 ) -> Array:

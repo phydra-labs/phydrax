@@ -12,9 +12,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array, lax
-from jaxtyping import Key
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -154,16 +154,16 @@ def complete_sampling_result(
 
 
 # (key, points, accepted count, proposed count, rounds)
-_RejectionState: TypeAlias = tuple[Key[Array, ""], Array, Array, Array, Array]
+_RejectionState: TypeAlias = tuple[PRNGKey, Array, Array, Array, Array]
 
 
 def bounded_rejection_sample(
-    proposal: Callable[[Key[Array, ""], int], Array],
+    proposal: Callable[[PRNGKey, int], Array],
     accept: Callable[[Array], Array],
     *,
     num_points: int,
     point_dimension: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     plan: RejectionSamplingPlan = RejectionSamplingPlan(),
     dtype: jnp.dtype | None = None,
 ) -> SamplingResult:
@@ -253,7 +253,7 @@ def sample_boundary_atlas(
     num_points: int,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     plan: AtlasSamplingPlan = AtlasSamplingPlan(),
 ) -> SamplingResult:
     """Sample charts in physical measure using Jacobian-weighted candidates."""

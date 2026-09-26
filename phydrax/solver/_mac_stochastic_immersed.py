@@ -69,7 +69,7 @@ class StochasticReplayKey(StrictModule, NonTrainableState):
     sample: Array
 
     def key(self, /) -> Array:
-        key = jax.random.PRNGKey(self.seed.astype(jnp.uint32))
+        key = jax.random.key(self.seed.astype(jnp.uint32))
         key = jax.random.fold_in(key, self.accepted_step.astype(jnp.uint32))
         key = jax.random.fold_in(key, self.stage.astype(jnp.uint32))
         return jax.random.fold_in(key, self.sample.astype(jnp.uint32))

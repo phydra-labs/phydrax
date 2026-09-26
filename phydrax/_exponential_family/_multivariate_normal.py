@@ -9,7 +9,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -23,6 +22,7 @@ from ..linalg import (
     PreparedFactorization,
     verify_dense_properties,
 )
+from ..typing import PRNGKey
 from ._contracts import (
     _AbstractAnalyticExponentialFamily,
     _mean_domain_result,
@@ -292,7 +292,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
 
     def _sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

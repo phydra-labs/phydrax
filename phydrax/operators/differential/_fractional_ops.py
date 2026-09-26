@@ -10,13 +10,13 @@ from typing import Any, Literal, TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
 from ..._sampling import materialize_design
+from ...typing import PRNGKey
 from ..integral._local_ops import _uniform_ball_rule
 from ._domain_ops import _factor_and_dim, _resolve_var, grad
 
@@ -267,7 +267,7 @@ def fractional_derivative_gl_mc(
 
     total_samples = int(N) * max(int(K), 1)
 
-    def _per_point_base(*args: Any, key: Key[Array, ""], **kwargs: Any) -> Array:
+    def _per_point_base(*args: Any, key: PRNGKey, **kwargs: Any) -> Array:
         x = args[idx_x]
         if isinstance(x, tuple):
             raise ValueError(

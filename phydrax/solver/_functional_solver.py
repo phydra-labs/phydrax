@@ -13,7 +13,6 @@ import equinox as eqx
 import jax
 import optax
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -58,6 +57,7 @@ from ..optim._riemannian import AbstractRiemannianOptimizer
 from ..terms import MomentPenalty, ResidualPenalty
 from ..terms._randomized_moment import RandomizedMomentPenalty
 from ..terms._randomized_residual import RandomizedResidualTerm
+from ..typing import PRNGKey
 from ._functional_objective import (
     _FunctionalObjective,
     evaluate_prepared_objective,
@@ -241,7 +241,7 @@ class FunctionalSolver(StrictModule):
         terms: AbstractScalarTerm | Sequence[AbstractScalarTerm],
         evaluation_terms: AbstractScalarTerm | Sequence[AbstractScalarTerm] = (),
         enforcement: EnforcementProgram | None = None,
-        collocation_key: Key[Array, ""] = DOC_KEY0,
+        collocation_key: PRNGKey = DOC_KEY0,
         regularity_policy: RegularityPolicy = EXPLORATORY_REGULARITY_POLICY,
     ) -> None:
         """Create a solver from fields, scalar terms, and optional enforcement."""
@@ -355,7 +355,7 @@ class FunctionalSolver(StrictModule):
         terms: AbstractScalarTerm | Sequence[AbstractScalarTerm],
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> "FunctionalSolver":
         objective = self.objective.append_training_terms(terms, key=key)
         updated = eqx.tree_at(lambda solver: solver.objective, self, objective)
@@ -398,7 +398,7 @@ class FunctionalSolver(StrictModule):
     def ansatz_functions(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         accepted_step: int = 0,
         parameter_revision: int = 0,
     ) -> frozendict[str, DomainFunction]:
@@ -443,7 +443,7 @@ class FunctionalSolver(StrictModule):
     def loss(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         step: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

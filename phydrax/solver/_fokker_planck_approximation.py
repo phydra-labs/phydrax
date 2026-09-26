@@ -11,7 +11,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from .._strict import StrictModule
 from ..domain._normalized_density import normalize_density_field, NormalizedDensityField
@@ -24,6 +23,7 @@ from ..stochastic._path_ensemble import (
     StochasticPathEnsemblePlan,
     StochasticPathEnsembleResult,
 )
+from ..typing import PRNGKey
 
 
 class WeakObservable(StrictModule):
@@ -96,7 +96,7 @@ def solve_particle_fokker_planck(
     plan: ParticleFokkerPlanckPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> ParticleFokkerPlanckResult:
     """Propagate particles and audit a finite declared class of weak observables."""
     if not isinstance(plan, ParticleFokkerPlanckPlan):

@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainComponent, DomainFunction, PointSampling
 from phydrax.ein import contract
@@ -35,6 +34,7 @@ from .._likelihoods import (
 from ..ml._classification import ClassificationObjective
 from ..ml._schema import TargetSchema
 from ..ml.metrics._base import METRIC_INVALID_INPUT, METRIC_SUCCESS
+from ..typing import PRNGKey
 from ._likelihood import (
     _AbstractSupervisedDatasetObservationTerm,
     _AbstractSupervisedLikelihoodTerm,
@@ -314,7 +314,7 @@ class SupervisedClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: SupervisedDatasetBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -415,7 +415,7 @@ class SupervisedSoftClassificationTerm(_AbstractSupervisedDatasetObservationTerm
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         batch: SupervisedDatasetBatch,
         **kwargs: Any,
     ) -> Array:
@@ -432,7 +432,7 @@ class SupervisedSoftClassificationTerm(_AbstractSupervisedDatasetObservationTerm
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: SupervisedDatasetBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -569,7 +569,7 @@ class SupervisedFocalClassificationTerm(_AbstractSupervisedDatasetObservationTer
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         batch: SupervisedDatasetBatch,
         **kwargs: Any,
     ) -> Array:
@@ -589,7 +589,7 @@ class SupervisedFocalClassificationTerm(_AbstractSupervisedDatasetObservationTer
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: SupervisedDatasetBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -721,7 +721,7 @@ class SupervisedOrdinalClassificationTerm(_AbstractSupervisedLikelihoodTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: SupervisedDatasetBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:

@@ -12,7 +12,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
@@ -24,6 +23,8 @@ from phydrax.equations._tokens import (
 )
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
+
+from .....typing import PRNGKey
 
 
 class PDEConditionEncoder(StrictModule):
@@ -55,7 +56,7 @@ class PDEConditionEncoder(StrictModule):
         depth: int = 3,
         dimension_basis: Sequence[str],
         max_tree_depth: int = 32,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         if min(width, depth, max_tree_depth) <= 0:
             raise ValueError("PDE encoder dimensions must be positive.")

@@ -14,12 +14,12 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 
 
 class FuzzySphereMatrixGeometryPlan(StrictModule):
@@ -271,7 +271,7 @@ class FuzzyScalarMatrixModelRun(StrictModule):
 def sample_fuzzy_scalar_matrix_model(
     plan: FuzzyScalarMatrixModelPlan,
     initial_field: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> FuzzyScalarMatrixModelRun:
     """Run a bounded Hermitian random-walk Metropolis matrix model."""

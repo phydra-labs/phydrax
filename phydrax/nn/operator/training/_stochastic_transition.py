@@ -16,7 +16,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
@@ -38,6 +37,7 @@ from ....stochastic._realization import (
 )
 from ....stochastic._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ....stochastic._wiener import WienerRealization
+from ....typing import PRNGKey
 from ..data import FunctionSamples, OperatorBatch, OperatorOutputSpec
 from ..distribution import (
     AbstractOperatorDistribution,
@@ -182,7 +182,7 @@ def _default_process_axes(rank: int, existing: Sequence[str], /) -> tuple[str, .
 
 
 def _key_fingerprint(
-    key: Key[Array, ""],
+    key: PRNGKey,
     process_id: str,
     times: Array,
     initial_state: Array,
@@ -757,7 +757,7 @@ class OperatorProcessDistribution(AbstractProcessDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         return self.operator_distribution.sample(key, sample_shape)
@@ -1176,7 +1176,7 @@ def marginal_operator_rollout(
     times: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_realizations: int,
     initial_state: ArrayLike | None = None,
     realization_axis: str = "__phydra_uq_process",
@@ -1609,7 +1609,7 @@ def operator_jump_generator_objective(
     time: ArrayLike,
     step: ArrayLike,
     observable: Callable[[Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     continuous_generator: Callable[[Array, Array], Array] | None = None,
     num_transition_samples: int = 256,
     num_mark_samples: int = 1,
@@ -1671,7 +1671,7 @@ def operator_weak_generator_objective(
     step: ArrayLike,
     observable: Callable[[Array], Array],
     generator_observable: Callable[[Array, Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_samples: int = 256,
     reduction: OperatorTransitionReduction = "mean",
 ) -> Array:

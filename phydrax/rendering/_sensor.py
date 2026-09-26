@@ -11,13 +11,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..imaging import ImagePlaneSupport
 from ..imaging.camera import CameraRig, project_points
+from ..typing import PRNGKey
 from ._point import GaussianRasterizer, GaussianRasterResult
 
 
@@ -152,7 +152,7 @@ def apply_photometry(
     response: PhotometricResponse,
     irradiance: ArrayLike,
     *,
-    key: PRNGKeyArray | None = None,
+    key: PRNGKey | None = None,
     valid_mask: ArrayLike | None = None,
 ) -> PhotometryResult:
     """Apply an explicit sensor response; stochastic response requires ``key``."""
@@ -225,7 +225,7 @@ def render_camera_stack(
     sigma: ArrayLike,
     active: ArrayLike | None = None,
     *,
-    key: PRNGKeyArray | None = None,
+    key: PRNGKey | None = None,
 ) -> CameraStackRenderResult:
     """Project a fixed particle support through a rig and form camera-first images."""
     if not isinstance(formation, ParticleImageFormation):

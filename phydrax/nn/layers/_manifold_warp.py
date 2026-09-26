@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -19,6 +18,7 @@ from ..._doc import DOC_KEY0
 from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._linear import Linear
 
@@ -98,7 +98,7 @@ class ManifoldMultiheadWarp(StrictModule, ParameterOwner):
         conditioning_size: int = 0,
         displacement_width: int | None = None,
         kernel_scale: float = 0.2,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.ambient_dim = int(ambient_dim)
         self.in_channels = int(in_channels)

@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -32,6 +32,7 @@ from ...linalg._shifted import (
     ShiftedSolveStatus,
     solve_shifted,
 )
+from ...typing import PRNGKey
 from ._pseudofermion_operator import AbstractPseudofermionDiracOperator
 from ._rational_approximation import (
     CertifiedRationalApproximation,
@@ -385,7 +386,7 @@ PseudofermionTerm: TypeAlias = (
 
 def refresh_pseudofermion(
     term: PseudofermionTerm,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     links: ArrayLike | None = None,
@@ -706,7 +707,7 @@ def _exact_rational_certificate(
     )
 
 
-def _standard_action_gaussian(space: Any, key: Key[Array, ""], /) -> PyTree[Array]:
+def _standard_action_gaussian(space: Any, key: PRNGKey, /) -> PyTree[Array]:
     structure = space.structure()
     leaves, treedef = jax.tree.flatten(structure)
     keys = jr.split(key, len(leaves))

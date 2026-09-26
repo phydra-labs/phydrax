@@ -13,11 +13,11 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import (
     _fixed_step_time_grid_valid,
     FunctionalDynamicsKernel,
@@ -319,7 +319,7 @@ def initialize_tps(prepared: PreparedTPS, /) -> TPSState:
 def _propose_tps(
     plan: TPSPlan,
     path: PathBuffer,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PathMoveResult:
     if plan.move_kind == "one-way-shooting":
@@ -357,7 +357,7 @@ def _propose_tps(
 def tps_step(
     prepared: PreparedTPS,
     state: TPSState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> TPSStep:
     """Execute exactly one path proposal and commit or reject without retry."""
@@ -549,7 +549,7 @@ def initialize_tis(prepared: PreparedTIS, /) -> TISState:
 def tis_step(
     prepared: PreparedTIS,
     state: TISState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     replica_index: int = 0,
@@ -701,7 +701,7 @@ def initialize_retis(prepared: PreparedRETIS, /) -> RETISState:
 def retis_step(
     prepared: PreparedRETIS,
     state: RETISState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     move_kind: str = "shooting",

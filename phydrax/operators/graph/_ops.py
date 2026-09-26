@@ -6,9 +6,7 @@ from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
-from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, DomainFunction
@@ -21,6 +19,7 @@ from phydrax.domain.graph import (
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ...graph import segment_max, segment_mean, segment_min, segment_sum
+from ...typing import PRNGKey
 
 
 GraphReduce = Literal["sum", "mean", "max", "min"]
@@ -294,7 +293,7 @@ def _field_data_on_graph_axis(
     batch: GraphBatch,
     /,
     *,
-    key: Key[Array, ""] | None = DOC_KEY0,
+    key: PRNGKey | None = DOC_KEY0,
     **kwargs: Any,
 ) -> tuple[cx.AxisArray, int, jnp.ndarray]:
     y = func(batch, key=key, **kwargs)
@@ -333,7 +332,7 @@ def _optional_edge_weight_data(
     target: jnp.ndarray,
     /,
     *,
-    key: Key[Array, ""] | None = DOC_KEY0,
+    key: PRNGKey | None = DOC_KEY0,
     **kwargs: Any,
 ) -> jnp.ndarray | None:
     if weight is None:
@@ -358,7 +357,7 @@ class _GraphDegreeCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -401,7 +400,7 @@ class _NeighborAggregateCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
@@ -438,7 +437,7 @@ class _GraphLaplacianCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_node_batch(batch)
@@ -489,7 +488,7 @@ class _GraphGradientCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_edge_batch(batch)
@@ -537,7 +536,7 @@ class _GraphDivergenceCallable(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         batch = _require_node_batch(batch)

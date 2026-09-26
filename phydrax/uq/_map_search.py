@@ -9,12 +9,13 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
 from ..optim._differential_evolution import _bounded_differential_evolution
 from ..optim._pytree import _PyTreeVectorizer
+from ..typing import PRNGKey
 from ._bayesian_optimization import (
     bayesian_optimize,
     BayesianOptimizationDomain,
@@ -56,7 +57,7 @@ class MAPSearchResult(StrictModule):
     best_objective_history: Array
     lower_bounds: PyTree[Array]
     upper_bounds: PyTree[Array]
-    key: Key[Array, ""]
+    key: PRNGKey
     search: DifferentialEvolutionSearch
     population_converged: bool = eqx.field(static=True)
     termination_reason: str = eqx.field(static=True)
@@ -76,7 +77,7 @@ class MAPSearchResult(StrictModule):
         best_objective_history: ArrayLike,
         lower_bounds: PyTree[ArrayLike],
         upper_bounds: PyTree[ArrayLike],
-        key: Key[Array, ""],
+        key: PRNGKey,
         search: DifferentialEvolutionSearch,
         population_converged: bool,
         termination_reason: str,
@@ -140,7 +141,7 @@ def search_map(
     search: DifferentialEvolutionSearch | GaussianProcessBayesianOptimization,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     position_bounds: PositionBounds,
     initial_position: PyTree[Array] | None = None,
 ) -> MAPSearchResult | BayesianOptimizationMAPResult:

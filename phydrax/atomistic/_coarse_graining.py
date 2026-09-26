@@ -11,13 +11,13 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._graph import AtomisticGraphExecutionPlan
 from ._potential import AbstractAtomisticPotential, AtomisticSpeciesKind
 from ._system import AtomisticSystemPlan, PreparedAtomisticSystem
@@ -483,7 +483,7 @@ def fit_coarse_potential(
     potential: AbstractAtomisticPotential,
     problem: CoarseForceMatchingProblem,
     policy: AtomisticTrainingPolicy,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> CoarseForceMatchingResult:
     if not isinstance(potential, AbstractAtomisticPotential):

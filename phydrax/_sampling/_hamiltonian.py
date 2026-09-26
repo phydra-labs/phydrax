@@ -17,7 +17,6 @@ import numpy as np
 from blackjax.mcmc import integrators as blackjax_integrators, nuts as blackjax_nuts
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._execution_array import shard_array_axis
 from .._execution_runtime import ExecutionGroup
@@ -43,6 +42,7 @@ from ..linalg import (
     OperatorProperties,
     PreparedFactorization,
 )
+from ..typing import PRNGKey
 from ._adaptation import (
     adapt_proposal_scale,
     AdaptiveProposalState,
@@ -294,7 +294,7 @@ def _kinetic(kernel: PreparedHamiltonianKernel, momentum: Array, /) -> Array:
     return 0.5 * jnp.vdot(momentum, _mass_solve(kernel, momentum)).real
 
 
-def _sample_momentum(kernel: PreparedHamiltonianKernel, key: Key[Array, ""], /) -> Array:
+def _sample_momentum(kernel: PreparedHamiltonianKernel, key: PRNGKey, /) -> Array:
     normal = jr.normal(
         key, (kernel.mass_matrix.shape[0],), dtype=kernel.mass_matrix.dtype
     )
@@ -357,7 +357,7 @@ def _one_hmc_transition(
     position: Array,
     log_target: Array,
     gradient: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     chain: Array,
     step_index: Array,
 ) -> _Transition:
@@ -397,7 +397,7 @@ def _one_nuts_transition(
     position: Array,
     log_target: Array,
     gradient: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     chain: Array,
     step_index: Array,
 ) -> _Transition:
@@ -488,7 +488,7 @@ def _one_transition(
     log_target: Array,
     gradient: Array,
     state_valid: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     chain: Array,
     step_index: Array,
 ) -> _Transition:
@@ -525,7 +525,7 @@ def sample_hamiltonian(
     state: HamiltonianChainState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     iteration: IterationPlan | None = None,
 ) -> HamiltonianSampleResult:
@@ -694,7 +694,7 @@ def _adapt_hamiltonian_warmup(
     kernel: PreparedHamiltonianKernel,
     state: HamiltonianChainState,
     scale_policy: RobbinsMonroScalePolicy,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[HamiltonianChainState, AdaptiveProposalState, Array, Array]:
     adaptive = initialize_proposal_adaptation(scale_policy, kernel.step_size)
@@ -748,7 +748,7 @@ def adapt_hamiltonian_kernel(
     plan: HamiltonianAdaptationPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> HamiltonianAdaptationResult:
     """Run an explicit finite warmup epoch and return one frozen production kernel."""
     if (

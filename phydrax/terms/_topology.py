@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -21,6 +20,7 @@ from .._term import AbstractEvaluatedScalarTerm, TermEvaluation
 from ..domain import DomainFunction
 from ..topology import FrozenPersistencePairing, PreparedVertexFiltration
 from ..topology._features import frozen_total_persistence
+from ..typing import PRNGKey
 
 
 class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
@@ -74,7 +74,7 @@ class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> TermEvaluation:
@@ -111,7 +111,7 @@ class FrozenTopologyTerm(AbstractEvaluatedScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

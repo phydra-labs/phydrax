@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -36,6 +35,7 @@ from ...atomistic._types import (
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
 )
+from ...typing import PRNGKey
 from ..layers import Linear
 from ..operator.layers import o3_gated_activation, O3TensorProduct, O3TensorProductPlan
 from ..operator.representations import O3Features, O3Representation
@@ -68,7 +68,7 @@ class _SpeciesSelfConnection(StrictModule):
         /,
         *,
         dtype: jnp.dtype,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         counts = (
             representation.scalars,
@@ -127,7 +127,7 @@ class _NequIPInteraction(StrictModule):
         /,
         *,
         dtype: jnp.dtype,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         plan = O3TensorProductPlan(
             representation,
@@ -217,7 +217,7 @@ class NequIPPotential(AbstractAtomisticPotential):
         species_kind: AtomisticSpeciesKind = AtomisticSpeciesKind.ATOMIC_NUMBER,
         maximum_tensor_product_parameters: int = 10_000_000,
         precision: AtomisticPrecisionPolicy | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")

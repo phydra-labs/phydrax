@@ -10,13 +10,13 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._domain import Domain
 from ._evaluation import BatchEvaluator
 from ._function import DomainFunction
@@ -33,9 +33,7 @@ class _IndexedFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
         self.index_key = str(index_key)
         self.owner = str(owner)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> NoReturn:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> NoReturn:
         del args, key, kwargs
         raise TypeError(f"{self.owner} requires structured batch evaluation.")
 
@@ -44,7 +42,7 @@ class _IndexedFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
         batch: PointBatch,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs

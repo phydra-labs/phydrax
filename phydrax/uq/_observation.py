@@ -14,10 +14,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._likelihoods import AbstractLikelihood
 from ..stochastic._state_space import AbstractObservationModel, StateSpaceStepContext
+from ..typing import PRNGKey
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
@@ -120,7 +120,7 @@ class LikelihoodObservationModel(AbstractObservationModel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         time: ArrayLike,
         context: StateSpaceStepContext,

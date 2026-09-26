@@ -14,11 +14,11 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._sampling import AbstractChainSampleResult, derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._kernel import (
     FactorExecutionEvidence,
     FactorGraphPrecisionPolicy,
@@ -499,7 +499,7 @@ def _conditional_logits(
 def gibbs_sweep(
     prepared: PreparedChromaticGibbs,
     state: GibbsState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     clamped: ArrayLike | None = None,
@@ -636,7 +636,7 @@ def sample_gibbs(
     state: GibbsState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     schedule: GibbsSchedule,
     clamped: ArrayLike | None = None,
 ) -> GibbsSampleResult:

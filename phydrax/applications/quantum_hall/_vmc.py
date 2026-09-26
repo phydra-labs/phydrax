@@ -15,7 +15,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -31,6 +30,7 @@ from ...operators.quantum import (
     uniform_sphere_electron_walkers,
 )
 from ...solver import VariationalMonteCarloProblem
+from ...typing import PRNGKey
 from ._sphere import HaldaneSpherePlan
 from ._trial_states import LaughlinSphereAmplitude
 
@@ -109,7 +109,7 @@ class PreparedLandauLevelMixingVMC(StrictModule):
 
 def prepare_landau_level_mixing_vmc(
     plan: LandauLevelMixingVMCPlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PreparedLandauLevelMixingVMC:
     if not isinstance(plan, LandauLevelMixingVMCPlan):

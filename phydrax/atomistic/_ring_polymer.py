@@ -11,13 +11,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
 from ..discretization import AbstractPreparedParticleNeighborhood
+from ..typing import PRNGKey
 from ._potential_program import PreparedAtomisticPotentialProgram
 from ._thermal import stable_particle_normals
 
@@ -177,7 +177,7 @@ class PreparedRingPolymerDynamics(StrictModule):
         *,
         velocity: ArrayLike | None = None,
         momentum: ArrayLike | None = None,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> RingPolymerState:
         base = jnp.asarray(positions, dtype=self.potential.system.plan.coordinate_dtype)
         expected = (self.potential.system.capacity, 3)

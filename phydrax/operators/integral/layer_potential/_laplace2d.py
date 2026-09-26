@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -20,6 +19,7 @@ from ...._fingerprint import canonical_fingerprint
 from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 from ....operators.differential._jet import jet_terms
+from ....typing import PRNGKey
 from ._core import (
     AbstractLayerKernel,
     BoundaryPanelization2D,
@@ -181,7 +181,7 @@ class LaplaceLayerPotential2D(_AbstractTrialSpaceField):
             self.panelization.normals,
         )
 
-    def __call__(self, target: Array, /, *, key: Key[Array, ""] | None = None) -> Array:
+    def __call__(self, target: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (2,):

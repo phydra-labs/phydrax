@@ -8,12 +8,12 @@ from typing import Literal
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import activated_affine
 from .._initializers import _initializer_dict
@@ -87,7 +87,7 @@ class Linear(_AbstractBaseModel):
         use_bias: bool = True,
         bias_init_lim: float = 1.0,
         weight_transform: AbstractParameterTransform | None = None,
-        key: Key[Array, ""] = _key,
+        key: PRNGKey = _key,
     ) -> None:
         # Initialize the weight matrix and (optionally) RWF scales and bias
         in_size_c = _canonical_size(in_size)

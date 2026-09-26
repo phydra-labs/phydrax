@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 import optax
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
@@ -48,6 +48,7 @@ from ..optim._riemannian import (
     AbstractRiemannianLineSearchOptimizer,
     AbstractRiemannianOptimizer,
 )
+from ..typing import PRNGKey
 from ._solver_objective import AbstractSolverObjective, kernel_objective
 
 
@@ -120,7 +121,7 @@ def _has_line_search(
 
 
 def _update_rule(
-    optimizer: Any, tree: PyTree[Any], key: Key[Array, ""], /
+    optimizer: Any, tree: PyTree[Any], key: PRNGKey, /
 ) -> AbstractKernelUpdateRule:
     """The kernel rule of one member of the FunctionalSolver optimizer union."""
     if isinstance(optimizer, KFAC):
@@ -193,7 +194,7 @@ def train_components(
     *,
     optimizer: ComponentOptimizer,
     steps: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     checkpoint: str | Path | None = None,
     rejection_budget: int = 0,
 ) -> ComponentTrainingResult:

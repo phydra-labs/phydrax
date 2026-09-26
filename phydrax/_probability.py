@@ -13,11 +13,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ._dtype_names import inexact_result_type
 from ._strict import StrictModule
 from .domain._measure import MeasureKind
+from .typing import PRNGKey
 
 
 class AbstractProbabilityLaw(StrictModule):
@@ -39,7 +39,7 @@ class AbstractProbabilityLaw(StrictModule):
         raise NotImplementedError
 
     @abstractmethod
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -156,7 +156,7 @@ class DiagonalNormalLaw(AbstractProbabilityLaw):
             )
         return array
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")

@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Bool, Key
+from jaxtyping import Bool
 
 from .._doc import DOC_KEY0
 from .._mass import Mass
@@ -31,6 +31,7 @@ from ..geometry import (
 )
 from ..geometry._contracts import ClosestPointResult
 from ..geometry._sampling import require_complete
+from ..typing import PRNGKey
 from ._base import _make_compact_boundary_factor, AbstractGeometry
 
 
@@ -200,7 +201,7 @@ class GeometryDomain(AbstractGeometry):
         num_points: int,
         *,
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         count = int(num_points)
@@ -212,7 +213,7 @@ class GeometryDomain(AbstractGeometry):
         bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         plan_ = RejectionSamplingPlan() if plan is None else plan
 
-        def proposal(proposal_key: Key[Array, ""], proposal_count: int) -> Array:
+        def proposal(proposal_key: PRNGKey, proposal_count: int) -> Array:
             return jr.uniform(
                 proposal_key,
                 shape=(proposal_count, self.spatial_dim),
@@ -239,7 +240,7 @@ class GeometryDomain(AbstractGeometry):
         num_points: int,
         *,
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         count = int(num_points)
@@ -249,7 +250,7 @@ class GeometryDomain(AbstractGeometry):
             return self.geometry.sample_boundary(count, key=key)
         plan_ = RejectionSamplingPlan() if plan is None else plan
 
-        def proposal(proposal_key: Key[Array, ""], proposal_count: int) -> Array:
+        def proposal(proposal_key: PRNGKey, proposal_count: int) -> Array:
             return self.geometry.sample_boundary(
                 proposal_count,
                 key=proposal_key,
@@ -274,7 +275,7 @@ class GeometryDomain(AbstractGeometry):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         del sampler
         result = self.sample_interior_result(num_points, where=where, key=key)
@@ -286,7 +287,7 @@ class GeometryDomain(AbstractGeometry):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         del sampler
         result = self.sample_boundary_result(num_points, where=where, key=key)
@@ -297,7 +298,7 @@ class GeometryDomain(AbstractGeometry):
         where: Callable[[Array], Bool[Array, ""]],
         *,
         num_samples: int = 4096,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         points = self.sample_boundary(int(num_samples), key=key)
         selected = jnp.asarray(jax.vmap(where)(points), dtype=jnp.float64)
@@ -309,7 +310,7 @@ class GeometryDomain(AbstractGeometry):
         *,
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> tuple[tuple[Array, ...], Array]:
         if isinstance(num_points, int):
             counts = (int(num_points),) * self.spatial_dim

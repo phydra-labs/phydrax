@@ -13,10 +13,10 @@ import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
+from ...typing import PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -360,13 +360,13 @@ class _SuperquadricKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         bounds = self.bounds(state)
         selected = RejectionSamplingPlan() if plan is None else plan
 
-        def proposal(proposal_key: Key[Array, ""], count: int) -> Array:
+        def proposal(proposal_key: PRNGKey, count: int) -> Array:
             return jr.uniform(
                 proposal_key,
                 shape=(count, 3),
@@ -386,7 +386,7 @@ class _SuperquadricKernel(GeometryKernel):
         )
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         center, axes, orientation, first, second = self._parameters(state)
         count = int(num_points)

@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -50,6 +50,7 @@ from ..._training_kernel import (
 )
 from ..._training_objective import _ObjectiveContribution
 from ...linalg import FactorizationPolicy, inverse, OperatorProperties
+from ...typing import PRNGKey
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
 from ._features import AbstractFeatureLibrary, FeatureEvaluation
@@ -363,7 +364,7 @@ def _score(
 def fit_variational_kinetic_model(
     model: AbstractArrayModel,
     data: TrajectoryData,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     model_id: str,

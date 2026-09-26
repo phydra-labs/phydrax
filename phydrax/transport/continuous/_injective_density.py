@@ -12,11 +12,11 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import _leading_shape, AbstractProbabilityLaw
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 
 
 class InjectiveDensityResult(StrictModule):
@@ -114,7 +114,7 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> str:
         return "hausdorff"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         latent = jnp.asarray(self.latent_law.sample(key, sample_shape))
         leading = _leading_shape(
             latent.shape,

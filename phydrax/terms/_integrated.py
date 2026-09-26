@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -26,6 +24,7 @@ from ..integration import (
     PerStepIntegration,
 )
 from ..integration._execution import IntegrationSource, resolve_integration
+from ..typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -54,7 +53,7 @@ def resolve_term_realization(
     source: IntegrationSource,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     realization: IntegrationRealization | _PreparedIntegrationRealization | None,
 ) -> IntegrationRealization:
     """Resolve public source semantics plus solver-prepared realizations."""

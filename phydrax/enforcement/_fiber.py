@@ -13,7 +13,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -31,6 +30,7 @@ from ..domain._derivative import (
 )
 from ..domain._evaluation import BatchEvaluator
 from ..linalg._constraint_operators import PreparedConstraintOperator
+from ..typing import PRNGKey
 
 
 FiberExactnessScope = Literal["continuum", "realization"]
@@ -551,7 +551,7 @@ class RealizedFiberProjectionUnit(StrictModule):
         fields: Mapping[str, Any],
         batch: Any,
         context: object,
-        key: Key[Array, ""] | None,
+        key: PRNGKey | None,
         /,
     ) -> Any:
         target = self.target(fields, batch, context, key)
@@ -567,7 +567,7 @@ class RealizedFiberProjectionUnit(StrictModule):
         fields: Mapping[str, Any],
         batch: Any,
         context: object,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         /,
     ) -> frozendict[str, Any]:
         coefficients = self.factor.apply(self._residual(fields, batch, context, key))
@@ -581,7 +581,7 @@ class RealizedFiberProjectionUnit(StrictModule):
         fields: Mapping[str, Any],
         batch: Any,
         context: object,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         /,
     ) -> frozendict[str, Any]:
         action = self.action(fields, batch, context, key)
@@ -661,7 +661,7 @@ class SeparableFiberProjectionUnit(StrictModule):
         fields: Mapping[str, Any],
         batch: Any,
         context: object,
-        key: Key[Array, ""] | None,
+        key: PRNGKey | None,
         /,
     ) -> Any:
         target = self.target(fields, batch, context, key)
@@ -677,7 +677,7 @@ class SeparableFiberProjectionUnit(StrictModule):
         fields: Mapping[str, Any],
         batch: Any,
         context: object,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         /,
     ) -> frozendict[str, Any]:
         coefficients = _shared_lift(
@@ -693,7 +693,7 @@ class SeparableFiberProjectionUnit(StrictModule):
         fields: Mapping[str, Any],
         batch: Any,
         context: object,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         /,
     ) -> frozendict[str, Any]:
         action = self.action(fields, batch, context, key)
@@ -795,7 +795,7 @@ class FiberProjectionState(StrictModule):
         context: object,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> frozendict[str, Any]:
         base = {
@@ -850,7 +850,7 @@ class _FiberProjectedEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvi
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> cx.AxisArray:
         value = self.state.project_batch(

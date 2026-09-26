@@ -15,7 +15,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -44,6 +43,7 @@ from ..linalg._runtime import (
     solve as solve_linear_system,
 )
 from ..linalg._spaces import ArraySpace
+from ..typing import PRNGKey
 from ._affine import (
     AbstractLinearCorrectionProvider,
     AffineBlockAssembly,
@@ -452,9 +452,7 @@ class _KernelFieldEvaluator(StrictModule):
             )
         return point.reshape(self.input_shape)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del key, kwargs
         point = self._point(args)
         if self.representation == "finite-feature":

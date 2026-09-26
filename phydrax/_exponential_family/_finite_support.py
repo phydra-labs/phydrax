@@ -14,7 +14,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -23,6 +22,7 @@ from ..linalg._local_blocks import (
     prepare_local_block_factorization,
     solve_local_blocks_detailed,
 )
+from ..typing import PRNGKey
 from ._contracts import (
     _mean_domain_result,
     _natural_domain_result,
@@ -312,7 +312,7 @@ class FiniteSupportExponentialFamily(AbstractExponentialFamily):
 
     def _sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

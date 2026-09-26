@@ -11,10 +11,10 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 
 
 class StructuralRandomModel(StrictModule, NonTrainableState):
@@ -62,7 +62,7 @@ class StructuralRandomModel(StrictModule, NonTrainableState):
         factor = jnp.linalg.cholesky(self.covariance)
         return self.mean + standard @ factor.T
 
-    def sample(self, key: PRNGKeyArray, sample_count: int, /) -> Array:
+    def sample(self, key: PRNGKey, sample_count: int, /) -> Array:
         standard = jax.random.normal(
             key, (int(sample_count), self.dimension), dtype=self.mean.dtype
         )
@@ -114,7 +114,7 @@ class FORMReliabilityResult(StrictModule):
 def monte_carlo_reliability(
     model: StructuralRandomModel,
     limit_state: StructuralLimitState,
-    key: PRNGKeyArray,
+    key: PRNGKey,
     sample_count: int,
     /,
 ) -> MonteCarloReliabilityResult:

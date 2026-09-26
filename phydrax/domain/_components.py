@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -36,6 +35,7 @@ from ..discretization._axis import (
     TensorGridPlan,
 )
 from ..geometry import BoundaryAtlasProvider, sample_boundary_atlas
+from ..typing import PRNGKey
 from ._base import AbstractGeometry, EnforcementGateMethod
 from ._dataset import DatasetDomain
 from ._domain import Domain
@@ -87,7 +87,7 @@ class _NormalCallable(StrictModule):
         self.geom = geom
 
     def __call__(
-        self, x: Array, /, *, key: Key[Array, ""] | None = None, **kwargs: Any
+        self, x: Array, /, *, key: PRNGKey | None = None, **kwargs: Any
     ) -> Array:
         del key, kwargs
         pts_in = jnp.asarray(x, dtype=jnp.float64)
@@ -123,9 +123,7 @@ class _SdfCallable(StrictModule):
     def __init__(self, geom: AbstractGeometry) -> None:
         self.geom = geom
 
-    def __call__(
-        self, x: Any, /, *, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, x: Any, /, *, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del key, kwargs
         d = int(self.geom.spatial_dim)
 
@@ -176,9 +174,7 @@ class _EnforcementGateCallable(StrictModule):
         )
         self.dim = int(geom.spatial_dim)
 
-    def __call__(
-        self, x: Any, /, *, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, x: Any, /, *, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del key, kwargs
         if isinstance(x, tuple):
             coords = tuple(jnp.asarray(c, dtype=jnp.float64).reshape((-1,)) for c in x)
@@ -213,7 +209,7 @@ def _sample_geometry(
     num_points: int,
     *,
     sampler: str,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     if isinstance(component, Interior):
         return jnp.asarray(
@@ -246,7 +242,7 @@ def _sample_scalar(
     num_points: int,
     *,
     sampler: str,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     if isinstance(component, Interior):
         return jnp.asarray(
@@ -512,7 +508,7 @@ class DomainComponent(StrictModule):
         *,
         structure: SampleLayout,
         sampler: str,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> GraphBatch | None:
         from .graph._batch import GraphBatch
         from .graph._dataset import GraphDatasetDomain
@@ -776,7 +772,7 @@ class DomainComponent(StrictModule):
         sampling: PointSampling,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> PointBatch | GraphBatch: ...
 
     @overload
@@ -785,7 +781,7 @@ class DomainComponent(StrictModule):
         sampling: GridSampling,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> GridBatch: ...
 
     def sample(
@@ -793,7 +789,7 @@ class DomainComponent(StrictModule):
         sampling: PointSampling | GridSampling,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> PointBatch | GridBatch | GraphBatch:
         """Materialize a typed sampling request."""
         if isinstance(sampling, PointSampling):
@@ -807,7 +803,7 @@ class DomainComponent(StrictModule):
         sampling: PointSampling,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> PointBatch | GraphBatch:
         from ._irregular_trajectory_dataset import (
             IrregularTrajectoryDatasetDomain,
@@ -1345,7 +1341,7 @@ class DomainComponent(StrictModule):
         sampling: GridSampling,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> GridBatch:
         r"""Materialize a coordinate grid with optional dense point blocks.
 
@@ -1709,7 +1705,7 @@ class ComponentSum(StrictModule):
         sampling: PointSampling | tuple[PointSampling, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         min_points_per_term: int = 1,
     ) -> tuple[PointBatch | GraphBatch, ...]:
         """Sample every additive term with explicit per-term point requests."""

@@ -12,11 +12,11 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import PRNGKey
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 from ._subspace_diffusion import AffineSubspaceLayout, SubspaceGaussianDiffusion
 
@@ -184,7 +184,7 @@ class PathCoefficientDiffusion(StrictModule):
         self.process_id = identifier
 
     def perturb(
-        self, key: Key[Array, ""], trajectory: ArrayLike, /, *, time: ArrayLike
+        self, key: PRNGKey, trajectory: ArrayLike, /, *, time: ArrayLike
     ) -> Array:
         return self.subspace_process.perturb(key, trajectory, time=time)
 

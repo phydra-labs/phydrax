@@ -15,7 +15,7 @@ import numpy as np
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._doc import DOC_KEY0
@@ -46,6 +46,7 @@ from .._training_kernel import (
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
+from ..typing import PRNGKey
 from ._graph import AtomisticGraphExecutionPlan, realize_atomistic_graph
 from ._potential import AbstractAtomisticPotential, atomistic_potential_revision
 from ._types import AtomisticBatch, AtomisticStatus
@@ -653,7 +654,7 @@ def fit_atomistic_potential(
     policy: AtomisticTrainingPolicy,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     session: IterationSession | None = None,
     continuation: AtomisticTrainingResult | None = None,
 ) -> AtomisticTrainingResult:

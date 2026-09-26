@@ -15,13 +15,14 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, ParameterOwner
+from ...typing import PRNGKey
 from ._selection import ParameterSubspace
 
 
@@ -101,7 +102,7 @@ class LowRankUpdate(StrictModule, ParameterOwner):
         alpha: float | None = None,
         scaling: LowRankScaling = "rank",
         stddev: float = 0.01,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         _factors: tuple[Array, Array] | None = None,
     ) -> None:
         value = jnp.asarray(base)
@@ -455,7 +456,7 @@ def adapt_low_rank(
     plan: LowRankAdaptationPlan | Mapping[str, LowRankSpec],
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> tuple[PyTree[Any], LowRankAdaptationReport]:
     """Apply a prepared adaptation plan and return immutable accounting."""
     from ..layers._linear import Linear

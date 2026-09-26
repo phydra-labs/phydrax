@@ -14,12 +14,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import PRNGKeyArray
 
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._core import TensorTrain, TensorTrainCompressionResult, tt_svd
 
 
@@ -434,7 +434,7 @@ def qtt_quadrature(
 def qtt_sample(
     tensor: TensorTrain,
     layout: QuanticsLayout,
-    key: PRNGKeyArray,
+    key: PRNGKey,
     /,
     *,
     sample_count: int,

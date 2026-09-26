@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, Domain, DomainFunction
@@ -21,6 +20,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import inverse_distance_stencil
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._observation import PointObservationAction
 
 
@@ -319,7 +319,7 @@ class _CardinalBasisEvaluator(StrictModule):
         args: tuple[Any, ...],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         if self.preservation_weight is None:
@@ -330,9 +330,7 @@ class _CardinalBasisEvaluator(StrictModule):
             dtype=jnp.float64,
         )
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         distance = self._distance_squared(args)
         weights = self._weights(distance) * self._envelope(distance)
         multiplier = self._query_multiplier(args, key=key, **kwargs)
@@ -350,9 +348,7 @@ class _CardinalLinearCombination(StrictModule):
     components: tuple[int, ...] | None = eqx.field(static=True)
     output_width: int | None = eqx.field(static=True)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         basis_values = jnp.asarray(
             self.basis.func(*args, key=key, **kwargs), dtype=jnp.float64
         )

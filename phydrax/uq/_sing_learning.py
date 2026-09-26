@@ -10,7 +10,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import optax
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._sampling import derive_key, SampleAddress
@@ -28,6 +28,7 @@ from .._training_kernel import (
 )
 from .._training_objective import _ObjectiveContribution
 from ..nn.parameters import ParameterSubspace
+from ..typing import PRNGKey
 from ._sing import sing_smoother, SINGResult, SINGState
 from ._sing_transition import sing_objective, SINGTransitionPlan
 
@@ -132,7 +133,7 @@ def fit_sing(
     optimizer: optax.GradientTransformation,
     state: SINGState | None = None,
     observation_factor: Any = None,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> SINGLearningResult:
     """Alternate posterior natural steps and held-posterior parameter steps.
 

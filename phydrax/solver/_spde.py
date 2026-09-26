@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
@@ -40,6 +39,7 @@ from ..stochastic import (
     WienerRealization,
 )
 from ..stochastic._spatial_noise import SpatialNoiseBasis
+from ..typing import PRNGKey
 from ._differential import (
     DifferentialInterpretation,
     DifferentialProblem,
@@ -426,7 +426,7 @@ class SemidiscreteSPDE(StrictModule):
 
     def wiener_realization(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         support: tuple[float, float] | None = None,

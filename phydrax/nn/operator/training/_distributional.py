@@ -12,9 +12,9 @@ from typing import Literal
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ...._doc import DOC_KEY0
+from ....typing import PRNGKey
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
 from ..distribution import AbstractProbabilisticOperatorModel
 from ._losses import (
@@ -34,7 +34,7 @@ def operator_distribution_nll(
     target: Array,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     reduction: DistributionReduction = "mean",
 ) -> Array:
     """Evaluate a complete-field negative log likelihood in model coordinates."""
@@ -79,7 +79,7 @@ class OperatorDistributionNLL(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

@@ -15,7 +15,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -28,6 +27,7 @@ from ..discretization import (
     RigidBodyKinematics,
     RigidBodyLoad,
 )
+from ..typing import PRNGKey
 from ._sites import AtomisticInteractionSiteState
 from ._units import AtomisticUnitSystem
 
@@ -122,7 +122,7 @@ class AbstractThermostatPlan(StrictModule, NonTrainableState):
         momenta: ArrayLike,
         masses: Array,
         mobile_mask: ArrayLike,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: ArrayLike,
         dt: float | Array,
         units: AtomisticUnitSystem,
@@ -155,7 +155,7 @@ class BussiThermostatPlan(AbstractThermostatPlan):
         momenta: ArrayLike,
         masses: Array,
         mobile_mask: ArrayLike,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: ArrayLike,
         dt: float | Array,
         units: AtomisticUnitSystem,
@@ -227,7 +227,7 @@ class NoseHooverChainPlan(AbstractThermostatPlan):
         momenta: ArrayLike,
         masses: Array,
         mobile_mask: ArrayLike,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: ArrayLike,
         dt: float | Array,
         units: AtomisticUnitSystem,
@@ -322,7 +322,7 @@ class GeneralizedLangevinPlan(AbstractThermostatPlan):
         momenta: ArrayLike,
         masses: Array,
         mobile_mask: ArrayLike,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: ArrayLike,
         dt: float | Array,
         units: AtomisticUnitSystem,
@@ -402,7 +402,7 @@ class NoisyForceLangevinPlan(AbstractThermostatPlan):
         momenta: ArrayLike,
         masses: Array,
         mobile_mask: ArrayLike,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: ArrayLike,
         dt: float | Array,
         units: AtomisticUnitSystem,
@@ -612,7 +612,7 @@ class BrownianDynamicsPlan(StrictModule, NonTrainableState):
         positions: Array,
         forces: Array,
         dt: float | Array,
-        key: Key[Array, ""],
+        key: PRNGKey,
         units: AtomisticUnitSystem,
         /,
     ) -> Array:

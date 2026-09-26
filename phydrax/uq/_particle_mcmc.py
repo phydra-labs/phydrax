@@ -14,11 +14,12 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._sampling import AbstractProposal
 from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
+from ..typing import PRNGKey
 from ._particle import (
     bootstrap_particle_filter,
     normalize_log_weights,
@@ -133,7 +134,7 @@ def _reference_path(problem: StateSpaceProblem, path: ArrayLike, /) -> Array:
 
 
 def conditional_particle_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     reference_path: ArrayLike,
     /,
@@ -424,7 +425,7 @@ def conditional_particle_filter(
 
 
 def sample_conditional_particle_path(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: ConditionalParticleFilterResult,
     /,
 ) -> Array:
@@ -459,7 +460,7 @@ def sample_conditional_particle_path(
 
 
 def particle_gibbs(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     initial_path: ArrayLike,
     /,
@@ -546,7 +547,7 @@ def _particle_log_likelihood(
 
 
 def particle_marginal_metropolis_hastings(
-    key: Key[Array, ""],
+    key: PRNGKey,
     initial_parameters: PyTree[Any],
     problem: Callable[[PyTree[Any]], StateSpaceProblem],
     log_prior: Callable[[PyTree[Any]], ArrayLike],

@@ -14,11 +14,11 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._probability import _event_axes, _leading_shape
 from .._strict import StrictModule
 from .._trainable import fixed_field
+from ..typing import PRNGKey
 from ._jump import AbstractJumpProcess
 from ._process import AbstractPathwiseTransition
 from ._state_space import (
@@ -147,7 +147,7 @@ class _NormalizedJumpProcess(AbstractJumpProcess):
 
     def sample_mark(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         time: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,
@@ -339,7 +339,7 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -480,7 +480,7 @@ class JumpTransitionKernel(AbstractTransitionKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -655,7 +655,7 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -826,7 +826,7 @@ class FiniteStateTransitionKernel(AbstractTransitionKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -922,7 +922,7 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,

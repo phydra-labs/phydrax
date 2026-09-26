@@ -17,13 +17,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from ..._sampling import derive_key, SampleAddress
 from ..._strict import StrictModule
 from ...linalg import DenseLinearOperator, FactorizationPolicy, factorize
+from ...typing import PRNGKey
 from ._amplitude import LogAmplitude
 
 
@@ -123,7 +123,7 @@ class StochasticElectronicKineticPolicy(StrictModule):
         configuration: ArrayLike,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> StochasticKineticEstimate:
         coordinates = jnp.asarray(configuration)
         shape = coordinates.shape

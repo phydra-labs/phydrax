@@ -8,10 +8,10 @@ from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._model import model_objective_labels, model_objective_values
+from ..typing import PRNGKey
 
 
 def function_model_loss_labels(functions: Any, /) -> tuple[str, ...]:
@@ -23,7 +23,7 @@ def function_model_loss_values(
     functions: Any,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     iter_: int | Array | None = None,
 ) -> tuple[Array, ...]:
     """Evaluate all model objective terms in a function tree."""

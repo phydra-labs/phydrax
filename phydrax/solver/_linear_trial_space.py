@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._sampling import derive_key, SampleAddress
@@ -35,6 +34,7 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ..terms import ResidualPenalty
+from ..typing import PRNGKey
 from ._functional_residual import (
     materialize_prepared_residual_terms,
     prepared_term_residual_vector,
@@ -132,7 +132,7 @@ def solve_linear_trial_space(
     /,
     *,
     linear: LinearSolvePolicy | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     affine_tolerance: float | None = None,
 ) -> LinearTrialSpaceResult:
     """Assemble and solve one fixed affine boundary-residual problem."""

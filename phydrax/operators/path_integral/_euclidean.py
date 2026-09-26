@@ -10,10 +10,10 @@ import jax.random as jr
 import jax.scipy.special as jsp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ...discretization import TemporalMesh
+from ...typing import PRNGKey
 from ._action import potential_action
 from ._estimate import (
     _estimate_positive_log_sums,
@@ -72,7 +72,7 @@ def _log_weights(
     hbar: Array,
     position_var: str,
     time_var: str,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     action = potential_action(
         paths,
@@ -97,7 +97,7 @@ def euclidean_kernel_from_noise(
     hbar: ArrayLike = 1.0,
     position_var: str = "q",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PathIntegralEstimate:
     r"""Estimate a Euclidean kernel from explicit standard-normal bridge noise."""
     mass_arr = _positive_scalar("mass", mass)
@@ -151,7 +151,7 @@ def euclidean_kernel(
     chunk_size: int | None = None,
     position_var: str = "q",
     time_var: str = "t",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PathIntegralEstimate:
     r"""Estimate a fixed-endpoint Euclidean propagator with Brownian bridges.
 

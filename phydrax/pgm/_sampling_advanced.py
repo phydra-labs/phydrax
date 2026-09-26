@@ -16,10 +16,10 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._gibbs import (
     _conditional_logits,
     gibbs_sweep,
@@ -230,7 +230,7 @@ def _sample_site(
     prepared: PreparedChromaticGibbs,
     positions: Array,
     variable: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     sweep_index: Array,
     event_index: int,
     clamped: Array,
@@ -264,7 +264,7 @@ def _sample_site(
 def gibbs_sweep_with_policy(
     prepared: PreparedChromaticGibbs,
     state: GibbsState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: GibbsScanPolicy,
     /,
     *,
@@ -404,7 +404,7 @@ def joint_block_sweep(
     prepared: PreparedChromaticGibbs,
     state: GibbsState,
     block: JointDiscreteBlock,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[GibbsState, GibbsTransitionInfo]:
     """Sample one dependent block exactly by bounded conditional enumeration."""
@@ -489,7 +489,7 @@ def initialize_parallel_tempering(
 def parallel_tempering_step(
     prepared: PreparedChromaticGibbs,
     state: ParallelTemperingState,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[ParallelTemperingState, ParallelTemperingInfo]:
     """Advance tempered replicas and apply alternating neighboring exchange moves."""
@@ -570,7 +570,7 @@ def reduce_gibbs_chain(
     reducer: AbstractChainReducer[_CarryT, _ReductionT],
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_sweeps: int,
     policy: GibbsScanPolicy | None = None,
 ) -> ReducedGibbsResult:
@@ -618,7 +618,7 @@ def reduce_gibbs_chain(
 def wolff_cluster_step(
     prepared: PreparedChromaticGibbs,
     position: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     inverse_temperature: float = 1.0,

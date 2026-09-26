@@ -9,7 +9,6 @@ from typing import Any, Mapping
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -19,13 +18,14 @@ from .._term import AbstractScalarTerm
 from ..domain import DomainFunction
 from ..integration._api import IntegrationRealization, reduce
 from ..transport import AbstractGroundCost
+from ..typing import PRNGKey
 
 
 class _MongeCostEvaluator(StrictModule):
     map_evaluator: Any
     cost: AbstractGroundCost
 
-    def __call__(self, *args: Any, key: Key[Array, ""] | None = None) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None) -> Array:
         source = (
             jnp.asarray(args[0])
             if len(args) == 1
@@ -88,7 +88,7 @@ class MongeMapTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -157,7 +157,7 @@ class NeuralDualTransportTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

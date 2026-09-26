@@ -280,7 +280,7 @@ def finite_size_growth(
         if count < 1:
             raise ValueError("num_directions must be positive.")
         vectors = jax.random.normal(
-            jax.random.PRNGKey(int(seed)),
+            jax.random.key(int(seed)),
             (count,) + evolution.state_layout.shape,
             dtype=inexact_result_type(state),
         )

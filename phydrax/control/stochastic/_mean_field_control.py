@@ -23,7 +23,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ...domain import DomainFunction
@@ -39,6 +38,7 @@ from ...stochastic import (
     MeanFieldBSDEProblem,
     MeanFieldSnapshot,
 )
+from ...typing import PRNGKey
 
 
 MEAN_FIELD_CONTROL_PLANNER_STATIONARITY = "MEAN_FIELD_CONTROL_PLANNER_STATIONARITY"
@@ -428,7 +428,7 @@ def evaluate_mean_field_control_planner(
     control_predictor: Any = None,
     control_mode: BSDEControlMode = "explicit",
     quadrature: BSDEQuadrature = "left",
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> MeanFieldControlResult:
     """Evaluate one social-planner candidate on its law-generating paths.
 

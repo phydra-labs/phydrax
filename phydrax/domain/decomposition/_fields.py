@@ -12,9 +12,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._function import DomainFunction
 from ._cover import SubdomainCover
 
@@ -161,15 +161,13 @@ class _PartitionOfUnityEvaluator(StrictModule):
         positions: tuple[int, ...],
         args: tuple[Any, ...],
         *,
-        key: Key[Array, ""] | None,
+        key: PRNGKey | None,
         kwargs: dict[str, Any],
     ) -> Any:
         selected = tuple(args[position] for position in positions)
         return field.func(*selected, key=key, **kwargs)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         arguments = tuple(args)
         effective_key = jr.key(0) if key is None else key
         call_kwargs = dict(kwargs)
@@ -285,9 +283,7 @@ class _BrokenFieldEvaluator(StrictModule):
         self.field_positions = tuple(_positions(field, deps) for field in lifted)
         self.support_positions = tuple(_positions(field, deps) for field in supports)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         arguments = tuple(args)
         effective_key = jr.key(0) if key is None else key
         supports = jnp.stack(

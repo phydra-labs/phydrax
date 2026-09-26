@@ -10,10 +10,10 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ...stochastic._state_space import CategoricalStatePrior
+from ...typing import PRNGKey
 from ._kernel import (
     _path_indices,
     bridge_path_log_prob,
@@ -61,7 +61,7 @@ class BridgeInferenceAdapter(StrictModule):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         sample_shape: tuple[int, ...] = (),

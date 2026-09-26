@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -33,6 +32,8 @@ from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 def _pair(shape: int | Sequence[int], name: str, /) -> tuple[int, int]:
@@ -124,7 +125,7 @@ def dpot_corrupt_history(
     /,
     *,
     noise_scale: float = 1e-3,
-    key: Key[Array, ""],
+    key: PRNGKey,
     mask: Array | None = None,
     channel_axis: int | None = -1,
 ) -> Array:
@@ -188,7 +189,7 @@ class _AFNO2D(StrictModule):
         width: int,
         num_blocks: int,
         modes: int | Sequence[int],
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.width = int(width)
         self.num_blocks = int(num_blocks)
@@ -282,7 +283,7 @@ class _DPOTBlock(StrictModule):
         mlp_ratio: float,
         groups: int,
         double_skip: bool,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         hidden = int(round(float(mlp_ratio) * int(width)))
         if hidden <= 0:
@@ -352,7 +353,7 @@ class _TemporalAggregator(StrictModule):
         history_steps: int,
         width: int,
         exponential_embedding: bool,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.history_steps = int(history_steps)
         self.width = int(width)
@@ -423,7 +424,7 @@ class DPOT(AbstractOperatorModel):
         normalize: bool = False,
         exponential_time_embedding: bool = True,
         source_key: str | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
@@ -534,7 +535,7 @@ class DPOT(AbstractOperatorModel):
         /,
         *,
         noise_scale: float = 1e-3,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> OperatorBatch:
         """Return an operator batch with DPOT denoising corruption on its history."""
 

@@ -11,7 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
@@ -33,6 +33,7 @@ from ..nn.neural_tangent import (
 )
 from ..sampling.collocation import CausalTimeSlabSchedule
 from ..terms import ResidualBlockRef, ResidualPenalty
+from ..typing import PRNGKey
 from ._functional_objective import (
     _ObjectiveValues,
     _PreparedObjective,
@@ -93,7 +94,7 @@ class _BlockScaledEvaluator(StrictModule, BatchEvaluator):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> cx.AxisArray:
         value = self.source(batch, key=key, **kwargs)
@@ -105,9 +106,7 @@ class _BlockScaledEvaluator(StrictModule, BatchEvaluator):
             self._scale(jnp.asarray(value.data), value.dims), dims=value.dims
         )
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         value = jnp.asarray(self.source.func(*args, key=key, **kwargs))
         dims = (None,) * value.ndim
         return self._scale(value, dims)
@@ -239,7 +238,7 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> cx.AxisArray:
         value = self.source(batch, key=key, **kwargs)
@@ -270,9 +269,7 @@ class _CausalScaledEvaluator(StrictModule, BatchEvaluator):
             dims=value.dims,
         )
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> NoReturn:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> NoReturn:
         raise TypeError("Causal residual transforms require a prepared batch.")
 
 
@@ -657,7 +654,7 @@ def _updated_balance_multipliers(
     params: PyTree[Any],
     policy: FunctionalTermBalancePolicy,
     old: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[Array, tuple[PyTree[Any], ...], Array]:
     if policy.method == "gradient_norm":
@@ -728,7 +725,7 @@ def _functional_ntk_diagnostics(
     residual: PreparedFunctionalResidual,
     params: PyTree[Any],
     policy: FunctionalDiagnosticsPolicy,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> NTKDiagnostics:
     roots = residual.roots(params)

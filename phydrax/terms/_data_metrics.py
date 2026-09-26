@@ -6,11 +6,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import PointSampling, SampleLayout
 
 from .._sampling import design_name
+from ..typing import PRNGKey
 
 
 def normalize_case_sampling(
@@ -235,7 +235,7 @@ def sample_case_indices(
     *,
     size: int,
     num_samples: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     indices: Array | None = None,
 ) -> Array:
     """Sample empirical-case indices uniformly from all cases or a subset."""
@@ -251,7 +251,7 @@ def sample_case_indices(
     return idx[positions]
 
 
-def _random_int(key: Key[Array, ""], /, *, n: int, maxval: int) -> Array:
+def _random_int(key: PRNGKey, /, *, n: int, maxval: int) -> Array:
     return jr.randint(
         key,
         shape=(int(n),),

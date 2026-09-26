@@ -12,10 +12,10 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...typing import PRNGKey
 from ._core import (
     AbstractTrefftzBasis,
     SimilarityNormalization,
@@ -30,7 +30,7 @@ def sample_unit_directions(
     dimension: int,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> Array:
     """Sample fixed unit directions from normalized Gaussian vectors."""
 

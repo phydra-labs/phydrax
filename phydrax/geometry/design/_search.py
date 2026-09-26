@@ -11,11 +11,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ...optim import DifferentialEvolutionSearch
 from ...optim._differential_evolution import _bounded_differential_evolution
+from ...typing import PRNGKey
 from ._constraints import DesignConstraintSystem
 from ._schema import DesignState, ParameterId
 
@@ -64,7 +64,7 @@ class DesignSearchResult(StrictModule):
     best_objective_history: Array
     lower_bounds: Array
     upper_bounds: Array
-    key: Key[Array, ""]
+    key: PRNGKey
     search: DifferentialEvolutionSearch
     converged: bool = eqx.field(static=True)
     termination_reason: str = eqx.field(static=True)
@@ -84,7 +84,7 @@ class DesignSearchResult(StrictModule):
         best_objective_history: Array,
         lower_bounds: Array,
         upper_bounds: Array,
-        key: Key[Array, ""],
+        key: PRNGKey,
         search: DifferentialEvolutionSearch,
         converged: bool,
         termination_reason: str,
@@ -218,7 +218,7 @@ def search_design_constraints(
     search: DifferentialEvolutionSearch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     bounds: SearchBounds | None = None,
     initial_state: DesignState | None = None,
 ) -> DesignSearchResult:

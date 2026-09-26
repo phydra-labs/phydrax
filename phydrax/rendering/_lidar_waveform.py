@@ -16,7 +16,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from phydrax._interpolation import linear_interpolate
 
@@ -24,6 +23,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..measurement import PulseResponse, WaveformSupport
+from ..typing import PRNGKey
 from ..units import conversion_factor, derived_unit, LENGTH, TIME, UnitDefinition
 from ._lidar import PreparedLidarSurface
 
@@ -657,7 +657,7 @@ class TimeResolvedMultipleScatteringPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def evaluate(self, key: PRNGKeyArray, /) -> LidarWaveformResult:
+    def evaluate(self, key: PRNGKey, /) -> LidarWaveformResult:
         ray_count = self.support.rays.sample_shape[0]
         random = (
             jr.exponential(key, (ray_count, self.packet_count, self.event_count))

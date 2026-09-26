@@ -9,7 +9,6 @@ from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
@@ -23,6 +22,7 @@ from .._model import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._keys import EvalKey, fold_in_eval_key
 
 
@@ -205,7 +205,7 @@ def model_loss_values(
     model: Any,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     iter_: Array | None = None,
 ) -> tuple[Array, ...]:
     """Evaluate all scalar objective terms attached to `model`."""

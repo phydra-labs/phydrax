@@ -13,7 +13,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.conditions._ir import (
@@ -41,6 +40,7 @@ from ..domain._trajectory_interpolation import (
     _broadcast_like,
     _RaggedTimeSeriesTable,
 )
+from ..typing import PRNGKey
 
 
 RaggedTimeSeriesHardInterpolation = Literal["linear", "cubic_hermite"]
@@ -109,7 +109,7 @@ class RaggedTimeSeriesObservationAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         if self.field not in values:
@@ -327,7 +327,7 @@ class _RaggedCardinalCorrectionEvaluator(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs
@@ -657,9 +657,7 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator, DerivativeRulePr
         self.table = table
         self.components = components
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError(
             "Ragged time-series hard enforcement requires PointBatch evaluation."
@@ -670,7 +668,7 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator, DerivativeRulePr
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, PointBatch):
@@ -715,9 +713,7 @@ class _RaggedTimeSeriesHardAnsatzDerivative(
         self.table = table
         self.components = components
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError(
             "Ragged time-series hard derivative requires PointBatch evaluation."
@@ -728,7 +724,7 @@ class _RaggedTimeSeriesHardAnsatzDerivative(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, PointBatch):

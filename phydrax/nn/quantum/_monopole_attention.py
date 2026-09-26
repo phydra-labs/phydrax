@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -22,6 +21,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
 from ...operators.quantum import LogAmplitude
+from ...typing import PRNGKey
 from ._complex_determinant import complex_determinant_mixture
 
 
@@ -51,7 +51,7 @@ class MonopoleAttentionAmplitude(StrictModule, ParameterOwner):
         self,
         particle_count: int,
         twice_monopole_flux: int,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         hidden_dimension: int = 32,

@@ -10,8 +10,6 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
-from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -25,6 +23,7 @@ from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._sampling import AntitheticDesign, design_capabilities
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._adaptive import integrate_adaptive
 from ._adaptive_cubature import integrate_adaptive_cubature
 from ._adaptive_triangle import integrate_adaptive_triangle
@@ -301,7 +300,7 @@ def materialize(
     plan: Any = None,
     /,
     *,
-    key: Key[Array, ""] | object = _KEY_UNSET,
+    key: PRNGKey | object = _KEY_UNSET,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationRealization:
     """Materialize a target under a typed plan without evaluating an integrand."""
@@ -339,7 +338,7 @@ def materialize(
         sampling_key: Any = DOC_KEY0
         evaluation_key: Any = None
     else:
-        sampling_key, evaluation_key = jr.split(cast(Key[Array, ""], key))
+        sampling_key, evaluation_key = jr.split(cast(PRNGKey, key))
     base = _base_target(target)
     if _is_domain_sampling_plan(plan):
         if not isinstance(base, ComponentTarget):
@@ -438,7 +437,7 @@ def from_samples(
     points: Any,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationRealization:
     """Attach authoritative target-measure weights to an existing point batch."""
@@ -794,7 +793,7 @@ def integrate(
     plan: Any = None,
     /,
     *,
-    key: Key[Array, ""] | object = _KEY_UNSET,
+    key: PRNGKey | object = _KEY_UNSET,
     precision: IntegrationPrecisionPolicy | None = None,
     **kwargs: Any,
 ) -> IntegrationEstimate:

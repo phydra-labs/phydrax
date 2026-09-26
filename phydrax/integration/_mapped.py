@@ -8,13 +8,13 @@ from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import DomainFunction
 
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
+from ..typing import PRNGKey
 from ._batches import MappedIntegrationBatch
 from ._estimates import (
     IntegrationEstimate,
@@ -87,7 +87,7 @@ def _mapped_values(
     batch: MappedIntegrationBatch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
 ) -> tuple[Array, tuple[Any, ...]]:
     if isinstance(value, DomainFunction):
@@ -123,7 +123,7 @@ def integrate_mapped(
     batch: MappedIntegrationBatch,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

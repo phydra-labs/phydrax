@@ -19,7 +19,6 @@ import jax.scipy as jsp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.ein import contract
@@ -29,6 +28,7 @@ from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...integration import discrete, integrate
+from ...typing import PRNGKey
 from ._amplitude import amplitude_ratio, LogAmplitude
 
 
@@ -513,7 +513,7 @@ class VariableSectorProposal(AbstractProposal):
         return -0.5 * jnp.sum(standardized**2 + jnp.log(2.0 * jnp.pi * scale**2))
 
     def sample(
-        self, key: Key[Array, ""], current: VariableParticleConfiguration, /
+        self, key: PRNGKey, current: VariableParticleConfiguration, /
     ) -> VariableParticleConfiguration:
         if not isinstance(current, VariableParticleConfiguration):
             raise TypeError("current must be VariableParticleConfiguration.")
@@ -764,7 +764,7 @@ class VariableSectorProposal(AbstractProposal):
 
     def payload(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         current: VariableParticleConfiguration,
         proposed: VariableParticleConfiguration,
         /,

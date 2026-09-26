@@ -19,11 +19,11 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ...discretization import TemporalMesh
+from ...typing import PRNGKey
 from ._action import kinetic_action, potential_action
 from ._sampling import _endpoints, brownian_bridge_from_noise
 
@@ -195,7 +195,7 @@ def real_time_kernel(
     /,
     *,
     plan: RealTimePathIntegralPlan,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> OscillatoryPathIntegralEstimate:
     start, _ = _endpoints(x0, x1)
     if start.ndim != 1:

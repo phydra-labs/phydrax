@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -20,6 +19,7 @@ from .._strict import StrictModule
 from ..integration._api import IntegrationRealization, reduce
 from ..integration._estimates import IntegrationEstimate
 from ..metrix import RiemannianMetric, WeightedRiemannianMeasure
+from ..typing import PRNGKey
 from ._function import DomainFunction
 from ._referenced_density import DensityReference, ReferencedDensityField
 
@@ -27,9 +27,7 @@ from ._referenced_density import DensityReference, ReferencedDensityField
 class _ExponentialFieldEvaluator(StrictModule):
     log_evaluator: Any
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         values = self.log_evaluator(*args, key=key, **kwargs)
         return jnp.exp(values)
 
@@ -39,9 +37,7 @@ class _NormalizedFieldEvaluator(StrictModule):
     log_normalizer: Array
     target_mass: Array
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         values = self.log_evaluator(*args, key=key, **kwargs)
         return self.target_mass * jnp.exp(values - self.log_normalizer)
 
@@ -70,7 +66,7 @@ class NormalizedDensityField(StrictModule):
         return self.referenced.state_var
 
     def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
+        self, *args: Any, key: PRNGKey | None = None, **kwargs: Any
     ) -> cx.AxisArray:
         return self.field(*args, key=key, **kwargs)
 

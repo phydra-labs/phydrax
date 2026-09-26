@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 from typing_extensions import assert_never
 
 import phydrax.axes as cx
@@ -32,7 +32,7 @@ from ..linalg import (
     inverse,
     OperatorProperties,
 )
-from ..typing import parse
+from ..typing import parse, PRNGKey
 from ._distributions import AbstractDistribution
 
 
@@ -87,7 +87,7 @@ def sobol_indices(
     /,
     *,
     num_samples: int,
-    key: Key[Array, ""] | None,
+    key: PRNGKey | None,
     sampler: str = "sobol_scrambled",
     batch_size: int | None = None,
     parameter_dim: str = "__phydra_uq_parameter",

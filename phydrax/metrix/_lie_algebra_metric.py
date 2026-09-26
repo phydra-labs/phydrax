@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key
 
 from phydrax import ein
 
@@ -24,6 +23,7 @@ from ..linalg import (
     prepare_local_block_factorization,
     solve_local_blocks,
 )
+from ..typing import PRNGKey
 from ._lie_group import AbstractLieGroup
 
 
@@ -98,7 +98,7 @@ class LieAlgebraCoordinateMetric(StrictModule, NonTrainableState):
 
     def sample_momentum(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         leading_shape: Sequence[int],
         /,
         *,

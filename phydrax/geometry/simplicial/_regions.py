@@ -15,11 +15,11 @@ import numpy as np
 import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -451,7 +451,7 @@ class _PlanarMeshRegionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         bounds = self.bounds(state)
@@ -473,7 +473,7 @@ class _PlanarMeshRegionKernel(GeometryKernel):
         )
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         vertices = self._vertices(state)
         segments = vertices[self.edges]
@@ -752,7 +752,7 @@ class _MeshRegionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         bounds = self.bounds(state)
@@ -774,7 +774,7 @@ class _MeshRegionKernel(GeometryKernel):
         )
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         triangles = self._triangles(state)
         area = 0.5 * jnp.linalg.norm(

@@ -10,12 +10,12 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._differentiation import AbstractConstructionCertificate, DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._model import INPUT_CONVEX_CERTIFICATE_KEY
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from .._contracts import AFFINE, compose_regularity, sum_regularity
 from .._keys import EvalKey, fold_in_eval_key
@@ -145,7 +145,7 @@ def _positive_linear(
     *,
     in_size: SizeLike,
     out_size: SizeLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Linear:
     return Linear(
         in_size=in_size,
@@ -176,7 +176,7 @@ class InputConvexNetwork(_AbstractBaseModel):
         depth: int = 3,
         activation: ConvexActivation = "softplus",
         use_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size_c = _canonical_size(in_size)
         width = int(width_size)
@@ -289,7 +289,7 @@ class PartiallyInputConvexNetwork(_AbstractStructuredInputModel):
         depth: int = 3,
         activation: ConvexActivation = "softplus",
         use_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         context_size_c = _canonical_size(context_size)
         convex_size_c = _canonical_size(convex_size)

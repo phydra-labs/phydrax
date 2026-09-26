@@ -18,14 +18,13 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jax import Array
-from jaxtyping import Key
 
 from ._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
 from ._document_resource import decode_json_resource
 from ._external_resource import read_bounded_resource, ResourceLimits
 from ._host_io import open_regular_beneath
 from ._publication import publish_bytes, publish_file
+from .typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -164,7 +163,7 @@ def _open_verified_state(
         ) from error
 
 
-def _serialize_root_key(key: Key[Array, ""], /) -> dict[str, Any]:
+def _serialize_root_key(key: PRNGKey, /) -> dict[str, Any]:
     """Return the canonical manifest representation of a typed JAX root key."""
 
     return {
@@ -177,7 +176,7 @@ def _deserialize_root_key(
     key_data: Any,
     key_impl: str,
     /,
-) -> Key[Array, ""]:
+) -> PRNGKey:
     """Restore one strictly validated scalar typed JAX root key."""
 
     words = {"threefry2x32": 2, "rbg": 4, "unsafe_rbg": 4}

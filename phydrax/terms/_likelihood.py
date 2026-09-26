@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import DatasetDomain, DomainComponent, DomainFunction, PointSampling
@@ -21,6 +20,7 @@ from .._doc import DOC_KEY0
 from .._dtype_names import inexact_result_type
 from .._likelihoods import AbstractLikelihood
 from .._term import AbstractSamplingTerm
+from ..typing import PRNGKey
 from ._data_metrics import (
     case_sample_count,
     configured_case_indices,
@@ -149,7 +149,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
             raise TypeError("Supervised observation domain is not a DatasetDomain.")
         return domain
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> SupervisedDatasetBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> SupervisedDatasetBatch:
         indices = sample_case_indices(
             size=self.domain.size,
             num_samples=case_sample_count(self.sampling),
@@ -186,7 +186,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
         batch: SupervisedDatasetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         **kwargs: Any,
     ) -> Array:
         function = functions[self.location_var]
@@ -207,7 +207,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         batch: SupervisedDatasetBatch,
         **kwargs: Any,
     ) -> Array:
@@ -218,7 +218,7 @@ class _AbstractSupervisedDatasetObservationTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: SupervisedDatasetBatch | None = None,
         **kwargs: Any,
@@ -299,7 +299,7 @@ class _AbstractSupervisedLikelihoodTerm(_AbstractSupervisedDatasetObservationTer
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: SupervisedDatasetBatch,
         **kwargs: Any,
     ) -> Array:
@@ -335,7 +335,7 @@ class _AbstractSupervisedLikelihoodTerm(_AbstractSupervisedDatasetObservationTer
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         batch: SupervisedDatasetBatch,
         **kwargs: Any,
     ) -> Array:

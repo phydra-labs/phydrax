@@ -15,11 +15,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._dtype_names import inexact_result_type
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 _STAGE_ADDRESS = SampleAddress(
@@ -111,12 +111,12 @@ class AdaptiveTDVPResult(StrictModule):
 
 
 def solve_adaptive_tdvp(
-    vector_field: Callable[[Array, Array, Key[Array, ""]], tuple[Array, Array]],
+    vector_field: Callable[[Array, Array, PRNGKey], tuple[Array, Array]],
     initial_parameters: ArrayLike,
     plan: AdaptiveTDVPPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> AdaptiveTDVPResult:
     """Control temporal defect separately from caller-reported sampling uncertainty.
 

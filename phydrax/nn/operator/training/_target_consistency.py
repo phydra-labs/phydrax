@@ -9,8 +9,8 @@ from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
+from ....typing import PRNGKey
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
 from ..metrics import operator_l2_loss
 from ._losses import (
@@ -41,7 +41,7 @@ class TargetOperatorConsistencyLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

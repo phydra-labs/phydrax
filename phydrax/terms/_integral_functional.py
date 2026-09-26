@@ -11,7 +11,6 @@ from typing import Any, Literal, SupportsFloat
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -29,6 +28,7 @@ from ..integration import (
     resolve_integration,
 )
 from ..integration._adaptive_signed import AdaptiveSignedEstimator
+from ..typing import PRNGKey
 
 
 class IntegralFunctional(AbstractSamplingTerm):
@@ -115,7 +115,7 @@ class IntegralFunctional(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> IntegrationRealization | None:
         """Resolve one realization according to the typed integration source."""
         if isinstance(self.source, CallerIntegration):
@@ -138,7 +138,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> Array:

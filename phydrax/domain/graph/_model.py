@@ -9,13 +9,13 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ...graph import GraphIR, rollout_features, segment_sum
+from ...typing import PRNGKey
 from .._evaluation import BatchEvaluator
 from .._function import DomainFunction
 from ._batch import GRAPH_ENTITY_INDEX_KEY, GRAPH_GRAPH_INDEX_KEY, GraphBatch
@@ -281,7 +281,7 @@ def _install_graph_input(
     key: str | None,
     /,
     *,
-    eval_key: Key[Array, ""] | None = DOC_KEY0,
+    eval_key: PRNGKey | None = DOC_KEY0,
     owner: str = "GraphModel",
     **kwargs: Any,
 ) -> GraphIR:
@@ -381,7 +381,7 @@ class GraphModel(StrictModule, BatchEvaluator):
         key: str | None,
         /,
         *,
-        eval_key: Key[Array, ""] | None = DOC_KEY0,
+        eval_key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> GraphIR:
         return _install_graph_input(
@@ -400,7 +400,7 @@ class GraphModel(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):
@@ -523,7 +523,7 @@ class GraphRolloutModel(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):

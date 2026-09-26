@@ -13,13 +13,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._uncertainty import UncertaintySource, validate_uncertainty_source
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from .data import (
     FunctionSamples,
@@ -60,7 +60,7 @@ class AbstractOperatorDistribution(StrictModule):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         raise NotImplementedError
@@ -277,7 +277,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw coherent full-function samples with leading sample dimensions."""

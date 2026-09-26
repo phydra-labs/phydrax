@@ -16,6 +16,12 @@
   contract field of a module. Checks read only kind, rank, extent, and dtype
   metadata: they add no JAX operations and synchronize nothing. See the typing
   guide.
+- PRNG key parameters and fields are annotated with `phydrax.typing.PRNGKey`, the
+  typed scalar key; seeded internal draws in Lyapunov, covariant-vector, and chaos
+  analysis, Riemannian density flows, multistart optimization, process
+  tomography, and stochastic immersed forcing create typed keys with
+  `jax.random.key`, producing the same random streams. `jaxtyping.Key` and
+  `jaxtyping.PRNGKeyArray` are refused by lint in package code.
 - Package code imports `Array` from `jax` and `ArrayLike` from `jax.typing`, their
   canonical owners; importing them from `jaxtyping` is refused by lint.
 - Strict modules that declare `__strict_contract__ = True` (inherited by

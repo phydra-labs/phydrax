@@ -14,10 +14,10 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._mass import require_exact_mass
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._capabilities import (
     GeometryCapability,
     SeamDiagnosticsProvider,
@@ -488,7 +488,7 @@ class DesignConstraintSystem(StrictModule):
         search: DifferentialEvolutionSearch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         bounds: Mapping[ParameterId, tuple[ArrayLike, ArrayLike]] | None = None,
         initial_state: DesignState | None = None,
     ) -> DesignSearchResult:

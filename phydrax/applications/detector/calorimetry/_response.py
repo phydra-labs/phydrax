@@ -13,13 +13,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax import ein
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 from .._core import DigitBank
 from ._geometry import CalorimeterGeometry
 from ._truth import CalorimeterTruth
@@ -114,7 +114,7 @@ class CalorimeterResponse(StrictModule, NonTrainableState):
 def apply_calorimeter_response(
     plan: CalorimeterResponsePlan,
     truth: CalorimeterTruth,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> CalorimeterResponse:
     if not isinstance(plan, CalorimeterResponsePlan) or not isinstance(

@@ -16,13 +16,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
 
 from ...._doc import DOC_KEY0
+from ....typing import PRNGKey
 from ..._keys import EvalKey, fold_in_eval_key, split_eval_key
 from ..data import (
     FunctionSamples,
@@ -593,7 +593,7 @@ class WeakOperatorLoss(AbstractOperatorLossTerm):
         targets: Any,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

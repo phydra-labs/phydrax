@@ -13,12 +13,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from ..typing import PRNGKey
 from ._coordinate import CoordinateSpec
 from ._dataset import DatasetDomain
 from ._domain import JointFactor
@@ -536,7 +537,7 @@ def _flat_observation_indices(
 
 
 def _sample_cases_uniform(
-    domain: IrregularTrajectoryDatasetDomain, n: int, key: Key[Array, ""], /
+    domain: IrregularTrajectoryDatasetDomain, n: int, key: PRNGKey, /
 ) -> Array:
     return jr.randint(key, shape=(n,), minval=0, maxval=domain.size, dtype=jnp.int32)
 
@@ -544,7 +545,7 @@ def _sample_cases_uniform(
 def _sample_valid_cases(
     valid: Array,
     n: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> Array:
     valid_f = jnp.asarray(valid, dtype=jnp.float64)
@@ -563,7 +564,7 @@ def _component_times(
     component: DomainComponent,
     case_indices: Array,
     n: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[Array, Array]:
     comp = component.spec.selection_for(domain.time_label)
@@ -606,7 +607,7 @@ def sample_irregular_trajectory_component(
     *,
     structure: SampleLayout,
     sampler: str = "latin_hypercube",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PointBatch:
     del sampler
     domain = component.domain

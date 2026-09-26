@@ -10,7 +10,6 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ..domain import Boundary, DomainComponent, DomainFunction
 from ..integration import (
@@ -24,6 +23,7 @@ from ..integration import (
     PerStepIntegration,
 )
 from ..operators.differential._domain_ops import grad
+from ..typing import PRNGKey
 from ..variational import (
     Functional,
     FunctionalContext,
@@ -51,7 +51,7 @@ def _base_target(target: IntegrationTarget, /) -> IntegrationTarget:
 
 
 def _stop_parameter_gradient(function: DomainFunction, /) -> DomainFunction:
-    def _stopped(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Any:
+    def _stopped(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Any:
         return jax.lax.stop_gradient(function.func(*args, key=key, **kwargs))
 
     return DomainFunction(
@@ -125,7 +125,7 @@ def _term_integrand(
         tuple(positions[label] for label in operand.deps) for operand in promoted
     )
 
-    def _density(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _density(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         arrays = tuple(
             operand.func(
                 *(args[index] for index in selected),

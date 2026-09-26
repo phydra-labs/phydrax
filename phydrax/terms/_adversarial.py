@@ -13,10 +13,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 class ImplicitGenerator(StrictModule):
@@ -28,7 +28,7 @@ class ImplicitGenerator(StrictModule):
 
     def __init__(
         self,
-        generator: Callable[[Key[Array, ""], tuple[int, ...]], ArrayLike],
+        generator: Callable[[PRNGKey, tuple[int, ...]], ArrayLike],
         event_shape: Sequence[int],
         /,
         *,
@@ -43,7 +43,7 @@ class ImplicitGenerator(StrictModule):
         self.event_shape = shape
         self.generator_id = generator_id
 
-    def sample(self, key: Key[Array, ""], sample_shape: Sequence[int], /) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: Sequence[int], /) -> Array:
         samples = tuple(sample_shape)
         value = jnp.asarray(self.generator(key, samples))
         expected = samples + self.event_shape
@@ -66,7 +66,7 @@ def wasserstein_adversarial_evaluation(
     critic: Any,
     real: ArrayLike,
     fake: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     gradient_penalty_weight: float = 0.0,
@@ -104,7 +104,7 @@ def wasserstein_adversarial_evaluation(
         interpolated = alpha * real_array + (1.0 - alpha) * fake_array
         penalty_keys = jr.split(jr.fold_in(key, 3), real_array.shape[0])
 
-        def gradient_norm(value: Array, local: Key[Array, ""]) -> Array:
+        def gradient_norm(value: Array, local: PRNGKey) -> Array:
             gradient = jax.grad(
                 lambda current: jnp.asarray(critic(current, key=local)).reshape(())
             )(value)

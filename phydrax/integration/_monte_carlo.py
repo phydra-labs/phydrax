@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -44,6 +43,7 @@ from ..linalg import (
     LinearSolvePolicy,
     solve,
 )
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch, WeightedSampleBatch
 from ._estimates import (
     AntitheticDiagnostics,
@@ -127,7 +127,7 @@ def _materialize_probability(
     target: ProbabilityTarget,
     num_samples: int,
     sampler: str,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PointIntegrationBatch:
     probability = target.probability
@@ -162,7 +162,7 @@ def _materialize_direct_once(
     target: ComponentTarget | DensityTarget | ProbabilityTarget,
     plan: MonteCarloPlan | QuasiMonteCarloPlan,
     design: Any,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PointIntegrationBatch:
     sampler = _design_sampler(design)
@@ -216,7 +216,7 @@ def _materialize_antithetic(
     target: ComponentTarget | DensityTarget | ProbabilityTarget,
     plan: MonteCarloPlan,
     design: AntitheticDesign,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PointIntegrationBatch:
     if plan.num_samples % 2:
@@ -324,7 +324,7 @@ def materialize_monte_carlo(
     plan: MonteCarloPlan | QuasiMonteCarloPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PointIntegrationBatch | tuple[PointIntegrationBatch, ...]:
     """Materialize direct stochastic samples while preserving design provenance."""
     design = plan.design
@@ -384,7 +384,7 @@ def materialize_stratified(
     plan: StratifiedMonteCarloPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PointIntegrationBatch:
     """Materialize a physical-measure stratified component batch."""
     component_target = _component_base(target)
@@ -467,7 +467,7 @@ def _sample_values(
     batch: PointIntegrationBatch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> tuple[Array, Array, Array | None, Array, tuple[Any, ...]]:
@@ -532,7 +532,7 @@ def _control_values(
     batch: PointIntegrationBatch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> Array:
@@ -552,7 +552,7 @@ def _apply_control_variate(
     /,
     *,
     independent_pilot: bool,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> tuple[Array, int]:
@@ -880,7 +880,7 @@ def integrate_monte_carlo_batch(
     /,
     *,
     plan: MonteCarloPlan | QuasiMonteCarloPlan | StratifiedMonteCarloPlan | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
@@ -1034,7 +1034,7 @@ def integrate_monte_carlo(
     /,
     *,
     plan: MonteCarloPlan | QuasiMonteCarloPlan | StratifiedMonteCarloPlan | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
@@ -1130,7 +1130,7 @@ def materialize_importance(
     plan: ImportanceSamplingPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> WeightedSampleBatch:
     """Draw proposal samples and retain raw target-to-proposal log ratios."""
     base = target.base if isinstance(target, DensityTarget) else target

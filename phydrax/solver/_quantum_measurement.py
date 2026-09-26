@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -23,6 +22,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..tensor_network import LocallyPurifiedDensity, MatrixProductState
+from ..typing import PRNGKey
 from ._quantum_program import DenseQuantumProgramResult, PreparedDenseQuantumProgram
 
 
@@ -465,7 +465,7 @@ def measure_dense_quantum_program(
     *,
     shots: int = 0,
     first_shot_address: int = 0,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> QuantumMeasurementResult:
     """Evaluate exact probabilities and address every shot independently."""
     if (

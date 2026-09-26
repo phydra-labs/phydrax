@@ -10,7 +10,6 @@ from typing import Any, cast, Literal
 import equinox as eqx
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax.geometry.operator import BoundsPolicy, TensorGridLatentGeometry
@@ -28,6 +27,8 @@ from phydrax.nn.operator.layers._graph_transfer import (
 )
 from phydrax.nn.operator.layers._transformer import OperatorTransformerProcessor
 
+from .....typing import PRNGKey
+
 
 def _magno_transfer(
     *,
@@ -44,7 +45,7 @@ def _magno_transfer(
     reference_measure: float,
     fusion: Literal["concat", "gated"],
     target_chunk_size: int | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> MultiscaleGraphTransfer:
     keys = jr.split(key, len(radii) + 1)
     transfers = tuple(
@@ -129,7 +130,7 @@ class GAOT(AbstractOperatorModel):
         query_channels: int = 0,
         query_chunk_size: int | None = 256,
         assume_uniform_measure: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if int(coord_dim) not in (2, 3):
             raise ValueError("GAOT supports coord_dim 2 or 3.")

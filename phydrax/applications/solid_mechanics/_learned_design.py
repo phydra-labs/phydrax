@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -39,6 +39,7 @@ from ...transport.diffusion._guidance import (
     GuidanceExactness,
     ScoreContext,
 )
+from ...typing import PRNGKey
 from ._topology import (
     TopologyContinuationStageEvidence,
     TopologyMechanicsProblem,
@@ -414,7 +415,7 @@ class MechanicsPotentialGuidance(AbstractScoreGuidance):
         context: ScoreContext,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> GuidanceEvaluation:
         del key
         if not isinstance(context, ScoreContext):

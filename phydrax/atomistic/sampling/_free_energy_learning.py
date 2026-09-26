@@ -14,7 +14,7 @@ import numpy as np
 import optax
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -42,6 +42,7 @@ from ..._training_kernel import (
     TrainingRejectionBudgetError,
 )
 from ..._training_objective import _ObjectiveContribution
+from ...typing import PRNGKey
 from .._dynamics import PreparedAtomisticDynamics
 from ._bias import (
     AbstractAtomisticBiasPlan,
@@ -377,7 +378,7 @@ def _free_energy_objective(
 def fit_free_energy_model(
     model: AbstractArrayModel,
     data: MeanForceData,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     model_id: str,

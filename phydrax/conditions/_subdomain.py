@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -24,6 +23,7 @@ from ..domain import (
     PairedSupport,
     SubdomainPatch,
 )
+from ..typing import PRNGKey
 from ._base import AbstractResidualCondition
 
 
@@ -89,9 +89,7 @@ class _NormalContract(StrictModule):
         self.flux_positions = tuple(by_label[label] for label in flux.deps)
         self.normal_positions = tuple(by_label[label] for label in normal.deps)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         flux = self.flux.func(
             *(args[index] for index in self.flux_positions),
             key=key,

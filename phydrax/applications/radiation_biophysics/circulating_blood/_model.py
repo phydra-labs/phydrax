@@ -15,11 +15,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ...._fingerprint import canonical_fingerprint
 from ....solver import finite_state_generator, FiniteStateGenerator
 from ....stochastic import AbstractJumpProcess
+from ....typing import PRNGKey
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -266,7 +266,7 @@ class BloodTransitJumpProcess(AbstractJumpProcess):
 
     def sample_mark(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         t: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,

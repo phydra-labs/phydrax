@@ -10,12 +10,12 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._term import AbstractScalarTerm
 from ...domain import DomainFunction, PairedSupport
+from ...typing import PRNGKey
 from ._problem import FunctionalDecompositionProblem
 
 
@@ -136,7 +136,7 @@ class DiscreteTracePenalty(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -258,7 +258,7 @@ class DiscreteOperatorTracePenalty(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

@@ -12,12 +12,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from ..._admissibility import AdmissibilityHeader, AdmissibilityReason
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import DSMCParticleState, DSMCStructuredCellPlan
 
 
@@ -204,7 +204,7 @@ class DSMCNTCSchedulePlan(StrictModule, NonTrainableState):
         particles: DSMCParticleState,
         state: DSMCNTCState,
         step_size: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
     ) -> DSMCNTCSchedule:
         if not isinstance(state, DSMCNTCState) or state.plan_id != self.plan_id:

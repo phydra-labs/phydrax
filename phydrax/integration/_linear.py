@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainFunction, PointBatch
@@ -23,6 +22,7 @@ from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._api import _requires_random_key, IntegrationRealization
 from ._batches import (
     MappedIntegrationBatch,
@@ -200,7 +200,7 @@ class PreparedLinearReduction(StrictModule, NonTrainableState):
         function: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> Any:
         """Evaluate fixed points with semantically independent per-batch keys."""
@@ -251,7 +251,7 @@ class PreparedLinearReduction(StrictModule, NonTrainableState):
         *,
         retained_axes: tuple[str, ...] | None = None,
         weight: Any | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> PreparedLinearReduction:
         return refresh_linear_reduction(
@@ -318,7 +318,7 @@ def _mapped_coefficients(
     /,
     *,
     reduced_axes: tuple[str, ...],
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
 ) -> cx.AxisArray:
     base = _base_target(target)
@@ -365,7 +365,7 @@ def _base_coefficients(
     /,
     *,
     reduced_axes: tuple[str, ...],
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     replica_key_policy: str | None = None,
 ) -> tuple[cx.AxisArray, ...]:
@@ -721,7 +721,7 @@ def _prepare_linear_reduction(
     *,
     retained_axes: tuple[str, ...],
     weight: Any | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     numeric_version: Any,
 ) -> PreparedLinearReduction:
@@ -831,7 +831,7 @@ def prepare_linear_reduction(
     *,
     retained_axes: tuple[str, ...] = (),
     weight: Any | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     **kwargs: Any,
 ) -> PreparedLinearReduction:
     """Freeze one materialized realization as an immutable coefficient action."""
@@ -869,7 +869,7 @@ def refresh_linear_reduction(
     *,
     retained_axes: tuple[str, ...] | None = None,
     weight: Any | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     **kwargs: Any,
 ) -> PreparedLinearReduction:
     """Refresh a fixed action and increment its version iff its numerics changed."""
@@ -928,7 +928,7 @@ def _evaluate_named(
     /,
     *,
     index: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
 ) -> Any:
     base = _base_target(target)
@@ -1037,7 +1037,7 @@ def _apply_batch(
     reduced_axes: tuple[str, ...],
     retained_axes: tuple[str, ...],
     retained_shape: tuple[int, ...],
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> Any:

@@ -12,11 +12,11 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._euler_maruyama import (
     _euler_maruyama_log_prob,
     _euler_maruyama_mean,
@@ -336,7 +336,7 @@ class IsothermalPortHamiltonianTransitionKernel(AbstractTransitionKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,

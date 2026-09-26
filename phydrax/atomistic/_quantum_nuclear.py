@@ -11,13 +11,13 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._ensemble_advanced import GeneralizedLangevinPlan, ThermostatResult
 from ._ring_polymer import RingPolymerState
 from ._units import AtomisticUnitSystem
@@ -228,7 +228,7 @@ class ThermostattedRPMDPlan(StrictModule, NonTrainableState):
         masses: ArrayLike,
         temperature: float,
         dt: float | Array,
-        key: Key[Array, ""],
+        key: PRNGKey,
         units: AtomisticUnitSystem,
         /,
     ) -> ThermostatResult:
@@ -405,7 +405,7 @@ class PIGLETPlan(StrictModule, NonTrainableState):
         momenta: ArrayLike,
         masses: Array,
         mobile_mask: ArrayLike,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: ArrayLike,
         dt: float | Array,
         units: AtomisticUnitSystem,

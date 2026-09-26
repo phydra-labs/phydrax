@@ -13,11 +13,11 @@ import jax.random as jr
 from jax import Array
 from jax.scipy.special import logsumexp
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._results import AbstractBalancedTransportPlan, require_converged
 
 
@@ -189,7 +189,7 @@ class EndpointCouplingSample(StrictModule):
 def independent_endpoint_coupling(
     source: ArrayLike,
     target: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     num_pairs: int,
@@ -247,7 +247,7 @@ def transport_plan_endpoint_coupling(
     plan: AbstractBalancedTransportPlan,
     source: ArrayLike,
     target: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     num_pairs: int,

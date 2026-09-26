@@ -8,7 +8,6 @@ from typing import Literal
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -23,6 +22,8 @@ from phydrax.nn.models import WeightSpaceRecurrentModel
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.nn.parameters import ParameterSubspace
+
+from .....typing import PRNGKey
 
 
 WeightSpaceOutputSize = int | Literal["scalar"]
@@ -65,7 +66,7 @@ class WeightSpaceOperator(AbstractOperatorModel):
         input_mode: WeightSpaceInputMode = "difference",
         maximum_retention: float = 0.999,
         input_scale: float = 1e-2,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(subspace, ParameterSubspace):
             raise TypeError("subspace must be a ParameterSubspace.")

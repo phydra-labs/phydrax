@@ -12,10 +12,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._ir import GraphIR
 
 
@@ -117,9 +117,7 @@ class FixedTopologyGraphDiffusion(StrictModule):
             raise ValueError("Graph payload shape differs from the template.")
         return value
 
-    def perturb(
-        self, graph: GraphIR, key: Key[Array, ""], /, *, time: ArrayLike
-    ) -> GraphIR:
+    def perturb(self, graph: GraphIR, key: PRNGKey, /, *, time: ArrayLike) -> GraphIR:
         value = self._require_topology(graph)
         perturbed = self.process.perturb(key, value.reshape((-1,)), t1=time)
         result = perturbed.reshape(self.payload_shape)
@@ -152,7 +150,7 @@ def graph_denoising_loss(
     diffusion: FixedTopologyGraphDiffusion,
     score_model: Callable[..., ArrayLike],
     clean: GraphIR,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     time: ArrayLike,

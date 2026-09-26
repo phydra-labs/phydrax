@@ -13,12 +13,12 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...particle_physics import ParticleEventBatch
+from ...typing import PRNGKey
 
 
 class CollisionBundleStatus(IntEnum):
@@ -120,7 +120,7 @@ def assign_collision_pileup(
     plan: CollisionEnvironmentPlan,
     primary: ParticleEventBatch,
     pileup_pool: ParticleEventBatch,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> CollisionEventBundle:
     """Assign pileup with event-ID-folded keys, independent of batch ordering."""

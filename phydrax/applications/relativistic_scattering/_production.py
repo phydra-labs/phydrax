@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -29,6 +28,7 @@ from ...particle_physics import (
     summarize_event_weights,
     WeightVariationKind,
 )
+from ...typing import PRNGKey
 from ._amplitudes import ScatteringProcess
 from ._events import WeightedEventStream
 from ._phase_space import kallen, TwoBodyPhaseSpaceMap
@@ -311,8 +311,8 @@ def hard_process_integrand(
 def integrate_hard_process(
     prepared: PreparedHardProcess,
     vegas_plan: VegasPlan,
-    adaptation_key: Key[Array, ""],
-    production_key: Key[Array, ""],
+    adaptation_key: PRNGKey,
+    production_key: PRNGKey,
     /,
 ) -> VegasResult:
     if not isinstance(prepared, PreparedHardProcess):

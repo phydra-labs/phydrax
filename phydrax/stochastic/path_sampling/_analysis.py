@@ -14,13 +14,13 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 class ReactiveFluxEstimate(StrictModule, NonTrainableState):
@@ -388,7 +388,7 @@ def autocorrelation_uncertainty(
 
 
 def moving_block_bootstrap_uncertainty(
-    key: Key[Array, ""],
+    key: PRNGKey,
     values: ArrayLike,
     /,
     *,

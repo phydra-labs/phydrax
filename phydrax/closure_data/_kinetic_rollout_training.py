@@ -16,7 +16,6 @@ import jax.random as jr
 import numpy as np
 import optax
 from jax import Array
-from jaxtyping import Key
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -48,6 +47,7 @@ from ..discretization.discrete_velocity._smooth_compressible import (
 from ..discretization.discrete_velocity._spatial import (
     PreparedSmoothCompressibleD2V17SpatialDynamics,
 )
+from ..typing import PRNGKey
 from ._kinetic_equilibrium import LearnedEnergyEquilibriumBindingPlan
 from ._kinetic_rollout import (
     PreparedSmoothCompressibleRolloutDataset,
@@ -1058,7 +1058,7 @@ def initialize_kinetic_rollout_training(
     dataset: PreparedSmoothCompressibleRolloutDataset,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> KineticRolloutTrainingState:
     """Initialize an exact kernel boundary and immutable baseline selection."""
 

@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._score_field import StateTimeScoreField
@@ -26,6 +25,7 @@ from ...stochastic._gaussian_diffusion import (
     TerminalReferenceRelationship,
 )
 from ...stochastic._wiener import WienerRealization
+from ...typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -76,7 +76,7 @@ class ReverseDiffusionRealization(StrictModule):
     def __init__(
         self,
         terminal_states: ArrayLike,
-        score_key: Key[Array, ""],
+        score_key: PRNGKey,
         wiener: WienerRealization,
         /,
         *,
@@ -285,7 +285,7 @@ class ReverseDiffusion(StrictModule):
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: Sequence[int],
         /,
     ) -> ReverseDiffusionRealization:
@@ -429,7 +429,7 @@ class ReverseDiffusion(StrictModule):
 
     def sample_with_diagnostics(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: Sequence[int],
         /,
         *,
@@ -440,7 +440,7 @@ class ReverseDiffusion(StrictModule):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: Sequence[int],
         /,
     ) -> Array:

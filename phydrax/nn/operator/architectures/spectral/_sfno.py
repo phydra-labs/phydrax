@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -30,6 +29,8 @@ from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
+from .....typing import PRNGKey
+
 
 class SphericalSpectralConv(StrictModule):
     """Scalar SO(3)-equivariant channel mixing in an S2FFT coefficient basis."""
@@ -47,7 +48,7 @@ class SphericalSpectralConv(StrictModule):
         *,
         in_channels: int,
         out_channels: int,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(plan, SphericalHarmonicPlan):
             raise TypeError("plan must be a SphericalHarmonicPlan.")
@@ -102,7 +103,7 @@ class _SFNOBlock(StrictModule):
         /,
         *,
         channels: int,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         spectral_key, pointwise_key = jr.split(key)
         self.spectral = SphericalSpectralConv(
@@ -196,7 +197,7 @@ class SFNO(AbstractOperatorModel):
         width: int = 32,
         depth: int = 4,
         source_key: str | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(discretization, SphericalSpectralDiscretization):
             raise TypeError("discretization must be a SphericalSpectralDiscretization.")

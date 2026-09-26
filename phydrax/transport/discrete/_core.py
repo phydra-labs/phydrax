@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -28,13 +27,14 @@ from ...pgm import (
     PreparedChromaticGibbs,
     sample_gibbs,
 )
+from ...typing import PRNGKey
 
 
 class AbstractDiscreteNoisingKernel(StrictModule):
     kernel_id: eqx.AbstractVar[str]
 
     @abstractmethod
-    def sample(self, key: Key[Array, ""], state: Array, cardinalities: Array, /) -> Array:
+    def sample(self, key: PRNGKey, state: Array, cardinalities: Array, /) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -55,7 +55,7 @@ class CategoricalNoisingKernel(AbstractDiscreteNoisingKernel):
         self.retention = value
         self.kernel_id = f"categorical-noise:{value}"
 
-    def sample(self, key: Key[Array, ""], state: Array, cardinalities: Array, /) -> Array:
+    def sample(self, key: PRNGKey, state: Array, cardinalities: Array, /) -> Array:
         retain_key, noise_key = jr.split(key)
         retain = jr.bernoulli(retain_key, self.retention, state.shape)
         uniform = jr.uniform(noise_key, state.shape)
@@ -88,9 +88,7 @@ class DiscreteForwardProcess(StrictModule):
             }
         )
 
-    def sample_path(
-        self, key: Key[Array, ""], initial: Array, cardinalities: Array, /
-    ) -> Array:
+    def sample_path(self, key: PRNGKey, initial: Array, cardinalities: Array, /) -> Array:
         initial_state = jnp.asarray(initial, dtype=jnp.int32)
         cards = jnp.asarray(cardinalities, dtype=jnp.int32)
         if cards.shape != initial_state.shape[-1:] or bool(jnp.any(cards < 1)):
@@ -165,7 +163,7 @@ class FactorGraphReverseKernel(StrictModule):
             }
         )
 
-    def sample(self, key: Key[Array, ""], noisy: Array, initial: GibbsState, /) -> Array:
+    def sample(self, key: PRNGKey, noisy: Array, initial: GibbsState, /) -> Array:
         if initial.positions.shape[1:] != (self.graph.num_variables,):
             raise ValueError("initial Gibbs state does not match the reverse graph.")
         values = jnp.asarray(noisy, dtype=jnp.int32)
@@ -229,7 +227,7 @@ class DiscreteDenoisingProcess(StrictModule):
 
     def sample_reverse(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         noisy: ArrayLike,
         initial_states: Sequence[GibbsState],
         /,

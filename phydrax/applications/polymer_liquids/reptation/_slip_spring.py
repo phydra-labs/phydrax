@@ -12,11 +12,11 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 
 
 class SlipSpringPlan(StrictModule, NonTrainableState):
@@ -144,7 +144,7 @@ class PreparedSlipSpring(StrictModule, NonTrainableState):
 
     def initialize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         initial_pairs: ArrayLike | None = None,

@@ -15,12 +15,12 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Key
 
 from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._amplitude import LogAmplitude
 from ._local import (
     AbstractLocalQuantumOperator,
@@ -238,7 +238,7 @@ class MonopoleSphereCoulombHamiltonian(AbstractLocalQuantumOperator):
 
 
 def uniform_sphere_electron_walkers(
-    key: Key[Array, ""],
+    key: PRNGKey,
     chain_count: int,
     electron_count: int,
     /,

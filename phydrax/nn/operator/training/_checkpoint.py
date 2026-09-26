@@ -10,8 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-from jax import Array
-from jaxtyping import Key
 
 from ...._fingerprint import canonical_fingerprint
 from ...._identity import ArtifactBindingIdentity, RecordInput, SemanticProvenance
@@ -32,6 +30,7 @@ from ...._training_kernel import (
     require_binding_record,
     training_role_schema_id,
 )
+from ....typing import PRNGKey
 from ._dtype import OperatorDTypePolicy
 from ._fingerprint import operator_batch_schema
 from ._normalization import OperatorNormalizationPolicy
@@ -47,7 +46,7 @@ class OperatorTrainingCheckpoint:
     model: Any
     optimizer_state: Any
     step: int
-    key: Key[Array, ""]
+    key: PRNGKey
     normalization: OperatorNormalizationPolicy | None
     dtype_policy: OperatorDTypePolicy | None
     schema: Mapping[str, Any] | None
@@ -94,7 +93,7 @@ def save_operator_training_checkpoint(
     /,
     *,
     step: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     normalization: OperatorNormalizationPolicy | None = None,
     dtype_policy: OperatorDTypePolicy | None = None,
     schema: Mapping[str, Any] | None = None,

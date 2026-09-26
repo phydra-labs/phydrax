@@ -11,12 +11,12 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..stochastic._categorical_diffusion import CategoricalDiffusionSchedule
 from ..stochastic._gaussian_diffusion import AbstractGaussianDiffusion
+from ..typing import PRNGKey
 from ._types import AtomisticBatch
 
 
@@ -108,7 +108,7 @@ class AtomisticCoordinateDiffusion(StrictModule):
         return eqx.tree_at(lambda value: value.positions, batch, checked_positions)
 
     def perturb(
-        self, batch: AtomisticBatch, key: Key[Array, ""], /, *, time: ArrayLike
+        self, batch: AtomisticBatch, key: PRNGKey, /, *, time: ArrayLike
     ) -> AtomisticBatch:
         batch = self._require_batch(batch)
         centered, _ = _center_positions(batch, batch.positions)
@@ -193,8 +193,8 @@ class AtomisticHybridDiffusion(StrictModule):
     def perturb(
         self,
         batch: AtomisticBatch,
-        coordinate_key: Key[Array, ""],
-        species_key: Key[Array, ""],
+        coordinate_key: PRNGKey,
+        species_key: PRNGKey,
         /,
         *,
         continuous_time: ArrayLike,

@@ -15,7 +15,6 @@ import jax.random as jr
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -36,6 +35,7 @@ from ..stochastic._feynman_kac import (
     trajectory_node_feynman_kac_labels,
 )
 from ..terms._feynman_kac import FeynmanKacRegressionTerm
+from ..typing import PRNGKey
 from ._functional_solver import FunctionalSolver
 
 
@@ -195,7 +195,7 @@ def _source_problem(
     source_builder: StructuredSourceBuilder,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> BSDEProblem:
     context = PicardSourceContext(predictor, problem, key)
     source = source_builder(context)
@@ -239,9 +239,9 @@ def _iteration_labels(
     query_times: ArrayLike | None,
     query_states: ArrayLike | None,
     query_weights: ArrayLike | None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None,
+    query_sampler: Callable[[PRNGKey], Any] | None,
     paths: BSDEPathBatch | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> FeynmanKacLabelBatch:
     label_problem = problem
     label_value = source_value
@@ -290,7 +290,7 @@ def _model_predictions(
     *,
     value_name: str,
     control_name: str | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> tuple[Array, Array | None]:
     functions = solver.ansatz_functions()
     if value_name not in functions:
@@ -337,7 +337,7 @@ def _damped_labels(
     value_name: str,
     control_name: str | None,
     damping: float,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> FeynmanKacLabelBatch:
     if damping == 1.0:
         return labels
@@ -393,8 +393,8 @@ def _validation_queries(
     query_times: ArrayLike | None,
     query_states: ArrayLike | None,
     query_weights: ArrayLike | None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None,
-    key: Key[Array, ""],
+    query_sampler: Callable[[PRNGKey], Any] | None,
+    key: PRNGKey,
 ) -> tuple[Array | None, Array | None, Array | None]:
     if plan.sampling_mode == "trajectory_nodes":
         return None, None, None
@@ -424,11 +424,11 @@ def solve_deep_picard(
     query_times: ArrayLike | None = None,
     query_states: ArrayLike | None = None,
     query_weights: ArrayLike | None = None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None = None,
+    query_sampler: Callable[[PRNGKey], Any] | None = None,
     validation_query_times: ArrayLike | None = None,
     validation_query_states: ArrayLike | None = None,
     validation_query_weights: ArrayLike | None = None,
-    validation_query_sampler: Callable[[Key[Array, ""]], Any] | None = None,
+    validation_query_sampler: Callable[[PRNGKey], Any] | None = None,
     source_builder: StructuredSourceBuilder | None = None,
     initial_source: DeepPicardInitialSource = "zero",
     target_damping: float = 1.0,

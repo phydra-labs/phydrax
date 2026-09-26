@@ -13,7 +13,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -43,6 +42,8 @@ from phydrax.nn.operator.architectures.geometric._geometry_operator import (
 from phydrax.nn.operator.data import OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.nn.operator.layers._attention import _measure_attention_regularity
+
+from .....typing import PRNGKey
 
 
 class GNOT(AbstractOperatorModel):
@@ -91,7 +92,7 @@ class GNOT(AbstractOperatorModel):
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(in_channels, Mapping) or not in_channels:
             raise ValueError("GNOT in_channels must be a non-empty named mapping.")

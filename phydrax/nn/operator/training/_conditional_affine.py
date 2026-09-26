@@ -12,8 +12,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
+from ....typing import PRNGKey
 from ..architectures import ChemicalConditionalAffineOperator
 from ..data import (
     FunctionSamples,
@@ -108,7 +108,7 @@ class ChemicalConditionalAffineDriverLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -175,7 +175,7 @@ class ChemicalConditionalAffineTeacherForcedLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

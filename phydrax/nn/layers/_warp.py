@@ -12,12 +12,12 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._dtype_names import inexact_result_type
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._linear import Linear
 from ._warp_geometry import (
@@ -205,7 +205,7 @@ class MultiheadWarp(StrictModule, ParameterOwner):
         mask_mode: WarpMaskMode = "reject",
         displacement_width: int | None = None,
         fill_value: float = 0.0,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.spatial_ndim = int(spatial_ndim)
         self.in_channels = int(in_channels)

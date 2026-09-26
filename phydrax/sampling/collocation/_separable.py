@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import DomainComponent, GridBatch
@@ -19,6 +18,7 @@ from phydrax.domain import DomainComponent, GridBatch
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._adaptive import AbstractCollocationPolicy
 
 
@@ -153,7 +153,7 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> SeparableCollocationPopulation:
         batch = constraint.sample(key=key)
         if not isinstance(batch, GridBatch):
@@ -191,7 +191,7 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
         population: SeparableCollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> SeparableCollocationPopulation:
         del functions
@@ -243,7 +243,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> SeparableCollocationPopulation:
         batch = constraint.sample(key=key)
         if not isinstance(batch, GridBatch):
@@ -291,7 +291,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         population: SeparableCollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> SeparableCollocationPopulation:
         marginals = _axis_residual_marginals(
@@ -465,7 +465,7 @@ def _axis_residual_marginals(
     batch: GridBatch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     epsilon: Array,
 ) -> frozendict[str, cx.AxisArray]:
     _single_component(constraint)

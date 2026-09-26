@@ -55,7 +55,7 @@ def _informationally_complete_vectors(
         raise ValueError(
             "A one-dimensional process has no distinct seeded design settings."
         )
-    key = jax.random.PRNGKey(design_seed)
+    key = jax.random.key(design_seed)
     real_key, imaginary_key = jax.random.split(key)
     raw = jax.random.normal(real_key, (dimension, dimension)) + 1j * jax.random.normal(
         imaginary_key, (dimension, dimension)

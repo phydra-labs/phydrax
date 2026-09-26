@@ -14,7 +14,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -29,6 +28,7 @@ from ..discretization import (
     PeriodicCell,
     PreparedVerletParticleNeighborhood,
 )
+from ..typing import PRNGKey
 from ._constraints import PreparedDistanceConstraints
 from ._ensemble_advanced import AtomisticSplittingPlan, SplittingOperatorKind
 from ._potential_program import (
@@ -531,7 +531,7 @@ class PreparedAtomisticDynamics(StrictModule):
         momentum: ArrayLike | None = None,
         time: ArrayLike = 0.0,
         species: ArrayLike | None = None,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> AtomisticDynamicsState:
         if not isinstance(thermodynamic, PreparedThermodynamicStateTable):
             raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")

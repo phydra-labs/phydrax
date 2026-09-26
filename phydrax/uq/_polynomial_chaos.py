@@ -16,7 +16,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -52,6 +51,7 @@ from .._polynomial import evaluate_tensor_basis, PolynomialMultiIndexSet
 from .._sampling import RandomizedQMCDesign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._distributions import Normal, Uniform
 
 
@@ -459,7 +459,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         model: Callable[..., Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> PolynomialChaosFitResult:
         """Evaluate and orthogonally project a deterministic pointwise model."""
         if not callable(model):

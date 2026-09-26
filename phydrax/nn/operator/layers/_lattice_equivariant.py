@@ -17,7 +17,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
@@ -28,6 +27,8 @@ from phydrax.nn.operator.representations import (
     FiniteOrthogonalGroup,
     TensorFieldLayout,
 )
+
+from ....typing import PRNGKey
 
 
 def _kernel_shape(value: int | Sequence[int], dimension: int, /) -> tuple[int, ...]:
@@ -276,7 +277,7 @@ class LatticeEquivariantConvND(StrictModule):
         use_bias: bool = True,
         epsilon: float = 1e-12,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(invariant_basis, InvariantFilterBasis):
             raise TypeError("invariant_basis must be an InvariantFilterBasis.")
@@ -426,7 +427,7 @@ class TensorPointwiseLinear(StrictModule):
         *,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         basis = InvariantFilterBasis(
             group,

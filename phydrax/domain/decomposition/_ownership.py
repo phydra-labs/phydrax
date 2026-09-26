@@ -9,10 +9,10 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from .._components import DomainComponent
 from .._function import DomainFunction
 from ._cover import SubdomainCover
@@ -45,9 +45,7 @@ class _NormalizedWeight(StrictModule, NonTrainableState):
         )
         self.index = int(index)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         values = jnp.stack(
             tuple(
                 jnp.asarray(

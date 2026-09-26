@@ -12,12 +12,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...geometry import interface_distance_metrics, phase_geometry_metrics
+from ...typing import PRNGKey
 from ._stefan import (
     compare_stefan_representations,
     ExplicitFrontStefanPINN,
@@ -116,7 +116,7 @@ class ExactStefanBenchmark(StrictModule, NonTrainableState):
         /,
         *,
         points_per_block: int = 256,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> StefanRepresentationComparison:
         batch = stefan_collocation_batch(
             self.parameters,

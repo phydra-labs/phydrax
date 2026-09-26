@@ -9,12 +9,12 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._callable import _KeyIterAdapter
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, compose_regularity, model_regularity, sum_regularity
 from .._keys import EvalKey, fold_in_eval_key
@@ -36,7 +36,7 @@ class _PirateBranch(StrictModule):
         rwf: bool | tuple[float, float],
         use_bias: bool,
         initializer: str,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         keys = jr.split(key, 3)
         first, second, third = (
@@ -121,7 +121,7 @@ class PirateNet(_AbstractBaseModel):
         use_bias: bool = True,
         use_final_bias: bool = True,
         initializer: str = "glorot_normal",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)

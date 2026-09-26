@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 import phydrax.linalg as la
 
@@ -27,10 +26,11 @@ from ...optim import (
     NewtonKrylov,
     OptimizationTermination,
 )
+from ...typing import PRNGKey
 
 
 # pCN scan carry: whitened state, log likelihood, PRNG key, accepted count.
-_PCNCarry: TypeAlias = tuple[Array, Array, PRNGKeyArray, Array]
+_PCNCarry: TypeAlias = tuple[Array, Array, PRNGKey, Array]
 
 
 class MAPResult(StrictModule):
@@ -328,9 +328,7 @@ class PCNSampler(StrictModule, NonTrainableState):
             }
         )
 
-    def sample(
-        self, key: PRNGKeyArray, initial_whitened: ArrayLike, /
-    ) -> PCNSamplingResult:
+    def sample(self, key: PRNGKey, initial_whitened: ArrayLike, /) -> PCNSamplingResult:
         initial = jnp.asarray(initial_whitened)
         if jnp.iscomplexobj(initial):
             raise TypeError("pCN whitened parameters must be real.")

@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from .._admissibility import AdmissibilityHeader, AdmissibilityReason
 from .._fingerprint import canonical_fingerprint
@@ -46,6 +45,7 @@ from ..discretization.dsmc._ntc import (
     DSMCNTCSchedulePlan,
     DSMCNTCState,
 )
+from ..typing import PRNGKey
 
 
 class DSMCBoundaryExchangeLedger(StrictModule):
@@ -213,7 +213,7 @@ class DSMCProductionPlan(StrictModule, NonTrainableState):
     def initialize(
         self,
         particles: DSMCParticleState,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
         *,
         majorant_sigma_speed: ArrayLike,
@@ -330,7 +330,7 @@ class DSMCProductionPlan(StrictModule, NonTrainableState):
         incoming: DSMCParticleState,
         streamed: DSMCStreamingResult,
         step: Array,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
     ) -> tuple[DSMCParticleState, Array, Array, Array, Array, Array]:
         dimension = incoming.velocity.shape[-1]

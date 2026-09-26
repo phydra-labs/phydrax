@@ -13,13 +13,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import FreeSurfaceGeometryState, JAXPLICStageReconstruction
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...typing import PRNGKey
 from ..layers import warp_jacobian
 from .data import FunctionSamples, OperatorBatch, OperatorPrediction
 from .task import OperatorTask
@@ -387,7 +387,7 @@ def solver_corrected_operator_rollout(
     advance: Callable[[OperatorBatch, Array, int], OperatorBatch],
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> CorrectedOperatorRollout:
     """Roll an operator only through accepted residual-controlled corrections."""
 

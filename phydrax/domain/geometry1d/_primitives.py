@@ -10,10 +10,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Bool, Float, Key
+from jaxtyping import Bool, Float
 
 from ..._doc import DOC_KEY0
 from ..._sampling import host_design_factory, seed_from_key
+from ...typing import PRNGKey
 from .._base import EnforcementGateMethod
 from ._base import _AbstractGeometry1D
 
@@ -117,7 +118,7 @@ class Interval1d(_AbstractGeometry1D):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         where = where or (lambda _: True)
 
@@ -166,7 +167,7 @@ class Interval1d(_AbstractGeometry1D):
         *,
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> tuple[tuple[Array, ...], Bool[Array, "..."]]:
         if isinstance(num_points, int):
             num_points_ = num_points
@@ -195,7 +196,7 @@ class Interval1d(_AbstractGeometry1D):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         where = where or (lambda _: True)
 
@@ -294,7 +295,7 @@ class Interval1d(_AbstractGeometry1D):
         where: Callable[[Array], Bool[Array, ""]],
         *,
         num_samples: int = 4096,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         """Estimate subset measure of the 1D boundary endpoints.
 

@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.discretization import AbstractAxisSpec, TensorGridPlan
@@ -44,6 +43,7 @@ from ..ml._overlap import (
     reduce_overlap_score,
 )
 from ..ml._schema import TargetSchema
+from ..typing import PRNGKey
 from ._data_metrics import (
     configured_case_indices,
     sample_case_indices,
@@ -519,7 +519,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
             site_axes=self._site_axes,
         )
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> DenseSiteClassificationBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> DenseSiteClassificationBatch:
         indices = sample_case_indices(
             size=self.dataset.size,
             num_samples=self._case_count,
@@ -528,9 +528,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         )
         return self._batch_from_indices(indices)
 
-    def observed_batch(
-        self, *, key: Key[Array, ""] = DOC_KEY0
-    ) -> DenseSiteClassificationBatch:
+    def observed_batch(self, *, key: PRNGKey = DOC_KEY0) -> DenseSiteClassificationBatch:
         """Materialize every configured case once on the fixed site grid."""
         del key
         indices = (
@@ -546,7 +544,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         **kwargs: Any,
     ) -> cx.AxisArray:
         function = functions[self.field]
@@ -567,7 +565,7 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         reference: cx.AxisArray,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         physical: bool,
         target_observed: Array,
         **kwargs: Any,
@@ -685,7 +683,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> tuple[Array, Array]:
         value = self._logits(functions, batch, key=key, **kwargs)
@@ -765,7 +763,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
         return self._per_case_loss_and_support(
@@ -780,7 +778,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: DenseSiteClassificationBatch | None = None,
         **kwargs: Any,
@@ -938,7 +936,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> tuple[Array, Array]:
         value = self._logits(functions, batch, key=key, **kwargs)
@@ -1034,7 +1032,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         batch: DenseSiteClassificationBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
         return self._per_case_score_and_support(
@@ -1049,7 +1047,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: DenseSiteClassificationBatch | None = None,
         **kwargs: Any,

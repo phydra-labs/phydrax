@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import GridBatch, GridSampling, PointBatch, PointSampling
@@ -22,6 +21,7 @@ from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ..._sampling import DesignLike, resolve_design, UnitDesign
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ class PointwiseSamplingTerm(Protocol):
     @property
     def policy(self) -> AbstractCollocationPolicy: ...
 
-    def sample(self, *, key: Key[Array, ""]) -> PointBatch | GridBatch: ...
+    def sample(self, *, key: PRNGKey) -> PointBatch | GridBatch: ...
 
     def pointwise_score(
         self,
@@ -48,7 +48,7 @@ class PointwiseSamplingTerm(Protocol):
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         **kwargs: Any,
     ) -> cx.AxisArray: ...
 
@@ -135,7 +135,7 @@ class AbstractCollocationPolicy(StrictModule):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Any:
         raise NotImplementedError
 
@@ -157,7 +157,7 @@ class AbstractCollocationPolicy(StrictModule):
         population: Any,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> Any:
         raise NotImplementedError
@@ -310,7 +310,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> CollocationPopulation:
         _point_sampling(constraint)
         batch = constraint.sample(key=key)
@@ -362,7 +362,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         population: CollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> CollocationPopulation:
         step = jnp.asarray(iter_, dtype=jnp.int32)
@@ -390,7 +390,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         batch: PointBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> cx.AxisArray:
         score = constraint.pointwise_score(functions, batch, key=key)
         axis, n = _single_axis_and_size(batch)
@@ -410,7 +410,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         functions: Mapping[str, DomainFunction],
         population: CollocationPopulation,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> CollocationPopulation:
         sampling = _point_sampling(constraint)
         axis, n = _single_axis_and_size(population.batch)
@@ -461,7 +461,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         functions: Mapping[str, DomainFunction],
         population: CollocationPopulation,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> CollocationPopulation:
         sampling = _point_sampling(constraint)
         if population.active is None:

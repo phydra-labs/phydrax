@@ -16,10 +16,10 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key
 
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ def _digest(prefix: bytes, *parts: object) -> str:
     return digest.hexdigest()
 
 
-def _scalar_key(value: Key[Array, ""], /) -> Array:
+def _scalar_key(value: PRNGKey, /) -> Array:
     if jr.key_data(value).shape != (2,):
         raise ValueError("FractionalGaussianRealization requires one scalar PRNG key.")
     return value
@@ -403,7 +403,7 @@ class FractionalGaussianRealization(StrictModule):
     def __init__(
         self,
         process: FractionalGaussianProcess,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         grid: ArrayLike,
         /,
         *,

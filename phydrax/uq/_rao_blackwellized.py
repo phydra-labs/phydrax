@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -28,6 +27,7 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
 )
 from ..stochastic._state_space_input import AbstractStateSpaceInput
+from ..typing import PRNGKey
 from ._conditional_moments import _condition_affine_gaussian_diagonal
 from ._covariance import (
     _factor_and_solve_covariance_system,
@@ -474,7 +474,7 @@ def _condition_linear_state(
 
 
 def rao_blackwellized_particle_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: RaoBlackwellizedStateSpaceProblem,
     /,
     *,
@@ -863,7 +863,7 @@ class RaoBlackwellizedFilterLikelihood(StrictModule):
 
     def __init__(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         num_particles: int,

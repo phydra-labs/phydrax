@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -26,6 +25,7 @@ from ..stochastic._state_space import (
     StateSpaceProblem,
     StateSpaceStepContext,
 )
+from ..typing import PRNGKey
 from ._predictive import PredictiveField, SampleAxis
 
 
@@ -170,7 +170,7 @@ class EnsembleFilterResult(StrictModule):
 
 
 def initialize_ensemble_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     /,
     *,
@@ -554,7 +554,7 @@ def _stack(values: list[Array], case_rank: int, /) -> Array:
 
 
 def ensemble_transform_kalman_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     /,
     *,

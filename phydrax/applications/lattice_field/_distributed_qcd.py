@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -69,6 +68,7 @@ from ...sampling._rhmc import (
     SeparableActionRegistry,
     SeparableActionTerm,
 )
+from ...typing import PRNGKey
 
 
 def _matrix_product(left: Array, right: Array, /) -> Array:
@@ -970,7 +970,7 @@ class PreparedDistributedHMC(StrictModule, NonTrainableState):
         links: ArrayLike,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step_index: int | Array = 0,
     ) -> DistributedHMCTransitionResult:
         values = self.gauge._configuration(links)
@@ -1128,7 +1128,7 @@ class PreparedDistributedRHMC(StrictModule, NonTrainableState):
         links: ArrayLike,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> RHMCChainState:
         values = self.gauge._configuration(links)
         return initialize_rhmc_state(self.kernel, values, key=key)

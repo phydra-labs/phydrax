@@ -13,13 +13,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import DigitBank, SensitiveHitBank, TruthStepBank
 
 
@@ -189,7 +189,7 @@ class DigitizationResult(StrictModule, NonTrainableState):
 def digitize_sensitive_hits(
     plan: DigitizationPlan,
     hits: SensitiveHitBank,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> DigitizationResult:
     """Aggregate, smear, couple, quantize, saturate, and suppress channel signals."""

@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -40,6 +39,8 @@ from phydrax.nn.operator.distribution import (
     AbstractProbabilisticOperatorModel,
 )
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 class _FixedReferenceQuery(StrictModule, NonTrainableState):
@@ -225,7 +226,7 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         shape = tuple(sample_shape)
@@ -236,9 +237,7 @@ class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
         condition = self.condition.reshape((cases, -1))
         keys = jr.split(key, cases)
 
-        def draw(
-            case_key: Key[Array, ""], case_condition: Array, case_center: Array
-        ) -> Array:
+        def draw(case_key: PRNGKey, case_condition: Array, case_center: Array) -> Array:
             residual = self.flow.sample(
                 case_key,
                 sample_shape=shape,
@@ -430,7 +429,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
 
 
 def conditional_coupling_flow_operator(
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     location_model: AbstractOperatorModel,

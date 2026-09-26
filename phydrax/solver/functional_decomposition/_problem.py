@@ -8,8 +8,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import equinox as eqx
-from jax import Array
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
@@ -27,6 +25,7 @@ from ...domain import (
 )
 from ...enforcement import EnforcementProgram
 from ...terms import ResidualPenalty
+from ...typing import PRNGKey
 
 
 ScopeKind = Literal["patch", "pair", "global"]
@@ -108,7 +107,7 @@ class FunctionalDecompositionProblem(StrictModule):
     terms: tuple[ScopedFunctionalTerm, ...]
     evaluation_terms: tuple[ScopedFunctionalTerm, ...]
     enforcement: EnforcementProgram | None
-    collocation_key: Key[Array, ""]
+    collocation_key: PRNGKey
     assembly: AssemblyKind = eqx.field(static=True)
     field_name: str = eqx.field(static=True)
 
@@ -128,7 +127,7 @@ class FunctionalDecompositionProblem(StrictModule):
         | ScopedFunctionalTerm
         | Sequence[AbstractScalarTerm | ScopedFunctionalTerm] = (),
         enforcement: EnforcementProgram | None = None,
-        collocation_key: Key[Array, ""] = DOC_KEY0,
+        collocation_key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(cover, SubdomainCover):
             raise TypeError("cover must be a SubdomainCover.")
@@ -179,7 +178,7 @@ class FunctionalDecompositionProblem(StrictModule):
         | ScopedFunctionalTerm
         | Sequence[AbstractScalarTerm | ScopedFunctionalTerm] = (),
         enforcement: EnforcementProgram | None = None,
-        collocation_key: Key[Array, ""] = DOC_KEY0,
+        collocation_key: PRNGKey = DOC_KEY0,
     ) -> FunctionalDecompositionProblem:
         if not isinstance(family, LocalFieldFamily):
             raise TypeError("family must be a LocalFieldFamily.")
@@ -213,7 +212,7 @@ class FunctionalDecompositionProblem(StrictModule):
         evaluation_terms: AbstractScalarTerm
         | ScopedFunctionalTerm
         | Sequence[AbstractScalarTerm | ScopedFunctionalTerm] = (),
-        collocation_key: Key[Array, ""] = DOC_KEY0,
+        collocation_key: PRNGKey = DOC_KEY0,
     ) -> FunctionalDecompositionProblem:
         if not isinstance(family, LocalFieldFamily):
             raise TypeError("family must be a LocalFieldFamily.")

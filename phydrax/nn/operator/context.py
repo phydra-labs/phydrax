@@ -14,12 +14,12 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array, core as jax_core
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .data import FunctionSamples
 
 
@@ -246,7 +246,7 @@ class LearnedTokenContext(AbstractOperatorContextStrategy):
         channels: int,
         num_tokens: int,
         initial_scale: float = 1.0,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.channels = int(channels)
         self.num_tokens = int(num_tokens)

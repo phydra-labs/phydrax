@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax.domain import DomainFunction
@@ -24,6 +23,7 @@ from .._frozendict import frozendict
 from .._probability import _event_axes, _leading_shape
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._bsde import (
     _event_finite,
     _predictor_value,
@@ -485,7 +485,7 @@ def feynman_kac_label_diagnostics(
 
 
 def _query_point_keys(
-    key: Key[Array, ""],
+    key: PRNGKey,
     address: SampleAddress,
     leading_shape: tuple[int, int, int],
     path_offset: int,
@@ -521,7 +521,7 @@ def _point_values(
     problem: BSDEProblem,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     output_shape: tuple[int, ...],
     point_keys: Array | None = None,
 ) -> Array:
@@ -561,7 +561,7 @@ def _point_controls(
     problem: BSDEProblem,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     point_keys: Array | None = None,
 ) -> Array:
     leading_shape = _leading_shape(
@@ -596,7 +596,7 @@ def _source_generator_nodes(
     *,
     source_value: Predictor | None,
     source_control: Predictor | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     path_offset: int | None = None,
 ) -> Array:
     leading_shape = _leading_shape(
@@ -774,7 +774,7 @@ def trajectory_node_feynman_kac_labels(
     *,
     source_value: Predictor | None = None,
     source_control: Predictor | None = None,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> FeynmanKacLabelBatch:
     """Construct one correlated global-time label at every valid trajectory node."""
     if not isinstance(problem, BSDEProblem) or not isinstance(paths, BSDEPathBatch):
@@ -905,11 +905,11 @@ def _resolve_queries(
     plan: FeynmanKacSamplingPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     query_times: ArrayLike | None,
     query_states: ArrayLike | None,
     query_weights: ArrayLike | None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None,
+    query_sampler: Callable[[PRNGKey], Any] | None,
 ) -> tuple[Array, Array, Array]:
     if query_sampler is not None:
         if (
@@ -963,7 +963,7 @@ def _resolve_queries(
 
 
 def _normal_draws(
-    key: Key[Array, ""],
+    key: PRNGKey,
     shape: tuple[int, ...],
     /,
     *,
@@ -1012,7 +1012,7 @@ def sample_feynman_kac_paths(
     plan: FeynmanKacSamplingPlan,
     /,
     *,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
     query_weights: ArrayLike | None = None,
     num_paths: int | None = None,
     _path_offset: int = 0,
@@ -1170,7 +1170,7 @@ def _query_path_targets(
     *,
     source_value: Predictor | None,
     source_control: Predictor | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     path_offset: int,
 ) -> tuple[Array, Array, Array]:
     generator = _source_generator_nodes(
@@ -1205,7 +1205,7 @@ def _query_chunk_samples(
     source_value: Predictor | None,
     source_control: Predictor | None,
     malliavin_weight: MalliavinWeight | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     path_count: int,
     path_offset: int,
 ) -> tuple[FeynmanKacPathBatch, Array, Array, Array | None, Array | None]:
@@ -1333,11 +1333,11 @@ def query_feynman_kac_labels(
     query_times: ArrayLike | None = None,
     query_states: ArrayLike | None = None,
     query_weights: ArrayLike | None = None,
-    query_sampler: Callable[[Key[Array, ""]], Any] | None = None,
+    query_sampler: Callable[[PRNGKey], Any] | None = None,
     source_value: Predictor | None = None,
     source_control: Predictor | None = None,
     malliavin_weight: MalliavinWeight | None = None,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
     return_paths: bool = False,
 ) -> FeynmanKacLabelBatch | tuple[FeynmanKacLabelBatch, FeynmanKacPathBatch]:
     """Estimate conditional Feynman--Kac labels in bounded path chunks."""

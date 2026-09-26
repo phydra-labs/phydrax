@@ -8,11 +8,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._input_convex import ConvexActivation, InputConvexNetwork
 
@@ -101,7 +101,7 @@ class PolyconvexPotential(StrictModule, ParameterOwner):
         depth: int = 3,
         activation: ConvexActivation = "softplus",
         use_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.minors = DeformationGradientMinors(dimension)
         convex_potential = (

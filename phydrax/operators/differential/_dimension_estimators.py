@@ -15,11 +15,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.linalg as la
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._stochastic_estimators import (
     _directional_second_derivative,
     _prepare_hessian_action,
@@ -180,7 +180,7 @@ class DimensionOperatorSamples(StrictModule):
 
 
 def _sample_indices(
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> Array:
@@ -196,7 +196,7 @@ def _sample_indices(
 
 def dimension_sum_samples(
     contribution: Callable[[Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> DimensionOperatorSamples:
@@ -219,7 +219,7 @@ def dimension_sum_samples(
 
 def estimate_dimension_sum(
     contribution: Callable[[Array], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> DimensionOperatorEstimate:
@@ -229,7 +229,7 @@ def estimate_dimension_sum(
 def coordinate_divergence_samples(
     vector_field: Callable[[Array], Array],
     state: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> DimensionOperatorSamples:
@@ -262,7 +262,7 @@ def coordinate_divergence_samples(
 def coordinate_second_derivative_samples(
     function: Callable[[Array], Array],
     state: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     policy: DimensionSamplingPolicy,
     /,
 ) -> DimensionOperatorSamples:

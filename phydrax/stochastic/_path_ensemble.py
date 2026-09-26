@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import (
     array_tree_fingerprint,
@@ -24,6 +23,7 @@ from .._fingerprint import (
 )
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
+from ..typing import PRNGKey
 from ._wiener import LevyAreaKind, WienerRealization
 
 
@@ -505,7 +505,7 @@ def prepare_stochastic_path_ensemble(
     /,
     *,
     realization: WienerRealization | None = None,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     initial_states: ArrayLike | None = None,
 ) -> PreparedStochasticPathEnsemble:
     """Prepare one bounded stochastic ensemble without executing an integrator."""

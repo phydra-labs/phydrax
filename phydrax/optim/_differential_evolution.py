@@ -14,7 +14,7 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._execution_array import shard_array_axis
 from .._execution_runtime import ExecutionGroup
@@ -27,6 +27,7 @@ from .._sampling import (
     resolve_design,
 )
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._bounded_search import _BoundedVectorDomain
 from ._finite import FiniteAxis
 from ._pareto import dominance_matrix
@@ -38,9 +39,7 @@ DifferentialEvolutionValidityMode = Literal["guarded", "vectorized"]
 _Objective: TypeAlias = Callable[[PyTree[Array]], Array]
 _Validity: TypeAlias = Callable[[PyTree[Array]], Array]
 # (generation, population, objectives, valid, key, invalid count, best history)
-_EvolutionState: TypeAlias = tuple[
-    Array, Array, Array, Array, Key[Array, ""], Array, Array
-]
+_EvolutionState: TypeAlias = tuple[Array, Array, Array, Array, PRNGKey, Array, Array]
 
 
 class DifferentialEvolutionStatus(IntEnum):
@@ -274,7 +273,7 @@ class DifferentialEvolutionResult(StrictModule):
     best_objective_history: Array
     lower_bounds: Array
     upper_bounds: Array
-    key: Key[Array, ""]
+    key: PRNGKey
     search: DifferentialEvolutionSearch
     status: Array
     converged: bool = eqx.field(static=True)
@@ -402,7 +401,7 @@ def _evaluate_population(
 
 
 def _round_integer_columns(
-    space: DifferentialEvolutionSpace, vectors: Array, key: Key[Array, ""]
+    space: DifferentialEvolutionSpace, vectors: Array, key: PRNGKey
 ) -> Array:
     if not space.integer_columns:
         return vectors
@@ -428,7 +427,7 @@ def _categorical_mutant(
     a: Array,
     b: Array,
     c: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     if not space.categorical_columns:
         return population[a]
@@ -483,7 +482,7 @@ def _run_differential_evolution(
     space: DifferentialEvolutionSpace,
     search: DifferentialEvolutionSearch,
     initial_population: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     population = initial_population
     _, objectives, valid = _evaluate_population(
@@ -596,7 +595,7 @@ def search_differential_evolution(
     search: DifferentialEvolutionSearch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     validity: Callable[[PyTree[Array]], Array] | None = None,
     initial: ArrayLike | None = None,
     execution_group: ExecutionGroup | None = None,
@@ -740,7 +739,7 @@ def _bounded_differential_evolution(
     search: DifferentialEvolutionSearch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     validity: Callable[[Array], Array] | None = None,
 ) -> DifferentialEvolutionResult:
     domain = _BoundedVectorDomain(initial_vector, lower_bounds, upper_bounds)

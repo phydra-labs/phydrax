@@ -10,7 +10,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -36,6 +35,7 @@ from ...sampling import (
     SeparableActionRegistry,
     SeparableActionTerm,
 )
+from ...typing import PRNGKey
 from ._actions import PreparedTwistedSYMAction
 from ._fermions import RegulatedTwistedDiracOperator, TwistedKahlerDiracOperator
 from ._twisted_n2 import (
@@ -272,7 +272,7 @@ def prepare_twisted_n2_rhmc(
 def sample_twisted_n2_rhmc(
     prepared: PreparedTwistedN2RHMC,
     initial_configuration: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     num_draws: int,

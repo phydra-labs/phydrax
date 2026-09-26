@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax.domain import DomainFunction
@@ -29,6 +28,7 @@ from ..stochastic._bsde import (
     evaluate_bsde,
 )
 from ..stochastic._wiener import WienerRealization
+from ..typing import PRNGKey
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
@@ -150,7 +150,7 @@ class CoupledFBSDEResult(StrictModule):
 
 
 def solve_coupled_fbsde_explicit(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: CoupledFBSDEProblem,
     value_predictor: Callable[[Array, Array], object] | DomainFunction,
     control_predictor: Callable[[Array, Array], object] | DomainFunction,

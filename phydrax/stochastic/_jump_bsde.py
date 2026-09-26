@@ -11,11 +11,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from .._frozendict import frozendict
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._bsde import (
     BSDEControlMode,
     BSDEEvaluation,
@@ -151,7 +151,7 @@ def _jump_values(
     problem: JumpBSDEProblem,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> Array:
     pre_states = events.pre_states
     if pre_states is None:
@@ -317,7 +317,7 @@ def evaluate_jump_bsde(
     control_predictor: Callable | None = None,
     control_mode: BSDEControlMode = "explicit",
     quadrature: BSDEQuadrature = "left",
-    key: Key[Array, ""] = jax.random.key(0),
+    key: PRNGKey = jax.random.key(0),
     raise_on_failure: bool = False,
 ) -> JumpBSDEEvaluation:
     """Evaluate a finite-activity BSDE using compensated jump increments."""

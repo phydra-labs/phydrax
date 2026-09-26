@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -27,6 +26,7 @@ from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCert
 from ....geometry import MeshRegion
 from ....integration import IntegrationPrecisionPolicy
 from ....linalg import AbstractLinearOperator, DenseLinearOperator, LinearCapabilityError
+from ....typing import PRNGKey
 from ._core import LayerDiscretizationReport
 from ._galerkin_quadrature3d import (
     _duffy_rule,
@@ -278,9 +278,7 @@ class StokesLayerPotential3D(_AbstractTrialSpaceField):
             raise ValueError("Replacement density must preserve (source_node_count, 3).")
         return eqx.tree_at(lambda potential: potential.density, self, values)
 
-    def __call__(
-        self, target: ArrayLike, /, *, key: Key[Array, ""] | None = None
-    ) -> Array:
+    def __call__(self, target: ArrayLike, /, *, key: PRNGKey | None = None) -> Array:
         del key
         point = jnp.asarray(target, dtype=self.panelization.points.dtype)
         if point.shape != (3,):

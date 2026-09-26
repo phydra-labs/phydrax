@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -34,6 +33,7 @@ from phydrax.domain import (
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._adaptive_callable import (
     _error_norm,
     _meets_plan_tolerance,
@@ -130,7 +130,7 @@ class DomainAdaptiveIntegrand(StrictModule):
     fixed_points: frozendict[str, cx.AxisArray]
     structure: SampleLayout
     log_density: DomainFunction | None
-    key: Key[Array, ""]
+    key: PRNGKey
     kwargs: frozendict[str, Any]
     variable: str = eqx.field(static=True)
     axis: str = eqx.field(static=True)
@@ -206,7 +206,7 @@ def _run_adaptive_raw(
     *,
     variable: str | None,
     log_density: Any | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
@@ -331,7 +331,7 @@ def integrate_adaptive(
     /,
     *,
     variable: str | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

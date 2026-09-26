@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import lineax as lx
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
@@ -19,6 +18,7 @@ from ..._score_field import StateTimeScoreField
 from ..._strict import StrictModule
 from ...dynamics import ContinuousSystem, StateLayout
 from ...stochastic._general_diffusion import AbstractItoScoreDiffusion
+from ...typing import PRNGKey
 from ._guidance import GuidedScoreField, ScoreContext
 
 
@@ -27,7 +27,7 @@ def _evaluate_score(
     state: Array,
     time: Array,
     context: ScoreContext,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> Array:
     if isinstance(score, GuidedScoreField):
@@ -51,7 +51,7 @@ class _GeneralReverseDrift(StrictModule):
         self,
         reverse_time: Array,
         state: Array,
-        args: tuple[Key[Array, ""], ScoreContext],
+        args: tuple[PRNGKey, ScoreContext],
         /,
     ) -> Array:
         score_key, context = args
@@ -114,7 +114,7 @@ def general_reverse_diffusion_problem(
     /,
     *,
     context: ScoreContext | None = None,
-    score_key: Key[Array, ""] = DOC_KEY0,
+    score_key: PRNGKey = DOC_KEY0,
     score_id: str,
     problem_id: str | None = None,
 ) -> GeneralReverseProblem:
@@ -179,7 +179,7 @@ def general_probability_flow_system(
     /,
     *,
     context: ScoreContext | None = None,
-    score_key: Key[Array, ""] = DOC_KEY0,
+    score_key: PRNGKey = DOC_KEY0,
     score_id: str,
     state_layout: StateLayout,
     system_id: str | None = None,

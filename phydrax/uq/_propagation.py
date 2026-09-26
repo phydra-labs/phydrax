@@ -10,13 +10,13 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
 from .._frozendict import frozendict
 from .._sampling import materialize_design
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._distributions import AbstractDistribution
 from ._predictive import PredictiveField, SampleAxis
 
@@ -67,7 +67,7 @@ def sample_joint(
     /,
     *,
     num_samples: int,
-    key: Key[Array, ""] | None,
+    key: PRNGKey | None,
     sampler: str = "sobol_scrambled",
     sample_dim: str = "__phydra_uq_input",
 ) -> RandomSampleBatch:

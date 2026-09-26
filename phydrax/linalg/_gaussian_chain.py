@@ -14,11 +14,11 @@ import jax.random as jr
 import jax.scipy as jsp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._dense_inverse import dense_inverse
 from ._operators import DenseLinearOperator
 from ._policies import DenseLU, FailurePolicy, LinearSolvePolicy
@@ -1315,7 +1315,7 @@ def gaussian_markov_information_from_moments(
 
 
 def sample_gaussian_markov(
-    key: Key[Array, ""],
+    key: PRNGKey,
     moments: GaussianMarkovMoments,
     /,
     *,

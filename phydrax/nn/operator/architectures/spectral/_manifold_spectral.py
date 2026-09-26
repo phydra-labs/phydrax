@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array, core as jax_core
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -28,6 +27,8 @@ from phydrax.nn.activations import activation_regularity
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 class _ManifoldSpectralMixer(StrictModule):
@@ -47,7 +48,7 @@ class _ManifoldSpectralMixer(StrictModule):
         *,
         in_channels: int,
         out_channels: int,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size = int(in_channels)
         out_size = int(out_channels)
@@ -139,7 +140,7 @@ class ManifoldSpectralOperator(AbstractOperatorModel):
         source_key: str | None = None,
         activation: Callable[[Array], Array] = jax.nn.gelu,
         residual: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(source_plan, SpectralDecomposition):
             raise TypeError("source_plan must be a SpectralDecomposition.")

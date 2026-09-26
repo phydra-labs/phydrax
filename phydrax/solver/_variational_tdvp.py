@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -23,6 +22,7 @@ from ..linalg import (
     solve,
 )
 from ..operators.quantum import ComplexParameterMode
+from ..typing import PRNGKey
 from ._variational_monte_carlo import (
     _score_geometry,
     _validate_model_coordinates,
@@ -187,7 +187,7 @@ def solve_variational_tdvp(
     policy: VariationalTDVPPolicy,
     /,
     *,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     state: VariationalMonteCarloState | None = None,
 ) -> VariationalTDVPResult:
     """Evolve amplitude parameters by fixed-step real- or imaginary-time TDVP."""

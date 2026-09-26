@@ -12,7 +12,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
@@ -30,6 +29,7 @@ from ...linalg import (
     solve,
 )
 from ...nn.parameters import ParameterSubspace
+from ...typing import PRNGKey
 from .._functional_residual import prepare_functional_residual
 from .._functional_solver import FunctionalSolver
 
@@ -98,7 +98,7 @@ def dense_local_curvature_step(
     plan: LocalCurvaturePlan | None = None,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> LocalCurvatureResult:
     """Take one damped exact local Newton step through Phydrax linear algebra."""
     if not isinstance(solver, FunctionalSolver):
@@ -316,7 +316,7 @@ def matrix_free_gauss_newton_step(
     plan: MatrixFreeGaussNewtonPlan | None = None,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> MatrixFreeGaussNewtonResult:
     """Take one damped Gauss-Newton step without assembling a Jacobian or Hessian."""
     if not isinstance(solver, FunctionalSolver):

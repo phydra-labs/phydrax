@@ -13,8 +13,8 @@ import jax.random as jr
 import jax.scipy as jsp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
+from ..typing import PRNGKey
 from ._contracts import (
     _mean_domain_result,
     _natural_domain_result,
@@ -380,7 +380,7 @@ class DirichletFamily(AbstractExponentialFamily):
 
     def _sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,

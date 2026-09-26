@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax._strict import StrictModule
 from phydrax.domain import DomainFunction
@@ -21,9 +20,10 @@ from phydrax.domain import DomainFunction
 from .._term import AbstractSamplingTerm
 from ..stochastic._bsde import _pointwise_autodiff_control, _pointwise_values, BSDEProblem
 from ..stochastic._feynman_kac import FeynmanKacLabelBatch, FeynmanKacSamplingPlan
+from ..typing import PRNGKey
 
 
-LabelProvider = Callable[[Key[Array, ""]], FeynmanKacLabelBatch]
+LabelProvider = Callable[[PRNGKey], FeynmanKacLabelBatch]
 
 
 def _weight(value: ArrayLike, /, *, owner: str) -> Array:
@@ -156,7 +156,7 @@ class FeynmanKacRegressionTerm(AbstractSamplingTerm):
         self.use_control_loss = bool(float(self.control_weight) > 0.0)
         self.label = label
 
-    def sample(self, *, key: Key[Array, ""] = jr.key(0)) -> FeynmanKacLabelBatch:
+    def sample(self, *, key: PRNGKey = jr.key(0)) -> FeynmanKacLabelBatch:
         if self.fixed_labels is not None:
             return self.fixed_labels
         if self.label_provider is None:
@@ -171,7 +171,7 @@ class FeynmanKacRegressionTerm(AbstractSamplingTerm):
         batch: FeynmanKacLabelBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> tuple[Array, Array | None]:
         if self.value_name not in functions:
             raise KeyError(f"Missing value function {self.value_name!r}.")
@@ -213,7 +213,7 @@ class FeynmanKacRegressionTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         iter_: int | Array | None = None,
         batch: FeynmanKacLabelBatch | None = None,
         **kwargs: Any,
@@ -265,7 +265,7 @@ class FeynmanKacRegressionTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: FeynmanKacLabelBatch | None = None,
     ) -> FeynmanKacRegressionDiagnostics:
         label_key, prediction_key = jr.split(key)
@@ -348,7 +348,7 @@ class FeynmanKacRegressionTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         iter_: int | Array | None = None,
         batch: FeynmanKacLabelBatch | None = None,
         **kwargs: Any,

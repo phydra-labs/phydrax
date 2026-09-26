@@ -15,7 +15,6 @@ import jax.random as jr
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import Domain, DomainFunction
 
@@ -28,6 +27,7 @@ from ..terms._deep_splitting import (
     DeepSplittingRegressionDiagnostics,
     DeepSplittingRegressionTerm,
 )
+from ..typing import PRNGKey
 from ._functional_solver import FunctionalSolver
 
 
@@ -96,7 +96,7 @@ class DeepSplittingSolution(StrictModule):
         state: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> Array:
         """Evaluate one learned node, or the exact terminal condition at the last node."""
         node = int(index)
@@ -160,7 +160,7 @@ class DeepSplittingSolution(StrictModule):
         state: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> Array:
         """Evaluate the nearest or linearly interpolated learned time-slice field."""
         time_value = jnp.asarray(time, dtype=self.times.dtype)
@@ -197,7 +197,7 @@ class DeepSplittingSolution(StrictModule):
         state: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> Array:
         """Differentiate the interpolated value and contract it with the diffusion."""
         time_value = jnp.asarray(time)
@@ -267,8 +267,8 @@ def _label_provider(
     slice_index: int,
     times: Array,
     /,
-) -> Callable[[Key[Array, ""]], DeepSplittingLabelBatch]:
-    def provider(key: Key[Array, ""]) -> DeepSplittingLabelBatch:
+) -> Callable[[PRNGKey], DeepSplittingLabelBatch]:
+    def provider(key: PRNGKey) -> DeepSplittingLabelBatch:
         paths = problem.sample(key)
         _require_time_grid(paths, times)
         return deep_splitting_labels(

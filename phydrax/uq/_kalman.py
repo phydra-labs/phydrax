@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -31,6 +30,7 @@ from ..stochastic._state_space import (
     state_space_key,
     StateSpaceProblem,
 )
+from ..typing import PRNGKey
 from ._covariance import _factor_and_solve_covariance_system
 
 
@@ -1066,7 +1066,7 @@ def _gaussian_draw(key: Array, mean: Array, covariance: Array, /) -> Array:
 
 
 def _sequential_sample_kalman_smoother_paths(
-    key: Key[Array, ""],
+    key: PRNGKey,
     smoother: KalmanSmootherResult,
     /,
     *,
@@ -1143,7 +1143,7 @@ def _sequential_sample_kalman_smoother_paths(
 
 
 def _parallel_sample_kalman_smoother_paths(
-    key: Key[Array, ""],
+    key: PRNGKey,
     smoother: KalmanSmootherResult,
     /,
     *,
@@ -1283,7 +1283,7 @@ def _parallel_sample_kalman_smoother_paths(
 
 
 def sample_kalman_smoother_paths(
-    key: Key[Array, ""],
+    key: PRNGKey,
     smoother: KalmanSmootherResult,
     /,
     *,

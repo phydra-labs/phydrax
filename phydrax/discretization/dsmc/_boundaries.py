@@ -13,12 +13,12 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import PRNGKeyArray
 
 from ..._admissibility import AdmissibilityHeader, AdmissibilityReason
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import DSMCParticleState, DSMCSpeciesPlan, DSMCStructuredCellPlan
 from ._surface import DSMCSurfaceInteractionPlan
 
@@ -225,7 +225,7 @@ class DSMCReservoirFacePlan(StrictModule, NonTrainableState):
         particles: DSMCParticleState,
         state: DSMCReservoirState,
         step_size: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
     ) -> DSMCReservoirResult:
         if not isinstance(state, DSMCReservoirState) or state.plan_id != self.plan_id:

@@ -15,7 +15,6 @@ import jax.random as jr
 import jax.scipy as jsp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -23,6 +22,7 @@ from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._uncertainty import UNCERTAINTY_SOURCES, UncertaintySource
 from ..stochastic._process import AbstractMarginalTransitionLaw, semigroup_objective
+from ..typing import PRNGKey
 from ._metrics import energy_score, ensemble_crps
 from ._predictive import _broadcast_field_data, PredictiveField
 
@@ -431,7 +431,7 @@ def observable_rank_diagnostics(
     /,
     *,
     sample_axis: int = 0,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     confidence: float = 0.95,
 ) -> UniformRankDiagnostics:
     """Compute tie-randomized ranks for declared scalar observables.
@@ -530,7 +530,7 @@ def semigroup_mc_diagnostics(
     t0: ArrayLike,
     tmid: ArrayLike,
     t1: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_samples: int = 256,
     num_replicates: int = 16,
     observable: Callable[[Array], Array] | None = None,

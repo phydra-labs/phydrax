@@ -9,10 +9,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ...discretization import TemporalMesh
+from ...typing import PRNGKey
 
 
 def _endpoints(x0: ArrayLike, x1: ArrayLike, /) -> tuple[Array, Array]:
@@ -117,7 +117,7 @@ def sample_brownian_bridge(
     slicing: TemporalMesh,
     num_paths: int,
     diffusion: ArrayLike = 1.0,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> Array:
     """Sample fixed-endpoint Brownian paths on a uniform time slicing."""
     start, end = _endpoints(x0, x1)

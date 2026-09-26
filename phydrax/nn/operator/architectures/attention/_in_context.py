@@ -12,7 +12,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -39,6 +38,8 @@ from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 from phydrax.nn.operator.layers._attention import _measure_attention_regularity
 from phydrax.nn.operator.prompt import OperatorPrompt, PromptedOperatorBatch
+
+from .....typing import PRNGKey
 
 
 class OperatorPromptState(StrictModule):
@@ -157,7 +158,7 @@ class InContextOperator(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)

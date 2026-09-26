@@ -14,7 +14,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -47,6 +46,8 @@ from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
+from .....typing import PRNGKey
+
 
 AliasingPolicy = Literal["collocation", "dealiased"]
 SpectralChannelMixing = Literal["depthwise", "dense"]
@@ -62,7 +63,7 @@ def _dealiased_spectral_resample(
     return _fourier_resample(values, output_shape, axes=axes)
 
 
-def _complex_normal(key: Key[Array, ""], shape: tuple[int, ...], scale: float) -> Array:
+def _complex_normal(key: PRNGKey, shape: tuple[int, ...], scale: float) -> Array:
     real_key, imaginary_key = jr.split(key)
     return scale * (
         jr.normal(real_key, shape=shape) + 1j * jr.normal(imaginary_key, shape=shape)
@@ -82,7 +83,7 @@ class _DepthwiseSpectralConvND(StrictModule):
         *,
         channels: int,
         n_modes: int | Sequence[int],
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.channels = int(channels)
         self.n_modes = _mode_tuple(n_modes)
@@ -178,7 +179,7 @@ class _ProjectedProductFourierMixer(StrictModule):
         factor_bias: bool,
         spectral_channel_mixing: SpectralChannelMixing,
         aliasing: AliasingPolicy,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.channels = int(channels)
         self.n_modes = _mode_tuple(n_modes)
@@ -315,7 +316,7 @@ class _HigherOrderFeedForward(StrictModule):
         expansion: int,
         activation: Activation,
         dropout: float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         hidden_channels = int(channels) * int(expansion)
         if hidden_channels <= 0:
@@ -377,7 +378,7 @@ class _HigherOrderFNOBlock(StrictModule):
         norm_epsilon: float,
         dropout: float,
         residual: bool,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         mixer_key, feedforward_key = jr.split(key)
         self.spectral = _ProjectedProductFourierMixer(
@@ -503,7 +504,7 @@ class HOFNO(AbstractOperatorModel):
         dropout: float | Sequence[float] = 0.0,
         source_key: str | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels

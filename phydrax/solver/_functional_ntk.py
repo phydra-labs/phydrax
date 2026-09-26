@@ -9,7 +9,7 @@ from typing import Any, Literal, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._doc import DOC_KEY0
 from .._sampling import derive_key, SampleAddress
@@ -24,6 +24,7 @@ from ..nn.neural_tangent import (
 )
 from ..nn.parameters import ParameterSubspace
 from ..terms import ResidualBlockRef
+from ..typing import PRNGKey
 from ._functional_residual import (
     FunctionalResidualLayout,
     prepare_functional_residual,
@@ -94,7 +95,7 @@ class PreparedFunctionalNTK(StrictModule):
         /,
         *,
         policy: NTKDiagnosticsPolicy | None = None,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> NTKDiagnostics:
         return analyze_ntk(self.ntk, policy=policy, key=key)
 
@@ -136,7 +137,7 @@ def prepare_functional_ntk(
     solver: FunctionalSolver,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     step: int | Array | None = None,
     term_indices: tuple[int, ...] | None = None,
     parameter_subspace: ParameterSubspace | None = None,

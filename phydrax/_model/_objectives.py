@@ -12,9 +12,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
+from ..typing import PRNGKey
 
 
 class ModelObjectiveProvider(abc.ABC):
@@ -35,7 +35,7 @@ class ModelObjectiveProvider(abc.ABC):
     def local_model_objective_values(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: Array | None = None,
     ) -> tuple[Array, ...]:
         """Evaluate objectives contributed directly by this node."""
@@ -97,7 +97,7 @@ def model_objective_values(
     tree: Any,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     iter_: Array | None = None,
 ) -> tuple[Array, ...]:
     """Evaluate every explicit model objective using deterministic site keys."""

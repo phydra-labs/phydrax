@@ -14,7 +14,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import GridBatch, GridSampling, PointBatch, PointSampling
@@ -22,6 +21,7 @@ from phydrax.domain import GridBatch, GridSampling, PointBatch, PointSampling
 from ..._doc import DOC_KEY0
 from ..._sampling import DesignLike, resolve_design, UnitDesign
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._adaptive import (
     _set_batch_rows,
     _single_axis_and_size,
@@ -382,7 +382,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> ControlledCollocationPopulation:
         current = self.base_policy.initialize(constraint, key=jr.fold_in(key, 1))
         monitor_batch = _sample_monitor_batch(
@@ -508,7 +508,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
         population: ControlledCollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> ControlledCollocationPopulation:
         step = jnp.asarray(iter_, dtype=jnp.int32)
@@ -597,7 +597,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
         population: ControlledCollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> ControlledCollocationPopulation:
         """Validate the terminal proposal without admitting another proposal."""
@@ -660,7 +660,7 @@ def _sample_monitor_batch(
     /,
     *,
     sampler: DesignLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> PointBatch | GridBatch:
     sampling = constraint.sampling
     if isinstance(sampling, GridSampling):
@@ -698,7 +698,7 @@ def _monitor_statistics(
     batch: PointBatch | GridBatch,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     epsilon: Array,
 ) -> tuple[Array, Array, Array, int]:
     score = constraint.pointwise_score(functions, batch, key=key)

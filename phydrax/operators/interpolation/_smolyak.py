@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -42,6 +41,7 @@ from ..._numerics import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._plans import (
     AdaptiveSmolyakInterpolationPlan,
     SmolyakInterpolationPlan,
@@ -337,7 +337,7 @@ class SmolyakInterpolant(StrictModule, NonTrainableState):
     def __call__(
         self,
         *coordinates: Any,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -376,7 +376,7 @@ def interpolate_smolyak(
     plan: SmolyakInterpolationPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> DomainFunction:
     """Fit a reusable Smolyak interpolant and return it as a `DomainFunction`."""
     if not isinstance(function, DomainFunction):
@@ -477,7 +477,7 @@ def _interpolate_index_set(
     index_set: SmolyakIndexSet,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> tuple[DomainFunction, np.ndarray]:
     dependencies = tuple(function.deps)
     raw_factors = tuple(function.domain.factor(label) for label in dependencies)
@@ -620,7 +620,7 @@ def interpolate_adaptive_smolyak(
     plan: AdaptiveSmolyakInterpolationPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> AdaptiveSmolyakInterpolationResult:
     """Prepare a dimension-adaptive immutable Smolyak interpolant."""
     if not isinstance(function, DomainFunction):

@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._fingerprint import canonical_fingerprint
@@ -30,6 +30,7 @@ from .._training_kernel import (
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
+from ..typing import PRNGKey
 from ._posterior import AbstractBijector
 from ._targeted_free_energy import (
     _evaluate_forward,
@@ -197,7 +198,7 @@ class _TargetedMapObjective(StrictModule):
 def fit_targeted_free_energy_map(
     problem: TargetedFreeEnergyProblem,
     source_samples: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     target_samples: ArrayLike | None = None,

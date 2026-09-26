@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 from jax import Array, core as jax_core
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import (
@@ -24,6 +24,7 @@ from .._tree_math import (
     tree_norm as _tree_norm,
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
+from ..typing import PRNGKey
 from ._bounds import ProjectedLBFGS
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._types import (
@@ -103,7 +104,7 @@ class AbstractSamplingPolicy(StrictModule):
     refresh: eqx.AbstractVar[str]
 
     @abc.abstractmethod
-    def sample(self, key: Key[Array, ""], iteration: int, /) -> SampleBatch:
+    def sample(self, key: PRNGKey, iteration: int, /) -> SampleBatch:
         raise NotImplementedError
 
 
@@ -123,7 +124,7 @@ class FixedSampling(AbstractSamplingPolicy):
     def refresh(self) -> str:
         return "fixed"
 
-    def sample(self, key: Key[Array, ""], iteration: int, /) -> SampleBatch:
+    def sample(self, key: PRNGKey, iteration: int, /) -> SampleBatch:
         del key, iteration
         return self.batch
 
@@ -131,13 +132,13 @@ class FixedSampling(AbstractSamplingPolicy):
 class MonteCarloSampling(AbstractSamplingPolicy):
     """Seed-reproducible Monte Carlo scenarios with declared refresh policy."""
 
-    sampler: Callable[[Key[Array, ""], int], PyTree[Any]]
+    sampler: Callable[[PRNGKey, int], PyTree[Any]]
     sample_size: int = eqx.field(static=True)
     refresh: Literal["fixed", "per_iteration"] = eqx.field(static=True)
 
     def __init__(
         self,
-        sampler: Callable[[Key[Array, ""], int], PyTree[Any]],
+        sampler: Callable[[PRNGKey, int], PyTree[Any]],
         sample_size: int,
         /,
         *,
@@ -158,7 +159,7 @@ class MonteCarloSampling(AbstractSamplingPolicy):
     def policy_id(self) -> str:
         return "monte-carlo"
 
-    def sample(self, key: Key[Array, ""], iteration: int, /) -> SampleBatch:
+    def sample(self, key: PRNGKey, iteration: int, /) -> SampleBatch:
         fold = 0 if self.refresh == "fixed" else iteration
         return SampleBatch(self.sampler(jr.fold_in(key, fold), self.sample_size))
 
@@ -563,7 +564,7 @@ class StochasticProblem(StrictModule):
 
     def frozen(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         iteration: int = 0,
         /,
         *,
@@ -596,7 +597,7 @@ class StochasticResult(StrictModule):
     status: Array
     diagnostics: OptimizationDiagnostics
     provenance: OptimizationProvenance
-    key: Key[Array, ""]
+    key: PRNGKey
 
     def __init__(
         self,
@@ -607,7 +608,7 @@ class StochasticResult(StrictModule):
         status: Any,
         diagnostics: OptimizationDiagnostics,
         provenance: OptimizationProvenance,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> None:
         self.parameters = _validate_real_inexact_tree(parameters, name="parameters")
@@ -641,7 +642,7 @@ class AbstractStochasticMethod(StrictModule):
         /,
         *,
         termination: OptimizationTermination,
-        key: Key[Array, ""],
+        key: PRNGKey,
         args: Any,
     ) -> StochasticResult:
         raise NotImplementedError
@@ -700,7 +701,7 @@ class StochasticAdam(AbstractStochasticMethod):
         /,
         *,
         termination: OptimizationTermination,
-        key: Key[Array, ""],
+        key: PRNGKey,
         args: Any,
     ) -> StochasticResult:
         if problem.chance_constraints:
@@ -1038,7 +1039,7 @@ class _AbstractConsensusMethod(AbstractStochasticMethod):
         /,
         *,
         termination: OptimizationTermination,
-        key: Key[Array, ""],
+        key: PRNGKey,
         args: Any,
     ) -> StochasticResult:
         return _solve_consensus(
@@ -1168,7 +1169,7 @@ def _solve_consensus(
     /,
     *,
     termination: OptimizationTermination,
-    key: Key[Array, ""],
+    key: PRNGKey,
     args: Any,
 ) -> StochasticResult:
     if not isinstance(problem.risk, ExpectationRisk):
@@ -1441,7 +1442,7 @@ def minimize_stochastic(
     *,
     method: AbstractStochasticMethod,
     termination: OptimizationTermination | None = None,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     seed: int = 0,
     args: Any = None,
 ) -> StochasticResult:

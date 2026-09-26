@@ -12,9 +12,9 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 from scipy.stats.qmc import Halton, LatinHypercube, Sobol
 
+from ..typing import PRNGKey
 from ._types import (
     design_capabilities,
     design_name,
@@ -210,7 +210,7 @@ def materialize_design(
     *,
     count: int,
     dimension: int,
-    key: Key[Array, ""] | None,
+    key: PRNGKey | None,
     start: int = 0,
 ) -> Array:
     """Materialize unit-cube points with JIT-safe host generation when required."""

@@ -9,11 +9,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from .._system import DiscreteStepContext
 
 
@@ -81,7 +81,7 @@ class LearnedMarginalTransition(StrictModule):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         context: DiscreteStepContext,
         state: ArrayLike,
         control: ArrayLike | None = None,

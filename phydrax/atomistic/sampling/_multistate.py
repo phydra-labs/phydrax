@@ -15,12 +15,12 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
+from ...typing import PRNGKey
 from .._barostat import (
     apply_isotropic_monte_carlo_barostat,
     IsotropicMonteCarloBarostatPlan,
@@ -468,7 +468,7 @@ class PreparedAtomisticMultistate(StrictModule):
     @staticmethod
     def _semantic_key(
         root_key: Array, stream: int, counter: Array, identity: Array
-    ) -> Key[Array, ""]:
+    ) -> PRNGKey:
         key = jr.wrap_key_data(root_key)
         key = jr.fold_in(key, jnp.asarray(stream, dtype=jnp.uint32))
         key = jr.fold_in(key, jnp.asarray(counter, dtype=jnp.uint32))
@@ -480,7 +480,7 @@ class PreparedAtomisticMultistate(StrictModule):
         self,
         states: Iterable[AtomisticDynamicsState],
         state_at_replica: ArrayLike,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
     ) -> AtomisticMultistateState:
         lanes = tuple(states)

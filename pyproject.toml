@@ -290,6 +290,8 @@ fixable = ["F401", "F841", "I001", "RUF100"]
 "jax.experimental.hijax".msg = "HiJAX is experimental; package code must not depend on it."
 "jaxtyping.Array".msg = "Import Array from jax."
 "jaxtyping.ArrayLike".msg = "Import ArrayLike from jax.typing."
+"jaxtyping.Key".msg = "Use phydrax.typing.PRNGKey for typed PRNG keys."
+"jaxtyping.PRNGKeyArray".msg = "Use phydrax.typing.PRNGKey for typed PRNG keys."
 
 [tool.ruff.lint.per-file-ignores]
 "phydrax/_strict.py" = ["TID251"]

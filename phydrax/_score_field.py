@@ -10,10 +10,10 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ._strict import StrictModule
 from .domain import DomainFunction
+from .typing import PRNGKey
 
 
 class StateTimeScoreField(StrictModule):
@@ -61,7 +61,7 @@ class StateTimeScoreField(StrictModule):
         time: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         context: Mapping[str, ArrayLike] | None = None,
     ) -> Array:
         state_array = jnp.asarray(state)

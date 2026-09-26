@@ -8,13 +8,13 @@ from typing import Any
 
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import Domain, DomainFunction
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ...discretization import TemporalMesh
+from ...typing import PRNGKey
 from ._euclidean import euclidean_kernel
 from ._potential import PotentialLike
 
@@ -56,7 +56,7 @@ class _EuclideanKernelCallable(StrictModule):
         x1: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         return euclidean_kernel(
             self.potential,

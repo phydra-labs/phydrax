@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -23,6 +22,7 @@ from .._term import AbstractSamplingTerm
 from ..integration import IntegrationPrecisionPolicy
 from ..operators.differential._dimension_estimators import DimensionOperatorSamples
 from ..operators.differential._stochastic_estimators import StochasticOperatorSamples
+from ..typing import PRNGKey
 from ._randomized_quadratic import event_inner as _event_inner, randomized_squared_mean
 
 
@@ -145,8 +145,8 @@ class RandomizedResidualBatch(StrictModule):
     def __init__(
         self,
         collocation: Any,
-        left_key: Key[Array, ""],
-        right_key: Key[Array, ""],
+        left_key: PRNGKey,
+        right_key: PRNGKey,
         /,
         *,
         batch_id: str = "randomized-residual",
@@ -174,10 +174,10 @@ class RandomizedResidualDiagnostics(StrictModule):
 
 
 ResidualEvaluator: TypeAlias = Callable[
-    [Mapping[str, DomainFunction], Any, Key[Array, ""]],
+    [Mapping[str, DomainFunction], Any, PRNGKey],
     RandomizedResidualSamples | StochasticOperatorSamples | DimensionOperatorSamples,
 ]
-BatchSampler: TypeAlias = Callable[[Key[Array, ""]], Any]
+BatchSampler: TypeAlias = Callable[[PRNGKey], Any]
 
 
 def _operator_samples(
@@ -314,7 +314,7 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
         self.precision = precision_
         self.label = label
 
-    def sample(self, *, key: Key[Array, ""] = jr.key(0)) -> RandomizedResidualBatch:
+    def sample(self, *, key: PRNGKey = jr.key(0)) -> RandomizedResidualBatch:
         collocation_key, left_key, right_key = jr.split(key, 3)
         if self.sampling_mode == "fixed":
             collocation = self.fixed_collocation
@@ -374,7 +374,7 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         iter_: int | Array | None = None,
         batch: RandomizedResidualBatch | None = None,
         **kwargs: Any,
@@ -400,7 +400,7 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: RandomizedResidualBatch | None = None,
     ) -> RandomizedResidualDiagnostics:
         materialized = self.sample(key=key) if batch is None else batch

@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array, core as jax_core
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -41,6 +40,8 @@ from phydrax.signal import (
     MultiresolutionCoefficients,
     WaveletBoundary,
 )
+
+from .....typing import PRNGKey
 
 
 class WaveletResourcePolicy(StrictModule):
@@ -77,7 +78,7 @@ class _WaveletSubbandMixerND(StrictModule):
         *,
         in_channels: int,
         out_channels: int,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size = int(in_channels)
         out_size = int(out_channels)
@@ -140,7 +141,7 @@ class _MultiwaveletSubbandMixer1D(StrictModule):
         *,
         in_channels: int,
         out_channels: int,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size = int(in_channels)
         out_size = int(out_channels)
@@ -430,7 +431,7 @@ class WaveletNeuralOperator(AbstractOperatorModel):
         depth: int = 4,
         source_key: str | None = None,
         activation: Callable[[Array], Array] = jnn.gelu,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         decode_policy: WaveletDecodePolicy | None = None,
         resources: WaveletResourcePolicy | None = None,
     ) -> None:
@@ -617,7 +618,7 @@ class MultiwaveletOperator(AbstractOperatorModel):
         depth: int = 4,
         source_key: str | None = None,
         activation: Callable[[Array], Array] = jnn.gelu,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         decode_policy: WaveletDecodePolicy | None = None,
     ) -> None:
         self.transform = AlpertMultiwaveletTransform(

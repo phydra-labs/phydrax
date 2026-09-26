@@ -16,7 +16,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array, core as jax_core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -28,6 +27,7 @@ from .._numerics import log_normalize, weight_ess
 from .._strict import StrictModule
 from .._trainable import ArrayRole, require_parameter_roles
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
+from ..typing import PRNGKey
 from ._checkpoint import (
     read_checkpoint_archive,
     write_checkpoint_archive,
@@ -139,7 +139,7 @@ def _stop_indices(indices: Array, /) -> Array:
 
 
 def resample_indices(
-    key: Key[Array, ""],
+    key: PRNGKey,
     log_weights: Array,
     /,
     *,
@@ -445,7 +445,7 @@ class ParticleFisherInformationResult(StrictModule):
 
 
 def initialize_particle_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     /,
     *,
@@ -572,7 +572,7 @@ def _propagate_particles(
         case_active = active_flat[case_index] & state_valid[case_index]
 
         def propagate_one(
-            transition_key: Key[Array, ""], previous_particle: Array
+            transition_key: PRNGKey, previous_particle: Array
         ) -> tuple[Array, Array]:
             def propagate(_: None) -> tuple[Array, Array]:
                 sample = problem.model.transition.sample(
@@ -862,7 +862,7 @@ def particle_filter_step(
 
 
 def bootstrap_particle_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     /,
     *,
@@ -1329,7 +1329,7 @@ def particle_backward_smoother(
 
 
 def particle_backward_simulation(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: ParticleFilterResult,
     /,
     *,
@@ -1739,7 +1739,7 @@ def _sample_terminal_index(
 
 
 def sample_particle_ancestry_paths(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: ParticleFilterResult,
     /,
     *,
@@ -1803,7 +1803,7 @@ def sample_particle_ancestry_paths(
 
 
 def sample_particle_backward_paths(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: ParticleFilterResult,
     /,
     *,
@@ -1814,7 +1814,7 @@ def sample_particle_backward_paths(
 
 
 def particle_filter_predictive(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: ParticleFilterResult,
     /,
     *,

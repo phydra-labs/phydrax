@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax.geometry.operator import BoundsPolicy, TensorGridLatentGeometry
@@ -29,6 +28,8 @@ from phydrax.nn.operator.layers._graph_transfer import (
     GraphKernelTransfer,
     TransferReduction,
 )
+
+from .....typing import PRNGKey
 
 
 class GINO(AbstractOperatorModel):
@@ -78,7 +79,7 @@ class GINO(AbstractOperatorModel):
         query_channels: int = 0,
         query_chunk_size: int | None = 256,
         assume_uniform_measure: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         shape = tuple(latent_shape)
         if len(shape) != int(coord_dim):

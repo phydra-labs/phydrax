@@ -8,12 +8,11 @@ import math
 
 import equinox as eqx
 import jax.random as jr
-from jax import Array
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from .._structure import PointSampling
 from ._cover import (
     PairedSupportEvidence,
@@ -76,7 +75,7 @@ def validate_mapped_cover(
     plan: MappedCoverValidationPlan | None = None,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     raise_on_error: bool = True,
 ) -> MappedCoverEvidence:
     """Sample cover support and every paired physical-coordinate realization."""

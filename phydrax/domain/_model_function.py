@@ -10,8 +10,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -19,6 +17,7 @@ from .._doc import DOC_KEY0
 from .._model import AxisModelEvaluator, ModelBinding
 from .._strict import StrictModule
 from ..logging import emit
+from ..typing import PRNGKey
 from ._evaluation import (
     BatchEvaluator,
     complete_batch_axes,
@@ -79,7 +78,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         x: Any,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         iter_: Any = None,
         **kwargs: Any,
     ) -> Any:
@@ -94,7 +93,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
     def _call_blockwise(
         self,
         *args: Any,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         iter_: Any = None,
         **kwargs: Any,
     ) -> Any:
@@ -110,7 +109,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         iter_: Any = None,
         **kwargs: Any,
     ) -> cx.AxisArray:
@@ -160,7 +159,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         deps: tuple[str, ...],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         iter_: Any = None,
         **kwargs: Any,
     ) -> object:
@@ -173,7 +172,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
     def __call__(
         self,
         *args: Any,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         iter_: Any = None,
         **kwargs: Any,
     ) -> Any:

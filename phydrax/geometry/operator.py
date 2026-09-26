@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._mass import require_exact_mass
@@ -20,6 +19,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..graph._operator_topology import OperatorTopology
 from ..nn.operator.data import FunctionSamples, OperatorAxis
+from ..typing import PRNGKey
 
 
 BoundsPolicy = Literal["global", "case_bbox"]
@@ -369,7 +369,7 @@ def function_samples_from_geometry(
     values: Any | None = None,
     component: GeometryComponent = "interior",
     sampler: str = "latin_hypercube",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> FunctionSamples:
     """Sample a PhydraX geometry into measure-aware operator points."""
     from phydrax.domain import AbstractGeometry

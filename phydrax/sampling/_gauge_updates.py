@@ -14,7 +14,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -25,6 +24,7 @@ from .._strict import StrictModule
 from ..graph._gauge_transport import GaugeStaplePlan
 from ..linalg import determinant_small_linear, SmallLinearSolvePlan
 from ..metrix import SpecialUnitaryGroup, UnitaryGroup
+from ..typing import PRNGKey
 
 
 _UPDATE_ADDRESS = SampleAddress(
@@ -366,7 +366,7 @@ def initialize_gauge_update_state(
 
 
 def _sample_von_mises(
-    key: Key[Array, ""], mean: Array, concentration: Array, attempts: int, /
+    key: PRNGKey, mean: Array, concentration: Array, attempts: int, /
 ) -> tuple[Array, Array, Array]:
     """Best--Fisher exact rejection with explicit finite-capacity exhaustion."""
     dtype = inexact_result_type(mean, concentration)
@@ -422,7 +422,7 @@ def _project_su2(plan: SmallLinearSolvePlan, matrix: Array, /) -> tuple[Array, A
 
 
 def _sample_su2(
-    key: Key[Array, ""], concentration: Array, attempts: int, /
+    key: PRNGKey, concentration: Array, attempts: int, /
 ) -> tuple[Array, Array, Array]:
     """Exact SU(2) Haar heatbath rejection for density exp(k a0)."""
     dtype = inexact_result_type(concentration)
@@ -453,7 +453,7 @@ def _u1_update(
     prepared: PreparedGaugeUpdate,
     link: Array,
     staple: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     overrelax: bool,
 ) -> tuple[Array, Array, Array]:
     product = staple[0, 0]
@@ -475,7 +475,7 @@ def _su2_update(
     prepared: PreparedGaugeUpdate,
     link: Array,
     staple: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     overrelax: bool,
 ) -> tuple[Array, Array, Array]:
     normalized, scale = _project_su2(prepared.small_su2_linalg, staple)
@@ -500,7 +500,7 @@ def _su3_subgroup_update(
     prepared: PreparedGaugeUpdate,
     link: Array,
     staple: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     overrelax: bool,
     pair: tuple[int, int],
 ) -> tuple[Array, Array, Array]:
@@ -537,7 +537,7 @@ def gauge_update_sweeps(
     state: GaugeUpdateState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> GaugeUpdateResult:
     """Execute fixed conflict-colored exact-conditionals and reflections."""
     if not isinstance(prepared, PreparedGaugeUpdate):
@@ -708,7 +708,7 @@ def gauge_replica_exchange(
     state: GaugeReplicaState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> GaugeReplicaExchangeResult:
     """Exchange disjoint neighbors using the exact reduced-potential ratio."""
     if not isinstance(plan, GaugeReplicaExchangePlan):

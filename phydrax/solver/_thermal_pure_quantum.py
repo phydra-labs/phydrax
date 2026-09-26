@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -24,6 +23,7 @@ from ..linalg import (
     MatrixFunctionPolicy,
 )
 from ..operators.quantum.lattice import QuantumSectorOperator
+from ..typing import PRNGKey
 
 
 class ThermalPureQuantumPlan(StrictModule):
@@ -208,7 +208,7 @@ def thermal_pure_quantum(
     observables: Sequence[AbstractLinearOperator],
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> ThermalPureQuantumResult:
     """Execute deterministic semantic probe splitting and preserve every raw probe."""
     if not isinstance(prepared, PreparedThermalPureQuantum):

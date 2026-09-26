@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -23,6 +22,7 @@ from ..._model import register_artifact_value
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
 from ...imaging import image_coordinates
+from ...typing import PRNGKey
 from ..imaging._types import DenseDisplacementField2D, ImagePair2D
 from ._learned_primitives import (
     backward_warp_2d,
@@ -280,7 +280,7 @@ class _ChannelLastConv2D(StrictModule):
         kernel_size: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         final_scale: float = 1.0,
     ) -> None:
         input_count = int(in_channels)
@@ -330,7 +330,7 @@ class _SharedFeaturePyramid(StrictModule):
         feature_channels: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         keys = jr.split(key, 3)
         self.input_projection = _ChannelLastConv2D(
@@ -371,7 +371,7 @@ class _SharedResidualRefinement(StrictModule):
         radius: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         keys = jr.split(key, 3)
         self.input_projection = _ChannelLastConv2D(
@@ -415,7 +415,7 @@ class CorrelationPyramidPIV(AbstractDensePIVModel):
         *,
         feature_channels: int = 16,
         refinement_channels: int = 32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(plan, LearnedDensePIVPlan):
             raise TypeError("plan must be a LearnedDensePIVPlan.")

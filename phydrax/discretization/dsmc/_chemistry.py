@@ -12,11 +12,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from ._core import DSMCParticleState, DSMCSpeciesPlan
 
 
@@ -179,7 +179,7 @@ class DSMCInternalReactionPlan(StrictModule, NonTrainableState):
         first_index: ArrayLike,
         second_index: ArrayLike,
         accepted_collision: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
     ) -> DSMCInternalReactionEventResult:
         first = jnp.asarray(first_index, dtype=jnp.int32)

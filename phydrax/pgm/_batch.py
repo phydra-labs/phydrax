@@ -12,11 +12,11 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..graph import batch_graphs, GraphIR
+from ..typing import PRNGKey
 from ._belief_propagation import (
     BeliefPropagationResult,
     BeliefPropagationState,
@@ -215,7 +215,7 @@ def sample_gibbs_per_chain_clamps(
     state: GibbsState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     schedule: GibbsSchedule,
     clamped: ArrayLike,
 ) -> tuple[GibbsSampleResult, ...]:

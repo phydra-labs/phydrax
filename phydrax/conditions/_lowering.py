@@ -8,13 +8,12 @@ from collections.abc import Mapping, Sequence
 from typing import Any, NoReturn
 
 import equinox as eqx
-from jax import Array
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..domain import DomainFunction
+from ..typing import PRNGKey
 from ._base import AbstractCondition, AbstractMomentCondition, AbstractResidualCondition
 from ._ir import (
     AbstractConditionOperator,
@@ -198,7 +197,7 @@ class _LegacyResidualOperator(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> DomainFunction:
         del key, kwargs
@@ -209,7 +208,7 @@ class _LegacyResidualOperator(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del values, key, kwargs
@@ -220,7 +219,7 @@ class _LegacyResidualOperator(AbstractConditionOperator):
         value: object,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del value, key, kwargs
@@ -231,7 +230,7 @@ class _LegacyResidualOperator(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del values, key, kwargs
@@ -251,7 +250,7 @@ class _LegacyMomentOperator(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Any:
         if "reduction" not in kwargs:
@@ -266,7 +265,7 @@ class _LegacyMomentOperator(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del values, key, kwargs
@@ -277,7 +276,7 @@ class _LegacyMomentOperator(AbstractConditionOperator):
         value: object,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del value, key, kwargs
@@ -288,7 +287,7 @@ class _LegacyMomentOperator(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> NoReturn:
         del values, key, kwargs

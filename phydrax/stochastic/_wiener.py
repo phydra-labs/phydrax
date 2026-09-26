@@ -16,16 +16,16 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 LevyAreaKind: TypeAlias = Literal["brownian", "space_time", "space_time_time"]
 WienerAlgorithm: TypeAlias = Literal["virtual_tree"]
 
 
-def _validated_key(key: Key[Array, ""], /) -> Array:
+def _validated_key(key: PRNGKey, /) -> Array:
     try:
         key_data = jr.key_data(key)
     except (TypeError, ValueError) as exc:
@@ -119,7 +119,7 @@ class WienerRealization(StrictModule):
 
     def __init__(
         self,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         noise_shape: Sequence[int],
         /,
         *,
@@ -240,7 +240,7 @@ class WienerRealization(StrictModule):
     @classmethod
     def independent(
         cls,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         noise_shape: Sequence[int],
         /,
         *,
@@ -268,7 +268,7 @@ class WienerRealization(StrictModule):
     @classmethod
     def antithetic(
         cls,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         noise_shape: Sequence[int],
         /,
         *,

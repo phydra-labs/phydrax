@@ -14,13 +14,13 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 
 
 class StochasticDelayInterpolationCapabilities(StrictModule, NonTrainableState):
@@ -241,9 +241,9 @@ def adaptive_stochastic_delay_step_doubling(
     terminal_time: ArrayLike,
     initial_state: ArrayLike,
     initial_step: ArrayLike,
-    increment: Callable[[Array, Array, Key[Array, ""]], Array],
+    increment: Callable[[Array, Array, PRNGKey], Array],
     step: Callable[[Array, Array, Array, Array, Any], Array],
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     args: Any = None,

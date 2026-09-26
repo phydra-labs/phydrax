@@ -14,7 +14,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._iteration import (
@@ -48,6 +47,7 @@ from ..metrix import (
     SpecialUnitaryGroup,
     UnitaryGroup,
 )
+from ..typing import PRNGKey
 
 
 _MOMENTUM_ADDRESS = SampleAddress(
@@ -353,7 +353,7 @@ def initialize_compact_group_hamiltonian_state(
 
 def _sample_momentum(
     kernel: PreparedCompactGroupHamiltonianKernel,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> Array:
     dtype = kernel.step_size.dtype
@@ -441,7 +441,7 @@ def _one_transition(
     log_target: Array,
     gradient: Array,
     state_valid: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     chain: Array,
     step_index: Array,
     /,
@@ -503,7 +503,7 @@ def sample_compact_group_hamiltonian(
     state: CompactGroupHamiltonianChainState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     iteration: IterationPlan | None = None,
 ) -> CompactGroupHamiltonianSampleResult:
@@ -681,7 +681,7 @@ def _adapt_compact_group_warmup(
     kernel: PreparedCompactGroupHamiltonianKernel,
     state: CompactGroupHamiltonianChainState,
     scale_policy: RobbinsMonroScalePolicy,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[CompactGroupHamiltonianChainState, AdaptiveProposalState, Array, Array]:
     adaptive = initialize_proposal_adaptation(scale_policy, kernel.step_size)
@@ -734,7 +734,7 @@ def adapt_compact_group_hamiltonian(
     plan: HamiltonianAdaptationPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> CompactGroupHamiltonianAdaptationResult:
     """Run finite step-size warmup and return one frozen group-HMC kernel."""
     if not isinstance(kernel, PreparedCompactGroupHamiltonianKernel):

@@ -9,10 +9,10 @@ from typing import Literal
 import equinox as eqx
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import compose_regularity
 from .._keys import EvalKey, fold_in_eval_key
@@ -45,7 +45,7 @@ class SIREN(_AbstractBaseModel):
         final_activation: Callable | None = None,
         use_bias: bool = True,
         use_final_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)

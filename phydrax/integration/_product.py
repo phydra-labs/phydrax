@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -40,6 +39,7 @@ from .._sampling import (
     SampleAddress,
 )
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     IntegrationEstimate,
@@ -520,7 +520,7 @@ def materialize_product(
     plan: ProductIntegrationPlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> ProductIntegrationRealization:
     """Materialize fixed/sparse and one stochastic named-axis product plan."""
     base = target.base if isinstance(target, DensityTarget) else target
@@ -622,7 +622,7 @@ def _reduce_stochastic_product(
     design: Any,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> tuple[cx.AxisArray, Array | None, Array, int]:
@@ -764,7 +764,7 @@ def integrate_product(
     realization: ProductIntegrationRealization,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

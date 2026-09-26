@@ -15,7 +15,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._differentiation import AbstractConstructionCertificate, DerivativeRegularity
 from ..._doc import DOC_KEY0
@@ -25,6 +24,7 @@ from ..._model._array import native_parameter_precision, value_derivative_contra
 from ..._model._component import ModelExecutionContract, RandomnessContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 TrialEquationFamily = Literal[
@@ -541,7 +541,7 @@ class LinearTrefftzField(_AbstractTrialSpaceField):
         *,
         out_size: int | Literal["scalar"] = "scalar",
         initial_scale: float = 0.0,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(basis, AbstractTrefftzBasis):
             raise TypeError("LinearTrefftzField requires an AbstractTrefftzBasis.")

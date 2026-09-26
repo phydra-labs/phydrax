@@ -12,7 +12,6 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict
@@ -33,6 +32,7 @@ from ....nn.operator.training._risk import (
     MechanicsCaseReduction,
     MechanicsCaseReductionResult,
 )
+from ....typing import PRNGKey
 from ._cases import (
     MechanicsCaseBuilder,
     MechanicsOperatorCase,
@@ -591,7 +591,7 @@ class _MechanicsLossBase(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,
@@ -608,7 +608,7 @@ class _MechanicsLossBase(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

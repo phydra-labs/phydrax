@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import optax
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import canonical_fingerprint
@@ -26,6 +26,7 @@ from ..._training_kernel import (
     TrainingRejectionBudgetError,
 )
 from ..._training_objective import _ObjectiveContribution
+from ...typing import PRNGKey
 from ._core import AbstractFlowDistribution
 
 
@@ -53,7 +54,7 @@ def _validation_loss(flow: AbstractFlowDistribution, samples: Array) -> Array:
 
 
 def fit_flow_to_data(
-    key: Key[Array, ""],
+    key: PRNGKey,
     flow: AbstractFlowDistribution,
     data: Array,
     /,

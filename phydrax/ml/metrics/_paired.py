@@ -12,9 +12,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._base import (
     _nan_where_invalid,
     _prepare_pair,
@@ -158,7 +158,7 @@ def _bootstrap_effects(
     unit_numerator: Array,
     unit_weight: Array,
     unit_count: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     resamples: int,
     /,
 ) -> Array:
@@ -194,7 +194,7 @@ def compare_paired_losses(
     candidate_loss: ArrayLike,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     plan: PairedLossComparisonPlan,
     sample_weight: ArrayLike | None = None,
     mask: ArrayLike | None = None,

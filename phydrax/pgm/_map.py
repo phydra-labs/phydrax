@@ -14,11 +14,11 @@ import jax.scipy as jsp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ..graph import segment_sum
+from ..typing import PRNGKey
 from ._belief_propagation import _broadcast_message, PreparedBeliefPropagation
 from ._elimination import _eliminate, VariableEliminationPlan
 from ._model import (
@@ -226,7 +226,7 @@ def perturb_and_map_log_normalizer(
     plan: VariableEliminationPlan,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_samples: int,
     evidence: ArrayLike | None = None,
 ) -> PerturbAndMAPResult:
@@ -245,7 +245,7 @@ def perturb_and_map_log_normalizer(
     keys = jr.split(key, count)
     euler_gamma = jnp.asarray(0.5772156649015329, dtype=base.dtype)
 
-    def one(sample_key: Key[Array, ""]) -> Array:
+    def one(sample_key: PRNGKey) -> Array:
         uniform = jr.uniform(
             sample_key,
             (graph.num_variable_states,),

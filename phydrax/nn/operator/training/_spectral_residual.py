@@ -16,11 +16,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from ...._frozendict import frozendict
 from ....equations._ir import PDEExpression
 from ....equations._spectral_residual import CompiledSpectralResidual
+from ....typing import PRNGKey
 from ..data import (
     FunctionSamples,
     OperatorAxis,
@@ -195,7 +195,7 @@ class SpectralPDEResidualLoss(AbstractOperatorLossTerm):
         targets: OperatorTargetBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         step: Array,
         training: bool,
         context: OperatorLossContext,

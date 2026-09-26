@@ -10,13 +10,13 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
+from ....typing import PRNGKey
 from ..._contracts import (
     AFFINE,
     compose_regularity,
@@ -113,7 +113,7 @@ class OperatorAttention(StrictModule):
         execution: AttentionExecution = "auto",
         block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.source_channels = int(source_channels)
         self.query_channels = (
@@ -189,7 +189,7 @@ class SliceAttention(StrictModule):
         out_channels: int | None = None,
         num_heads: int = 4,
         head_dim: int = 16,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.channels = int(channels)
         self.out_channels = self.channels if out_channels is None else int(out_channels)
@@ -277,7 +277,7 @@ class CodomainAttention(StrictModule):
         out_channels: int | None = None,
         num_heads: int = 4,
         head_dim: int = 16,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.channels = int(channels)
         self.out_channels = self.channels if out_channels is None else int(out_channels)
@@ -336,7 +336,7 @@ class AxialOperatorAttention(StrictModule):
         channels: int,
         num_heads: int = 4,
         head_dim: int = 16,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.channels = int(channels)
         self.core = _AttentionCore(

@@ -14,7 +14,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -23,6 +22,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleNeighborhoodState
 from ..linalg import AbstractLinearOperator
+from ..typing import PRNGKey
 from ._dynamics import PreparedAtomisticDynamics
 from ._hydrodynamic_mobility import (
     AbstractHydrodynamicMobilityPlan,
@@ -230,7 +230,7 @@ class PreparedHydrodynamicBrownian(StrictModule, NonTrainableState):
         positions: ArrayLike,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> HydrodynamicBrownianState:
         value = jnp.asarray(positions, dtype=self.dynamics.system.plan.coordinate_dtype)
         expected = (self.dynamics.system.capacity, 3)

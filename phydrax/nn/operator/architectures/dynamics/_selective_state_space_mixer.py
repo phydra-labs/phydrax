@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -26,6 +25,8 @@ from phydrax.nn.layers._physical_sequence import (
 )
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 SelectiveInputIntegration = Literal["zoh", "linear"]
@@ -111,7 +112,7 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
         min_step_scale: float = 1e-4,
         training_delta_range: tuple[float, float] | None = None,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_size = in_channels
         self.out_size = in_channels if out_channels is None else out_channels

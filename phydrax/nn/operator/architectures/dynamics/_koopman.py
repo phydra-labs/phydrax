@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -28,6 +27,8 @@ from phydrax.nn._utils import _get_size
 from phydrax.nn.models._mlp import MLP
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 KoopmanEvolution = Literal["discrete", "continuous"]
@@ -83,7 +84,7 @@ class KoopmanTemporalOperator(AbstractOperatorModel):
         initial_decay: float = 0.1,
         min_decay: float = 1e-4,
         skew_scale: float = 0.05,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels

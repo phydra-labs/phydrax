@@ -10,12 +10,12 @@ from typing import Literal
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE
 from .._keys import EvalKey
@@ -40,7 +40,7 @@ class ComplexLinear(_AbstractBaseModel):
         in_size: SizeLike,
         out_size: SizeLike,
         use_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size_ = _canonical_size(in_size)
         out_size_ = _canonical_size(out_size)

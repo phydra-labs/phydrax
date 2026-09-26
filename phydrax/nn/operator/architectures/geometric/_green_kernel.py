@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -28,6 +27,8 @@ from phydrax.nn._utils import _get_size
 from phydrax.nn.models._mlp import MLP
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 def _coordinates(
@@ -155,7 +156,7 @@ class GreenKernelOperator(AbstractOperatorModel):
         forcing_key: str = "forcing",
         boundary_key: str = "boundary",
         query_chunk_size: int = 256,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         coordinate_dimension = int(coord_dim)
         forcing_count = _get_size(forcing_channels)

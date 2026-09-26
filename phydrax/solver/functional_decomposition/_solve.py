@@ -14,7 +14,6 @@ import jax.random as jr
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
@@ -57,6 +56,7 @@ from ...domain import (
 )
 from ...nn.parameters import ParameterSubspace
 from ...terms import ResidualPenalty
+from ...typing import PRNGKey
 from .._functional_kernel import (
     functional_kernel_objective,
     FUNCTIONAL_ROOT_AUTHORITY,
@@ -294,7 +294,7 @@ def _term_values(
     functions: Mapping[str, DomainFunction],
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     evaluation: bool,
 ) -> tuple[Array, tuple[tuple[str, Array], ...], tuple[tuple[str, Array], ...]]:
     scoped_terms = (
@@ -332,7 +332,7 @@ def _evidence(
     functions: Mapping[str, DomainFunction],
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> FunctionalDecompositionEvidence:
     training, training_patches, training_pairs = _term_values(
         prepared,
@@ -895,7 +895,7 @@ def solve_functional_decomposition(
     training: FunctionalTrainingPlan | None = None,
     state: FunctionalDecompositionState | None = None,
     max_sweeps: int | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     session: IterationSession | None = None,
 ) -> FunctionalDecompositionResult:
     """Execute one prepared native functional domain-decomposition problem."""

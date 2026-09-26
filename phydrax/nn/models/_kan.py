@@ -10,12 +10,12 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, compose_regularity, SMOOTH, sum_regularity
 from .._keys import EvalKey
@@ -126,7 +126,7 @@ class KANLayer(StrictModule):
         init: Literal["default", "identity"] = "default",
         autoscale: bool = False,
         use_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
@@ -312,7 +312,7 @@ class KAN(_AbstractBaseModel):
         skip_connection: bool = True,
         use_bias: bool = True,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)

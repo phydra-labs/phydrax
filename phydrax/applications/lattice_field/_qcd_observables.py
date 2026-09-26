@@ -17,7 +17,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -49,6 +48,7 @@ from ...operators.path_integral._lattice_fermion import (
     WilsonDiracOperator,
 )
 from ...operators.path_integral._wilson_gauge import WilsonGaugeAction
+from ...typing import PRNGKey
 from ._qcd_ensembles import MeasurementWorkItem
 
 
@@ -784,7 +784,7 @@ class StochasticSourceRealization(StrictModule):
 
 def realize_stochastic_sources(
     plan: StochasticSourcePlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> StochasticSourceRealization:
     """Realize normalized Z2/Z4 noise without changing semantic source identity."""
@@ -792,7 +792,7 @@ def realize_stochastic_sources(
         raise TypeError("plan must be StochasticSourcePlan.")
     keys = jr.split(key, len(plan.source_ids))
 
-    def one(source_key: Key[Array, ""]) -> Array:
+    def one(source_key: PRNGKey) -> Array:
         if plan.noise_kind == "z2":
             values = (
                 2 * jr.bernoulli(source_key, shape=plan.source_shape).astype("float64")

@@ -13,10 +13,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 HawkesTiePolicy: TypeAlias = Literal["simultaneous", "ordered"]
@@ -376,7 +376,7 @@ def evaluate_hawkes_likelihood(
 
 def simulate_hawkes(
     process: ExponentialHawkesProcess,
-    key: PRNGKeyArray,
+    key: PRNGKey,
     /,
     *,
     start_time: float,

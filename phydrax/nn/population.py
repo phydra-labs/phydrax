@@ -22,7 +22,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._dtype_names import inexact_result_type
 from .._numerics import solve_weighted_least_squares, WeightedLeastSquaresResult
@@ -30,6 +29,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..domain import HyperRectangle
 from ..ein import contract
+from ..typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -186,7 +186,7 @@ def prepare_lif_population(
     neuron_count: int,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     encoders: ArrayLike | None = None,
     intercepts: ArrayLike | None = None,
     maximum_rates_hz: ArrayLike | None = None,
@@ -265,7 +265,7 @@ def sample_population_points(
     count: int,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     sampler: str = "latin_hypercube",
 ) -> Array:
     """Sample evaluation or independent held-out points using the native domain."""

@@ -11,11 +11,11 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._density import ContinuousFlowDensityResult, ContinuousFlowLaw
 from ._transport import ContinuousTransport
 
@@ -59,7 +59,7 @@ class RiemannianContinuousFlowLaw(AbstractProbabilityLaw):
             flow_id=flow_id,
         )
         initial_evidence = manifold.local_geometry(
-            transport.source_law.sample(jax.random.PRNGKey(0))
+            transport.source_law.sample(jax.random.key(0))
         )
         if not bool(initial_evidence.valid):
             raise ValueError("Initial manifold tangent/measure evidence is invalid.")
@@ -88,7 +88,7 @@ class RiemannianContinuousFlowLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> str:
         return "riemannian"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.coordinate_law.sample(key, sample_shape)
 
     def log_prob_with_diagnostics(

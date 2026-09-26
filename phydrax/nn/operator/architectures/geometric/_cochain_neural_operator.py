@@ -17,7 +17,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
@@ -44,6 +43,8 @@ from phydrax.nn.operator.topology import (
     materialize_operator_fields,
 )
 
+from .....typing import PRNGKey
+
 
 _ROUTE_ORDER = (
     "self",
@@ -55,12 +56,12 @@ _ROUTE_ORDER = (
 )
 
 
-def _named_key(key: Key[Array, ""], label: str, /) -> Key[Array, ""]:
+def _named_key(key: PRNGKey, label: str, /) -> PRNGKey:
     digest = hashlib.sha256(label.encode("utf-8")).digest()
     return jr.fold_in(key, int.from_bytes(digest[:4], "little"))
 
 
-def _channel_matrix(key: Key[Array, ""], in_channels: int, out_channels: int, /) -> Array:
+def _channel_matrix(key: PRNGKey, in_channels: int, out_channels: int, /) -> Array:
     scale = 1.0 / jnp.sqrt(float(max(1, in_channels)))
     return scale * jr.normal(key, (int(in_channels), int(out_channels)))
 
@@ -162,7 +163,7 @@ class TopologicalCochainBlock(StrictModule):
         boundary_policy: CochainBoundaryKind = "absolute",
         norm_epsilon: float = 1e-6,
         residual_scale: float = 0.25,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         resolved_width = int(width)
         degrees = tuple(sorted({int(value) for value in active_degrees}))
@@ -360,7 +361,7 @@ class CochainNeuralOperator(AbstractOperatorModel):
         boundary_policy: CochainBoundaryKind = "absolute",
         default_target: str | None = None,
         norm_epsilon: float = 1e-6,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         specs = tuple(fields)
         if not specs or any(not isinstance(field, OperatorFieldSpec) for field in specs):

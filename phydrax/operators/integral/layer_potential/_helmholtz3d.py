@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax._strict import StrictModule
 from phydrax.ein import contract
@@ -20,6 +19,7 @@ from phydrax.ein import contract
 from ...._fingerprint import canonical_fingerprint
 from ...._model import TRIAL_SPACE_CERTIFICATE_KEY
 from ....equations.trefftz._core import _AbstractTrialSpaceField, TrialSpaceCertificate
+from ....typing import PRNGKey
 from ._core import LayerDiscretizationReport
 from ._surface3d import SurfacePanelization3D
 
@@ -155,7 +155,7 @@ class HelmholtzLayerPotential3D(_AbstractTrialSpaceField):
             raise ValueError("Replacement density must preserve source-node shape.")
         return eqx.tree_at(lambda potential: potential.density, self, values)
 
-    def __call__(self, target: Array, /, *, key: Key[Array, ""] | None = None) -> Array:
+    def __call__(self, target: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (3,):
@@ -268,7 +268,7 @@ class HelmholtzCombinedField3D(_AbstractTrialSpaceField):
             trace_policy="three-dimensional-brakhage-werner-combined",
         )
 
-    def __call__(self, target: Array, /, *, key: Key[Array, ""] | None = None) -> Array:
+    def __call__(self, target: Array, /, *, key: PRNGKey | None = None) -> Array:
         del key
         value = jnp.asarray(target, dtype=jnp.float64)
         differences = value[None, :] - self.panelization.points

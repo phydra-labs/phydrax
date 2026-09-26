@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import DomainFunction, PointBatch, SampleLayout
@@ -38,6 +37,7 @@ from ...linalg import (
     RankPolicy,
     solve,
 )
+from ...typing import PRNGKey
 
 
 BSplineFitMode: TypeAlias = Literal["interpolate", "least_squares", "smooth"]
@@ -236,7 +236,7 @@ class BSplineInterpolant(StrictModule, NonTrainableState):
         /,
         *,
         derivative_order: int = 0,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -627,7 +627,7 @@ def interpolate_bspline(
     grid: BSplineGrid | None = None,
     sample_weights: ArrayLike | None = None,
     constraints: Sequence[BSplineBoundaryConstraint] = (),
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> DomainFunction:
     """Fit a one-dependency `DomainFunction` and preserve its domain metadata."""
     if not isinstance(function, DomainFunction):

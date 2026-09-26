@@ -17,7 +17,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -35,6 +34,7 @@ from .._model._component import bind_positional_component
 from .._model._ports import require_port_shapes
 from .._strict import StrictModule
 from .._trainable import fixed_field, NonTrainableState, parameter_field
+from ..typing import PRNGKey
 from ._linear_gaussian import (
     degenerate_gaussian_log_prob,
     LinearGaussianDynamics,
@@ -89,7 +89,7 @@ def _event_finite(array: Array, event_shape: tuple[int, ...]) -> Array:
 
 
 def state_space_key(
-    root_key: Key[Array, ""],
+    root_key: PRNGKey,
     namespace: str,
     case_id: str,
     step: ArrayLike,
@@ -300,7 +300,7 @@ class AbstractStatePrior(StrictModule):
         raise NotImplementedError
 
     @abstractmethod
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         raise NotImplementedError
 
     @abstractmethod
@@ -332,7 +332,7 @@ class DistributionStatePrior(AbstractStatePrior):
     def location(self) -> Array:
         return self.distribution.location
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.distribution.sample(key, sample_shape)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
@@ -396,7 +396,7 @@ class GaussianStatePrior(AbstractStatePrior):
     def location(self) -> Array:
         return self.mean
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         samples = _shape(sample_shape, owner="sample_shape")
         size = _event_size(self.state_shape)
         noise = jr.normal(
@@ -471,7 +471,7 @@ class CategoricalStatePrior(AbstractStatePrior):
         indices = jnp.argmax(self.probabilities, axis=-1)
         return self.states[indices]
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         samples = _shape(sample_shape, owner="sample_shape")
         logits = jnp.log(self.probabilities)
         indices = jr.categorical(
@@ -536,7 +536,7 @@ class AbstractTransitionKernel(AbstractComponentSlot):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -598,7 +598,7 @@ class CallableTransitionKernel(AbstractTransitionKernel, NonTrainableState):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -672,7 +672,7 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -869,7 +869,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -967,7 +967,7 @@ class AbstractObservationModel(AbstractComponentSlot):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         time: ArrayLike,
         context: StateSpaceStepContext,
@@ -1042,7 +1042,7 @@ class CallableObservationModel(AbstractObservationModel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         time: ArrayLike,
         context: StateSpaceStepContext,
@@ -1282,7 +1282,7 @@ class GaussianObservationModel(AbstractObservationModel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         time: ArrayLike,
         context: StateSpaceStepContext,
@@ -1412,7 +1412,7 @@ class LinearGaussianObservationModel(AbstractObservationModel):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         time: ArrayLike,
         context: StateSpaceStepContext,

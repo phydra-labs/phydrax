@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -31,6 +30,8 @@ from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
+
+from .....typing import PRNGKey
 
 
 def _image_shape(shape: int | Sequence[int], /) -> tuple[int, int]:
@@ -194,7 +195,7 @@ class _ConditionedLayerNorm(StrictModule):
         *,
         conditioned: bool,
         eps: float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.conditioned = bool(conditioned)
         self.norm = eqx.nn.LayerNorm(
@@ -248,7 +249,7 @@ class _WindowAttention2D(StrictModule):
         num_heads: int,
         window_size: int,
         shifted: bool,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.width = int(width)
         self.num_heads = int(num_heads)
@@ -447,7 +448,7 @@ class _PoseidonBlock(StrictModule):
         mlp_ratio: float,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         hidden = int(round(float(mlp_ratio) * int(width)))
         if hidden <= 0:
@@ -520,7 +521,7 @@ class _PoseidonStage(StrictModule):
         mlp_ratio: float,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.blocks = tuple(
             _PoseidonBlock(
@@ -557,7 +558,7 @@ class _PatchMerge(StrictModule):
         *,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         reduction_key, norm_key = jr.split(key)
         self.in_width = int(in_width)
@@ -606,7 +607,7 @@ class _PatchUnmerge(StrictModule):
         *,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         expansion_key, mix_key, norm_key = jr.split(key, 3)
         self.in_width = int(in_width)
@@ -666,7 +667,7 @@ class _ConvNeXtSkipBlock(StrictModule):
         *,
         conditioned: bool,
         norm_eps: float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         keys = jr.split(key, 4)
         self.width = int(width)
@@ -760,7 +761,7 @@ class Poseidon(AbstractOperatorModel):
         source_key: str | None = None,
         learn_residual: bool = False,
         norm_eps: float = 1e-5,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels

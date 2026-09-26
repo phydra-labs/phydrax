@@ -13,13 +13,13 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax import ein
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.qualification import ReferenceArtifactManifest
 from phydrax.units import conversion_factor, SECOND, UnitDefinition
 
+from ....typing import PRNGKey
 from ._scenario import _identity, _label, GeneIdentity
 
 
@@ -198,7 +198,7 @@ class LabeledTranscriptAssay:
             )
         return mean, covariance
 
-    def sample(self, key: Key[Array, ""], latent_counts: ArrayLike, /) -> Array:
+    def sample(self, key: PRNGKey, latent_counts: ArrayLike, /) -> Array:
         """Sample exact mutually exclusive capture plus Poisson background."""
 
         raw = np.asarray(latent_counts)
@@ -369,7 +369,7 @@ class LabeledTranscriptCounts:
 
 
 def observe_labeled_transcripts(
-    key: Key[Array, ""],
+    key: PRNGKey,
     latent_counts: ArrayLike,
     assay: LabeledTranscriptAssay,
     /,

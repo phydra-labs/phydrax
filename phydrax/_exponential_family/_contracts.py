@@ -12,11 +12,11 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
 from ..domain._measure import MeasureKind
+from ..typing import PRNGKey
 
 
 ExponentialFamilyStatus: TypeAlias = Literal[0, 1, 2, 3, 4, 5, 6, 7]
@@ -363,7 +363,7 @@ class AbstractExponentialFamily(StrictModule):
     @abstractmethod
     def _sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         natural_values: Array,
         sample_shape: tuple[int, ...],
         /,
@@ -495,7 +495,7 @@ class AbstractExponentialFamily(StrictModule):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         natural: NaturalCoordinates,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
@@ -599,7 +599,7 @@ class ExponentialFamilyLaw(AbstractProbabilityLaw):
     def log_prob(self, value: ArrayLike, /) -> Array:
         return self.family.log_prob(self.natural, value)
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.family.sample(key, self.natural, tuple(sample_shape))
 
     def kl_divergence(self, other: "ExponentialFamilyLaw", /) -> Array:

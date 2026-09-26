@@ -15,7 +15,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array, core as jax_core
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -39,6 +38,7 @@ from phydrax.nn.operator.data import (
 from phydrax.nn.operator.engine import AbstractOperatorModel
 from phydrax.signal import fourier_resample as _fourier_resample
 
+from .....typing import PRNGKey
 from ._fno import _activation_regularity
 
 
@@ -322,7 +322,7 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         oversample_factor: int = 2,
         circular: bool = True,
         extension_modes: Sequence[ConvolutionAxisPolicy] | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         super().__init__(
             spatial_ndim=spatial_ndim,
@@ -503,7 +503,7 @@ class _CNOBlock(StrictModule):
         oversample_factor: int,
         circular: bool,
         extension_modes: Sequence[ConvolutionAxisPolicy],
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         first_key, second_key, skip_key = jr.split(key, 3)
         self.first = AntiAliasedConvND(
@@ -616,7 +616,7 @@ class CNO(AbstractOperatorModel):
         coordinate_embedding: bool = True,
         source_key: str | None = None,
         support_plan: ConvolutionSupportPlan | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels
@@ -833,7 +833,7 @@ class UNO(AbstractOperatorModel):
         coordinate_embedding: bool = True,
         source_key: str | None = None,
         support_plan: ConvolutionSupportPlan | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels

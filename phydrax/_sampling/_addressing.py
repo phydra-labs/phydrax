@@ -11,9 +11,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 _ADDRESS_NAMESPACE = b"phydrax-sample-address\0"
@@ -72,11 +72,11 @@ def _address_token(*parts: str) -> int:
 
 
 def derive_key(
-    root_key: Key[Array, ""],
+    root_key: PRNGKey,
     address: SampleAddress,
     /,
     *indices: int | Array,
-) -> Key[Array, ""]:
+) -> PRNGKey:
     """Derive a JAX key from a semantic address and runtime indices."""
     key = jr.fold_in(root_key, jnp.asarray(address.token, dtype=jnp.uint32))
     for index in indices:

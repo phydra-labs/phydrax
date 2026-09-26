@@ -14,15 +14,15 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._term import AbstractSamplingTerm, AbstractScalarTerm
 from ..domain import DomainFunction
 from ..nn.models.wrappers._implicit_modal import ImplicitModalField
+from ..typing import PRNGKey
 
 
-ModalTimeProvider: TypeAlias = Callable[[Key[Array, ""]], Array]
+ModalTimeProvider: TypeAlias = Callable[[PRNGKey], Array]
 
 
 def _weight(value: ArrayLike, /, *, name: str) -> Array:
@@ -103,7 +103,7 @@ class CompiledModalResidualTerm(AbstractSamplingTerm):
         self.function_name = name
         self.label = label
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> Array:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> Array:
         if self.fixed_times is not None:
             return self.fixed_times
         if self.time_provider is None:
@@ -115,7 +115,7 @@ class CompiledModalResidualTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: ArrayLike | None = None,
         **kwargs: Any,
@@ -206,7 +206,7 @@ class ModalObservationTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

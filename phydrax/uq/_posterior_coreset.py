@@ -13,11 +13,11 @@ import jax.random as jr
 from jax import Array
 from jax.flatten_util import ravel_pytree
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._diagnostics import MCMCDiagnostics
 from ._mcmc import MCMCResult
 from ._posterior import PosteriorProblem
@@ -133,7 +133,7 @@ def thin_posterior(
     method: SteinThinning,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PosteriorCoreset:
     """Compress each MCMC chain without changing the source result's semantics."""
     if not isinstance(result, MCMCResult):
@@ -262,7 +262,7 @@ def _thin_chain(
     scores: Array,
     method: SteinThinning,
     precision: Array,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[Array, Array]:
     num_draws = points.shape[0]

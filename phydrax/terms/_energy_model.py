@@ -13,10 +13,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 class EnergyTarget(StrictModule):
@@ -120,7 +120,7 @@ class PersistentContrastiveDivergence(StrictModule):
     def __init__(
         self,
         target: EnergyTarget,
-        reference_sampler: Callable[[Key[Array, ""], tuple[int, ...]], ArrayLike],
+        reference_sampler: Callable[[PRNGKey, tuple[int, ...]], ArrayLike],
         /,
         *,
         step_size: float,
@@ -151,9 +151,7 @@ class PersistentContrastiveDivergence(StrictModule):
             }
         )
 
-    def initialize(
-        self, key: Key[Array, ""], particle_count: int, /
-    ) -> PersistentEnergyState:
+    def initialize(self, key: PRNGKey, particle_count: int, /) -> PersistentEnergyState:
         count = int(particle_count)
         if count <= 0:
             raise ValueError("particle_count must be positive.")
@@ -198,7 +196,7 @@ class PersistentContrastiveDivergence(StrictModule):
         expanded = refresh.reshape(refresh.shape + (1,) * len(self.target.event_shape))
         initial = jnp.where(expanded, fresh, state.particles)
 
-        def one_step(particles: Array, key: Key[Array, ""]) -> tuple[Array, None]:
+        def one_step(particles: Array, key: PRNGKey) -> tuple[Array, None]:
             keys = jr.split(key, particles.shape[0])
             gradients = jax.vmap(
                 lambda particle: jax.grad(self.target.energy_value)(particle)

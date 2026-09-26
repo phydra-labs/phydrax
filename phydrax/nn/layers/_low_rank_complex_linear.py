@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -22,6 +21,7 @@ from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE
 from .._keys import EvalKey
@@ -106,7 +106,7 @@ class LowRankComplexLinear(_AbstractBaseModel):
         out_size: SizeLike,
         rank: int,
         use_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         in_size_ = _canonical_size(in_size)
         out_size_ = _canonical_size(out_size)

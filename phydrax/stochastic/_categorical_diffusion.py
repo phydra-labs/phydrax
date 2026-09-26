@@ -14,10 +14,10 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 CategoricalTerminalRelationship: TypeAlias = Literal["exact", "approximate", "assumed"]
@@ -149,9 +149,7 @@ class CategoricalDiffusionSchedule(StrictModule):
         )
         return probabilities.reshape(state.shape + (self.num_classes,))
 
-    def corrupt(
-        self, clean: ArrayLike, timestep: ArrayLike, key: Key[Array, ""], /
-    ) -> Array:
+    def corrupt(self, clean: ArrayLike, timestep: ArrayLike, key: PRNGKey, /) -> Array:
         probabilities = self.marginal_probabilities(clean, timestep)
         return jr.categorical(key, jnp.log(probabilities), axis=-1).astype(jnp.int32)
 
@@ -342,7 +340,7 @@ class CategoricalReverseDiffusion(StrictModule):
         )
 
     def sample(
-        self, key: Key[Array, ""], sample_shape: Sequence[int], /
+        self, key: PRNGKey, sample_shape: Sequence[int], /
     ) -> CategoricalDiffusionSample:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
@@ -356,8 +354,8 @@ class CategoricalReverseDiffusion(StrictModule):
         timesteps = jnp.arange(self.schedule.num_steps - 1, -1, -1, dtype=jnp.int32)
 
         def step(
-            carry: tuple[Array, Key[Array, ""]], timestep: Array
-        ) -> tuple[tuple[Array, Key[Array, ""]], Array]:
+            carry: tuple[Array, PRNGKey], timestep: Array
+        ) -> tuple[tuple[Array, PRNGKey], Array]:
             state, current_key = carry
             current_key, model_key, sample_key = jr.split(current_key, 3)
             batch_time = jnp.full(samples, timestep, dtype=jnp.int32)
@@ -394,7 +392,7 @@ def categorical_denoising_loss(
     predictor: Callable,
     schedule: CategoricalDiffusionSchedule,
     clean: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     mask: ArrayLike | None = None,

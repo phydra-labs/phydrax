@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import BatchEvaluator, DomainComponent, DomainFunction, PointSampling
@@ -37,6 +36,7 @@ from ..domain.graph._observation import (
 from ..integration import ComponentTarget, mean_over, over, per_step
 from ..ml._classification import ClassificationObjective, ClassificationObjectiveKind
 from ..ml._schema import TargetSchema
+from ..typing import PRNGKey
 from ._integral_functional import IntegralFunctional
 
 
@@ -146,9 +146,7 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         self.alpha = objective.alpha
         self.thresholds = objective.thresholds
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError("Graph classification scores require GraphBatch evaluation.")
 
@@ -157,7 +155,7 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if not isinstance(batch, GraphBatch):

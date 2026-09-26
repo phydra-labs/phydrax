@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import (
@@ -27,6 +27,7 @@ from ..linalg import (
     SparseStorage,
 )
 from ..linalg._spaces import _coordinate_dtype
+from ..typing import PRNGKey
 from ._gp_likelihood import GaussianProcessLikelihoodState
 
 
@@ -302,7 +303,7 @@ class BlockSparseGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
     @classmethod
     def from_random(
         cls,
-        key: Key[Array, ""],
+        key: PRNGKey,
         num_observations: int,
         num_actions: int,
         /,

@@ -16,7 +16,6 @@ import numpy as np
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax._strict import StrictModule
 
@@ -27,6 +26,7 @@ from ....nn.models import MLP
 from ....solver import DiffraxEvolution, FunctionalSolver
 from ....terms import FlowMatchingTerm
 from ....transport import EndpointCouplingSample, LinearEndpointInterpolant
+from ....typing import PRNGKey
 from ._corpus import CalorimeterCorpus
 from ._geometry import CalorimeterGeometry
 
@@ -48,7 +48,7 @@ class ConditionalCalorimeterVelocity(StrictModule):
         *,
         width: int,
         depth: int,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         if not isinstance(geometry, CalorimeterGeometry):
             raise TypeError("geometry must be CalorimeterGeometry.")
@@ -118,7 +118,7 @@ def _velocity_function(model: ConditionalCalorimeterVelocity) -> DomainFunction:
 def _endpoints(
     corpus: CalorimeterCorpus,
     indices: Sequence[int],
-    key: Key[Array, ""],
+    key: PRNGKey,
     count: int,
     energy_scale: float,
 ) -> EndpointCouplingSample:
@@ -160,7 +160,7 @@ def fit_calorimeter_flow(
     corpus: CalorimeterCorpus,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     steps: int = 200,
     pairs_per_step: int = 32,
     width: int = 64,
@@ -345,7 +345,7 @@ def prepare_calorimeter_sampler(
 
 def sample_calorimeter_showers(
     sampler: PreparedCalorimeterSampler,
-    key: Key[Array, ""],
+    key: PRNGKey,
     conditions: ArrayLike,
     /,
 ) -> CalorimeterFastSimulation:

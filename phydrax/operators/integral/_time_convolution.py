@@ -11,13 +11,13 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
 from ...integration import GaussLegendreRule
 from ...integration._rules import IntervalRule
+from ...typing import PRNGKey
 from .._causal_quadrature import causal_reference_rule
 
 
@@ -82,14 +82,14 @@ def time_convolution(
     u_time_position = u.deps.index(time_var) if time_var in u.deps else None
 
     def _u_at_time(
-        u_args: list[object], time: Array, *, key: Key[Array, ""], **kwargs: Any
+        u_args: list[object], time: Array, *, key: PRNGKey, **kwargs: Any
     ) -> Any:
         call_args = list(u_args)
         if u_time_position is not None:
             call_args[u_time_position] = time
         return u.func(*call_args, key=key, **kwargs)
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         evaluation_key = DOC_KEY0 if key is None else key
         target_time = jnp.asarray(args[time_position], dtype=jnp.float64).reshape(())
         duration = jnp.maximum(target_time - t0, 0.0)

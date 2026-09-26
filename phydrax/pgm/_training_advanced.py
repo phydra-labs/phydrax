@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from .._strict import StrictModule
@@ -30,6 +30,7 @@ from .._training_kernel import (
     TrainingRejectionBudgetError,
 )
 from .._training_objective import _ObjectiveContribution
+from ..typing import PRNGKey
 from ._belief_propagation import SumProductBeliefPropagationResult
 from ._elimination import (
     plan_variable_elimination,
@@ -213,7 +214,7 @@ def persistent_contrastive_divergence_step(
     optimizer: optax.GradientTransformation,
     prepared: PreparedChromaticGibbs,
     positive_assignments: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     negative_sweeps: int = 1,
@@ -279,7 +280,7 @@ def stochastic_maximum_likelihood_step(
     optimizer: optax.GradientTransformation,
     prepared: PreparedChromaticGibbs,
     positive_assignments: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     negative_sweeps: int = 1,

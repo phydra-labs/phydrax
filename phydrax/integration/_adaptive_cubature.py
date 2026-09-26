@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -37,6 +36,7 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._numerics._compensated import compensated_sum, two_sum
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._adaptive_callable import _error_norm, _meets_plan_tolerance
 from ._adaptive_triangle import integrate_adaptive_triangle
 from ._estimates import (
@@ -61,7 +61,7 @@ class _ProductCubatureIntegrand(StrictModule):
     structure: SampleLayout
     axis: str = eqx.field(static=True)
     log_density: DomainFunction | None
-    key: Key[Array, ""]
+    key: PRNGKey
     kwargs: frozendict[str, Any]
     precision: IntegrationPrecisionPolicy
 
@@ -940,7 +940,7 @@ def _run_product(
     /,
     *,
     log_density: Any | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
     precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
@@ -1109,7 +1109,7 @@ def integrate_adaptive_cubature(
     plan: AdaptiveCubaturePlan,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:

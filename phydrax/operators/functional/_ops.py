@@ -8,11 +8,11 @@ from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import DomainFunction
 
+from ...typing import PRNGKey
 from ..integral._batch_ops import integral, mean
 
 
@@ -44,9 +44,7 @@ def spatial_inner_product(
     u_positions = tuple(indices[label] for label in u2.deps)
     v_positions = tuple(indices[label] for label in v2.deps)
 
-    def _inner(
-        *args: Any, key: Key[Array, ""] | None = None, **inner_kwargs: Any
-    ) -> Array:
+    def _inner(*args: Any, key: PRNGKey | None = None, **inner_kwargs: Any) -> Array:
         left = jnp.asarray(
             u2.func(*(args[index] for index in u_positions), key=key, **inner_kwargs)
         )
@@ -73,9 +71,7 @@ def spatial_lp_norm(
         raise ValueError("p must be positive.")
     exponent = float(p)
 
-    def _power(
-        *args: Any, key: Key[Array, ""] | None = None, **inner_kwargs: Any
-    ) -> Array:
+    def _power(*args: Any, key: PRNGKey | None = None, **inner_kwargs: Any) -> Array:
         value = jnp.asarray(u.func(*args, key=key, **inner_kwargs))
         return jnp.power(jnp.linalg.norm(value.reshape((-1,))), exponent)
 

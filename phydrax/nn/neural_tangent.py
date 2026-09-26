@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -32,6 +32,7 @@ from ..linalg import (
     PyTreeSpace,
     stochastic_trace,
 )
+from ..typing import PRNGKey
 
 
 TangentKernelKind = Literal["euclidean", "parameter_metric"]
@@ -348,7 +349,7 @@ def _dense_diagnostics(
 def _matrix_free_diagnostics(
     prepared: PreparedEmpiricalNTK,
     policy: NTKDiagnosticsPolicy,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> NTKDiagnostics:
     diagonal_key, trace_key, square_key, eigen_key = jr.split(key, 4)
     diagonal = estimate_diagonal(
@@ -417,7 +418,7 @@ def analyze_ntk(
     /,
     *,
     policy: NTKDiagnosticsPolicy | None = None,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
 ) -> NTKDiagnostics:
     """Measure a prepared NTK without silently materializing large kernels."""
     if not isinstance(prepared, PreparedEmpiricalNTK):

@@ -16,7 +16,7 @@ import numpy as np
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
@@ -40,6 +40,7 @@ from ..._training_kernel import (
 )
 from ..._training_objective import _ObjectiveContribution
 from ...imaging import ImagePlaneSupport
+from ...typing import PRNGKey
 from ._learned_model import AbstractDensePIVModel
 from ._learned_primitives import (
     MultiScaleRobustPIVLoss,
@@ -522,7 +523,7 @@ def fit_learned_piv(
     config: LearnedPIVTrainingConfig,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     optimizer: optax.GradientTransformation | None = None,
     session: IterationSession | None = None,
 ) -> LearnedPIVFitResult:

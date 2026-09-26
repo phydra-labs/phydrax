@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -51,6 +50,7 @@ from ..operators.quantum import (
     ComplexParameterMode,
     LogAmplitude,
 )
+from ..typing import PRNGKey
 from ._variational_monte_carlo import (
     _clipped_direction,
     _FrozenVMCRun,
@@ -374,7 +374,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
         )
 
     def initial_state(
-        self, *, key: Key[Array, ""] = DOC_KEY0
+        self, *, key: PRNGKey = DOC_KEY0
     ) -> VariationalMonteCarloSubspaceState:
         markov = self.kernel.initialize(
             FullMarkovTarget(
@@ -414,7 +414,7 @@ class VariationalMonteCarloSubspaceState(StrictModule):
         parameter_coordinates: Sequence[Array],
         markov_state: MarkovState,
         iteration: int | Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         attempt_cursor: int | Array | None = None,
     ) -> None:
         models_ = tuple(models)
@@ -734,7 +734,7 @@ def evaluate_variational_monte_carlo_subspace(
     markov_state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
     steps_per_draw: int = 1,
     warmup_steps: int = 0,
@@ -1020,7 +1020,7 @@ def solve_variational_monte_carlo_subspace(
     policy: VariationalMonteCarloPolicy,
     /,
     *,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     state: VariationalMonteCarloSubspaceState | None = None,
     ritz_tolerance: float = 1e-10,
 ) -> VariationalMonteCarloSubspaceResult:

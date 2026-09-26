@@ -8,7 +8,6 @@ from typing import Any, SupportsFloat
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._term import AbstractSamplingTerm
@@ -21,6 +20,7 @@ from ..integration import (
     reduce,
     resolve_integration,
 )
+from ..typing import PRNGKey
 
 
 class TargetConsistencyTerm(AbstractSamplingTerm):
@@ -47,7 +47,7 @@ class TargetConsistencyTerm(AbstractSamplingTerm):
         self.weight = float(weight)
         self.label = None if label is None else str(label)
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> IntegrationRealization | None:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> IntegrationRealization | None:
         if isinstance(self.source, CallerIntegration):
             return None
         return resolve_integration(self.source, key=key)
@@ -57,7 +57,7 @@ class TargetConsistencyTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: IntegrationRealization | None = None,
         target_functions: Mapping[str, DomainFunction] | None = None,
         **kwargs: Any,

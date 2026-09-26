@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -26,6 +25,7 @@ from ..._trainable import fixed_field, ParameterOwner
 from ...linalg import DenseLinearOperator, FactorizationPolicy, factorize
 from ...operators.quantum._amplitude import LogAmplitude
 from ...tensor_network import MatrixProductState
+from ...typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -326,7 +326,7 @@ class AutoregressiveSpinAmplitude(StrictModule, ParameterOwner):
         )
         return LogAmplitude(0.5 * log_probability, jnp.exp(1j * phase_angle), valid=valid)
 
-    def sample(self, key: Key[Array, ""], /, *, sample_index: int = 0) -> Array:
+    def sample(self, key: PRNGKey, /, *, sample_index: int = 0) -> Array:
         spins = jnp.zeros((self.site_count,), dtype=self.conditional_bias.dtype)
         for site in range(self.site_count):
             site_key = derive_key(key, _DIRECT_SAMPLE_ADDRESS, sample_index, site)

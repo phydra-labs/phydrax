@@ -14,7 +14,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0
@@ -54,6 +53,8 @@ from phydrax.nn.operator.data import (
 )
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 from phydrax.nn.operator.layers._attention import _measure_attention_regularity
+
+from .....typing import PRNGKey
 
 
 class _AttentionOptions(TypedDict):
@@ -179,7 +180,7 @@ class LatentTokenBlock(StrictModule):
         block_size: int = 256,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.width = int(width)
         hidden = round(float(feed_forward_multiplier) * self.width)
@@ -306,7 +307,7 @@ class LatentTokenProcessor(StrictModule):
         block_size: int = 256,
         accumulation_dtype: str = "input",
         norm_eps: float = 1e-6,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.width = int(width)
         self.depth = int(depth)
@@ -411,7 +412,7 @@ class UPT(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)
@@ -698,7 +699,7 @@ class ABUPT(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.graph = graph
         self.conditioning_names = graph.conditioning_names

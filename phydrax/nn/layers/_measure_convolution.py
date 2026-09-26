@@ -12,11 +12,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._dependency import AxisDependencyReach, OperatorDependencySupport
 
 
@@ -116,7 +116,7 @@ class _AbstractMeasureNormalizedConvND(StrictModule, ParameterOwner):
         use_bias: bool = True,
         epsilon: float = 1e-12,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         ndim = int(spatial_ndim)
         _dimension_numbers(ndim)

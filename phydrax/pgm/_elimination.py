@@ -17,11 +17,11 @@ import jax.scipy as jsp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._kernel import FactorGraphResourcePolicy
 from ._model import (
     DiscreteFactorGraph,
@@ -585,11 +585,11 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
             -jnp.inf,
         )
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         count = prod(tuple(sample_shape)) if sample_shape else 1
         keys = jr.split(key, count)
 
-        def one_sample(sample_key: Key[Array, ""]) -> Array:
+        def one_sample(sample_key: PRNGKey) -> Array:
             chosen: dict[int, Array] = {}
             state = jnp.zeros((self.plan.graph.num_variables,), dtype=jnp.int32)
             for variable, cardinality in enumerate(

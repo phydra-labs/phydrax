@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -25,6 +24,7 @@ from ..nn._base import _AbstractBaseModel
 from ..nn._keys import EvalKey, split_eval_key
 from ..nn.operator.data import OperatorBatch
 from ..nn.operator.protocols import OperatorModel
+from ..typing import PRNGKey
 from ._operator import operator_predictive_from_samples, OperatorPredictiveField
 from ._predictive import _sample_validity, PredictiveField, SampleAxis
 
@@ -81,7 +81,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         /,
         *,
         num_members: int,
-        key: Key[Array, ""],
+        key: PRNGKey,
         source_dim: str = "__phydra_uq_epistemic",
     ) -> "HomogeneousFunctionEnsemble":
         count = int(num_members)
@@ -112,7 +112,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         variable: str | None = None,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
@@ -123,7 +123,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
             template_member, points, variable=variable, key=member_keys[0], **kwargs
         )
 
-        def evaluate(member: Any, member_key: Key[Array, ""]) -> Array:
+        def evaluate(member: Any, member_key: PRNGKey) -> Array:
             return _evaluate_field(
                 member,
                 points,
@@ -149,7 +149,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         batch: OperatorBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         field_name: str,
         query_name: str,
         input_sample_axes: Sequence[str] = (),
@@ -171,7 +171,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
                 f"Output field {field_name!r} is bound to query {template_field.query_name!r}, not {query_name!r}."
             )
 
-        def evaluate(member: Any, member_key: Key[Array, ""]) -> Array:
+        def evaluate(member: Any, member_key: PRNGKey) -> Array:
             return member.evaluate(batch, key=member_key).field(field_name).values
 
         data = eqx.filter_vmap(
@@ -195,7 +195,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
     ) -> frozendict[str, PredictiveField]:
@@ -246,7 +246,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         variable: str | None = None,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
@@ -283,7 +283,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         batch: OperatorBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         field_name: str,
         query_name: str,
         input_sample_axes: Sequence[str] = (),
@@ -351,7 +351,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         points: Any,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         valid_policy: Literal["record", "raise"] = "record",
         **kwargs: Any,
     ) -> frozendict[str, PredictiveField]:
@@ -412,7 +412,7 @@ def randomized_prior_ensemble(
     /,
     *,
     num_members: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     beta: float = 1.0,
     homogeneous: bool = True,
     source_dim: str = "__phydra_uq_epistemic",
@@ -502,7 +502,7 @@ def fit_ensemble(
     /,
     *,
     num_members: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     solve_kwargs: Mapping[str, Any] | None = None,
     homogeneous: bool = True,
     source_dim: str = "__phydra_uq_epistemic",
@@ -571,7 +571,7 @@ def _evaluate_field(
     /,
     *,
     variable: str | None,
-    key: Key[Array, ""],
+    key: PRNGKey,
     **kwargs: Any,
 ) -> cx.AxisArray:
     ansatz = getattr(member, "ansatz_functions", None)

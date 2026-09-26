@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -23,6 +22,7 @@ from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
 from .._trainable import fixed_field
 from ..domain._measure import MeasureKind
+from ..typing import PRNGKey
 from ._gaussian_diffusion import AbstractGaussianDiffusion
 
 
@@ -198,7 +198,7 @@ class SubspaceGaussianLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> MeasureKind:
         return "hausdorff"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.layout.synthesize(self.coefficient_law.sample(key, sample_shape))
 
     def contains(self, value: ArrayLike, /) -> Array:
@@ -264,9 +264,7 @@ class SubspaceGaussianDiffusion(StrictModule):
             }
         )
 
-    def perturb(
-        self, key: Key[Array, ""], value: ArrayLike, /, *, time: ArrayLike
-    ) -> Array:
+    def perturb(self, key: PRNGKey, value: ArrayLike, /, *, time: ArrayLike) -> Array:
         coefficients, residual = self.layout.project(value)
         coefficients = eqx.error_if(
             coefficients,

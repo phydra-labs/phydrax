@@ -10,13 +10,13 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from ._linear import Linear
 
 
@@ -237,7 +237,7 @@ class MeasureAwareAttention(StrictModule, ParameterOwner):
         execution: AttentionExecution = "auto",
         block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.num_heads = int(num_heads)
         self.head_dim = int(head_dim)

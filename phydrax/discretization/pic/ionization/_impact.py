@@ -9,13 +9,13 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from phydrax._interpolation import linear_interpolate
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....typing import PRNGKey
 from ...particle import (
     ParticleAllocationRequest,
     ParticlePopulationPlan,
@@ -95,7 +95,7 @@ class ElectronImpactIonizationPlan(StrictModule, NonTrainableState):
         electron_particles: PICParticleState,
         ion_indices: ArrayLike,
         electron_indices: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         step_size: ArrayLike,
         step_index: ArrayLike,
         /,

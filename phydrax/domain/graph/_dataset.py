@@ -12,13 +12,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ...graph import batch_graphs, GraphIR, LayoutPlan
+from ...typing import PRNGKey
 from .._coordinate import CoordinateSpec
 from .._domain import JointFactor
 from .._factor_component import FactorComponent
@@ -301,7 +301,7 @@ class GraphDatasetDomain(JointFactor):
         num_points: int,
         *,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         """Sample graph-case indices from the dataset."""
         del sampler
@@ -340,7 +340,7 @@ class GraphDatasetDomain(JointFactor):
         structure: SampleLayout,
         label: str | None = None,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> GraphBatch:
         """Sample graph cases and materialize the selected graph entities."""
         indices = self.sample_indices(num_points, sampler=sampler, key=key)

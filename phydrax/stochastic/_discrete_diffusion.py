@@ -14,10 +14,10 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 DiffusionPredictionKind: TypeAlias = Literal["epsilon", "clean", "score", "velocity"]
@@ -291,7 +291,7 @@ class AncestralGaussianDiffusion(StrictModule):
         )
 
     def sample(
-        self, key: Key[Array, ""], sample_shape: Sequence[int], /
+        self, key: PRNGKey, sample_shape: Sequence[int], /
     ) -> DiscreteDiffusionSample:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
@@ -301,8 +301,8 @@ class AncestralGaussianDiffusion(StrictModule):
         timesteps = jnp.arange(self.schedule.num_steps - 1, -1, -1, dtype=jnp.int32)
 
         def step(
-            carry: tuple[Array, Key[Array, ""]], timestep: Array
-        ) -> tuple[tuple[Array, Key[Array, ""]], Array]:
+            carry: tuple[Array, PRNGKey], timestep: Array
+        ) -> tuple[tuple[Array, PRNGKey], Array]:
             state, current_key = carry
             current_key, model_key, noise_key = jr.split(current_key, 3)
             batch_time = jnp.full(samples, timestep, dtype=jnp.int32)
@@ -394,7 +394,7 @@ class DDIMTransport(StrictModule):
         )
 
     def sample(
-        self, key: Key[Array, ""], sample_shape: Sequence[int], /
+        self, key: PRNGKey, sample_shape: Sequence[int], /
     ) -> DiscreteDiffusionSample:
         samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
@@ -406,8 +406,8 @@ class DDIMTransport(StrictModule):
         )
 
         def step(
-            carry: tuple[Array, Key[Array, ""]], pair: tuple[Array, Array]
-        ) -> tuple[tuple[Array, Key[Array, ""]], Array]:
+            carry: tuple[Array, PRNGKey], pair: tuple[Array, Array]
+        ) -> tuple[tuple[Array, PRNGKey], Array]:
             state, current_key = carry
             timestep, previous_timestep = pair
             current_key, model_key, noise_key = jr.split(current_key, 3)
@@ -455,7 +455,7 @@ def discrete_denoising_loss(
     predictor: Callable,
     schedule: DiscreteGaussianDiffusionSchedule,
     clean: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     prediction_kind: DiffusionPredictionKind = "epsilon",

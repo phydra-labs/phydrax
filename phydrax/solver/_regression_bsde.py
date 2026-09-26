@@ -16,7 +16,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -26,6 +25,7 @@ from .._numerics import (
 )
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch, BSDEProblem
+from ..typing import PRNGKey
 
 
 BSDERegressionScheme: TypeAlias = Literal["explicit", "implicit"]
@@ -327,7 +327,7 @@ def solve_bsde_least_squares(
     /,
     *,
     paths: BSDEPathBatch | None = None,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     scheme: BSDERegressionScheme = "explicit",
     ridge: float = 1e-8,
     standardize: bool = True,

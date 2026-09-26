@@ -12,13 +12,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._linear_recurrent_unit import _last_valid_array
 from ._physical_sequence import normalize_physical_schedule
@@ -61,7 +61,7 @@ class ResetAwareCausalConv1D(StrictModule, ParameterOwner):
         *,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.channels = int(channels)
         self.kernel_size = int(kernel_size)
@@ -180,7 +180,7 @@ class SelectiveStateSpaceBlock(StrictModule, ParameterOwner):
         min_decay: float = 1e-4,
         min_step_scale: float = 1e-4,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.input_size = int(input_size)
         self.state_size = int(state_size)

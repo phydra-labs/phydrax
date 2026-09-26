@@ -14,13 +14,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch
 from ..stochastic._path_dependent_bsde import ReflectedPathDependentBSDEProblem
+from ..typing import PRNGKey
 from ._regression_bsde import (
     _basis_matrix,
     _normal_equation_error,
@@ -255,7 +255,7 @@ def solve_reflected_path_dependent_bsde(
     /,
     *,
     paths: BSDEPathBatch | None = None,
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     scheme: BSDERegressionScheme = "explicit",
     ridge: float = 1e-8,
     standardize: bool = True,

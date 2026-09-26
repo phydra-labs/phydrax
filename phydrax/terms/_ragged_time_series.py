@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -36,6 +35,7 @@ from .._interpolation import (
 from .._sampling import design_name
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
+from ..typing import PRNGKey
 from ._data_metrics import (
     reduce_supervised_loss,
     sample_case_indices as _sample_case_indices,
@@ -479,7 +479,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Any:
         """Draw a ragged trajectory mini-batch and aligned target values."""
         domain = self.domain
@@ -566,7 +566,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         domain: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> RaggedTimeSeriesBatch:
         count = self.sampling.count
         if not isinstance(count, tuple):
@@ -656,7 +656,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         batch: RaggedTimeSeriesBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         var = self.fields[0]
@@ -672,7 +672,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: RaggedTimeSeriesBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -695,7 +695,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: RaggedTimeSeriesBatch | None = None,
         **kwargs: Any,

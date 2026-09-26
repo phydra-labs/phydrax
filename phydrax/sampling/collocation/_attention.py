@@ -12,12 +12,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._adaptive import (
     _normalized_importance,
     _set_batch_rows,
@@ -242,7 +242,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         term: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> ResidualAttentionPopulation:
         batch = term.sample(key=key)
         from phydrax.domain import PointBatch
@@ -343,7 +343,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         population: ResidualAttentionPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> ResidualAttentionPopulation:
         score_key, candidate_key, candidate_score_key = jax.random.split(key, 3)

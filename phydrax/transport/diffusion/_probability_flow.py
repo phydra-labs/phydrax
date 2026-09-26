@@ -8,7 +8,6 @@ from typing import Any
 
 import equinox as eqx
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._strict import StrictModule
 
@@ -18,6 +17,7 @@ from ..._score_field import StateTimeScoreField
 from ...domain import DomainFunction
 from ...dynamics import ContinuousSystem, StateLayout
 from ...stochastic._gaussian_diffusion import AbstractGaussianDiffusion
+from ...typing import PRNGKey
 
 
 class ProbabilityFlowVectorField(StrictModule):
@@ -44,7 +44,7 @@ def probability_flow_system(
     *,
     state_layout: StateLayout,
     score_id: str,
-    score_key: Key[Array, ""] = DOC_KEY0,
+    score_key: PRNGKey = DOC_KEY0,
     state_label: str = "x",
     time_label: str = "t",
     system_id: str | None = None,

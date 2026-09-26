@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax.geometry.operator import RegionalGeometryMode, RegionalPointLatentGeometry
@@ -28,6 +27,8 @@ from phydrax.nn.operator.layers._graph_transfer import (
     TransferReduction,
 )
 from phydrax.nn.operator.layers._regional_processor import RegionalGraphProcessor
+
+from .....typing import PRNGKey
 
 
 class RIGNO(AbstractOperatorModel):
@@ -81,7 +82,7 @@ class RIGNO(AbstractOperatorModel):
         query_channels: int = 0,
         query_chunk_size: int | None = 256,
         assume_uniform_measure: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if int(coord_dim) <= 0 or int(regional_count) <= 0:
             raise ValueError("coord_dim and regional_count must be positive.")

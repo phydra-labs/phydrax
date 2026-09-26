@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -26,6 +25,7 @@ from ..stochastic._bsde import (
     BSDEQuadrature,
     evaluate_bsde,
 )
+from ..typing import PRNGKey
 
 
 class BSDETerm(AbstractSamplingTerm):
@@ -59,7 +59,7 @@ class BSDETerm(AbstractSamplingTerm):
         global_weight: ArrayLike = 1.0,
         sampling_mode: Literal["resample", "fixed"] = "resample",
         fixed_paths: BSDEPathBatch | None = None,
-        fixed_paths_key: Key[Array, ""] = jr.key(0),
+        fixed_paths_key: PRNGKey = jr.key(0),
         label: str | None = None,
     ) -> None:
         if not isinstance(problem, BSDEProblem):
@@ -105,7 +105,7 @@ class BSDETerm(AbstractSamplingTerm):
         self.sampling_mode = sampling_mode
         self.label = None if label is None else str(label)
 
-    def sample(self, *, key: Key[Array, ""] = jr.key(0)) -> BSDEPathBatch:
+    def sample(self, *, key: PRNGKey = jr.key(0)) -> BSDEPathBatch:
         if self.sampling_mode == "fixed":
             if self.fixed_paths is None:
                 raise ValueError("Fixed BSDE objective has no fixed_paths.")
@@ -117,7 +117,7 @@ class BSDETerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: BSDEPathBatch | None = None,
         **kwargs: Any,
     ) -> Array:

@@ -10,7 +10,6 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.conditions._ir import (
@@ -22,6 +21,7 @@ from phydrax.domain import DomainFunction, PointBatch
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 class ObservationActionEvidence(StrictModule):
@@ -154,7 +154,7 @@ class PointObservationAction(AbstractConditionOperator):
         values: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         if self.field not in values:

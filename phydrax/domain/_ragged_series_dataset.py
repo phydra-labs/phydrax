@@ -14,12 +14,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from ..typing import PRNGKey
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -427,7 +428,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         num_points: int,
         *,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> dict[str, Any]:
         """Sample case rows and return their ragged-series payloads."""
         indices = self.sample_indices(num_points, sampler=sampler, key=key)
@@ -438,7 +439,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         num_points: int,
         *,
         sampler: str = "uniform",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         """Sample case indices from the finite dataset."""
         del sampler
@@ -473,7 +474,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         *,
         num_series_points: int,
         sampling: RaggedSeriesSampling,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> dict[str, Any]:
         """Return fixed-width sampled series views for selected cases.
 
@@ -612,7 +613,7 @@ class RaggedSeriesDatasetDomain(JointFactor):
         num_series_points: int,
         sampling: RaggedSeriesSampling = "points_uniform",
         structure: SampleLayout | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> PointBatch:
         """Materialize fixed-width sampled series rows as a `PointBatch`."""
         structure_in = structure or SampleLayout(((self.label,),))

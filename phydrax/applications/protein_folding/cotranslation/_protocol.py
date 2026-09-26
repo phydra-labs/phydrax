@@ -9,9 +9,7 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ...._fingerprint import canonical_fingerprint
 from ....atomistic._checkpoint import (
@@ -33,6 +31,7 @@ from ....atomistic._topology_epoch import (
 )
 from ....qualification._reference import ReferenceArtifactManifest
 from ....series import SampledSeries, SeriesSupport
+from ....typing import PRNGKey
 from .._construct import ProteinConstruct
 
 
@@ -318,7 +317,7 @@ class CotranslationProtocol:
         )
 
     def initialize(
-        self, positions: ArrayLike, momenta: ArrayLike, /, *, key: Key[Array, ""]
+        self, positions: ArrayLike, momenta: ArrayLike, /, *, key: PRNGKey
     ) -> CotranslationCursor:
         stage = self.stages[0]
         runtime = stage.runtime

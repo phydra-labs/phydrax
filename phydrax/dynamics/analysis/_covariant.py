@@ -85,7 +85,7 @@ def _initial_basis(
     dimension = state.size
     if supplied is None:
         matrix = jax.random.normal(
-            jax.random.PRNGKey(int(seed)),
+            jax.random.key(int(seed)),
             (dimension, rank),
             dtype=inexact_result_type(state),
         )
@@ -286,7 +286,7 @@ def covariant_directions(
     coefficients = jnp.eye(rank, dtype=basis0.dtype)
     probe_coefficients = jnp.eye(rank, dtype=basis0.dtype) + 0.25 * jnp.triu(
         jax.random.normal(
-            jax.random.PRNGKey(int(seed) + 1),
+            jax.random.key(int(seed) + 1),
             (rank, rank),
             dtype=basis0.dtype,
         ),

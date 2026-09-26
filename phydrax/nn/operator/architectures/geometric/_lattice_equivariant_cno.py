@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
@@ -31,6 +30,8 @@ from phydrax.nn.operator.representations import (
     TensorFieldLayout,
     TensorType,
 )
+
+from .....typing import PRNGKey
 
 
 LatticeActivation = Literal["gelu", "silu", "tanh"]
@@ -106,7 +107,7 @@ class _LatticeEquivariantBlock(StrictModule):
         *,
         activation: LatticeActivation,
         use_bias: bool,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         first_key, second_key = jr.split(key)
         self.first = LatticeEquivariantConvND(
@@ -187,7 +188,7 @@ class LatticeEquivariantCNO(AbstractOperatorModel):
         source_key: str | None = None,
         squeeze_scalar_output: bool = False,
         max_basis_construction_bytes: int = 256 * 1024**2,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(group, FiniteOrthogonalGroup):
             raise TypeError("group must be a FiniteOrthogonalGroup.")

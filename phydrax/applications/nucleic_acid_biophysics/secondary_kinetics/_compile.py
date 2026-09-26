@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
@@ -25,6 +24,7 @@ from ....solver._jump import (
     GeneratorBoundaryPolicy,
 )
 from ....stochastic import AbstractJumpProcess
+from ....typing import PRNGKey
 from .._construct import NucleicAcidConstruct, NucleotideKey
 from ._model import AssociationConvention, SecondaryEnergyModel, SecondaryRateLaw
 from ._state import _noncrossing, SecondaryMove, SecondaryStructureState
@@ -133,7 +133,7 @@ class SecondaryJumpProcess(AbstractJumpProcess):
 
     def sample_mark(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         t: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,

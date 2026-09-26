@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Bool, Float, Key
+from jaxtyping import Bool, Float
 
 from .._doc import DOC_KEY0
 from .._sampling import (
@@ -21,6 +21,7 @@ from .._sampling import (
     seed_from_key,
 )
 from ..discretization._axis import broadcasted_grid
+from ..typing import PRNGKey
 from ._base import AbstractGeometry, EnforcementGateMethod, GeometryTransitionKind
 from ._structure import _validate_label
 
@@ -174,7 +175,7 @@ class HyperRectangle(AbstractGeometry):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         _validate_rejection_design(where, sampler)
         lower = np.asarray(self.lower, dtype=np.float64)
@@ -223,7 +224,7 @@ class HyperRectangle(AbstractGeometry):
         *,
         where: Callable | None = None,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         _validate_rejection_design(where, sampler)
         lower = np.asarray(self.lower, dtype=np.float64)
@@ -299,7 +300,7 @@ class HyperRectangle(AbstractGeometry):
         *,
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> tuple[tuple[Array, ...], Bool[Array, "..."]]:
         dim = int(self.spatial_dim)
         if isinstance(num_points, int):
@@ -396,7 +397,7 @@ class HyperRectangle(AbstractGeometry):
         where: Callable[[Array], Bool[Array, ""]],
         *,
         num_samples: int = 4096,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         pts = self.sample_boundary(int(num_samples), key=key)
         mask = jax.vmap(where)(pts)

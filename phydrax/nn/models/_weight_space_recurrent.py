@@ -11,11 +11,12 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ..layers import RecurrentBatch, RecurrentResult
 from ..layers._weight_space_recurrence import (
@@ -122,7 +123,7 @@ class WeightSpaceRecurrentModel(StrictModule, ParameterOwner):
         maximum_retention: float = 0.999,
         input_scale: float = 1e-2,
         dtype: Any | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if execution not in ("serial", "associative"):
             raise ValueError("execution must be 'serial' or 'associative'.")

@@ -12,9 +12,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from ..._mass import Mass
+from ...typing import PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import (
     ClosestPointProvider,
@@ -213,7 +213,7 @@ class _TranslationKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         result = self.child.sample_interior(state, num_points, key=key, plan=plan)
@@ -231,7 +231,7 @@ class _TranslationKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         result = self.child.sample_boundary(state, num_points, key=key)
         return SamplingResult(
@@ -393,13 +393,13 @@ class _UnionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         bounds = self.bounds(state)
         plan_ = RejectionSamplingPlan() if plan is None else plan
 
-        def proposal(proposal_key: Key[Array, ""], count: int) -> Array:
+        def proposal(proposal_key: PRNGKey, count: int) -> Array:
             return jr.uniform(
                 proposal_key,
                 shape=(count, self.ambient_dimension),
@@ -427,7 +427,7 @@ class _UnionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         del state, num_points, key
         raise NotImplementedError(

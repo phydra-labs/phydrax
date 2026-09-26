@@ -17,13 +17,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 
 
 class VegasStatus(IntEnum):
@@ -219,7 +219,7 @@ class PreparedVegas(StrictModule, NonTrainableState):
         )
 
 
-def _stratified_unit_points(key: Key[Array, ""], count: int, dimension: int, /) -> Array:
+def _stratified_unit_points(key: PRNGKey, count: int, dimension: int, /) -> Array:
     """Latin-stratified points: every one-dimensional stratum is occupied."""
     keys = jr.split(key, 2 * dimension)
     base = jnp.arange(count, dtype=jnp.float64)
@@ -267,7 +267,7 @@ def transform_frozen_vegas(
 
 def sample_frozen_vegas(
     grid: FrozenVegasGrid,
-    key: Key[Array, ""],
+    key: PRNGKey,
     count: int,
     /,
 ) -> VegasSampleBatch:
@@ -325,7 +325,7 @@ def _adapt_edges(
 def prepare_vegas(
     integrand: Callable[[Array], Array],
     plan: VegasPlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> PreparedVegas:
     """Adapt a grid using pilot evaluations and freeze it for later production."""
@@ -403,7 +403,7 @@ def prepare_vegas(
 def run_vegas(
     integrand: Callable[[Array], Array],
     prepared: PreparedVegas,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> VegasResult:
     """Run independent production replicates without mutating the frozen grid."""
@@ -473,8 +473,8 @@ def run_vegas(
 def vegas_integrate(
     integrand: Callable[[Array], Array],
     plan: VegasPlan,
-    adaptation_key: Key[Array, ""],
-    production_key: Key[Array, ""],
+    adaptation_key: PRNGKey,
+    production_key: PRNGKey,
     /,
 ) -> VegasResult:
     """Prepare and run VEGAS with disjoint caller-owned random keys."""

@@ -8,7 +8,6 @@ from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from .._strict import StrictModule
 from ..metrix import (
@@ -17,6 +16,7 @@ from ..metrix import (
     VolumeDensity,
     WeightedRiemannianMeasure,
 )
+from ..typing import PRNGKey
 from ._base import AbstractGeometry
 from ._components import DomainComponent
 from ._function import DomainFunction
@@ -34,7 +34,7 @@ class _VolumeDensityCallable(StrictModule):
         coordinates: Any,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         del key, kwargs

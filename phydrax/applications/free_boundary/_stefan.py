@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0
@@ -32,6 +32,7 @@ from ..._training_kernel import (
 from ..._training_objective import _ObjectiveContribution
 from ...geometry import regularized_delta_values, regularized_heaviside_values
 from ...sampling.collocation import CausalTimeSlabSchedule
+from ...typing import PRNGKey
 
 
 StefanRepresentation = Literal["explicit_front", "implicit_level_set", "reference_map"]
@@ -263,7 +264,7 @@ def stefan_collocation_batch(
     boundary_points: int,
     interface_points: int,
     initial_points: int,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     final_time: float | None = None,
 ) -> StefanCollocationBatch:
     """Materialize reproducible scrambled-Sobol Stefan collocation blocks."""
@@ -332,7 +333,7 @@ def explicit_front_stefan_loss(
     data: StefanBoundaryData,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> StefanLoss:
     """Evaluate a one-phase Stefan PINN with a separately learned front."""
 
@@ -404,7 +405,7 @@ def implicit_level_set_stefan_loss(
     *,
     interface_width: float,
     gradient_floor: float = 1.0e-12,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> StefanLoss:
     """Evaluate a fixed-ambient-domain Stefan PINN with a learned level set."""
 
@@ -484,7 +485,7 @@ def reference_map_stefan_loss(
     data: StefanBoundaryData,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> StefanLoss:
     """Evaluate a Stefan PINN pulled back to a learned reference-domain map."""
 
@@ -579,7 +580,7 @@ def compare_stefan_representations(
     /,
     *,
     interface_width: float,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> StefanRepresentationComparison:
     """Evaluate all three representations on identical physical collocation."""
 
@@ -711,9 +712,7 @@ def fit_stefan_time_slabs(
     )
 
 
-def _scalar_call(
-    model: Callable[[Array], Array], point: Array, key: Key[Array, ""], /
-) -> Array:
+def _scalar_call(model: Callable[[Array], Array], point: Array, key: PRNGKey, /) -> Array:
     value = (
         model(point, key=key) if isinstance(model, AbstractArrayModel) else model(point)
     )

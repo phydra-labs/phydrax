@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ...._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ...._execution_runtime import ExecutionGroup
@@ -96,6 +96,7 @@ from ....privacy._provider import (
     _prepare_private_gradient,
     _PreparedPrivateGradient,
 )
+from ....typing import PRNGKey
 from ..._loss import model_loss_labels, model_loss_values
 from ...layers._dropout import inference_mode
 from ...parameters import ParameterSubspace
@@ -1655,7 +1656,7 @@ def fit_operator(
         evaluated_model: AbstractOperatorModel,
         batch: OperatorBatch,
         physical_batch: OperatorBatch,
-        key: Key[jax.Array, ""],
+        key: PRNGKey,
     ) -> tuple[OperatorPrediction, OperatorPrediction]:
         if task is None:
             raw_prediction = _operator_prediction(
@@ -1747,7 +1748,7 @@ def fit_operator(
         case_log_weights: jax.Array,
         case_mask: jax.Array,
         sampling_probabilities: jax.Array,
-        key: Key[jax.Array, ""],
+        key: PRNGKey,
         step: jax.Array,
         active_rollout_horizon: int | None,
         *,
@@ -2010,7 +2011,7 @@ def fit_operator(
         model_state: PyTree,
         fixed: PyTree,
         payload: _OperatorFitPayload,
-        key: Key[jax.Array, ""],
+        key: PRNGKey,
     ) -> _LossComponents:
         current_model, target_model = payload_models(
             parameters_, model_state, fixed, payload
@@ -2166,7 +2167,7 @@ def fit_operator(
             case_log_weights: jax.Array,
             case_mask: jax.Array,
             sampling_probabilities: jax.Array,
-            key: Key[jax.Array, ""],
+            key: PRNGKey,
             step: jax.Array,
             active_rollout_horizon: int | None,
         ) -> jax.Array:

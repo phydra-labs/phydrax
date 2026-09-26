@@ -11,10 +11,11 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState, ParameterOwner
+
+from ...typing import PRNGKey
 
 
 class SinusoidalTimeEmbedding(StrictModule, NonTrainableState):
@@ -66,7 +67,7 @@ class TimeConditionedVectorModel(StrictModule, ParameterOwner):
         time: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> Array:
         value = jnp.asarray(state)
         if value.shape[-1:] != (self.state_dimension,):

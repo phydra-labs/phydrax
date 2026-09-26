@@ -25,7 +25,7 @@ import jax.random as jr
 import numpy as np
 import optax
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ._differentiation import (
     authority_admits,
@@ -68,6 +68,7 @@ from ._training_objective import (
     _ObjectiveContribution,
 )
 from ._tree_math import tree_inner, tree_norm, tree_where
+from .typing import PRNGKey
 
 
 TargetPolicy = DelayedTargetPolicy | ExponentialMovingAverageTargetPolicy
@@ -155,7 +156,7 @@ def _index(value: Any, /) -> Array:
 
 
 def _site_key(
-    root: Key[Array, ""],
+    root: PRNGKey,
     objective_id: str,
     site: str,
     cursor_kind: str,
@@ -163,7 +164,7 @@ def _site_key(
     microstep: int | Array,
     lane: int | Array | None,
     /,
-) -> Key[Array, ""]:
+) -> PRNGKey:
     role = cursor_kind if lane is None else f"{cursor_kind}-lane"
     address = SampleAddress(
         _TRAINING_NAMESPACE,
@@ -176,7 +177,7 @@ def _site_key(
 
 
 def training_site_key(
-    root: Key[Array, ""],
+    root: PRNGKey,
     /,
     *,
     objective_id: str,
@@ -184,7 +185,7 @@ def training_site_key(
     attempt: int | Array,
     microstep: int | Array,
     lane: int | Array | None = None,
-) -> Key[Array, ""]:
+) -> PRNGKey:
     """Key of one attempt-addressed training site.
 
     Attempt-addressed randomness (dropout, stochastic estimators) is fresh on
@@ -196,7 +197,7 @@ def training_site_key(
 
 
 def training_accepted_site_key(
-    root: Key[Array, ""],
+    root: PRNGKey,
     /,
     *,
     objective_id: str,
@@ -204,7 +205,7 @@ def training_accepted_site_key(
     accepted: int | Array,
     microstep: int | Array,
     lane: int | Array | None = None,
-) -> Key[Array, ""]:
+) -> PRNGKey:
     """Key of one accepted-update-addressed training site.
 
     Accepted-addressed randomness (batch and sample selection) repeats across
@@ -223,7 +224,7 @@ class TrainingKeys(StrictModule):
     maps lanes internally passes its own `lane` instead.
     """
 
-    root: Key[Array, ""]
+    root: PRNGKey
     attempt_cursor: Array
     accepted_cursor: Array
     microstep: Array
@@ -235,9 +236,7 @@ class TrainingKeys(StrictModule):
             raise ValueError("The kernel already addresses this evaluation's lane.")
         return self.lane if lane is None else lane
 
-    def attempt_key(
-        self, site: str, /, *, lane: int | Array | None = None
-    ) -> Key[Array, ""]:
+    def attempt_key(self, site: str, /, *, lane: int | Array | None = None) -> PRNGKey:
         """Key of an attempt-addressed site (fresh on every attempt)."""
         return training_site_key(
             self.root,
@@ -248,9 +247,7 @@ class TrainingKeys(StrictModule):
             lane=self._lane(lane),
         )
 
-    def accepted_key(
-        self, site: str, /, *, lane: int | Array | None = None
-    ) -> Key[Array, ""]:
+    def accepted_key(self, site: str, /, *, lane: int | Array | None = None) -> PRNGKey:
         """Key of an accepted-update-addressed site (stable across rejections)."""
         return training_accepted_site_key(
             self.root,
@@ -812,7 +809,7 @@ class TrainingKernelState(StrictModule):
     targets: TargetParameterState | None
     accumulation: tuple[ObjectiveAccumulation, ...]
     pending_model_state: Any
-    root_key: Key[Array, ""]
+    root_key: PRNGKey
     attempt_cursor: Array
     accepted_cursor: Array
     microstep: Array
@@ -1314,7 +1311,7 @@ class PreparedTrainingKernel(StrictModule):
         )
 
     def _initial_state(
-        self, parameters: Any, model_state: Any, key: Key[Array, ""], /
+        self, parameters: Any, model_state: Any, key: PRNGKey, /
     ) -> TrainingKernelState:
         rule_state = self.rule.init(parameters)
         _require_rejection_fields(self.rule, rule_state)
@@ -1346,7 +1343,7 @@ class PreparedTrainingKernel(StrictModule):
         )
 
     def _states(
-        self, parameters: Any, model_state: Any, key: Key[Array, ""], /
+        self, parameters: Any, model_state: Any, key: PRNGKey, /
     ) -> TrainingKernelState:
         if not self.lane_parameters:
             return self._initial_state(parameters, model_state, key)
@@ -1354,7 +1351,7 @@ class PreparedTrainingKernel(StrictModule):
             self._initial_state, in_axes=(eqx.if_array(0), eqx.if_array(0), None)
         )(parameters, model_state, key)
 
-    def init(self, tree: PyTree[Any], key: Key[Array, ""], /) -> TrainingKernelState:
+    def init(self, tree: PyTree[Any], key: PRNGKey, /) -> TrainingKernelState:
         """Start a run from the prepared tree and a typed root key."""
         key_ = jnp.asarray(key)
         if not jax.dtypes.issubdtype(key_.dtype, jax.dtypes.prng_key) or key_.shape:

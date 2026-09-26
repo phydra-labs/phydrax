@@ -16,13 +16,13 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from .._probability import _leading_shape, DiagonalNormalLaw
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ._wiener import WienerRealization
 
@@ -112,7 +112,7 @@ class AbstractProcessDistribution(StrictModule):
     @abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         raise NotImplementedError
@@ -197,7 +197,7 @@ class GaussianProcessDistribution(AbstractProcessDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         samples = _positive_shape(sample_shape, name="sample_shape")
@@ -269,7 +269,7 @@ class DiagonalGaussianProcessDistribution(AbstractProcessDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         return self.law.sample(key, sample_shape)
@@ -572,7 +572,7 @@ class LatentGaussianCoefficientProcess(
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         initial_state: ArrayLike,
         /,
         *,
@@ -830,7 +830,7 @@ def semigroup_objective(
     t0: ArrayLike,
     tmid: ArrayLike,
     t1: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_samples: int = 256,
     observable: Callable[[Array], Array] | None = None,
     reduction: ProcessReduction = "mean",

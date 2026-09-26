@@ -12,13 +12,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._recurrent import (
     AffineRecurrence,
@@ -60,7 +60,7 @@ class WeightSpaceRecurrence(StrictModule, ParameterOwner):
         maximum_retention: float = 0.999,
         input_scale: float = 1e-2,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.input_size = int(input_size)
         self.parameter_size = int(parameter_size)

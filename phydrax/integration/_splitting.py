@@ -16,7 +16,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Key
 
 from .._strict import StrictModule
 from ..stochastic._events import (
@@ -26,6 +25,7 @@ from ..stochastic._events import (
     PathEventResult,
 )
 from ..stochastic._trajectory import StochasticTrajectory
+from ..typing import PRNGKey
 
 
 class AdaptiveSplittingStatus(IntEnum):
@@ -108,7 +108,7 @@ class AdaptiveSplittingBranchRequest(StrictModule):
         self.round_index = int(round_index)
 
 
-InitialPathSampler: TypeAlias = Callable[[Key[Array, ""], int], StochasticTrajectory]
+InitialPathSampler: TypeAlias = Callable[[PRNGKey, int], StochasticTrajectory]
 PathBranchSampler: TypeAlias = Callable[
     [StochasticTrajectory, AdaptiveSplittingBranchRequest],
     StochasticTrajectory,
@@ -338,7 +338,7 @@ def adaptive_multilevel_splitting(
     *,
     initial_sampler: InitialPathSampler,
     branch_sampler: PathBranchSampler,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> AdaptiveMultilevelSplittingResult:
     """Estimate a path-event probability with adaptive multilevel splitting.
 
@@ -509,7 +509,7 @@ def replicate_adaptive_multilevel_splitting(
     *,
     initial_sampler: InitialPathSampler,
     branch_sampler: PathBranchSampler,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> AdaptiveSplittingEnsembleResult:
     """Run independent AMS populations and estimate uncertainty across replicates."""
 

@@ -15,13 +15,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 
 
 class PolarizationDensity(StrictModule):
@@ -273,7 +273,7 @@ class UnweightedEventStream(StrictModule):
 def rejection_unweight(
     stream: WeightedEventStream,
     plan: RejectionUnweightingPlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> UnweightedEventStream:
     """Perform exact rejection unweighting, never clipping a violated bound."""

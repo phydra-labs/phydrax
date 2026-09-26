@@ -16,7 +16,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._strict import StrictModule
 from ..stochastic._state_space import (
@@ -27,6 +26,7 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
     TransitionSample,
 )
+from ..typing import PRNGKey
 from ._covariance import _factor_and_solve_covariance_system
 from ._particle import (
     effective_sample_size,
@@ -66,7 +66,7 @@ class AbstractParticleProposal(StrictModule):
     @abstractmethod
     def propose(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         problem: StateSpaceProblem,
         previous_state: ArrayLike,
         t0: ArrayLike,
@@ -108,7 +108,7 @@ class BootstrapParticleProposal(AbstractParticleProposal):
 
     def propose(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         problem: StateSpaceProblem,
         previous_state: ArrayLike,
         t0: ArrayLike,
@@ -191,7 +191,7 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
 
     def propose(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         problem: StateSpaceProblem,
         previous_state: ArrayLike,
         t0: ArrayLike,
@@ -293,7 +293,7 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
 
     def propose(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         problem: StateSpaceProblem,
         previous_state: ArrayLike,
         t0: ArrayLike,
@@ -549,7 +549,7 @@ def _resampling_decision(
 
 
 def guided_particle_filter(
-    key: Key[Array, ""],
+    key: PRNGKey,
     problem: StateSpaceProblem,
     proposal: AbstractParticleProposal,
     /,

@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -32,12 +31,13 @@ from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..transport.continuous._coupling import EndpointCouplingSample
 from ..transport.continuous._interpolant import AbstractEndpointInterpolant
+from ..typing import PRNGKey
 from ._sample_statistics import effective_sample_size, normalized_log_weights
 from ._time_sampling import AbstractTimeSamplingPolicy, UniformTimeSamplingPolicy
 
 
 FlowMatchingSamplingMode: TypeAlias = Literal["fixed", "resample"]
-FlowEndpointProvider: TypeAlias = Callable[[Key[Array, ""]], EndpointCouplingSample]
+FlowEndpointProvider: TypeAlias = Callable[[PRNGKey], EndpointCouplingSample]
 
 
 class FlowMatchingBatch(StrictModule):
@@ -68,7 +68,7 @@ class FlowMatchingBatch(StrictModule):
         valid: ArrayLike,
         log_weights: ArrayLike,
         context: Mapping[str, ArrayLike] | None,
-        evaluation_key: Key[Array, ""],
+        evaluation_key: PRNGKey,
         source_indices: ArrayLike,
         target_indices: ArrayLike,
         interpolant_id: str,
@@ -246,7 +246,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         self.sampling_mode = sampling_mode
         self.label = None if label is None else str(label)
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> FlowMatchingBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> FlowMatchingBatch:
         endpoint_key, time_key, evaluation_key = jr.split(key, 3)
         if self.sampling_mode == "fixed":
             if self.fixed_endpoints is None:
@@ -351,7 +351,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
                 arguments.append(safe_context[dependency])
         node_keys = jr.split(batch.evaluation_key, count)
 
-        def velocity_at(key: Key[Array, ""], *values: Array) -> Array:
+        def velocity_at(key: PRNGKey, *values: Array) -> Array:
             return jnp.asarray(velocity.func(*values, key=key))
 
         predicted = jax.vmap(velocity_at)(node_keys, *arguments)
@@ -396,7 +396,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: FlowMatchingBatch | None = None,
         **kwargs: Any,
@@ -415,7 +415,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: FlowMatchingBatch | None = None,
     ) -> FlowMatchingDiagnostics:
         materialized = self.sample(key=key) if batch is None else batch

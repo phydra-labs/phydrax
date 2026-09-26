@@ -11,13 +11,14 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.nn.operator.representations import O3Features, O3Representation
+
+from ....typing import PRNGKey
 
 
 class RadialBasis(StrictModule, NonTrainableState):
@@ -62,7 +63,7 @@ class RadialMap(StrictModule):
         out_multiplicity: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.in_multiplicity = int(in_multiplicity)
         self.out_multiplicity = int(out_multiplicity)
@@ -80,7 +81,7 @@ def _radial_map(
     basis_count: int,
     in_multiplicity: int,
     out_multiplicity: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> RadialMap | None:
     if int(in_multiplicity) == 0 or int(out_multiplicity) == 0:
@@ -165,7 +166,7 @@ class EquivariantIntegralLayer(StrictModule):
         *,
         radius: float,
         radial_basis_size: int = 16,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_representation = in_representation
         self.out_representation = out_representation
@@ -485,7 +486,7 @@ class O3PointwiseLinear(StrictModule):
         /,
         *,
         use_scalar_bias: bool = True,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_representation = in_representation
         self.out_representation = out_representation

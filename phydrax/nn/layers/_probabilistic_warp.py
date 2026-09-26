@@ -10,11 +10,11 @@ import jax
 import jax.nn as jnn
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 from .._keys import EvalKey
 from ._linear import Linear
 from ._warp import MultiheadWarp, WarpBoundaryMode
@@ -51,7 +51,7 @@ class ProbabilisticMultiheadWarp(StrictModule, ParameterOwner):
         fill_value: float = 0.0,
         minimum_scale: float = 1e-6,
         scale_factor: float = 1e-3,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if float(minimum_scale) <= 0.0 or float(scale_factor) <= 0.0:
             raise ValueError("Probabilistic warp scales must be positive.")

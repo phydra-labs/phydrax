@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax.domain import DomainFunction
@@ -22,6 +21,7 @@ from phydrax.domain import DomainFunction
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..stochastic._bsde import _pointwise_values, BSDEPathBatch, BSDEProblem
+from ..typing import PRNGKey
 
 
 DeepBSDESamplingMode: TypeAlias = Literal["resample", "fixed"]
@@ -125,7 +125,7 @@ def deep_bsde_rollout(
     control_predictor: DeepBSDEPredictor,
     /,
     *,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> DeepBSDERollout:
     """Roll Y forward with Y[n+1] = Y[n] - f[n] dt + Z[n] dW[n]."""
     if not isinstance(problem, BSDEProblem):
@@ -319,7 +319,7 @@ class DeepBSDEShootingTerm(AbstractSamplingTerm):
         terminal_weight: ArrayLike = 1.0,
         sampling_mode: DeepBSDESamplingMode = "resample",
         fixed_paths: BSDEPathBatch | None = None,
-        fixed_paths_key: Key[Array, ""] = jr.key(0),
+        fixed_paths_key: PRNGKey = jr.key(0),
         label: str | None = None,
     ) -> None:
         if not isinstance(problem, BSDEProblem):
@@ -353,7 +353,7 @@ class DeepBSDEShootingTerm(AbstractSamplingTerm):
         self.sampling_mode = sampling_mode
         self.label = None if label is None else str(label)
 
-    def sample(self, *, key: Key[Array, ""] = jr.key(0)) -> BSDEPathBatch:
+    def sample(self, *, key: PRNGKey = jr.key(0)) -> BSDEPathBatch:
         if self.sampling_mode == "fixed":
             if self.fixed_paths is None:
                 raise RuntimeError("Fixed Deep BSDE paths are unavailable.")
@@ -365,7 +365,7 @@ class DeepBSDEShootingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: BSDEPathBatch | None = None,
     ) -> DeepBSDERollout:
         if self.initial_value_name not in functions:
@@ -389,7 +389,7 @@ class DeepBSDEShootingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: BSDEPathBatch | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -407,7 +407,7 @@ class DeepBSDEShootingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: BSDEPathBatch | None = None,
     ) -> DeepBSDEShootingDiagnostics:
         return deep_bsde_shooting_diagnostics(

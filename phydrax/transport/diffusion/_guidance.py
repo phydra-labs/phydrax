@@ -13,13 +13,13 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._score_field import StateTimeScoreField
 from ..._strict import StrictModule
 from ...domain import DomainFunction
+from ...typing import PRNGKey
 
 
 GuidanceExactness = Literal["exact", "approximate", "heuristic"]
@@ -77,7 +77,7 @@ class AbstractScoreGuidance(StrictModule):
         context: ScoreContext,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> GuidanceEvaluation:
         raise NotImplementedError
 
@@ -141,7 +141,7 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
         context: ScoreContext,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> GuidanceEvaluation:
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be a ScoreContext.")
@@ -261,7 +261,7 @@ class ClassifierFreeGuidance(AbstractScoreGuidance):
         context: ScoreContext,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> GuidanceEvaluation:
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be a ScoreContext.")
@@ -348,7 +348,7 @@ class GuidedScoreField(StrictModule):
         context: ScoreContext,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> tuple[Array, tuple[GuidanceEvaluation, ...], Array]:
         if not isinstance(context, ScoreContext):
             raise TypeError("context must be a ScoreContext.")
@@ -378,7 +378,7 @@ class GuidedScoreField(StrictModule):
         /,
         *,
         context: ScoreContext,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
     ) -> Array:
         return self.evaluate(state, time, context, key=key)[0]
 

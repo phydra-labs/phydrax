@@ -15,10 +15,10 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._realization import (
     is_stochastic_realization,
     realization_independence_labels,
@@ -789,7 +789,7 @@ class StochasticTransitionView(StrictModule):
 
     def sample_flat_indices(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         num_samples: int,
         /,
         *,

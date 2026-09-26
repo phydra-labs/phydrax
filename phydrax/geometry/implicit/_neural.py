@@ -16,13 +16,14 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from ..._differentiation import CapabilityEvidenceKind, DerivativeRegularity
 from ..._fingerprint import canonical_fingerprint
 from ..._model._array import AbstractArrayModel
 from ..._strict import StrictModule
 from ..._trainable import fixed_field, NonTrainableState, partition_parameters
+from ...typing import PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -470,13 +471,13 @@ class _NeuralImplicitKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         bounds = self.region_bounds
         dimension = self.ambient_dimension
 
-        def proposal(proposal_key: Key[Array, ""], count: int) -> Array:
+        def proposal(proposal_key: PRNGKey, count: int) -> Array:
             return jr.uniform(
                 proposal_key,
                 shape=(count, dimension),
@@ -496,7 +497,7 @@ class _NeuralImplicitKernel(GeometryKernel):
         )
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError(

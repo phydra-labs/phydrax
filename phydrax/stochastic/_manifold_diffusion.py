@@ -14,13 +14,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
 from ..domain._measure import MeasureKind
 from ..metrix import AbstractRiemannianManifold
+from ..typing import PRNGKey
 
 
 class ManifoldProbabilityLaw(AbstractProbabilityLaw):
@@ -34,7 +34,7 @@ class ManifoldProbabilityLaw(AbstractProbabilityLaw):
     def __init__(
         self,
         manifold: AbstractRiemannianManifold,
-        sampler: Callable[[Key[Array, ""], tuple[int, ...]], ArrayLike],
+        sampler: Callable[[PRNGKey, tuple[int, ...]], ArrayLike],
         log_density: Callable[[Array], ArrayLike],
         /,
         *,
@@ -63,7 +63,7 @@ class ManifoldProbabilityLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> MeasureKind:
         return "riemannian"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         value = jnp.asarray(self.sampler(key, tuple(sample_shape)))
         if value.shape != tuple(sample_shape) + self.event_shape:
             raise ValueError("Manifold sampler returned an incompatible shape.")
@@ -116,7 +116,7 @@ class RiemannianScoreField(StrictModule):
         self.score_id = score_id
 
     def __call__(
-        self, point: ArrayLike, time: ArrayLike, /, *, key: Key[Array, ""] | None = None
+        self, point: ArrayLike, time: ArrayLike, /, *, key: PRNGKey | None = None
     ) -> Array:
         value = jnp.asarray(point)
         if value.shape != self.manifold.point_shape:
@@ -155,7 +155,7 @@ class IsotropicRiemannianDiffusion(StrictModule):
         manifold: AbstractRiemannianManifold,
         drift: Callable[[Array, Array], ArrayLike],
         diffusion_rate: Callable[[Array], ArrayLike],
-        tangent_noise: Callable[[Key[Array, ""], Array], ArrayLike],
+        tangent_noise: Callable[[PRNGKey, Array], ArrayLike],
         /,
         *,
         terminal_time: float = 1.0,
@@ -228,7 +228,7 @@ def sample_manifold_reverse_diffusion(
     process: IsotropicRiemannianDiffusion,
     score: RiemannianScoreField,
     terminal_state: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     num_steps: int,
@@ -253,8 +253,8 @@ def sample_manifold_reverse_diffusion(
     reverse_times = jnp.arange(count, dtype=jnp.float64) * step_size
 
     def step(
-        carry: tuple[Array, Key[Array, ""]], reverse_time: Array
-    ) -> tuple[tuple[Array, Key[Array, ""]], Array]:
+        carry: tuple[Array, PRNGKey], reverse_time: Array
+    ) -> tuple[tuple[Array, PRNGKey], Array]:
         point, current_key = carry
         current_key, score_key, noise_key = jr.split(current_key, 3)
         forward_time = process.terminal_time - reverse_time

@@ -11,7 +11,6 @@ from typing import Any, ClassVar, Literal
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import GridBatch, PointBatch
@@ -29,6 +28,7 @@ from ...._frozendict import frozendict
 from ...._model import AxisModelEvaluator, ModelBinding, StructuredDerivativeProvider
 from ...._strict import StrictModule
 from ....logging import emit
+from ....typing import PRNGKey
 from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from ..._contracts import compose_regularity, model_regularity, product_regularity
 from ..._keys import EvalKey, split_eval_key
@@ -156,7 +156,7 @@ class LatentContractionModel(
         keep_outputs_complex: bool = False,
         execution_policy: LatentExecutionPolicy | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **factor_models: _AbstractBaseModel,
     ) -> None:
         r"""Create a latent contraction model.
@@ -954,7 +954,7 @@ class Separable(_AbstractStructuredInputModel):
         keep_outputs_complex: bool = False,
         split_input: int | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         r"""Create a separable wrapper.
 

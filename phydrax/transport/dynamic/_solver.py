@@ -12,10 +12,10 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import Array
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ...stochastic._state_space import StateSpaceStepContext
+from ...typing import PRNGKey
 from .._status import TransportStatus
 from ._problem import SchrodingerBridgeProblem
 
@@ -100,16 +100,14 @@ class SchrodingerBridgeResult(StrictModule):
         return ControlledTransitionKernel(self)
 
     def sample_state_indices(
-        self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()
+        self, key: PRNGKey, sample_shape: tuple[int, ...] = ()
     ) -> Array:
         """Sample stable finite-state index paths from the controlled law."""
         from ._kernel import sample_bridge_state_indices
 
         return sample_bridge_state_indices(key, self, sample_shape=sample_shape)
 
-    def sample_paths(
-        self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()
-    ) -> Array:
+    def sample_paths(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         """Sample stable state-value paths from the controlled law."""
         from ._kernel import sample_bridge_paths
 

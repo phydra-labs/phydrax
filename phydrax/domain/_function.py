@@ -15,7 +15,6 @@ import jax.core as jax_core
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -30,6 +29,7 @@ from .._trainable import (
     ParameterOwner,
     resolve_array_roles,
 )
+from ..typing import PRNGKey
 from ._derivative import (
     DerivativeBackend,
     DerivativeBasis,
@@ -101,9 +101,7 @@ class _ConstCallable(StrictModule, NonTrainableState):
             raise TypeError("DomainFunction constants must be array-like, not None.")
         self.value = jnp.asarray(value)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del key, kwargs
         # Coordinate tuples carry grid axes that every pointwise evaluator returns.
         grid_shape = tuple(
@@ -125,9 +123,7 @@ class _TrainableConstCallable(StrictModule, ParameterOwner):
             raise TypeError("Domain.Parameter constants must be array-like, not None.")
         self.value = jnp.asarray(value)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         return self.value
 
@@ -140,9 +136,7 @@ class UnaryFieldEvaluator(StrictModule):
         self.func = func
         self.op = op
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Any:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Any:
         return self.op(self.func(*args, key=key, **kwargs))
 
 
@@ -181,9 +175,7 @@ class SwapAxesFieldEvaluator(StrictModule, DerivativeRuleProvider):
         self.axis1 = int(axis1)
         self.axis2 = int(axis2)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         return jnp.swapaxes(self.func(*args, key=key, **kwargs), self.axis1, self.axis2)
 
     def derivative_rule_for(self, function: "DomainFunction", /) -> DerivativeRule | None:
@@ -261,7 +253,7 @@ class BinaryFieldEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvider)
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         left_fn = self.b if self.reverse else self.a
@@ -273,9 +265,7 @@ class BinaryFieldEvaluator(StrictModule, BatchEvaluator, DerivativeRuleProvider)
             raise TypeError("Batch-aware binary DomainFunction must return a Field.")
         return out
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Any:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Any:
         a_args = [args[i] for i in self.a_pos]
         b_args = [args[i] for i in self.b_pos]
         if self.reverse:
@@ -797,7 +787,7 @@ class DomainFunction(StrictModule):
         self,
         points: Any,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         return evaluate_domain_function(

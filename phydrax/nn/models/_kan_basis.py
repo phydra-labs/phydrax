@@ -15,7 +15,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._differentiation import DerivativeRegularity
 from ..._interpolation import (
@@ -34,6 +33,7 @@ from ..._polynomial._orthogonal import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState, ParameterOwner
+from ...typing import PRNGKey
 
 
 EdgeInitialization = Literal["default", "identity"]
@@ -117,7 +117,7 @@ class AbstractEdgeBasis(StrictModule):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Any:
         """Initialize one output-by-input edge-parameter PyTree."""
 
@@ -193,7 +193,7 @@ class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Array:
         coefficients = jnp.zeros((out_size, in_size, self.coefficient_count))
         if initialization == "identity":
@@ -393,7 +393,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Array:
         if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != in_size:
@@ -700,7 +700,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> RationalBSplineEdgeParameters:
         if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
             if self.grid.num_grids != in_size:

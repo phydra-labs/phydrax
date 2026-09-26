@@ -12,10 +12,10 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 
 
 class AbstractFlowDistribution(StrictModule, ParameterOwner, abc.ABC):
@@ -34,7 +34,7 @@ class AbstractFlowDistribution(StrictModule, ParameterOwner, abc.ABC):
     @abc.abstractmethod
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         *,
         sample_shape: tuple[int, ...] = (),
         condition: ArrayLike | None = None,
@@ -51,7 +51,7 @@ class AbstractFlowDistribution(StrictModule, ParameterOwner, abc.ABC):
 
     def sample_and_log_prob(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         *,
         sample_shape: tuple[int, ...] = (),
         condition: ArrayLike | None = None,
@@ -95,7 +95,7 @@ class NormalFlowDistribution(AbstractFlowDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         *,
         sample_shape: tuple[int, ...] = (),
         condition: ArrayLike | None = None,
@@ -142,7 +142,7 @@ class AffineCouplingLayer(StrictModule, ParameterOwner):
         *,
         width: int,
         depth: int,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         event = int(event_size)
         condition = int(condition_size)
@@ -267,7 +267,7 @@ class CouplingFlowDistribution(AbstractFlowDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         *,
         sample_shape: tuple[int, ...] = (),
         condition: ArrayLike | None = None,
@@ -306,7 +306,7 @@ class CouplingFlowDistribution(AbstractFlowDistribution):
 
 
 def coupling_flow(
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     base_dist: NormalFlowDistribution,
@@ -350,7 +350,7 @@ def coupling_flow(
 
 
 def triangular_flow(
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     base_dist: NormalFlowDistribution,

@@ -13,7 +13,6 @@ import jax.core as jax_core
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -38,6 +37,7 @@ if TYPE_CHECKING:
     from ..mechanics._linear_elasticity import LinearElasticityTensor
 
 from ...domain._evaluation import evaluate_pointwise_callable
+from ...typing import PRNGKey
 from ._array_ops import (
     _basis_nth_derivative,
     _fd_nth_derivative,
@@ -106,9 +106,7 @@ class _DiscreteDerivativeEvaluator(StrictModule, BatchEvaluator):
         self.basis = basis
         self.periodic = bool(periodic)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         return self.pointwise(*args, key=key, **kwargs)
 
     def __call_batch__(
@@ -116,7 +114,7 @@ class _DiscreteDerivativeEvaluator(StrictModule, BatchEvaluator):
         batch: Any,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         if isinstance(batch, GridBatch) and self.variable in batch.coord_axes_by_label:
@@ -630,7 +628,7 @@ def grad(
 
     if var not in u.deps:
 
-        def _zero(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+        def _zero(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
             if factor.kind == "scalar":
                 return jnp.zeros_like(y)
@@ -665,9 +663,7 @@ def grad(
             for i in range(int(var_dim))
         )
 
-        def _grad_fast(
-            *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-        ) -> Array:
+        def _grad_fast(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             vals = [jnp.asarray(p.func(*args, key=key, **kwargs)) for p in partials]
             if int(var_dim) == 1:
                 return vals[0][..., None]
@@ -679,7 +675,7 @@ def grad(
 
     idx = u.deps.index(var)
 
-    def _grad(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _grad(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         x0 = args[idx]
 
         def f(xi: Array) -> Array:
@@ -834,7 +830,7 @@ def hessian(
 
     if var not in u.deps:
 
-        def _zero(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+        def _zero(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
             if factor.kind == "scalar":
                 return jnp.zeros_like(y)
@@ -884,9 +880,7 @@ def hessian(
             for i in range(int(var_dim))
         )
 
-        def _hess_jvp(
-            *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-        ) -> Array:
+        def _hess_jvp(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             rows = []
             for i in range(int(var_dim)):
                 row_vals = [
@@ -946,9 +940,7 @@ def hessian(
             for i in range(int(var_dim))
         )
 
-        def _hess_fast(
-            *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-        ) -> Array:
+        def _hess_fast(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             rows = []
             for i in range(int(var_dim)):
                 row_vals = [
@@ -967,7 +959,7 @@ def hessian(
 
     idx = u.deps.index(var)
 
-    def _hess(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _hess(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         x0 = args[idx]
 
         def f(xi: Array) -> Array:
@@ -1110,7 +1102,7 @@ def directional_derivative(
     v_pos = tuple(idx[lbl] for lbl in v2.deps)
     u_var_pos = u2.deps.index(var) if var in u2.deps else None
 
-    def _dd(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _dd(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         v_args = [args[i] for i in v_pos]
         vv = jnp.asarray(v2.func(*v_args, key=key, **kwargs))
@@ -1190,7 +1182,7 @@ def div(
     )
     use_jvp = _generic_jvp_enabled(u, backend=backend, ad_engine=ad_engine)
 
-    def _div(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _div(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         if use_jvp:
             evaluated = _fused_point_coordinate_derivatives(
                 u,
@@ -1284,7 +1276,7 @@ def curl(
     )
     use_jvp = _generic_jvp_enabled(u, backend=backend, ad_engine=ad_engine)
 
-    def _curl(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _curl(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         if use_jvp:
             evaluated = _fused_point_coordinate_derivatives(
                 u,
@@ -1352,7 +1344,7 @@ def vector_curl_2d(
         ad_engine=ad_engine,
     )
 
-    def _curl(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _curl(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         jacobian = jnp.asarray(derivative.func(*args, key=key, **kwargs))
         if jacobian.ndim < 2 or jacobian.shape[-2:] != (2, 2):
             raise ValueError(
@@ -1389,7 +1381,7 @@ def scalar_curl_2d(
         ad_engine=ad_engine,
     )
 
-    def _curl(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _curl(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         gradient = jnp.asarray(derivative.func(*args, key=key, **kwargs))
         if gradient.ndim < 1 or gradient.shape[-1] != 2:
             raise ValueError(
@@ -1454,7 +1446,7 @@ def div_tensor(
     )
     use_jvp = _generic_jvp_enabled(T, backend=backend, ad_engine=ad_engine)
 
-    def _divT(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _divT(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         if use_jvp:
             evaluated = _fused_point_coordinate_derivatives(
                 T,
@@ -1603,7 +1595,7 @@ def strain_rate_magnitude(
         ad_engine=ad_engine if backend == "ad" else "auto",
     )
 
-    def _mag(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _mag(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         d = jnp.asarray(D.func(*args, key=key, **kwargs))
         return jnp.sqrt(2.0 * jnp.sum(d * d, axis=(-2, -1)))
 
@@ -1613,7 +1605,7 @@ def strain_rate_magnitude(
 def _trace_last2(T: DomainFunction, /, *, keepdims: bool = False) -> DomainFunction:
     keep = bool(keepdims)
 
-    def _tr(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _tr(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         x = jnp.asarray(T.func(*args, key=key, **kwargs))
         tr = jnp.trace(x, axis1=-2, axis2=-1)
         if keep:
@@ -1719,7 +1711,7 @@ def linear_elastic_stress(
         ad_engine=ad_engine,
     )
 
-    def _stress(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _stress(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         value = strain.func(*args, key=key, **kwargs)
         return material.stress(value)
 
@@ -2021,7 +2013,7 @@ def laplacian(
     if var not in u.deps:
         out_metadata = u.metadata
 
-        def _zero(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+        def _zero(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
             return jnp.zeros_like(y)
 
@@ -2065,7 +2057,7 @@ def laplacian(
     if backend in ("ad", "jet"):
         idx = int(u.deps.index(var))
 
-        def _lap(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+        def _lap(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             x0 = args[idx]
             if not isinstance(x0, tuple):
                 if use_jvp:
@@ -2190,7 +2182,7 @@ def bilaplacian(
 
     if var not in u.deps:
 
-        def _zero(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+        def _zero(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
             return jnp.zeros_like(y)
 
@@ -2236,7 +2228,7 @@ def bilaplacian(
 
     idx = u.deps.index(var)
 
-    def _bilap(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _bilap(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         x0 = args[idx]
 
         def f(xi: Array) -> Array:
@@ -2386,9 +2378,7 @@ def partial(
     if use_jvp:
         if idx is None:
 
-            def _zero(
-                *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-            ) -> Array:
+            def _zero(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
                 y = jnp.asarray(u.func(*args, key=key, **kwargs))
                 return jnp.zeros_like(y)
 
@@ -2398,9 +2388,7 @@ def partial(
 
         assert idx is not None
 
-        def _partial_jvp(
-            *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-        ) -> Array:
+        def _partial_jvp(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             x0 = args[idx]
             if isinstance(x0, tuple):
                 coords = tuple(jnp.asarray(xi) for xi in x0)
@@ -2449,9 +2437,7 @@ def partial(
 
     if var_dim == 1:
 
-        def _partial(
-            *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-        ) -> Array:
+        def _partial(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             jac = jnp.asarray(g.func(*args, key=key, **kwargs))
             if jac.ndim > 0 and jac.shape[-1] == 1:
                 return jnp.squeeze(jac, axis=-1)
@@ -2462,7 +2448,7 @@ def partial(
         )
     assert axis_i is not None
 
-    def _partial(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _partial(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         jac = jnp.asarray(g.func(*args, key=key, **kwargs))
         return jnp.take(jac, axis_i, axis=-1)
 
@@ -2594,7 +2580,7 @@ def partial_n(
 
     if var not in u.deps:
 
-        def _zero(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+        def _zero(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
             return jnp.zeros_like(y)
 
@@ -2623,7 +2609,7 @@ def partial_n(
 
     idx = u.deps.index(var)
 
-    def _nth(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _nth(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         runtime_kwargs = kwargs
         cache = get_partial_eval_cache()
         cache_key: tuple[Any, ...] | None = None
@@ -2977,7 +2963,7 @@ def div_k_grad(
     u_pos = tuple(idx[lbl] for lbl in u2.deps)
     k_pos = tuple(idx[lbl] for lbl in k2.deps)
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         k_args = [args[i] for i in k_pos]
 
@@ -3089,7 +3075,7 @@ def div_diag_k_grad(
             ad_engine=ad_engine,
         )
 
-        def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+        def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             u_args = [args[i] for i in u_pos]
             k_args = [args[i] for i in k_pos]
 
@@ -3232,7 +3218,7 @@ def div_diag_k_grad(
     if backend != "jet":
         raise ValueError("backend must be 'ad' or 'jet'.")
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         k_args = [args[i] for i in k_pos]
 
@@ -3406,7 +3392,7 @@ def div_K_grad(
     u_pos = tuple(idx[lbl] for lbl in u2.deps)
     k_pos = tuple(idx[lbl] for lbl in K2.deps)
 
-    def _flux(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _flux(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         k_args = [args[i] for i in k_pos]
 
@@ -3483,7 +3469,7 @@ def deformation_gradient(
     G = grad(u, var=var, mode=mode, backend="ad", ad_engine=ad_engine)
     I = jnp.eye(var_dim)
 
-    def _F(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _F(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         Gx = jnp.asarray(G.func(*args, key=key, **kwargs))
         if Gx.shape[-2:] != (var_dim, var_dim):
             raise ValueError(
@@ -3535,7 +3521,7 @@ def green_lagrange_strain(
     F = deformation_gradient(u, var=var, mode=mode)
     I = jnp.eye(var_dim)
 
-    def _E(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _E(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         Fx = jnp.asarray(F.func(*args, key=key, **kwargs))
         C = jnp.swapaxes(Fx, -1, -2) @ Fx
         return 0.5 * (C - I)
@@ -3636,7 +3622,7 @@ def pk1_from_pk2(
     u_pos = tuple(idx[lbl] for lbl in u2.deps)
     s_pos = tuple(idx[lbl] for lbl in S2.deps)
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         s_args = [args[i] for i in s_pos]
         Fx = jnp.asarray(F.func(*u_args, key=key, **kwargs))
@@ -3696,7 +3682,7 @@ def cauchy_from_pk2(
     u_pos = tuple(idx[lbl] for lbl in u2.deps)
     s_pos = tuple(idx[lbl] for lbl in S2.deps)
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         s_args = [args[i] for i in s_pos]
         Fx = jnp.asarray(F.func(*u_args, key=key, **kwargs))
@@ -3808,7 +3794,7 @@ def neo_hookean_reference_energy(
     ) = _prepare_neo_hookean_fields(u, mu, lambda_, var, mode)
     from ..mechanics._finite_strain import neo_hookean_reference_energy_from_moduli
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         mu_args = [args[i] for i in mu_pos]
         lambda_args = [args[i] for i in lambda_pos]
@@ -3873,7 +3859,7 @@ def neo_hookean_pk1(
     ) = _prepare_neo_hookean_fields(u, mu, lambda_, var, mode)
     from ..mechanics._finite_strain import neo_hookean_first_piola_from_moduli
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         mu_args = [args[i] for i in mu_pos]
         lambda_args = [args[i] for i in lambda_pos]
@@ -3939,7 +3925,7 @@ def neo_hookean_cauchy(
     ) = _prepare_neo_hookean_fields(u, mu, lambda_, var, mode)
     from ..mechanics._finite_strain import neo_hookean_cauchy_from_moduli
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         mu_args = [args[i] for i in mu_pos]
         lambda_args = [args[i] for i in lambda_pos]
@@ -4105,7 +4091,7 @@ def von_mises_stress(
             "embedded-3d von Mises stress supports only two- and three-dimensional geometry."
         )
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         sig = jnp.asarray(sigma.func(*args, key=key, **kwargs))
         if convention == "embedded-3d" and var_dim == 2:
             sx = sig[..., 0, 0]
@@ -4214,7 +4200,7 @@ def maxwell_stress(
     eps_pos = _pos(eps2)
     mu_pos = _pos(mu2)
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         T = 0.0
         n = None
 
@@ -4309,7 +4295,7 @@ def linear_elastic_cauchy_stress_2d(
     e_pos = tuple(idx[lbl] for lbl in E2.deps)
     nu_pos = tuple(idx[lbl] for lbl in nu2.deps)
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         e_args = [args[i] for i in e_pos]
         nu_args = [args[i] for i in nu_pos]
@@ -4430,7 +4416,7 @@ def linear_elastic_orthotropic_stress_2d(
     nu_pos = tuple(idx[lbl] for lbl in nu12_2.deps)
     g_pos = tuple(idx[lbl] for lbl in G12_2.deps)
 
-    def _op(*args: Any, key: Key[Array, ""] | None = None, **kwargs: Any) -> Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         u_args = [args[i] for i in u_pos]
         e1_args = [args[i] for i in e1_pos]
         e2_args = [args[i] for i in e2_pos]

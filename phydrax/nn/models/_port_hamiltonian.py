@@ -9,11 +9,11 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import AbstractArrayModel
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel, _AbstractStructuredInputModel
 from .._contracts import (
     AFFINE,
@@ -180,7 +180,7 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
         initial_damping: float = 1e-2,
         minimum_dissipation_factor: float = 1e-6,
         interconnection_scale: float = 0.1,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         dimension = int(state_size)
         if dimension <= 0:

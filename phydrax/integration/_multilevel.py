@@ -20,7 +20,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._array_archive import (
     ArrayArchiveCorruptionError,
@@ -29,6 +28,7 @@ from .._array_archive import (
 )
 from .._numerics import LogWeightedAccumulator
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._estimates import IntegrationEstimate, IntegrationProvenance
 from ._plans import MultilevelMonteCarloPlan
 from ._precision import IntegrationPrecisionPolicy
@@ -253,7 +253,7 @@ class MultilevelResultArchive:
 def materialize_multilevel(
     target: MultilevelTarget,
     plan: MultilevelMonteCarloPlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     precision: IntegrationPrecisionPolicy | None = None,

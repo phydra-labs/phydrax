@@ -16,11 +16,11 @@ import numpy as np
 import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...typing import PRNGKey
 from .._domain import Domain, JointFactor
 from .._function import DomainFunction
 from .._hyperrectangle import HyperRectangle
@@ -39,7 +39,7 @@ class _IdentityCoordinate(StrictModule, NonTrainableState):
         pass
 
     def __call__(
-        self, value: _ValueT, /, *, key: Key[Array, ""] | None = None, **kwargs: object
+        self, value: _ValueT, /, *, key: PRNGKey | None = None, **kwargs: object
     ) -> _ValueT:
         del key, kwargs
         return value
@@ -85,7 +85,7 @@ class _PeriodicCoordinate(StrictModule, NonTrainableState):
         coordinate: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: object,
     ) -> Array:
         del key, kwargs
@@ -138,7 +138,7 @@ class _BoxSupport(StrictModule, NonTrainableState):
         coordinate: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: object,
     ) -> Array:
         del key, kwargs
@@ -197,7 +197,7 @@ class _BoxWindow(StrictModule, NonTrainableState):
         coordinate: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: object,
     ) -> Array:
         del key, kwargs
@@ -262,7 +262,7 @@ class _AffineCoordinate(StrictModule, NonTrainableState):
         coordinate: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: object,
     ) -> Array:
         del key, kwargs
@@ -288,7 +288,7 @@ class _FaceEmbedding(StrictModule, NonTrainableState):
         tangent: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: object,
     ) -> Array:
         del key, kwargs

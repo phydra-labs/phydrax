@@ -15,12 +15,12 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
+from ...typing import PRNGKey
 from ._actions import BFSSConfiguration, BFSSPlan, prepare_bfss, PreparedBFSSAction
 
 
@@ -494,7 +494,7 @@ class BFSSFermionRHMCRun(StrictModule):
 def sample_bfss_fermion_rhmc(
     prepared: PreparedBFSSFermionRHMC,
     initial_configuration: BFSSConfiguration,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     step_size: float,

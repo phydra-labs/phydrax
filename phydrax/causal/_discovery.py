@@ -14,11 +14,11 @@ import equinox as eqx
 import jax
 import numpy as np
 from jax import Array
-from jaxtyping import PRNGKeyArray
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._core import CausalDataset, CausalSchema, VariableObservability, VariableScale
 from ._graph import (
     CausalCPDAG,
@@ -86,7 +86,7 @@ class AbstractConditionalIndependenceTest(StrictModule):
         conditioned: Sequence[str] = (),
         *,
         sample_indices: Array | None = None,
-        key: PRNGKeyArray | None = None,
+        key: PRNGKey | None = None,
     ) -> ConditionalIndependenceResult:
         raise NotImplementedError
 
@@ -120,7 +120,7 @@ class FisherZTest(AbstractConditionalIndependenceTest):
         conditioned: Sequence[str] = (),
         *,
         sample_indices: Array | None = None,
-        key: PRNGKeyArray | None = None,
+        key: PRNGKey | None = None,
     ) -> ConditionalIndependenceResult:
         del key
         names = (left, right) + tuple(conditioned)
@@ -246,7 +246,7 @@ class GSquareTest(AbstractConditionalIndependenceTest):
         conditioned: Sequence[str] = (),
         *,
         sample_indices: Array | None = None,
-        key: PRNGKeyArray | None = None,
+        key: PRNGKey | None = None,
     ) -> ConditionalIndependenceResult:
         del key
         names = (left, right) + tuple(conditioned)
@@ -364,7 +364,7 @@ class KernelConditionalIndependenceTest(AbstractConditionalIndependenceTest):
         conditioned: Sequence[str] = (),
         *,
         sample_indices: Array | None = None,
-        key: PRNGKeyArray | None = None,
+        key: PRNGKey | None = None,
     ) -> ConditionalIndependenceResult:
         if key is None:
             raise ValueError("Kernel CI requires an explicit JAX key.")
@@ -669,7 +669,7 @@ def discover_pc_stable(
     plan: PCStablePlan,
     *,
     sample_indices: Array | None = None,
-    key: PRNGKeyArray | None = None,
+    key: PRNGKey | None = None,
 ) -> DiscoveryResult:
     adjacency, separators, evidence, tests, status, reason = _learn_skeleton(
         dataset,
@@ -731,7 +731,7 @@ def discover_conservative_fci(
     plan: ConservativeFCIPlan,
     *,
     sample_indices: Array | None = None,
-    key: PRNGKeyArray | None = None,
+    key: PRNGKey | None = None,
 ) -> DiscoveryResult:
     adjacency, separators, evidence, tests, status, reason = _learn_skeleton(
         dataset,
@@ -816,7 +816,7 @@ def falsify_dag_local_markov(
     *,
     maximum_tests: int = 10_000,
     sample_indices: Array | None = None,
-    key: PRNGKeyArray | None = None,
+    key: PRNGKey | None = None,
 ) -> GraphFalsificationResult:
     """Challenge DAG local-Markov implications without validating the graph."""
     if graph.schema.schema_id != dataset.schema.schema_id:
@@ -1072,7 +1072,7 @@ def _learn_skeleton(
     resources: DiscoveryResourcePolicy,
     *,
     sample_indices: Array | None,
-    key: PRNGKeyArray | None,
+    key: PRNGKey | None,
     exhaustive_candidates: bool,
 ) -> tuple[
     set[tuple[str, str]],

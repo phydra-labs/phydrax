@@ -11,11 +11,11 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
 from ..._sampling import materialize_design
+from ...typing import PRNGKey
 from ..differential._domain_ops import _factor_and_dim
 from ._ctx import _compile_ctx_integrand
 
@@ -133,9 +133,7 @@ def local_integral(
 
     u_var_idx = u.deps.index(var) if var in u.deps else None
 
-    def _op(
-        *args: Any, key: Key[jax.Array, ""] | None = None, **kwargs: Any
-    ) -> jax.Array:
+    def _op(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> jax.Array:
         x = args[x_pos]
         if isinstance(x, tuple):
             raise ValueError("local_integral does not support coord-separable inputs.")

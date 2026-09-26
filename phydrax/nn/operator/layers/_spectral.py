@@ -10,13 +10,13 @@ from typing import cast
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ....discretization._spectral import BasisTransformPlan, ModalTransformKind
+from ....typing import PRNGKey
 from ..data import OperatorAxis
 
 
@@ -41,7 +41,7 @@ class BasisSpectralConvND(StrictModule):
         out_channels: int,
         n_modes: int | Sequence[int],
         bases: ModalTransformKind | Sequence[ModalTransformKind],
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)

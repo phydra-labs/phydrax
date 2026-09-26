@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._iteration import (
     bind_iteration_scope,
@@ -27,6 +27,7 @@ from .._iteration import (
     IterationSessionState,
 )
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._markov import MarkovSampleResult, MarkovState, MetropolisHastings, sample_markov
 
 
@@ -114,7 +115,7 @@ def sample_markov_chunked(
     state: MarkovState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     plan: MarkovChunkPlan,
     iteration: IterationPlan | None = None,
     session: IterationSession | None = None,

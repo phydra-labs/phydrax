@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
@@ -25,6 +24,7 @@ from ..._holomorphic_linear import (
     HolomorphicMultiJet,
 )
 from ..._holomorphic_taylor import multijet_from_normalized, taylor_exp
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import AFFINE, compose_regularity
 from .._keys import EvalKey
@@ -53,7 +53,7 @@ class HolomorphicMLP(_AbstractBaseModel):
         normalization: ComplexAffineNormalization | None = None,
         use_bias: bool = True,
         linear_ranks: Sequence[int | None] | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         input_size = int(in_size)
         output_size = int(out_size)

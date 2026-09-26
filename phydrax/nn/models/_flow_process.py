@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
@@ -21,6 +20,7 @@ from ...stochastic._process import (
     AbstractMarginalTransitionLaw,
     AbstractProcessDistribution,
 )
+from ...typing import PRNGKey
 from ..flows import (
     AbstractFlowDistribution,
     coupling_flow,
@@ -177,7 +177,7 @@ class FlowProcessDistribution(AbstractProcessDistribution):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         shape = _sample_shape(sample_shape)
@@ -292,7 +292,7 @@ class LatentFlowCoefficientProcess(AbstractMarginalTransitionLaw, ParameterOwner
 
 
 def conditional_coupling_flow_process(
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     state_shape: Sequence[int],

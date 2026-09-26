@@ -13,12 +13,12 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from .._interpolation import apply_gather_stencil, linear_stencil_from_indices
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._bsde import BSDEPathBatch, BSDEProblem
 
 
@@ -413,7 +413,7 @@ class MeanFieldBSDEProblem(StrictModule):
         self.problem_id = _name(problem_id, owner="problem_id")
         self.process_id = _name(process_id, owner="process_id")
 
-    def sample(self, key: Key[Array, ""], /) -> BSDEPathBatch:
+    def sample(self, key: PRNGKey, /) -> BSDEPathBatch:
         paths = self.forward_sampler(key)
         if not isinstance(paths, BSDEPathBatch):
             raise TypeError("forward_sampler must return a BSDEPathBatch.")
@@ -431,7 +431,7 @@ class MeanFieldBSDEProblem(StrictModule):
     def as_bsde_problem(self) -> BSDEProblem:
         """Freeze the empirical law into the canonical Phydrax BSDE contract."""
 
-        def forward_sampler(key: Key[Array, ""]) -> BSDEPathBatch:
+        def forward_sampler(key: PRNGKey) -> BSDEPathBatch:
             return self.sample(key)
 
         def drift(time: Array, state: Array, args: Any) -> Array:

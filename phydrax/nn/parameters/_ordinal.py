@@ -9,10 +9,10 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner
+from ...typing import PRNGKey
 
 
 OrdinalCutpointAnchor = Literal["mean", "fixed_first"]
@@ -36,7 +36,7 @@ class OrderedOrdinalCutpoints(StrictModule, ParameterOwner):
         class_count: int,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         initial: ArrayLike | None = None,
         minimum_gap: float = 1.0e-3,
         anchor: OrdinalCutpointAnchor = "mean",

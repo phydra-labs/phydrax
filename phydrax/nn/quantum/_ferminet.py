@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy.special as jsp_special
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -26,6 +25,7 @@ from ..._trainable import NonTrainableState, ParameterOwner
 from ...atomistic._types import AtomicStructure
 from ...operators.quantum._amplitude import LogAmplitude
 from ...operators.quantum._electronic_advanced import ElectronicVMCResourcePlan
+from ...typing import PRNGKey
 from ...units import BOHR, conversion_factor
 from ..parameters import PositiveTransform
 
@@ -516,7 +516,7 @@ class FermiNet(StrictModule, ParameterOwner):
         compute_dtype: Any = "float64",
         resource_plan: ElectronicVMCResourcePlan | None = None,
         minimum_envelope_decay: float = 1e-6,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         if not isinstance(nuclei, AtomicStructure):
             raise TypeError("nuclei must be an AtomicStructure.")

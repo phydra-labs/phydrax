@@ -10,7 +10,6 @@ from typing import Any, Literal
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (
@@ -24,6 +23,7 @@ from phydrax.domain import (
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
+from ..typing import PRNGKey
 from ._data_metrics import (
     case_sample_count,
     normalize_case_sampling,
@@ -180,7 +180,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Any:
         domain = self.domain
         indices = sample_case_indices(
@@ -204,7 +204,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         batch: SupervisedDatasetBatch,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         var = self.fields[0]
@@ -220,7 +220,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: SupervisedDatasetBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -237,7 +237,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: SupervisedDatasetBatch | None = None,
         **kwargs: Any,

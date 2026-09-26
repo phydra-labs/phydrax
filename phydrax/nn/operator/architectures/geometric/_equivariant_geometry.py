@@ -10,7 +10,6 @@ from typing import Literal
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
@@ -23,6 +22,8 @@ from phydrax.nn.operator.layers import (
     O3PointwiseLinear,
 )
 from phydrax.nn.operator.representations import O3Representation
+
+from .....typing import PRNGKey
 
 
 class EquivariantOperatorState(StrictModule):
@@ -77,7 +78,7 @@ class EquivariantGeometryOperator(AbstractEncodedOperatorModel):
         radial_basis_size: int = 16,
         depth: int = 3,
         source_key: str | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.input_representation = input_representation
         self.output_representation = output_representation
@@ -243,7 +244,7 @@ def EqGINO(
     radial_basis_size: int = 16,
     depth: int = 3,
     source_key: str | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> EquivariantGeometryOperator:
     """Construct the EqGINO configuration of the equivariant geometry operator."""
     return EquivariantGeometryOperator(

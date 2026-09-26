@@ -24,7 +24,6 @@ import numpy.typing as npt
 import optax
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax._strict import StrictModule
 
@@ -39,6 +38,7 @@ from ...qualification import ReferenceArtifactManifest
 from ...solver import DiffraxEvolution, FunctionalSolver
 from ...terms import FlowMatchingTerm
 from ...transport import EndpointCouplingSample, LinearEndpointInterpolant
+from ...typing import PRNGKey
 from ._decoder import (
     AbstractCoordinateDecoder,
     CartesianCoordinateDecoder,
@@ -333,7 +333,7 @@ def _velocity_function(model: ConditionalCoordinateVelocity) -> DomainFunction:
 def _endpoints(
     data: CoordinateTrainingData,
     indices: tuple[int, ...],
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_pairs: int,
 ) -> EndpointCouplingSample:
     noise_key, index_key = jr.split(key)
@@ -381,7 +381,7 @@ class CoordinateFitResult:
 def fit_coordinate_model(
     data: CoordinateTrainingData,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     steps: int = 200,
     pairs_per_step: int = 32,
     width: int = 64,
@@ -501,9 +501,7 @@ class PreparedCoordinateSampler(StrictModule):
     decoder: AbstractCoordinateDecoder
     max_samples: int = eqx.field(static=True)
 
-    def __call__(
-        self, key: Key[Array, ""], conditions: ArrayLike
-    ) -> tuple[Array, Array, Array]:
+    def __call__(self, key: PRNGKey, conditions: ArrayLike) -> tuple[Array, Array, Array]:
         """Numeric JIT/grad boundary: returns every state, valid bit and status."""
         conditions = jnp.asarray(conditions)
         if conditions.ndim != 2 or conditions.shape[1] != len(self.model.condition_names):
@@ -596,14 +594,14 @@ class CoordinateProposalBatch:
 
 @eqx.filter_jit
 def _sample_prepared_coordinate(
-    sampler: PreparedCoordinateSampler, key: Key[Array, ""], context: Array, /
+    sampler: PreparedCoordinateSampler, key: PRNGKey, context: Array, /
 ) -> tuple[Array, Array, Array]:
     return sampler(key, context)
 
 
 def sample_coordinate_proposals(
     fit: CoordinateFitResult,
-    key: Key[Array, ""],
+    key: PRNGKey,
     conditions: ArrayLike,
     *,
     commercial_use: bool = False,

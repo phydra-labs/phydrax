@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.conditions._ir import Condition
 from phydrax.domain import (
@@ -43,6 +42,7 @@ from .._strict import StrictModule
 from ..domain._derivative import DerivativeRule, DerivativeRuleProvider
 from ..domain._function import differentiate_operands
 from ..operators.differential._hooks import blend_with_gate
+from ..typing import PRNGKey
 from ._ansatz import _enforcement_weight, _enforcement_weight_fn, enforce_initial
 from ._lifecycle import (
     EnforcementState,
@@ -104,9 +104,7 @@ def _boundary_piece_where(
     local_fn = _ensure_special_kwonly_args(local)
     global_fn = _ensure_special_kwonly_args(global_filter.func)
 
-    def _conjunction(
-        point: Array, *, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def _conjunction(point: Array, *, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         return jnp.logical_and(
             local_fn(point, key=key, **kwargs),
             global_fn(point, key=key, **kwargs),
@@ -696,7 +694,7 @@ def _initial_overlay_boundary_compatible(
     u_base: DomainFunction,
     boundary_overlays: Sequence["_BoundaryBlendOverlay"],
     initial_overlay: "_InitialEnforcedOverlay",
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_probe: int = 64,
     atol: float = 1e-8,
 ) -> bool:
@@ -800,9 +798,7 @@ class _BoundaryWeightedQuotientCallable(StrictModule, DerivativeRuleProvider):
         self.remainder_weight_pos = remainder_weight_pos
         self.base_pos = base_pos
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         num = jnp.asarray(0.0, dtype=jnp.float64)
         den = jnp.asarray(0.0, dtype=jnp.float64)
 
@@ -863,7 +859,7 @@ class _BoundaryBlendOverlay(StrictModule):
         include_identity_remainder: bool,
         num_reference: int,
         sampler: str,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         if not pieces:
             raise ValueError("_BoundaryBlendOverlay requires at least one piece.")
@@ -1237,9 +1233,7 @@ class _InteriorAnchorOverlay(StrictModule):
                 m = m * (jnp.maximum(t - t0, 0.0) ** int(q))
             return m
 
-        def _correction(
-            *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-        ) -> Array:
+        def _correction(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
             z = {lbl: args[idx[lbl]] for lbl in deps}
 
             def _u0_at_anchor(*dep_vals: Array) -> Array:
@@ -1644,7 +1638,7 @@ class _FieldEnforcementPipeline(StrictModule):
         gate_linear_fraction: float = 0.5,
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         r"""Build a pipeline for one field.
 
@@ -1815,9 +1809,7 @@ class _FieldEnforcementPipeline(StrictModule):
                 for factor in gate_factors
             )
 
-            def _gate(
-                *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-            ) -> Array:
+            def _gate(*args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
                 del key, kwargs
                 value = jnp.asarray(1.0, dtype=jnp.float64)
                 for arg, gate, power in zip(
@@ -1942,7 +1934,7 @@ class EnforcementProgram(StrictModule):
         gate_linear_fraction: float = 0.5,
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> "EnforcementProgram":
         field_order = tuple(functions.keys())
         resolved_specs = tuple(specs)

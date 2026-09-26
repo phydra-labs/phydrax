@@ -14,12 +14,12 @@ import numpy as np
 import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ...._strict import StrictModule
 from ....artifacts import ScientificArtifactEnvelope
 from ....atomistic import AtomisticBatch
 from ....qualification import ReferenceArtifactManifest
+from ....typing import PRNGKey
 from ....units import conversion_factor, UnitDefinition
 from ..._coordinate_generation._native import (
     CoordinateFitResult,
@@ -330,7 +330,7 @@ class ProteinCoordinateProposalBatch:
 
 def sample_protein_coordinate_proposals(
     fit: CoordinateFitResult,
-    key: Key[Array, ""],
+    key: PRNGKey,
     conditions: ArrayLike,
     qualification: PreparedProteinQualification,
     *,

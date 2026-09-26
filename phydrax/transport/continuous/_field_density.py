@@ -13,12 +13,12 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import _leading_shape, AbstractProbabilityLaw
 from ..._strict import StrictModule
 from ...stochastic._path_diffusion import TrajectoryEventLayout
+from ...typing import PRNGKey
 
 
 class HybridFlowSample(StrictModule):
@@ -70,7 +70,7 @@ class HybridFlowLaw(StrictModule):
         return self.conditional_laws[0].event_shape
 
     def sample(
-        self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()
+        self, key: PRNGKey, sample_shape: tuple[int, ...] = ()
     ) -> HybridFlowSample:
         shape = tuple(sample_shape)
         mode_key, value_key = jr.split(key)
@@ -157,7 +157,7 @@ class TrajectoryFlowLaw(AbstractProbabilityLaw):
     def density_measure_kind(self) -> str:
         return "trajectory"
 
-    def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.layout.synthesize(self.coefficient_law.sample(key, sample_shape))
 
     def log_prob(self, value: ArrayLike, /) -> Array:
@@ -237,7 +237,7 @@ class FiniteFieldFlowLaw(StrictModule):
 
     def sample_field(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         query: PreparedFieldQuery,
         sample_shape: tuple[int, ...] = (),
     ) -> FiniteFieldSample:

@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -22,6 +21,7 @@ from ...stochastic._state_space import (
     StateSpaceStepContext,
     TransitionSample,
 )
+from ...typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -154,7 +154,7 @@ class ControlledTransitionKernel(AbstractTransitionKernel, NonTrainableState):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
@@ -223,7 +223,7 @@ class ControlledTransitionKernel(AbstractTransitionKernel, NonTrainableState):
 
 
 def _sample_indices_flat(
-    key: Key[Array, ""], result: SchrodingerBridgeResult, sample_count: int, /
+    key: PRNGKey, result: SchrodingerBridgeResult, sample_count: int, /
 ) -> Array:
     problem = result.problem
     case_count = problem.num_cases
@@ -272,7 +272,7 @@ def _sample_indices_flat(
 
 
 def sample_bridge_state_indices(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: SchrodingerBridgeResult,
     /,
     *,
@@ -296,7 +296,7 @@ def sample_bridge_state_indices(
 
 
 def sample_bridge_paths(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: SchrodingerBridgeResult,
     /,
     *,
@@ -409,7 +409,7 @@ def reference_path_log_prob(
 
 
 def sample_bridge(
-    key: Key[Array, ""],
+    key: PRNGKey,
     result: SchrodingerBridgeResult,
     /,
     *,

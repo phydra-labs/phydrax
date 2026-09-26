@@ -14,9 +14,9 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 
 
 if TYPE_CHECKING:
@@ -82,7 +82,7 @@ class GaussianCoefficientRealization(StrictModule):
     def __init__(
         self,
         coefficients: ArrayLike,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
         *,
         mode_ids: Sequence[str],
@@ -132,7 +132,7 @@ class GaussianCoefficientRealization(StrictModule):
     @classmethod
     def sample(
         cls,
-        key: Key[Array, ""],
+        key: PRNGKey,
         mode_ids: Sequence[str],
         /,
         *,
@@ -451,7 +451,7 @@ class StaticGaussianRandomField(StrictModule):
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         sample_shape: Sequence[int] = (),
@@ -539,7 +539,7 @@ class TransformedRandomField(StrictModule):
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         sample_shape: Sequence[int] = (),
@@ -635,7 +635,7 @@ class GaussianFieldCoupling(StrictModule):
 
     def realize(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         /,
         *,
         sample_shape: Sequence[int] = (),

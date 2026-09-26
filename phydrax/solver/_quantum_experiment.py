@@ -14,13 +14,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ..operators.quantum._operations import QuantumProgram
+from ..typing import PRNGKey
 from ._quantum_measurement import (
     apply_dense_quantum_instrument,
     DenseInstrumentBranchResult,
@@ -298,7 +298,7 @@ def sample_quantum_experiment(
     *,
     shots: int,
     first_shot_address: int = 0,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> QuantumShotBatchResult:
     """Sample addressed shots; concatenated batches exactly replay one large batch."""
     if not isinstance(exact, QuantumExperimentExactResult):

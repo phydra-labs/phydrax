@@ -13,7 +13,6 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity
@@ -43,6 +42,8 @@ from phydrax.nn.operator.context import EncodedOperatorState, operator_context_f
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 
+from .....typing import PRNGKey
+
 
 class _PhysicsSliceTokenizer(StrictModule):
     """Learn sparse physical memberships and integrate points into slice tokens."""
@@ -62,7 +63,7 @@ class _PhysicsSliceTokenizer(StrictModule):
         *,
         top_k: int,
         temperature: float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.channels = int(channels)
         self.num_slices = int(num_slices)
@@ -205,7 +206,7 @@ class Transolver(AbstractEncodedOperatorModel):
         attention_execution: AttentionExecution = "auto",
         attention_block_size: int = 256,
         accumulation_dtype: str = "input",
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_channels = _get_size(in_channels)
         self.out_channels = _get_size(out_channels)

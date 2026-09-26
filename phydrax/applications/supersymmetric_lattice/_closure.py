@@ -17,7 +17,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._limit_study import (
@@ -39,6 +38,7 @@ from ...linalg import (
     ShiftedSolveResult,
     solve_shifted,
 )
+from ...typing import PRNGKey
 from ._rhmc import (
     PreparedTwistedN2RHMC,
     sample_twisted_n2_rhmc,
@@ -500,7 +500,7 @@ class DistributedTwistedN2Run:
 def sample_distributed_twisted_n2_rhmc(
     prepared: PreparedTwistedN2RHMC,
     initial_configurations: Sequence[ArrayLike],
-    keys: Sequence[Key[Array, ""]],
+    keys: Sequence[PRNGKey],
     /,
     *,
     num_draws: int,

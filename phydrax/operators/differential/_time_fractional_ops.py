@@ -11,12 +11,12 @@ import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.domain import AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
 from ...integration import GaussLegendreRule
+from ...typing import PRNGKey
 from .._causal_quadrature import causal_reference_rule
 from ._domain_ops import _unwrap_factor
 
@@ -74,7 +74,7 @@ def caputo_time_fractional(
     t0 = _time_start(u, time_var)
     time_position = u.deps.index(time_var) if time_var in u.deps else None
 
-    def d_t_at(args: tuple[Any, ...], *, key: Key[Array, ""], **kwargs: Any) -> Array:
+    def d_t_at(args: tuple[Any, ...], *, key: PRNGKey, **kwargs: Any) -> Array:
         if time_position is None:
             return jnp.zeros_like(u.func(*args, key=key, **kwargs))
         time = args[time_position]
@@ -91,7 +91,7 @@ def caputo_time_fractional(
         )
         return derivative
 
-    def d2_t_at(args: tuple[Any, ...], *, key: Key[Array, ""], **kwargs: Any) -> Array:
+    def d2_t_at(args: tuple[Any, ...], *, key: PRNGKey, **kwargs: Any) -> Array:
         if time_position is None:
             return jnp.zeros_like(u.func(*args, key=key, **kwargs))
         time = args[time_position]

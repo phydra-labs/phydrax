@@ -11,10 +11,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Bool, Key
+from jaxtyping import Bool
 
 from .._doc import DOC_KEY0
 from .._sampling import host_design_factory, seed_from_key
+from ..typing import PRNGKey
 from ._coordinate import CoordinateSpec
 from ._domain import JointFactor
 from ._factor_component import FactorComponent
@@ -78,7 +79,7 @@ class AbstractScalarDomain(JointFactor):
         num_points: int,
         *,
         sampler: str,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> Array:
         raise NotImplementedError
 
@@ -186,7 +187,7 @@ class ScalarInterval(AbstractScalarDomain):
         *,
         sampler: str = "latin_hypercube",
         where: Callable | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         def _sample_host(
             num_points: int,

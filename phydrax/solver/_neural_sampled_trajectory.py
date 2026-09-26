@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._sampling import MarkovSampleResult, sample_markov
 from .._strict import StrictModule
@@ -28,6 +27,7 @@ from ..operators.quantum import (
     AbstractDiscreteQuantumOperator,
     evaluate_local_operator,
 )
+from ..typing import PRNGKey
 from ._variational_monte_carlo import (
     _score_geometry,
     _validate_model_coordinates,
@@ -395,7 +395,7 @@ def _connected_rate_statistics(
 def solve_connected_vmc_neural_trajectory(
     problem: ConnectedVMCNeuralTrajectoryProblem,
     policy: ConnectedVMCNeuralTrajectoryPolicy,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     state: VariationalMonteCarloState | None = None,

@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.kernels import (
     AbstractPositiveDefiniteKernel,
@@ -21,6 +20,7 @@ from phydrax.kernels import (
 from .._doc import DOC_KEY0
 from .._measure_weights import log_weights_from_normalized
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._types import CoresetSelection, PivotedCholeskyDiagnostics
 
 
@@ -54,7 +54,7 @@ def randomized_pivoted_cholesky(
     method: RandomizedPivotedCholesky,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> CoresetSelection:
     """Select source rows using randomized residual Cholesky pivots."""
     if not isinstance(method, RandomizedPivotedCholesky):

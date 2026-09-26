@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
@@ -33,6 +33,7 @@ from ..linalg._spaces import (
     _has_diagonal_pairing,
     _has_euclidean_pairing,
 )
+from ..typing import PRNGKey
 from ._coloring import (
     native_coloring,
     SparseColoring,
@@ -600,7 +601,7 @@ def verify_sparse_derivative(
     point: PyTree[Any],
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     args: Any = _USE_COMPILED_ARGUMENTS,
     num_probes: int = 3,
     relative_tolerance: float | None = None,

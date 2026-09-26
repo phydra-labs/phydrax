@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -22,6 +21,7 @@ from .._term import AbstractScalarTerm
 from .._trainable import NonTrainableState
 from ..conditions import AbstractResidualCondition
 from ..domain import DomainComponent, DomainFunction
+from ..typing import PRNGKey
 
 
 class LocalTestSpaceEvidence(StrictModule, NonTrainableState):
@@ -144,7 +144,7 @@ class LocalizedResidualNorm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

@@ -8,11 +8,11 @@ from typing import ClassVar, Literal
 import jax
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
 from ..._model import ModelBinding
+from ...typing import PRNGKey
 from .._base import _AbstractStructuredInputModel
 from .._keys import EvalKey
 from .._utils import _get_size
@@ -54,7 +54,7 @@ class SeparableModifiedMLP(_AbstractStructuredInputModel):
         use_final_bias: bool = True,
         initializer: str = "glorot_normal",
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         """Construct a separable modified MLP."""
         in_dim = _get_size(in_size)

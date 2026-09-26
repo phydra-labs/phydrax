@@ -10,7 +10,6 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -22,6 +21,7 @@ from ..stochastic._path_ensemble import (
     StochasticPathEnsemblePlan,
     StochasticPathEnsembleResult,
 )
+from ..typing import PRNGKey
 from ._spde import SemidiscreteSPDE
 
 
@@ -151,7 +151,7 @@ def prepare_spde_approximation(
     /,
     *,
     ensemble_plan: StochasticPathEnsemblePlan,
-    key: Key[Array, ""],
+    key: PRNGKey,
 ) -> PreparedSPDEApproximation:
     """Prepare coupled finite levels using common prefix-stable Wiener keys."""
     if not isinstance(family, SPDEApproximationFamily):

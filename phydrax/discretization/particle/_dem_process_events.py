@@ -13,12 +13,12 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
+from ...typing import PRNGKey
 from ._dem import DEMRuntimeState, PreparedSoftSphereDEMDynamics
 from ._particle_epoch import (
     grow_particle_execution_epoch,
@@ -194,7 +194,7 @@ class ReactiveParticleTemplateDistributionPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def sample(self, key: Key[Array, ""], count: int, /) -> Array:
+    def sample(self, key: PRNGKey, count: int, /) -> Array:
         return jr.choice(
             key,
             len(self.templates),
@@ -275,7 +275,7 @@ def insert_reactive_particles(
     internal_batch: PreparedParticleInternalBatch,
     internal_state: ParticleInternalBatchState,
     molar_masses: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     time: Array,
     /,
     *,
@@ -598,7 +598,7 @@ def insert_reactive_particles_with_growth(
     internal_batch: PreparedParticleInternalBatch,
     internal_state: ParticleInternalBatchState,
     molar_masses: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     time: Array,
     growth_policy: ParticleCapacityGrowthPolicy,
     /,

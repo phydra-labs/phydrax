@@ -14,9 +14,9 @@ import jax.random as jr
 import jax.scipy as jsp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._categorical import CategoricalFamily
 from ._contracts import ExponentialFamilyLaw, NaturalCoordinates
 from ._dirichlet import DirichletFamily
@@ -173,7 +173,7 @@ class GammaPoissonUpdate(StrictModule):
 
     def sample_predictive(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
         *,
         exposure: ArrayLike = 1.0,
@@ -501,7 +501,7 @@ class DirichletCategoricalUpdate(StrictModule):
         )
 
     def sample_predictive(
-        self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()
+        self, key: PRNGKey, sample_shape: tuple[int, ...] = ()
     ) -> Array:
         return self.predictive_law.sample(key, tuple(sample_shape))
 

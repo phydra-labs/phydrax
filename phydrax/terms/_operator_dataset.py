@@ -11,7 +11,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.domain import ConcatenatedModelEvaluator, Domain, DomainFunction
 
@@ -26,6 +25,7 @@ from ..nn.operator.metrics import (
     operator_spectral_loss,
 )
 from ..nn.operator.protocols import OperatorModel
+from ..typing import PRNGKey
 
 
 OperatorLoss = Literal["l2", "h1", "spectral"]
@@ -137,7 +137,7 @@ class OperatorDatasetTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -166,7 +166,7 @@ class OperatorDatasetTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
@@ -229,7 +229,7 @@ class PhysicsInformedOperatorTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -303,7 +303,7 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:

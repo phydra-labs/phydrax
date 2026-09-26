@@ -9,7 +9,6 @@ from typing import Any, cast
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import DomainFunction, PointBatch
@@ -17,6 +16,7 @@ from phydrax.domain import DomainFunction, PointBatch
 from .._doc import DOC_KEY0
 from .._dtype_names import complex_precision_dtype, real_precision_dtype_name
 from .._numerics import LogWeightedAccumulator, weighted_diagnostics
+from ..typing import PRNGKey
 from ._batches import (
     PointIntegrationBatch,
     SeparableIntegrationBatch,
@@ -79,7 +79,7 @@ def _evaluate_external(
     samples: Any,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
 ) -> Any:
     if isinstance(samples, PointBatch):
@@ -282,7 +282,7 @@ def integrate_weighted_samples(
     /,
     *,
     normalized: bool | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     evaluation_dtype: Any | None = None,
     accumulation_dtype: Any | None = None,
@@ -650,7 +650,7 @@ def integrate_discrete_measure(
     batch: PointIntegrationBatch | SeparableIntegrationBatch,
     /,
     *,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
     evaluation_dtype: Any | None = None,
     accumulation_dtype: Any | None = None,

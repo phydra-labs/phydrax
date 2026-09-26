@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
@@ -36,6 +35,7 @@ from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatc
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
 from ....._dtype_names import inexact_result_type
+from .....typing import PRNGKey
 
 
 FlowerTransitionMode = Literal["learned", "resolution_consistent"]
@@ -52,7 +52,7 @@ class _WarpKwargs(TypedDict):
     mask_mode: WarpMaskMode
     displacement_width: int
     fill_value: float
-    key: Key[Array, ""]
+    key: PRNGKey
 
 
 class _ChannelLastGroupNorm(StrictModule):
@@ -200,7 +200,7 @@ class _FlowerBlock(StrictModule):
         probabilistic_routing: bool,
         minimum_route_scale: float,
         route_scale_factor: float,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         warp_key, identity_key, modulation_key = jr.split(key, 3)
         warp_kwargs = _WarpKwargs(
@@ -316,7 +316,7 @@ class _StrideTwoConvND(StrictModule):
         in_channels: int,
         out_channels: int,
         transpose: bool,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.spatial_ndim = int(spatial_ndim)
         self.in_channels = int(in_channels)
@@ -386,7 +386,7 @@ class _ResolutionConsistentTransitionND(StrictModule):
         transpose: bool,
         boundary: tuple[WarpBoundaryMode, ...],
         mask_mode: WarpMaskMode,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> None:
         self.spatial_ndim = int(spatial_ndim)
         self.in_channels = int(in_channels)
@@ -617,7 +617,7 @@ class Flower(AbstractOperatorModel):
         minimum_route_scale: float = 1e-6,
         route_scale_factor: float = 1e-3,
         conserve_mass: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.in_size = in_channels
         self.out_size = out_channels

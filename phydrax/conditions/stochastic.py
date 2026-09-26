@@ -6,7 +6,6 @@ from typing import Any, TypeAlias
 
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import (
     ComponentSum,
@@ -31,6 +30,7 @@ from ..operators.differential import (
     weighted_kolmogorov_generator,
     weighted_probability_current,
 )
+from ..typing import PRNGKey
 from ._base import ConditionSupport, Residual
 from ._field_ops import dot
 from .boundary import _condition_value, ConditionValue
@@ -101,7 +101,7 @@ class _RiemannianNormalCallable(StrictModule):
         coordinates: ArrayLike,
         /,
         *,
-        key: Key[Array, ""] | None = None,
+        key: PRNGKey | None = None,
         **kwargs: Any,
     ) -> Array:
         del key, kwargs

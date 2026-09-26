@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jaxtyping import PRNGKeyArray
 
 from .._fingerprint import canonical_fingerprint
 from .._identity import callable_payload
@@ -27,6 +26,7 @@ from ..pgm import (
     factor_graph_log_score,
     VariableSelection,
 )
+from ..typing import PRNGKey
 from ..uq import PosteriorProblem
 from ._core import CausalSchema
 from ._graph import CausalDAG, descendants
@@ -103,9 +103,7 @@ class DeterministicMechanism(StrictModule):
 class StochasticMechanism(StrictModule):
     output: str = eqx.field(static=True)
     parents: tuple[str, ...] = eqx.field(static=True)
-    sampler: Callable[[PRNGKeyArray, tuple[Array, ...], int], Array] = eqx.field(
-        static=True
-    )
+    sampler: Callable[[PRNGKey, tuple[Array, ...], int], Array] = eqx.field(static=True)
     semantic_id: str = eqx.field(static=True)
     numeric_id: str = eqx.field(static=True)
     mechanism_id: str = eqx.field(static=True)
@@ -116,7 +114,7 @@ class StochasticMechanism(StrictModule):
         *,
         output: str,
         parents: Sequence[str],
-        sampler: Callable[[PRNGKeyArray, tuple[Array, ...], int], Array],
+        sampler: Callable[[PRNGKey, tuple[Array, ...], int], Array],
         semantic_id: str | None = None,
         numeric_id: str | None = None,
     ) -> None:
@@ -144,7 +142,7 @@ class StochasticMechanism(StrictModule):
 
     def sample(
         self,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         parents: tuple[Array, ...],
         n_samples: int,
         /,
@@ -155,7 +153,7 @@ class StochasticMechanism(StrictModule):
 class InvertibleNoiseMechanism(StrictModule):
     output: str = eqx.field(static=True)
     parents: tuple[str, ...] = eqx.field(static=True)
-    noise_sampler: Callable[[PRNGKeyArray, int], Array] = eqx.field(static=True)
+    noise_sampler: Callable[[PRNGKey, int], Array] = eqx.field(static=True)
     forward: Callable[[tuple[Array, ...], Array], Array] = eqx.field(static=True)
     inverse: Callable[[tuple[Array, ...], Array], Array] = eqx.field(static=True)
     semantic_id: str = eqx.field(static=True)
@@ -168,7 +166,7 @@ class InvertibleNoiseMechanism(StrictModule):
         *,
         output: str,
         parents: Sequence[str],
-        noise_sampler: Callable[[PRNGKeyArray, int], Array],
+        noise_sampler: Callable[[PRNGKey, int], Array],
         forward: Callable[[tuple[Array, ...], Array], Array],
         inverse: Callable[[tuple[Array, ...], Array], Array],
         semantic_ids: Sequence[str] | None = None,
@@ -218,7 +216,7 @@ class InvertibleNoiseMechanism(StrictModule):
         object.__setattr__(self, "mechanism_id", mechanism_id)
         object.__setattr__(self, "kind", MechanismKind.INVERTIBLE_NOISE)
 
-    def sample_noise(self, key: PRNGKeyArray, n_samples: int, /) -> Array:
+    def sample_noise(self, key: PRNGKey, n_samples: int, /) -> Array:
         return jnp.asarray(self.noise_sampler(key, n_samples))
 
     def evaluate(self, parents: tuple[Array, ...], noise: Array, /) -> Array:
@@ -624,7 +622,7 @@ def build_intervention_regime(
 
 def sample_scm(
     regime: MechanismRegime,
-    key: PRNGKeyArray,
+    key: PRNGKey,
     n_samples: int,
 ) -> SCMResult:
     """Sample a fixed mechanism regime in topological order."""
@@ -935,7 +933,7 @@ def _replacement_mechanism(intervention: Intervention) -> Mechanism | None:
 
 def _sample_mechanism(
     mechanism: Mechanism,
-    key: PRNGKeyArray,
+    key: PRNGKey,
     parents: tuple[Array, ...],
     n_samples: int,
 ) -> Array:

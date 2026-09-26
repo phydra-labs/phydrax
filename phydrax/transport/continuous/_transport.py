@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
@@ -23,6 +22,7 @@ from ...dynamics._evolution import (
     EVOLUTION_SUCCESS,
     EvolutionStep,
 )
+from ...typing import PRNGKey
 
 
 def _sample_shape(value: Sequence[int], /) -> tuple[int, ...]:
@@ -183,7 +183,7 @@ class ContinuousTransport(StrictModule):
 
     def sample_with_diagnostics(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> ContinuousTransportSample:
         samples = _sample_shape(sample_shape)
@@ -226,7 +226,7 @@ class ContinuousTransport(StrictModule):
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         result = self.sample_with_diagnostics(key, sample_shape)

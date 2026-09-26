@@ -20,7 +20,6 @@ import numpy as np
 import numpy.typing as npt
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
@@ -29,6 +28,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations import PreparedChemicalMechanism
 from ...stochastic import AbstractJumpProcess
+from ...typing import PRNGKey
 
 
 ApproximationKind: TypeAlias = Literal["deterministic", "cle"]
@@ -972,7 +972,7 @@ class PreparedStoichiometricNetwork(StrictModule, NonTrainableState):
         self,
         state: ArrayLike,
         duration: ArrayLike,
-        key: Key[Array, ""],
+        key: PRNGKey,
         runtime: StoichiometricRuntime | None = None,
         /,
         *,
@@ -1372,7 +1372,7 @@ class CompartmentalJumpProcess(AbstractJumpProcess):
 
     def sample_mark(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         time: ArrayLike,
         state: ArrayLike,
         channel: ArrayLike,

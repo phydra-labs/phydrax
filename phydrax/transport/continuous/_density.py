@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw
@@ -31,6 +30,7 @@ from ...operators.differential._stochastic_estimators import (
     stochastic_divergence_samples,
     StochasticTracePolicy,
 )
+from ...typing import PRNGKey
 from ._transport import ContinuousTransport, ContinuousTransportSample
 
 
@@ -120,7 +120,7 @@ class _StochasticAugmentedField(StrictModule):
     def __init__(
         self,
         transport: ContinuousTransport,
-        probe_key: Key[Array, ""],
+        probe_key: PRNGKey,
         policy: StochasticTracePolicy,
         /,
     ) -> None:
@@ -462,21 +462,21 @@ class ContinuousFlowLaw(AbstractProbabilityLaw):
 
     def sample_with_diagnostics(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> ContinuousTransportSample:
         return self.transport.sample_with_diagnostics(key, sample_shape)
 
     def sample(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         return self.transport.sample(key, sample_shape)
 
     def sample_and_log_prob(
         self,
-        key: Key[Array, ""],
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> tuple[Array, Array]:
         samples = tuple(sample_shape)
@@ -536,7 +536,7 @@ class ContinuousFlowLaw(AbstractProbabilityLaw):
 def estimate_continuous_flow_log_prob(
     transport: ContinuousTransport,
     value: ArrayLike,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
     *,
     policy: StochasticTracePolicy | None = None,

@@ -11,13 +11,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ...graph import batch_graphs, GraphIR, LayoutPlan
+from ...typing import PRNGKey
 from .._coordinate import CoordinateSpec
 from .._domain import JointFactor
 from .._factor_component import FactorComponent
@@ -113,12 +113,12 @@ def _single_axis_for_graph_trajectory(
 
 
 def _sample_cases_uniform(
-    domain: "GraphTrajectoryDatasetDomain", n: int, key: Key[Array, ""], /
+    domain: "GraphTrajectoryDatasetDomain", n: int, key: PRNGKey, /
 ) -> Array:
     return jr.randint(key, shape=(n,), minval=0, maxval=domain.size, dtype=jnp.int32)
 
 
-def _sample_valid_cases(valid: Array, n: int, key: Key[Array, ""], /) -> Array:
+def _sample_valid_cases(valid: Array, n: int, key: PRNGKey, /) -> Array:
     valid_np = np.asarray(valid, dtype=np.bool_)
     if not bool(valid_np.any()):
         raise ValueError("No graph trajectories are valid for this fixed time.")
@@ -132,7 +132,7 @@ def _component_times(
     component: "DomainComponent",
     case_indices: Array,
     n: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     /,
 ) -> tuple[Array, Array]:
     comp = component.spec.selection_for(domain.time_label)
@@ -691,7 +691,7 @@ def sample_graph_trajectory_component(
     *,
     structure: SampleLayout,
     sampler: str = "latin_hypercube",
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> GraphBatch:
     del sampler
     domain = component.domain

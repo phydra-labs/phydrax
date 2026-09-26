@@ -15,7 +15,7 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 from phydrax.ein import contract
 
@@ -25,6 +25,7 @@ from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure, AtomisticScaleContract
+from ...typing import PRNGKey
 from ...units import BOHR, conversion_factor, HARTREE
 from ._amplitude import LogAmplitude
 from ._electronic_advanced import ElectronicVMCResourcePlan
@@ -414,7 +415,7 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         standard_deviation = self.step_size * harmonic_mean
         return standard_deviation, ~singular & jnp.isfinite(standard_deviation)
 
-    def sample(self, key: Key[Array, ""], current: Array, /) -> Array:
+    def sample(self, key: PRNGKey, current: Array, /) -> Array:
         coordinate = jnp.asarray(current)
         if coordinate.shape != (self.electron_count, 3):
             raise ValueError(
@@ -448,7 +449,7 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         return jnp.where(jnp.all(valid), log_probability, -jnp.inf)
 
     def payload(
-        self, key: Key[Array, ""], current: PyTree[Any], proposed: PyTree[Any], /
+        self, key: PRNGKey, current: PyTree[Any], proposed: PyTree[Any], /
     ) -> tuple[()]:
         del key, current, proposed
         return ()
@@ -488,7 +489,7 @@ def harmonic_mean_electron_proposal(
 
 
 def electronic_initial_walkers(
-    key: Key[Array, ""],
+    key: PRNGKey,
     nuclei: AtomicStructure,
     electron_count: int,
     walker_count: int,

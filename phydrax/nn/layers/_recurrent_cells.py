@@ -15,11 +15,11 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
+from ...typing import PRNGKey
 from .._keys import EvalKey, split_eval_key
 from ._recurrent import (
     _recurrent_output_from_state,
@@ -96,7 +96,7 @@ class CfCCell(AbstractTimeAwareRecurrentCell):
         activation: Callable[[Array], Array] = jnp.tanh,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         resolved_depth = int(backbone_depth)
@@ -284,7 +284,7 @@ class RNNCell(AbstractRecurrentCell):
         activation: RNNActivation = "tanh",
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         if activation not in ("tanh", "relu"):
@@ -375,7 +375,7 @@ class GRUCell(AbstractRecurrentCell):
         *,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         resolved_dtype = _validate_real_dtype(dtype)
@@ -448,7 +448,7 @@ class LSTMCell(AbstractRecurrentOutputCell):
         *,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         resolved_dtype = _validate_real_dtype(dtype)
@@ -596,7 +596,7 @@ class ArtificialLIFCell(AbstractTimeAwareRecurrentCell, AbstractRecurrentOutputC
         detach_reset: bool = False,
         use_bias: bool = True,
         dtype: Any = jnp.float32,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         self.input_size, self.hidden_size = _validate_widths(input_size, hidden_size)
         constants = tuple(

@@ -9,8 +9,6 @@ from typing import Any
 
 import equinox as eqx
 import numpy as np
-from jax import Array
-from jaxtyping import Key
 
 from phydrax.conditions._ir import Condition
 from phydrax.domain import DomainFunction
@@ -19,6 +17,7 @@ from .._doc import DOC_KEY0
 from .._model import TRIAL_SPACE_CERTIFICATE_KEY
 from .._strict import StrictModule
 from ..domain._base import EnforcementGateMethod
+from ..typing import PRNGKey
 from ._compile import EnforcementProgram, InteriorAnchors
 from ._spec import EnforcementSpec
 
@@ -72,7 +71,7 @@ def compile(
     *,
     interior: Sequence[InteriorAnchors] = (),
     options: EnforcementOptions | None = None,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> EnforcementProgram:
     """Validate and compile hard specifications into one staged program."""
     resolved_functions = dict(functions)

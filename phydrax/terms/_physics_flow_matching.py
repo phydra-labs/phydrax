@@ -15,7 +15,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
@@ -25,6 +24,7 @@ from .._trainable import NonTrainableState
 from ..domain import DomainFunction
 from ..transport.continuous._coupling import EndpointCouplingSample
 from ..transport.continuous._interpolant import AbstractEndpointInterpolant
+from ..typing import PRNGKey
 from ._flow_matching import (
     AbstractFlowMatchingMetric,
     FlowEndpointProvider,
@@ -209,7 +209,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         self.physics_weight = physics
         self.label = self.flow.label
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> FlowMatchingBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> FlowMatchingBatch:
         return self.flow.sample(key=key)
 
     def _terminal_endpoint(
@@ -244,7 +244,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
             keys = jax.vmap(lambda value: jr.fold_in(value, depth))(node_keys)
 
             def velocity_at(
-                key: Key[Array, ""], point: Array, coordinate: Array, *contexts: Array
+                key: PRNGKey, point: Array, coordinate: Array, *contexts: Array
             ) -> Array:
                 values = {
                     name: context
@@ -343,7 +343,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: Any = None,
         batch: FlowMatchingBatch | None = None,
         **kwargs: Any,
@@ -368,7 +368,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: Any = None,
         batch: FlowMatchingBatch | None = None,
         **kwargs: Any,
@@ -387,7 +387,7 @@ class PhysicsFlowMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: FlowMatchingBatch | None = None,
         iter_: Any = None,
     ) -> PhysicsFlowMatchingDiagnostics:

@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
@@ -20,6 +19,7 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
+from ..typing import PRNGKey
 from ._derivative import (
     DerivativeBackend,
     DerivativeBasis,
@@ -155,9 +155,7 @@ class _SeriesTrajectorySignal(
         self.reconstruction = reconstruction
         self.derivative_order = int(derivative_order)
 
-    def __call__(
-        self, *args: Any, key: Key[Array, ""] | None = None, **kwargs: Any
-    ) -> Array:
+    def __call__(self, *args: Any, key: PRNGKey | None = None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError("TrajectorySignal requires PointBatch evaluation.")
 
@@ -166,7 +164,7 @@ class _SeriesTrajectorySignal(
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.AxisArray:
         del key, kwargs

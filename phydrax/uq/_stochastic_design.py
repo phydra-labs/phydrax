@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import PRNGKeyArray
 
 from .._dtype_names import inexact_result_type
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -27,6 +26,7 @@ from ..linalg import (
     LinearSystem,
     solve,
 )
+from ..typing import PRNGKey
 
 
 StochasticDesignCriterion = Literal["a-optimal", "d-optimal", "e-optimal"]
@@ -66,7 +66,7 @@ class StochasticExperimentDesignPlan(StrictModule, NonTrainableState):
         self,
         precision_factory: Callable[[Array], AbstractLinearOperator],
         design_template: ArrayLike,
-        key: PRNGKeyArray,
+        key: PRNGKey,
         /,
         *,
         precision_factory_id: str,

@@ -6,8 +6,6 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jax import Array
-from jaxtyping import Key
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....artifacts import ScientificArtifactEnvelope
@@ -25,6 +23,7 @@ from ....atomistic import (
 )
 from ....discretization import AbstractPreparedParticleNeighborhood
 from ....dynamics import StateLayout, TrajectoryData
+from ....typing import PRNGKey
 from ....units import conversion_factor, UnitDefinition
 from .._binding import PreparedProteinBinding
 from .._qualification import PreparedProteinQualification, ProteinGeometryEvidence
@@ -99,7 +98,7 @@ def run_protein_dynamics(
     *,
     velocity: npt.ArrayLike,
     velocity_unit: UnitDefinition,
-    key: Key[Array, ""],
+    key: PRNGKey,
     step_count: int,
     sample_stride: int = 1,
     commercial_use: bool = False,

@@ -12,13 +12,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import PRNGKey
 from ._potential import AtomisticPotentialCapabilities, AtomisticPotentialRequirements
 from ._potential_program import (
     AbstractAtomisticEnergyTerm,
@@ -300,7 +300,7 @@ class ActiveForcePlan(StrictModule, NonTrainableState):
         )
 
     def evaluate(
-        self, orientations: ArrayLike, key: Key[Array, ""], dt: ArrayLike, /
+        self, orientations: ArrayLike, key: PRNGKey, dt: ArrayLike, /
     ) -> ActiveForceEvaluation:
         direction = jnp.asarray(orientations)
         step = jnp.asarray(dt, dtype=direction.dtype)

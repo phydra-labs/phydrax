@@ -16,12 +16,12 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import determinant_small_linear, SmallLinearSolvePlan
+from ...typing import PRNGKey
 from ...uq import correlated_observable_diagnostics, CorrelatedObservablePolicy
 from ._core import DiagramGraph
 
@@ -228,7 +228,7 @@ class PreparedSignFreeCTINT(StrictModule, NonTrainableState):
         weight = (-self.plan.interaction) ** order * determinant_up * determinant_down
         return weight, determinant_up, determinant_down, symmetry
 
-    def run(self, key: Key[Array, ""], /) -> SignFreeCTINTResult:
+    def run(self, key: PRNGKey, /) -> SignFreeCTINTResult:
         sites = jnp.zeros((self.plan.maximum_order,), dtype=jnp.int32)
         times = jnp.zeros((self.plan.maximum_order,))
         weight, _, _, _ = self._weight(sites, times, jnp.asarray(0, dtype=jnp.int32))
@@ -242,7 +242,7 @@ class PreparedSignFreeCTINT(StrictModule, NonTrainableState):
         keys = jr.split(key, self.plan.steps)
 
         def advance(
-            state: _CTINTState, step_key: Key[Array, ""]
+            state: _CTINTState, step_key: PRNGKey
         ) -> tuple[_CTINTState, _CTINTRecord]:
             move_key, site_key, time_key, slot_key, accept_key = jr.split(step_key, 5)
             insertion = jr.bernoulli(move_key)
@@ -488,15 +488,13 @@ class PreparedLowOrderFermionDiagramMonteCarlo(StrictModule, NonTrainableState):
         self.detailed_balance_residual, self.prepared_id = residual, str(prepared_id)
 
     def run(
-        self, key: Key[Array, ""], /, *, initial_index: int = 0
+        self, key: PRNGKey, /, *, initial_index: int = 0
     ) -> LowOrderDiagramMonteCarloResult:
         if initial_index < 0 or initial_index >= self.orders.size:
             raise ValueError("initial_index is outside the diagram catalog.")
         keys = jr.split(key, self.plan.steps)
 
-        def advance(
-            index: Array, step_key: Key[Array, ""]
-        ) -> tuple[Array, _LowOrderRecord]:
+        def advance(index: Array, step_key: PRNGKey) -> tuple[Array, _LowOrderRecord]:
             proposal_key, acceptance_key = jr.split(step_key)
             candidate = jr.categorical(
                 proposal_key, jnp.log(self.proposal_matrix[index])

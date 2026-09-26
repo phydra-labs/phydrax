@@ -18,7 +18,6 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._sampling._addressing import derive_key, SampleAddress
@@ -33,6 +32,7 @@ from ..linalg import (
     OperatorProperties,
     PreparedFactorization,
 )
+from ..typing import PRNGKey
 
 
 _DA_MOMENTUM = SampleAddress(
@@ -714,7 +714,7 @@ def _metric_kinetic(kernel: PreparedDelayedAcceptanceHMC, momentum: Array, /) ->
 
 
 def _sample_metric_momentum(
-    kernel: PreparedDelayedAcceptanceHMC, key: Key[Array, ""], /
+    kernel: PreparedDelayedAcceptanceHMC, key: PRNGKey, /
 ) -> Array:
     normal = jr.normal(
         key,
@@ -783,7 +783,7 @@ def _delayed_acceptance_transition(
     surrogate_value: Array,
     surrogate_gradient: Array,
     state_valid: Array,
-    root_key: Key[Array, ""],
+    root_key: PRNGKey,
     chain_index: Array,
     step_index: Array,
     /,
@@ -844,7 +844,7 @@ def sample_delayed_acceptance_hmc(
     state: DelayedAcceptanceHMCState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
 ) -> DelayedAcceptanceHMCResult:
     """Advance exact chains; the surrogate affects efficiency, never target density."""
@@ -1079,7 +1079,7 @@ class GaugeFlowProposalPlan(StrictModule, NonTrainableState):
 
 class PreparedGaugeFlowProposal(StrictModule, NonTrainableState):
     target_log_density: Callable[[Array], Array] = eqx.field(static=True)
-    base_sample: Callable[[Key[Array, ""]], Array] = eqx.field(static=True)
+    base_sample: Callable[[PRNGKey], Array] = eqx.field(static=True)
     base_log_density: Callable[[Array], Array] = eqx.field(static=True)
     flow: AbstractGaugeEquivariantFlow
     plan: GaugeFlowProposalPlan
@@ -1149,7 +1149,7 @@ def prepare_gauge_flow_proposal(
     plan: GaugeFlowProposalPlan,
     flow: AbstractGaugeEquivariantFlow,
     target_log_density: Callable[[Array], Array],
-    base_sample: Callable[[Key[Array, ""]], Array],
+    base_sample: Callable[[PRNGKey], Array],
     base_log_density: Callable[[Array], Array],
     /,
     *,
@@ -1273,7 +1273,7 @@ def _gauge_flow_transition(
     log_target: Array,
     log_proposal: Array,
     state_valid: Array,
-    root_key: Key[Array, ""],
+    root_key: PRNGKey,
     chain_index: Array,
     step_index: Array,
     /,
@@ -1351,7 +1351,7 @@ def sample_gauge_flow_proposal(
     state: GaugeFlowChainState,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     num_draws: int,
 ) -> GaugeFlowProposalResult:
     """Advance exact-target chains with an independence flow and full MH ratio."""

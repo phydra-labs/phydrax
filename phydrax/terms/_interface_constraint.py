@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.ein as ein
 
@@ -21,6 +20,7 @@ from .._strict import StrictModule
 from .._term import AbstractScalarTerm
 from .._trainable import NonTrainableState
 from ..domain import DomainFunction, LocalFieldRef, PairedSupport
+from ..typing import PRNGKey
 
 
 FieldBinding = str | LocalFieldRef
@@ -127,7 +127,7 @@ class MortarInterfacePenalty(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -192,7 +192,7 @@ class NitscheInterfaceFunctional(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -295,7 +295,7 @@ class AugmentedValueConstraint(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> Array:
         left = self.pairing.trace(functions[self.fields[0]], side="left")(
             self.points, key=key
@@ -313,7 +313,7 @@ class AugmentedValueConstraint(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -328,7 +328,7 @@ class AugmentedValueConstraint(AbstractScalarTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> tuple[AugmentedValueConstraint, AugmentedInterfaceEvidence]:
         residual = self.residual(functions, key=key)
         multiplier = self.multiplier + self.penalty * residual

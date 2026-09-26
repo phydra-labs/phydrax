@@ -10,13 +10,13 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 import phydrax.axes as cx
 
 from ..._doc import DOC_KEY0
 from ...domain import DomainFunction, GridBatch, GridSampling, PointBatch, PointSampling
 from ...operators.differential import regularized_delta
+from ...typing import PRNGKey
 from ._adaptive import (
     AbstractCollocationPolicy,
     CollocationPolicy,
@@ -44,7 +44,7 @@ class _NarrowBandTermProxy:
     def policy(self) -> NarrowBandCollocationPolicy:
         return self.narrow_band_policy
 
-    def sample(self, *, key: Key[Array, ""]) -> PointBatch | GridBatch:
+    def sample(self, *, key: PRNGKey) -> PointBatch | GridBatch:
         return self.term.sample(key=key)
 
     def pointwise_score(
@@ -53,7 +53,7 @@ class _NarrowBandTermProxy:
         batch: PointBatch | GridBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         **kwargs: Any,
     ) -> cx.AxisArray:
         residual = self.term.pointwise_score(functions, batch, key=key, **kwargs)
@@ -136,7 +136,7 @@ class NarrowBandCollocationPolicy(AbstractCollocationPolicy):
         constraint: PointwiseSamplingTerm,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> CollocationPopulation:
         return self.base_policy.initialize(constraint, key=key)
 
@@ -158,7 +158,7 @@ class NarrowBandCollocationPolicy(AbstractCollocationPolicy):
         population: CollocationPopulation,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array,
     ) -> CollocationPopulation:
         proxy = _NarrowBandTermProxy(constraint, self)

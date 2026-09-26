@@ -14,12 +14,12 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from phydrax._interpolation import linear_interpolate
 
 from ..._mass import EstimatedMass
 from ..._numerics._quadrature_rules import gauss_legendre_data
+from ...typing import PRNGKey
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -120,13 +120,13 @@ def _uniform_in_bounds(
     kernel: GeometryKernel,
     state: DesignState,
     count: int,
-    key: Key[Array, ""],
+    key: PRNGKey,
     plan: RejectionSamplingPlan | None,
 ) -> SamplingResult:
     bounds = kernel.bounds(state)
     plan_ = RejectionSamplingPlan() if plan is None else plan
 
-    def proposal(proposal_key: Key[Array, ""], proposal_count: int) -> Array:
+    def proposal(proposal_key: PRNGKey, proposal_count: int) -> Array:
         return jr.uniform(
             proposal_key,
             shape=(proposal_count, kernel.ambient_dimension),
@@ -353,7 +353,7 @@ class _EllipseKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del plan
@@ -371,7 +371,7 @@ class _EllipseKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         center, radii = self._parameters(state)
         grid = jnp.linspace(0.0, _TWO_PI, 1025, dtype=center.dtype)
@@ -712,13 +712,13 @@ class _PolygonKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         return _uniform_in_bounds(self, state, int(num_points), key, plan)
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         vertices = self._vertices(state)
         edges = jnp.roll(vertices, -1, axis=0) - vertices
@@ -919,7 +919,7 @@ class _EllipsoidKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del plan
@@ -932,7 +932,7 @@ class _EllipsoidKernel(GeometryKernel):
         return complete_sampling_result(center + radii * radial * directions)
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         center, radii = self._parameters(state)
         proposal_count = max(8 * int(num_points), 64)
@@ -1091,7 +1091,7 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del plan
@@ -1113,7 +1113,7 @@ class _AxisAlignedEllipsoidKernel(GeometryKernel):
         return complete_sampling_result(center + radii * radial * directions)
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> NoReturn:
         del state, num_points, key
         raise NotImplementedError(
@@ -1373,7 +1373,7 @@ class _CylinderKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del plan
@@ -1393,7 +1393,7 @@ class _CylinderKernel(GeometryKernel):
         return complete_sampling_result(points)
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         atlas = self.boundary_atlas(state)
         reference_key, chart_key = jr.split(key)
@@ -1707,13 +1707,13 @@ class _ConeKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         return _uniform_in_bounds(self, state, int(num_points), key, plan)
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         atlas = self.boundary_atlas(state)
         reference_key, chart_key = jr.split(key)
@@ -1999,13 +1999,13 @@ class _TorusKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         return _uniform_in_bounds(self, state, int(num_points), key, plan)
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         atlas = self.boundary_atlas(state)
         return _sample_boundary_atlas(atlas, int(num_points), key)
@@ -2027,7 +2027,7 @@ class _TorusKernel(GeometryKernel):
 
 
 def _sample_boundary_atlas(
-    atlas: BoundaryAtlas, count: int, key: Key[Array, ""]
+    atlas: BoundaryAtlas, count: int, key: PRNGKey
 ) -> SamplingResult:
     candidate_count = max(8 * count, 64)
     chart_key, reference_key, choice_key = jr.split(key, 3)
@@ -2282,13 +2282,13 @@ class _WedgeKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         return _uniform_in_bounds(self, state, int(num_points), key, plan)
 
     def sample_boundary(
-        self, state: DesignState, num_points: int, /, *, key: Key[Array, ""]
+        self, state: DesignState, num_points: int, /, *, key: PRNGKey
     ) -> SamplingResult:
         return _sample_boundary_atlas(self.boundary_atlas(state), int(num_points), key)
 

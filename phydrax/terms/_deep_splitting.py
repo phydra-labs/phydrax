@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -26,6 +25,7 @@ from ..stochastic._bsde import (
     BSDEPathBatch,
     BSDEProblem,
 )
+from ..typing import PRNGKey
 
 
 DeepSplittingPredictor: TypeAlias = Callable | DomainFunction
@@ -142,7 +142,7 @@ def deep_splitting_labels(
     slice_index: int,
     /,
     *,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> DeepSplittingLabelBatch:
     """Build the explicit right-endpoint target U[n+1] + dt f[n+1]."""
     if not isinstance(problem, BSDEProblem):
@@ -232,9 +232,7 @@ def deep_splitting_labels(
     )
 
 
-DeepSplittingLabelProvider: TypeAlias = Callable[
-    [Key[Array, ""]], DeepSplittingLabelBatch
-]
+DeepSplittingLabelProvider: TypeAlias = Callable[[PRNGKey], DeepSplittingLabelBatch]
 
 
 class DeepSplittingRegressionTerm(AbstractSamplingTerm):
@@ -289,7 +287,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
     def sample(
         self,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> DeepSplittingLabelBatch:
         if self.fixed_labels is not None:
             return self.fixed_labels
@@ -305,7 +303,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
         labels: DeepSplittingLabelBatch,
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
     ) -> Array:
         _validate_labels(labels, self.problem, self.slice_index)
         if self.value_name not in functions:
@@ -325,7 +323,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: DeepSplittingLabelBatch | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -344,7 +342,7 @@ class DeepSplittingRegressionTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = jr.key(0),
+        key: PRNGKey = jr.key(0),
         batch: DeepSplittingLabelBatch | None = None,
     ) -> DeepSplittingRegressionDiagnostics:
         sampling_key, prediction_key = jr.split(key)

@@ -14,13 +14,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction, ProbabilityDomain
 
 from .._strict import StrictModule
 from ..fidelity import FidelityLevelSpec
 from ..stochastic._hierarchy import StochasticCouplingPlan, StochasticLevelSpec
+from ..typing import PRNGKey
 from ._api import integrate
 from ._estimates import IntegrationEstimate
 from ._fidelity import FidelityBatchEvaluation, FidelityMultilevelSampler
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from ..operators.interpolation._smolyak import SmolyakInterpolant
 
 
-SmolyakInputSampler: TypeAlias = Callable[[Array, Key[Array, ""]], tuple[Array, ...]]
+SmolyakInputSampler: TypeAlias = Callable[[Array, PRNGKey], tuple[Array, ...]]
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -119,7 +119,7 @@ class SmolyakProbabilityInputSampler(StrictModule):
     def __call__(
         self,
         sample_indices: Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
     ) -> tuple[Array, ...]:
         indices = jnp.asarray(sample_indices, dtype=jnp.uint32).reshape((-1,))
@@ -264,7 +264,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
     def _sample_inputs(
         self,
         sample_indices: Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
     ) -> tuple[Array, ...]:
         coordinates = tuple(self.input_sampler(sample_indices, root_key))
@@ -317,7 +317,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
         self,
         level_index: int,
         sample_indices: Array,
-        root_key: Key[Array, ""],
+        root_key: PRNGKey,
         /,
     ) -> MultilevelSampleBatch:
         return self.multilevel_sampler(level_index, sample_indices, root_key)

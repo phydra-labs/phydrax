@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein
@@ -23,6 +22,7 @@ from phydrax.domain import DomainFunction
 from .._frozendict import frozendict
 from .._probability import _leading_shape
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._jump import JumpEventBatch
 from ._realization import is_stochastic_realization, StochasticRealization
 from ._wiener import WienerRealization
@@ -224,7 +224,7 @@ class BSDEProblem(StrictModule):
         self.process_id = _name(process_id, owner="process_id")
         self.time_label, self.state_label = labels
 
-    def sample(self, key: Key[Array, ""], /) -> BSDEPathBatch:
+    def sample(self, key: PRNGKey, /) -> BSDEPathBatch:
         paths = self.forward_sampler(key)
         if not isinstance(paths, BSDEPathBatch):
             raise TypeError("forward_sampler must return a BSDEPathBatch.")
@@ -355,7 +355,7 @@ def autodiff_bsde_control(
     problem: BSDEProblem,
     /,
     *,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> Array:
     """Compute Z = grad_x u sigma with full output/noise event semantics."""
     if not isinstance(problem, BSDEProblem):
@@ -437,7 +437,7 @@ def evaluate_bsde(
     control_predictor: Callable | DomainFunction | None = None,
     control_mode: BSDEControlMode = "explicit",
     quadrature: BSDEQuadrature = "left",
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> BSDEEvaluation:
     """Evaluate one Markovian BSDE on explicitly aligned path intervals."""
     if not isinstance(problem, BSDEProblem):
@@ -739,7 +739,7 @@ def semilinear_pde_residual(
     state: ArrayLike,
     /,
     *,
-    key: Key[Array, ""] = jr.key(0),
+    key: PRNGKey = jr.key(0),
 ) -> Array:
     """Evaluate u_t + b·grad u + 1/2 tr(sigma sigmaᵀ Hess u) + f(t,x,u,Z)."""
     if not isinstance(problem, BSDEProblem):

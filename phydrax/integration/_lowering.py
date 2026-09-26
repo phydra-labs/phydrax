@@ -9,7 +9,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 from phydrax.discretization import (
@@ -41,6 +41,7 @@ from .._doc import DOC_KEY0
 from .._dtype_names import complex_precision_dtype, real_precision_dtype_name
 from .._frozendict import frozendict
 from ..geometry import BoundaryAtlasProvider, CubatureAtlasProvider
+from ..typing import PRNGKey
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._plans import FixedQuadraturePlan
 from ._rules import (
@@ -162,7 +163,7 @@ def component_factor_fields(
     points: PointBatch | GridBatch | Any,
     /,
     *,
-    key: Key[Array, ""],
+    key: PRNGKey,
     kwargs: dict[str, Any],
 ) -> tuple[cx.AxisArray, cx.AxisArray]:
     """Evaluate dynamic selection and measure-modifier fields."""

@@ -11,7 +11,6 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from ..._differentiation import AbstractConstructionCertificate
 from ..._fingerprint import canonical_fingerprint
@@ -21,6 +20,7 @@ from ..._holomorphic_linear import (
     MultivariableHolomorphicPotentialProvider,
 )
 from ..._model import TRIAL_SPACE_CERTIFICATE_KEY
+from ...typing import PRNGKey
 from ._complex_potential_2d import _parameter_count
 from ._core import _AbstractTrialSpaceField, TrialSpaceCertificate
 
@@ -142,9 +142,7 @@ class PluriharmonicPotential(_AbstractTrialSpaceField):
             self.index_set,
         )
 
-    def __call__(
-        self, coordinates: ArrayLike, /, *, key: Key[Array, ""] | None = None
-    ) -> Array:
+    def __call__(self, coordinates: ArrayLike, /, *, key: PRNGKey | None = None) -> Array:
         del key
         return jnp.real(self._jet(coordinates).value[self.branch])
 

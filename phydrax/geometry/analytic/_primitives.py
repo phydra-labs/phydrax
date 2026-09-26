@@ -15,9 +15,9 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Key
 
 from ..._polynomial._cubature import CubatureReference
+from ...typing import PRNGKey
 from .._atlas import (
     BoundaryAtlas,
     box_boundary_atlas,
@@ -430,7 +430,7 @@ class _BallKernel(GeometryKernel):
     def _directions(
         self,
         count: int,
-        key: Key[Array, ""],
+        key: PRNGKey,
         *,
         dtype: jnp.dtype,
     ) -> Array:
@@ -444,7 +444,7 @@ class _BallKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del plan
@@ -465,7 +465,7 @@ class _BallKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         center, radius = self._parameters(state)
         directions = self._directions(int(num_points), key, dtype=center.dtype)
@@ -703,7 +703,7 @@ class _OrthotopeKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del plan
@@ -723,7 +723,7 @@ class _OrthotopeKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         count = int(num_points)
         face_key, coordinate_key = jr.split(key)

@@ -13,7 +13,6 @@ from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
-from jaxtyping import Key
 
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
@@ -22,6 +21,7 @@ from .._frozendict import frozendict
 from .._identity import callable_payload
 from .._strict import StrictModule
 from ..discretization import CochainFieldSpec
+from ..typing import PRNGKey
 from ._ir import GraphIR
 
 
@@ -160,7 +160,7 @@ class CochainResidualProgram(StrictModule):
         fields: Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] | None = DOC_KEY0,
+        key: PRNGKey | None = DOC_KEY0,
         **kwargs: Any,
     ) -> frozendict[str, Array]:
         if not isinstance(fields, Mapping):

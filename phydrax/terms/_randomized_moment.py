@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -29,6 +28,7 @@ from ..integration import (
 )
 from ..integration._api import _requires_random_key
 from ..integration._execution import resolve_integration
+from ..typing import PRNGKey
 from ._integrated import checked_estimate_field, validate_condition_source
 from ._randomized_quadratic import event_inner, randomized_squared_mean
 from ._randomized_residual import RandomizedResidualLossMode
@@ -139,7 +139,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         self.precision = precision_
         self.label = condition.label if label is None else str(label)
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> RandomizedMomentBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> RandomizedMomentBatch:
         group_count = 2 if self.loss_mode == "independent_product" else 1
         keys = tuple(jr.split(key, group_count * self.num_realizations))
         left = tuple(
@@ -239,7 +239,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: RandomizedMomentBatch | None = None,
         **kwargs: Any,
@@ -267,7 +267,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: RandomizedMomentBatch | None = None,
         **kwargs: Any,

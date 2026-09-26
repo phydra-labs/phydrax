@@ -13,7 +13,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
@@ -25,6 +24,7 @@ from .._term import AbstractSamplingTerm
 from ..integration._external import _canonical_weighted, materialize_weighted_target
 from ..integration._targets import WeightedSampleTarget
 from ..stochastic._gaussian_diffusion import AbstractGaussianDiffusion
+from ..typing import PRNGKey
 from ._sample_statistics import effective_sample_size, normalized_log_weights
 from ._time_sampling import UniformTimeSamplingPolicy
 
@@ -33,7 +33,7 @@ DenoisingScoreSamplingMode: TypeAlias = Literal["fixed", "resample"]
 DenoisingScoreWeighting: TypeAlias = Literal[
     "unit", "conditional-variance", "diffusion-rate"
 ]
-DenoisingScoreDataProvider: TypeAlias = Callable[[Key[Array, ""]], WeightedSampleTarget]
+DenoisingScoreDataProvider: TypeAlias = Callable[[PRNGKey], WeightedSampleTarget]
 
 
 def _canonical_target(
@@ -286,7 +286,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
             return scale**2
         return jax.vmap(self.process.diffusion_scale)(time) ** 2
 
-    def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> DenoisingScoreMatchingBatch:
+    def sample(self, *, key: PRNGKey = DOC_KEY0) -> DenoisingScoreMatchingBatch:
         data_key, time_key, noise_key = jr.split(key, 3)
         if self.sampling_mode == "fixed":
             if self.fixed_target is None:
@@ -351,7 +351,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         batch: DenoisingScoreMatchingBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> _DenoisingNodeEvaluation:
         if not isinstance(batch, DenoisingScoreMatchingBatch):
             raise TypeError("batch must be a DenoisingScoreMatchingBatch.")
@@ -394,7 +394,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         batch: DenoisingScoreMatchingBatch,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> DenoisingScoreMatchingDiagnostics:
         evaluation = self._evaluate_nodes(functions, batch, key=key)
         weights = evaluation.weights
@@ -478,7 +478,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         iter_: int | Array | None = None,
         batch: DenoisingScoreMatchingBatch | None = None,
         **kwargs: Any,
@@ -492,7 +492,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
         batch: DenoisingScoreMatchingBatch | None = None,
     ) -> DenoisingScoreMatchingDiagnostics:
         resolved = self.sample(key=key) if batch is None else batch

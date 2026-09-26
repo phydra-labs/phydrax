@@ -15,12 +15,13 @@ import jax.random as jr
 import numpy as np
 from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Key, PyTree
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 
 from .._polynomial._orthogonal import standard_normal_hermite_rule_data
 from .._strict import StrictModule
+from ..typing import PRNGKey
 from ._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 
 
@@ -379,7 +380,7 @@ def gaussian_expectation(
     /,
     *,
     method: GaussianExpectationMethod = "cubature",
-    key: Key[Array, ""] | None = None,
+    key: PRNGKey | None = None,
     num_samples: int = 32,
     order: int = 3,
     max_dimension: int = 5,

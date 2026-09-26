@@ -8,12 +8,12 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
-from jaxtyping import Key
 
 from phydrax.ein import contract
 
 from ..._differentiation import DerivativeRegularity
 from ..._doc import DOC_KEY0
+from ...typing import PRNGKey
 from .._base import _AbstractBaseModel
 from .._contracts import SMOOTH
 from .._keys import EvalKey
@@ -41,7 +41,7 @@ class SineLayer(_AbstractBaseModel):
         is_first: bool = False,
         use_bias: bool = True,
         dtype: Any | None = None,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: PRNGKey = DOC_KEY0,
     ) -> None:
         omega_value = float(omega)
         if not math.isfinite(omega_value) or omega_value <= 0.0:

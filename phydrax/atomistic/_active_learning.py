@@ -10,7 +10,6 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from .._execution_plan import ExecutionPlan
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -24,6 +23,7 @@ from ..lifecycle import (
     RevisionLineage,
     RunRecord,
 )
+from ..typing import PRNGKey
 from ._committee import (
     AcquisitionPlan,
     AcquisitionRecord,
@@ -511,7 +511,7 @@ def run_atomistic_campaign_round(
     frames: Sequence[AtomisticFrame],
     uncertainty: Sequence[AtomisticUncertaintyEvidence],
     initial_potentials: Sequence[AbstractAtomisticPotential],
-    keys: Sequence[Key[Array, ""]],
+    keys: Sequence[PRNGKey],
     qualify: Callable[
         [CommitteeAtomisticPotential], AtomisticDynamicsQualificationResult
     ],

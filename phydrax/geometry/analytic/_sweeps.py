@@ -12,9 +12,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import Key
 
 from ..._mass import ExactMass, Mass, product_mass, scale_mass, sum_mass
+from ...typing import PRNGKey
 from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -264,7 +264,7 @@ class _ExtrusionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         profile_key, axial_key = jr.split(key)
@@ -296,7 +296,7 @@ class _ExtrusionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         side_key, cap_key, axial_key, choose_key, sign_key = jr.split(key, 5)
         count = int(num_points)
@@ -469,7 +469,7 @@ class _RevolutionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
         plan: RejectionSamplingPlan | None = None,
     ) -> SamplingResult:
         del state, num_points, key, plan
@@ -483,7 +483,7 @@ class _RevolutionKernel(GeometryKernel):
         num_points: int,
         /,
         *,
-        key: Key[Array, ""],
+        key: PRNGKey,
     ) -> SamplingResult:
         del state, num_points, key
         raise NotImplementedError(

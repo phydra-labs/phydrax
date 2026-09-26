@@ -9,12 +9,12 @@ from typing import TypeAlias
 
 from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 
 from ..._callable import _ensure_special_kwonly_args
 from ..._doc import DOC_KEY0
+from ...typing import PRNGKey
 
 
 PotentialCallable: TypeAlias = Callable[[Array, Array], ArrayLike]
@@ -27,7 +27,7 @@ def _as_point_time_callable(
     *,
     position_var: str,
     time_var: str,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
     role: str = "Function",
 ) -> PotentialCallable:
     if isinstance(function, DomainFunction):
@@ -65,7 +65,7 @@ def _as_potential_callable(
     *,
     position_var: str,
     time_var: str,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: PRNGKey = DOC_KEY0,
 ) -> PotentialCallable:
     return _as_point_time_callable(
         potential,
