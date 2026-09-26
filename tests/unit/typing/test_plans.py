@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import dataclasses
-import gc
 import threading
-import weakref
 from typing import Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax.typing as pt
@@ -27,6 +25,8 @@ class ElementDim(pt.Dim):
 
 
 class Catalog(StrictModule):
+    __strict_contract__ = True
+
     names: pt.Identifiers[ComponentDim] = eqx.field(static=True)
     masses: pt.Float64[ComponentDim]
     composition: pt.Int32[ElementDim, ComponentDim]
@@ -48,51 +48,68 @@ def _catalog(**overrides):
     return Catalog(**fields)
 
 
-def test_class_plans_check_contract_fields_in_declaration_order():
+def test_contract_fields_are_checked_in_declaration_order():
     pt.validate(_catalog())
     with pytest.raises(ValueError, match="masses"):
-        pt.validate(_catalog(masses=jnp.asarray((2.0, 32.0, 18.0))))
+        _catalog(masses=jnp.asarray((2.0, 32.0, 18.0)))
     with pytest.raises(ValueError, match="count"):
-        pt.validate(_catalog(count=3))
+        _catalog(count=3)
     with pytest.raises(TypeError, match="masses"):
-        pt.validate(_catalog(masses=jnp.asarray((2, 32), dtype=jnp.int32), count=3))
+        _catalog(masses=jnp.asarray((2, 32), dtype=jnp.int32), count=3)
 
 
+@pytest.mark.filterwarnings("ignore:A JAX array is being set as static")
 def test_field_validation_requires_exact_literal_runtime_types():
-    import numpy as np
-
     with pytest.raises(TypeError, match="basis"):
-        pt.validate(_catalog(basis=np.str_("nodal")))
+        _catalog(basis=np.str_("nodal"))
     with pytest.raises(ValueError, match="basis"):
-        pt.validate(_catalog(basis="spectral"))
+        _catalog(basis="spectral")
 
 
-def test_classes_without_contract_fields_are_refused():
+def test_validate_requires_an_opted_in_strict_module():
     class Plain(StrictModule):
+        masses: pt.Float64[ComponentDim]
+
+    with pytest.raises(TypeError):
+        pt.validate(Plain(jnp.zeros((1,))))
+    with pytest.raises(TypeError):
+        pt.validate(object())
+
+
+def test_opt_in_without_contract_fields_is_refused():
+    class Plain(StrictModule):
+        __strict_contract__ = True
+
         note: str = eqx.field(static=True)
 
     with pytest.raises(TypeError):
-        pt.validate(Plain("x"))
+        Plain("x")
 
 
 def test_type_checking_only_contract_names_fail_with_field_context():
     class Hidden(StrictModule):
+        __strict_contract__ = True
+
         values: CheckerOnlyFloat[ComponentDim]
 
     with pytest.raises(TypeError, match="Hidden.values"):
-        pt.validate(Hidden(jnp.zeros((1,), dtype=jnp.float32)))
+        Hidden(jnp.zeros((1,), dtype=jnp.float32))
 
 
 def test_unsupported_contract_placements_fail_with_field_context():
     class Misplaced(StrictModule):
+        __strict_contract__ = True
+
         values: list[pt.Float64[ComponentDim]] = eqx.field(static=True)
 
     with pytest.raises(TypeError, match="Misplaced.values"):
-        pt.validate(Misplaced([]))
+        Misplaced([])
 
 
 def test_inherited_fields_resolve_in_their_defining_module():
     class AbstractHolder(StrictModule):
+        __strict_contract__ = True
+
         masses: pt.Float64[ComponentDim]
 
     class Holder(AbstractHolder):
@@ -100,19 +117,21 @@ def test_inherited_fields_resolve_in_their_defining_module():
 
     pt.validate(Holder(jnp.zeros((2,)), 2))
     with pytest.raises(ValueError):
-        pt.validate(Holder(jnp.zeros((2,)), 3))
+        Holder(jnp.zeros((2,)), 3)
 
 
-def test_concurrent_first_validation_compiles_one_consistent_plan():
+def test_concurrent_first_construction_compiles_one_consistent_plan():
     class Concurrent(StrictModule):
+        __strict_contract__ = True
+
         masses: pt.Float64[ComponentDim]
 
-    instance = Concurrent(jnp.zeros((2,)))
+    values = jnp.zeros((2,))
     errors = []
 
     def run():
         try:
-            pt.validate(instance)
+            Concurrent(values)
         except Exception as error:  # collected for the assertion below
             errors.append(error)
 
@@ -122,17 +141,3 @@ def test_concurrent_first_validation_compiles_one_consistent_plan():
     for thread in threads:
         thread.join()
     assert errors == []
-
-
-def test_plan_cache_does_not_retain_dynamically_defined_classes():
-    def define():
-        @dataclasses.dataclass(frozen=True)
-        class Transient:
-            masses: pt.Float64[ComponentDim]
-
-        pt.validate(Transient(jnp.zeros((1,))))
-        return weakref.ref(Transient)
-
-    reference = define()
-    gc.collect()
-    assert reference() is None

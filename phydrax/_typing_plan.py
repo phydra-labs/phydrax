@@ -17,7 +17,7 @@ import sys
 import threading
 import types
 import weakref
-from collections.abc import Hashable
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -353,7 +353,7 @@ _CLASS_PLANS: weakref.WeakKeyDictionary[type, ClassPlan] = weakref.WeakKeyDictio
 _CLASS_PLAN_LOCK = threading.Lock()
 
 
-def _field_annotation(cls: type, name: str, /) -> object:
+def field_annotation(cls: type, name: str, /) -> object:
     for owner in cls.__mro__:
         annotations = get_annotations(owner)
         if name not in annotations:
@@ -383,7 +383,7 @@ def _compile_class(cls: type, /) -> ClassPlan:
         raise TypeError(f"{cls.__qualname__} is not a dataclass-based module.")
     fields: list[FieldPlan] = []
     for field in dataclasses.fields(cls):
-        annotation = _field_annotation(cls, field.name)
+        annotation = field_annotation(cls, field.name)
         try:
             contract = compile_form(annotation)
         except TypeError as error:
@@ -765,3 +765,40 @@ def validate_instance(instance: object, /) -> None:
         )
         if violation is not None:
             raise_violation(violation)
+
+
+def validate_constructed(instance: object, /) -> None:
+    """Check one freshly constructed opted-in module; called by the strict metaclass."""
+    validate_instance(instance)
+
+
+def validate_tree(root: object, /) -> None:
+    """Check every opted-in strict module reachable from `root`.
+
+    Traversal follows dataclass fields (static and dynamic), tuples, lists, and
+    mappings, visits each object once (cycle-safe), and never descends into
+    arrays, callables, or other objects.
+    """
+    # Lazy: the strict metaclass imports this module.
+    from ._strict import Strict
+
+    seen: set[int] = set()
+    stack: list[object] = [root]
+    while stack:
+        value = stack.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        if isinstance(value, type):
+            continue
+        if dataclasses.is_dataclass(value):
+            if isinstance(value, Strict) and type(value)._strict_contract_:
+                validate_instance(value)
+            children = [getattr(value, field.name) for field in dataclasses.fields(value)]
+        elif isinstance(value, tuple | list):
+            children = list(value)
+        elif isinstance(value, Mapping):
+            children = list(value.values())
+        else:
+            continue
+        stack.extend(reversed(children))

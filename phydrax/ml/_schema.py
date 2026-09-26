@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import math
 from collections.abc import Hashable, Iterable, Sequence
 from typing import Any, Literal, Self, TypeAlias
@@ -22,6 +21,7 @@ from .._model._array import native_parameter_precision
 from .._model._component import ModelExecutionContract, RandomnessContract
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._typing_plan import validate_tree
 from ..units._dimension import DimensionSignature
 
 
@@ -413,13 +413,14 @@ class AbstractFittedModel(AbstractArrayModel):
             changes["target_schema"] = target_schema
         if not changes:
             return self
-        bound = object.__new__(type(self))
-        for field in dataclasses.fields(self):
-            object.__setattr__(
-                bound,
-                field.name,
-                changes.get(field.name, object.__getattribute__(self, field.name)),
-            )
+        names = tuple(changes)
+        bound = eqx.tree_at(
+            lambda model: tuple(getattr(model, name) for name in names),
+            self,
+            tuple(changes[name] for name in names),
+            is_leaf=lambda node: node is None,
+        )
+        validate_tree(bound)
         return bound
 
     def output_ports(self) -> tuple[ValuePort, ...]:

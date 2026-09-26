@@ -31,7 +31,8 @@ PSD, ...) is not part of this language and stays with its scientific owner.
 
 `parse` validates a value against a form, `as_array`/`as_host_array` perform one
 explicit conversion and then validate, and `validate` checks every contract field
-of an opted-in module (``__strict_contract__ = True``).
+of an opted-in module (``__strict_contract__ = True``). Opted-in modules are also
+checked, read-only, when constructed.
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ import numpy as np
 from typing_extensions import TypeForm
 
 from ._dtype_names import dtype_matches
+from ._strict import StrictModule
 from ._typing_forms import (
     AnyDim,
     AnyShape,
@@ -90,7 +92,7 @@ from ._typing_plan import (
     parse_contract,
     raise_violation,
     Scope,
-    validate_instance,
+    validate_tree,
 )
 
 
@@ -205,13 +207,21 @@ def as_host_array(
 
 
 def validate(instance: object, /) -> None:
-    """Check every contract field of one module instance in declaration order.
+    """Check the structural contracts of one opted-in module and of its contents.
 
-    Construction does not make a module permanently valid: transformations such
-    as `jax.tree_util.tree_map` or `equinox.tree_at` rebuild modules without
-    running constructors, so consumers validate transformed values explicitly.
+    `instance` must be a `StrictModule` that declares (or inherits)
+    ``__strict_contract__ = True``. Its contract fields are checked in declaration
+    order, then every opted-in module reachable through its fields, tuples, lists,
+    and mappings. Construction does not make a module permanently valid:
+    transformations such as `jax.tree_util.tree_map` or `equinox.tree_at` rebuild
+    modules without running constructors, so consumers validate transformed values
+    explicitly.
     """
-    validate_instance(instance)
+    if not isinstance(instance, StrictModule) or not type(instance)._strict_contract_:
+        raise TypeError(
+            f"{type(instance).__qualname__} does not declare __strict_contract__ = True."
+        )
+    validate_tree(instance)
 
 
 __all__ = [

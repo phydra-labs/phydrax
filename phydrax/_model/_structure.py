@@ -27,6 +27,7 @@ from .._array_archive import (
 )
 from .._frozendict import frozendict
 from .._strict import mark_strict_initialized, Strict
+from .._typing_plan import validate_tree
 from ._artifacts import artifact_value, artifact_value_id
 
 
@@ -848,7 +849,11 @@ def model_from_array_recipe(
             restored[entry.tree_index] = jnp.asarray(payload)
         else:
             restored[entry.tree_index] = np.array(payload, copy=True, order="C")
-    return jax.tree_util.tree_unflatten(definition, restored)
+    model = jax.tree_util.tree_unflatten(definition, restored)
+    # Raw reconstruction bypasses constructors: check restored structural
+    # contracts once, on the complete value.
+    validate_tree(model)
+    return model
 
 
 def model_from_structure_recipe(

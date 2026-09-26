@@ -42,6 +42,7 @@ from ...._training_kernel import (
     require_binding_record,
     training_role_schema_id,
 )
+from ...._typing_plan import validate_tree
 from ....privacy import PrivacyCertificate
 from ..capabilities import OperatorTrainingEvidence
 from ..data import OperatorBatch
@@ -765,6 +766,9 @@ def load_trained_operator(
             (model_template, pipeline_template),
             filter_spec=_deserialize_leaf,
         )
+        # Deserialization bypasses constructors; restored structural contracts
+        # are checked once on the complete model and pipeline.
+        validate_tree((execution_model, output_pipeline))
     except (EOFError, OSError, TypeError, ValueError) as error:
         raise ValueError("Operator artifact model payload is invalid.") from error
     if stream.read(1):

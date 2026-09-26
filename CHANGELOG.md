@@ -16,6 +16,13 @@
   contract field of a module. Checks read only kind, rank, extent, and dtype
   metadata: they add no JAX operations and synchronize nothing. See the typing
   guide.
+- Strict modules that declare `__strict_contract__ = True` (inherited by
+  subclasses) check their `phydrax.typing` field contracts, read-only, after
+  Equinox construction and `__check_init__`; `phydrax.typing.validate` checks an
+  opted-in module and the opted-in modules it contains. Model array-recipe
+  restores and operator artifact models are validated once after complete
+  reconstruction, and fitted ML schema binding uses `equinox.tree_at` instead of
+  raw object reconstruction. `ChemicalComponentCatalog` opts in.
 - `ChemicalComponentCatalog` declares its stored fields with `phydrax.typing`
   forms and checks name counts and array extents through one binding scope; its
   accepted inputs, identity, and exception categories are unchanged.

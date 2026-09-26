@@ -136,10 +136,13 @@ kernels accept canonical arrays.
 
 ## Field contracts
 
-`validate(instance)` checks every contract field of a dataclass-based module in
-declaration order. Stored fields are checked read-only, so selector fields must
-hold the exact declared literal type. Field validation never converts, mutates,
-or adds JAX operations.
+A `StrictModule` opts in by declaring `__strict_contract__ = True`; subclasses
+inherit the opt-in and cannot withdraw it. After Equinox construction (custom or
+generated `__init__`, converters, and `__check_init__`), the strict metaclass
+checks every contract field in declaration order, read-only, in one scope per
+module. Nested modules check their own fields in their own scopes. The check
+never converts, mutates, allocates, synchronizes, or adds JAX operations, so
+selector fields must hold the exact declared literal type.
 
 ```python
 import equinox as eqx
@@ -148,14 +151,24 @@ from phydrax import StrictModule
 
 
 class Catalog(StrictModule):
+    __strict_contract__ = True
+
     names: pt.Identifiers[ComponentDim] = eqx.field(static=True)
     masses: pt.Float64[ComponentDim]
     composition: pt.Int32[ElementDim, ComponentDim]
     count: pt.Size[ComponentDim] = eqx.field(static=True)
 ```
 
-Annotations of contract fields must resolve at runtime: names imported only under
-`TYPE_CHECKING` are refused with the class and field in the error.
+A contract field on a module that does not opt in is refused by the repository
+declaration test, and an opted-in module without contract fields is refused at
+first construction. Annotations of contract fields must resolve at runtime:
+names imported only under `TYPE_CHECKING` are refused with the class and field in
+the error.
+
+`validate(module)` checks an opted-in module and every opted-in module reachable
+through its fields, tuples, lists, and mappings. Model artifacts restored from
+array recipes and operator artifacts are validated once after complete
+reconstruction.
 
 ## Worked example: a component catalog
 
@@ -164,6 +177,8 @@ structural forms and keeps conversion and numerical admissibility explicit:
 
 ```python
 class ChemicalComponentCatalog(StrictModule, NonTrainableState):
+    __strict_contract__ = True
+
     component_names: tuple[str, ...] = eqx.field(static=True)
     molar_masses: Float64[_ComponentDim]
     element_names: tuple[str, ...] = eqx.field(static=True)
@@ -175,7 +190,8 @@ class ChemicalComponentCatalog(StrictModule, NonTrainableState):
     catalog_id: Identifier = eqx.field(static=True)
 ```
 
-Its constructor converts inputs once with NumPy, binds both counts in one
+It opts in with `__strict_contract__ = True`. Its constructor converts inputs
+once with NumPy, binds both counts in one
 `Scope`, and parses the host arrays against `HostFloat64[_ComponentDim]`,
 `HostInteger[_ElementDim, _ComponentDim]`, and `HostInteger[_ComponentDim]`, so
 every extent must agree with the name counts. Finite, strictly positive masses

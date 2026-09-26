@@ -4,15 +4,16 @@
 
 """Host-side costs of Phydrax structural contracts.
 
-Every measured operation is host-only metadata work: no JAX compiler metrics are
-reported. Capacities vary the controlling sizes: contract fields per class
-(plan compilation and warmed validation) and classes per cache (plan memory).
+Structural checks are host-only metadata work. The benchmark reports cold first
+construction (plan compilation), warmed construction of opted-in modules against
+unchecked twins, explicit validation, tracing and lowering time with the number
+of traced equations, boundary parsing and conversion, plan memory, and import
+time. Capacities vary contract fields per class and classes per cache.
 """
 
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import re
 import subprocess
 import sys
@@ -29,6 +30,7 @@ import phydrax.typing as pt
 from benchmarks._io import write_json_atomic
 from benchmarks._runtime import capture_environment, DurationDistribution, measure_host
 from phydrax import StrictModule
+from phydrax._typing_plan import _CLASS_PLANS, class_plan
 
 
 FIELD_COUNTS = (1, 4, 16, 64)
@@ -50,22 +52,16 @@ def _host_samples(
     return DurationDistribution(tuple(samples))
 
 
-def _contract_class(field_count: int, /) -> type:
-    namespace = {
-        "__annotations__": {
-            f"x{index}": pt.Float64[_NodeDim] for index in range(field_count)
-        }
+def _module_class(field_count: int, *, opted: bool) -> type[StrictModule]:
+    annotations: dict[str, object] = {
+        f"x{index}": pt.Float64[_NodeDim] if opted else jax.Array
+        for index in range(field_count)
     }
-    return dataclasses.dataclass(frozen=True)(
-        type(f"Contract{field_count}", (), namespace)
-    )
-
-
-def _strict_class(field_count: int, /) -> type[StrictModule]:
-    namespace = {
-        "__annotations__": {f"x{index}": jax.Array for index in range(field_count)}
-    }
-    return type(f"Unopted{field_count}", (StrictModule,), namespace)
+    namespace: dict[str, object] = {"__annotations__": annotations}
+    if opted:
+        namespace["__strict_contract__"] = True
+    name = f"{'Opted' if opted else 'Unopted'}{field_count}"
+    return type(name, (StrictModule,), namespace)
 
 
 def _plans(field_counts: tuple[int, ...], repeats: int, /) -> list[dict[str, object]]:
@@ -74,27 +70,54 @@ def _plans(field_counts: tuple[int, ...], repeats: int, /) -> list[dict[str, obj
         values = tuple(jnp.zeros((8,)) for _ in range(count))
         cold = []
         for _ in range(repeats):
-            instance = _contract_class(count)(*values)
-            _, elapsed = measure_host(lambda instance=instance: pt.validate(instance))
+            opted = _module_class(count, opted=True)
+            _, elapsed = measure_host(lambda opted=opted: opted(*values))
             cold.append(elapsed)
-        instance = _contract_class(count)(*values)
-        pt.validate(instance)
-        warm = _host_samples(lambda instance=instance: pt.validate(instance), repeats)
-        strict = _strict_class(count)
-        construction = _host_samples(
-            lambda strict=strict, values=values: strict(*values), repeats
-        )
+        opted = _module_class(count, opted=True)
+        unopted = _module_class(count, opted=False)
+        instance = opted(*values)
+        plans_before = len(_CLASS_PLANS)
+        warm_opted = _host_samples(lambda opted=opted: opted(*values), repeats)
+        warm_unopted = _host_samples(lambda unopted=unopted: unopted(*values), repeats)
+        validate = _host_samples(lambda instance=instance: pt.validate(instance), repeats)
         records.append(
             {
                 "contract_fields": count,
-                "cold_compile_and_validate": DurationDistribution(
+                "cold_first_construction": DurationDistribution(
                     tuple(cold)
                 ).to_milliseconds_dict(),
-                "warm_validate": warm.to_milliseconds_dict(),
-                "unopted_strict_construction": construction.to_milliseconds_dict(),
+                "warm_opted_construction": warm_opted.to_milliseconds_dict(),
+                "warm_unopted_construction": warm_unopted.to_milliseconds_dict(),
+                "warm_validate": validate.to_milliseconds_dict(),
+                "plans_compiled_by_warm_constructions": len(_CLASS_PLANS) - plans_before,
+                "trace": _trace_and_lower(opted, unopted, values, repeats),
             }
         )
     return records
+
+
+def _trace_and_lower(
+    opted: type[StrictModule],
+    unopted: type[StrictModule],
+    values: tuple[jax.Array, ...],
+    repeats: int,
+    /,
+) -> dict[str, object]:
+    record: dict[str, object] = {}
+    for label, cls in (("opted", opted), ("unopted", unopted)):
+
+        def body(*arrays: jax.Array, cls: type[StrictModule] = cls) -> object:
+            return cls(*arrays)
+
+        jaxpr = jax.make_jaxpr(body)(*values)
+        record[f"{label}_equations"] = len(jaxpr.jaxpr.eqns)
+        record[f"{label}_trace"] = _host_samples(
+            lambda body=body: jax.make_jaxpr(body)(*values), repeats
+        ).to_milliseconds_dict()
+        record[f"{label}_lower"] = _host_samples(
+            lambda body=body: jax.jit(body).lower(*values), repeats
+        ).to_milliseconds_dict()
+    return record
 
 
 def _parse_and_convert(repeats: int, /) -> dict[str, object]:
@@ -127,14 +150,12 @@ def _parse_and_convert(repeats: int, /) -> dict[str, object]:
 
 def _cache_memory(class_counts: tuple[int, ...], /) -> list[dict[str, object]]:
     records = []
-    value = jnp.zeros((1,))
     for count in class_counts:
-        classes = [_contract_class(1) for _ in range(count)]
-        instances = [cls(value) for cls in classes]
+        classes = [_module_class(1, opted=True) for _ in range(count)]
         tracemalloc.start()
         before = tracemalloc.get_traced_memory()[0]
-        for instance in instances:
-            pt.validate(instance)
+        for cls in classes:
+            class_plan(cls)
         after = tracemalloc.get_traced_memory()[0]
         tracemalloc.stop()
         records.append(
@@ -190,7 +211,6 @@ def run(*, quick: bool, repeats: int) -> dict[str, object]:
         "boundaries": _parse_and_convert(repeats),
         "plan_cache_memory": _cache_memory(class_counts),
         "import_cumulative_microseconds": _import_microseconds("phydrax.typing"),
-        "compiler_metrics": "not applicable: structural checks are host-only metadata work",
     }
 
 

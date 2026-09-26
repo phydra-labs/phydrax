@@ -39,6 +39,8 @@ class _ElementDim(Dim):
 class ChemicalComponentCatalog(StrictModule, NonTrainableState):
     """Canonical chemical identities shared by phase-specific species occurrences."""
 
+    __strict_contract__ = True
+
     component_names: tuple[str, ...] = eqx.field(static=True)
     molar_masses: Float64[_ComponentDim]
     element_names: tuple[str, ...] = eqx.field(static=True)

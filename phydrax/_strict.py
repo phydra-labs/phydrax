@@ -9,13 +9,18 @@ Phydrax-specific deviations (kept intentionally):
 - Resolves `eqx.AbstractVar[T]` / `eqx.AbstractClassVar[T]` annotations that
   `from __future__ import annotations` stringified. Equinox only inspects the raw
   annotation, so without this they silently become concrete dataclass fields.
+- Classes that declare `__strict_contract__ = True` (or inherit it) check their
+  `phydrax.typing` field contracts, read-only, after Equinox construction.
 """
 
 import abc
+import dataclasses
 import re
 from typing import Any, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
+
+from ._typing_plan import validate_constructed
 
 
 _StrictMetaT = TypeVar("_StrictMetaT", bound="_StrictMeta")
@@ -28,6 +33,7 @@ def _is_strict_subclass(cls: type) -> bool:
 
 class _StrictMeta(abc.ABCMeta):
     _strict_is_abstract_: bool
+    _strict_contract_: bool
 
     def __new__(
         mcs: type[_StrictMetaT],
@@ -62,7 +68,26 @@ class _StrictMeta(abc.ABCMeta):
 
         # Skip checks for the base strict class itself
         if is_defining_strict_itself:
+            cls._strict_contract_ = False
             return cls
+
+        # Structural contracts are opt-in and inherited; a subclass cannot
+        # withdraw an inherited opt-in, so the declaration is only ever `True`.
+        if (
+            "__strict_contract__" in namespace
+            and namespace["__strict_contract__"] is not True
+        ):
+            raise TypeError(
+                f"'{cls.__module__}.{name}' may only declare __strict_contract__ = True."
+            )
+        cls._strict_contract_ = "__strict_contract__" in namespace or any(
+            isinstance(base, _StrictMeta) and base._strict_contract_ for base in bases
+        )
+        if cls._strict_contract_ and not dataclasses.is_dataclass(cls):
+            raise TypeError(
+                f"'{cls.__module__}.{name}' declares structural contracts but is not "
+                "a dataclass-based StrictModule."
+            )
 
         has_abstract_name = (
             name.startswith("Abstract")
@@ -127,6 +152,8 @@ class _StrictMeta(abc.ABCMeta):
 
             instance = super().__call__(*args, **kwargs)
 
+            if cls._strict_contract_:
+                validate_constructed(instance)
             mark_strict_initialized(instance)
 
             return instance
