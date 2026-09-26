@@ -9,8 +9,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._numerics._quadrature_rules import clenshaw_curtis_data

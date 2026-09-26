@@ -8,7 +8,9 @@ from collections.abc import Callable
 from typing import Any, TypeAlias
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule

@@ -11,7 +11,7 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._array_archive import (
     array_collection_digest,

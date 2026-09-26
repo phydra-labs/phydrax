@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._costs import PrecomputedCost

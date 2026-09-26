@@ -9,7 +9,7 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.graph._query_batch import query_neighbors

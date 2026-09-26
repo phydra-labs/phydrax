@@ -11,7 +11,8 @@ from typing import SupportsFloat
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_archive import (
     pack_array_tree,

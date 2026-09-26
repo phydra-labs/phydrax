@@ -12,7 +12,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import DomainFunction, PointBatch, SampleLayout

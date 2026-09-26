@@ -10,7 +10,7 @@ from typing import Any, Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._execution_pool import refill_completed_tasks
 from .._precision import PrecisionEvidenceEnvelope

@@ -8,7 +8,7 @@ from math import prod
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ..stochastic._state_space import StateSpaceProblem

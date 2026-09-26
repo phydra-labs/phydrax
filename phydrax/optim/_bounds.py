@@ -12,9 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import core
+from jax import Array, core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._dtype_names import inexact_result_type
 from .._tree_math import (

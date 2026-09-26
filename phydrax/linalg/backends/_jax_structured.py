@@ -11,7 +11,7 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from .._local_blocks import (

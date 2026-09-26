@@ -10,7 +10,7 @@ from enum import IntEnum
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 from scipy.optimize import linear_sum_assignment
 
 from ..._fingerprint import canonical_fingerprint

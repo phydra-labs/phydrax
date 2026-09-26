@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 from phydrax.linalg import eigen as eigen_api

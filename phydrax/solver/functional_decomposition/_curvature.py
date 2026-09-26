@@ -11,7 +11,8 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict

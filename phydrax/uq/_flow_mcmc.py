@@ -18,8 +18,9 @@ import jax.random as jr
 import numpy as np
 from blackjax.mcmc.hmc import HMCState
 from blackjax.mcmc.nuts import NUTSInfo
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint
 from .._frozendict import frozendict

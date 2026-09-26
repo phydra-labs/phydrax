@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._dtype_names import real_precision_dtype_name
 from .._fingerprint import canonical_fingerprint

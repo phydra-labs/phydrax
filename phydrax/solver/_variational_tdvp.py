@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._strict import StrictModule
 from ..linalg import (

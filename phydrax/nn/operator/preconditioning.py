@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule

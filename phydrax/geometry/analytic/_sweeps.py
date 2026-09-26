@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ..._mass import ExactMass, Mass, product_mass, scale_mass, sum_mass
 from .._atlas import BoundaryAtlas

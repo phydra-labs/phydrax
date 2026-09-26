@@ -8,7 +8,8 @@ from collections.abc import Callable
 from typing import Any
 
 import jax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._iterative._globalization import (
     armijo_backtracking as _armijo_backtracking,

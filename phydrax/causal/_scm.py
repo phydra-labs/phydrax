@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PRNGKeyArray
+from jax import Array
+from jaxtyping import PRNGKeyArray
 
 from .._fingerprint import canonical_fingerprint
 from .._identity import callable_payload

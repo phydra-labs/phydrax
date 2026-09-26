@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

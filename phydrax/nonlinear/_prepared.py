@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._iteration import IterationPlan
 from .._linear_refresh import LinearRefreshState

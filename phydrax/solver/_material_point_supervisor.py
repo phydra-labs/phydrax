@@ -9,7 +9,7 @@ from time import perf_counter
 from typing import cast
 
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..discretization.mpm import (
     MPMCommercialFailure,

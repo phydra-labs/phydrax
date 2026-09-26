@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 
 if TYPE_CHECKING:

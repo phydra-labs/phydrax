@@ -9,7 +9,8 @@ from typing import Any, TypeVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._dtype_names import (
     complex_precision_dtype,

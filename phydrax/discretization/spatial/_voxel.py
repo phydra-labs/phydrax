@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import canonical_fingerprint
 from phydrax._strict import StrictModule

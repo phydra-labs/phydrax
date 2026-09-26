@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._callable import _ensure_special_kwonly_args
 from phydrax._doc import DOC_KEY0

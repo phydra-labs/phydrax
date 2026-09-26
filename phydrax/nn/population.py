@@ -20,7 +20,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from .._dtype_names import inexact_result_type
 from .._numerics import solve_weighted_least_squares, WeightedLeastSquaresResult

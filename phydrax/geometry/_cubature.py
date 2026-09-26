@@ -11,7 +11,7 @@ from typing import Literal, Protocol, runtime_checkable, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._polynomial._cubature import CubatureReference
 from .._strict import StrictModule

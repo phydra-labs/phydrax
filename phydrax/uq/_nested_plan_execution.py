@@ -14,8 +14,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule

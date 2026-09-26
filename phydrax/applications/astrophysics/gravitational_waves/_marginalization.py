@@ -14,7 +14,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._probability import AbstractProbabilityLaw

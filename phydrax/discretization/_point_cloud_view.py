@@ -29,7 +29,7 @@ from typing import Any, final
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._bvh import build_point_bvh, PackedBVH, point_select_leaf_items
 from .._differentiation import DerivativeRegularity

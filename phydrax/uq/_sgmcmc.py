@@ -17,7 +17,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from blackjax.sgmcmc import diffusions
 from blackjax.sgmcmc.sgnht import init as init_sgnht, SGNHTState
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, array_tree_signature
 from .._frozendict import frozendict

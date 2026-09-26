@@ -9,8 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax.typing import DTypeLike
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._precision import PrecisionEvidenceEnvelope

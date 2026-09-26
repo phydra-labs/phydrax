@@ -12,9 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optimistix as optx
-from jax import core as jax_core
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import PyTree
 
 from phydrax._strict import StrictModule
 

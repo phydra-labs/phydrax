@@ -14,7 +14,8 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._interpolation import (
     bspline_cross_gram,

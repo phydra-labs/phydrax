@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from blackjax.ns.base import NSInfo, StateWithLogLikelihood
 from blackjax.ns.utils import compute_num_live, logX
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._particle import effective_sample_size

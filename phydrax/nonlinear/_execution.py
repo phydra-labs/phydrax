@@ -9,7 +9,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite

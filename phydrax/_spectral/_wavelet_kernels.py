@@ -8,7 +8,7 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ._wavelet_catalog import get_wavelet
 

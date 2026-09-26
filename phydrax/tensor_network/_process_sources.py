@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ._causal_process import CausalProcessTensor, CombLegSpec
 from ._local_lindblad import prepare_local_lindblad_channel

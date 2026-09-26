@@ -12,7 +12,9 @@ from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 from scipy.spatial import Delaunay, QhullError
 
 from ..._mass import Mass

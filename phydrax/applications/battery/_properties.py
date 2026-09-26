@@ -9,8 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint

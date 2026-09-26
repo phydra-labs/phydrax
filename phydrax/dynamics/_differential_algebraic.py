@@ -10,7 +10,9 @@ from typing import Any, cast, Literal, Protocol, TypeAlias, TypedDict, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import AbstractLinearOperator, ArraySpace, OperatorCapabilities

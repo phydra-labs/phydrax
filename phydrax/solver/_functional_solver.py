@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import optax
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 

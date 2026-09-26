@@ -14,8 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 import phydrax.ein as ein

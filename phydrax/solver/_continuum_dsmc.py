@@ -11,7 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PRNGKeyArray
 
 from phydrax.ein import contract
 

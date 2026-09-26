@@ -15,7 +15,9 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint

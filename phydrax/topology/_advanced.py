@@ -10,7 +10,8 @@ from itertools import combinations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.spatial import Delaunay
 
 from .._strict import StrictModule

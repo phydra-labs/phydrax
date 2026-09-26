@@ -10,8 +10,9 @@ from typing import TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 

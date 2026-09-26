@@ -7,8 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 import phydrax.ein as ein
 

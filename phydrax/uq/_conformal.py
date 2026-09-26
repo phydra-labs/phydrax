@@ -8,7 +8,8 @@ import math
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 

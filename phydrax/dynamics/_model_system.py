@@ -8,7 +8,8 @@ from typing import Any, Literal
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._model import AbstractArrayModel
 from .._model._ports import (

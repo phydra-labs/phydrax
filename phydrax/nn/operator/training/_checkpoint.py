@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ...._fingerprint import canonical_fingerprint
 from ...._identity import ArtifactBindingIdentity, RecordInput, SemanticProvenance

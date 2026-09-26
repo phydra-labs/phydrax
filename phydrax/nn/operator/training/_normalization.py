@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._document_resource import decode_json_resource
 from ...._external_resource import read_bounded_resource, ResourceLimits

@@ -288,6 +288,8 @@ fixable = ["F401", "F841", "I001", "RUF100"]
 "jax.scipy.sparse.linalg".msg = "Use phydrax.linalg iterative solvers and status evidence."
 "equinox.Module".msg = "Use phydrax._strict.StrictModule for Phydrax-owned modules."
 "jax.experimental.hijax".msg = "HiJAX is experimental; package code must not depend on it."
+"jaxtyping.Array".msg = "Import Array from jax."
+"jaxtyping.ArrayLike".msg = "Import ArrayLike from jax.typing."
 
 [tool.ruff.lint.per-file-ignores]
 "phydrax/_strict.py" = ["TID251"]

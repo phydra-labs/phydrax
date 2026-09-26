@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Literal
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule

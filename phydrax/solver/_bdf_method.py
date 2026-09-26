@@ -8,8 +8,7 @@ from collections.abc import Callable
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array
+from jax import Array, lax
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState

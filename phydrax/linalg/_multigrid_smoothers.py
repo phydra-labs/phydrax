@@ -12,7 +12,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import NonTrainableState

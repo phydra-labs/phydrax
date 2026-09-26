@@ -11,8 +11,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 import phydrax.ein as ein
 

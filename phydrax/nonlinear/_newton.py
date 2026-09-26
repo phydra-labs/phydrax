@@ -11,8 +11,9 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._iteration import (
     bind_iteration_scope,

@@ -15,7 +15,7 @@ from typing import Self, TypedDict, Unpack
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from s2fft.recursions.risbo_jax import compute_full as _wigner_small_d
 
 import phydrax.ein as ein

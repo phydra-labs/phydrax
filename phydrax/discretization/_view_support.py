@@ -16,7 +16,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ._simplicial_locator import AbstractCellLocator, CellLocationStatus
 from ._views import FieldQueryStatus

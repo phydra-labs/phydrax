@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData

@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 import jax
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._utils import _pointwise_array, _pointwise_jacfwd

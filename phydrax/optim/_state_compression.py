@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint

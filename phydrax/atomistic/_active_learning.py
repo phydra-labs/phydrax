@@ -9,7 +9,8 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._execution_plan import ExecutionPlan
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint

@@ -11,7 +11,8 @@ from numbers import Integral, Real
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._exponential_family import BernoulliFamily, PoissonFamily
 from .._likelihoods import AbstractLikelihood, ScalarNaturalExponentialFamilyLikelihood

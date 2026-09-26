@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import Key, PyTree
 
 from ..._differentiation import CapabilityEvidenceKind, DerivativeRegularity
 from ..._fingerprint import canonical_fingerprint

@@ -2,7 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def transfer_material_field(

@@ -7,7 +7,9 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.coresets import (

@@ -16,7 +16,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .... import linalg as la
 from ...._strict import StrictModule

@@ -9,7 +9,7 @@ from math import lcm
 from typing import Any, Literal, TypeVar
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax.fidelity import FidelityPath

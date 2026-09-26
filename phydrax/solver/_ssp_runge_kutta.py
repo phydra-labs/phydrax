@@ -8,7 +8,7 @@ from typing import ClassVar, TYPE_CHECKING
 
 import diffrax as dfx
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from .._numerics._ssp_runge_kutta import ssprk33_step, ssprk54_step
 from ._temporal_method import TemporalMethodCapabilities

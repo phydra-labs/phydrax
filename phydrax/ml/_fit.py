@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._differentiation import DifferentiationRequest
 from ._batch import MLBatch

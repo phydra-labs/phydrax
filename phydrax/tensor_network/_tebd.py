@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._canonical import canonicalize_mps

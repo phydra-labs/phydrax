@@ -13,7 +13,7 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._strict import StrictModule

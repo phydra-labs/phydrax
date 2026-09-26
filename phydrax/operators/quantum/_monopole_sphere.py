@@ -13,8 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array, Key
+from jaxtyping import Key
 
 from ..._dtype_names import real_precision_dtype_name
 from ..._fingerprint import canonical_fingerprint

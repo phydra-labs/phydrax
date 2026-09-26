@@ -14,9 +14,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jax import core as jax_core
+from jax import Array, core as jax_core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, Key
+from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein

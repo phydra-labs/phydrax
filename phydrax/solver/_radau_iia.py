@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 from numpy.polynomial import Polynomial
 from numpy.polynomial.legendre import Legendre
 

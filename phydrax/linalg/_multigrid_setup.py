@@ -11,7 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as spla
 import scipy.sparse as sp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule

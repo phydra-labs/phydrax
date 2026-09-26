@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import Key, PyTree
 
 from .._strict import StrictModule
 from ..linalg import (

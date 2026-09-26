@@ -14,7 +14,8 @@ from typing import cast, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._numerics import solve_weighted_least_squares

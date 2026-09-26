@@ -10,7 +10,8 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity

@@ -16,7 +16,8 @@ import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
 import optimistix as optx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 

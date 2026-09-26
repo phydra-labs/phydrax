@@ -14,7 +14,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...units import BOHR, conversion_factor, derived_unit, ELEMENTARY_CHARGE, HARTREE

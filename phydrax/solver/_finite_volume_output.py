@@ -14,7 +14,7 @@ from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope

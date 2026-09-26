@@ -8,7 +8,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 

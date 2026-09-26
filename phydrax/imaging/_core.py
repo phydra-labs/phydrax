@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import (
     array_tree_fingerprint,

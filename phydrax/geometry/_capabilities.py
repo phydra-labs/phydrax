@@ -7,7 +7,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
-from jaxtyping import Array
+from jax import Array
 
 from ._atlas import BoundaryAtlas
 from ._cubature import CubatureAtlasProvider

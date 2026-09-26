@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..core import Currency, FinanceDate

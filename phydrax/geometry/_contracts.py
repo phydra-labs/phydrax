@@ -13,7 +13,8 @@ from typing import Any, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._mass import ExactMass, known_mass_value, Mass
 from .._strict import StrictModule

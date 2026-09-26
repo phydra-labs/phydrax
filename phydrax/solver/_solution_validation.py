@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 _TimeLayout = Literal["shared", "per_path"]

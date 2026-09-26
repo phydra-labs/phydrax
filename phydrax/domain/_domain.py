@@ -10,7 +10,7 @@ from math import prod
 from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._model import ModelPorts, PortMapping, ValuePort
 from .._strict import StrictModule

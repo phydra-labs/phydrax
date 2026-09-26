@@ -7,7 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._exponential_family import (
     FiniteSupportNaturalSolvePlan,

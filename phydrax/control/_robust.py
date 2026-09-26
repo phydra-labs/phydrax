@@ -12,7 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as scipy_linalg
 import scipy.stats as scipy_stats
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ._lqr import discrete_lqr

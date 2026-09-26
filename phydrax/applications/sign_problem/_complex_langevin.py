@@ -16,7 +16,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from ... import ein
 from ..._fingerprint import canonical_fingerprint

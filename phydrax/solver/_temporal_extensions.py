@@ -12,7 +12,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..linalg import ArraySpace, DenseLinearOperator, matrix_phi1_action
 from ._radau_iia import RadauIIAMethod

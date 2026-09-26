@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Literal, TypeVar
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule

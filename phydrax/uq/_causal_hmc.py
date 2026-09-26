@@ -17,8 +17,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from blackjax.mcmc.proposal import safe_energy_diff, static_binomial_sampling
 from blackjax.mcmc.trajectory import hmc_energy
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..nonlinear import (

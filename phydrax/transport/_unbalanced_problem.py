@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..integration._api import IntegrationRealization

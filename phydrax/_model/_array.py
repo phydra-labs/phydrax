@@ -9,7 +9,7 @@ from typing import Any, Callable, ClassVar, Literal
 
 import equinox as eqx
 import jax
-from jaxtyping import Array
+from jax import Array
 
 from .._differentiation import (
     _REGULARITY_UNDECLARED,

@@ -11,7 +11,9 @@ from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein

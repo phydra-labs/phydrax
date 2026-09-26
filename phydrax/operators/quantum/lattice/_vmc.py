@@ -11,7 +11,7 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._discrete import AbstractDiscreteQuantumOperator, ConnectedConfigurations
 from ._operator import apply_compiled_to_coordinate, QuantumSectorOperator

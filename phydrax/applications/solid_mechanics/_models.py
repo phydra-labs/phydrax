@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

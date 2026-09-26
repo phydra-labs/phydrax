@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ._core import ParticleDiscretization
 from ._neighborhood import ParticleNeighborhoodState

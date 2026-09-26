@@ -13,8 +13,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._tree_math import validate_real_inexact_tree
 from ..linalg import (

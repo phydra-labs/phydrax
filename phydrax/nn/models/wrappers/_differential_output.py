@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 

@@ -8,8 +8,9 @@ from typing import Any, cast, TYPE_CHECKING, TypeGuard
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein

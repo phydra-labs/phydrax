@@ -9,8 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._admissibility import guard_derivative_validity
 from .._trainable import combine_parameters, partition_parameters

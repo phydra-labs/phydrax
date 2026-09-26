@@ -16,7 +16,8 @@ from types import MappingProxyType
 from typing import Any
 
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...measurement import resolve_quantity
 from ...units import (

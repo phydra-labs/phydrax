@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ._policies import RankPolicy
 

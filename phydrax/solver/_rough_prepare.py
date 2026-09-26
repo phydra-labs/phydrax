@@ -8,7 +8,7 @@ from math import isfinite
 from typing import Literal
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule

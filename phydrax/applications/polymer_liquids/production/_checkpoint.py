@@ -10,7 +10,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._array_archive import (
     pack_array_tree,

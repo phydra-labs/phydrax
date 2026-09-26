@@ -18,7 +18,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 

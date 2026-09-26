@@ -10,7 +10,7 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._iteration import IterationPlan, IterationRuntimeState
 from ..._strict import StrictModule

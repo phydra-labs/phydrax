@@ -8,7 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._ssp_runge_kutta import ssprk33_step

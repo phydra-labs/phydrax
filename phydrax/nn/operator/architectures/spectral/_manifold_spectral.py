@@ -13,8 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, Key
+from jax import Array, core as jax_core
+from jaxtyping import Key
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity

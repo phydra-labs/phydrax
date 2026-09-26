@@ -21,7 +21,9 @@ from blackjax.mcmc import (
     trajectory,
 )
 from blackjax.mcmc.proposal import safe_energy_diff, static_binomial_sampling
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._frozendict import frozendict
 from .._sampling import AbstractChainSampleResult

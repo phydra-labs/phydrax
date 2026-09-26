@@ -5,7 +5,7 @@ from math import isfinite
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..linalg import (
     ArraySpace,

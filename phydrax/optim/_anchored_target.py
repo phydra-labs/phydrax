@@ -11,8 +11,7 @@ from typing import Any, Literal, NamedTuple, TypeVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core
-from jaxtyping import Array
+from jax import Array, core
 
 from .._bounds import Bounds
 from .._strict import StrictModule

@@ -9,7 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from ._operators import AbstractLinearOperator, FunctionLinearOperator

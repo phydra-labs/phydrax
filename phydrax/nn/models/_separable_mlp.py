@@ -7,7 +7,8 @@ from typing import ClassVar, Literal
 
 import jax
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ..._axis_factorization import AxisFactorizedField
 from ..._differentiation import DerivativeRegularity

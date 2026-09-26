@@ -8,7 +8,7 @@ from pathlib import Path
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._array_archive import write_array_archive
 from ..._strict import StrictModule

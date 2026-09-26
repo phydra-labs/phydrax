@@ -11,9 +11,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
 from jax.typing import ArrayLike
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState

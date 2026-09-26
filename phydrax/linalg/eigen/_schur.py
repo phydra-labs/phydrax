@@ -13,7 +13,7 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule

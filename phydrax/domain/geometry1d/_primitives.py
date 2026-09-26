@@ -8,7 +8,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Bool, Float, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Bool, Float, Key
 
 from ..._doc import DOC_KEY0
 from ..._sampling import host_design_factory, seed_from_key

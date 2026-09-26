@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.conditions._ir import (

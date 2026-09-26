@@ -13,7 +13,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._sampling._addressing import derive_key, SampleAddress

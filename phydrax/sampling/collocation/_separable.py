@@ -10,7 +10,8 @@ from typing import Any, TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import DomainComponent, GridBatch

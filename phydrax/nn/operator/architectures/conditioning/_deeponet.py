@@ -13,7 +13,7 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._frozendict import frozendict

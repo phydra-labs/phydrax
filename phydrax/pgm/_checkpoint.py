@@ -9,7 +9,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._array_archive import read_array_archive, write_array_archive
 from .._strict import StrictModule

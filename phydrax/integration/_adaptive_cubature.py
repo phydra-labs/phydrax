@@ -11,8 +11,9 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import Key
 
 import phydrax.axes as cx
 import phydrax.ein as ein

@@ -14,8 +14,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jax import core as jax_core
-from jaxtyping import Array, Key, PyTree
+from jax import Array, core as jax_core
+from jaxtyping import Key, PyTree
 
 from .._strict import StrictModule
 from .._tree_math import (

@@ -14,8 +14,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.tree_util import PyTreeDef
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule

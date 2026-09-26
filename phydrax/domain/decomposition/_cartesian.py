@@ -14,7 +14,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

@@ -11,7 +11,8 @@ from numbers import Integral
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from numpy.polynomial.legendre import leggauss
 
 from .._fingerprint import canonical_fingerprint

@@ -19,8 +19,8 @@ from typing import ClassVar, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from ._membrane_scaling import CardiacMembraneScaling
 from ._reaction import (

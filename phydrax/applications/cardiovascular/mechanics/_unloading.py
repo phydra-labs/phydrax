@@ -12,7 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._array_archive import read_array_archive, write_array_archive
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint

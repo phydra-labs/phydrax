@@ -10,7 +10,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule

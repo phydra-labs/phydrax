@@ -9,7 +9,8 @@ from typing import Any, Protocol, TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule

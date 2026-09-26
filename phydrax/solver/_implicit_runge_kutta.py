@@ -10,8 +10,8 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule

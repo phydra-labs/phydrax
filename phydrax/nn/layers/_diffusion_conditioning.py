@@ -9,7 +9,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState, ParameterOwner

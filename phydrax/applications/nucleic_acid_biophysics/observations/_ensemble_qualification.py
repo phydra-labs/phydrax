@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule

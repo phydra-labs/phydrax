@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

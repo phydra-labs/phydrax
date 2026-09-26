@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 import jax.scipy.special as jsp
-from jaxtyping import Array
+from jax import Array
 
 
 def _estimate_positive_log_weights(

@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict

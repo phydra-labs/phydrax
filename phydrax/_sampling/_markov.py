@@ -9,7 +9,9 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key, PyTree
 
 from .._dtype_names import inexact_result_type
 from .._execution_array import shard_tree_axis

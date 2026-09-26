@@ -10,7 +10,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from phydrax.enforcement._geometry_support import BoundaryCover
 from phydrax.linalg import (

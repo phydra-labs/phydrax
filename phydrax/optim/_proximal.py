@@ -12,8 +12,10 @@ from typing import Any, cast, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule

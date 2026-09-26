@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._likelihoods import GaussianLikelihood
 from ...._numerics._checkpointed_scan import CheckpointedScanMode, PreparedReplaySchedule

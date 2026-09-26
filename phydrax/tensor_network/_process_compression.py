@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._causal_process import CausalProcessTensor, CombLegSpec

@@ -9,7 +9,8 @@ from math import isfinite
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..discretization import TemporalMesh

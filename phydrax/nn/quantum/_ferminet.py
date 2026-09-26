@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy.special as jsp_special
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from phydrax.ein import contract
 

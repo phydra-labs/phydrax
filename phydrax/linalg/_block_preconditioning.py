@@ -8,7 +8,8 @@ from typing import Literal, NoReturn, TypeAlias
 
 import equinox as eqx
 import jax
-from jaxtyping import ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._trainable import fixed_field

@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule

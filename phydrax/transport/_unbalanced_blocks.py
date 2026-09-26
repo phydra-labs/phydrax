@@ -8,7 +8,7 @@ from typing import Literal, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ._geometry import block_count, cost_block, indices
 from ._unbalanced_problem import UnbalancedTransportProblem

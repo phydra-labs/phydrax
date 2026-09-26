@@ -8,8 +8,8 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from ..._strict import StrictModule
 from ._cones import (

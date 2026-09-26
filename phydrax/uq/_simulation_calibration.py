@@ -13,7 +13,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._sampling import derive_key, SampleAddress

@@ -16,7 +16,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax.axes as cx
 

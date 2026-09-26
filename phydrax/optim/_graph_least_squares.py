@@ -10,7 +10,8 @@ from typing import Any, TypeAlias, TypeVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import (

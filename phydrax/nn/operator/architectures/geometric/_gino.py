@@ -10,7 +10,8 @@ from typing import Any, cast, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax.geometry.operator import BoundsPolicy, TensorGridLatentGeometry

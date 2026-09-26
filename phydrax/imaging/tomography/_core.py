@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 from phydrax._bvh import build_packed_bvh, ray_select_leaf_items

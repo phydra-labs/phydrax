@@ -12,8 +12,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax import ein
 

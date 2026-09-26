@@ -10,7 +10,8 @@ from pathlib import Path
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._array_archive import array_payload_digest
 from .._fingerprint import canonical_fingerprint

@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Literal
 
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._strict import StrictModule
 from phydrax.equations._tokens import PDETokenBatch

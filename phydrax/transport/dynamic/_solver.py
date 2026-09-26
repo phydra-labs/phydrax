@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ...stochastic._state_space import StateSpaceStepContext

@@ -10,7 +10,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 

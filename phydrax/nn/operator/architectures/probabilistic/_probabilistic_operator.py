@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import jax.nn as jnn
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0

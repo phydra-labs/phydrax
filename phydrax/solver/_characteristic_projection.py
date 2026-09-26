@@ -13,7 +13,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 from phydrax.conditions import Residual

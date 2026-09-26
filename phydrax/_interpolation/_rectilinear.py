@@ -11,7 +11,8 @@ from typing import get_args, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
 from ._stencil import GatherStencil

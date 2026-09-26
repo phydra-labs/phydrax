@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._algebra import AmplitudeKernel, SumKernel
 from ._base import AbstractPositiveDefiniteKernel

@@ -10,7 +10,7 @@ from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 
 BoilingRegime: TypeAlias = Literal["single-phase", "nucleate", "transition", "film"]

@@ -11,7 +11,8 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ..architectures import ChemicalConditionalAffineOperator
 from ..data import (

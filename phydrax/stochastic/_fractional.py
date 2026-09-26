@@ -14,8 +14,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import Key
 
 from .._interpolation import linear_interpolate
 from .._strict import StrictModule

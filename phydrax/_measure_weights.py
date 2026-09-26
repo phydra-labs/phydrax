@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
 
 
 def normalized_weights(

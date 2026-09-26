@@ -5,7 +5,8 @@
 from collections.abc import Sequence
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule

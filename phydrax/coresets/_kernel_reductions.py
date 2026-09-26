@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 

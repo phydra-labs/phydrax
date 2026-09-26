@@ -10,9 +10,8 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import core as jax_core
+from jax import Array, core as jax_core
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from .._dtype_names import precision_dtype_name
 from .._model import register_artifact_value

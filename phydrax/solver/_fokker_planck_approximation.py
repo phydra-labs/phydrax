@@ -10,7 +10,8 @@ from typing import Any, cast
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._strict import StrictModule
 from ..domain._normalized_density import normalize_density_field, NormalizedDensityField

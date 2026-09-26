@@ -13,7 +13,8 @@ from math import prod
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._probability import AbstractProbabilityLaw

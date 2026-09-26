@@ -12,7 +12,7 @@ import diffrax as dfx
 import equinox as eqx
 import jax.numpy as jnp
 from diffrax._term import WrapTerm
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry

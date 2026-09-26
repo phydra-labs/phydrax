@@ -11,7 +11,7 @@ from typing import cast
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 

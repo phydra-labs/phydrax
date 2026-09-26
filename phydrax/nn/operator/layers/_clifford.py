@@ -12,7 +12,8 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._differentiation import AbstractConstructionCertificate
 from phydrax._doc import DOC_KEY0

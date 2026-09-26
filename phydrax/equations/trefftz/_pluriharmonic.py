@@ -9,7 +9,9 @@ from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from ..._differentiation import AbstractConstructionCertificate
 from ..._fingerprint import canonical_fingerprint

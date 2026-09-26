@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import final, Literal, NamedTuple
 
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.coresets import (
     CoresetSelection,

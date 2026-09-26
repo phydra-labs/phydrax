@@ -10,8 +10,8 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._differentiation import (
     DerivativeContract,

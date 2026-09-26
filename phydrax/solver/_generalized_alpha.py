@@ -9,8 +9,7 @@ from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array
+from jax import Array, lax
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope

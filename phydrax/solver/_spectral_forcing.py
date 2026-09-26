@@ -9,8 +9,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from phydrax._strict import StrictModule
 

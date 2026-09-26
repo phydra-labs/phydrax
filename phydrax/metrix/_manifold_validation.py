@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule

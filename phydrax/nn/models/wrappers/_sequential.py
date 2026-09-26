@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._differentiation import DerivativeRegularity
 from ...._doc import DOC_KEY0

@@ -9,7 +9,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ...units import convert_value, derived_unit, KILOMETER, SECOND, UnitDefinition
 from ._bodies import CelestialBodyCatalog

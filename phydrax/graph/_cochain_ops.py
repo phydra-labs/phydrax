@@ -11,8 +11,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array
+from jax import Array, core as jax_core
 
 from .._strict import StrictModule
 from ..sparse import EdgeRelation, gather_routes, linear_apply, route_reduce

@@ -7,7 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from ..._doc import DOC_KEY0
 from ...discretization import TemporalMesh

@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ._pair_state import (

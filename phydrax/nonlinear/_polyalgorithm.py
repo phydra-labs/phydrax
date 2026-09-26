@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..linalg import PyTreeSpace
 from ._newton import (

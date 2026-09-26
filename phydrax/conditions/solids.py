@@ -4,7 +4,7 @@
 
 from typing import Literal
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainComponent, DomainFunction
 

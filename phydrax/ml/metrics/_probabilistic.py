@@ -8,7 +8,7 @@ from math import prod
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ._base import (
     _broadcast_full,

@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ..._strict import StrictModule
 from .._function import DomainFunction

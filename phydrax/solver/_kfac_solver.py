@@ -24,8 +24,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array
 
 from .._dtype_names import inexact_result_type
 from .._fingerprint import canonical_fingerprint

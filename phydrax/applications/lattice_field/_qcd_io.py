@@ -17,7 +17,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._array_archive import (
     ArrayArchiveLimits,

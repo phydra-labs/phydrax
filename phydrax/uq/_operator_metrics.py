@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..nn.operator.data import OperatorPrediction
 from ._metrics import energy_distance, energy_score, ensemble_crps

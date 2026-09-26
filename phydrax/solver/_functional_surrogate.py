@@ -10,7 +10,8 @@ from typing import Any, NoReturn
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import Key, PyTree
 
 import phydrax.axes as cx
 

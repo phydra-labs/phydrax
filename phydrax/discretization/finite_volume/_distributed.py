@@ -12,8 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._execution_runtime import ExecutionGroup
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint

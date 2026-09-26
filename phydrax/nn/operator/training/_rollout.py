@@ -11,7 +11,7 @@ from typing import Any, NamedTuple, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._doc import DOC_KEY0
 from ...._model._ports import PortBindingEvidence, ValuePort

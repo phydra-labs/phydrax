@@ -10,8 +10,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 from phydrax.linalg import DenseLinearOperator
 

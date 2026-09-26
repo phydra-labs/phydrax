@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jax import lax
-from jaxtyping import Array, Key
+from jax import Array, lax
+from jaxtyping import Key
 
 from .._strict import StrictModule
 

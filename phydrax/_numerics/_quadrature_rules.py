@@ -9,7 +9,7 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._polynomial._orthogonal import legendre_rule_data
 

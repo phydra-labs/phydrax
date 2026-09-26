@@ -8,8 +8,9 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule

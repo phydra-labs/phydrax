@@ -11,7 +11,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax import ein
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint

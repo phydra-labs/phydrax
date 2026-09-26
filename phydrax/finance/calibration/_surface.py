@@ -11,7 +11,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 

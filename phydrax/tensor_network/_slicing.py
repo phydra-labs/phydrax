@@ -11,7 +11,7 @@ from numbers import Integral
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize

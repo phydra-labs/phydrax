@@ -15,7 +15,8 @@ from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax.ein as ein
 

@@ -17,7 +17,8 @@ import scipy.fft as scipy_fft
 import scipy.linalg as scipy_linalg
 import scipy.sparse as scipy_sparse
 import scipy.sparse.linalg as scipy_sparse_linalg
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule

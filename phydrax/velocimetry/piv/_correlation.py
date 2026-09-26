@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ._types import CorrelationBatch
 from ._windows import _pair, WindowBatch2D

@@ -11,7 +11,8 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..contracts._options import OptionType, VanillaPayoff

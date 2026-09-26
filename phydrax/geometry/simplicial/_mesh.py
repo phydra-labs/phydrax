@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array
+from jax import Array
 
 from ..._polynomial._cubature import CubatureReference
 from ..._strict import StrictModule

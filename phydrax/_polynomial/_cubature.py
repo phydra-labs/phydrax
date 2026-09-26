@@ -12,8 +12,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 from scipy.special import roots_jacobi
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint

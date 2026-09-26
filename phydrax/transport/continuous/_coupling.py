@@ -10,8 +10,10 @@ from math import prod
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.scipy.special import logsumexp
-from jaxtyping import Array, ArrayLike, Key
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict

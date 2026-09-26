@@ -10,7 +10,7 @@ from typing import Any, Callable, cast
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.axes as cx
 

@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 

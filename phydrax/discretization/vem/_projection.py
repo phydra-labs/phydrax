@@ -7,8 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 import phydrax.ein as ein
 

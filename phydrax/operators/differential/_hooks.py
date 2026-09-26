@@ -10,7 +10,8 @@ from math import comb
 from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import (
     DerivativeBackend,

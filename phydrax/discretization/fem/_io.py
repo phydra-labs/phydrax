@@ -11,7 +11,8 @@ import jax.numpy as jnp
 import meshio
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._mesh_file_profiles import resolve_mesh_file_profile
 from ..._publication import publish_bytes

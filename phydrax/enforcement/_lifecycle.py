@@ -11,7 +11,8 @@ from typing import Any, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._frozendict import frozendict
 from .._strict import StrictModule

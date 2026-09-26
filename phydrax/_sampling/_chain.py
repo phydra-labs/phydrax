@@ -7,7 +7,8 @@ from __future__ import annotations
 from abc import abstractmethod
 
 import equinox as eqx
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 

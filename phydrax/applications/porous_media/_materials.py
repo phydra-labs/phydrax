@@ -10,7 +10,8 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...discretization.finite_volume._hybrid_diffusion import _positive_tensor, _tensor

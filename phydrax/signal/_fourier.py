@@ -12,8 +12,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax._spectral._fourier import fourier_resample as _fourier_resample

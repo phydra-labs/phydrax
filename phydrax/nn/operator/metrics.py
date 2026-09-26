@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from typing import Literal, TypedDict, Unpack
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .data import FunctionSamples
 

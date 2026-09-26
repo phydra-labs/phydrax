@@ -13,7 +13,8 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...dynamics._grid import TimeGrid

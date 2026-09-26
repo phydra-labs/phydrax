@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._bounds import Bounds
 from .._cone import AbstractConvexCone

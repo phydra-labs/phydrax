@@ -8,7 +8,7 @@ from typing import Any, Generic, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule

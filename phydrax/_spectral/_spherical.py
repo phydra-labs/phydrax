@@ -13,11 +13,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import s2fft
+from jax import Array
 from jax.core import ShapedArray
 from jax.extend import core as jax_core
 from jax.interpreters import ad, batching, mlir
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike, DTypeLike
 from s2fft.precompute_transforms import (
     construct as s2fft_construct,
     spherical as s2fft_precomputed,

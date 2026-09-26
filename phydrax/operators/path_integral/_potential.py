@@ -7,7 +7,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeAlias
 
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 

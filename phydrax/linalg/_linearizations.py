@@ -9,7 +9,8 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule

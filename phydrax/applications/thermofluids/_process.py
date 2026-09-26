@@ -9,7 +9,7 @@ from enum import IntEnum, StrEnum
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

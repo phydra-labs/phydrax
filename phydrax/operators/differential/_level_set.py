@@ -9,7 +9,8 @@ from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction, UnaryFieldEvaluator
 from phydrax.geometry import regularized_delta_values, regularized_heaviside_values

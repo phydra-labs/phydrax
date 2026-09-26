@@ -10,8 +10,8 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 

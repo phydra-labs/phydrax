@@ -9,7 +9,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from .design._schema import DesignState, ParameterSchema

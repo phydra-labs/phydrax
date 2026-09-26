@@ -8,7 +8,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._frozendict import frozendict

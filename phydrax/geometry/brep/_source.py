@@ -9,7 +9,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from ..._physical import SpatialCoordinateContract
 from .._atlas import BoundaryAtlas

@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, ClassVar, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.axes as cx
 

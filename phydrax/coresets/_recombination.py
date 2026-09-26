@@ -9,7 +9,7 @@ import math
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._measure_weights import log_weights_from_normalized, normalized_weights
 from .._strict import StrictModule

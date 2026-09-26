@@ -10,7 +10,8 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from phydrax.domain import ConcatenatedModelEvaluator, Domain, DomainFunction
 

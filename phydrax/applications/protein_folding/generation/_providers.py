@@ -12,7 +12,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from ...._strict import StrictModule
 from ....artifacts import ScientificArtifactEnvelope

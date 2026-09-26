@@ -12,7 +12,8 @@ from typing import Any, Self, TypeAlias, TypeVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._dtype_names import inexact_result_type
 from .._strict import StrictModule

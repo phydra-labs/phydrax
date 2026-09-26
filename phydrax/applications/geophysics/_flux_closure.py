@@ -15,7 +15,8 @@ from typing import Any, cast
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...discretization import (

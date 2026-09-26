@@ -9,7 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...manufacturing import GaussianMovingSource, MaterialActivationState
 from ...qualification import CapabilityProfile, SupportTuple

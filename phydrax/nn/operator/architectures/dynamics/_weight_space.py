@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from phydrax._differentiation import DerivativeRegularity
 from phydrax._doc import DOC_KEY0

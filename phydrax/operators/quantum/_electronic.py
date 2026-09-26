@@ -13,8 +13,9 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array, Key, PyTree
+from jaxtyping import Key, PyTree
 
 from phydrax.ein import contract
 

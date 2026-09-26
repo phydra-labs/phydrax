@@ -13,8 +13,8 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

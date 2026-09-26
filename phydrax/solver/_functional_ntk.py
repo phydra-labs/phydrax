@@ -8,7 +8,8 @@ from typing import Any, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import Key, PyTree
 
 from .._doc import DOC_KEY0
 from .._sampling import derive_key, SampleAddress

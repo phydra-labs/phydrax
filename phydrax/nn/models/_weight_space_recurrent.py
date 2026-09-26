@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import Key, PyTree
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule

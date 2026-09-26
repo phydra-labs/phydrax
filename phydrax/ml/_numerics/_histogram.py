@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def quantile_bin_edges(features: ArrayLike, /, *, num_bins: int) -> Array:

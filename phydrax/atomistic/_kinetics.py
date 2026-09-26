@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ..dynamics import StateLayout

@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import s2fft
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from s2fft.precompute_transforms import (
     construct as s2fft_construct,
     wigner as s2fft_precomputed,

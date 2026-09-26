@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._tree_math import validate_real_inexact_tree

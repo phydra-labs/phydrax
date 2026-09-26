@@ -20,7 +20,8 @@ from math import log1p
 from typing import TypeVar
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ...._strict import StrictModule
 from ....ein import contract

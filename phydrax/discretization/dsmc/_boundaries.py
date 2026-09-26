@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike, PRNGKeyArray
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import PRNGKeyArray
 
 from ..._admissibility import AdmissibilityHeader, AdmissibilityReason
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint

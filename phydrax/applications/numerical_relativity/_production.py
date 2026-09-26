@@ -15,7 +15,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._execution_plan import ExecutionPlan
 from ..._execution_resources import ExecutionPolicy, ResourceRequest

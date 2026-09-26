@@ -19,7 +19,7 @@ from typing import Any, final
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._differentiation import DerivativeRegularity
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint

@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._dtype_names import real_precision_dtype_name
 from ..._precision import (

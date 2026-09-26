@@ -10,7 +10,8 @@ from typing import TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._interpolation import (
     bspline_jet_stencil,

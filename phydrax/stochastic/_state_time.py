@@ -9,7 +9,7 @@ from typing import Literal, TypeAlias, TypedDict, Unpack
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 

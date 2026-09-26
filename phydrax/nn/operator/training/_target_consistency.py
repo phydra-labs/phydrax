@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch
 from ..metrics import operator_l2_loss

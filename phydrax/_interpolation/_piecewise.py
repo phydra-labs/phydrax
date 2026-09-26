@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._dtype_names import inexact_result_type
 from ._stencil import apply_gather_stencil, GatherStencil

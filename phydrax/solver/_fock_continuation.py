@@ -8,7 +8,8 @@ from collections.abc import Callable, Sequence
 from math import isfinite
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..operators.quantum import BosonicFockSpace

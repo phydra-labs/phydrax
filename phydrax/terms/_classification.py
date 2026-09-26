@@ -10,7 +10,9 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from phydrax.domain import DomainComponent, DomainFunction, PointSampling
 from phydrax.ein import contract

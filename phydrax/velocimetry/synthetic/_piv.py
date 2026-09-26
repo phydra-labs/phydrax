@@ -11,7 +11,7 @@ from typing import Literal, overload
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

@@ -11,7 +11,9 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 

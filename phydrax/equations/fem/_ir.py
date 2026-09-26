@@ -8,7 +8,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 import equinox as eqx
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 import phydrax.linalg as la
 

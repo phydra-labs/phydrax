@@ -11,7 +11,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._callable import _ensure_special_kwonly_args
 from ..._doc import DOC_KEY0

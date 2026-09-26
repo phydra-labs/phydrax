@@ -12,7 +12,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import Key, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule

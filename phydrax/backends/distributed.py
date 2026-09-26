@@ -13,7 +13,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from ._availability import import_backend_module, probe_backend

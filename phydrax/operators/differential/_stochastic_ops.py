@@ -8,7 +8,7 @@ from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction

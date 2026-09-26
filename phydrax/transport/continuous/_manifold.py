@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._flow_matching_metric import ManifoldFlowMatchingMetric
 from ..._geometry_precision import GeometryPrecisionPolicy

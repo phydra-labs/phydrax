@@ -10,7 +10,8 @@ from numbers import Integral
 import equinox as eqx
 import jax.core as jax_core
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

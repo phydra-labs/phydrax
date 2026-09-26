@@ -22,8 +22,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._array_archive import ArrayArchiveCorruptionError, ArrayArchiveLimits
 from ..._execution_pool import (

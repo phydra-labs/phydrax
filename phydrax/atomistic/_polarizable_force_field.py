@@ -16,7 +16,8 @@ import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 

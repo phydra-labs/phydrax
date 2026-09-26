@@ -9,7 +9,8 @@ from typing import Any, Literal, TypeAlias
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._relation import EdgeRelation, RowRelation, SparseRelation
 

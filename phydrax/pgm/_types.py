@@ -7,7 +7,7 @@ from __future__ import annotations
 from enum import IntEnum
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ._model import VariableStateValues

@@ -10,7 +10,9 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Bool, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Bool, Key
 
 from .._sampling import materialize_design
 from .._strict import StrictModule

@@ -11,7 +11,8 @@ from math import isfinite
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ...._doc import DOC_KEY0
 from ..data import OperatorBatch, OperatorPrediction, OperatorTargetBatch

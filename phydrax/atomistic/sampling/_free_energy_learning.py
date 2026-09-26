@@ -12,8 +12,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import Key, PyTree
 
 from phydrax.ein import contract
 

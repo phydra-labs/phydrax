@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._strict import StrictModule
 from ..metrix import (

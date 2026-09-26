@@ -12,7 +12,8 @@ import jax.core as jax_core
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._operators import _generic_adjoint, _id, AbstractLinearOperator
 from ._properties import OperatorCapabilities, OperatorProperties

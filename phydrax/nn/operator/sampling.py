@@ -14,7 +14,7 @@ from typing import Any, ClassVar, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_mapping
 from ...graph._operator_topology import take_operator_topology

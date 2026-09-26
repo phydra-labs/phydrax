@@ -9,7 +9,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from ..linalg import (

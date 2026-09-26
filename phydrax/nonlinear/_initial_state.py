@@ -10,7 +10,8 @@ from typing import Any
 
 import equinox as eqx
 import jax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..linalg import AbstractInitialGuessProvider, InitialGuessDiagnostics, PyTreeSpace
 from ..linalg._initial_guess import _select_proposal

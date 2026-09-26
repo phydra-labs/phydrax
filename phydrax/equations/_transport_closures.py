@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint

@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from .._function import DomainFunction

@@ -12,7 +12,8 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._differentiation import (
     ComponentAuthority,

@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._strict import StrictModule
 

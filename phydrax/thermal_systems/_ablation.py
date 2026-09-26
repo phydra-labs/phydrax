@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ._core import STEFAN_BOLTZMANN_W_M2_K4
 

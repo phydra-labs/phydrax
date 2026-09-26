@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, Key
+from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._sampling import derive_key, SampleAddress

@@ -9,7 +9,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan

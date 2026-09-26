@@ -6,7 +6,8 @@ from __future__ import annotations
 from typing import Literal, TypeAlias
 
 import equinox as eqx
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ..._strict import StrictModule
 from ...domain import DomainFunction

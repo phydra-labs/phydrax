@@ -8,7 +8,9 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import (

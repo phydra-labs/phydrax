@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._interpolation import fourier_interpolate

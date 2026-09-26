@@ -10,8 +10,9 @@ from typing import TypeVar
 import equinox as eqx
 import jax
 import numpy as np
+from jax import Array
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import ArrayRole, NonTrainableState, resolve_array_roles

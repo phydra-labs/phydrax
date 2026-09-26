@@ -8,7 +8,8 @@ from collections.abc import Callable
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule

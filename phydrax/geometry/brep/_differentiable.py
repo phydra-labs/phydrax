@@ -11,8 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.tree_util import PyTreeDef
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule

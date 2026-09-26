@@ -12,7 +12,8 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import optax
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 

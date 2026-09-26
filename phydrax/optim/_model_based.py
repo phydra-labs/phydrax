@@ -11,8 +11,9 @@ from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._tree_math import validate_real_inexact_tree

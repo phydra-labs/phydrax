@@ -8,7 +8,8 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._strict import StrictModule
 from ._bsde import BSDEPathBatch

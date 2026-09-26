@@ -7,8 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 from phydrax.integration import GaussLegendreRule, interval_rule_data
 

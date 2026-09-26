@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
 
 from ..._strict import StrictModule
 

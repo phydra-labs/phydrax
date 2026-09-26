@@ -24,7 +24,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import Key, PyTree
 
 from ._differentiation import (
     authority_admits,

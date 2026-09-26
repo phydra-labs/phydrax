@@ -11,7 +11,8 @@ from typing import Any, cast, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._array_tree import ArrayPyTreeSchema
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint

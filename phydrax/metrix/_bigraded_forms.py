@@ -9,7 +9,8 @@ from itertools import combinations
 from math import comb
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ._complex import ComplexCoordinateConvention, wirtinger_derivatives

@@ -3,7 +3,8 @@
 #
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def structural_incidence(equation_variables: ArrayLike, /) -> tuple[Array, int]:

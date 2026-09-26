@@ -13,8 +13,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+from jax import Array
 from jax.typing import ArrayLike
-from jaxtyping import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule

@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from enum import IntEnum
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

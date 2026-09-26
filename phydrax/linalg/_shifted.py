@@ -14,8 +14,9 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule

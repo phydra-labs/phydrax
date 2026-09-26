@@ -8,7 +8,8 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint

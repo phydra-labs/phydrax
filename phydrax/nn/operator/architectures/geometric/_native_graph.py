@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._doc import DOC_KEY0
 from phydrax.graph._ir import GraphIR

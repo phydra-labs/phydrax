@@ -8,8 +8,8 @@ from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array
 
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from ..linalg import (

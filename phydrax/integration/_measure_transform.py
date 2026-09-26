@@ -10,8 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from jax import core as jax_core
-from jaxtyping import Array
+from jax import Array, core as jax_core
 
 import phydrax.axes as cx
 from phydrax.domain import PointBatch

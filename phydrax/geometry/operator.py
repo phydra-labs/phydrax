@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._doc import DOC_KEY0
 from .._mass import require_exact_mass

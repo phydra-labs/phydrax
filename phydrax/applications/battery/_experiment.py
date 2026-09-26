@@ -14,8 +14,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule

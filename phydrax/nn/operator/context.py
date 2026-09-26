@@ -13,8 +13,8 @@ from typing import Literal
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
-from jax import core as jax_core
-from jaxtyping import Array, Key
+from jax import Array, core as jax_core
+from jaxtyping import Key
 
 import phydrax.ein as ein
 

@@ -10,8 +10,7 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import lax
-from jaxtyping import Array
+from jax import Array, lax
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule

@@ -18,7 +18,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._fingerprint import (

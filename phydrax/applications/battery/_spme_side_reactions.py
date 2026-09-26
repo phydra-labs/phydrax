@@ -10,7 +10,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._dtype_names import inexact_result_type
 from ..._fingerprint import canonical_fingerprint

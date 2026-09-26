@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ...artifacts import ScientificArtifactEnvelope

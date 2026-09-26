@@ -7,7 +7,8 @@ from __future__ import annotations
 from math import isqrt
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def symmetric_packed_dimension(matrix_dimension: int, /) -> int:

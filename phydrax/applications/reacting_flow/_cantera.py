@@ -13,7 +13,7 @@ import jax
 import numpy as np
 import yaml
 from jax import core as jax_core
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._document_resource import decode_text_resource
 from ..._external_resource import read_bounded_resource, ResourceLimits

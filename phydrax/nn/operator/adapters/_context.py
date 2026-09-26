@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.domain import Domain, DomainFunction
 

@@ -9,7 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax.random as jr
 import optax
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch, BSDEProblem

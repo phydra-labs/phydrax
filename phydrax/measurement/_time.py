@@ -11,7 +11,7 @@ from enum import StrEnum
 from numbers import Integral
 
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..units import conversion_factor, TIME, UnitDefinition

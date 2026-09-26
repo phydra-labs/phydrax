@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint, canonical_mapping
 from .._calculation import ElectronicCalculationPlan

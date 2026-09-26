@@ -9,8 +9,8 @@ from typing import TypeAlias
 
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from ..discretization._tensor_entities import StructuredAxis
 from ..discretization.finite_volume._mac_momentum import (

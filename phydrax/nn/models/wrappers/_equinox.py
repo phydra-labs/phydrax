@@ -11,7 +11,8 @@ from typing import Any, final, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ...._callable import _ensure_special_kwonly_args, _KeyIterAdapter
 from ...._differentiation import DerivativeRegularity

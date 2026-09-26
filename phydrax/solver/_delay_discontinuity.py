@@ -13,7 +13,9 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax._strict import StrictModule
 

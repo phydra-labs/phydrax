@@ -8,8 +8,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import (

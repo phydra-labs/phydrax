@@ -16,6 +16,8 @@
   contract field of a module. Checks read only kind, rank, extent, and dtype
   metadata: they add no JAX operations and synchronize nothing. See the typing
   guide.
+- Package code imports `Array` from `jax` and `ArrayLike` from `jax.typing`, their
+  canonical owners; importing them from `jaxtyping` is refused by lint.
 - Strict modules that declare `__strict_contract__ = True` (inherited by
   subclasses) check their `phydrax.typing` field contracts, read-only, after
   Equinox construction and `__check_init__`; `phydrax.typing.validate` checks an

@@ -8,7 +8,7 @@ from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._numerics._compensated import compensated_sum
 from ..._tree_math import tree_allfinite, tree_where

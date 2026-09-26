@@ -11,8 +11,8 @@ from typing import TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import lax
-from jaxtyping import Array, ArrayLike
+from jax import Array, lax
+from jax.typing import ArrayLike
 
 import phydrax.ein as ein
 from phydrax.linalg import SmallLinearSolvePlan, solve_small_linear

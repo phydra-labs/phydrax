@@ -18,7 +18,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from ._array_archive import DEFAULT_ARRAY_ARCHIVE_LIMITS
 from ._document_resource import decode_json_resource

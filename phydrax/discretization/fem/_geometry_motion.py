@@ -13,7 +13,7 @@ from typing import Any, Protocol, runtime_checkable
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.ein import contract
 

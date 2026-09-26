@@ -14,7 +14,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jax import Array
-from jaxtyping import ArrayLike, Key
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from ..._differentiation import DerivativeRegularity
 from ..._interpolation import (

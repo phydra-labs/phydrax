@@ -9,7 +9,8 @@ from typing import Any
 
 import equinox as eqx
 import numpy as np
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from phydrax.conditions._ir import Condition
 from phydrax.domain import DomainFunction

@@ -9,7 +9,8 @@ from typing import Protocol
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 import phydrax.linalg as la
 

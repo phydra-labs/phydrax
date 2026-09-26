@@ -9,7 +9,8 @@ from collections.abc import Callable, Sequence
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Bool, Key
+from jax import Array
+from jaxtyping import Bool, Key
 
 from .._doc import DOC_KEY0
 from .._mass import Mass

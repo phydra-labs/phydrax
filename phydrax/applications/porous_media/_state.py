@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import TypeVar
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._admissibility import guard_derivative_validity
 from ..._strict import StrictModule

@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax._interpolation import apply_gather_stencil, inverse_distance_stencil
 from phydrax._strict import StrictModule

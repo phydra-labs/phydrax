@@ -9,7 +9,7 @@ from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import ArraySpace, ConstraintMap, FunctionLinearOperator

@@ -8,7 +8,7 @@ from string import ascii_lowercase
 from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, DomainFunction

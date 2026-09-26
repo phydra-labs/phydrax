@@ -11,7 +11,8 @@ from typing import Any, SupportsFloat, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 

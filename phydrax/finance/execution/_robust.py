@@ -9,7 +9,7 @@ from __future__ import annotations
 from math import isfinite
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ...control.games._hjbi import (

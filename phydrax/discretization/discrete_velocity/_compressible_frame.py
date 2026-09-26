@@ -7,7 +7,8 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._exponential_family import solve_finite_support_mean
 from ..._fingerprint import canonical_fingerprint

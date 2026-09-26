@@ -11,8 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jax import core as jax_core
-from jaxtyping import Array
+from jax import Array, core as jax_core
 
 from ..._strict import StrictModule
 from .._dense_pseudoinverse import factor_pseudoinverse

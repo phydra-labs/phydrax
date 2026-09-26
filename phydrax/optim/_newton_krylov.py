@@ -11,7 +11,8 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._iteration import IterationPlan
 from .._linear_refresh import prepare_refresh_state

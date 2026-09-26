@@ -13,7 +13,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array
+from jax import Array
 
 from .._external_resource import BoundedResource, read_bounded_resource, ResourceLimits
 from .._fingerprint import canonical_fingerprint

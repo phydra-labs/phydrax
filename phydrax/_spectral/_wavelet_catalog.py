@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 class Wavelet(NamedTuple):

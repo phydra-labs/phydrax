@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 

@@ -11,7 +11,9 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key, PyTree
 
 from ..._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind
 from ..._doc import DOC_KEY0

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ...discretization.finite_volume._diffusion_boundary import HybridDiffusionBoundary

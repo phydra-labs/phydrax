@@ -8,7 +8,7 @@ from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 
 # (u, v, matching, feasible, total_steps)

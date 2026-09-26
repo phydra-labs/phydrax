@@ -6,7 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..materials import ConservativeMaterialTransfer
 from ._activation import MaterialActivationState

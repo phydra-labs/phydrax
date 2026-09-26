@@ -10,8 +10,9 @@ from typing import Literal, NamedTuple
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array, Key
+from jaxtyping import Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._fingerprint import canonical_fingerprint

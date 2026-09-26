@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ...dynamics import (

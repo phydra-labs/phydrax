@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 from numpy.typing import ArrayLike, NDArray
 
 from phydrax.ein import contract

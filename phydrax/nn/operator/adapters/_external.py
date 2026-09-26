@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ...._differentiation import DerivativeContract, DerivativeRoute
 from ...._document_resource import decode_json_resource

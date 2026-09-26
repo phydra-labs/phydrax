@@ -9,7 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from jaxtyping import Array
+from jax import Array
 
 
 def _leaf_static_equal(a: Any, b: Any) -> bool:

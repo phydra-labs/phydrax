@@ -8,7 +8,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...ml.metrics import (

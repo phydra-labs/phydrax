@@ -10,8 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array
 
 from .._strict import StrictModule
 from ._particle import _parameter_lane, ParticleFilterResult

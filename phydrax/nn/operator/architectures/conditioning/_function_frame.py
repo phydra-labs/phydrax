@@ -14,8 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array
+from jax import Array, core as jax_core
 
 import phydrax.ein as ein
 from phydrax._differentiation import DerivativeRegularity

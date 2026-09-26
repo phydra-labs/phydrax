@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 
 EPOCH_ORDER_ALGORITHM = "feistel32"

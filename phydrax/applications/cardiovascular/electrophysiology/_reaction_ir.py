@@ -19,7 +19,7 @@ from math import isfinite
 from typing import TypeAlias
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 
 class ReactionUnaryOperator(Enum):

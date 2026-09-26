@@ -8,8 +8,8 @@ from typing import Literal
 
 import jax.numpy as jnp
 import jax.scipy as jsp
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from ._model import (
     BinaryCardinalityFactorGroup,

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, NamedTuple, TypeAlias
 
-from jaxtyping import Array
+from jax import Array
 
 
 CoordinateKind: TypeAlias = Literal["continuous", "discrete"]

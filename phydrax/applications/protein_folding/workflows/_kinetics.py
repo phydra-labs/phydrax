@@ -6,7 +6,8 @@ from typing import TypedDict, Unpack
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ....dynamics import TrajectoryData
 from ....dynamics.analysis import MarkovValidationResult, validate_markov_models

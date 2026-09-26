@@ -10,7 +10,8 @@ from typing import Any, Literal, TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from phydrax.domain import AbstractScalarDomain, DomainFunction
 

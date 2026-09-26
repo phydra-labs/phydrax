@@ -12,7 +12,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key, PyTree
 
 from phydrax.ein import contract
 

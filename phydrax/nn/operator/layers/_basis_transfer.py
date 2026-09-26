@@ -9,7 +9,7 @@ from collections.abc import Sequence
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule

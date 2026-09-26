@@ -11,7 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 
 ChainMethod = Literal["sequential", "vectorized"]

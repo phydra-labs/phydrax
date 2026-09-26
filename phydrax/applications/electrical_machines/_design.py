@@ -12,8 +12,8 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core
+from jax.typing import ArrayLike
 
 from phydrax._strict import StrictModule
 from phydrax.ein import contract

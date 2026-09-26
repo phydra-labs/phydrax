@@ -9,7 +9,8 @@ from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ._policies import EigenDifferentiationMode, EigenTarget

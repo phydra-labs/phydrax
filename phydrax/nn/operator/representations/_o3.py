@@ -8,8 +8,7 @@ from math import sqrt
 from typing import Literal
 
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array
+from jax import Array, core as jax_core
 
 import phydrax.ein as ein
 from phydrax._strict import StrictModule

@@ -9,8 +9,9 @@ from math import isfinite, pi
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.scipy.special import ndtri
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ..core import PhysicalLaw

@@ -12,7 +12,8 @@ from typing import Any, Literal, NamedTuple, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule

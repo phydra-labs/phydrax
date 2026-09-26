@@ -8,7 +8,7 @@ from math import isfinite
 from typing import NamedTuple
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.ein as ein
 

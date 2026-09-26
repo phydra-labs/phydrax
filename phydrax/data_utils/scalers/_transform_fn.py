@@ -4,7 +4,7 @@
 
 from collections.abc import Callable
 
-from jaxtyping import Array
+from jax import Array
 
 from ._base import _AbstractScaler
 

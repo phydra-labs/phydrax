@@ -14,7 +14,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._dtype_names import precision_dtype_name, real_precision_dtype_name
 from .._precision import (

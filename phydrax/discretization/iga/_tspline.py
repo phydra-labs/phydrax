@@ -21,7 +21,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 from scipy.interpolate import BSpline
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint

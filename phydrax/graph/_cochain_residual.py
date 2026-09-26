@@ -12,7 +12,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0

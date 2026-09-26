@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from ..._strict import StrictModule
 from ..._trainable import ParameterOwner

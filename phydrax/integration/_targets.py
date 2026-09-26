@@ -9,7 +9,7 @@ from typing import Any, cast, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 import phydrax.axes as cx
 from phydrax.domain import (

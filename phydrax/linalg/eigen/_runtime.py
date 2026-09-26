@@ -11,7 +11,8 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._materialization import MaterializationPolicy, materialize
 from .._operators import AbstractLinearOperator

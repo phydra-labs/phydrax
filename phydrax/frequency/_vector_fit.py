@@ -4,7 +4,8 @@
 from dataclasses import dataclass
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..linalg import (
     ArraySpace,

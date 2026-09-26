@@ -8,7 +8,7 @@ from math import prod
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._dtype_names import complex_precision_dtype, real_precision_dtype_name
 from .._strict import StrictModule

@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._fingerprint import canonical_fingerprint
 from ..._model import ValuePort

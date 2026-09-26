@@ -9,7 +9,7 @@ from typing import Any, NamedTuple, TypeAlias
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from ..nn.flows import AbstractFlowDistribution, fit_flow_to_data
 

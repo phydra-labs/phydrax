@@ -12,8 +12,9 @@ from math import factorial
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.special import gammainc, gammaln
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 
 def _boys_values_impl(maximum: int, value: Array, /) -> Array:

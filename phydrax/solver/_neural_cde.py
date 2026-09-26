@@ -14,7 +14,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._data_plane import EPOCH_ORDER_ALGORITHM, IndexEpochPlan
 from .._differentiation import ComponentAuthority, DerivativeRoute, ObjectiveKind

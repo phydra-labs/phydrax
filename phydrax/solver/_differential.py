@@ -13,7 +13,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import lineax as lx
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 import phydrax.axes as cx
 

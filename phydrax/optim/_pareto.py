@@ -9,7 +9,8 @@ from numbers import Integral
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 
 def dominance_matrix(objectives: ArrayLike, valid: ArrayLike | None = None, /) -> Array:

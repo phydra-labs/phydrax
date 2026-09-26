@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.domain import DomainFunction, JointFactor
 

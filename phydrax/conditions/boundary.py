@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.domain import (
     DomainComponent,

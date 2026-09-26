@@ -13,7 +13,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ..._model import AbstractArrayModel
 from ...kernels import SquaredExponentialKernel

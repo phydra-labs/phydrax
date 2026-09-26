@@ -13,7 +13,8 @@ from collections.abc import Iterable, Sequence
 import equinox as eqx
 import jax
 import numpy as np
-from jaxtyping import Array, PRNGKeyArray
+from jax import Array
+from jaxtyping import PRNGKeyArray
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule

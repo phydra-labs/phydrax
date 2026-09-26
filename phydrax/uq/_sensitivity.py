@@ -11,7 +11,9 @@ from typing import Any, cast, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key, PyTree
 from typing_extensions import assert_never
 
 import phydrax.axes as cx

@@ -11,8 +11,8 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule

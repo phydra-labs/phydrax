@@ -14,7 +14,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import Key, PyTree
 
 from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule

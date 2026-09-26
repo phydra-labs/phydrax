@@ -7,7 +7,9 @@ from __future__ import annotations
 from typing import Any
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from phydrax.domain import DomainFunction
 from phydrax.ein import contract

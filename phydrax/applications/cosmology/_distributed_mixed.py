@@ -13,8 +13,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.sharding import NamedSharding, PartitionSpec
-from jaxtyping import Array
 
 from ..._execution_plan import ExecutionPlan, PlacementKind
 from ..._fingerprint import canonical_fingerprint

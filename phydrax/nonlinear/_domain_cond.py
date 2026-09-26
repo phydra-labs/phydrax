@@ -10,10 +10,11 @@ from typing import Any, TypeVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax._src import ad_util, core
 from jax._src.ad_checkpoint import transpose_jaxpr
 from jax._src.interpreters import ad, batching, mlir, partial_eval as pe, pxla
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 
 _BranchResult = TypeVar("_BranchResult")

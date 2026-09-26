@@ -10,7 +10,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, PyTree
+from jax import Array
+from jaxtyping import PyTree
 
 from .._sampling import UnitCubeTransport
 from ._components import Boundary, Interior, Selection

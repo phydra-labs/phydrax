@@ -11,7 +11,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Bool, Float, Key
+from jax import Array
+from jaxtyping import Bool, Float, Key
 
 from .._doc import DOC_KEY0
 from .._mass import ExactMass, Mass, UnknownMass

@@ -9,8 +9,9 @@ import abc
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.scipy.special import xlogy
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.ein import contract
 

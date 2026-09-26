@@ -5,7 +5,8 @@
 from typing import Any
 
 import jax.random as jr
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 
 EvalKey = Key[Array, ""] | None

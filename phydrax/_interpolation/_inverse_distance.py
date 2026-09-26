@@ -9,7 +9,8 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ._stencil import GatherStencil
 from ._types import InterpolationCapabilities

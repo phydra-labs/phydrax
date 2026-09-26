@@ -11,8 +11,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+from jax import Array
 from jax.experimental import sparse as jsparse
-from jaxtyping import Array
 
 import phydrax.ein as ein
 

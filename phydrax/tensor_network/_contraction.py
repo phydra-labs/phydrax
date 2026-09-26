@@ -17,7 +17,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import opt_einsum as oe
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import precision_itemsize, PrecisionEvidenceEnvelope

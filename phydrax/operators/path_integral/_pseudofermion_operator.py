@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import abc
 
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from ...linalg import AbstractLinearOperator
 

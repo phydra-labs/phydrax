@@ -9,7 +9,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import lineax as lx
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from .._plans import _certified_rank, LinearSolvePlan

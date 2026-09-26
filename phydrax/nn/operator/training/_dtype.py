@@ -11,8 +11,8 @@ from typing import Any, cast, Literal, TypeAlias
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array
 
 from ...._dtype_names import (
     complex_precision_dtype,

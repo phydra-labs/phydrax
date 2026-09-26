@@ -8,7 +8,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._numerics import log_normalize
 from .._strict import StrictModule

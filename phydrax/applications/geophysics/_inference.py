@@ -20,7 +20,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ... import linalg, optim, uq
 from ..._array_archive import read_array_archive, write_array_archive

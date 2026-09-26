@@ -10,9 +10,10 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core as jax_core
+from jax import Array, core as jax_core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, ArrayLike, PyTree
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from ..linalg import (

@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from phydrax._strict import StrictModule
 

@@ -11,7 +11,9 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from ..._fingerprint import canonical_fingerprint
 from ..._probability import AbstractProbabilityLaw

@@ -10,7 +10,8 @@ from math import isfinite, sqrt
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._strict import StrictModule
 from ...linalg import ArraySpace

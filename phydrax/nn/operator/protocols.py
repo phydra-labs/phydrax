@@ -8,7 +8,7 @@ import abc
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from jaxtyping import Array
+from jax import Array
 
 from ..._doc import DOC_KEY0
 from .capabilities import ConfiguredOperatorContract

@@ -12,7 +12,7 @@ from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array
+from jax import Array
 
 from .._fingerprint import array_tree_fingerprint
 from ..stochastic._state_space import StateSpaceProblem

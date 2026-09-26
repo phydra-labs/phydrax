@@ -11,7 +11,7 @@ from typing import Any, cast, Literal, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ....transport import (
     AbstractBalancedTransportSolver,

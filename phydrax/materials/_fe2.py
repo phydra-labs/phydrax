@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Self
 
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..ein import contract
 

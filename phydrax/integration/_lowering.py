@@ -8,7 +8,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import Key, PyTree
 
 import phydrax.axes as cx
 from phydrax.discretization import (

@@ -13,8 +13,9 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
-from jax.typing import DTypeLike
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike, DTypeLike
+from jaxtyping import PyTree
 
 import phydrax.ein as ein
 

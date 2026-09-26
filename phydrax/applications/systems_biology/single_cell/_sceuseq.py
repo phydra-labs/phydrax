@@ -11,7 +11,8 @@ from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from phydrax.interchange import AdapterReport, AdapterStatus

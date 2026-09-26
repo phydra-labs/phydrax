@@ -14,8 +14,9 @@ import equinox.internal as eqxi
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from phydrax._strict import StrictModule
 

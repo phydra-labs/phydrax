@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ._compile import CompiledMonomial, PreparedQuantumLattice
 

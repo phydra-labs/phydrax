@@ -12,8 +12,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from jax import Array
 from jax.typing import ArrayLike, DTypeLike
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 
 PreconditionerMatrix = Array | None

@@ -14,7 +14,9 @@ import jax.core as jax_core
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint

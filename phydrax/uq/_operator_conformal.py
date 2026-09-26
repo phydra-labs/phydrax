@@ -8,7 +8,7 @@ from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 import phydrax.axes as cx
 

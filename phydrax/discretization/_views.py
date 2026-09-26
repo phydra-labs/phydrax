@@ -26,8 +26,9 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from jax.custom_derivatives import SymbolicZero
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from .._differentiation import (
     _regularity_payload,

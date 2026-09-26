@@ -4,7 +4,9 @@
 
 from typing import Any, TypeAlias
 
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 from phydrax.domain import (
     ComponentSum,

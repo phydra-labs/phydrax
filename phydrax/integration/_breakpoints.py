@@ -9,7 +9,7 @@ from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ._estimates import DiscoveredBreakpoints
 from ._plans import BreakpointDiscoveryPlan

@@ -12,8 +12,9 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import core as jax_core
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jax import Array, core as jax_core
+from jax.typing import ArrayLike
+from jaxtyping import Key, PyTree
 
 import phydrax.axes as cx
 from phydrax.domain import ComponentSum, DomainFunction

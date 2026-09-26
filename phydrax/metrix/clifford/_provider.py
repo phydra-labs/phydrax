@@ -7,7 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule

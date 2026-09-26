@@ -13,7 +13,9 @@ from typing import Any, ClassVar, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._differentiation import ComponentAuthority
 from .._fingerprint import canonical_fingerprint

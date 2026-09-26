@@ -8,7 +8,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from jaxtyping import ArrayLike, PRNGKeyArray
+from jax.typing import ArrayLike
+from jaxtyping import PRNGKeyArray
 
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule

@@ -10,7 +10,7 @@ from typing import Any, cast, Literal
 
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jax import Array
 
 from ...._fingerprint import canonical_fingerprint
 from ....data_utils import (

@@ -15,7 +15,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.signal as scipy_signal
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._interpolation import linear_interpolate

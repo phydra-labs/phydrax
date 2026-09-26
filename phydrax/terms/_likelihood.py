@@ -10,7 +10,9 @@ from typing import Any, Literal, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import Key
 
 import phydrax.axes as cx
 from phydrax.domain import DatasetDomain, DomainComponent, DomainFunction, PointSampling

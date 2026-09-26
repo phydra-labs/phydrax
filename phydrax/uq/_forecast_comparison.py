@@ -8,8 +8,9 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.special import ndtr
-from jaxtyping import Array, ArrayLike
+from jax.typing import ArrayLike
 
 from .._strict import StrictModule
 

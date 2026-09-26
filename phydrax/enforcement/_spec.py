@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast, Literal
 
 import equinox as eqx
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from phydrax.conditions._base import AbstractCondition
 from phydrax.conditions._ir import Condition

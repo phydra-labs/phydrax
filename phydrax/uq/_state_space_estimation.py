@@ -11,7 +11,8 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, Key, PyTree
+from jax import Array
+from jaxtyping import Key, PyTree
 
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch

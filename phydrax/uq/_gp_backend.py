@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import jax.scipy as jsp
-from jaxtyping import Array, ArrayLike
+from jax import Array
+from jax.typing import ArrayLike
 
 from phydrax.kernels import AbstractPositiveDefiniteKernel
 

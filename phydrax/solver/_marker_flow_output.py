@@ -16,7 +16,7 @@ from typing import Any
 import equinox as eqx
 import numpy as np
 import numpy.typing as npt
-from jaxtyping import ArrayLike
+from jax.typing import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._publication import publish_bytes

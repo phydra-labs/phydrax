@@ -10,9 +10,9 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax import core
+from jax import Array, core
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from phydrax._strict import StrictModule
 from phydrax.ein import contract

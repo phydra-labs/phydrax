@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from typing import Any, TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from phydrax.domain import DomainFunction
 

@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 
 def cyclic_phase_shift(harmonic_index: int, sector_count: int) -> Array:

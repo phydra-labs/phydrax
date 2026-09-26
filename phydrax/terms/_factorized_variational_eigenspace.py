@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ..integration import (

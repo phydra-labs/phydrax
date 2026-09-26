@@ -8,7 +8,7 @@ from enum import IntEnum, IntFlag
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array
+from jax import Array
 
 from ..._strict import StrictModule
 from ..finite_volume import FaceVelocity

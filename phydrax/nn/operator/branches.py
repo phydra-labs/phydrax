@@ -9,7 +9,7 @@ from math import prod, sqrt
 from typing import Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from ..._frozendict import frozendict
 from ..._strict import StrictModule

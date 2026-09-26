@@ -10,7 +10,8 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 from .._frozendict import frozendict
 from .._sampling._addressing import derive_key, SampleAddress

@@ -10,8 +10,9 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.typing import DTypeLike
-from jaxtyping import Array, PyTree
+from jaxtyping import PyTree
 
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree

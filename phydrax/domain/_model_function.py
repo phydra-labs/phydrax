@@ -10,7 +10,8 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jax import Array
+from jaxtyping import Key
 
 import phydrax.axes as cx
 

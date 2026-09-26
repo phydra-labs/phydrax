@@ -9,7 +9,7 @@ from typing import Any, Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jax import Array
 
 from .._strict import StrictModule
 from ..discretization import DiscretizationBundle

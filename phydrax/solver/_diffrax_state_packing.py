@@ -11,7 +11,9 @@ import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, PyTree
+from jax import Array
+from jax.typing import ArrayLike
+from jaxtyping import PyTree
 
 from .._dtype_names import precision_dtype_name
 from .._fingerprint import canonical_fingerprint
