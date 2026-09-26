@@ -157,6 +157,30 @@ class Catalog(StrictModule):
 Annotations of contract fields must resolve at runtime: names imported only under
 `TYPE_CHECKING` are refused with the class and field in the error.
 
+## Worked example: a component catalog
+
+`phydrax.equations.ChemicalComponentCatalog` declares its stored fields with
+structural forms and keeps conversion and numerical admissibility explicit:
+
+```python
+class ChemicalComponentCatalog(StrictModule, NonTrainableState):
+    component_names: tuple[str, ...] = eqx.field(static=True)
+    molar_masses: Float64[_ComponentDim]
+    element_names: tuple[str, ...] = eqx.field(static=True)
+    element_composition: Int32[_ElementDim, _ComponentDim]
+    charges: Int32[_ComponentDim]
+    provenance: str = eqx.field(static=True)
+    component_count: Size[_ComponentDim] = eqx.field(static=True)
+    element_count: Size[_ElementDim] = eqx.field(static=True)
+    catalog_id: Identifier = eqx.field(static=True)
+```
+
+Its constructor converts inputs once with NumPy, binds both counts in one
+`Scope`, and parses the host arrays against `HostFloat64[_ComponentDim]`,
+`HostInteger[_ElementDim, _ComponentDim]`, and `HostInteger[_ComponentDim]`, so
+every extent must agree with the name counts. Finite, strictly positive masses
+and nonnegative composition stay explicit host checks owned by the catalog.
+
 ## Transformations
 
 Checks read only shape and dtype metadata, so they run on tracers at trace time

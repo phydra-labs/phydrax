@@ -9,35 +9,54 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike, Float, Int
+import numpy.typing as npt
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..typing import (
+    Dim,
+    Float64,
+    HostFloat64,
+    HostInteger,
+    Identifier,
+    Int32,
+    parse,
+    Scope,
+    Size,
+)
+
+
+class _ComponentDim(Dim, minimum=1):
+    """Number of chemical components."""
+
+
+class _ElementDim(Dim):
+    """Number of chemical elements."""
 
 
 class ChemicalComponentCatalog(StrictModule, NonTrainableState):
     """Canonical chemical identities shared by phase-specific species occurrences."""
 
     component_names: tuple[str, ...] = eqx.field(static=True)
-    molar_masses: Float[Array, " component"]
+    molar_masses: Float64[_ComponentDim]
     element_names: tuple[str, ...] = eqx.field(static=True)
-    element_composition: Int[Array, "element component"]
-    charges: Int[Array, " component"]
+    element_composition: Int32[_ElementDim, _ComponentDim]
+    charges: Int32[_ComponentDim]
     provenance: str = eqx.field(static=True)
-    component_count: int = eqx.field(static=True)
-    element_count: int = eqx.field(static=True)
-    catalog_id: str = eqx.field(static=True)
+    component_count: Size[_ComponentDim] = eqx.field(static=True)
+    element_count: Size[_ElementDim] = eqx.field(static=True)
+    catalog_id: Identifier = eqx.field(static=True)
 
     def __init__(
         self,
         component_names: Sequence[str],
-        molar_masses: ArrayLike,
+        molar_masses: npt.ArrayLike,
         element_names: Sequence[str],
-        element_composition: ArrayLike,
+        element_composition: npt.ArrayLike,
         *,
-        charges: ArrayLike | None = None,
+        charges: npt.ArrayLike | None = None,
         provenance: str = "user-supplied",
     ) -> None:
         names = tuple(str(name) for name in component_names)
@@ -59,28 +78,28 @@ class ChemicalComponentCatalog(StrictModule, NonTrainableState):
             raise ValueError("element_names must contain non-empty names.")
         if len(set(elements)) != len(elements):
             raise ValueError("element_names must be unique.")
-        if masses_np.shape != (len(names),):
-            raise ValueError("molar_masses must have shape (component_count,).")
+        scope = Scope()
+        component_count = parse(
+            len(names), Size[_ComponentDim], "component_count", scope=scope
+        )
+        element_count = parse(
+            len(elements), Size[_ElementDim], "element_count", scope=scope
+        )
+        parse(masses_np, HostFloat64[_ComponentDim], "molar_masses", scope=scope)
         if not np.all(np.isfinite(masses_np)) or np.any(masses_np <= 0.0):
             raise ValueError("molar_masses must be finite and strictly positive.")
-        if composition_np.shape != (len(elements), len(names)):
-            raise ValueError(
-                "element_composition must have shape (element_count, component_count)."
-            )
-        if not np.issubdtype(composition_np.dtype, np.integer):
-            raise TypeError("element_composition must have integer dtype.")
+        parse(
+            composition_np,
+            HostInteger[_ElementDim, _ComponentDim],
+            "element_composition",
+            scope=scope,
+        )
         if np.any(composition_np < 0):
             raise ValueError("element_composition must be nonnegative.")
-        if charges_np.shape != (len(names),):
-            raise ValueError("charges must have shape (component_count,).")
-        if not np.issubdtype(charges_np.dtype, np.integer):
-            raise TypeError("charges must have integer dtype.")
+        parse(charges_np, HostInteger[_ComponentDim], "charges", scope=scope)
         if not source:
             raise ValueError("provenance must be non-empty.")
 
-        masses = jnp.asarray(masses_np)
-        composition = jnp.asarray(composition_np, dtype=jnp.int32)
-        charge_values = jnp.asarray(charges_np, dtype=jnp.int32)
         content = array_tree_fingerprint(
             {
                 "molar_masses": masses_np,
@@ -88,27 +107,22 @@ class ChemicalComponentCatalog(StrictModule, NonTrainableState):
                 "charges": charges_np,
             }
         )
-
-        object.__setattr__(self, "component_names", names)
-        object.__setattr__(self, "molar_masses", masses)
-        object.__setattr__(self, "element_names", elements)
-        object.__setattr__(self, "element_composition", composition)
-        object.__setattr__(self, "charges", charge_values)
-        object.__setattr__(self, "provenance", source)
-        object.__setattr__(self, "component_count", len(names))
-        object.__setattr__(self, "element_count", len(elements))
-        object.__setattr__(
-            self,
-            "catalog_id",
-            canonical_fingerprint(
-                {
-                    "kind": "chemical_component_catalog",
-                    "component_names": list(names),
-                    "element_names": list(elements),
-                    "provenance": source,
-                    "content": content,
-                }
-            ),
+        self.component_names = names
+        self.molar_masses = jnp.asarray(masses_np)
+        self.element_names = elements
+        self.element_composition = jnp.asarray(composition_np, dtype=jnp.int32)
+        self.charges = jnp.asarray(charges_np, dtype=jnp.int32)
+        self.provenance = source
+        self.component_count = component_count
+        self.element_count = element_count
+        self.catalog_id = canonical_fingerprint(
+            {
+                "kind": "chemical_component_catalog",
+                "component_names": list(names),
+                "element_names": list(elements),
+                "provenance": source,
+                "content": content,
+            }
         )
 
 

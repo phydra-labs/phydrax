@@ -16,6 +16,9 @@
   contract field of a module. Checks read only kind, rank, extent, and dtype
   metadata: they add no JAX operations and synchronize nothing. See the typing
   guide.
+- `ChemicalComponentCatalog` declares its stored fields with `phydrax.typing`
+  forms and checks name counts and array extents through one binding scope; its
+  accepted inputs, identity, and exception categories are unchanged.
 - Battery OED criteria, generic experiment-design criteria, and axis
   discretization bases and primary entities are parsed against their `Literal`
   aliases, removing duplicated option tuples; non-string selector values now
