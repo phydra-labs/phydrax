@@ -24,6 +24,13 @@ from .._cell_complex import (
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
+from .._motion_validity import MotionValidityPlan, MotionValidityPolicy
+from ..fem._geometry_motion import (
+    FiniteElementMeshMotionPolicy,
+    FiniteElementMeshMotionRoute,
+    FiniteElementMotionExtension,
+    TimeMeshMonitor,
+)
 from ._geometry_protocol import (
     ALEGeometryConsistencyPolicy,
     FiniteVolumeGeometryStatus,
@@ -40,6 +47,13 @@ from ._unstructured import (
 
 
 VertexMotion = Callable[[Array, Array, Any], ArrayLike]
+
+# ALE admits every orientation-preserving epoch; the GCL evidence owns accuracy.
+_ALE_VALIDITY = MotionValidityPolicy(
+    minimum_absolute_jacobian=0.0,
+    minimum_relative_jacobian=0.0,
+    maximum_displacement_fraction=None,
+)
 
 
 def _boundary_patches(plan: UnstructuredFiniteVolumePlan, /):
@@ -138,10 +152,21 @@ class UnstructuredALEStepGeometry(StrictModule, NonTrainableState):
 
 
 class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
-    """JAX-traceable fixed-connectivity ALE geometry for SSPRK(3,3)."""
+    """JAX-traceable fixed-connectivity ALE geometry for SSPRK(3,3).
+
+    Without ``motion_policy`` (or with the ``PRESCRIBED`` route) ``motion`` maps
+    every reference vertex. Any other route prescribes only the boundary:
+    ``motion`` then receives the boundary reference vertices, and the interior
+    follows the shared :class:`FiniteElementMotionExtension` route (``monitor(time,
+    points, args)`` drives ``MMPDE``). Mesh velocity is the exact time JVP of the
+    realized vertices in both cases, so the discrete GCL holds by construction.
+    """
 
     base_plan: UnstructuredFiniteVolumePlan
     motion: VertexMotion = eqx.field(static=True)
+    monitor: TimeMeshMonitor | None = eqx.field(static=True)
+    interior_motion: FiniteElementMotionExtension | None
+    validity: MotionValidityPlan
     consistency_policy: ALEGeometryConsistencyPolicy
     connectivity: PolygonalConnectivity | TetrahedralConnectivity
     owner_cells: Array
@@ -162,6 +187,8 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         *,
         mapping_id: str,
         consistency_policy: ALEGeometryConsistencyPolicy | None = None,
+        motion_policy: FiniteElementMeshMotionPolicy | None = None,
+        monitor: TimeMeshMonitor | None = None,
     ):
         if not isinstance(base_plan, UnstructuredFiniteVolumePlan):
             raise TypeError("base_plan must be UnstructuredFiniteVolumePlan.")
@@ -180,6 +207,22 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         )
         if not isinstance(policy, ALEGeometryConsistencyPolicy):
             raise TypeError("consistency_policy must be ALEGeometryConsistencyPolicy.")
+        if motion_policy is not None and not isinstance(
+            motion_policy, FiniteElementMeshMotionPolicy
+        ):
+            raise TypeError(
+                "motion_policy must be FiniteElementMeshMotionPolicy or None."
+            )
+        routed = (
+            motion_policy is not None
+            and motion_policy.route is not FiniteElementMeshMotionRoute.PRESCRIBED
+        )
+        if (monitor is not None) != (
+            routed and motion_policy.route is FiniteElementMeshMotionRoute.MMPDE
+        ):
+            raise ValueError("A monitor is required exactly for the MMPDE route.")
+        if monitor is not None and not callable(monitor):
+            raise TypeError("monitor must be callable.")
 
         prepared = base_plan.prepare()
         connectivity = prepared.connectivity
@@ -201,6 +244,27 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             )
         else:
             raise TypeError("Unsupported unstructured connectivity.")
+        cell_blocks = tuple(
+            (kind, np.asarray(cells, dtype=np.int64))
+            for kind, cells in (
+                ("triangle", base_plan.triangles),
+                ("quadrilateral", base_plan.quadrilaterals),
+                ("tetrahedron", base_plan.tetrahedra),
+            )
+            if np.asarray(cells).size
+        )
+        interior_motion = None
+        if routed:
+            neighbors = np.asarray(prepared.neighbor_cells)
+            boundary = np.unique(np.asarray(face_vertices)[neighbors < 0].reshape(-1))
+            interior_motion = FiniteElementMotionExtension(
+                base_plan.vertices, cell_blocks, boundary, policy=motion_policy
+            )
+        route_id = (
+            FiniteElementMeshMotionRoute.PRESCRIBED.value
+            if interior_motion is None
+            else interior_motion.extension_id
+        )
 
         base_block = prepared.face_blocks[0]
         quadrature_shape = tuple(prepared.face_quadrature_weights.shape)
@@ -245,12 +309,18 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
                 "face_layout": face_layout_id,
                 "metric_rule": "coordinate-polytopes-with-owner-oriented-faces",
                 "velocity_rule": "jax-jvp-of-vertex-motion",
+                "motion_route": route_id,
                 "face_rate_rule": "quadrature-integral-of-grid-normal-velocity",
             }
         )
 
         self.base_plan = base_plan
         self.motion = motion
+        self.monitor = monitor
+        self.interior_motion = interior_motion
+        self.validity = MotionValidityPlan(
+            base_plan.vertices, cell_blocks, policy=_ALE_VALIDITY
+        )
         self.consistency_policy = policy
         self.connectivity = connectivity
         self.owner_cells = jnp.asarray(prepared.owner_cells, dtype=jnp.int32)
@@ -288,11 +358,12 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         """Evaluate one immutable geometry epoch; intentionally host-side."""
 
         time_ = jnp.asarray(time).reshape(())
-        vertices = np.asarray(
-            self.motion(time_, self.base_plan.vertices, args), dtype=np.float64
-        )
+        realized, successful = self._vertices(time_, args)
+        vertices = np.asarray(realized, dtype=np.float64)
         if vertices.shape != self.base_plan.vertices.shape:
             raise ValueError("Fixed-connectivity motion must preserve vertex shape.")
+        if not bool(successful):
+            raise ValueError("The interior motion route failed to realize the epoch.")
         plan = UnstructuredFiniteVolumePlan(
             vertices,
             triangles=self.base_plan.triangles,
@@ -338,116 +409,43 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         )
         return scalar.astype(jnp.int32)
 
-    def _coordinate_geometry_is_valid(
+    def _vertices(self, time: Array, args: Any, /) -> tuple[Array, Array]:
+        """Realized vertices and whether the interior route solve succeeded."""
+
+        extension = self.interior_motion
+        if extension is None:
+            return (
+                jnp.asarray(self.motion(time, self.base_plan.vertices, args)),
+                jnp.asarray(True),
+            )
+        reference = extension.reference_coordinates
+        boundary_reference = reference[extension.boundary_indices]
+        boundary = jnp.asarray(self.motion(time, boundary_reference, args))
+        if boundary.shape != boundary_reference.shape:
+            raise ValueError("Boundary motion must preserve the boundary vertex shape.")
+        monitor = (
+            None
+            if self.monitor is None
+            else lambda points: self.monitor(time, points, args)
+        )
+        routed = extension.extend(boundary - boundary_reference, monitor=monitor)
+        return reference + routed.displacement, routed.successful
+
+    def _faces_are_valid(
         self,
-        vertices: Array,
-        vertex_velocity: Array,
+        cell_centers: Array,
+        face_centers: Array,
+        area_vectors: Array,
+        face_measures: Array,
         /,
     ) -> Array:
-        """Return whether a trial coordinate geometry is safe to evaluate."""
+        """Owner-oriented faces must be finite, non-degenerate, and outward."""
 
-        points = jnp.asarray(vertices)
-        valid = jnp.all(jnp.isfinite(points)) & jnp.all(jnp.isfinite(vertex_velocity))
-        if isinstance(self.connectivity, PolygonalConnectivity):
-            triangle_points = points[self.base_plan.triangles]
-            triangle_cross = (triangle_points[:, 1, 0] - triangle_points[:, 0, 0]) * (
-                triangle_points[:, 2, 1] - triangle_points[:, 0, 1]
-            ) - (triangle_points[:, 1, 1] - triangle_points[:, 0, 1]) * (
-                triangle_points[:, 2, 0] - triangle_points[:, 0, 0]
-            )
-            triangle_volumes = 0.5 * triangle_cross
-            triangle_centers = jnp.mean(triangle_points, axis=1)
-
-            root = 1.0 / np.sqrt(3.0)
-            reference = jnp.asarray(
-                ((-root, -root), (root, -root), (root, root), (-root, root)),
-                dtype=points.dtype,
-            )
-            xi = reference[:, 0]
-            eta = reference[:, 1]
-            shape = 0.25 * jnp.stack(
-                (
-                    (1.0 - xi) * (1.0 - eta),
-                    (1.0 + xi) * (1.0 - eta),
-                    (1.0 + xi) * (1.0 + eta),
-                    (1.0 - xi) * (1.0 + eta),
-                ),
-                axis=-1,
-            )
-            gradient = 0.25 * jnp.stack(
-                (
-                    jnp.stack((-(1.0 - eta), -(1.0 - xi)), axis=-1),
-                    jnp.stack((1.0 - eta, -(1.0 + xi)), axis=-1),
-                    jnp.stack((1.0 + eta, 1.0 + xi), axis=-1),
-                    jnp.stack((-(1.0 + eta), 1.0 - xi), axis=-1),
-                ),
-                axis=1,
-            )
-            quadrilateral_points = points[self.base_plan.quadrilaterals]
-            mapped = ein.contract("qv,cvd->cqd", shape, quadrilateral_points)
-            jacobian = ein.contract("qva,cvd->cqad", gradient, quadrilateral_points)
-            determinant = (
-                jacobian[..., 0, 0] * jacobian[..., 1, 1]
-                - jacobian[..., 0, 1] * jacobian[..., 1, 0]
-            )
-            quadrilateral_volumes = jnp.sum(determinant, axis=1)
-            safe_quadrilateral_volumes = jnp.where(
-                jnp.isfinite(quadrilateral_volumes) & (quadrilateral_volumes > 0.0),
-                quadrilateral_volumes,
-                1.0,
-            )
-            quadrilateral_centers = (
-                jnp.sum(mapped * determinant[..., None], axis=1)
-                / safe_quadrilateral_volumes[:, None]
-            )
-            cell_volumes = jnp.concatenate((triangle_volumes, quadrilateral_volumes))
-            cell_centers = jnp.concatenate(
-                (triangle_centers, quadrilateral_centers),
-                axis=0,
-            )
-            valid = (
-                valid
-                & jnp.all(jnp.isfinite(determinant) & (determinant > 0.0))
-                & jnp.all(jnp.isfinite(cell_volumes) & (cell_volumes > 0.0))
-                & jnp.all(jnp.isfinite(cell_centers))
-            )
-            face_points = points[self.connectivity.edges]
-            face_centers = 0.5 * (face_points[:, 0] + face_points[:, 1])
-            tangent = face_points[:, 1] - face_points[:, 0]
-            canonical_area = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
-        else:
-            cell_points = points[self.base_plan.tetrahedra]
-            determinant = jnp.linalg.det(
-                jnp.stack(
-                    (
-                        cell_points[:, 1] - cell_points[:, 0],
-                        cell_points[:, 2] - cell_points[:, 0],
-                        cell_points[:, 3] - cell_points[:, 0],
-                    ),
-                    axis=-1,
-                )
-            )
-            cell_volumes = determinant / 6.0
-            cell_centers = jnp.mean(cell_points, axis=1)
-            valid = (
-                valid
-                & jnp.all(jnp.isfinite(cell_volumes) & (cell_volumes > 0.0))
-                & jnp.all(jnp.isfinite(cell_centers))
-            )
-            face_points = points[self.connectivity.faces]
-            face_centers = jnp.mean(face_points, axis=1)
-            canonical_area = 0.5 * jnp.cross(
-                face_points[:, 1] - face_points[:, 0],
-                face_points[:, 2] - face_points[:, 0],
-            )
-
-        area_vectors = self.owner_signs[:, None] * canonical_area
-        face_measures = jnp.linalg.norm(area_vectors, axis=-1)
-        owner_centers = cell_centers[self.owner_cells]
-        outward = jnp.sum((face_centers - owner_centers) * area_vectors, axis=-1)
+        outward = jnp.sum(
+            (face_centers - cell_centers[self.owner_cells]) * area_vectors, axis=-1
+        )
         return (
-            valid
-            & jnp.all(jnp.isfinite(face_centers))
+            jnp.all(jnp.isfinite(face_centers))
             & jnp.all(jnp.isfinite(area_vectors))
             & jnp.all(jnp.isfinite(face_measures) & (face_measures > 0.0))
             & jnp.all(jnp.isfinite(outward) & (outward > 0.0))
@@ -460,12 +458,13 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
         /,
     ) -> _InstantaneousALEGeometry:
         def evaluate_vertices(value):
-            return jnp.asarray(self.motion(value, self.base_plan.vertices, args))
+            return self._vertices(value, args)
 
-        vertices, vertex_velocity = jax.jvp(
+        vertices, vertex_velocity, route_successful = jax.jvp(
             evaluate_vertices,
             (time,),
             (jnp.ones_like(time),),
+            has_aux=True,
         )
         if vertices.shape != self.base_plan.vertices.shape:
             raise ValueError("Fixed-connectivity motion must preserve vertex shape.")
@@ -473,9 +472,10 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "The time derivative of fixed-connectivity motion must preserve vertex shape."
             )
-        coordinate_valid = self._coordinate_geometry_is_valid(
-            vertices,
-            vertex_velocity,
+        cells_valid = (
+            route_successful
+            & self.validity.evaluate(vertices).valid
+            & jnp.all(jnp.isfinite(vertex_velocity))
         )
 
         def evaluate_geometry(points):
@@ -491,7 +491,7 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
 
         fallback_vertices = jnp.asarray(self.base_plan.vertices, dtype=vertices.dtype)
         geometry_values = jax.lax.cond(
-            coordinate_valid,
+            cells_valid,
             evaluate_geometry,
             lambda _: evaluate_geometry(fallback_vertices),
             vertices,
@@ -506,6 +506,9 @@ class FixedConnectivityMotionPlan(StrictModule, NonTrainableState):
             quadrature_points,
             quadrature_weights,
         ) = geometry_values
+        coordinate_valid = cells_valid & self._faces_are_valid(
+            cell_centers, face_centers, area_vectors, face_measures
+        )
         safe_vertices = jnp.where(jnp.isfinite(vertices), vertices, fallback_vertices)
         safe_vertex_velocity = jnp.where(
             jnp.isfinite(vertex_velocity),

@@ -421,7 +421,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         active_indices = tuple(
             tuple(
                 tuple(
-                    tuple(index)
+                    tuple(index.tolist())
                     for index in np.argwhere(
                         np.asarray(bucket.cell_active, dtype=np.bool_)
                     )

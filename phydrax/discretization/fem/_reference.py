@@ -97,7 +97,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         if not np.all(np.isfinite(nodes)):
             raise ValueError("Reference nodes must be finite.")
         normalized_entity_dofs = tuple(
-            tuple(tuple(entity) for entity in dimension_entities)
+            tuple(tuple(int(dof) for dof in entity) for entity in dimension_entities)
             for dimension_entities in entity_dofs
         )
         if len(normalized_entity_dofs) != dimension + 1:
@@ -112,7 +112,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Each local DOF must belong to exactly one reference entity."
             )
-        values = tuple(value_shape)
+        values = tuple(int(size) for size in value_shape)
         if any(size <= 0 for size in values):
             raise ValueError("Finite-element value dimensions must be positive.")
         if tabulator is not None and not callable(tabulator):

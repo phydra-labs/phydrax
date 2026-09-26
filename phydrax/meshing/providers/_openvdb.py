@@ -40,17 +40,27 @@ from .._trace import (
 
 
 @runtime_checkable
-class _FloatGridAccessor(Protocol):
-    def setValueOn(self, ijk: tuple[int, int, int], value: float, /) -> None: ...
-
-
-@runtime_checkable
 class _FloatGrid(Protocol):
-    def getAccessor(self) -> _FloatGridAccessor: ...
+    def copyFromArray(
+        self,
+        array: NDArray[np.float32],
+        *,
+        ijk: tuple[int, int, int],
+        tolerance: float,
+    ) -> None: ...
 
     def convertToPolygons(
         self, *, isovalue: float, adaptivity: float
     ) -> tuple[NDArray[np.float32], NDArray[np.uint32], NDArray[np.uint32]]: ...
+
+    def createLevelSetFromPolygons(
+        self,
+        points: NDArray[np.float32],
+        *,
+        triangles: NDArray[np.uint32],
+        quads: NDArray[np.uint32],
+        halfWidth: float,
+    ) -> _FloatGrid: ...
 
 
 @runtime_checkable
@@ -79,42 +89,113 @@ def _openvdb() -> _OpenVDB:
     return backend
 
 
+class OpenVDBLevelSetRebuild(StrictModule, NonTrainableState):
+    """Rebuild the isosurface as a narrow-band signed-distance level set.
+
+    The isovalue surface is polygonized without adaptivity and converted back to
+    a closed narrow-band level set of ``half_width`` voxels on each side (this is
+    OpenVDB's LevelSetRebuild route: volume to mesh to level set). The rebuilt
+    grid is negative inside the surface, its constant background is
+    ``half_width`` voxel units outside the band, and extraction then runs at
+    isovalue zero with the requested adaptivity.
+    """
+
+    half_width: float = eqx.field(static=True)
+    operation_id: str = eqx.field(static=True)
+
+    def __init__(self, *, half_width: float = 3.0):
+        width = float(half_width)
+        if not np.isfinite(width) or not 1.0 <= width <= np.finfo(np.float32).max:
+            raise ValueError("half_width must be a float32-representable value >= 1.")
+        self.half_width = width
+        self.operation_id = canonical_fingerprint(
+            {"kind": "openvdb-level-set-rebuild", "half_width": width}
+        )
+
+
 class OpenVDBMeshingSpec(StrictModule, NonTrainableState):
     """Scalar isovalue and native index-space adaptivity, not physical edge sizing.
 
     OpenVDB's float32 grid and polygonizer approximate the supplied scalar field.
     Adaptivity zero disables adaptive polygon merging; it does not make the
     extracted surface an exact interpolation of the original source geometry.
+    An optional level-set rebuild re-distances the extracted surface first.
     """
 
     isovalue: float = eqx.field(static=True)
     adaptivity: float = eqx.field(static=True)
+    rebuild: OpenVDBLevelSetRebuild | None
     specification_id: str = eqx.field(static=True)
 
-    def __init__(self, *, isovalue: float = 0.0, adaptivity: float = 0.0):
+    def __init__(
+        self,
+        *,
+        isovalue: float = 0.0,
+        adaptivity: float = 0.0,
+        rebuild: OpenVDBLevelSetRebuild | None = None,
+    ):
         level = float(isovalue)
         adaptive = float(adaptivity)
         if not np.isfinite(level) or abs(level) > np.finfo(np.float32).max:
             raise ValueError("isovalue must be finite and representable in float32.")
         if not np.isfinite(adaptive) or not 0.0 <= adaptive <= 1.0:
             raise ValueError("adaptivity must lie in [0, 1].")
+        if rebuild is not None and not isinstance(rebuild, OpenVDBLevelSetRebuild):
+            raise TypeError("rebuild must be OpenVDBLevelSetRebuild or None.")
         self.isovalue = level
         self.adaptivity = adaptive
+        self.rebuild = rebuild
         self.specification_id = canonical_fingerprint(
             {
                 "kind": "openvdb-meshing-spec",
                 "isovalue": level,
                 "adaptivity": adaptive,
+                "rebuild": None if rebuild is None else rebuild.operation_id,
             }
         )
+
+
+def _extract_polygons(
+    native: _FloatGrid,
+    specification: OpenVDBMeshingSpec,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Polygonize, optionally after a narrow-band level-set rebuild."""
+
+    rebuild = specification.rebuild
+    if rebuild is None:
+        return native.convertToPolygons(
+            isovalue=specification.isovalue,
+            adaptivity=specification.adaptivity,
+        )
+    points, triangles, quads = native.convertToPolygons(
+        isovalue=specification.isovalue,
+        adaptivity=0.0,
+    )
+    if not len(triangles) and not len(quads):
+        return points, triangles, quads
+    rebuilt = native.createLevelSetFromPolygons(
+        np.ascontiguousarray(points, dtype=np.float32),
+        triangles=np.ascontiguousarray(triangles, dtype=np.uint32),
+        quads=np.ascontiguousarray(quads, dtype=np.uint32),
+        halfWidth=rebuild.half_width,
+    )
+    return rebuilt.convertToPolygons(
+        isovalue=0.0,
+        adaptivity=specification.adaptivity,
+    )
 
 
 class OpenVDBProvider:
     """Extract a real sparse scalar isosurface with OpenVDB 13.
 
-    Active voxel values are lowered to FloatGrid without densifying the domain.
-    Inactive voxels and the exterior of the Morton box have the declared constant
-    background value. Unknown background, periodic grids, vector fields, and
+    Active voxel values are lowered to FloatGrid brick by brick through the
+    binding's dense-block ingestion (copyFromDense), without densifying the
+    domain or issuing per-voxel calls. Inactive voxels and the exterior of the
+    Morton box have the declared constant background value; an active sample
+    exactly equal to the float32 background is stored as background. The
+    OpenVDB 13 binding exposes no CSG or level-set filter tools (only per-value
+    Python callbacks), so neither is offered here. Unknown background, periodic grids, vector fields, and
     nonphysical/non-Cartesian coordinates are rejected. Every integer VDB sample
     maps to the corresponding physical voxel *center*, including anisotropic
     spacing; no world-space output is transformed twice. Native quads are split
@@ -233,7 +314,8 @@ class OpenVDBProvider:
             {
                 "kind": "openvdb-sparse-source",
                 "grid": grid.grid_id,
-                "values": values.tolist(),
+                "indices": indices,
+                "values": values,
                 "background": background,
                 "coordinate_contract": coordinate_contract.spatial_id,
                 "source_id": source,
@@ -246,23 +328,24 @@ class OpenVDBProvider:
         if not isinstance(native, _FloatGrid):
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-                "OpenVDB FloatGrid requires getAccessor and NumPy polygon extraction.",
+                "OpenVDB FloatGrid requires dense-array ingestion, level-set "
+                "construction, and NumPy polygon extraction.",
             )
-        accessor = native.getAccessor()
-        if not isinstance(accessor, _FloatGridAccessor):
-            raise MeshingFailure(
-                MeshingFailureCategory.PROVIDER_UNAVAILABLE,
-                "OpenVDB FloatGrid accessor requires setValueOn.",
-            )
+        occupied, first, brick_rank = np.unique(
+            brick_slots, return_index=True, return_inverse=True
+        )
+        blocks = np.full(
+            (occupied.size, grid.brick_size, grid.brick_size, grid.brick_size),
+            np.float32(background),
+            dtype=np.float32,
+        )
+        blocks[(brick_rank, *local_coordinates.T)] = values.astype(np.float32)
+        block_origins = brick_coordinates[first] * grid.brick_size
         try:
-            for index, value in zip(indices, values, strict=True):
-                accessor.setValueOn(
-                    (int(index[0]), int(index[1]), int(index[2])), float(value)
-                )
-            points, triangles, quads = native.convertToPolygons(
-                isovalue=specification.isovalue,
-                adaptivity=specification.adaptivity,
-            )
+            # The binding ingests dense blocks only; one call per occupied brick.
+            for origin, block in zip(block_origins.tolist(), blocks, strict=True):
+                native.copyFromArray(block, ijk=tuple(origin), tolerance=0.0)
+            points, triangles, quads = _extract_polygons(native, specification)
         except (RuntimeError, ValueError) as exc:
             raise MeshingFailure(
                 MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
@@ -296,6 +379,14 @@ class OpenVDBProvider:
                 "native_scalar_dtype": "float32",
                 "quad_triangulation": "diagonal-0-2",
                 "exterior": "constant-background",
+                "level_set_rebuild": None
+                if specification.rebuild is None
+                else {
+                    "route": "volume-to-mesh-to-level-set",
+                    "half_width_voxels": specification.rebuild.half_width,
+                    "background_voxels": specification.rebuild.half_width,
+                    "interior_sign": "negative",
+                },
                 "source_identity_preserved": False,
             }
         )
@@ -372,4 +463,4 @@ class OpenVDBProvider:
         )
 
 
-__all__ = ["OpenVDBMeshingSpec", "OpenVDBProvider"]
+__all__ = ["OpenVDBLevelSetRebuild", "OpenVDBMeshingSpec", "OpenVDBProvider"]

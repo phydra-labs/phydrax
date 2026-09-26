@@ -7,7 +7,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Callable, Mapping, Sequence, TypeVar
+from typing import Any, Callable, Mapping, Sequence, TYPE_CHECKING, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,6 +19,13 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import TopologyEpoch
 from ..meshing import CellMeshTransition
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume._automatic_remap import (
+        PreparedUnstructuredConservativeRemap,
+    )
+    from ..geometry._supermesh import CommonRefinementPolicy
 
 
 _EnumT = TypeVar("_EnumT", bound=IntEnum)
@@ -1405,7 +1412,12 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
 
 @dataclass(frozen=True)
 class FiniteVolumeTopologyEventTransactionResult:
-    """Host-side result of one atomic topology-event transaction."""
+    """Host-side result of one atomic topology-event transaction.
+
+    ``automatic_remap`` is the common-refinement remap the transaction prepared
+    from its source and target geometry (``None`` when a remap was supplied); its
+    ``status`` and ``evidence`` explain a failed remap preparation.
+    """
 
     journal: FiniteVolumeTopologyEventJournal
     content_state: Any
@@ -1415,6 +1427,7 @@ class FiniteVolumeTopologyEventTransactionResult:
     statuses: tuple[TopologyEventStatus, ...]
     committed: bool
     failure: TopologyEventStatus | None = None
+    automatic_remap: PreparedUnstructuredConservativeRemap | None = None
 
     @property
     def state(self) -> Any:
@@ -1682,6 +1695,7 @@ class _PreparedTopologyEvent:
     source_content: Any
     result_id: str | None
     payload_ids: Sequence[str | None] | None
+    automatic_remap: PreparedUnstructuredConservativeRemap | None
 
 
 def _normalize_topology_event_inputs(
@@ -1820,30 +1834,51 @@ def _prepare_topology_event_artifacts(
         )
     if resource_ok is False:
         return self._failure(source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
+    automatic_remap = None
     if (
         remap is None
         and self.source_geometry is not None
         and self.target_geometry is not None
     ):
         from ..discretization.finite_volume._automatic_remap import (
-            build_unstructured_conservative_remap,
+            prepare_unstructured_conservative_remap,
         )
+        from ..geometry._supermesh import CommonRefinementStatus
 
-        build = build_unstructured_conservative_remap(
+        automatic_remap = prepare_unstructured_conservative_remap(
             self.source_geometry,
             self.target_geometry,
-            tolerance=self.remap_tolerance,
-            limits=self.remap_limits,
             provenance=self.remap_provenance,
+            policy=self.remap_policy,
         )
-        if not build.passed or build.plan is None:
-            return self._failure(
-                source_content,
-                TopologyEventStatus.FAILED_COVERAGE,
-            )
-        remap = build.plan
-        metrics = build.evidence
-        evidence = build.evidence
+        match automatic_remap.status:
+            case CommonRefinementStatus.SUCCESS:
+                pass
+            case CommonRefinementStatus.RESOURCE_LIMIT:
+                return self._failure(
+                    source_content,
+                    TopologyEventStatus.FAILED_RESOURCE_LIMIT,
+                    automatic_remap=automatic_remap,
+                )
+            case (
+                CommonRefinementStatus.INVALID_GEOMETRY
+                | CommonRefinementStatus.PREDICATE_UNCERTAIN
+                | CommonRefinementStatus.INTERSECTION_FAILURE
+                | CommonRefinementStatus.DOUBLE_COVERAGE
+                | CommonRefinementStatus.COVERAGE_GAP
+            ):
+                return self._failure(
+                    source_content,
+                    TopologyEventStatus.FAILED_COVERAGE,
+                    automatic_remap=automatic_remap,
+                )
+            case _:
+                raise ValueError(
+                    f"Unknown common-refinement status {automatic_remap.status!r}."
+                )
+        remap = automatic_remap.plan
+        metrics = automatic_remap.evidence
+        evidence = automatic_remap.evidence
         status = TopologyEventStatus.SUCCESS
     if (
         remap is None
@@ -1853,24 +1888,45 @@ def _prepare_topology_event_artifacts(
         or candidate_epoch is None
         or candidate_artifacts is None
     ):
-        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
+        return self._failure(
+            source_content,
+            TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+            automatic_remap=automatic_remap,
+        )
     if not _required_artifact_success(status, "status"):
         return self._failure(
             source_content,
             _failure_reason(status, TopologyEventStatus.FAILED_MISSING_ARTIFACT),
+            automatic_remap=automatic_remap,
         )
     if coverage_ok is False or not _coverage_passed(remap, self.coverage_tolerance):
-        return self._failure(source_content, TopologyEventStatus.FAILED_COVERAGE)
+        return self._failure(
+            source_content,
+            TopologyEventStatus.FAILED_COVERAGE,
+            automatic_remap=automatic_remap,
+        )
     if not _required_artifact_success(
         metrics, "metrics"
     ) or not _required_artifact_success(evidence, "evidence"):
-        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
+        return self._failure(
+            source_content,
+            TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+            automatic_remap=automatic_remap,
+        )
     if not isinstance(candidate_epoch, TopologyEpoch) or not isinstance(
         candidate_artifacts, FiniteVolumeTopologyArtifacts
     ):
-        return self._failure(source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT)
+        return self._failure(
+            source_content,
+            TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+            automatic_remap=automatic_remap,
+        )
     if candidate_artifacts.epoch_id != candidate_epoch.epoch_id:
-        return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
+        return self._failure(
+            source_content,
+            TopologyEventStatus.FAILED_STALE_EPOCH,
+            automatic_remap=automatic_remap,
+        )
     return _PreparedTopologyEvent(
         prepared,
         candidate_epoch,
@@ -1882,6 +1938,7 @@ def _prepare_topology_event_artifacts(
         source_content,
         result_id,
         payload_ids,
+        automatic_remap,
     )
 
 
@@ -1912,8 +1969,7 @@ class FiniteVolumeTopologyEventTransaction:
         status: Any = None,
         source_geometry: Any = None,
         target_geometry: Any = None,
-        remap_tolerance: float = 1e-10,
-        remap_limits: Any = None,
+        remap_policy: CommonRefinementPolicy | None = None,
         remap_provenance: str = "topology-event",
     ):
         if not isinstance(journal, FiniteVolumeTopologyEventJournal):
@@ -1930,6 +1986,16 @@ class FiniteVolumeTopologyEventTransaction:
         tolerance = float(coverage_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("coverage_tolerance must be finite and nonnegative.")
+        from ..geometry._supermesh import CommonRefinementPolicy
+
+        if remap_policy is not None and not isinstance(
+            remap_policy, CommonRefinementPolicy
+        ):
+            raise TypeError("remap_policy must be a CommonRefinementPolicy or None.")
+        if not isinstance(remap_provenance, str):
+            raise TypeError("remap_provenance must be a string.")
+        if not remap_provenance:
+            raise ValueError("remap_provenance must be non-empty.")
         self.journal = journal
         self.requests = tuple(requests)
         self.accepted_step = _host_nonnegative_integer(accepted_step, "accepted_step")
@@ -1950,9 +2016,8 @@ class FiniteVolumeTopologyEventTransaction:
         self._status = status
         self.source_geometry = source_geometry
         self.target_geometry = target_geometry
-        self.remap_tolerance = float(remap_tolerance)
-        self.remap_limits = remap_limits
-        self.remap_provenance = str(remap_provenance)
+        self.remap_policy = remap_policy
+        self.remap_provenance = remap_provenance
 
     def _outcome(
         self,
@@ -1964,6 +2029,7 @@ class FiniteVolumeTopologyEventTransaction:
         result_epoch: TopologyEpoch | None = None,
         result_artifacts: FiniteVolumeTopologyArtifacts | None = None,
         committed: bool = False,
+        automatic_remap: PreparedUnstructuredConservativeRemap | None = None,
     ) -> FiniteVolumeTopologyEventTransactionResult:
         current_journal = self.journal if journal is None else journal
         count = int(np.asarray(current_journal.count))
@@ -1982,6 +2048,7 @@ class FiniteVolumeTopologyEventTransaction:
             tuple(status for _ in self.requests),
             committed,
             None if committed else status,
+            automatic_remap,
         )
 
     def _failure(
@@ -1989,21 +2056,29 @@ class FiniteVolumeTopologyEventTransaction:
         content_state: Any,
         status: TopologyEventStatus,
         /,
+        *,
+        automatic_remap: PreparedUnstructuredConservativeRemap | None = None,
     ) -> FiniteVolumeTopologyEventTransactionResult:
         if status is TopologyEventStatus.FAILED_STALE_EPOCH:
-            return self._outcome(content_state, status)
+            return self._outcome(content_state, status, automatic_remap=automatic_remap)
         try:
             requested = self.journal.append_requested_batch(
                 self.requests, self.accepted_step, self.time
             )
         except (OverflowError, ValueError):
-            return self._outcome(content_state, TopologyEventStatus.FAILED_RESOURCE_LIMIT)
+            return self._outcome(
+                content_state,
+                TopologyEventStatus.FAILED_RESOURCE_LIMIT,
+                automatic_remap=automatic_remap,
+            )
         sequences = tuple(
             int(np.asarray(requested.count)) - len(self.requests) + index
             for index in range(len(self.requests))
         )
         failed = requested.fail_batch(sequences, status=status)
-        return self._outcome(content_state, status, journal=failed)
+        return self._outcome(
+            content_state, status, journal=failed, automatic_remap=automatic_remap
+        )
 
     def execute(
         self,
@@ -2063,6 +2138,7 @@ class FiniteVolumeTopologyEventTransaction:
         source_content = prepared_event.source_content
         result_id = prepared_event.result_id
         payload_ids = prepared_event.payload_ids
+        automatic_remap = prepared_event.automatic_remap
         current_epoch = self.journal.epoch_table[-1]
         current_artifacts = self.journal.artifact_table[-1]
         same_realization = (
@@ -2072,10 +2148,16 @@ class FiniteVolumeTopologyEventTransaction:
         if same_realization:
             if candidate_epoch.epoch_id != current_epoch.epoch_id:
                 return self._failure(
-                    source_content, TopologyEventStatus.FAILED_STALE_EPOCH
+                    source_content,
+                    TopologyEventStatus.FAILED_STALE_EPOCH,
+                    automatic_remap=automatic_remap,
                 )
         elif candidate_epoch.index != current_epoch.index + 1:
-            return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
+            return self._failure(
+                source_content,
+                TopologyEventStatus.FAILED_STALE_EPOCH,
+                automatic_remap=automatic_remap,
+            )
         if self.source_geometry is not None:
             if (
                 current_artifacts.prepared_id != self.source_geometry.prepared_id
@@ -2083,14 +2165,20 @@ class FiniteVolumeTopologyEventTransaction:
                 or current_epoch.geometry_id != self.source_geometry.geometry_id
             ):
                 return self._failure(
-                    source_content, TopologyEventStatus.FAILED_STALE_EPOCH
+                    source_content,
+                    TopologyEventStatus.FAILED_STALE_EPOCH,
+                    automatic_remap=automatic_remap,
                 )
         if self.target_geometry is not None and (
             candidate_artifacts.prepared_id != self.target_geometry.prepared_id
             or candidate_epoch.topology_id != self.target_geometry.topology_id
             or candidate_epoch.geometry_id != self.target_geometry.geometry_id
         ):
-            return self._failure(source_content, TopologyEventStatus.FAILED_STALE_EPOCH)
+            return self._failure(
+                source_content,
+                TopologyEventStatus.FAILED_STALE_EPOCH,
+                automatic_remap=automatic_remap,
+            )
 
         candidate_content = _host_field(prepared, "content_state")
         if candidate_content is _MISSING:
@@ -2119,12 +2207,16 @@ class FiniteVolumeTopologyEventTransaction:
                 for field in required_content_fields
             ):
                 return self._failure(
-                    source_content, TopologyEventStatus.FAILED_MISSING_ARTIFACT
+                    source_content,
+                    TopologyEventStatus.FAILED_MISSING_ARTIFACT,
+                    automatic_remap=automatic_remap,
                 )
             candidate_content_epoch = _host_field(candidate_content, "topology_epoch_id")
             if candidate_content_epoch != candidate_epoch.epoch_id:
                 return self._failure(
-                    source_content, TopologyEventStatus.FAILED_STALE_EPOCH
+                    source_content,
+                    TopologyEventStatus.FAILED_STALE_EPOCH,
+                    automatic_remap=automatic_remap,
                 )
             if self.target_geometry is not None:
                 target_volumes = np.asarray(self.target_geometry.cell_volumes)
@@ -2138,7 +2230,9 @@ class FiniteVolumeTopologyEventTransaction:
                     atol=0.0,
                 ):
                     return self._failure(
-                        source_content, TopologyEventStatus.FAILED_STALE_EPOCH
+                        source_content,
+                        TopologyEventStatus.FAILED_STALE_EPOCH,
+                        automatic_remap=automatic_remap,
                     )
         if not _conservation_passed(
             remap,
@@ -2146,12 +2240,20 @@ class FiniteVolumeTopologyEventTransaction:
             candidate_content,
             self.coverage_tolerance,
         ):
-            return self._failure(source_content, TopologyEventStatus.FAILED_COVERAGE)
+            return self._failure(
+                source_content,
+                TopologyEventStatus.FAILED_COVERAGE,
+                automatic_remap=automatic_remap,
+            )
         if positivity_ok is False or not _active_content_valid(
             candidate_content,
             self.active_cell_mask if active_cell_mask is _MISSING else active_cell_mask,
         ):
-            return self._failure(source_content, TopologyEventStatus.FAILED_POSITIVITY)
+            return self._failure(
+                source_content,
+                TopologyEventStatus.FAILED_POSITIVITY,
+                automatic_remap=automatic_remap,
+            )
         if admissibility is not None:
             admissible = (
                 admissibility(candidate_content)
@@ -2160,7 +2262,9 @@ class FiniteVolumeTopologyEventTransaction:
             )
             if not bool(np.asarray(admissible)):
                 return self._failure(
-                    source_content, TopologyEventStatus.FAILED_POSITIVITY
+                    source_content,
+                    TopologyEventStatus.FAILED_POSITIVITY,
+                    automatic_remap=automatic_remap,
                 )
         try:
             requested = self.journal.append_requested_batch(
@@ -2177,7 +2281,9 @@ class FiniteVolumeTopologyEventTransaction:
             )
         except (OverflowError, ValueError, TypeError):
             return self._failure(
-                source_content, TopologyEventStatus.FAILED_RESOURCE_LIMIT
+                source_content,
+                TopologyEventStatus.FAILED_RESOURCE_LIMIT,
+                automatic_remap=automatic_remap,
             )
         return self._outcome(
             candidate_content if candidate_content is not None else source_content,
@@ -2186,6 +2292,7 @@ class FiniteVolumeTopologyEventTransaction:
             result_epoch=candidate_epoch,
             result_artifacts=candidate_artifacts,
             committed=True,
+            automatic_remap=automatic_remap,
         )
 
     run = execute
@@ -2310,8 +2417,7 @@ class FiniteVolumeTopologyEventScheduler:
         constructor_kwargs = dict(kwargs)
         source_geometry = constructor_kwargs.pop("source_geometry", None)
         target_geometry = constructor_kwargs.pop("target_geometry", None)
-        remap_tolerance = constructor_kwargs.pop("remap_tolerance", 1e-10)
-        remap_limits = constructor_kwargs.pop("remap_limits", None)
+        remap_policy = constructor_kwargs.pop("remap_policy", None)
         remap_provenance = constructor_kwargs.pop("remap_provenance", "topology-event")
         coverage_tolerance = constructor_kwargs.pop("coverage_tolerance", 0.0)
         active_cell_mask = constructor_kwargs.pop("active_cell_mask", _MISSING)
@@ -2333,8 +2439,7 @@ class FiniteVolumeTopologyEventScheduler:
             admissibility=admissibility,
             source_geometry=source_geometry,
             target_geometry=target_geometry,
-            remap_tolerance=remap_tolerance,
-            remap_limits=remap_limits,
+            remap_policy=remap_policy,
             remap_provenance=remap_provenance,
         )
         result = transaction.execute(

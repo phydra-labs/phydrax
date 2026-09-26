@@ -6,6 +6,7 @@
 
 from importlib import import_module
 
+from .._bvh import BVHBuildKind, BVHBuildPolicy
 from .._sharp_measures import (
     exact_sharp_geometry,
     QualifiedSharpGeometry,
@@ -124,6 +125,16 @@ from ._interface import (
     regularized_heaviside_values,
 )
 from ._partition import BoundaryAtlasPartition, GeometryMeasurePartition
+from ._predicates import (
+    incircle,
+    insphere,
+    orient2d,
+    orient3d,
+    PredicateMode,
+    PredicateResult,
+    PredicateSign,
+    resolve_host_predicate_mode,
+)
 from ._ray_intersection import (
     intersect_ray_plane,
     RayIntersectionResult,
@@ -136,6 +147,14 @@ from ._sampling import (
     sample_boundary_atlas,
     SamplingReport,
     SamplingResult,
+)
+from ._supermesh import (
+    CommonRefinementCoverage,
+    CommonRefinementEvidence,
+    CommonRefinementPolicy,
+    CommonRefinementStatus,
+    prepare_common_refinement,
+    PreparedCommonRefinement,
 )
 from ._surfel_atlas import (
     BoundaryAtlasSurfelMaterialization,
@@ -160,6 +179,14 @@ from ._triangle_ray import (
     TriangleRayIntersectionResult,
     TriangleRayIntersectionStatus,
     TriangleRayQueryPlan,
+)
+from ._triangulation import (
+    ConstrainedDelaunayTriangulation,
+    DelaunayTriangulation,
+    DiagramCells,
+    PowerDiagram,
+    TriangulationEvidence,
+    VoronoiDiagram,
 )
 from ._validity import (
     GeometryValidityDisposition,
@@ -211,6 +238,8 @@ from .brep import (
     all_brep_faces,
     all_brep_solids,
     BRep,
+    brep_entity_id,
+    BRepEntityDimension,
     BRepEntityId,
     BRepImportReport,
     BRepModel,
@@ -224,6 +253,9 @@ from .brep import (
     BRepPartitionReport,
     BRepPartitionResult,
     BRepPartitionRole,
+    BRepProjectionPolicy,
+    BRepProjectionResult,
+    BRepProjectionStatus,
     BRepSource,
     BRepTopology,
     BSplineCurve,
@@ -243,6 +275,8 @@ from .brep import (
     PlanarPartitionOperand,
     PlanarPartitionPlan,
     PlanePatch,
+    prepare_brep_projection,
+    PreparedBRepProjection,
     read_occt_shape,
     SpherePatch,
     surface_differential,
@@ -357,6 +391,8 @@ from .simplicial import (
     TriangleMeshQueryIndex,
     TriangleSurface,
     TriangleTopology,
+    WindingNumberResult,
+    WindingNumberRoute,
 )
 from .surface import __all__ as _surface_all
 
@@ -408,6 +444,8 @@ __all__ = [
     "OverlapTolerance",
     "build_host_aabb_overlap_bvh",
     "query_host_aabb_overlaps",
+    "BVHBuildKind",
+    "BVHBuildPolicy",
     "ImmersedMarkerMaterialization",
     "ImmersedMarkerQuadraturePlan",
     "MarkerVelocityProvider",
@@ -463,6 +501,26 @@ __all__ = [
     "TetraIntersectionTolerance",
     "intersect_tetrahedra",
     "stable_tetra_pair_id",
+    "PredicateMode",
+    "PredicateResult",
+    "PredicateSign",
+    "orient2d",
+    "orient3d",
+    "incircle",
+    "insphere",
+    "resolve_host_predicate_mode",
+    "CommonRefinementCoverage",
+    "CommonRefinementEvidence",
+    "CommonRefinementPolicy",
+    "CommonRefinementStatus",
+    "PreparedCommonRefinement",
+    "prepare_common_refinement",
+    "ConstrainedDelaunayTriangulation",
+    "DelaunayTriangulation",
+    "DiagramCells",
+    "PowerDiagram",
+    "TriangulationEvidence",
+    "VoronoiDiagram",
     "AbstractCubatureMap",
     "box_boundary_atlas",
     "BoundaryAtlas",
@@ -494,6 +552,13 @@ __all__ = [
     "BRepModel",
     "BRepSource",
     "BRepTopology",
+    "BRepEntityDimension",
+    "BRepProjectionPolicy",
+    "BRepProjectionResult",
+    "BRepProjectionStatus",
+    "PreparedBRepProjection",
+    "brep_entity_id",
+    "prepare_brep_projection",
     "all_brep_faces",
     "all_brep_solids",
     "BRepPartitionHistoryError",
@@ -644,6 +709,8 @@ __all__ = [
     "Torus",
     "TriangleBVH",
     "TriangleMeshQueryIndex",
+    "WindingNumberResult",
+    "WindingNumberRoute",
     "Union",
     "Triangle",
     "TriangleSurface",

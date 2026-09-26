@@ -14,7 +14,13 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator, ConstraintMap
-from .._partition import CellPartition
+from .._partition import (
+    CellAdjacency,
+    CellPartition,
+    CellPartitionHalo,
+    inherit_cell_owners,
+    padded_part_table,
+)
 from ._generic import FiniteElementDiscretization, FiniteElementDofMap
 from ._hp import FiniteElementHPLineage
 from ._hp_runtime import FiniteElementHPEpoch
@@ -384,15 +390,12 @@ def partition_cells_cost_aware(
         cost = weight * shape_factor * local_width * max(degree + 1, 1)
         costs.extend((cost,) * block.cell_count)
     costs_array = np.asarray(costs, dtype=np.float64)
-    adjacency = [set() for _ in range(cell_count)]
     domain = discretization.interior_facet_domain
-    for left, right in zip(
-        np.asarray(domain.owner_cells, dtype=np.int32),
-        np.asarray(domain.neighbor_cells, dtype=np.int32),
-        strict=True,
-    ):
-        adjacency[int(left)].add(int(right))
-        adjacency[int(right)].add(int(left))
+    left_cells = np.asarray(domain.owner_cells, dtype=np.int32)
+    right_cells = np.asarray(domain.neighbor_cells, dtype=np.int32)
+    adjacency = CellAdjacency(np.stack((left_cells, right_cells), axis=1), cell_count)
+    offsets = np.asarray(adjacency.offsets)
+    neighbors = np.asarray(adjacency.neighbors)
     owner = np.full((cell_count,), -1, dtype=np.int32)
     part_costs = np.zeros((parts,), dtype=np.float64)
     order = np.argsort(-costs_array, kind="stable")
@@ -400,30 +403,20 @@ def partition_cells_cost_aware(
         owner[cell] = part
         part_costs[part] += costs_array[cell]
     for cell in order[parts:]:
-        scores = np.empty((parts,), dtype=np.float64)
-        for part in range(parts):
-            cut = sum(
-                owner[neighbor] >= 0 and owner[neighbor] != part
-                for neighbor in adjacency[cell]
-            )
-            locality = sum(owner[neighbor] == part for neighbor in adjacency[cell])
-            scores[part] = (
-                part_costs[part]
-                + costs_array[cell]
-                + penalty * costs_array[cell] * (cut - locality)
-            )
+        adjacent = owner[neighbors[offsets[cell] : offsets[cell + 1]]]
+        adjacent = adjacent[adjacent >= 0]
+        locality = np.bincount(adjacent, minlength=parts)
+        cut = adjacent.size - locality
+        scores = (
+            part_costs
+            + costs_array[cell]
+            + penalty * costs_array[cell] * (cut - locality)
+        )
         selected = int(np.argmin(scores))
         owner[cell] = selected
         part_costs[selected] += costs_array[cell]
     partition = CellPartition(owner, parts)
-    edge_cut = sum(
-        owner[int(left)] != owner[int(right)]
-        for left, right in zip(
-            np.asarray(domain.owner_cells, dtype=np.int32),
-            np.asarray(domain.neighbor_cells, dtype=np.int32),
-            strict=True,
-        )
-    )
+    edge_cut = np.count_nonzero(owner[left_cells] != owner[right_cells])
     mean_cost = np.mean(part_costs)
     imbalance = np.max(part_costs) / mean_cost if mean_cost > 0.0 else 1.0
     evidence_id = canonical_fingerprint(
@@ -446,7 +439,11 @@ def partition_cells_cost_aware(
 
 
 class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
-    """Compiler-facing owned/halo cell worksets and dependency completions."""
+    """Compiler-facing owned/halo cell worksets and dependency completions.
+
+    Worksets are fixed-capacity ``(parts, capacity)`` tables padded with -1,
+    where each capacity is the largest per-part owned or halo count.
+    """
 
     owned_cells: Array
     owned_valid: Array
@@ -481,13 +478,15 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
         dependency = np.asarray(dependencies, dtype=np.bool_)
         completion = np.asarray(completions, dtype=np.bool_)
         cell_count = np.asarray(partition.cell_owner).size
-        shape = (partition.part_count, cell_count)
+        parts = partition.part_count
         if (
-            owned.shape != shape
-            or owned_valid_.shape != shape
-            or halo.shape != shape
-            or halo_valid_.shape != shape
-            or dependency.shape != (partition.part_count, partition.part_count)
+            owned.ndim != 2
+            or owned.shape[0] != parts
+            or owned_valid_.shape != owned.shape
+            or halo.ndim != 2
+            or halo.shape[0] != parts
+            or halo_valid_.shape != halo.shape
+            or dependency.shape != (parts, parts)
             or completion.shape != dependency.shape
             or not np.array_equal(completion, dependency.T)
             or np.any(np.diag(dependency))
@@ -503,24 +502,22 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Partition workset routes or sentinels are invalid.")
         owners = np.asarray(partition.cell_owner)
-        seen_owned = []
-        for part in range(partition.part_count):
-            local_owned = owned[part, owned_valid_[part]]
-            local_halo = halo[part, halo_valid_[part]]
-            if (
-                np.unique(local_owned).size != local_owned.size
-                or np.unique(local_halo).size != local_halo.size
-                or np.intersect1d(local_owned, local_halo).size
-                or np.any(owners[local_owned] != part)
-                or np.any(owners[local_halo] == part)
-            ):
-                raise ValueError("Owned/halo workset membership is inconsistent.")
-            required = np.zeros((partition.part_count,), dtype=np.bool_)
-            required[np.unique(owners[local_halo])] = True
-            if not np.array_equal(required, dependency[part]):
-                raise ValueError("Halo worksets and dependency data disagree.")
-            seen_owned.extend(local_owned.tolist())
-        if not np.array_equal(np.sort(np.asarray(seen_owned)), np.arange(cell_count)):
+        owned_parts = np.nonzero(owned_valid_)[0]
+        halo_parts = np.nonzero(halo_valid_)[0]
+        local_owned = owned[owned_valid_]
+        local_halo = halo[halo_valid_]
+        halo_keys = _workset_keys(halo, halo_valid_, cell_count)
+        if (
+            np.any(owners[local_owned] != owned_parts)
+            or np.any(owners[local_halo] == halo_parts)
+            or np.unique(halo_keys).size != halo_keys.size
+        ):
+            raise ValueError("Owned/halo workset membership is inconsistent.")
+        required = np.zeros((parts, parts), dtype=np.bool_)
+        required[halo_parts, owners[local_halo]] = True
+        if not np.array_equal(required, dependency):
+            raise ValueError("Halo worksets and dependency data disagree.")
+        if not np.array_equal(np.sort(local_owned), np.arange(cell_count)):
             raise ValueError("Every cell must occur in exactly one owned workset.")
         completion_ids = tuple(
             canonical_fingerprint(
@@ -586,6 +583,13 @@ class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
         return jnp.where(mask, values[safe], 0.0), valid
 
 
+def _workset_keys(cells: ArrayLike, valid: ArrayLike, cell_count: int, /) -> np.ndarray:
+    """Encode valid ``(part, cell)`` workset entries as unique integer keys."""
+    table = np.asarray(cells, dtype=np.int64)
+    mask = np.asarray(valid, dtype=np.bool_)
+    return np.nonzero(mask)[0] * cell_count + table[mask]
+
+
 def finite_element_partition_workset_plan(
     partition: CellPartition,
     facet_cells: ArrayLike,
@@ -614,38 +618,22 @@ def finite_element_partition_workset_plan(
         or np.unique(identifiers).size != cell_count
     ):
         raise ValueError("Facet adjacency or cell global IDs are invalid.")
-    shape = (partition.part_count, cell_count)
-    owned = np.full(shape, -1, dtype=np.int32)
-    owned_valid = np.zeros(shape, dtype=np.bool_)
-    halo = np.full(shape, -1, dtype=np.int32)
-    halo_valid = np.zeros(shape, dtype=np.bool_)
-    dependency = np.zeros((partition.part_count, partition.part_count), dtype=np.bool_)
-    for part in range(partition.part_count):
-        local_owned = np.flatnonzero(owner == part)
-        local_owned = local_owned[np.argsort(identifiers[local_owned], kind="stable")]
-        halo_set: set[int] = set()
-        for left, right in facets:
-            if owner[left] == part and owner[right] != part:
-                halo_set.add(int(right))
-            if owner[right] == part and owner[left] != part:
-                halo_set.add(int(left))
-        local_halo = np.asarray(
-            sorted(halo_set, key=lambda cell: int(identifiers[cell])),
-            dtype=np.int32,
-        )
-        owned[part, : local_owned.size] = local_owned
-        owned_valid[part, : local_owned.size] = True
-        halo[part, : local_halo.size] = local_halo
-        halo_valid[part, : local_halo.size] = True
-        dependency[part, np.unique(owner[local_halo])] = True
+    halo = CellPartitionHalo(
+        partition,
+        CellAdjacency(facets, cell_count),
+        layers=1,
+        cell_global_ids=identifiers,
+    )
+    owned = padded_part_table(halo.owned_offsets, halo.owned_cells)
+    halo_table = padded_part_table(halo.halo_offsets, halo.halo_cells)
     return FiniteElementPartitionWorksetPlan(
         partition,
         owned,
-        owned_valid,
-        halo,
-        halo_valid,
-        dependency,
-        dependency.T,
+        owned >= 0,
+        halo_table,
+        halo_table >= 0,
+        halo.dependencies,
+        halo.dependencies.T,
     )
 
 
@@ -812,15 +800,18 @@ class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
                 or worksets.partition_id != partition.partition_id
             ):
                 raise ValueError("Supplied FE worksets must match the partition.")
-            for part in range(partition.part_count):
-                required = np.asarray(required_worksets.halo_cells[part])[
-                    np.asarray(required_worksets.halo_valid[part])
-                ]
-                provided = np.asarray(worksets.halo_cells[part])[
-                    np.asarray(worksets.halo_valid[part])
-                ]
-                if not np.all(np.isin(required, provided)):
-                    raise ValueError("Supplied FE halos omit an adjacent remote cell.")
+            cell_count = partition.cell_owner.size
+            if not np.all(
+                np.isin(
+                    _workset_keys(
+                        required_worksets.halo_cells,
+                        required_worksets.halo_valid,
+                        cell_count,
+                    ),
+                    _workset_keys(worksets.halo_cells, worksets.halo_valid, cell_count),
+                )
+            ):
+                raise ValueError("Supplied FE halos omit an adjacent remote cell.")
         ownership = FiniteElementFacetOwnershipPlan(
             partition,
             facets,
@@ -1091,14 +1082,11 @@ class FiniteElementHPPartitionPlan(StrictModule, NonTrainableState):
         )
         interface_owner_part = np.minimum(interface_owner_part, paired_parts)
         dependencies = np.zeros((parts, parts), dtype=np.bool_)
-        for left, right in zip(
-            owners[interface_owners[interior]],
-            owners[interface_neighbors[interior]],
-            strict=True,
-        ):
-            if left != right:
-                dependencies[left, right] = True
-                dependencies[right, left] = True
+        left = owners[interface_owners[interior]]
+        right = owners[interface_neighbors[interior]]
+        crossing = left != right
+        dependencies[left[crossing], right[crossing]] = True
+        dependencies[right[crossing], left[crossing]] = True
         self.cell_owner_by_slot = jnp.asarray(owners)
         self.partition = partition
         self.worksets = worksets
@@ -1136,29 +1124,27 @@ def inherit_finite_element_hp_ownership(
         raise ValueError(
             "hp ownership lineage does not match source and target topologies."
         )
-    owners = np.full((target.topology.capacity,), -1, dtype=np.int32)
     source_owners = np.asarray(source.cell_owner_by_slot)
-    routes: dict[int, set[int]] = {}
-    for source_slot, target_slot, valid in zip(
-        np.asarray(lineage.source_slots),
-        np.asarray(lineage.target_slots),
-        np.asarray(lineage.valid),
-        strict=True,
-    ):
-        if valid:
-            routes.setdefault(int(target_slot), set()).add(
-                int(source_owners[int(source_slot)])
-            )
-    for target_slot in np.flatnonzero(np.asarray(target.topology.active)):
-        inherited = routes.get(int(target_slot), set())
-        if len(inherited) != 1 or next(iter(inherited)) < 0:
-            raise ValueError(
-                "Every active hp target cell must inherit exactly one valid owner."
-            )
-        owners[target_slot] = next(iter(inherited))
+    valid = np.asarray(lineage.valid, dtype=np.bool_)
+    source_slots = np.asarray(lineage.source_slots, dtype=np.int64)[valid]
+    target_slots = np.asarray(lineage.target_slots, dtype=np.int64)[valid]
+    unowned = source_owners[source_slots] < 0
+    inherited, distinct = inherit_cell_owners(
+        source_owners,
+        source_slots[~unowned],
+        target_slots[~unowned],
+        target.topology.capacity,
+    )
+    reads_unowned = np.zeros((target.topology.capacity,), dtype=np.bool_)
+    reads_unowned[target_slots[unowned]] = True
+    active = np.asarray(target.topology.active, dtype=np.bool_)
+    if np.any(active & ((distinct != 1) | reads_unowned)):
+        raise ValueError(
+            "Every active hp target cell must inherit exactly one valid owner."
+        )
     return FiniteElementHPPartitionPlan(
         target,
-        owners,
+        np.where(active, inherited, -1),
         source.partition.part_count,
     )
 

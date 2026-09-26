@@ -4,157 +4,361 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
-from ..._bvh import build_packed_bvh
+from ..._bvh import (
+    bvh_hierarchical_sum,
+    bvh_nearest_items,
+    BVHBuildPolicy,
+    BVHNearestResult,
+    PackedBVH,
+    prepare_bvh,
+    reduce_packed_bvh_nodes,
+    refit_packed_bvh_bounds,
+)
 from ..._strict import StrictModule
 from ._mesh import _closest_points_on_triangles, MeshQueryResult, TriangleMesh
 
 
+# Closing-fan edges are evaluated in fixed-width chunks inside the traversal.
+_FAN_CHUNK = 8
+
+
+class WindingNumberRoute(StrEnum):
+    """Evaluation route of generalized winding numbers."""
+
+    EXACT = "exact"
+    FAST_DIPOLE = "fast_dipole"
+
+
+class WindingNumberResult(StrictModule):
+    """Generalized winding numbers together with their evaluation route.
+
+    `EXACT` is exact up to floating-point roundoff: it sums the solid angles of
+    every triangle in leaves whose box contains the query and replaces every
+    other subtree by the closing fan of its boundary (Jacobson et al. 2013).
+    `FAST_DIPOLE` is the approximate first-order dipole expansion of Barill et al.
+    (2018) with opening parameter `opening_angle` (beta).
+    """
+
+    values: Array
+    route: WindingNumberRoute = eqx.field(static=True)
+    opening_angle: float | None = eqx.field(static=True)
+
+    @property
+    def approximate(self) -> bool:
+        return self.route is WindingNumberRoute.FAST_DIPOLE
+
+
+def _solid_angles(point: Array, first: Array, second: Array, third: Array) -> Array:
+    """Signed solid angles of triangles seen from `point` (Van Oosterom-Strackee)."""
+    a = first - point
+    b = second - point
+    c = third - point
+    length_a = jnp.linalg.norm(a, axis=-1)
+    length_b = jnp.linalg.norm(b, axis=-1)
+    length_c = jnp.linalg.norm(c, axis=-1)
+    numerator = jnp.sum(a * jnp.cross(b, c), axis=-1)
+    denominator = (
+        length_a * length_b * length_c
+        + jnp.sum(a * b, axis=-1) * length_c
+        + jnp.sum(b * c, axis=-1) * length_a
+        + jnp.sum(c * a, axis=-1) * length_b
+    )
+    return 2.0 * jnp.arctan2(numerator, denominator)
+
+
+def _reduce_chains(
+    node: np.ndarray, low: np.ndarray, high: np.ndarray, net: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Cancel oppositely oriented copies of each edge within each node chain."""
+    order = np.lexsort((high, low, node))
+    node, low, high, net = node[order], low[order], high[order], net[order]
+    first = np.ones(node.shape, dtype=np.bool_)
+    first[1:] = (node[1:] != node[:-1]) | (low[1:] != low[:-1]) | (high[1:] != high[:-1])
+    starts = np.flatnonzero(first)
+    if starts.shape[0] == 0:
+        return node, low, high, net
+    total = np.add.reduceat(net, starts)
+    keep = total != 0
+    return node[starts][keep], low[starts][keep], high[starts][keep], total[keep]
+
+
+def _closing_boundaries(
+    faces: np.ndarray, bvh: PackedBVH, /
+) -> tuple[np.ndarray, np.ndarray]:
+    """Oriented boundary 1-chain of every node patch as CSR `(offsets, edges)`.
+
+    A node's triangles minus the fan joining its boundary to any point of its box
+    form a closed chain inside the box, so outside the box the fan reproduces the
+    patch's winding number exactly.  Chains are merged bottom-up level by level.
+    """
+    left = np.asarray(bvh.left, dtype=np.int64)
+    right = np.asarray(bvh.right, dtype=np.int64)
+    leaf_items = np.asarray(bvh.leaf_items, dtype=np.int64)
+    leaf_node = np.asarray(bvh.leaf_node, dtype=np.int64)
+    node_count = left.shape[0]
+    parent = np.full((node_count,), -1, dtype=np.int64)
+    internal = np.flatnonzero(left >= 0)
+    parent[left[internal]] = internal
+    parent[right[internal]] = internal
+    face_node = np.empty((faces.shape[0],), dtype=np.int64)
+    valid = leaf_items >= 0
+    face_node[leaf_items[valid]] = np.broadcast_to(leaf_node[:, None], leaf_items.shape)[
+        valid
+    ]
+    origin = faces.reshape((-1,)).astype(np.int64)
+    destination = faces[:, [1, 2, 0]].reshape((-1,)).astype(np.int64)
+    leaf_chain = _reduce_chains(
+        np.repeat(face_node, 3),
+        np.minimum(origin, destination),
+        np.maximum(origin, destination),
+        np.where(origin < destination, 1, -1).astype(np.int64),
+    )
+    offsets = np.asarray(bvh.level_offsets, dtype=np.int64)
+    leaf_level = np.searchsorted(offsets, leaf_chain[0], side="right") - 1
+    collected = [leaf_chain]
+    current = tuple(part[leaf_level == bvh.max_depth] for part in leaf_chain)
+    for level in range(bvh.max_depth - 1, -1, -1):
+        merged = _reduce_chains(parent[current[0]], *current[1:])
+        collected.append(merged)
+        current = tuple(
+            np.concatenate((merged_part, leaf_part[leaf_level == level]))
+            for merged_part, leaf_part in zip(merged, leaf_chain, strict=True)
+        )
+    node, low, high, net = (
+        np.concatenate([chain[index] for chain in collected]) for index in range(4)
+    )
+    by_node = np.argsort(node, kind="stable")
+    order = np.repeat(by_node, np.abs(net[by_node]))
+    edges = np.stack(
+        (
+            np.where(net[order] > 0, low[order], high[order]),
+            np.where(net[order] > 0, high[order], low[order]),
+        ),
+        axis=1,
+    )
+    counts = np.bincount(node[order], minlength=node_count)
+    boundary_offsets = np.concatenate((np.zeros((1,), dtype=np.int64), np.cumsum(counts)))
+    return boundary_offsets, edges
+
+
 class TriangleBVH(StrictModule):
-    """Exact stack-traversed packed AABB hierarchy over immutable triangles."""
+    """Exact stack-traversed AABB hierarchy over one fixed triangle topology.
 
-    mesh: TriangleMesh
-    bbox_min: Array
-    bbox_max: Array
-    left: Array
-    right: Array
-    leaf_id: Array
-    leaf_items: Array
-    num_nodes: int = eqx.field(static=True)
+    `refit` moves the hierarchy to new differentiable vertex positions while
+    keeping its topology; every query remains exact after refitting.
+    """
 
-    def __init__(self, mesh: TriangleMesh, *, leaf_size: int = 8):
+    vertices: Array
+    faces: Array
+    bvh: PackedBVH
+    boundary_offsets: Array
+    boundary_edges: Array
+
+    def __init__(
+        self,
+        mesh: TriangleMesh,
+        *,
+        policy: BVHBuildPolicy = BVHBuildPolicy(leaf_size=8),
+    ):
         if not isinstance(mesh, TriangleMesh):
             raise TypeError("TriangleBVH requires a TriangleMesh.")
-        triangles = np.asarray(mesh.triangles)
-        packed = build_packed_bvh(
+        if not isinstance(policy, BVHBuildPolicy):
+            raise TypeError("policy must be a BVHBuildPolicy.")
+        faces = np.asarray(mesh.faces)
+        triangles = np.asarray(mesh.vertices)[faces]
+        packed = prepare_bvh(
             np.min(triangles, axis=1),
             np.max(triangles, axis=1),
-            np.mean(triangles, axis=1),
-            leaf_size=leaf_size,
+            policy=policy,
             dtype=mesh.vertices.dtype,
         )
-        self.mesh = mesh
-        self.bbox_min = packed.bbox_min
-        self.bbox_max = packed.bbox_max
-        self.left = packed.left
-        self.right = packed.right
-        self.leaf_id = packed.leaf_id
-        self.leaf_items = packed.leaf_items
-        self.num_nodes = packed.left.shape[0]
+        boundary_offsets, boundary_edges = _closing_boundaries(faces, packed)
+        self.vertices = mesh.vertices
+        self.faces = mesh.faces
+        self.bvh = packed
+        self.boundary_offsets = jnp.asarray(boundary_offsets, dtype=jnp.int32)
+        self.boundary_edges = jnp.asarray(boundary_edges, dtype=jnp.int32)
 
-    def _query_one(self, point: Array) -> tuple[Array, Array, Array]:
-        triangles = self.mesh.triangles
-        stack = jnp.zeros((self.num_nodes,), dtype=jnp.int32).at[0].set(0)
-        initial = (
-            stack,
-            jnp.asarray(1, dtype=jnp.int32),
-            jnp.asarray(jnp.inf, dtype=point.dtype),
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.zeros((3,), dtype=point.dtype),
+    @property
+    def triangles(self) -> Array:
+        return self.vertices[self.faces]
+
+    def refit(self, vertices: ArrayLike, /) -> TriangleBVH:
+        """Return this topology refitted to differentiable current vertices."""
+        values = jnp.asarray(vertices, dtype=self.vertices.dtype)
+        if values.shape != self.vertices.shape:
+            raise ValueError(f"vertices must have shape {self.vertices.shape}.")
+        triangles = values[self.faces]
+        packed = refit_packed_bvh_bounds(
+            self.bvh, jnp.min(triangles, axis=1), jnp.max(triangles, axis=1)
         )
+        return eqx.tree_at(lambda tree: (tree.vertices, tree.bvh), self, (values, packed))
 
-        def condition(state):
-            return state[1] > 0
-
-        def body(state):
-            stack_, top, best_distance_sq, best_face, best_point = state
-            top = top - 1
-            node = stack_[top]
-            delta = jnp.maximum(
-                0.0,
-                jnp.maximum(self.bbox_min[node] - point, point - self.bbox_max[node]),
-            )
-            lower_bound = jnp.sum(delta * delta)
-            active = lower_bound <= best_distance_sq
-            leaf = self.leaf_id[node]
-
-            def visit_leaf(leaf_state):
-                stack_l, top_l, distance_l, face_l, point_l = leaf_state
-                safe_leaf = jnp.maximum(leaf, 0)
-                items = self.leaf_items[safe_leaf]
-                valid = items >= 0
-                safe_items = jnp.maximum(items, 0)
-                closest = _closest_points_on_triangles(point, triangles[safe_items])
-                distance_sq = jnp.sum((closest - point) ** 2, axis=-1)
-                distance_sq = jnp.where(valid, distance_sq, jnp.inf)
-                local = jnp.argmin(distance_sq)
-                candidate_distance = distance_sq[local]
-                improve = candidate_distance < distance_l
-                return (
-                    stack_l,
-                    top_l,
-                    jnp.where(improve, candidate_distance, distance_l),
-                    jnp.where(improve, safe_items[local], face_l),
-                    jnp.where(improve, closest[local], point_l),
-                )
-
-            def visit_internal(internal_state):
-                stack_i, top_i, distance_i, face_i, point_i = internal_state
-                left = self.left[node]
-                right = self.right[node]
-                left_delta = jnp.maximum(
-                    0.0,
-                    jnp.maximum(
-                        self.bbox_min[left] - point,
-                        point - self.bbox_max[left],
-                    ),
-                )
-                right_delta = jnp.maximum(
-                    0.0,
-                    jnp.maximum(
-                        self.bbox_min[right] - point,
-                        point - self.bbox_max[right],
-                    ),
-                )
-                left_distance = jnp.sum(left_delta * left_delta)
-                right_distance = jnp.sum(right_delta * right_delta)
-                near = jnp.where(left_distance <= right_distance, left, right)
-                far = jnp.where(left_distance <= right_distance, right, left)
-                stack_i = stack_i.at[top_i].set(far)
-                stack_i = stack_i.at[top_i + 1].set(near)
-                return stack_i, top_i + 2, distance_i, face_i, point_i
-
-            def visit(active_state):
-                return jax.lax.cond(
-                    leaf >= 0,
-                    visit_leaf,
-                    visit_internal,
-                    active_state,
-                )
-
-            return jax.lax.cond(
-                active,
-                visit,
-                lambda inactive_state: inactive_state,
-                (stack_, top, best_distance_sq, best_face, best_point),
-            )
-
-        _, _, distance_sq, face, closest = jax.lax.while_loop(
-            condition,
-            body,
-            initial,
-        )
-        return closest, jnp.sqrt(distance_sq), face
-
-    def query(self, points: Array, /) -> MeshQueryResult:
-        points_ = jnp.asarray(points, dtype=self.mesh.vertices.dtype)
-        if points_.ndim == 0 or points_.shape[-1] != 3:
+    def _points(self, points: ArrayLike, /) -> tuple[Array, tuple[int, ...]]:
+        values = jnp.asarray(points, dtype=self.vertices.dtype)
+        if values.ndim == 0 or values.shape[-1] != 3:
             raise ValueError("points must have trailing dimension 3.")
-        leading = points_.shape[:-1]
-        flat = points_.reshape((-1, 3))
-        closest, distance, face = jax.vmap(self._query_one)(flat)
-        normal = self.mesh.face_normals[face]
+        return values.reshape((-1, 3)), values.shape[:-1]
+
+    def nearest_faces(self, points: ArrayLike, /, *, k: int = 1) -> BVHNearestResult:
+        """Exact `k` nearest faces per point, ties ordered by face index."""
+        flat, leading = self._points(points)
+        triangles = self.triangles
+
+        def distance(point: Array, items: Array) -> Array:
+            closest = _closest_points_on_triangles(point, triangles[items])
+            return jnp.sum((closest - point) ** 2, axis=-1)
+
+        result = bvh_nearest_items(self.bvh, flat, k=k, item_distance_squared=distance)
+        return BVHNearestResult(
+            items=result.items.reshape((*leading, k)),
+            distance_squared=result.distance_squared.reshape((*leading, k)),
+        )
+
+    def query(self, points: ArrayLike, /) -> MeshQueryResult:
+        flat, leading = self._points(points)
+        face = self.nearest_faces(flat).items[:, 0]
+        triangle = self.triangles[face]
+        closest = jax.vmap(
+            lambda point, vertices: _closest_points_on_triangles(point, vertices[None])[0]
+        )(flat, triangle)
+        normal = jnp.cross(
+            triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]
+        )
+        normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
         return MeshQueryResult(
             closest_point=closest.reshape((*leading, 3)),
-            distance=distance.reshape(leading),
+            distance=jnp.linalg.norm(closest - flat, axis=-1).reshape(leading),
             face_index=face.reshape(leading),
             normal=normal.reshape((*leading, 3)),
         )
 
+    def _leaf_solid_angle(self, point: Array, leaf: Array) -> Array:
+        items = self.bvh.leaf_items[leaf]
+        triangles = self.triangles[jnp.maximum(items, 0)]
+        angles = _solid_angles(point, triangles[:, 0], triangles[:, 1], triangles[:, 2])
+        return jnp.sum(jnp.where(items >= 0, angles, 0.0))
 
-__all__ = ["TriangleBVH"]
+    def winding_number(self, points: ArrayLike, /) -> WindingNumberResult:
+        """Exact generalized winding numbers by hierarchical closing fans."""
+        flat, leading = self._points(points)
+        lanes = jnp.arange(_FAN_CHUNK, dtype=jnp.int32)
+        edge_count = self.boundary_edges.shape[0]
+
+        def inside(point, node):
+            return jnp.all(
+                (point >= self.bvh.bbox_min[node]) & (point <= self.bvh.bbox_max[node])
+            )
+
+        def closing_fan(point, node):
+            if edge_count == 0:
+                return jnp.zeros((), dtype=point.dtype)
+            apex = 0.5 * (self.bvh.bbox_min[node] + self.bvh.bbox_max[node])
+            start = self.boundary_offsets[node]
+            stop = self.boundary_offsets[node + 1]
+
+            def chunk(state):
+                offset, total = state
+                index = offset + lanes
+                edges = self.boundary_edges[jnp.clip(index, 0, edge_count - 1)]
+                angles = _solid_angles(
+                    point,
+                    apex,
+                    self.vertices[edges[:, 0]],
+                    self.vertices[edges[:, 1]],
+                )
+                return offset + _FAN_CHUNK, total + jnp.sum(
+                    jnp.where(index < stop, angles, 0.0)
+                )
+
+            _, total = jax.lax.while_loop(
+                lambda state: state[0] < stop,
+                chunk,
+                (start, jnp.zeros((), dtype=point.dtype)),
+            )
+            return total
+
+        values = bvh_hierarchical_sum(
+            self.bvh,
+            flat,
+            open_node=inside,
+            far_value=closing_fan,
+            leaf_value=self._leaf_solid_angle,
+        )
+        return WindingNumberResult(
+            values=(values / (4.0 * jnp.pi)).reshape(leading),
+            route=WindingNumberRoute.EXACT,
+            opening_angle=None,
+        )
+
+    def fast_winding_number(
+        self, points: ArrayLike, /, *, opening_angle: float = 2.0
+    ) -> WindingNumberResult:
+        """Approximate winding numbers by per-node dipoles (Barill et al. 2018).
+
+        A node whose area-weighted center lies farther than `opening_angle`
+        times its radius from the query contributes its dipole term; closer
+        nodes are opened and leaves are summed exactly.
+        """
+        if isinstance(opening_angle, bool) or not isinstance(opening_angle, (int, float)):
+            raise TypeError("opening_angle must be a real number.")
+        if not np.isfinite(opening_angle) or opening_angle <= 0.0:
+            raise ValueError("opening_angle must be finite and positive.")
+        flat, leading = self._points(points)
+        triangles = self.triangles
+        area_vectors = 0.5 * jnp.cross(
+            triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+        )
+        areas = jnp.linalg.norm(area_vectors, axis=-1)
+        moments = reduce_packed_bvh_nodes(
+            self.bvh,
+            jnp.concatenate(
+                (
+                    area_vectors,
+                    areas[:, None],
+                    areas[:, None] * jnp.mean(triangles, axis=1),
+                ),
+                axis=1,
+            ),
+            reduction="sum",
+        )
+        node_normal = moments[:, :3]
+        node_center = moments[:, 4:] / moments[:, 3:4]
+        reach = jnp.maximum(
+            jnp.abs(self.bvh.bbox_max - node_center),
+            jnp.abs(node_center - self.bvh.bbox_min),
+        )
+        node_radius = jnp.linalg.norm(reach, axis=-1)
+        beta = jnp.asarray(opening_angle, dtype=flat.dtype)
+
+        def near(point, node):
+            return jnp.linalg.norm(node_center[node] - point) <= beta * node_radius[node]
+
+        def dipole(point, node):
+            offset = node_center[node] - point
+            distance = jnp.linalg.norm(offset)
+            return jnp.dot(node_normal[node], offset) / distance**3
+
+        values = bvh_hierarchical_sum(
+            self.bvh,
+            flat,
+            open_node=near,
+            far_value=dipole,
+            leaf_value=self._leaf_solid_angle,
+        )
+        return WindingNumberResult(
+            values=(values / (4.0 * jnp.pi)).reshape(leading),
+            route=WindingNumberRoute.FAST_DIPOLE,
+            opening_angle=float(opening_angle),
+        )
+
+
+__all__ = ["TriangleBVH", "WindingNumberResult", "WindingNumberRoute"]

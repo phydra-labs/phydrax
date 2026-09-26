@@ -64,6 +64,35 @@
 
 ::: phydrax.discretization.FiniteElementPrecisionPolicy
 
+## Masked capacity layouts
+
+`MaskedFiniteElementPlan` is the static P1 Lagrange plan of one `MaskedSimplexMesh`
+capacity bucket; its `plan_id` depends on the family, degree, layout signature, and
+precision policy only. `assemble_masked_finite_element` is a module-level compiled
+entry: every layout of one signature, whatever its active counts or topology, reuses
+one executable. Mass and stiffness act on `(vertex_capacity,)` vectors over one edge
+relation of cell routes valid on active cells plus identity routes valid on inactive
+vertex slots, so padding DOFs are pinned: operators stay square and nonsingular on
+padding, and solves and transpose actions keep the capacity shape. Masked layouts
+carry vertex DOFs only, so degrees other than 1 are rejected.
+`constrain_masked_dofs` pins a traced DOF mask (for example `boundary_dofs`) through
+identity rows and columns with a static route capacity, giving the homogeneous
+Dirichlet operator.
+
+::: phydrax.discretization.MaskedFiniteElementPlan
+
+---
+
+::: phydrax.discretization.MaskedFiniteElementSystem
+
+---
+
+::: phydrax.discretization.assemble_masked_finite_element
+
+---
+
+::: phydrax.discretization.constrain_masked_dofs
+
 ## Field views and point evaluation
 
 Discrete field views are shared by every discretization family; the finite-element
@@ -127,12 +156,26 @@ cell map.
 ## Fixed-topology mesh motion
 
 `FiniteElementMeshMotionPlan` consumes a fixed-route boundary coordinate provider,
-solves a graph-harmonic interior extension, and returns `FiniteElementMeshRealization`.
+extends the boundary displacement to the interior along the policy's
+`FiniteElementMeshMotionRoute`, and returns `FiniteElementMeshRealization`. Routes are
+`HARMONIC` (graph-Laplacian extension), `LINEAR_ELASTICITY` (finite-element elasticity
+with Jacobian stiffening `E = (J_max / J)**chi`), `WINSLOW` (inverse harmonic map with
+an inversion barrier), `MMPDE` (steady state of the Huang–Russell moving-mesh PDE for a
+monitor passed to `realize(..., monitor=...)`, relaxation time `tau`), and `PRESCRIBED`
+(the provider realizes every vertex). Linear routes solve matrix-free element tensors
+through one prepared Krylov solve; nonlinear routes solve their stationarity equations
+through `phydrax.nonlinear` with implicit root derivatives, so realizations are
+differentiable in the boundary design and the monitor parameters.
+`FiniteElementMotionExtension` is the reusable route owner consumed by fixed-connectivity
+finite-volume ALE and variable-patch ALE.
+
 `realize(design, numeric_version=...)` requires a nonempty caller-owned identifier for
 the proposed numeric coordinate state. That version participates in runtime identity
-without changing prepared topology or coordinate layout. Signed-Jacobian,
-displacement, boundary-provider, and linear-solve evidence determine acceptance;
-rejected proposals expose the base runtime and remain explicitly rejected.
+without changing prepared topology or coordinate layout. Sampled corner-Jacobian
+evidence from the shared `MotionValidityPlan`, displacement, boundary-provider, and
+route-solver evidence determine acceptance inside the compiled step; rejected proposals
+expose the base runtime and remain explicitly rejected. `certify(coordinates)` is the
+host-epoch Bernstein certificate of a moved state.
 
 ::: phydrax.discretization.FiniteElementMeshMotionPlan
 
@@ -142,11 +185,31 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 
 ---
 
+::: phydrax.discretization.FiniteElementMeshMotionRoute
+
+---
+
+::: phydrax.discretization.FiniteElementMotionExtension
+
+---
+
+::: phydrax.discretization.FiniteElementMotionExtensionResult
+
+---
+
 ::: phydrax.discretization.FiniteElementMeshRealization
 
 ---
 
-::: phydrax.discretization.FiniteElementGeometryEvidence
+::: phydrax.discretization.MotionValidityPlan
+
+---
+
+::: phydrax.discretization.MotionValidityPolicy
+
+---
+
+::: phydrax.discretization.MotionValidityEvidence
 
 ## Constraints
 
@@ -558,11 +621,15 @@ differentiates it by the implicit function theorem.
 
 
 
-::: phydrax.discretization.FiniteElementAdaptationMap
+::: phydrax.discretization.FiniteElementTopologyTransfer
 
 ---
 
-::: phydrax.discretization.FiniteElementTransferBundle
+::: phydrax.discretization.FiniteElementL2Projection
+
+---
+
+::: phydrax.discretization.prepare_l2_projection_transfer
 
 ---
 

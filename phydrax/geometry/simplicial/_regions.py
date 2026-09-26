@@ -8,7 +8,6 @@ from collections.abc import Sequence
 from uuid import uuid4
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -44,8 +43,8 @@ from ..design._schema import (
     ParameterBinding,
     ParameterId,
 )
+from ._bvh import TriangleBVH
 from ._mesh import (
-    _closest_points_on_triangles,
     _TriangleCubatureMap,
     _TriangleSurfaceMap,
     MeshQueryResult,
@@ -525,16 +524,27 @@ class MeshRegion(GeometrySource):
             role="position",
             physical_scale=float(np.max(np.ptp(np.asarray(self.vertices), axis=0))),
         )
-        return _MeshRegionKernel(vertices, self.faces, source_id=self.feature_id)
+        return _MeshRegionKernel(
+            vertices,
+            self.faces,
+            TriangleBVH(self.triangle_mesh),
+            source_id=self.feature_id,
+        )
 
 
 class _MeshRegionKernel(GeometryKernel):
     vertices: ParameterBinding = eqx.field(static=True)
     faces: Array
+    index: TriangleBVH
     source_id: str = eqx.field(static=True)
 
-    def __init__(self, vertices, faces, *, source_id):
-        self.vertices, self.faces, self.source_id = vertices, faces, source_id
+    def __init__(self, vertices, faces, index, *, source_id):
+        self.vertices, self.faces, self.index, self.source_id = (
+            vertices,
+            faces,
+            index,
+            source_id,
+        )
 
     @property
     def ambient_dimension(self):
@@ -575,49 +585,18 @@ class _MeshRegionKernel(GeometryKernel):
     def _triangles(self, state):
         return self._vertices(state)[self.faces]
 
+    def _index(self, state) -> TriangleBVH:
+        """The prepared hierarchy refitted to the current differentiable vertices."""
+        return self.index.refit(self._vertices(state))
+
     def _query(self, state, points):
-        points_ = jnp.asarray(points, dtype=jnp.float64)
-        leading = points_.shape[:-1]
-        flat = points_.reshape((-1, 3))
-        triangles = self._triangles(state)
-        closest_by_face = jax.vmap(_closest_points_on_triangles, in_axes=(0, None))(
-            flat, triangles
-        )
-        distance_sq = jnp.sum((closest_by_face - flat[:, None, :]) ** 2, axis=-1)
-        face = jnp.argmin(distance_sq, axis=-1).astype(jnp.int32)
-        closest = jnp.take_along_axis(closest_by_face, face[:, None, None], axis=1)[:, 0]
-        distance = jnp.sqrt(jnp.take_along_axis(distance_sq, face[:, None], axis=1)[:, 0])
-        triangle = triangles[face]
-        normal = jnp.cross(
-            triangle[:, 1] - triangle[:, 0], triangle[:, 2] - triangle[:, 0]
-        )
-        normal = normal / jnp.linalg.norm(normal, axis=-1, keepdims=True)
-        return MeshQueryResult(
-            closest_point=closest.reshape((*leading, 3)),
-            distance=distance.reshape(leading),
-            face_index=face.reshape(leading),
-            normal=normal.reshape((*leading, 3)),
-        )
+        return self._index(state).query(jnp.asarray(points, dtype=jnp.float64))
 
     def contains(self, state, points, /):
-        points_ = jnp.asarray(points, dtype=jnp.float64)
-        triangles = self._triangles(state)
-        a = triangles[:, 0] - points_[..., None, :]
-        b = triangles[:, 1] - points_[..., None, :]
-        c = triangles[:, 2] - points_[..., None, :]
-        numerator = jnp.sum(a * jnp.cross(b, c), axis=-1)
-        denominator = (
-            jnp.linalg.norm(a, axis=-1)
-            * jnp.linalg.norm(b, axis=-1)
-            * jnp.linalg.norm(c, axis=-1)
-            + jnp.sum(a * b, axis=-1) * jnp.linalg.norm(c, axis=-1)
-            + jnp.sum(b * c, axis=-1) * jnp.linalg.norm(a, axis=-1)
-            + jnp.sum(c * a, axis=-1) * jnp.linalg.norm(b, axis=-1)
+        winding = self._index(state).winding_number(
+            jnp.asarray(points, dtype=jnp.float64)
         )
-        winding = jnp.sum(2.0 * jnp.arctan2(numerator, denominator), axis=-1) / (
-            4.0 * jnp.pi
-        )
-        return jnp.abs(winding) > 0.5
+        return jnp.abs(winding.values) > 0.5
 
     def boundary_field(self, state, points, /):
         query = self._query(state, points)
@@ -645,16 +624,13 @@ class _MeshRegionKernel(GeometryKernel):
         points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
-        triangles = self._triangles(state)
-        closest_by_face = jax.vmap(_closest_points_on_triangles, in_axes=(0, None))(
-            flat, triangles
-        )
-        query = self._query(state, flat)
+        index = self._index(state)
+        query = index.query(flat)
         unique, regular, margin = triangle_query_evidence(
             flat,
-            triangles,
-            closest_by_face,
-            query.face_index,
+            index.triangles[query.face_index],
+            query.closest_point,
+            index.nearest_faces(flat, k=2).distance_squared[:, 1],
         )
         return represented_mesh_closest_point(
             points_,

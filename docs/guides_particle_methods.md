@@ -28,11 +28,12 @@ Particle IDs are stable physical identities. Logical particle order is distinct 
 explicit `maximum_pairs` budget. `CellListParticleNeighborhoodPlan` instead
 prepares fixed cell geometry, occupied-cell capacity, neighboring-key offsets,
 particle-per-cell capacity, candidate-slot capacity, and pair capacity.
-`MortonTreeParticleNeighborhoodPlan` prepares a compact Morton plane schedule
-and exact radius relation for clustered one-, two-, or three-dimensional
-supports. Both locality-oriented realizations sort by stable particle ID,
-materialize only occupied execution containers, and return canonical unordered
-pairs without changing public logical particle order.
+`MortonTreeParticleNeighborhoodPlan` sorts particles once by Morton code and
+prepares an exact radius relation over coarse Morton cells with a bounded
+candidate buffer for clustered one-, two-, or three-dimensional supports. Both
+locality-oriented realizations order ties by stable particle ID, materialize
+only occupied execution containers, and return canonical unordered pairs
+without changing public logical particle order.
 
 `ParticleNeighborhoodState` carries the realized relation, logical/storage
 permutations, cell counts and offsets, actual pair count, maximum occupancy,

@@ -18,8 +18,9 @@ from .._topology_epoch import TopologyEpoch
 from ._core import (
     BlockHierarchyPlan,
     BlockHierarchyTopology,
-    BlockMetadata,
+    canonical_block_metadata,
 )
+from ._forest import AMRBalanceStencil, balance_directions
 
 
 class BlockTopologyCompileStatus(StrictModule, NonTrainableState):
@@ -60,13 +61,18 @@ class BlockTopologyCompileStatus(StrictModule, NonTrainableState):
 
 
 class BlockTopologyCompileEvidence(StrictModule, NonTrainableState):
-    """Auditable block counts, tag counts, nesting rejections, and capacity."""
+    """Auditable block counts, tag counts, nesting rejections, and capacity.
+
+    ``balance_additions[l]`` counts level-``l`` blocks added by 2:1 closure to
+    support level ``l + 1``; it is all zeros without a balance stencil.
+    """
 
     requested_blocks: tuple[int, ...] = eqx.field(static=True)
     realized_blocks: tuple[int, ...] = eqx.field(static=True)
     capacities: tuple[int, ...] = eqx.field(static=True)
     buffered_tagged_cells: tuple[int, ...] = eqx.field(static=True)
     proper_nesting_rejections: tuple[int, ...] = eqx.field(static=True)
+    balance_additions: tuple[int, ...] = eqx.field(static=True)
     overflow_level: int | None = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
@@ -77,6 +83,7 @@ class BlockTopologyCompileEvidence(StrictModule, NonTrainableState):
         capacities: Sequence[int],
         buffered_tagged_cells: Sequence[int],
         proper_nesting_rejections: Sequence[int],
+        balance_additions: Sequence[int],
         overflow_level: int | None,
         /,
     ):
@@ -85,9 +92,13 @@ class BlockTopologyCompileEvidence(StrictModule, NonTrainableState):
         capacities_ = tuple(capacities)
         tagged = tuple(buffered_tagged_cells)
         rejected = tuple(proper_nesting_rejections)
+        additions = tuple(balance_additions)
         if not (
             len(requested) == len(realized) == len(capacities_)
-            and len(tagged) == len(rejected) == max(0, len(requested) - 1)
+            and len(tagged)
+            == len(rejected)
+            == len(additions)
+            == max(0, len(requested) - 1)
         ):
             raise ValueError(
                 "Topology compilation evidence has inconsistent level counts."
@@ -98,6 +109,7 @@ class BlockTopologyCompileEvidence(StrictModule, NonTrainableState):
         self.capacities = capacities_
         self.buffered_tagged_cells = tagged
         self.proper_nesting_rejections = rejected
+        self.balance_additions = additions
         self.overflow_level = overflow
         self.evidence_id = canonical_fingerprint(
             {
@@ -107,6 +119,7 @@ class BlockTopologyCompileEvidence(StrictModule, NonTrainableState):
                 "capacities": capacities_,
                 "tagged": tagged,
                 "nesting_rejections": rejected,
+                "balance_additions": additions,
                 "overflow_level": overflow,
             }
         )
@@ -291,61 +304,59 @@ def _region_is_nested(
     return True
 
 
-def _metadata_from_logical(
+def _balance_support_blocks(
     plan: BlockHierarchyPlan,
     level: int,
-    logical_indices: Sequence[tuple[int, ...]],
-) -> BlockMetadata:
-    level_plan = plan.levels[level]
-    capacity = level_plan.maximum_blocks
-    logical = sorted(
-        (tuple(row) for row in logical_indices),
-        key=lambda row: plan.block_id(level, row),
+    rows: set[tuple[int, ...]],
+    width: int,
+    stencil: AMRBalanceStencil,
+    /,
+) -> set[tuple[int, ...]]:
+    """Level ``level - 1`` blocks supporting ``rows`` over one balance stencil.
+
+    Each stencil direction contributes one box: the coarsened fine block extended
+    by ``width`` coarse cells along the direction's nonzero axes.  Periodic axes
+    wrap block rows; non-periodic axes clip at the physical boundary.
+    """
+    if not rows:
+        return set()
+    fine = plan.levels[level]
+    coarse = plan.levels[level - 1]
+    dimension = len(coarse.block_shape)
+    ratio = coarse.refinement_ratio
+    shape = np.asarray(plan.global_cell_shapes[level - 1], dtype=np.int64)
+    lattice = np.asarray(plan.block_lattice_shapes[level - 1], dtype=np.int64)
+    block = np.asarray(coarse.block_shape, dtype=np.int64)
+    periodic = np.asarray(plan.periodic_axes, dtype=np.bool_)
+    fine_rows = np.asarray(sorted(rows), dtype=np.int64)
+    fine_block = np.asarray(fine.block_shape, dtype=np.int64)
+    lower = fine_rows * fine_block // ratio
+    upper = (fine_rows + 1) * fine_block // ratio
+    directions = np.concatenate(
+        (
+            np.zeros((1, dimension), dtype=np.int64),
+            balance_directions(dimension, stencil),
+        )
     )
-    if len(logical) > capacity:
-        raise ValueError("Internal topology metadata construction exceeded capacity.")
-    count = len(logical)
-    active = np.zeros((capacity,), dtype=np.bool_)
-    active[:count] = True
-    block_ids = np.full((capacity,), -1, dtype=np.int32)
-    block_ids[:count] = [plan.block_id(level, row) for row in logical]
-    parent_ids = np.full((capacity,), -1, dtype=np.int32)
-    logical_array = np.full((capacity, len(level_plan.block_shape)), -1, dtype=np.int32)
-    if count:
-        logical_array[:count] = logical
-    if level > 0:
-        children = plan.children_per_parent[level - 1]
-        parent_ids[:count] = [
-            plan.block_id(
-                level - 1,
-                tuple(value // child for value, child in zip(row, children, strict=True)),
-            )
-            for row in logical
-        ]
-    logical_to_slot = {row: slot for slot, row in enumerate(logical)}
-    lattice = plan.block_lattice_shapes[level]
-    neighbors = np.full((capacity, len(level_plan.block_shape), 2), -1, dtype=np.int32)
-    for slot, row in enumerate(logical):
-        for axis in range(len(row)):
-            for side, delta in enumerate((-1, 1)):
-                neighbor = list(row)
-                neighbor[axis] += delta
-                if plan.periodic_axes[axis]:
-                    neighbor[axis] %= lattice[axis]
-                neighbor_tuple = tuple(neighbor)
-                if (
-                    0 <= neighbor[axis] < lattice[axis]
-                    and neighbor_tuple in logical_to_slot
-                ):
-                    neighbors[slot, axis, side] = logical_to_slot[neighbor_tuple]
-    return BlockMetadata(
-        level_plan,
-        active=active,
-        block_ids=block_ids,
-        parent_ids=parent_ids,
-        logical_indices=logical_array,
-        neighbor_slots=neighbors,
-    )
+    result: set[tuple[int, ...]] = set()
+    for direction in directions:
+        start = np.where(
+            direction < 0, lower - width, np.where(direction > 0, upper, lower)
+        )
+        stop = np.where(
+            direction < 0, lower, np.where(direction > 0, upper + width, upper)
+        )
+        start = np.where(periodic, start, np.maximum(start, 0))
+        stop = np.where(periodic, stop, np.minimum(stop, shape))
+        nonempty = np.all(stop > start, axis=1)
+        first = start // block
+        span = np.where(nonempty[:, None], (stop - 1) // block - first + 1, 0)
+        offsets = np.indices(tuple(np.max(span, axis=0))).reshape(dimension, -1).T
+        candidates = first[:, None, :] + offsets[None, :, :]
+        keep = np.all(offsets[None, :, :] < span[:, None, :], axis=2)
+        wrapped = np.where(periodic, candidates % lattice, candidates)[keep]
+        result.update(map(tuple, wrapped.tolist()))
+    return result
 
 
 def _route_graph(
@@ -414,6 +425,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
     plan: BlockHierarchyPlan
     tag_buffer: int = eqx.field(static=True)
     proper_nesting: int = eqx.field(static=True)
+    balance: AMRBalanceStencil | None = eqx.field(static=True)
     compiler_id: str = eqx.field(static=True)
 
     def __init__(
@@ -423,6 +435,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
         *,
         tag_buffer: int = 0,
         proper_nesting: int = 0,
+        balance: AMRBalanceStencil | None = None,
     ):
         if not isinstance(plan, BlockHierarchyPlan):
             raise TypeError("Block topology compiler requires BlockHierarchyPlan.")
@@ -432,15 +445,18 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
             raise ValueError(
                 "Tag buffering and proper-nesting widths must be non-negative."
             )
+        balance_ = None if balance is None else AMRBalanceStencil(balance)
         self.plan = plan
         self.tag_buffer = buffer_
         self.proper_nesting = nesting
+        self.balance = balance_
         self.compiler_id = canonical_fingerprint(
             {
                 "kind": "block-topology-compiler",
                 "plan": plan.plan_id,
                 "tag_buffer": buffer_,
                 "proper_nesting": nesting,
+                "balance": None if balance_ is None else balance_.value,
             }
         )
 
@@ -448,7 +464,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
         base = tuple(np.ndindex(self.plan.block_lattice_shapes[0]))
         logical = (base,) + ((),) * (len(self.plan.levels) - 1)
         metadata = tuple(
-            _metadata_from_logical(self.plan, level, rows)
+            canonical_block_metadata(self.plan, level, rows)
             for level, rows in enumerate(logical)
         )
         return BlockHierarchyTopology(self.plan, metadata)
@@ -464,6 +480,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
             tuple(level.maximum_blocks for level in self.plan.levels),
             (0,) * (len(self.plan.levels) - 1),
             (0,) * (len(self.plan.levels) - 1),
+            (0,) * (len(self.plan.levels) - 1),
             None,
         )
         return BlockTopologyCompileResult(
@@ -475,12 +492,12 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
             evidence,
         )
 
-    def compile(
+    def _validated_tags(
         self,
         source: BlockHierarchyTopology,
         block_tags: Sequence[ArrayLike],
         /,
-    ) -> BlockTopologyCompileResult:
+    ) -> tuple[np.ndarray, ...]:
         if (
             not isinstance(source, BlockHierarchyTopology)
             or source.plan.plan_id != self.plan.plan_id
@@ -509,9 +526,17 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
             )
             if np.any(value & ~active.reshape(inactive_shape)):
                 raise ValueError("Inactive block slots cannot carry refinement tags.")
+        return tags
 
-        desired: list[tuple[tuple[int, ...], ...]] = [
-            tuple(np.ndindex(self.plan.block_lattice_shapes[0]))
+    def _requested_rows(
+        self,
+        source: BlockHierarchyTopology,
+        tags: tuple[np.ndarray, ...],
+        /,
+    ) -> tuple[list[set[tuple[int, ...]]], list[int], list[int], list[int]]:
+        """Buffered tag candidates per level; nesting rejects only without balance."""
+        desired: list[set[tuple[int, ...]]] = [
+            set(np.ndindex(self.plan.block_lattice_shapes[0]))
         ]
         requested = [len(desired[0])]
         tagged_counts: list[int] = []
@@ -519,7 +544,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
         for level, local_tags in enumerate(tags):
             level_plan = self.plan.levels[level]
             fine_plan = self.plan.levels[level + 1]
-            desired_rows = set(desired[level])
+            desired_rows = desired[level]
             tagged = {
                 coordinate
                 for coordinate in _active_tagged_cells(source, level, local_tags)
@@ -555,8 +580,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
                     )
                 )
             }
-            requested_candidates = len(candidates)
-            accepted: list[tuple[int, ...]] = []
+            accepted: set[tuple[int, ...]] = set()
             rejected = 0
             for row in sorted(
                 candidates,
@@ -572,23 +596,54 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
                         fine_starts, fine_plan.block_shape, strict=True
                     )
                 )
-                coarse_starts = tuple(start // ratio for start in fine_starts)
-                coarse_stops = tuple(stop // ratio for stop in fine_stops)
-                if _region_is_nested(
+                if self.balance is not None or _region_is_nested(
                     desired_rows,
                     level_plan.block_shape,
                     self.plan.global_cell_shapes[level],
-                    coarse_starts,
-                    coarse_stops,
+                    tuple(start // ratio for start in fine_starts),
+                    tuple(stop // ratio for stop in fine_stops),
                     self.proper_nesting,
                     self.plan.periodic_axes,
                 ):
-                    accepted.append(row)
+                    accepted.add(row)
                 else:
                     rejected += 1
-            desired.append(tuple(accepted))
-            requested.append(requested_candidates)
+            desired.append(accepted)
+            requested.append(len(candidates))
             nesting_rejections.append(rejected)
+        return desired, requested, tagged_counts, nesting_rejections
+
+    def compile(
+        self,
+        source: BlockHierarchyTopology,
+        block_tags: Sequence[ArrayLike],
+        /,
+    ) -> BlockTopologyCompileResult:
+        """Compile Boolean block-local tags into a successor topology epoch.
+
+        With ``balance`` set, requested fine blocks are closed under 2:1 grading:
+        every coarser level gains the blocks covering each finer block's coarsened
+        region grown by ``max(proper_nesting, 1)`` cells over the balance stencil,
+        instead of rejecting unsupported requests.  Non-periodic physical
+        boundaries require no coarse support in that mode.
+        """
+        tags = self._validated_tags(source, block_tags)
+
+        desired, requested, tagged_counts, nesting_rejections = self._requested_rows(
+            source, tags
+        )
+        balance_additions = [0] * (len(self.plan.levels) - 1)
+        if self.balance is not None:
+            # Closure runs finest to coarsest, so support added at one level is
+            # itself supported before the next coarser level is closed.
+            width = max(self.proper_nesting, 1)
+            for level in range(len(self.plan.levels) - 1, 0, -1):
+                support = _balance_support_blocks(
+                    self.plan, level, desired[level], width, self.balance
+                )
+                balance_additions[level - 1] = len(support - desired[level - 1])
+                desired[level - 1] |= support
+            requested = [len(rows) for rows in desired]
 
         capacities = tuple(level.maximum_blocks for level in self.plan.levels)
         overflow_level = next(
@@ -611,6 +666,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
                 capacities,
                 tagged_counts,
                 nesting_rejections,
+                balance_additions,
                 None,
             )
             first_rejected = next(
@@ -634,6 +690,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
                 capacities,
                 tagged_counts,
                 nesting_rejections,
+                balance_additions,
                 overflow_level,
             )
             return BlockTopologyCompileResult(
@@ -649,7 +706,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
             )
 
         metadata = tuple(
-            _metadata_from_logical(self.plan, level, rows)
+            canonical_block_metadata(self.plan, level, rows)
             for level, rows in enumerate(desired)
         )
         candidate = BlockHierarchyTopology(self.plan, metadata)
@@ -659,6 +716,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
             capacities,
             tagged_counts,
             nesting_rejections,
+            balance_additions,
             None,
         )
         if (

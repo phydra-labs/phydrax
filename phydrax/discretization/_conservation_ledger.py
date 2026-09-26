@@ -155,6 +155,59 @@ def _route_fingerprint(
     )
 
 
+def _capacity_route_arrays(
+    owner_cells: ArrayLike,
+    neighbor_cells: ArrayLike,
+    active_mask: ArrayLike,
+    /,
+) -> tuple[Array, Array, Array]:
+    owner = jnp.asarray(owner_cells)
+    neighbor = jnp.asarray(neighbor_cells)
+    active = jnp.asarray(active_mask)
+    if owner.dtype != jnp.int32 or neighbor.dtype != jnp.int32:
+        raise TypeError("Capacity flux routes must hold int32 cell slots.")
+    if owner.ndim != 1 or neighbor.shape != owner.shape:
+        raise ValueError(
+            "owner_cells and neighbor_cells must be identical one-dimensional routes."
+        )
+    if active.dtype != jnp.bool_:
+        raise TypeError("active_mask must have boolean dtype.")
+    if active.shape != owner.shape:
+        raise ValueError("active_mask must contain one value per routed face.")
+    owner = eqx.error_if(
+        owner,
+        jnp.any(owner < 0),
+        "owner_cells cannot contain negative cell indices.",
+    )
+    neighbor = eqx.error_if(
+        neighbor,
+        jnp.any(neighbor < -1),
+        "neighbor_cells can use only -1 as a boundary sentinel.",
+    )
+    active = eqx.error_if(
+        active,
+        jnp.any(active & (neighbor == owner)),
+        "An active flux route cannot connect a cell to itself.",
+    )
+    return owner, neighbor, active
+
+
+def _capacity_route_fingerprint(
+    route_signature_id: str,
+    component_shape: tuple[int, ...],
+    block_kind: str,
+    /,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "conservation-capacity-flux-route",
+            "route_signature_id": route_signature_id,
+            "component_shape": list(component_shape),
+            "block_kind": block_kind,
+        }
+    )
+
+
 def _validate_route_bounds(
     validation_token: Array,
     owner_cells: Array,
@@ -249,6 +302,37 @@ def _scatter_block(
     )
 
 
+def _conservation_sums(
+    source: Array,
+    routed_values: tuple[tuple[Array, Array], ...],
+    scattered: Array,
+    component_shape: tuple[int, ...],
+    /,
+) -> tuple[Array, Array, Array]:
+    """Compensated source, boundary-outward, and net-cell sums of one ledger.
+
+    ``routed_values`` pairs each block's owner-outward values with its neighbor
+    cells; boundary routes are the ``-1`` neighbors. For exact scatter algebra
+    ``net_cell == source - boundary_outward`` up to compensated round-off.
+    """
+    source_sum = compensated_sum(source, axis=0)
+    boundary_chunks = tuple(
+        jnp.where(
+            (neighbor_cells < 0).reshape(neighbor_cells.shape + (1,) * (values.ndim - 1)),
+            values,
+            jnp.zeros((), dtype=values.dtype),
+        )
+        for values, neighbor_cells in routed_values
+    )
+    boundary_sum = (
+        compensated_sum_chunks(boundary_chunks, output_ndim=len(component_shape))
+        if boundary_chunks
+        else jnp.zeros(component_shape, dtype=source.dtype)
+    )
+    net_cell_sum = compensated_sum(scattered, axis=0)
+    return source_sum, boundary_sum, net_cell_sum
+
+
 class ConservationStageFluxRateBlock(StrictModule):
     """One immutable owner-oriented block of area-integrated stage flux rates."""
 
@@ -272,26 +356,50 @@ class ConservationStageFluxRateBlock(StrictModule):
         block_id: str,
         block_kind: str,
         /,
+        *,
+        route_signature_id: str | None = None,
     ):
+        """Validate one owner-oriented route block.
+
+        Without ``route_signature_id`` the routes are host topology: they are
+        validated with NumPy and fingerprinted by value. With it, the routes are
+        device-resident fixed-capacity data (for example masked simplex
+        half-facets) that may be traced: they are validated in-graph with
+        ``eqx.error_if`` and the route identity is the capacity signature, never
+        the route values, so one compiled consumer serves every topology of the
+        capacity bucket.
+        """
         block_id_ = _flux_identity(block_id, "block_id")
         block_kind_ = _flux_identity(block_kind, "block_kind")
-        owner, owner_host = _route_array(owner_cells, "owner_cells")
-        neighbor, neighbor_host = _route_array(neighbor_cells, "neighbor_cells")
-        if neighbor.shape != owner.shape:
-            raise ValueError("owner_cells and neighbor_cells must have identical shapes.")
-        active, active_host = _active_array(active_mask, owner.shape[0])
-        _validate_route_values(owner_host, neighbor_host, active_host)
+        if route_signature_id is None:
+            owner, owner_host = _route_array(owner_cells, "owner_cells")
+            neighbor, neighbor_host = _route_array(neighbor_cells, "neighbor_cells")
+            if neighbor.shape != owner.shape:
+                raise ValueError(
+                    "owner_cells and neighbor_cells must have identical shapes."
+                )
+            active, active_host = _active_array(active_mask, owner.shape[0])
+            _validate_route_values(owner_host, neighbor_host, active_host)
+        else:
+            signature = _flux_identity(route_signature_id, "route_signature_id")
+            owner, neighbor, active = _capacity_route_arrays(
+                owner_cells, neighbor_cells, active_mask
+            )
         rate = _finite_values(flux_rate, "flux_rate")
         if rate.ndim == 0 or rate.shape[0] != owner.shape[0]:
             raise ValueError("flux_rate must begin with the routed face count.")
         component_shape = tuple(rate.shape[1:])
         rate = _masked_face_values(rate, active)
-        route_id = _route_fingerprint(
-            owner_host,
-            neighbor_host,
-            active_host,
-            component_shape,
-            block_kind_,
+        route_id = (
+            _route_fingerprint(
+                owner_host,
+                neighbor_host,
+                active_host,
+                component_shape,
+                block_kind_,
+            )
+            if route_signature_id is None
+            else _capacity_route_fingerprint(signature, component_shape, block_kind_)
         )
         self.flux_rate = rate
         self.owner_cells = owner
@@ -313,7 +421,7 @@ class ConservationStageFluxRateBlock(StrictModule):
         )
 
     def with_flux_rate(self, flux_rate: ArrayLike, /) -> ConservationStageFluxRateBlock:
-        """Replace rates while reusing this block's host-validated route identity."""
+        """Replace rates while reusing this block's validated route identity."""
         rate = _finite_values(flux_rate, "flux_rate")
         if rate.shape != self.flux_rate.shape:
             raise ValueError("flux_rate must have the exact route-template shape.")
@@ -554,6 +662,15 @@ class ConservationStageLedger(StrictModule):
                 block.neighbor_cells,
             )
         return scattered
+
+    def conservation_sums(self) -> tuple[Array, Array, Array]:
+        """Return source, boundary-outward, and net-cell content-rate sums."""
+        return _conservation_sums(
+            self.source_rate,
+            tuple((block.flux_rate, block.neighbor_cells) for block in self.blocks),
+            self.scatter_content_rate(),
+            self.component_shape,
+        )
 
 
 class AcceptedConservationFluxIntegralBlock(StrictModule):
@@ -989,30 +1106,12 @@ class AcceptedConservationIntegralLedger(StrictModule):
 
     def conservation_sums(self) -> tuple[Array, Array, Array]:
         """Return source, boundary-outward, and net-cell accepted content sums."""
-        source_sum = compensated_sum(self.source_integral, axis=0)
-        boundary_chunks_list: list[Array] = []
-        for block in self.blocks:
-            boundary = (block.neighbor_cells < 0).reshape(
-                block.neighbor_cells.shape + (1,) * (block.flux_integral.ndim - 1)
-            )
-            boundary_chunks_list.append(
-                jnp.where(
-                    boundary,
-                    block.flux_integral,
-                    jnp.zeros((), dtype=block.flux_integral.dtype),
-                )
-            )
-        boundary_chunks = tuple(boundary_chunks_list)
-        boundary_sum = (
-            compensated_sum_chunks(
-                boundary_chunks,
-                output_ndim=len(self.component_shape),
-            )
-            if boundary_chunks
-            else jnp.zeros(self.component_shape, dtype=self.source_integral.dtype)
+        return _conservation_sums(
+            self.source_integral,
+            tuple((block.flux_integral, block.neighbor_cells) for block in self.blocks),
+            self.scatter_content_integral(),
+            self.component_shape,
         )
-        net_cell_sum = compensated_sum(self.scatter_content_integral(), axis=0)
-        return source_sum, boundary_sum, net_cell_sum
 
 
 __all__ = [

@@ -23,7 +23,10 @@ metrics, segmented cochain metrics, fixed RK4 coordinate geodesics, Fréchet
 statistics, metric validation, and exponential-family information geometry accept
 this policy. Reductions cast operands before summation; casting a completed
 low-precision scalar is never reported as widened accumulation. Result-bearing
-services retain effective precision evidence.
+services retain effective precision evidence. `predicate_mode`
+(`phydrax.geometry.PredicateMode`, default `EXACT`) selects how geometric sign
+decisions such as orientation and side-of-plane tests are certified; it is part
+of `policy_id`.
 
 ## Coordinate metric integration
 

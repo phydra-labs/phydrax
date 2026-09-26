@@ -23,7 +23,20 @@ certification, and topology-transition contracts.
         - RegionControl
         - PatchControl
         - LayerSchedule
-        - SweptLayerControl
+        - BoundaryLayerRoute
+        - BoundaryLayerCollisionPolicy
+        - BoundaryLayerCornerPolicy
+        - BoundaryLayerControl
+        - BoundaryLayerPolicy
+        - BoundaryLayerEvidence
+        - BoundaryLayerMesh
+        - prepare_boundary_layers
+        - BoundaryLayerExtrusion
+        - prepare_boundary_layer_extrusion
+        - ProtectedFeature
+        - BackgroundMetricMode
+        - BackgroundMetricControl
+        - SurfaceReconstructionControl
         - PlanarBandControl
         - PlanarBandPlan
         - PlanarBandResult
@@ -34,55 +47,166 @@ certification, and topology-transition contracts.
         - CurvatureSizeControl
         - ProximitySizeControl
         - ResolvedSizeField
-        - MeshMetricField
         - resolve_size_controls
+        - size_field_metric
+        - MeshMetricField
+        - MeshMetricSamples
+        - MetricNormalizationPolicy
+        - MetricNormalizationEvidence
+        - MetricComplexityStatus
         - normalize_mesh_metric
+        - MetricGradationKind
+        - MetricGradationPolicy
+        - MetricGradationEvidence
+        - grade_mesh_metric
+        - MetricCombinationEvidence
+        - combine_mesh_metrics
+        - interpolate_mesh_metric
+        - metric_edge_lengths
+        - HessianMetricEvidence
+        - lp_metric_from_hessian
         - CellMeshingResult
+        - CellMeshAuditDisposition
         - CellMeshAuditPolicy
         - CellMeshAuditReport
         - GeometryAssociation
+        - GeometryAssociationKind
+        - GeometryAssociationProvenance
+        - AssociationPropagationPolicy
+        - AssociationPropagationError
+        - BRepAssociationTransfer
+        - associate_mesh_vertices
+        - associate_mesh_entities
+        - propagate_association
+        - rederive_association
         - MeshingComplianceReport
         - MeshingTrace
         - MeshingFailure
         - certify_cell_mesh
         - evaluate_cell_quality
+        - FiniteVolumeQualityEvaluation
+        - evaluate_finite_volume_quality
         - import_cell_mesh
         - export_cell_mesh
         - export_mesh_array_artifact
         - MeshLineage
         - CellMeshTransition
         - VertexInterpolationStencil
-        - refine_triangle_mesh
+        - MeshAdaptationRoute
+        - MeshAdaptationStatus
+        - MeshAdaptationPolicy
+        - MarkedMeshAdaptation
+        - MetricMeshAdaptation
+        - RelocationMeshAdaptation
+        - PreparedMeshAdaptation
+        - MeshAdaptationResult
+        - prepare_mesh_adaptation
+        - execute_mesh_adaptation
+        - BisectionCompatibility
+        - BisectionHierarchy
+        - BisectionEvidence
+        - LocalMetricEvidence
+        - PreparedAdaptiveSimplex
+        - prepare_adaptive_simplex
+        - commit_adaptive_simplex
+        - PartitionedAdaptiveSimplex
+        - partition_adaptive_simplex
+        - commit_partitioned_adaptive_simplex
+        - PreparedDeviceMetricAdaptation
+        - DeviceMetricLayout
+        - DeviceMetricState
+        - DeviceMetricReport
+        - DeviceMetricUpdate
+        - DeviceMetricEvidence
+        - prepare_device_metric_adaptation
+        - adapt_device_metric
+        - commit_device_metric_adaptation
+        - project_hp_lineage
+        - MeshQualityObjective
+        - MeshUntanglingPolicy
+        - MeshUntanglingEvidence
         - TargetMatrixOptimizationPlan
+        - MeshOptimizationStatus
+        - MeshOptimizationResult
         - optimize_cell_mesh
+        - CellGeometryOptimizationResult
         - optimize_cell_geometry_coordinates
+        - HighOrderCurvingPolicy
+        - HighOrderCurvingStatus
+        - HighOrderCurvingResult
+        - CurvedGeometryEvidence
+        - curve_cell_mesh
+        - verify_curved_geometry
+        - MeshMotionDecision
+        - MeshMotionMonitorPolicy
+        - MeshMotionMonitor
+        - MeshMotionAssessment
+        - MeshMotionAdvance
+        - advance_mesh_motion
         - GmshProvider
         - GmshOptions
+        - GmshSurfaceAlgorithm
+        - GmshVolumeAlgorithm
+        - GmshHighOrderOptimization
+        - GmshMeshingPlan
+        - GmshRemeshingPlan
         - GmshSession
         - NativeImplicitProvider
         - ManifoldProvider
         - SurfaceBooleanOperation
         - MmgProvider
         - MmgOptions
+        - MmgAdaptationPlan
+        - MmgAdaptationResult
+        - MmgLevelSet
+        - MmgLagrangianMotion
+        - MmgLagrangianMode
+        - MmgFieldTransfer
+        - MmgReference
+        - MmgReferenceRetention
+        - MmgSessionEvidence
         - FTetWildProvider
         - FTetWildOptions
         - OrientedPointCloud
         - PoissonProvider
         - PoissonReconstructionSpec
+        - PoissonBoundaryCondition
         - OpenVDBProvider
         - OpenVDBMeshingSpec
+        - OpenVDBLevelSetRebuild
         - OmegaHProvider
+        - OmegaHOptions
+        - OmegaHField
+        - OmegaHFieldTransfer
+        - OmegaHClassification
+        - OmegaHAdaptationResult
+        - OmegaHAdaptationEvidence
+        - OmegaHFieldEvidence
+        - OmegaHTransferredField
+        - OmegaHPartition
         - VoroCrustProvider
         - VoroCrustOptions
         - TiogaProvider
         - TiogaOptions
+        - TiogaRegistration
         - MeshPart
         - MeshAssembly
         - MeshDistribution
+        - MeshPartitionKind
+        - MeshPartitionPolicy
+        - MeshPartitionEvidence
+        - prepare_mesh_distribution
+        - MeshDistributionTransition
+        - prepare_distribution_transition
+        - MetisUnavailableError
+        - MetisPartitionError
         - ConformalCoupling
         - PeriodicCoupling
         - ContactCoupling
         - OversetCoupling
+        - CouplingSearchStatus
+        - CouplingSearchEvidence
+        - CouplingSearchError
         - MeshMarkingProposal
         - MeshSizeProposal
         - MeshMetricProposal
@@ -95,6 +219,14 @@ certification, and topology-transition contracts.
         - prepare_mesh_proposal
 
 ::: phydrax.discretization.CellGeometrySpec
+
+::: phydrax.discretization.CellValidityPolicy
+
+::: phydrax.discretization.CellValidityCertificate
+
+::: phydrax.discretization.CellValidityStatus
+
+::: phydrax.discretization.certify_cell_geometry_validity
 
 ::: phydrax.SpatialCoordinateContract
 

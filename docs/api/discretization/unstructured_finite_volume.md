@@ -40,6 +40,35 @@
 
 ::: phydrax.discretization.evaluate_unstructured_fv_geometry
 
+## Masked capacity layouts
+
+Device-resident `MaskedSimplexMesh` layouts (triangles in 2-D, tetrahedra in
+3-D) are consumed directly through fixed-capacity half-facet routes. Each
+physical face is routed exactly once, inactive cells and routes contribute
+exactly zero, and every compiled entry is keyed by the layout's capacity
+signature, never by its active counts, so refinement within a bucket does not
+recompile. `evaluate_masked_fv_conservation` reports the exact source,
+boundary-outward, and net-cell content-rate sums through the shared
+`ConservationStageLedger`.
+
+::: phydrax.discretization.MaskedFiniteVolumeGeometry
+
+---
+
+::: phydrax.discretization.evaluate_masked_fv_geometry
+
+---
+
+::: phydrax.discretization.masked_fv_flux_divergence
+
+---
+
+::: phydrax.discretization.MaskedFiniteVolumeConservation
+
+---
+
+::: phydrax.discretization.evaluate_masked_fv_conservation
+
 ## Hybrid diffusion and surface traces
 
 ::: phydrax.discretization.HybridMimeticDiffusion
@@ -151,6 +180,27 @@ finite-volume meshes.
 ---
 
 ::: phydrax.discretization.UnstructuredConservativeRemapPlan
+
+---
+
+::: phydrax.discretization.prepare_unstructured_conservative_remap
+
+---
+
+::: phydrax.discretization.PreparedUnstructuredConservativeRemap
+
+---
+
+::: phydrax.discretization.UnstructuredSecondOrderRemapPlan
+
+---
+
+::: phydrax.discretization.UnstructuredSecondOrderRemapResult
+
+---
+
+::: phydrax.discretization.UnstructuredRemapLimiter
+
 ---
 
 ::: phydrax.discretization.FiniteVolumeStageEpochTransition

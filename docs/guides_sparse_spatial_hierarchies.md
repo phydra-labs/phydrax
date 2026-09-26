@@ -97,20 +97,33 @@ accepted hierarchy authoritative.
 
 ## Compact plane execution and exact point queries
 
-The canonical point hierarchy is not also the most compact execution layout
-for every point-search kernel. `MortonNeighborQueryPlan` and
-`MortonRadiusRelationPlan` lower the same validated Morton point order into a
-private plane schedule. Leaves contain bounded contiguous Morton-order ranges;
-each coarser plane groups contiguous children without allocating every occupied
-octree prefix. Tight node bounds, parent/child ranges, logical permutations,
-and required-versus-allocated resource evidence remain explicit.
+`MortonNeighborQueryPlan` and `MortonRadiusRelationPlan` sort sources once by
+their canonical Morton code and stable ID. Every occupied cell at every prefix
+level is then one contiguous span of that order, located by binary search over
+the sorted codes, so no per-level structure is allocated. Each target visits
+the `3^d` stencil around its own coarse cell, skips stencil cells farther than
+the active search bound, and packs at most `maximum_candidates` sources into a
+fixed-width buffer. Distances and selection run only over that buffer, and
+targets are processed in bounded chunks (`target_chunk_size`), so the working
+set is bounded by chunk size times candidate capacity rather than by the
+target-by-source product.
 
-The plane schedule has no independent physical identity. Algorithms return
-logical source indices through `RowRelation`, exact radius routes through
-`EdgeRelation`, or an owning domain result. Coincident points and points that
-share the deepest integer Morton code are split into stable-ID execution tiles
-with identical geometry. Their worst-case direct work is visible through
-terminal-bucket and candidate evidence.
+The k-nearest-neighbor query starts at the finest level whose visited stencil
+holds enough sources. Its selection is certified when the k-th distance (or the
+radius cap) is strictly smaller than the distance from the target to the
+nearest unvisited region, after a conservative floating-point margin. An
+uncertified row retries once at the coarser level whose cells are wider than
+that distance, visiting only the cells within it. The radius relation uses the
+finest level whose cells are wider than the radius. Neighbors are ordered by
+squared distance and then stable ID; radius pairs are ordered by target and
+source stable ID, or by the smaller and larger ID for `pair_once`.
+
+Every result carries a per-target `status` (`MortonNeighborQueryStatus`):
+`COMPLETE`, `INACTIVE_TARGET`, `INVALID_TARGET`, `INVALID_SOURCES`,
+`CANDIDATE_OVERFLOW`, or `UNCERTIFIED`. Rows that are not complete return no
+neighbors, and evidence reports the required candidate width, overflowing and
+uncertified row counts, and source/target validity. A possibly wrong neighbor
+is never returned as valid.
 
 ```python
 query_plan = phx.discretization.spatial.MortonNeighborQueryPlan(
@@ -118,7 +131,7 @@ query_plan = phx.discretization.spatial.MortonNeighborQueryPlan(
     source_capacity=source.shape[-2],
     target_capacity=target.shape[-2],
     maximum_neighbors=16,
-    maximum_candidates=source.shape[-2],
+    maximum_candidates=512,
 )
 neighbors = phx.graph.query_neighbors(
     source,
@@ -135,8 +148,11 @@ reports exactness, finite input, completeness, and success. Discrete selected
 indices are stopped topology; relative vectors and distances are recomputed
 with native minimum-image JAX geometry and remain branchwise differentiable.
 
+Pairwise interaction kernels use a compact Morton plane schedule instead:
+leaves contain bounded contiguous Morton-order ranges, and each coarser plane
+groups contiguous children without allocating every occupied octree prefix.
 `MortonPlaneInteractionPlan` performs deterministic dual-tree refinement over
-the compact planes. A geometric opening policy accepts unequal-size node pairs
+those planes. A geometric opening policy accepts unequal-size node pairs
 for far translation and opens the remainder until exact leaf completion. Every
 ordered point pair is covered by exactly one accepted ancestor or one leaf
 route. Queue, far-route, and near-route requirements are counted before their
@@ -162,9 +178,11 @@ topology completeness, convergence, finite arithmetic, and success are
 reported independently; overflow never publishes a partial catalog as
 successful.
 
-`MortonRadiusRelationPlan` separately controls pair capacity and open or closed
-radius boundaries. Capacity exhaustion invalidates every truncated route and
-reports the exact required pair count.
+`MortonRadiusRelationPlan` separately controls candidate capacity, pair
+capacity, and open or closed radius boundaries. Candidate or pair exhaustion
+invalidates every route; the exact required pair count is reported whenever no
+candidate buffer overflowed. The result also exposes the occupied coarse cells
+as logical cell slots, counts, and offsets into the Morton storage order.
 
 `DistributedMortonNeighborQueryPlan` shards sources, gathers target coordinates,
 computes each shard's exact local top-k set, and globally merges those sets by

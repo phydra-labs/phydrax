@@ -7,17 +7,12 @@
 from .._integration_domain import IntegrationDomain
 from . import smoothing
 from ._adaptivity import (
-    coarsen_triangles_local,
     dorfler_mark,
     dual_weighted_residual_estimate,
-    FiniteElementAdaptationMap,
     FiniteElementDWRIndicators,
     FiniteElementErrorEstimate,
-    FiniteElementTransferBundle,
     local_dual_weighted_residual,
     maximum_mark,
-    refine_triangles_local,
-    refine_triangles_uniform,
     residual_jump_estimate,
 )
 from ._boundary import (
@@ -70,21 +65,27 @@ from ._fast_diagonalization import (
     TensorFastDiagonalizationPreconditioner,
 )
 from ._generic import (
+    assemble_masked_finite_element,
+    constrain_masked_dofs,
     FiniteElementDiscretization,
     FiniteElementDofMap,
     FiniteElementFieldSpec,
     FiniteElementPlan,
     FiniteElementRuntimeData,
+    MaskedFiniteElementPlan,
+    MaskedFiniteElementSystem,
 )
 from ._geometry_motion import (
     FiniteElementBoundaryProvider,
     FiniteElementBoundaryRealization,
-    FiniteElementGeometryEvidence,
     FiniteElementMeshMotionEvidence,
     FiniteElementMeshMotionPlan,
     FiniteElementMeshMotionPolicy,
+    FiniteElementMeshMotionRoute,
     FiniteElementMeshMotionStatus,
     FiniteElementMeshRealization,
+    FiniteElementMotionExtension,
+    FiniteElementMotionExtensionResult,
 )
 from ._geometry_quality import (
     finite_element_geometry_quality,
@@ -107,6 +108,7 @@ from ._hp import (
     FiniteElementHPCellKind,
     FiniteElementHPLineage,
     FiniteElementHPLineageKind,
+    FiniteElementHPProjectionEvidence,
     FiniteElementHPTopology,
     FiniteElementHPTransferKind,
     FiniteElementHPTransferPlan,
@@ -224,6 +226,15 @@ from ._point_interpolation import (
     PreparedFiniteElementPointInterpolation,
 )
 from ._precision import FiniteElementPrecisionPolicy
+from ._recovery import (
+    dual_weighted_residual_indicators,
+    FiniteElementRecoveryEvidence,
+    prepare_gradient_recovery,
+    PreparedGradientRecovery,
+    recover_gradient,
+    recover_hessian,
+    recovery_error_estimate,
+)
 from ._reference import (
     discontinuous_element,
     FiniteElementSpec,
@@ -293,6 +304,12 @@ from ._spectral_hp_io import (
     write_adaptive_xdmf,
     write_hp_forest,
 )
+from ._topology_transfer import (
+    FiniteElementL2Projection,
+    FiniteElementTopologyTransfer,
+    prepare_l2_projection_transfer,
+    vertex_interpolation_transfer,
+)
 
 
 __all__ = [
@@ -301,10 +318,12 @@ __all__ = [
     "FiniteElementBoundarySet",
     "FiniteElementPeriodicFacetPair",
     "FiniteElementPeriodicTransform",
-    "FiniteElementAdaptationMap",
     "FiniteElementDWRIndicators",
     "FiniteElementErrorEstimate",
-    "FiniteElementTransferBundle",
+    "FiniteElementTopologyTransfer",
+    "vertex_interpolation_transfer",
+    "FiniteElementL2Projection",
+    "prepare_l2_projection_transfer",
     "NodeSet",
     "QuadratureChunkPolicy",
     "ReferenceNodalFamily",
@@ -318,14 +337,12 @@ __all__ = [
     "FiniteElementReferenceReport",
     "PreparedFiniteElementReference",
     "local_diagonal",
-    "coarsen_triangles_local",
     "LowOrderAuxiliaryOperatorPlan",
     "low_order_auxiliary_preconditioner_builder",
     "LowOrderAuxiliaryPreconditioner",
     "dorfler_mark",
     "local_dual_weighted_residual",
     "maximum_mark",
-    "refine_triangles_local",
     "finite_element_p_transfer",
     "FiniteElementPTransfer",
     "PTransferRole",
@@ -340,7 +357,6 @@ __all__ = [
     "FiniteElementPatchPreconditioner",
     "FiniteElementPatchPreconditionerBuilder",
     "one_ring_patch_plan",
-    "refine_triangles_uniform",
     "affine_dof_constraint",
     "dual_weighted_residual_estimate",
     "residual_jump_estimate",
@@ -373,6 +389,7 @@ __all__ = [
     "FiniteElementHPCellKind",
     "FiniteElementHPLineage",
     "FiniteElementHPLineageKind",
+    "FiniteElementHPProjectionEvidence",
     "FiniteElementHPTopology",
     "FiniteElementHPTransaction",
     "FiniteElementHPTransferKind",
@@ -455,14 +472,20 @@ __all__ = [
     "HDGCondensationPlan",
     "HDGTraceSpace",
     "FiniteElementRuntimeData",
+    "MaskedFiniteElementPlan",
+    "MaskedFiniteElementSystem",
+    "assemble_masked_finite_element",
+    "constrain_masked_dofs",
     "FiniteElementBoundaryProvider",
     "FiniteElementBoundaryRealization",
-    "FiniteElementGeometryEvidence",
     "FiniteElementMeshMotionEvidence",
     "FiniteElementMeshMotionPlan",
     "FiniteElementMeshMotionPolicy",
+    "FiniteElementMeshMotionRoute",
     "FiniteElementMeshMotionStatus",
     "FiniteElementMeshRealization",
+    "FiniteElementMotionExtension",
+    "FiniteElementMotionExtensionResult",
     "FiniteElementPrecisionPolicy",
     "FiniteElementSpec",
     "IntegrationDomain",
@@ -518,6 +541,13 @@ __all__ = [
     "prepare_finite_element_field_reconstruction",
     "FiniteElementFieldReconstructionKernel",
     "PreparedFiniteElementPointInterpolation",
+    "FiniteElementRecoveryEvidence",
+    "PreparedGradientRecovery",
+    "dual_weighted_residual_indicators",
+    "prepare_gradient_recovery",
+    "recover_gradient",
+    "recover_hessian",
+    "recovery_error_estimate",
     "PreparedMixedFiniteElementConstraint",
     "PressureGaugeEvidence",
     "PressureGaugeMode",

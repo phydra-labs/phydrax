@@ -16,56 +16,63 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._cell_mesh import CellMesh
 from ._cut_complex import MultivaluedCutCellComplex
 
 
 if TYPE_CHECKING:
+    from ...geometry._supermesh import CommonRefinementEvidence
     from ..finite_volume._unstructured_remap import UnstructuredConservativeRemapPlan
 
 
-def _point_in_tetrahedron(
-    point: np.ndarray,
-    tetrahedron: np.ndarray,
-    tolerance: float,
+def _component_tetrahedra_mesh(
+    complex_: MultivaluedCutCellComplex,
     /,
-) -> bool:
-    matrix = np.stack(
-        (
-            tetrahedron[1] - tetrahedron[0],
-            tetrahedron[2] - tetrahedron[0],
-            tetrahedron[3] - tetrahedron[0],
+) -> tuple[CellMesh, np.ndarray]:
+    """Tetrahedral cell mesh of the active cut components and each cell's component."""
+    from ...geometry._predicates import orient3d, PredicateMode, PredicateSign
+
+    tetrahedra = np.concatenate(
+        tuple(
+            np.asarray(component, dtype=np.float64)
+            for component in complex_.component_tetrahedra
         ),
-        axis=1,
+        axis=0,
     )
-    barycentric = np.linalg.solve(matrix, point - tetrahedron[0])
-    coordinates = np.concatenate((np.asarray((1.0 - np.sum(barycentric),)), barycentric))
-    return bool(
-        np.all(coordinates >= -tolerance) and np.all(coordinates <= 1.0 + tolerance)
+    owners = np.repeat(
+        np.arange(complex_.component_count, dtype=np.int32),
+        np.asarray(
+            tuple(len(component) for component in complex_.component_tetrahedra),
+            dtype=np.int64,
+        ),
     )
-
-
-def _component_contains(
-    container: tuple[np.ndarray, ...],
-    candidate: tuple[np.ndarray, ...],
-    tolerance: float,
-    /,
-) -> bool:
-    points = {
-        tuple(float(value) for value in point)
-        for tetrahedron in candidate
-        for point in tetrahedron
-    }
-    return all(
-        any(
-            _point_in_tetrahedron(
-                np.asarray(point),
-                tetrahedron,
-                tolerance,
-            )
-            for tetrahedron in container
-        )
-        for point in points
+    signs = np.asarray(
+        orient3d(
+            tetrahedra[:, 0],
+            tetrahedra[:, 1],
+            tetrahedra[:, 2],
+            tetrahedra[:, 3],
+            mode=PredicateMode.EXACT,
+        ).signs
     )
+    if np.any(signs == PredicateSign.NEGATIVE):
+        raise ValueError("Cut component tetrahedra must be positively oriented.")
+    # An exactly degenerate tetrahedron has zero measure: excluding it leaves every
+    # component measure and every overlap measure unchanged, and the remaining cells
+    # reference four distinct points as a cell mesh requires.
+    positive = signs == PredicateSign.POSITIVE
+    if np.any(np.bincount(owners[positive], minlength=complex_.component_count) == 0):
+        raise ValueError("Every cut component requires a positive-measure tetrahedron.")
+    coordinates, inverse = np.unique(
+        tetrahedra[positive].reshape(-1, 3), axis=0, return_inverse=True
+    )
+    mesh = CellMesh.from_tetrahedra(
+        coordinates,
+        inverse.reshape(-1, 4).astype(np.int32),
+        block_name="cut-component-tetrahedra",
+        numeric_version=complex_.geometry_id,
+    )
+    return mesh, owners[positive]
 
 
 class MultivaluedCutCellTransitionResult(StrictModule):
@@ -80,14 +87,25 @@ class MultivaluedCutCellTransitionResult(StrictModule):
 
 
 class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
-    """Conservative physical-overlap transfer across regrid/rebox epochs."""
+    """Conservative physical-overlap transfer across regrid/rebox epochs.
+
+    Each active cut component is the union of its positively oriented
+    tetrahedra.  The tetrahedral meshes of both complexes are intersected by the
+    canonical common refinement (:func:`phydrax.geometry.prepare_common_refinement`)
+    and the overlap volumes are summed per ``(target, source)`` component pair.
+    ``require_complete`` requests complete source and target coverage; otherwise
+    uncovered measure is reported by ``source_coverage``/``target_coverage`` and
+    ``refinement_evidence``.  Any refinement failure raises ``ValueError``.
+    """
 
     source: MultivaluedCutCellComplex
     target: MultivaluedCutCellComplex
     remap: UnstructuredConservativeRemapPlan
     source_coverage: Array
     target_coverage: Array
+    refinement_evidence: CommonRefinementEvidence
     coverage_complete: bool = eqx.field(static=True)
+    refinement_id: str = eqx.field(static=True)
     transition_id: str = eqx.field(static=True)
 
     def __init__(
@@ -103,184 +121,134 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
             target, MultivaluedCutCellComplex
         ):
             raise TypeError("Cut-cell transitions require source and target complexes.")
+        if not isinstance(require_complete, bool):
+            raise TypeError("Cut-cell transition require_complete must be a bool.")
         tolerance_ = float(tolerance)
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("Cut-cell transition tolerance must be positive and finite.")
-        from ...geometry._tetra_intersections import (
-            intersect_tetrahedra,
-            TetraIntersectionStatus,
-            TetraIntersectionTolerance,
+        from ...geometry._supermesh import (
+            CommonRefinementCoverage,
+            CommonRefinementPolicy,
+            CommonRefinementStatus,
+            prepare_common_refinement,
         )
         from ..finite_volume._unstructured_remap import (
             UnstructuredConservativeRemapPlan,
         )
 
+        source_mesh, source_owners = _component_tetrahedra_mesh(source)
+        target_mesh, target_owners = _component_tetrahedra_mesh(target)
+        refinement = prepare_common_refinement(
+            source_mesh,
+            target_mesh,
+            policy=CommonRefinementPolicy(
+                coverage=(
+                    CommonRefinementCoverage.COMPLETE
+                    if require_complete
+                    else CommonRefinementCoverage.PARTIAL
+                ),
+                coverage_tolerance=tolerance_,
+            ),
+        )
+        match refinement.status:
+            case CommonRefinementStatus.SUCCESS:
+                pass
+            case CommonRefinementStatus.COVERAGE_GAP:
+                raise ValueError(
+                    "Cut-cell source or target common-refinement coverage is "
+                    f"incomplete (COVERAGE_GAP): {refinement.evidence.reason}"
+                )
+            case (
+                CommonRefinementStatus.INVALID_GEOMETRY
+                | CommonRefinementStatus.PREDICATE_UNCERTAIN
+                | CommonRefinementStatus.INTERSECTION_FAILURE
+                | CommonRefinementStatus.DOUBLE_COVERAGE
+                | CommonRefinementStatus.RESOURCE_LIMIT
+            ):
+                raise ValueError(
+                    "Cut-cell common refinement failed with status "
+                    f"{refinement.status.name}: {refinement.evidence.reason}"
+                )
+            case _:
+                raise ValueError(
+                    f"Unknown common-refinement status {refinement.status!r}."
+                )
+        source_count = source.component_count
+        target_count = target.component_count
+        # Canonical component-pair keys sort by target component, then source
+        # component, which is exactly the CSR row order of the remap plan.
+        pair_keys = target_owners[np.asarray(refinement.target_cells)].astype(
+            np.int64
+        ) * source_count + source_owners[np.asarray(refinement.source_cells)].astype(
+            np.int64
+        )
+        unique_keys, pair_inverse = np.unique(pair_keys, return_inverse=True)
+        measures = np.bincount(
+            pair_inverse.reshape(-1),
+            weights=np.asarray(refinement.volumes, dtype=np.float64),
+            minlength=unique_keys.size,
+        )
+        pair_targets = (unique_keys // source_count).astype(np.int32)
+        pair_sources = (unique_keys % source_count).astype(np.int32)
+        offsets = np.zeros((target_count + 1,), dtype=np.int32)
+        offsets[1:] = np.cumsum(np.bincount(pair_targets, minlength=target_count))
         source_geometry = source.finite_volume_plan().prepare(
             numeric_version="cut-transition-source"
         )
         target_geometry = target.finite_volume_plan().prepare(
             numeric_version="cut-transition-target"
         )
-        source_tetrahedra = tuple(
-            tuple(np.asarray(tetra, dtype=np.float64) for tetra in component)
-            for component in source.component_tetrahedra
-        )
-        target_tetrahedra = tuple(
-            tuple(np.asarray(tetra, dtype=np.float64) for tetra in component)
-            for component in target.component_tetrahedra
-        )
-        source_lower = np.asarray(
-            [
-                np.min(np.concatenate(component, axis=0), axis=0)
-                for component in source_tetrahedra
-            ]
-        )
-        source_upper = np.asarray(
-            [
-                np.max(np.concatenate(component, axis=0), axis=0)
-                for component in source_tetrahedra
-            ]
-        )
-        target_lower = np.asarray(
-            [
-                np.min(np.concatenate(component, axis=0), axis=0)
-                for component in target_tetrahedra
-            ]
-        )
-        target_upper = np.asarray(
-            [
-                np.max(np.concatenate(component, axis=0), axis=0)
-                for component in target_tetrahedra
-            ]
-        )
-        predicate = TetraIntersectionTolerance(
-            absolute=0.0,
-            relative=min(tolerance_, 1.0e-10),
-        )
-        records: list[tuple[int, int, float]] = []
-        if (
-            source.mesh.geometry_id == target.mesh.geometry_id
-            and source.component_count == target.component_count
-        ):
-            records.extend(
-                (index, index, float(source_geometry.cell_volumes[index]))
-                for index in range(source.component_count)
-            )
-        else:
-            for target_index in range(target.component_count):
-                candidates = np.flatnonzero(
-                    np.all(source_lower <= target_upper[target_index], axis=1)
-                    & np.all(source_upper >= target_lower[target_index], axis=1)
-                )
-                for source_index in candidates:
-                    containment_tolerance = tolerance_ * max(
-                        1.0,
-                        float(np.max(np.abs(source_upper[int(source_index)]))),
-                        float(np.max(np.abs(target_upper[target_index]))),
-                    )
-                    if _component_contains(
-                        source_tetrahedra[int(source_index)],
-                        target_tetrahedra[target_index],
-                        containment_tolerance,
-                    ):
-                        overlap = float(target_geometry.cell_volumes[target_index])
-                        records.append((target_index, int(source_index), overlap))
-                        continue
-                    if _component_contains(
-                        target_tetrahedra[target_index],
-                        source_tetrahedra[int(source_index)],
-                        containment_tolerance,
-                    ):
-                        overlap = float(source_geometry.cell_volumes[int(source_index)])
-                        records.append((target_index, int(source_index), overlap))
-                        continue
-                    overlap = 0.0
-                    for source_tetrahedron in source_tetrahedra[int(source_index)]:
-                        for target_tetrahedron in target_tetrahedra[target_index]:
-                            overlap_width = np.minimum(
-                                np.max(source_tetrahedron, axis=0),
-                                np.max(target_tetrahedron, axis=0),
-                            ) - np.maximum(
-                                np.min(source_tetrahedron, axis=0),
-                                np.min(target_tetrahedron, axis=0),
-                            )
-                            pair_scale = max(
-                                1.0,
-                                float(np.max(np.abs(source_tetrahedron))),
-                                float(np.max(np.abs(target_tetrahedron))),
-                            )
-                            if np.any(overlap_width <= tolerance_ * pair_scale):
-                                continue
-                            result = intersect_tetrahedra(
-                                source_tetrahedron,
-                                target_tetrahedron,
-                                source_id=int(source_index),
-                                target_id=target_index,
-                                tolerance=predicate,
-                                volume_only=True,
-                            )
-                            if result.status is TetraIntersectionStatus.SUCCESS:
-                                overlap += result.volume
-                            elif result.status not in {
-                                TetraIntersectionStatus.DISJOINT,
-                                TetraIntersectionStatus.ZERO_MEASURE_CONTACT,
-                            }:
-                                raise ValueError(
-                                    "Cut-cell common refinement has an unresolved "
-                                    f"tetrahedron predicate: {result.status.value}."
-                                )
-                    if overlap > 0.0:
-                        records.append((target_index, int(source_index), overlap))
-        records.sort(key=lambda value: (value[0], value[1]))
-        source_coverage = np.zeros((source.component_count,), dtype=np.float64)
-        target_coverage = np.zeros((target.component_count,), dtype=np.float64)
-        for target_index, source_index, overlap in records:
-            source_coverage[source_index] += overlap
-            target_coverage[target_index] += overlap
         source_volumes = np.asarray(source_geometry.cell_volumes, dtype=np.float64)
         target_volumes = np.asarray(target_geometry.cell_volumes, dtype=np.float64)
-        source_complete = np.allclose(
-            source_coverage,
-            source_volumes,
-            rtol=tolerance_,
-            atol=tolerance_ * max(1.0, float(np.max(source_volumes))),
+        source_coverage = np.bincount(
+            pair_sources, weights=measures, minlength=source_count
         )
-        target_complete = np.allclose(
-            target_coverage,
-            target_volumes,
-            rtol=tolerance_,
-            atol=tolerance_ * max(1.0, float(np.max(target_volumes))),
+        target_coverage = np.bincount(
+            pair_targets, weights=measures, minlength=target_count
         )
-        coverage_complete = bool(source_complete and target_complete)
-        if bool(require_complete) and not coverage_complete:
+        # A component tolerates the summed coverage tolerances of its tetrahedra,
+        # so component completeness is the aggregate of the refinement's own test.
+        source_tolerances = np.bincount(
+            source_owners,
+            weights=np.asarray(
+                refinement.evidence.source_coverage_tolerances, dtype=np.float64
+            ),
+            minlength=source_count,
+        )
+        target_tolerances = np.bincount(
+            target_owners,
+            weights=np.asarray(
+                refinement.evidence.target_coverage_tolerances, dtype=np.float64
+            ),
+            minlength=target_count,
+        )
+        coverage_complete = bool(
+            np.all(np.abs(source_coverage - source_volumes) <= source_tolerances)
+            and np.all(np.abs(target_coverage - target_volumes) <= target_tolerances)
+        )
+        if require_complete and not coverage_complete:
             raise ValueError(
                 "Cut-cell source or target common-refinement coverage is incomplete."
             )
-        offsets = np.zeros((target.component_count + 1,), dtype=np.int32)
-        for target_index, _, _ in records:
-            offsets[target_index + 1] += 1
-        np.cumsum(offsets, out=offsets)
-        source_indices = np.asarray(
-            [source_index for _, source_index, _ in records], dtype=np.int32
-        )
-        measures = np.asarray([value for _, _, value in records], dtype=np.float64)
         remap = UnstructuredConservativeRemapPlan(
             source_geometry,
             target_geometry,
             offsets,
-            source_indices,
+            pair_sources,
             measures,
             method="block-amr-cut-component-common-refinement",
-            provenance="block-amr-multivalued-common-refinement",
+            provenance=refinement.refinement_id,
             tolerance=tolerance_,
-            require_complete=bool(require_complete),
+            require_complete=require_complete,
         )
         self.source = source
         self.target = target
         self.remap = remap
-        self.source_coverage = jnp.asarray(source_coverage)
-        self.target_coverage = jnp.asarray(target_coverage)
+        self.source_coverage = jnp.asarray(source_coverage, dtype=jnp.float64)
+        self.target_coverage = jnp.asarray(target_coverage, dtype=jnp.float64)
+        self.refinement_evidence = refinement.evidence
         self.coverage_complete = coverage_complete
+        self.refinement_id = refinement.refinement_id
         self.transition_id = canonical_fingerprint(
             {
                 "kind": "multivalued-cut-cell-transition",
@@ -288,6 +256,7 @@ class MultivaluedCutCellTransition(StrictModule, NonTrainableState):
                 "source_geometry": source.geometry_id,
                 "target": target.topology_id,
                 "target_geometry": target.geometry_id,
+                "refinement": refinement.refinement_id,
                 "remap": remap.plan_id,
                 "coverage_complete": coverage_complete,
             }

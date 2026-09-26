@@ -29,6 +29,11 @@ from ...discretization.lattice_boltzmann import (
     ImmersedBoundaryForcingPlan,
     ImmersedBoundaryForcingResult,
 )
+from ...geometry._predicates import (
+    orient2d,
+    PredicateMode,
+    resolve_host_predicate_mode,
+)
 from ...sparse import EdgeRelation, route_reduce
 
 
@@ -444,21 +449,15 @@ def _conservative_transfer(
     return amount / source_measure[None, :]
 
 
-def _orient2d(a: np.ndarray, b: np.ndarray, c: np.ndarray, /) -> float:
-    return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
-
-
 def _point_in_triangle_2d(
-    point: np.ndarray, triangle: np.ndarray, tolerance: float, /
+    point: np.ndarray, triangle: np.ndarray, mode: PredicateMode, /
 ) -> bool:
-    signs = np.asarray(
-        [
-            _orient2d(triangle[0], triangle[1], point),
-            _orient2d(triangle[1], triangle[2], point),
-            _orient2d(triangle[2], triangle[0], point),
-        ]
-    )
-    return bool(np.all(signs >= -tolerance) or np.all(signs <= tolerance))
+    orientation = orient2d(triangle, np.roll(triangle, -1, axis=0), point, mode=mode)
+    # An unresolved orientation is conservatively treated as contact.
+    if not np.all(orientation.certain):
+        return True
+    signs = orientation.signs
+    return bool(np.all(signs >= 0) or np.all(signs <= 0))
 
 
 def _segments_intersect_2d(
@@ -466,39 +465,25 @@ def _segments_intersect_2d(
     first_b: np.ndarray,
     second_a: np.ndarray,
     second_b: np.ndarray,
-    tolerance: float,
+    mode: PredicateMode,
     /,
 ) -> bool:
-    first = np.asarray(
-        [
-            _orient2d(first_a, first_b, second_a),
-            _orient2d(first_a, first_b, second_b),
-        ]
-    )
-    second = np.asarray(
-        [
-            _orient2d(second_a, second_b, first_a),
-            _orient2d(second_a, second_b, first_b),
-        ]
-    )
-    if (
-        first[0] * first[1] < -tolerance * tolerance
-        and second[0] * second[1] < -tolerance * tolerance
-    ):
+    starts = np.stack((first_a, first_a, second_a, second_a))
+    ends = np.stack((first_b, first_b, second_b, second_b))
+    points = np.stack((second_a, second_b, first_a, first_b))
+    orientation = orient2d(starts, ends, points, mode=mode)
+    # An unresolved orientation is conservatively treated as contact.
+    if not np.all(orientation.certain):
         return True
-    for value, point, start, end in (
-        (first[0], second_a, first_a, first_b),
-        (first[1], second_b, first_a, first_b),
-        (second[0], first_a, second_a, second_b),
-        (second[1], first_b, second_a, second_b),
-    ):
-        if (
-            abs(float(value)) <= tolerance
-            and np.all(point >= np.minimum(start, end) - tolerance)
-            and np.all(point <= np.maximum(start, end) + tolerance)
-        ):
-            return True
-    return False
+    signs = orientation.signs.tolist()
+    if signs[0] * signs[1] < 0 and signs[2] * signs[3] < 0:
+        return True
+    return any(
+        sign == 0
+        and bool(np.all(point >= np.minimum(start, end)))
+        and bool(np.all(point <= np.maximum(start, end)))
+        for sign, point, start, end in zip(signs, points, starts, ends, strict=True)
+    )
 
 
 def _segment_triangle_intersection(
@@ -541,7 +526,7 @@ def _segment_triangle_intersection(
 
 
 def _triangles_intersect(
-    first: np.ndarray, second: np.ndarray, tolerance: float, /
+    first: np.ndarray, second: np.ndarray, tolerance: float, mode: PredicateMode, /
 ) -> bool:
     origin = first[0]
     all_points = np.concatenate((first, second), axis=0)
@@ -583,14 +568,12 @@ def _triangles_intersect(
                     projected_first[(first_index + 1) % 3],
                     projected_second[second_index],
                     projected_second[(second_index + 1) % 3],
-                    distance_tolerance,
+                    mode,
                 ):
                     return True
         return _point_in_triangle_2d(
-            projected_first[0], projected_second, distance_tolerance
-        ) or _point_in_triangle_2d(
-            projected_second[0], projected_first, distance_tolerance
-        )
+            projected_first[0], projected_second, mode
+        ) or _point_in_triangle_2d(projected_second[0], projected_first, mode)
     for index in range(3):
         if _segment_triangle_intersection(
             first[index],
@@ -612,12 +595,13 @@ def _self_intersection_free(
 ) -> bool:
     triangles = positions[faces]
     trimming = max(np.sqrt(tolerance), 1.0e-10)
+    mode = resolve_host_predicate_mode(PredicateMode.EXACT)
     for first in range(faces.shape[0]):
         for second in range(first + 1, faces.shape[0]):
             shared = np.intersect1d(faces[first], faces[second])
             if shared.size == 0:
                 intersects = _triangles_intersect(
-                    triangles[first], triangles[second], tolerance
+                    triangles[first], triangles[second], tolerance, mode
                 )
             elif shared.size == 1:
                 first_triangle = triangles[first].copy()
@@ -631,7 +615,7 @@ def _self_intersection_free(
                     second_slot
                 ] + trimming * np.mean(second_triangle, axis=0)
                 intersects = _triangles_intersect(
-                    first_triangle, second_triangle, tolerance
+                    first_triangle, second_triangle, tolerance, mode
                 )
             elif shared.size == 2:
                 first_other = int(

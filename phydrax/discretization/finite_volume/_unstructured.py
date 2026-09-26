@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import final
 
 import equinox as eqx
 import jax
@@ -18,6 +19,8 @@ import phydrax.ein as ein
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import ArraySpace, DiagonalPairing
+from ...sparse import EdgeRelation, SparseLinearMap
+from .._adaptive_simplex import MaskedSimplexMesh
 from .._cell_complex import (
     polygonal_connectivity,
     PolygonalConnectivity,
@@ -26,6 +29,10 @@ from .._cell_complex import (
     TetrahedralConnectivity,
 )
 from .._cell_mesh import CellBlock, CellMesh
+from .._conservation_ledger import (
+    ConservationStageFluxRateBlock,
+    ConservationStageLedger,
+)
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -391,6 +398,44 @@ def _owner_neighbor(connectivity: Connectivity, cell_count: int, /):
     return owner, neighbor, owner_sign
 
 
+def _triangle_measures(cell_points: Array, /) -> tuple[Array, Array]:
+    """Signed areas (positive counterclockwise) and centroids of ``(..., 3, 2)``."""
+    cross = (cell_points[..., 1, 0] - cell_points[..., 0, 0]) * (
+        cell_points[..., 2, 1] - cell_points[..., 0, 1]
+    ) - (cell_points[..., 1, 1] - cell_points[..., 0, 1]) * (
+        cell_points[..., 2, 0] - cell_points[..., 0, 0]
+    )
+    return 0.5 * cross, jnp.mean(cell_points, axis=-2)
+
+
+def _tetrahedron_measures(cell_points: Array, /) -> tuple[Array, Array]:
+    """Signed volumes (positive right-handed) and centroids of ``(..., 4, 3)``."""
+    determinant = jnp.linalg.det(
+        jnp.stack(
+            (
+                cell_points[..., 1, :] - cell_points[..., 0, :],
+                cell_points[..., 2, :] - cell_points[..., 0, :],
+                cell_points[..., 3, :] - cell_points[..., 0, :],
+            ),
+            axis=-1,
+        )
+    )
+    return determinant / 6.0, jnp.mean(cell_points, axis=-2)
+
+
+def _edge_area_vectors(tangent: Array, /) -> Array:
+    """Edge normals ``(t_y, -t_x)``: outward for counterclockwise traversal."""
+    return jnp.stack((tangent[..., 1], -tangent[..., 0]), axis=-1)
+
+
+def _triangle_area_vectors(face_points: Array, /) -> Array:
+    """Right-handed area vectors of ``(..., 3, 3)`` triangular faces."""
+    return 0.5 * jnp.cross(
+        face_points[..., 1, :] - face_points[..., 0, :],
+        face_points[..., 2, :] - face_points[..., 0, :],
+    )
+
+
 def _polygon_geometry(
     vertices: ArrayLike,
     triangles: ArrayLike,
@@ -403,14 +448,7 @@ def _polygon_geometry(
     points = jnp.asarray(vertices)
     triangle_cells = jnp.asarray(triangles, dtype=jnp.int32)
     quadrilateral_cells = jnp.asarray(quadrilaterals, dtype=jnp.int32)
-    triangle_points = points[triangle_cells]
-    triangle_cross = (triangle_points[:, 1, 0] - triangle_points[:, 0, 0]) * (
-        triangle_points[:, 2, 1] - triangle_points[:, 0, 1]
-    ) - (triangle_points[:, 1, 1] - triangle_points[:, 0, 1]) * (
-        triangle_points[:, 2, 0] - triangle_points[:, 0, 0]
-    )
-    triangle_volume = 0.5 * triangle_cross
-    triangle_center = jnp.mean(triangle_points, axis=1)
+    triangle_volume, triangle_center = _triangle_measures(points[triangle_cells])
 
     root = 1.0 / np.sqrt(3.0)
     reference = np.asarray(((-root, -root), (root, -root), (root, root), (-root, root)))
@@ -445,7 +483,7 @@ def _polygon_geometry(
     edge_points = points[edges]
     face_centers = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
     tangent = edge_points[:, 1] - edge_points[:, 0]
-    canonical_area = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
+    canonical_area = _edge_area_vectors(tangent)
     area_vectors = jnp.asarray(owner_sign, dtype=points.dtype)[:, None] * canonical_area
     face_measures = jnp.linalg.norm(area_vectors, axis=-1)
     owner_centers = cell_centers[jnp.asarray(owner, dtype=jnp.int32)]
@@ -500,30 +538,16 @@ def _tetrahedral_geometry(
     points = jnp.asarray(vertices)
     cells = jnp.asarray(tetrahedra, dtype=jnp.int32)
     cell_points = points[cells]
-    determinant = jnp.linalg.det(
-        jnp.stack(
-            (
-                cell_points[:, 1] - cell_points[:, 0],
-                cell_points[:, 2] - cell_points[:, 0],
-                cell_points[:, 3] - cell_points[:, 0],
-            ),
-            axis=-1,
-        )
-    )
-    cell_volumes = determinant / 6.0
+    cell_volumes, cell_centers = _tetrahedron_measures(cell_points)
     cell_volumes = eqx.error_if(
         cell_volumes,
         jnp.any(~jnp.isfinite(cell_volumes) | (cell_volumes <= 0.0)),
         "Tetrahedral FV geometry requires positive finite cell volumes.",
     )
-    cell_centers = jnp.mean(cell_points, axis=1)
     faces = jnp.asarray(connectivity.faces, dtype=jnp.int32)
     face_points = points[faces]
     face_centers = jnp.mean(face_points, axis=1)
-    canonical_area = 0.5 * jnp.cross(
-        face_points[:, 1] - face_points[:, 0],
-        face_points[:, 2] - face_points[:, 0],
-    )
+    canonical_area = _triangle_area_vectors(face_points)
     area_vectors = jnp.asarray(owner_sign, dtype=points.dtype)[:, None] * canonical_area
     face_measures = jnp.linalg.norm(area_vectors, axis=-1)
     owner_centers = cell_centers[jnp.asarray(owner, dtype=jnp.int32)]
@@ -583,6 +607,318 @@ def evaluate_unstructured_fv_geometry(
             owner_sign,
         )
     return _tetrahedral_geometry(vertices, tetrahedra, connectivity, owner, owner_sign)
+
+
+# Facet opposite each local vertex, ordered so the edge normal ``(t_y, -t_x)`` of
+# a counterclockwise triangle and the right-handed area vector of a positively
+# oriented tetrahedron face both point out of the cell.
+_SIMPLEX_OUTWARD_FACETS = {
+    2: ((1, 2), (2, 0), (0, 1)),
+    3: ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)),
+}
+
+
+def _masked_cell_geometry(
+    mesh: MaskedSimplexMesh, /
+) -> tuple[Array, Array, Array, Array]:
+    """Cell volumes/centroids and half-facet area vectors/centroids.
+
+    Inactive cells are evaluated on the positively oriented reference simplex
+    before any geometric operation, so their lanes are finite in value and
+    derivative regardless of the padding rows and coordinates.
+    """
+
+    dimension = mesh.dimension
+    dtype = mesh.coordinates.dtype
+    reference = jnp.asarray(
+        np.vstack(
+            (
+                np.zeros((1, dimension), dtype=np.float64),
+                np.eye(dimension, dtype=np.float64),
+            )
+        ),
+        dtype=dtype,
+    )
+    cell_points = jnp.where(
+        mesh.cell_active[:, None, None], mesh.coordinates[mesh.cells], reference
+    )
+    facets = np.asarray(_SIMPLEX_OUTWARD_FACETS[dimension], dtype=np.int32)
+    facet_points = cell_points[:, facets]
+    match dimension:
+        case 2:
+            volumes, centers = _triangle_measures(cell_points)
+            area_vectors = _edge_area_vectors(
+                facet_points[..., 1, :] - facet_points[..., 0, :]
+            )
+        case 3:
+            volumes, centers = _tetrahedron_measures(cell_points)
+            area_vectors = _triangle_area_vectors(facet_points)
+        case _:
+            raise ValueError("Masked FV geometry holds triangles or tetrahedra.")
+    face_count = mesh.cell_capacity * (dimension + 1)
+    return (
+        volumes,
+        centers,
+        area_vectors.reshape((face_count, dimension)),
+        jnp.mean(facet_points, axis=-2).reshape((face_count, dimension)),
+    )
+
+
+@final
+class MaskedFiniteVolumeGeometry(StrictModule):
+    """Owner-oriented finite-volume geometry of a capacity-bucketed simplex layout.
+
+    Face routes are the ``face_capacity = cell_capacity * (d + 1)`` half-facets
+    of the layout: route ``c * (d + 1) + i`` is the facet of cell slot ``c``
+    opposite local vertex ``i`` and is owned by ``c``. ``face_active`` keeps
+    exactly one route per physical face of the active mesh: a boundary
+    half-facet of an active cell, or the interior half-facet whose owner slot is
+    smaller than its neighbor slot. Area vectors point out of the owner, and
+    ``content_rate_map`` is the fixed-capacity sparse face-to-cell map (owner
+    ``-1``, neighbor ``+1``) taking owner-outward integrated face fluxes to net
+    cell content rates.
+
+    Every quantity is exactly zero on inactive lanes (cell volumes and centroids
+    of inactive cells; area vectors, measures, and centroids of inactive routes,
+    whose neighbor is ``-1``), and the geometry is computed from a reference
+    simplex on those lanes, so padding never yields non-finite values or
+    derivatives. Active lanes use the same simplex formulas as
+    `UnstructuredFiniteVolumeDiscretization`. ``signature_id`` is the capacity
+    signature of the source `MaskedSimplexMesh`; it, not the active topology,
+    is the compile identity of every masked finite-volume route.
+    """
+
+    cell_kind: str = eqx.field(static=True)
+    cell_capacity: int = eqx.field(static=True)
+    face_capacity: int = eqx.field(static=True)
+    signature_id: str = eqx.field(static=True)
+    cell_active: Array
+    cell_volumes: Array
+    cell_centers: Array
+    owner_cells: Array
+    neighbor_cells: Array
+    face_active: Array
+    area_vectors: Array
+    face_measures: Array
+    face_centers: Array
+    content_rate_map: SparseLinearMap
+
+    def __init__(self, mesh: MaskedSimplexMesh, /):
+        """Evaluate the geometry of ``mesh``; see `evaluate_masked_fv_geometry`."""
+        if not isinstance(mesh, MaskedSimplexMesh):
+            raise TypeError("mesh must be a MaskedSimplexMesh.")
+        if mesh.ambient_dimension != mesh.dimension:
+            raise ValueError(
+                "Masked FV geometry requires triangles in 2-D or tetrahedra in 3-D."
+            )
+        width = mesh.dimension + 1
+        face_count = mesh.cell_capacity * width
+        dtype = mesh.coordinates.dtype
+        volumes, centers, area_vectors, face_centers = _masked_cell_geometry(mesh)
+        cell_active = mesh.cell_active
+        volumes = eqx.error_if(
+            volumes,
+            jnp.any(cell_active & (~jnp.isfinite(volumes) | (volumes <= 0.0))),
+            "Masked FV geometry requires positively oriented finite active cells.",
+        )
+
+        half = jnp.arange(face_count, dtype=jnp.int32)
+        owner = half // width
+        packed = mesh.facet_neighbors.reshape((face_count,))
+        interior = packed >= 0
+        safe_packed = jnp.where(interior, packed, 0)
+        neighbor = jnp.where(interior, safe_packed // width, -1)
+        live = jnp.repeat(cell_active, width)
+        face_active = live & (~interior | (owner < neighbor))
+        measures = jnp.linalg.norm(area_vectors, axis=-1)
+        outward = jnp.sum((face_centers - centers[owner]) * area_vectors, axis=-1)
+        area_vectors = eqx.error_if(
+            area_vectors,
+            jnp.any(
+                live & (~jnp.isfinite(measures) | (measures <= 0.0) | (outward <= 0.0))
+            ),
+            "Masked FV half-facet vectors must be positive and owner-outward.",
+        )
+        # Each interior face must be seen from both sides by active cells, so the
+        # owner-slot tie-break selects exactly one route per physical face.
+        unpaired = (
+            live
+            & interior
+            & ((packed[safe_packed] != half) | ~cell_active[safe_packed // width])
+        )
+        area_vectors = eqx.error_if(
+            area_vectors,
+            jnp.any(unpaired),
+            "Masked simplex facet neighbors must pair active cells reciprocally.",
+        )
+        neighbor = jnp.where(face_active, neighbor, -1)
+        zero = jnp.zeros((), dtype=dtype)
+        routed = face_active[:, None]
+        interior_route = face_active & (neighbor >= 0)
+        relation = EdgeRelation(
+            jnp.concatenate((half, half)),
+            jnp.concatenate((owner, jnp.maximum(neighbor, 0))),
+            source_size=face_count,
+            target_size=mesh.cell_capacity,
+            valid=jnp.concatenate((face_active, interior_route)),
+        )
+        coefficients = jnp.concatenate(
+            (-jnp.ones((face_count,), dtype=dtype), jnp.ones((face_count,), dtype=dtype))
+        )
+        self.cell_kind = mesh.cell_kind
+        self.cell_capacity = mesh.cell_capacity
+        self.face_capacity = face_count
+        self.signature_id = mesh.signature_id
+        self.cell_active = cell_active
+        self.cell_volumes = jnp.where(cell_active, volumes, zero)
+        self.cell_centers = jnp.where(cell_active[:, None], centers, zero)
+        self.owner_cells = owner
+        self.neighbor_cells = neighbor
+        self.face_active = face_active
+        self.area_vectors = jnp.where(routed, area_vectors, zero)
+        self.face_measures = jnp.where(face_active, measures, zero)
+        self.face_centers = jnp.where(routed, face_centers, zero)
+        # Explicit operator identity: the capacity signature, never route values.
+        self.content_rate_map = SparseLinearMap(
+            relation,
+            coefficients,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "masked-simplex-fv-content-rate-map",
+                    "signature_id": mesh.signature_id,
+                }
+            ),
+        )
+
+    @property
+    def dimension(self) -> int:
+        return self.cell_centers.shape[1]
+
+    @property
+    def boundary_faces(self) -> Array:
+        """Active routes on the boundary of the active mesh, shaped ``(faces,)``."""
+        return self.face_active & (self.neighbor_cells < 0)
+
+
+@final
+class MaskedFiniteVolumeConservation(StrictModule):
+    """Exact content-rate balance of one masked finite-volume evaluation.
+
+    ``ledger`` is the repository `ConservationStageLedger` over the capacity
+    half-facet routes (route identity: the capacity signature). The compensated
+    sums obey ``net_cell_sum = source_sum - boundary_outward_sum`` because every
+    interior route adds its owner-outward rate to one active cell and subtracts
+    it from another; ``residual`` is the round-off defect of that identity.
+    Inactive cells and routes contribute exactly zero to every sum.
+    """
+
+    ledger: ConservationStageLedger
+    source_sum: Array
+    boundary_outward_sum: Array
+    net_cell_sum: Array
+    residual: Array
+
+    def __init__(self, ledger: ConservationStageLedger, /):
+        if not isinstance(ledger, ConservationStageLedger):
+            raise TypeError("ledger must be a ConservationStageLedger.")
+        source_sum, boundary_sum, net_cell_sum = ledger.conservation_sums()
+        self.ledger = ledger
+        self.source_sum = source_sum
+        self.boundary_outward_sum = boundary_sum
+        self.net_cell_sum = net_cell_sum
+        self.residual = net_cell_sum - (source_sum - boundary_sum)
+
+
+def _routed_face_flux(
+    geometry: MaskedFiniteVolumeGeometry, face_flux: ArrayLike, /
+) -> Array:
+    if not isinstance(geometry, MaskedFiniteVolumeGeometry):
+        raise TypeError("geometry must be a MaskedFiniteVolumeGeometry.")
+    flux = jnp.asarray(face_flux)
+    if not jnp.issubdtype(flux.dtype, jnp.floating):
+        raise TypeError("face_flux must have a floating dtype.")
+    if flux.ndim == 0 or flux.shape[0] != geometry.face_capacity:
+        raise ValueError("face_flux must begin with the half-facet route capacity.")
+    return flux
+
+
+@eqx.filter_jit
+def evaluate_masked_fv_geometry(mesh: MaskedSimplexMesh, /) -> MaskedFiniteVolumeGeometry:
+    """Compiled finite-volume geometry of a `MaskedSimplexMesh`.
+
+    One compilation serves every layout with the same capacity signature: the
+    active counts, topology, and coordinates are dynamic data.
+    """
+    return MaskedFiniteVolumeGeometry(mesh)
+
+
+@eqx.filter_jit
+def masked_fv_flux_divergence(
+    geometry: MaskedFiniteVolumeGeometry, face_flux: ArrayLike, /
+) -> Array:
+    """Compiled cell residual ``-(1/V_c) * sum_f s_cf F_f`` of face fluxes.
+
+    ``face_flux`` has shape ``(face_capacity, ...)`` and holds owner-outward
+    area-integrated fluxes on the half-facet routes; the owner loses and the
+    neighbor gains each routed flux. Values on inactive routes (padding and the
+    twin half-facet of every interior face) are ignored, and inactive cells
+    receive exactly zero.
+    """
+    flux = _routed_face_flux(geometry, face_flux)
+    routed = geometry.face_active.reshape(
+        geometry.face_active.shape + (1,) * (flux.ndim - 1)
+    )
+    rate = geometry.content_rate_map.mv(
+        jnp.where(routed, flux, jnp.zeros((), dtype=flux.dtype))
+    )
+    active = geometry.cell_active.reshape(
+        geometry.cell_active.shape + (1,) * (flux.ndim - 1)
+    )
+    volume = jnp.where(geometry.cell_active, geometry.cell_volumes, 1.0).reshape(
+        active.shape
+    )
+    return jnp.where(active, rate / volume, jnp.zeros((), dtype=rate.dtype))
+
+
+@eqx.filter_jit
+def evaluate_masked_fv_conservation(
+    geometry: MaskedFiniteVolumeGeometry,
+    face_flux: ArrayLike,
+    source_rate: ArrayLike,
+    /,
+) -> MaskedFiniteVolumeConservation:
+    """Compiled exact conservation ledger of one masked finite-volume evaluation.
+
+    ``face_flux`` follows `masked_fv_flux_divergence`; ``source_rate`` has shape
+    ``(cell_capacity, ...)``, holds integrated cell source rates, and must be
+    exactly zero on inactive cells. The ledger's layout, route, and topology
+    epoch identities are the capacity signature because masked topology is
+    dynamic data of the bucket; its geometry and evidence versions are zero for
+    this single evaluation.
+    """
+    flux = _routed_face_flux(geometry, face_flux)
+    block = ConservationStageFluxRateBlock(
+        flux,
+        geometry.owner_cells,
+        geometry.neighbor_cells,
+        geometry.face_active,
+        "masked-simplex-faces",
+        "masked-simplex-half-facet",
+        route_signature_id=geometry.signature_id,
+    )
+    version = jnp.zeros((), dtype=jnp.int32)
+    ledger = ConservationStageLedger(
+        (block,),
+        source_rate,
+        geometry.cell_active,
+        geometry_family_id="masked-simplex-finite-volume",
+        geometry_layout_id=geometry.signature_id,
+        geometry_version=version,
+        evidence_policy_id="masked-simplex-exact-balance",
+        evidence_version=version,
+        topology_epoch_id=geometry.signature_id,
+    )
+    return MaskedFiniteVolumeConservation(ledger)
 
 
 class UnstructuredFiniteVolumeQualityReport(StrictModule):
@@ -1394,8 +1730,13 @@ def _quality_report(
 
 
 __all__ = [
+    "MaskedFiniteVolumeConservation",
+    "MaskedFiniteVolumeGeometry",
     "UnstructuredFiniteVolumeDiscretization",
     "UnstructuredFiniteVolumePlan",
     "UnstructuredFiniteVolumeQualityReport",
+    "evaluate_masked_fv_conservation",
+    "evaluate_masked_fv_geometry",
     "evaluate_unstructured_fv_geometry",
+    "masked_fv_flux_divergence",
 ]

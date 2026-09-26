@@ -108,13 +108,16 @@ part of the model.
 `discover_implicit_surface` consumes a valid three-dimensional region and a
 nonperiodic `PreparedTensorGrid`. Discovery is host-side and concrete:
 
-1. evaluate the lattice sign pattern;
-2. locate every sign-changing edge root;
-3. split active-cell inside corners into connected components;
+1. evaluate the lattice sign pattern in one batched field call;
+2. locate every sign-changing edge root with one vectorized ITP program;
+3. split active-cell inside corners into connected components through
+   lookup tables over the 256 cube sign configurations;
 4. build manifold dual incidence;
-5. fit regularized QEF vertices;
-6. orient and validate a closed triangle topology;
-7. freeze topology, anchor routes, face diagonals, and intersection pairs.
+5. fit batched regularized QEF vertices with native small solves;
+6. orient (one batched gradient) and validate a closed triangle topology;
+7. freeze topology, anchor routes, face diagonals, and the BVH overlap pairs
+   of triangles' reachable dual-cell boxes, which is the complete
+   self-intersection candidate set for every accepted realization.
 
 ```python
 grid = phx.discretization.TensorGridPlan(
@@ -215,20 +218,27 @@ vanishes.
 ## Finite-element mesh motion
 
 `FiniteElementMeshMotionPlan` maps a fixed boundary-coordinate provider into a
-full-dimensional vertex-coordinate FE mesh. The initial support envelope is:
+full-dimensional vertex-coordinate FE mesh. The support envelope is:
 
 - two- or three-dimensional full-dimensional meshes;
-- triangle, quadrilateral, tetrahedron, or hexahedron cells;
+- triangle, quadrilateral, tetrahedron, hexahedron, prism, or pyramid cells;
 - P1/Q1 vertex coordinates;
 - fixed connectivity and entity IDs;
-- one supplied coordinate for every topological boundary vertex.
+- one supplied coordinate for every topological boundary vertex (every vertex for
+  the `PRESCRIBED` route).
 
-Interior displacement is the graph-harmonic extension of boundary displacement.
-The graph operator is fixed at preparation and solved through `phydrax.linalg`
-with RHS-only differentiation. The plan validates signed coordinate Jacobians
-at deterministic reference probes and rejects orientation reversal, small
-Jacobians, excessive displacement, nonfinite values, rejected boundary maps,
-or failed extension solves.
+`FiniteElementMeshMotionPolicy(route=...)` selects the interior extension:
+`HARMONIC` (graph Laplacian, valid on convex planar domains), `LINEAR_ELASTICITY`
+(Jacobian-stiffened elasticity that keeps small cells near moving inclusions rigid),
+`WINSLOW` (inverse harmonic map whose barrier keeps maps onto a convex reference
+valid), `MMPDE` (Huang–Russell moving-mesh PDE equilibrium for a `monitor(points)`
+passed to `realize`), or `PRESCRIBED`. Linear operators are fixed at preparation and
+solved through `phydrax.linalg` with RHS-only differentiation; nonlinear routes solve
+through `phydrax.nonlinear` with implicit root derivatives in the boundary design and
+monitor parameters. The shared `MotionValidityPlan` validates signed corner
+Jacobians inside the traced step and rejects orientation reversal, small Jacobians,
+excessive displacement, nonfinite values, rejected boundary maps, or failed route
+solves; `motion.certify(coordinates)` is the host-epoch Bernstein certificate.
 
 ```python
 motion = phx.discretization.FiniteElementMeshMotionPlan(

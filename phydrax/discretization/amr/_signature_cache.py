@@ -199,9 +199,13 @@ class PreparedPatchExecutable(StrictModule, NonTrainableState):
 
 
 class PatchExecutableCacheState(StrictModule, NonTrainableState):
-    """Immutable installed executable set for one accepted runtime boundary."""
+    """Immutable installed executable set for one accepted runtime boundary.
 
-    executables: tuple[PreparedPatchExecutable, ...]
+    ``executables`` maps each signature ID to its prepared executable in canonical
+    sorted key order, so lookup is a direct keyed access.
+    """
+
+    executables: dict[str, PreparedPatchExecutable]
     generation: int = eqx.field(static=True)
     cache_id: str = eqx.field(static=True)
 
@@ -212,21 +216,21 @@ class PatchExecutableCacheState(StrictModule, NonTrainableState):
         *,
         generation: int = 0,
     ):
-        values = tuple(
-            sorted(executables, key=lambda value: value.signature.signature_id)
-        )
-        if (
-            any(not isinstance(value, PreparedPatchExecutable) for value in values)
-            or len({value.signature.signature_id for value in values}) != len(values)
-            or int(generation) < 0
-        ):
+        values = tuple(executables)
+        if any(not isinstance(value, PreparedPatchExecutable) for value in values):
             raise ValueError("Patch executable cache entries or generation are invalid.")
-        self.executables = values
+        by_signature = {
+            value.signature.signature_id: value
+            for value in sorted(values, key=lambda value: value.signature.signature_id)
+        }
+        if len(by_signature) != len(values) or int(generation) < 0:
+            raise ValueError("Patch executable cache entries or generation are invalid.")
+        self.executables = by_signature
         self.generation = int(generation)
         self.cache_id = canonical_fingerprint(
             {
                 "kind": "patch-executable-cache-state",
-                "executables": [value.executable_id for value in values],
+                "executables": [value.executable_id for value in by_signature.values()],
                 "generation": int(generation),
             }
         )
@@ -234,10 +238,7 @@ class PatchExecutableCacheState(StrictModule, NonTrainableState):
     def lookup(
         self, signature: PatchExecutableSignature, /
     ) -> PreparedPatchExecutable | None:
-        for executable in self.executables:
-            if executable.signature.signature_id == signature.signature_id:
-                return executable
-        return None
+        return self.executables.get(signature.signature_id)
 
 
 class PatchExecutableInstallResult(StrictModule, NonTrainableState):
@@ -333,7 +334,7 @@ class PatchExecutableCachePlan(StrictModule, NonTrainableState):
             not isinstance(value, PatchExecutableSignature) for value in requested
         ) or len({value.signature_id for value in requested}) != len(requested):
             raise ValueError("Requested executable signatures must be unique and valid.")
-        prepared = list(state.executables)
+        prepared = dict(state.executables)
         installed = []
         reused = []
         for signature in requested:
@@ -347,13 +348,15 @@ class PatchExecutableCachePlan(StrictModule, NonTrainableState):
             positional, keyword = sample_factory(signature)
             lowered = jax.jit(kernel).lower(*positional, **keyword)
             compiled = lowered.compile()
-            prepared.append(PreparedPatchExecutable(signature, compiled))
+            prepared[signature.signature_id] = PreparedPatchExecutable(
+                signature, compiled
+            )
             installed.append(signature.signature_id)
         successor = (
             state
             if not installed
             else PatchExecutableCacheState(
-                prepared,
+                tuple(prepared.values()),
                 generation=state.generation + 1,
             )
         )

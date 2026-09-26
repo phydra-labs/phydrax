@@ -118,11 +118,11 @@ def _finite_element_case(*, warmup: int, repeats: int):
     )
     return {
         "accepted": bool(realization.accepted),
-        "boundary_vertices": motion.boundary_indices.shape[0],
+        "boundary_vertices": motion.extension.boundary_indices.shape[0],
         "derivative": derivative_distribution.to_seconds_dict(),
         "first_derivative_seconds": first_derivative_seconds,
         "first_realization_seconds": first_realization_seconds,
-        "interior_vertices": motion.interior_indices.shape[0],
+        "interior_vertices": motion.extension.interior_indices.shape[0],
         "logical_plan_bytes": logical_array_bytes(motion),
         "minimum_relative_jacobian": float(
             realization.evidence.geometry.minimum_relative_jacobian

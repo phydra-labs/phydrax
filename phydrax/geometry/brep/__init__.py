@@ -56,6 +56,15 @@ from ._planar import (
     PlanarPartitionOperand,
     PlanarPartitionPlan,
 )
+from ._projection import (
+    brep_entity_id,
+    BRepEntityDimension,
+    BRepProjectionPolicy,
+    BRepProjectionResult,
+    BRepProjectionStatus,
+    prepare_brep_projection,
+    PreparedBRepProjection,
+)
 from ._source import BRep, BRepSource
 
 
@@ -63,6 +72,7 @@ __all__ = [
     "AbstractSurfacePatch",
     "BRep",
     "BRepBoundaryMap",
+    "BRepEntityDimension",
     "BRepEntityId",
     "BRepImportReport",
     "BRepModel",
@@ -76,6 +86,9 @@ __all__ = [
     "BRepPartitionReport",
     "BRepPartitionResult",
     "BRepPartitionRole",
+    "BRepProjectionPolicy",
+    "BRepProjectionResult",
+    "BRepProjectionStatus",
     "BRepSource",
     "BRepTopology",
     "BSplineCurve",
@@ -88,11 +101,13 @@ __all__ = [
     "PlanarPartitionOperand",
     "PlanarPartitionPlan",
     "PlanePatch",
+    "PreparedBRepProjection",
     "SpherePatch",
     "SurfacePatch",
     "TorusPatch",
     "all_brep_faces",
     "all_brep_solids",
+    "brep_entity_id",
     "cad_revision_from_brep_model",
     "evaluate_fixed_topology_mesh",
     "import_brep",
@@ -100,6 +115,7 @@ __all__ = [
     "partition_brep",
     "partition_planar",
     "persist_occt_shape",
+    "prepare_brep_projection",
     "read_occt_shape",
     "surface_differential",
     "surface_jacobian",

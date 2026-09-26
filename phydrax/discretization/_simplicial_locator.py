@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.ein import contract
 
-from .._bvh import build_packed_bvh, PackedBVH, point_select_leaf_items
+from .._bvh import BVHBuildPolicy, PackedBVH, point_select_leaf_items, prepare_bvh
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -161,11 +161,10 @@ class PreparedSimplicialCellLocator(AbstractCellLocator, NonTrainableState):
             raise ValueError("Locator coordinates do not match the prepared cell map.")
         cells = cell_map.coordinate_dofs
         cell_vertices = np.asarray(values)[np.asarray(cells)]
-        bvh = build_packed_bvh(
+        bvh = prepare_bvh(
             np.min(cell_vertices, axis=1),
             np.max(cell_vertices, axis=1),
-            np.mean(cell_vertices, axis=1),
-            leaf_size=min(16, cell_map.cell_count),
+            policy=BVHBuildPolicy(leaf_size=min(16, cell_map.cell_count)),
             dtype=values.dtype,
         )
         centroids = jnp.mean(values[cells], axis=1)

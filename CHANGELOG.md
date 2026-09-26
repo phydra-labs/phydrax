@@ -3,6 +3,178 @@
 ## Unreleased
 
 ### Added
+- Meshing workflow examples `adaptive_bisection_heat.py`,
+  `anisotropic_metric_adaptation.py`, `ale_conservative_remesh.py`,
+  `cad_high_order_curving.py`, `boundary_layer_core_mesh.py`, and
+  `delaunay_voronoi.py`, linked from the new Workflows section of the meshing
+  guide, whose code blocks now run as one sequence. `tools/meshing_qualification.py`
+  adds the `bisection`, `device-adaptation`, `metric-adaptation`, `gmsh-metric`,
+  `supermesh`, `remap-p1`, `cad-curving`, `boundary-layer`,
+  `gmsh-boundary-layer`, `predicates`, `triangulation`, `distribution`,
+  `forest-amr`, `omega-h`, and `omega-h-distributed` scenarios (source/target
+  identities, `QualificationRuntimeIdentity` with the meshcore build, quality
+  before/after, conservation and transfer properties, resources, and explicit
+  missing-dependency records); `tools/meshing_benchmarks.py` adds the
+  `host-bisection`, `local-metric`, `optimization`, `predicates`,
+  `boundary-layer`, `high-order-certification`, `provider-worker`, and
+  `repartition` cases.
+- Boundary layers: `phydrax.meshing.BoundaryLayerControl` binds a `LayerSchedule`
+  to a wall scope with an explicit `BoundaryLayerRoute` (`EXACT_SWEEP`,
+  `CAD_EXTRUSION`, `ADVANCING`, `PROVIDER`), `BoundaryLayerCollisionPolicy`
+  (`FAIL`, `TERMINATE_LOCALLY`, `REDUCE_THICKNESS`, `MERGE`), and
+  `BoundaryLayerCornerPolicy` (`FAN`, `SMOOTH`, `REJECT`).
+  `prepare_boundary_layers` grows native advancing layers from triangle or
+  quadrilateral walls: dihedral ridge/corner classification, visibility-optimal
+  column directions (simplex QP through `phydrax.optim`), fan columns and corner
+  patches at convex features, stretch-bounded concave corners, curvature and
+  BVH-nearest medial proximity limits, weighted Laplacian smoothing, pyramid and
+  tetrahedron termination templates, transition pyramids on quadrilateral caps,
+  and per-layer Bernstein validity plus exact-predicate intersection
+  certification; failures carry the offending wall vertices and locations.
+  `BoundaryLayerMesh` exposes the certified cells, the exact cap, and
+  `BoundaryLayerEvidence` (thickness measured as exact wall distance).
+  `GmshProvider.fill_boundary_layer_core` fills the core with the cap and outer
+  boundary fixed (bitwise node and exact face-conformity checks) and returns
+  `boundary-layer`/`core` zones with `wall`, `layer-core-interface`, and `outer`
+  patches. `GmshProvider` realizes ADVANCING and PROVIDER (boundary-layer
+  extrusion) controls around closed BRep walls, lowers planar PROVIDER controls to
+  a Gmsh `BoundaryLayer` field with measured first-layer thickness, growth, and
+  layer-count compliance (`SurfaceMeshingSpec.layer_controls`), and
+  `prepare_boundary_layer_extrusion` partitions exact CAD extrusions of planar
+  walls into an `EXACT_SWEEP` slab (`BoundaryLayerExtrusion`).
+- Device adaptive simplex epochs: `phydrax.discretization.MaskedSimplexMesh`
+  (capacity-bucketed simplex layout with activity masks and packed sibling
+  half-facets) and `AdaptiveSimplexState` with module-level compiled
+  `refine_adaptive_simplex` / `coarsen_adaptive_simplex` (conformity closure in
+  one `while_loop`, prefix-sum ID issue, capacity refusal leaves the state
+  unchanged, FILTERED_DEVICE child validity) keyed by the static
+  `AdaptiveSimplexLayout` of an `AdaptiveSimplexPolicy` bucket.
+  `phydrax.meshing.prepare_adaptive_simplex` / `commit_adaptive_simplex` bind a
+  certified source to the device and commit one `MeshAdaptationResult` with one
+  transfer; the new `MeshAdaptationRoute.DEVICE_BISECTION` commits the meshes,
+  lineage, and hierarchy of `NATIVE_BISECTION` byte for byte, and
+  `DEVICE_METRIC_2D` runs the planar metric passes on device.
+  `partition_adaptive_simplex`, `refine_adaptive_simplex_parts`, and
+  `commit_partitioned_adaptive_simplex` refine owned cells per device inside one
+  `shard_map` with part-independent IDs. `MeshAdaptationPolicy` gains
+  `device_policy`, and its `predicate_mode` now defaults to EXACT for host routes
+  and FILTERED_DEVICE for device routes. Host and device bisection share one set
+  of Maubach templates.
+- Masked solver routes on `MaskedSimplexMesh`: `MaskedFiniteElementPlan`,
+  `assemble_masked_finite_element` (P1 mass/stiffness with pinned identity rows on
+  inactive DOFs), `constrain_masked_dofs`, `evaluate_masked_fv_geometry`,
+  `masked_fv_flux_divergence`, and `evaluate_masked_fv_conservation` (capacity-route
+  stage ledger); compiled identity is the layout signature, never the active count.
+- `phydrax.discretization.prepare_l2_projection_transfer` builds the Galerkin L2
+  projection of a scalar Lagrange field between non-matching triangle or tetrahedron
+  meshes from a `PreparedCommonRefinement` with overlap simplices: the exact mixed
+  mass on the overlap simplices and one prepared sparse Cholesky of the target mass
+  form the `FiniteElementL2Projection` primal (`M_T^{-1} B`, pullback
+  `B^T M_T^{-1}`, factor status and condition evidence). Constant/linear
+  preservation and conservation are claimed from the certified coverage.
+  `FiniteElementTopologyTransfer.primal` now accepts any unbatched linear operator
+  (claims certified through actions, positivity only from sparse coefficients,
+  `action_condition` scaling), and `apply`/`pullback` carry payload axes as one
+  column block.
+- Fixed-topology mesh motion selects an explicit `FiniteElementMeshMotionRoute`
+  through `FiniteElementMeshMotionPolicy(route=...)`: `HARMONIC` (graph Laplacian),
+  `LINEAR_ELASTICITY` (matrix-free finite-element elasticity with Jacobian stiffening
+  `E = (J_max / J)**chi`), `WINSLOW` (inverse harmonic map with an inversion barrier,
+  implicit Newton–Krylov), `MMPDE` (Huang–Russell moving-mesh PDE equilibrium for a
+  monitor, SER pseudo-transient continuation with relaxation time `tau`), and
+  `PRESCRIBED`. `FiniteElementMotionExtension` owns the prepared route and returns
+  `FiniteElementMotionExtensionResult` with native solver status; every route is
+  differentiable in the boundary displacement and MMPDE monitor parameters.
+  `FiniteElementMeshMotionPlan.realize(..., monitor=...)` drives MMPDE and
+  `certify(coordinates)` returns the host-epoch Bernstein certificate.
+- `MotionValidityPlan`, `MotionValidityPolicy`, `MotionValidityEvidence`, and
+  `MotionValidityStatus` are the single traced accept/reject owner of fixed-topology
+  motion (signed corner Jacobians of every standard cell kind, finiteness,
+  displacement). FE mesh motion, `FixedConnectivityMotionPlan`, and
+  `VariablePatchGeometryPlan` consume it; `FiniteElementGeometryEvidence` is removed
+  and `FiniteElementMeshMotionPolicy` takes `validity=MotionValidityPolicy(...)`.
+- `FixedConnectivityMotionPlan` and `VariablePatchGeometryPlan` take
+  `motion_policy`/`monitor`: non-prescribed routes move only the boundary through the
+  supplied map and extend it with the shared motion route, keeping mesh velocity an
+  exact time JVP so the GCL holds by construction.
+- `MeshMotionMonitor`, `MeshMotionMonitorPolicy`, `MeshMotionAssessment`,
+  `MeshMotionDecision`, `MeshMotionAdvance`, and `advance_mesh_motion` assess moved
+  meshes (certified Jacobian ratio, quality degradation, displacement, boundary
+  residual), relocate/untangle through `optimize_cell_mesh`, and escalate to a
+  `MetricMeshAdaptation` whose transition feeds the solver transaction.
+- Target-matrix mesh optimization supports prism, pyramid, and polygon corner frames
+  and polyhedral face-centroid star simplices; metric-alignment targets use each
+  corner's ideal-cell frame.
+- Riemannian mesh metrics are owned by `phydrax/meshing/_metric.py`
+  (`MeshMetricField` moved from sizing). `normalize_mesh_metric(metric, *, policy,
+  adjacency, coordinates, vertex_volumes)` takes an explicit
+  `MetricNormalizationPolicy` (size and anisotropy bounds, target complexity
+  `sum_i V_i sqrt(det M_i)` met by the native bracketed root, gradation, and
+  opt-in symmetrization/indefinite projection of untrusted `MeshMetricSamples`)
+  and returns `MetricNormalizationEvidence` with every clamp and repair count.
+  `grade_mesh_metric` enforces edge-length-aware physical
+  (`h_q <= h_p + (beta - 1) |pq|`) or metric-space growth by an exact
+  minimum-first relaxation (scalar) or Alauzet grow-and-intersect sweeps
+  (anisotropic) with convergence and per-edge certification evidence; the silent
+  64-sweep cap is gone. Added `combine_mesh_metrics` (canonical
+  simultaneous-reduction intersection with hard-bound conflict evidence),
+  log-Euclidean `interpolate_mesh_metric`, `metric_edge_lengths`, and
+  `lp_metric_from_hessian` (Loseille-Alauzet `L^p` metric with explicit
+  indefinite/zero Hessian handling). All spectral and SPD decisions use
+  `phydrax.linalg`.
+- `phydrax.discretization.fem` adds superconvergent patch recovery for P1/P2
+  Lagrange fields on simplices: `prepare_gradient_recovery` (fixed-capacity vertex
+  patches, two-ring enlargement of singular or ill-conditioned fits, one batched
+  patch factorization), `recover_gradient`, `recover_hessian` (recovery of the
+  recovered gradient, symmetric part with asymmetry evidence),
+  `recovery_error_estimate` (Zienkiewicz-Zhu indicators), and
+  `dual_weighted_residual_indicators` (enriched adjoint solved through
+  `phydrax.linalg.solve_adjoint`), with `FiniteElementRecoveryEvidence`.
+- Native meshing core `phydrax-meshcore` (`native/meshcore`, C++20 plain C ABI
+  loaded through `phydrax._meshcore`, optional extra `phydrax[meshcore]` or
+  `PHYDRAX_MESHCORE_LIBRARY`): Shewchuk adaptive exact predicates with
+  index-ordered symbolic perturbation, exactly classified convex polygon,
+  tetrahedron, and halfspace clipping moments, and exact Delaunay, regular, and
+  constrained Delaunay (Ruppert/Chew) triangulations. `phydrax.geometry` adds
+  `orient2d`/`orient3d`/`incircle`/`insphere` with `PredicateMode` (`FILTERED`,
+  `FILTERED_DEVICE`, `EXACT`), `DelaunayTriangulation`,
+  `ConstrainedDelaunayTriangulation`, `VoronoiDiagram`, `PowerDiagram`,
+  `DiagramCells`, and `TriangulationEvidence`; `GeometryPrecisionPolicy` gains
+  `predicate_mode`. Convex-polygon and tetrahedron intersections drop their
+  extended-precision stages and the polygon `tolerance` argument: orientation
+  decisions go through the policy's predicates (exact with meshcore, otherwise
+  unresolved signs return `UNCERTAIN_PREDICATE`), `PredicateEvidence` reports
+  the predicate mode and counts, and polygon areas are correctly rounded.
+- `phydrax.geometry.prepare_common_refinement` certifies the common refinement
+  (supermesh) of two `CellMesh` instances of any 2D/3D block mix: convex pieces
+  or exactly certified vertex cones per cell, float64 BVH broad phase, batched
+  meshcore clipping, and CSR rows grouped by target cell with overlap measures,
+  first moments, optional second moments and exact simplex partitions, certified
+  cell measures, and global IDs (`PreparedCommonRefinement`). Failures are
+  statuses, never repairs (`CommonRefinementStatus`: invalid geometry,
+  uncertain predicates, native failures, double coverage, coverage gaps against
+  `CommonRefinementCoverage`, resource refusal under `CommonRefinementPolicy`
+  candidate/accepted-pair/memory limits), with `CommonRefinementEvidence`.
+  meshcore adds `polygon_intersection_simplices` and
+  `tetrahedron_intersection_simplices` (C entry points
+  `phx_mc_*_intersection_simplices`), which return the moment fans as exact
+  simplex partitions. `tools/meshing_benchmarks.py --case supermesh` scales the
+  build with the cell count.
+- Implicit, OpenVDB, Poisson, and Manifold surface providers: `ImplicitMeshingPlan.execute`
+  runs in process and publishes `result.geometry.coordinates` as the JAX
+  realization, so result observables differentiate with respect to design
+  parameters along the fixed route; `discover_implicit_surface` is vectorized
+  (batched lattice field, one-program ITP root isolation, 256-configuration
+  dual-cell tables, batched QEF small solves, one batched orientation gradient)
+  and takes self-intersection candidates from BVH overlap of reachable dual-cell
+  boxes instead of all face pairs; implicit fingerprints hash array bytes.
+  `ManifoldProvider.execute(operands, operation, *, vertex_properties=...)` performs
+  n-ary booleans and publishes transferred vertex properties per face corner
+  with barycentric transfer evidence. `OpenVDBProvider` ingests voxel bricks in
+  bulk and offers `OpenVDBLevelSetRebuild`. `PoissonReconstructionSpec` adds
+  `density_trim_quantile`, `threads`, and `boundary` (`PoissonBoundaryCondition`),
+  and results publish per-vertex sample density. The benchmark case
+  `implicit-discovery` scales discovery with lattice resolution.
 - Added the machine-learning interoperability qualification runner
   `tools/ml_interoperability_qualification.py`. It runs the scenarios of the 24
   gates in `tests/integration/test_ml_interoperability_qualification.py` (all gates
@@ -231,6 +403,163 @@
   `EdgeRelation` with a shared topology ID and `GraphIR.from_edge_relation`.
 
 ### Changed
+- `SweptLayerControl` and `LayerTerminationPolicy` are replaced by
+  `BoundaryLayerControl(wall, schedule, route=EXACT_SWEEP, volume_scope=...,
+  cap_scope=...)`; `VolumeMeshingSpec.layer_controls` accepts
+  `BoundaryLayerControl` values only.
+- Automatic finite-volume remap consumes the canonical common refinement:
+  `prepare_unstructured_conservative_remap(source, target, *, provenance, policy)`
+  returns `PreparedUnstructuredConservativeRemap` (refinement, its
+  `CommonRefinementStatus`/evidence, reason, and a plan only on success),
+  replacing `build_unstructured_conservative_remap`, its private AABB/clipping
+  loops, Mapping/attribute limit parsing, and
+  `UnstructuredConservativeRemapBuildResult`/`Evidence`/`Status`.
+  New bound-preserving second-order remap `UnstructuredSecondOrderRemapPlan`
+  (vertex-stencil least-squares gradients as a sparse map, exact overlap
+  first-moment integration, Barth-Jespersen `UnstructuredRemapLimiter`, bounded
+  global conservation restoration, `UnstructuredSecondOrderRemapResult` evidence).
+  Topology-event transactions take `remap_policy` instead of
+  `remap_tolerance`/`remap_limits` and report `automatic_remap`.
+- External meshing providers run as persistent native library-API workers
+  (`native/providers/{mmg,omega_h,tioga,vorocrust}`, moved out of
+  `phydrax/meshing/providers/native`; shared protocol headers in
+  `native/providers/common`). Arrays travel through a binary, checksummed,
+  memory-mappable exchange directory (`phydrax._external_exchange`: one NPY file
+  per array plus a canonical manifest of name, dtype, shape, and payload
+  SHA-256). `phydrax._external_runtime.NativeWorker` keeps one bounded worker
+  process per provider session (reuse across calls, `close()`/context manager,
+  per-call wall time, exchange byte bounds, address-space or peak-RSS memory
+  limits, call-count lifetime) and records the worker's exact runtime identity
+  once at startup; failures surface as `MeshingFailure` with the worker log tail
+  and raw evidence on `__cause__`. No provider spawns a version process per call.
+- Mmg runs only through its library worker (the pymmg/medit executable route and
+  the `meshing-mmg` extra are removed). `MmgProvider.adapt(source:
+  CellMeshingResult, ...)` returns `MmgAdaptationResult`: multi-block/multi-zone
+  region and facet-patch references are retained by name, required entities and
+  ridges are honored, isotropic metrics travel as scalar sizes and others as
+  tensors, `MmgLevelSet` discretizes level sets, `MmgLagrangianMotion` moves
+  meshes when Mmg is built with ELAS (otherwise refused), declared vertex fields
+  are P1-interpolated with `MmgFieldTransfer` evidence, and
+  `-DPHYDRAX_MMG_WITH_PARMMG=ON` builds a collective ParMmg worker.
+- Omega_h: `OmegaHProvider.execute(source: CellMeshingResult, metric, *, options,
+  fields, ranks, gather, limits)` preserves blocks, zones, patches, and labels as
+  Omega_h class IDs, passes `OmegaHOptions` AdaptOpts targets verbatim, transfers
+  declared `OmegaHField`s (LINEAR vertex, CONSERVE cell) with integral evidence,
+  and returns vectorized per-rank `OmegaHPartition` ownership, ghost, and
+  global-ID arrays; the global carrier and `MeshDistribution` are assembled only
+  for serial runs or `gather=True`. `OmegaHProvider(timeout=)` is removed (use
+  `MeshingLimits.maximum_wall_seconds`).
+- TIOGA runs as a persistent collective worker: `TiogaProvider.move(previous,
+  coordinates)` updates moving parts in the resident `TiogaRegistration` without
+  restarting, donor records are parsed vectorized from CSR arrays,
+  `TiogaOptions.timeout_seconds` is removed, and the license metadata is
+  BSD-3-Clause. VoroCrust extraction is a persistent worker returning binary
+  arrays assembled with NumPy and a vectorized alias merge; `VoroCrustProvider`'s
+  second argument is the optional `worker`, preflight bounds are per emitted
+  polytope, and `relative_merge_tolerance` defaults to 1e-9.
+- Worker executables are located through `PHYDRAX_MMG_WORKER`,
+  `PHYDRAX_OMEGA_H_WORKER`, `PHYDRAX_TIOGA_WORKER`, and
+  `PHYDRAX_VOROCRUST_WORKER` (replacing `PHYDRAX_OMEGA_H_EXECUTABLE`,
+  `PHYDRAX_TIOGA_EXECUTABLE`, and the VoroCrust extractor path).
+- Mesh coordinate optimization runs through `phydrax.optim.minimize`
+  (`ProjectedLBFGS` default, `NewtonTrustRegion` optional) on one stable compiled
+  route with fixed vertices eliminated (bit-identical) and coordinate boxes
+  enforced by projection. `TargetMatrixOptimizationPlan` selects a
+  `MeshQualityObjective` (generalized Knupp shape, shape plus size, metric
+  alignment, or the Gram-determinant energy) on triangle, tetrahedron,
+  quadrilateral, and hexahedron corners and takes `coordinate_bounds`,
+  `termination`, `method`, and `MeshUntanglingPolicy` instead of step-size and
+  projection callbacks. Inverted input runs explicit Escobar untangling accepted
+  only at zero inversions with a passing audit; failures return unmodified
+  coordinates with a `MeshOptimizationStatus`, and `MeshOptimizationResult`
+  carries the native `MinimizationResult`. `optimize_cell_geometry_coordinates`
+  uses the same route and returns `CellGeometryOptimizationResult`.
+- Size resolution measures proximity gaps with exact BVH nearest queries
+  (`normals` replaces supplied gap samples), grades hard growth limits by edge
+  length through the metric owner, records the gradation evidence in
+  `SizeResolutionReport`, binds `ResolvedSizeField.sample_entity_ids`, and
+  compiles fields into metric constraints with `size_field_metric`. Mesh
+  proposals project sizes and metrics through the metric owner and expose
+  `MeshProposalProjection.metric_evidence`.
+- Cell incidence construction is vectorized: polygonal, tetrahedral, hexahedral,
+  mixed standard-block, and face-loop polyhedral connectivity, cell-block
+  duplicate checks, hexahedral face tensor permutations, and `TriangleTopology`
+  half-edge twins, boundary loops, face components, and vertex incidence use
+  sorted canonical keys and array passes instead of per-cell Python loops.
+  `OrientedIncidence` and `EntitySet` check uniqueness with sorted row keys
+  instead of `np.unique` over rows. Entity ordering, global IDs, orientation
+  signs, topology IDs, and the first reported defect are unchanged. `CellMesh`
+  builds tetrahedral and hexahedral connectivity once, and
+  `CellMesh.with_coordinates` reuses the prepared connectivity and topology. The
+  unused `hexahedral_cell_complex` helper is removed. The benchmark case
+  `incidence` scales construction with the cell count.
+- The uniform full-depth `SparseLevelOctree`/`SparseLevelOctreePlan`/
+  `SparseLevelOctreeEvidence` layout is replaced by the adaptive linear octree
+  `AdaptiveOctreePlan(address_plan, leaf_capacity=..., balanced=False,
+  separation_padding=0.0, u_capacity=..., v_capacity=..., w_capacity=...,
+  x_capacity=...).prepare(points) -> AdaptiveOctree` in
+  `phydrax.discretization.spatial`. Host preparation subdivides Morton-sorted
+  points level by level until leaves hold at most `leaf_capacity` points,
+  optionally enforces 2:1 leaf balance, and stores only the refined nodes and
+  their child blocks (empty siblings are leaves, so `locate` finds the leaf of
+  any domain point) with parent, child span, point span, level, and cell
+  geometry. Adaptive-FMM U/V/W/X lists are target-major `EdgeRelation` routes
+  with row offsets, bounded capacities, and `overflow`/`required_routes`
+  evidence; `separation_padding` keeps one cell of clearance for displaced
+  sources. `LaplaceMultipolePlan3D`, the radial Helmholtz plans, and
+  `VortexFMMPlan` with `execution="level_octree"` now prepare this tree over
+  the reference sources (leaf capacity `source_leaf_occupancy`/`leaf_capacity`),
+  locate targets at evaluation, add X-list P2L and W-list M2P routes, and report
+  `p2l_count`/`m2p_count`. `far_local` and `prepare_laplace_qbx_far_local_3d`
+  return far-only local expansions centered at the requested target centers.
+- Packed BVHs have one host construction entry point, `prepare_bvh(bbox_min,
+  bbox_max, policy=BVHBuildPolicy(kind, leaf_size, sah_bins), dtype=...)`, with
+  `BVHBuildKind.MEDIAN` (level-synchronous median splits), `MORTON` (Karras radix
+  tree over sorted 30- or 63-bit Morton codes of box centers), and `SAH` (binned
+  surface-area heuristic); ties are ordered by item index and narrower storage
+  dtypes round bounds outward. `build_packed_bvh` and `build_point_bvh` are
+  removed (points use `prepare_bvh(points, points)`). `PackedBVH` is level-ordered,
+  stores its item boxes, and `refit_packed_bvh_bounds(bvh, item_min, item_max)`
+  returns the refitted hierarchy with one vectorized, differentiable update per
+  level (`reduce_packed_bvh_nodes` exposes the level sweep). New queries:
+  `bvh_nearest_items` (exact k nearest items), `bvh_hierarchical_sum`
+  (Barnes-Hut style cut sums), `bvh_overlap_pairs` (JAX simultaneous traversal
+  with pair capacity and `overflow`), and `bvh_overlap_pairs_host` /
+  `bvh_overlap_pair_blocks` (complete exact host pairs, sorted or in bounded
+  blocks). `query_host_aabb_overlaps` uses the host pair search instead of an
+  all-pairs loop, with unchanged statuses, limits, and ordering, and
+  `HostAabbOverlapBvh` carries its prepared `packed_bvh`. `TriangleBVH` takes a
+  `BVHBuildPolicy`, uses `max_depth + 2` traversal stacks, and adds `refit`,
+  `nearest_faces`, exact `winding_number` (hierarchical closing fans), and the
+  approximate `fast_winding_number` (Barill et al. dipoles), both returning a
+  `WindingNumberResult` with its `WindingNumberRoute`. `MeshRegion` distance,
+  closest-point, and inside queries refit that hierarchy instead of forming
+  query-by-face arrays, and `triangle_query_evidence(points, selected_triangles,
+  closest_points, second_distance_squared)` takes the two nearest distances
+  rather than dense per-face closest points. Benchmark cases `lbvh` and
+  `overlap-pairs` scale construction, refit, kNN, and pair search.
+- `MortonNeighborQueryPlan` and `MortonRadiusRelationPlan` prune with coarse
+  Morton cells instead of a plane schedule: sources are sorted once by Morton
+  code, each target visits its cell's `3^d` stencil at an adaptive level, and
+  distances run only over a fixed `maximum_candidates` buffer in bounded target
+  chunks (`target_chunk_size`), so no target-by-source product is formed. k-NN
+  selections are certified against the visited region and retry once at a
+  coarser level. Results carry a per-target `status`
+  (`MortonNeighborQueryStatus`); evidence reports `complete`, `sources_valid`,
+  `overflow_rows`, and `uncertified_rows` instead of plane-node counts. Radius
+  results expose `logical_cell_slots`, `cell_counts`, and `cell_offsets`. The
+  `maximum_nodes`, `maximum_leaf_occupancy`, `coarsening_factor`, and
+  `target_top_nodes` options are removed from these plans,
+  `DistributedMortonNeighborQueryPlan`, and `MortonTreeParticleNeighborhoodPlan`
+  (which gain `maximum_candidates`); `PeriodicFoFFinderPlan` replaces
+  `morton_maximum_nodes` and `morton_leaf_occupancy` with
+  `morton_maximum_candidates`.
+- `DDGOperators` accumulates cotangent edge weights over the triangle topology's
+  half-edge-to-edge map instead of a dense face-corner-by-edge match.
+  `phydrax.graph.mesh_cotangent_weights` and `mesh_to_cotangent_graph` now take
+  their edge weights and lumped vertex masses from `DDGOperators` on a validated
+  `TriangleMesh`, so degenerate faces, duplicate faces, and non-manifold edges
+  raise `ValueError` instead of silently receiving zero cotangent weight.
 - The dense control linearizations `linearize_discrete_dynamics`,
   `linearize_differential_dynamics`, and `linearize_control_dynamics` are built
   from `PreparedLinearization` and `JacobianLinearOperator` and require a
@@ -398,6 +727,18 @@
   require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- `phydrax.meshing.evaluate_cell_quality` of hexahedra, prisms, and pyramids
+  can be first evaluated under `jax.jit`/`eqx.filter_jit`: the cached exact
+  measure quadrature holds host NumPy nodal gradients instead of converting a
+  JAX tabulation, which raised `TracerArrayConversionError` inside a trace.
+- Simplex Lagrange elements of order 3 and higher (`lagrange_element` on
+  triangles and tetrahedra, `SimplexNodalFamily.finite_element`) order edge DOFs
+  along their reference edge direction, so `FiniteElementDofMap` routes every
+  shared-edge DOF to one physical node on arbitrarily oriented meshes;
+  previously edges such as the triangle's `(2, 0)` edge were listed in reverse.
+- `PreparedHelmholtzMultipole3D.p2l` pairs the outgoing Hankel radial factor with
+  `conj(Y)` as its documented local convention states; it previously also
+  conjugated the Hankel factor.
 - Derivative admission refuses every request on a `STOPPED` route, including
   hard-tree fits and meets of differing routes; differentiated regularity keeps
   the conditions it was admitted under.

@@ -402,8 +402,8 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         self.mortar = mortar
         self.mortar_metric = mortar_metric
         self.action_indices = jnp.asarray(actions)
-        self.action_index_values = tuple(actions)
-        self.entity_index_values = tuple(entities)
+        self.action_index_values = tuple(actions.tolist())
+        self.entity_index_values = tuple(entities.tolist())
         self.entity_indices = jnp.asarray(entities)
         self.owner_cells = jnp.asarray(owners)
         self.neighbor_cells = jnp.asarray(neighbors)

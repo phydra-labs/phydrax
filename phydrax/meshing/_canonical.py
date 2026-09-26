@@ -16,6 +16,7 @@ from ..discretization import (
     PolyhedralConnectivity,
 )
 from ..discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
+from ..discretization._cell_geometry_validity import CellValidityStatus
 from ..discretization._hexahedral import HexahedralConnectivity
 from ._association import GeometryAssociation
 from ._audit import audit_cell_mesh, CellMeshAuditPolicy
@@ -30,9 +31,15 @@ from ._contracts import (
     MeshingSourceKind,
 )
 from ._organization import MeshAttribute, MeshLabel, MeshPatch, MeshZone
-from ._quality import evaluate_cell_quality
 from ._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
-from ._trace import MeshingStageKind, MeshingStageReport, MeshingStageStatus, MeshingTrace
+from ._trace import (
+    MeshingDiagnostic,
+    MeshingDiagnosticSeverity,
+    MeshingStageKind,
+    MeshingStageReport,
+    MeshingStageStatus,
+    MeshingTrace,
+)
 
 
 _NATIVE_PROVIDER = MeshingProviderInfo(
@@ -190,11 +197,9 @@ def certify_cell_mesh(
     geometry_ = CellGeometrySpec.affine(canonical) if geometry is None else geometry
     if not isinstance(geometry_, CellGeometrySpec):
         raise TypeError("geometry must be CellGeometrySpec or None.")
-    quality_evaluation = evaluate_cell_quality(canonical)
     audit = audit_cell_mesh(
         canonical,
         geometry_,
-        quality_evaluation,
         policy=audit_policy,
         patches=patches,
         associations=associations,
@@ -202,19 +207,35 @@ def certify_cell_mesh(
         zones=zones,
         labels=labels,
     )
-    if audit.quality_scope != "vertex_geometry":
-        raise MeshingFailure(
-            MeshingFailureCategory.AUDIT_FAILED,
-            "Native certification does not certify high-order geometry from corner-only quality.",
-            stage=MeshingStageKind.GEOMETRY_AUDIT.value,
-        )
     if not audit.passed:
+        uncertified = (
+            np.asarray(audit.validity.status) != CellValidityStatus.CERTIFIED_VALID
+        )
+        cell_ids = np.concatenate(
+            [np.asarray(block.global_ids, dtype=np.int64) for block in canonical.blocks]
+        )
         raise MeshingFailure(
             MeshingFailureCategory.AUDIT_FAILED,
             "; ".join(audit.issues),
             stage=MeshingStageKind.GEOMETRY_AUDIT.value,
-            entity_ids=audit.quality.worst_cell_global_ids,
+            entity_ids=(
+                tuple(int(value) for value in cell_ids[uncertified])
+                if np.any(uncertified)
+                else audit.quality.worst_cell_global_ids
+            ),
         )
+    findings = audit.recorded
+    audit_status = MeshingStageStatus.WARNING if findings else MeshingStageStatus.PASSED
+    audit_diagnostics = (
+        (
+            MeshingDiagnostic(
+                MeshingDiagnosticSeverity.WARNING,
+                "Accepted audit findings: " + "; ".join(findings),
+            ),
+        )
+        if findings
+        else ()
+    )
     compliance = MeshingComplianceReport(f"existing-cell-mesh:{canonical.mesh_id}")
     stages = (
         MeshingStageReport(
@@ -230,10 +251,18 @@ def certify_cell_mesh(
             output_ids=(audit.quality.report_id,),
         ),
         MeshingStageReport(
+            MeshingStageKind.GEOMETRY_AUDIT,
+            audit_status,
+            input_ids=(geometry_.geometry_layout_id,),
+            output_ids=(audit.validity.certificate_id,),
+            diagnostics=audit_diagnostics,
+        ),
+        MeshingStageReport(
             MeshingStageKind.TOPOLOGY_AUDIT,
-            MeshingStageStatus.PASSED,
+            audit_status,
             input_ids=(canonical.topology_id,),
             output_ids=(audit.report_id,),
+            diagnostics=audit_diagnostics,
         ),
         MeshingStageReport(
             MeshingStageKind.SPECIFICATION_COMPLIANCE,

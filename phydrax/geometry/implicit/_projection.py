@@ -243,8 +243,8 @@ class ImplicitPointProjectionPlan(StrictModule):
                 "source_id": source_id,
                 "kernel": type(geometry.kernel).__qualname__,
                 "schema": [str(item.parameter_id) for item in geometry.schema.specs],
-                "anchors": anchors_host.tolist(),
-                "trust_radii": trust_host.tolist(),
+                "anchors": anchors_host,
+                "trust_radii": trust_host,
                 "policy": repr(policy),
             }
         )

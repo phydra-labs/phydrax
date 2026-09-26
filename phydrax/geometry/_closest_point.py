@@ -205,25 +205,22 @@ def segment_query_evidence(
 
 def triangle_query_evidence(
     points: Array,
-    triangles: Array,
-    closest_by_face: Array,
-    selected_face: Array,
+    selected_triangles: Array,
+    closest_points: Array,
+    second_distance_squared: Array,
     /,
 ) -> tuple[Array, Array, Array]:
-    """Certify a unique regular closest point in one triangle interior."""
+    """Certify a unique regular closest point in one triangle interior.
+
+    `selected_triangles` holds the closest triangle of each point and
+    `second_distance_squared` the squared distance to the nearest other triangle
+    (infinite when none exists).
+    """
     points_ = jnp.asarray(points)
-    distance_sq = jnp.sum((points_[..., None, :] - closest_by_face) ** 2, axis=-1)
-    sorted_distance = jnp.sort(distance_sq, axis=-1)
-    second = (
-        sorted_distance[..., 1]
-        if distance_sq.shape[-1] > 1
-        else jnp.full(distance_sq.shape[:-1], jnp.inf, dtype=distance_sq.dtype)
-    )
-    first = sorted_distance[..., 0]
-    triangle = triangles[selected_face]
-    closest = jnp.take_along_axis(
-        closest_by_face, selected_face[..., None, None], axis=-2
-    )[..., 0, :]
+    closest = jnp.asarray(closest_points)
+    triangle = jnp.asarray(selected_triangles)
+    first = jnp.sum((points_ - closest) ** 2, axis=-1)
+    second = jnp.asarray(second_distance_squared)
     first_edge = triangle[..., 1, :] - triangle[..., 0, :]
     second_edge = triangle[..., 2, :] - triangle[..., 0, :]
     relative = closest - triangle[..., 0, :]

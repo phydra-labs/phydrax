@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import NamedTuple
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -15,26 +16,26 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._cell_complex import (
-    interval_cell_complex,
+    _interval_complex,
+    _polygonal_complex,
+    _tetrahedral_complex,
     interval_connectivity,
     IntervalConnectivity,
-    polygonal_cell_complex,
     polygonal_connectivity,
     PolygonalConnectivity,
     polyhedral_cell_complex,
     polyhedral_connectivity as _build_polyhedral_connectivity,
     PolyhedralConnectivity,
-    tetrahedral_cell_complex,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
 from ._hexahedral import (
-    hexahedral_cell_complex,
+    _hexahedral_complex,
     hexahedral_connectivity,
     HexahedralConnectivity,
 )
 from ._support import DiscreteSupport
-from ._topology import CellComplexTopology, EntitySet
+from ._topology import _has_duplicate_rows, CellComplexTopology, EntitySet
 
 
 _CELL_ARITIES = {
@@ -118,13 +119,13 @@ class CellBlock(StrictModule, NonTrainableState):
             )
         if np.any(cells[valid] < 0):
             raise ValueError("Cell vertex indices must be non-negative.")
-        canonical_cells = []
-        for row, mask in zip(cells, valid, strict=True):
-            active = row[mask]
-            if np.unique(active).size != active.size:
-                raise ValueError("Each cell must reference distinct active vertices.")
-            canonical_cells.append(tuple(sorted(int(value) for value in active)))
-        if len(set(canonical_cells)) != len(canonical_cells):
+        # Padding sorts first as -1, so equal sorted rows are equal active sets.
+        active_rows = np.sort(np.where(valid, cells, -1), axis=1)
+        if np.any(
+            (active_rows[:, 1:] == active_rows[:, :-1]) & (active_rows[:, 1:] >= 0)
+        ):
+            raise ValueError("Each cell must reference distinct active vertices.")
+        if _has_duplicate_rows(active_rows):
             raise ValueError("Cell blocks cannot contain duplicate cells.")
         ids = (
             np.arange(cells.shape[0], dtype=np.int64)
@@ -196,12 +197,10 @@ class PolyhedralBlock(StrictModule, NonTrainableState):
             )
         if np.any(cells < 0):
             raise ValueError("Polyhedral cell vertex indices must be non-negative.")
-        canonical = []
-        for row in cells:
-            if np.unique(row).size != row.size:
-                raise ValueError("Each polyhedral cell must reference distinct vertices.")
-            canonical.append(tuple(sorted(int(value) for value in row)))
-        if len(set(canonical)) != len(canonical):
+        ordered = np.sort(cells, axis=1)
+        if np.any(ordered[:, 1:] == ordered[:, :-1]):
+            raise ValueError("Each polyhedral cell must reference distinct vertices.")
+        if _has_duplicate_rows(ordered):
             raise ValueError("Polyhedral blocks cannot contain duplicate cells.")
         ids = (
             np.arange(cells.shape[0], dtype=np.int64)
@@ -242,6 +241,386 @@ class PolyhedralBlock(StrictModule, NonTrainableState):
         return 3
 
 
+_CellMeshConnectivity = (
+    IntervalConnectivity
+    | PolygonalConnectivity
+    | TetrahedralConnectivity
+    | HexahedralConnectivity
+    | PolyhedralConnectivity
+)
+
+
+class _PreparedCellMeshTopology(NamedTuple):
+    """Validated coordinate-independent state shared by coordinate refreshes."""
+
+    blocks: tuple[CellBlock | PolyhedralBlock, ...]
+    vertex_global_ids: Array | np.ndarray
+    connectivity: _CellMeshConnectivity
+    topology: CellComplexTopology
+    topology_id: str
+    topological_dimension: int
+
+
+def _interval_mesh_topology(
+    blocks: tuple[CellBlock | PolyhedralBlock, ...],
+    coordinate_count: int,
+    vertex_ids: np.ndarray,
+    cell_ids: np.ndarray,
+    /,
+) -> tuple[IntervalConnectivity, CellComplexTopology]:
+    if any(block.cell_kind != "interval" for block in blocks):
+        raise ValueError("One-dimensional meshes support interval blocks only.")
+    intervals = np.concatenate(
+        tuple(np.asarray(block.vertices, dtype=np.int32) for block in blocks),
+        axis=0,
+    )
+    connectivity = interval_connectivity(intervals, coordinate_count)
+    return connectivity, _interval_complex(
+        connectivity, vertex_global_ids=vertex_ids, cell_global_ids=cell_ids
+    )
+
+
+def _polygonal_mesh_topology(
+    blocks: tuple[CellBlock | PolyhedralBlock, ...],
+    coordinate_count: int,
+    vertex_ids: np.ndarray,
+    edge_ids: np.ndarray | None,
+    cell_ids: np.ndarray,
+    /,
+) -> tuple[PolygonalConnectivity, CellComplexTopology]:
+    if any(
+        block.cell_kind not in ("triangle", "quadrilateral", "polygon")
+        for block in blocks
+    ):
+        raise ValueError("Two-dimensional meshes support polygonal blocks only.")
+    arities = tuple(block.arity for block in blocks)
+    if arities != tuple(sorted(arities)):
+        raise ValueError("Polygonal CellMesh blocks must be ordered by increasing arity.")
+    triangles = [
+        np.asarray(block.vertices, dtype=np.int32)
+        for block in blocks
+        if block.cell_kind == "triangle"
+    ]
+    quadrilaterals = [
+        np.asarray(block.vertices, dtype=np.int32)
+        for block in blocks
+        if block.cell_kind == "quadrilateral"
+    ]
+    connectivity = polygonal_connectivity(
+        np.concatenate(triangles, axis=0) if triangles else None,
+        np.concatenate(quadrilaterals, axis=0) if quadrilaterals else None,
+        coordinate_count,
+        polygons=tuple(
+            np.asarray(block.vertices, dtype=np.int32)
+            for block in blocks
+            if block.cell_kind == "polygon"
+        ),
+    )
+    return connectivity, _polygonal_complex(
+        connectivity,
+        vertex_global_ids=vertex_ids,
+        edge_global_ids=edge_ids,
+        cell_global_ids=cell_ids,
+    )
+
+
+def _validate_supplied_polyhedral_connectivity(
+    connectivity: PolyhedralConnectivity,
+    blocks: tuple[CellBlock | PolyhedralBlock, ...],
+    coordinate_count: int,
+    vertex_ids: np.ndarray,
+    entity_ids: Mapping[int, np.ndarray],
+    cell_ids: np.ndarray,
+    /,
+) -> None:
+    if (
+        connectivity.vertex_count != coordinate_count
+        or connectivity.cell_count != sum(block.cell_count for block in blocks)
+        or not np.array_equal(np.asarray(connectivity.vertex_global_ids), vertex_ids)
+        or (
+            entity_ids.get(1) is not None
+            and not np.array_equal(
+                entity_ids[1], np.asarray(connectivity.edge_global_ids)
+            )
+        )
+        or (
+            entity_ids.get(2) is not None
+            and not np.array_equal(
+                entity_ids[2], np.asarray(connectivity.face_global_ids)
+            )
+        )
+        or not np.array_equal(np.asarray(connectivity.cell_global_ids), cell_ids)
+    ):
+        raise ValueError("PolyhedralConnectivity does not match the CellMesh IDs.")
+    offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
+    values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
+    cell_offset = 0
+    for block in blocks:
+        widths = np.diff(offsets[cell_offset : cell_offset + block.cell_count + 1])
+        if np.any(widths != block.arity):
+            raise ValueError("PolyhedralConnectivity cell widths do not match blocks.")
+        start = int(offsets[cell_offset])
+        stop = int(offsets[cell_offset + block.cell_count])
+        expected = np.asarray(block.vertices, dtype=np.int32)
+        if not np.array_equal(
+            values[start:stop].reshape(expected.shape), np.sort(expected, axis=1)
+        ):
+            raise ValueError("PolyhedralConnectivity cell vertices do not match blocks.")
+        cell_offset += block.cell_count
+
+
+def _volume_mesh_topology(
+    blocks: tuple[CellBlock | PolyhedralBlock, ...],
+    coordinate_count: int,
+    vertex_ids: np.ndarray,
+    entity_ids: Mapping[int, np.ndarray],
+    cell_ids: np.ndarray,
+    supplied: PolyhedralConnectivity | None,
+    /,
+) -> tuple[_CellMeshConnectivity, CellComplexTopology]:
+    if supplied is not None:
+        _validate_supplied_polyhedral_connectivity(
+            supplied, blocks, coordinate_count, vertex_ids, entity_ids, cell_ids
+        )
+        return supplied, polyhedral_cell_complex(supplied)
+    if len(blocks) == 1 and blocks[0].cell_kind == "tetrahedron":
+        connectivity = tetrahedral_connectivity(
+            np.asarray(blocks[0].vertices, dtype=np.int32), coordinate_count
+        )
+        return connectivity, _tetrahedral_complex(
+            connectivity,
+            vertex_global_ids=vertex_ids,
+            edge_global_ids=entity_ids.get(1),
+            face_global_ids=entity_ids.get(2),
+            cell_global_ids=cell_ids,
+        )
+    if len(blocks) == 1 and blocks[0].cell_kind == "hexahedron":
+        connectivity = hexahedral_connectivity(
+            np.asarray(blocks[0].vertices, dtype=np.int32), coordinate_count
+        )
+        return connectivity, _hexahedral_complex(
+            connectivity,
+            vertex_global_ids=vertex_ids,
+            edge_global_ids=entity_ids.get(1),
+            face_global_ids=entity_ids.get(2),
+            cell_global_ids=cell_ids,
+        )
+    if any(block.cell_kind == "polyhedron" for block in blocks):
+        raise ValueError("Polyhedron blocks require matching PolyhedralConnectivity.")
+    connectivity = _build_polyhedral_connectivity(
+        tuple(
+            (block.cell_kind, np.asarray(block.vertices, dtype=np.int32))
+            for block in blocks
+        ),
+        coordinate_count,
+        vertex_global_ids=vertex_ids,
+        edge_global_ids=entity_ids.get(1),
+        face_global_ids=entity_ids.get(2),
+        cell_global_ids=cell_ids,
+    )
+    return connectivity, polyhedral_cell_complex(connectivity)
+
+
+def _validated_mesh_blocks(
+    point_shape: tuple[int, ...],
+    blocks: Sequence[CellBlock | PolyhedralBlock],
+    /,
+) -> tuple[tuple[CellBlock | PolyhedralBlock, ...], int]:
+    coordinate_count, ambient_dimension = point_shape
+    normalized_blocks = tuple(blocks)
+    if not normalized_blocks:
+        raise ValueError("Cell mesh requires at least one cell block.")
+    if not all(
+        isinstance(block, (CellBlock, PolyhedralBlock)) for block in normalized_blocks
+    ):
+        raise TypeError(
+            "blocks must contain only CellBlock or PolyhedralBlock instances."
+        )
+    names = tuple(block.name for block in normalized_blocks)
+    if len(set(names)) != len(names):
+        raise ValueError("Cell block names must be unique.")
+    dimensions = {block.topological_dimension for block in normalized_blocks}
+    if len(dimensions) != 1:
+        raise ValueError("All cell blocks must share one topological dimension.")
+    topological_dimension = dimensions.pop()
+    if ambient_dimension < topological_dimension:
+        raise ValueError(
+            "Cell mesh ambient dimension cannot be smaller than its topological dimension."
+        )
+    for block in normalized_blocks:
+        vertices_ = np.asarray(block.vertices)
+        valid_ = np.asarray(block.vertex_valid, dtype=np.bool_)
+        if np.any(vertices_[valid_] >= coordinate_count):
+            raise ValueError(f"Cell block {block.name!r} indexes undeclared vertices.")
+    return normalized_blocks, topological_dimension
+
+
+def _resolved_mesh_identities(
+    coordinate_count: int,
+    blocks: tuple[CellBlock | PolyhedralBlock, ...],
+    topological_dimension: int,
+    vertex_global_ids: ArrayLike | None,
+    entity_global_ids: Mapping[int, ArrayLike] | None,
+    /,
+) -> tuple[np.ndarray, dict[int, np.ndarray], np.ndarray]:
+    """Return consistent vertex, supplied entity, and cell global IDs."""
+
+    entity_ids = (
+        {}
+        if entity_global_ids is None
+        else {
+            int(dimension): np.asarray(values, dtype=np.int64)
+            for dimension, values in entity_global_ids.items()
+        }
+    )
+    if any(
+        dimension < 0 or dimension > topological_dimension for dimension in entity_ids
+    ):
+        raise ValueError("entity_global_ids contains an undeclared dimension.")
+    supplied_vertices = entity_ids.get(0)
+    if supplied_vertices is not None and vertex_global_ids is not None:
+        if not np.array_equal(
+            supplied_vertices, np.asarray(vertex_global_ids, dtype=np.int64)
+        ):
+            raise ValueError(
+                "vertex_global_ids contradicts entity_global_ids dimension zero."
+            )
+    global_ids = (
+        supplied_vertices
+        if supplied_vertices is not None
+        else (
+            np.arange(coordinate_count, dtype=np.int64)
+            if vertex_global_ids is None
+            else np.asarray(vertex_global_ids, dtype=np.int64)
+        )
+    )
+    if global_ids.shape != (coordinate_count,):
+        raise ValueError("vertex_global_ids must have shape (coordinate_count,).")
+    if np.any(global_ids < 0) or np.unique(global_ids).size != global_ids.size:
+        raise ValueError("vertex_global_ids must be unique non-negative integers.")
+    cell_global_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in blocks)
+    )
+    if np.unique(cell_global_ids).size != cell_global_ids.size:
+        raise ValueError("Cell global IDs must be unique across mesh blocks.")
+    supplied_cells = entity_ids.get(topological_dimension)
+    if supplied_cells is not None and not np.array_equal(supplied_cells, cell_global_ids):
+        raise ValueError(
+            "Top-dimensional entity_global_ids contradict cell block global IDs."
+        )
+    return global_ids, entity_ids, cell_global_ids
+
+
+def _prepare_cell_mesh_topology(
+    point_shape: tuple[int, ...],
+    blocks: Sequence[CellBlock | PolyhedralBlock],
+    /,
+    *,
+    vertex_global_ids: ArrayLike | None,
+    entity_global_ids: Mapping[int, ArrayLike] | None,
+    polyhedral_connectivity: PolyhedralConnectivity | None,
+) -> _PreparedCellMeshTopology:
+    """Validate blocks and identities, then build connectivity and topology once."""
+
+    coordinate_count = point_shape[0]
+    normalized_blocks, topological_dimension = _validated_mesh_blocks(point_shape, blocks)
+    global_ids, entity_ids, cell_global_ids = _resolved_mesh_identities(
+        coordinate_count,
+        normalized_blocks,
+        topological_dimension,
+        vertex_global_ids,
+        entity_global_ids,
+    )
+    if polyhedral_connectivity is not None and topological_dimension != 3:
+        raise ValueError(
+            "polyhedral_connectivity is valid only for three-dimensional meshes."
+        )
+    if topological_dimension == 1:
+        connectivity, topology = _interval_mesh_topology(
+            normalized_blocks, coordinate_count, global_ids, cell_global_ids
+        )
+    elif topological_dimension == 2:
+        connectivity, topology = _polygonal_mesh_topology(
+            normalized_blocks,
+            coordinate_count,
+            global_ids,
+            entity_ids.get(1),
+            cell_global_ids,
+        )
+    else:
+        connectivity, topology = _volume_mesh_topology(
+            normalized_blocks,
+            coordinate_count,
+            global_ids,
+            entity_ids,
+            cell_global_ids,
+            polyhedral_connectivity,
+        )
+
+    canonical_blocks = []
+    for block in normalized_blocks:
+        block_ids = np.asarray(block.global_ids, dtype=np.int64)
+        order = np.argsort(block_ids, kind="stable")
+        global_vertices = global_ids[np.asarray(block.vertices, dtype=np.int32)]
+        canonical_blocks.append(
+            {
+                "name": block.name,
+                "cell_kind": block.cell_kind,
+                "global_ids": array_tree_fingerprint(block_ids[order]),
+                "global_vertices": array_tree_fingerprint(global_vertices[order]),
+                "vertex_valid": array_tree_fingerprint(
+                    np.asarray(block.vertex_valid)[order]
+                ),
+            }
+        )
+    topology_id = canonical_fingerprint(
+        {
+            "kind": "cell-mesh-topology",
+            "topological_dimension": topological_dimension,
+            "vertex_global_ids": array_tree_fingerprint(global_ids),
+            "blocks": canonical_blocks,
+            "cell_complex": topology.topology_id,
+        }
+    )
+    return _PreparedCellMeshTopology(
+        normalized_blocks,
+        global_ids,
+        connectivity,
+        topology,
+        topology_id,
+        topological_dimension,
+    )
+
+
+def _reused_cell_mesh_topology(
+    prepared: _PreparedCellMeshTopology,
+    point_shape: tuple[int, ...],
+    blocks: Sequence[CellBlock | PolyhedralBlock],
+    /,
+    *,
+    identities_supplied: bool,
+) -> _PreparedCellMeshTopology:
+    """Check that a coordinate refresh keeps the prepared topology intact."""
+
+    if not isinstance(prepared, _PreparedCellMeshTopology):
+        raise TypeError("A prepared cell-mesh topology must come from a CellMesh.")
+    if identities_supplied:
+        raise ValueError("A prepared cell-mesh topology already owns its identities.")
+    normalized_blocks = tuple(blocks)
+    if len(normalized_blocks) != len(prepared.blocks) or any(
+        block is not prepared_block
+        for block, prepared_block in zip(normalized_blocks, prepared.blocks, strict=True)
+    ):
+        raise ValueError("blocks must be the prepared topology's blocks.")
+    if point_shape[0] != prepared.vertex_global_ids.shape[0]:
+        raise ValueError("vertex_global_ids must have shape (coordinate_count,).")
+    if point_shape[1] < prepared.topological_dimension:
+        raise ValueError(
+            "Cell mesh ambient dimension cannot be smaller than its topological dimension."
+        )
+    return prepared
+
+
 class CellMesh(StrictModule, NonTrainableState):
     """Canonical computational mesh shared by unstructured discretizations."""
 
@@ -275,293 +654,36 @@ class CellMesh(StrictModule, NonTrainableState):
         entity_global_ids: Mapping[int, ArrayLike] | None = None,
         polyhedral_connectivity: PolyhedralConnectivity | None = None,
         numeric_version: str = "0",
+        _prepared_topology: _PreparedCellMeshTopology | None = None,
     ):
         points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError("Cell mesh coordinates must have shape (n > 0, d > 0).")
         if not np.all(np.isfinite(points)):
             raise ValueError("Cell mesh coordinates must be finite.")
-        normalized_blocks = tuple(blocks)
-        if not normalized_blocks:
-            raise ValueError("Cell mesh requires at least one cell block.")
-        if not all(
-            isinstance(block, (CellBlock, PolyhedralBlock)) for block in normalized_blocks
-        ):
-            raise TypeError(
-                "blocks must contain only CellBlock or PolyhedralBlock instances."
-            )
-        names = tuple(block.name for block in normalized_blocks)
-        if len(set(names)) != len(names):
-            raise ValueError("Cell block names must be unique.")
-        dimensions = {block.topological_dimension for block in normalized_blocks}
-        if len(dimensions) != 1:
-            raise ValueError("All cell blocks must share one topological dimension.")
-        topological_dimension = dimensions.pop()
-        if points.shape[1] < topological_dimension:
-            raise ValueError(
-                "Cell mesh ambient dimension cannot be smaller than its topological dimension."
-            )
-        for block in normalized_blocks:
-            vertices_ = np.asarray(block.vertices)
-            valid_ = np.asarray(block.vertex_valid, dtype=np.bool_)
-            if np.any(vertices_[valid_] >= points.shape[0]):
-                raise ValueError(
-                    f"Cell block {block.name!r} indexes undeclared vertices."
-                )
-        entity_ids = (
-            {}
-            if entity_global_ids is None
-            else {
-                int(dimension): np.asarray(values, dtype=np.int64)
-                for dimension, values in entity_global_ids.items()
-            }
-        )
-        if any(
-            dimension < 0 or dimension > topological_dimension for dimension in entity_ids
-        ):
-            raise ValueError("entity_global_ids contains an undeclared dimension.")
-        supplied_vertices = entity_ids.get(0)
-        if supplied_vertices is not None and vertex_global_ids is not None:
-            if not np.array_equal(
-                supplied_vertices, np.asarray(vertex_global_ids, dtype=np.int64)
-            ):
-                raise ValueError(
-                    "vertex_global_ids contradicts entity_global_ids dimension zero."
-                )
-        global_ids = (
-            supplied_vertices
-            if supplied_vertices is not None
-            else (
-                np.arange(points.shape[0], dtype=np.int64)
-                if vertex_global_ids is None
-                else np.asarray(vertex_global_ids, dtype=np.int64)
-            )
-        )
-        if global_ids.shape != (points.shape[0],):
-            raise ValueError("vertex_global_ids must have shape (coordinate_count,).")
-        if np.any(global_ids < 0) or np.unique(global_ids).size != global_ids.size:
-            raise ValueError("vertex_global_ids must be unique non-negative integers.")
-        all_cell_ids = np.concatenate(
-            tuple(
-                np.asarray(block.global_ids, dtype=np.int64)
-                for block in normalized_blocks
-            )
-        )
-        if np.unique(all_cell_ids).size != all_cell_ids.size:
-            raise ValueError("Cell global IDs must be unique across mesh blocks.")
-
-        cell_global_ids = np.concatenate(
-            tuple(
-                np.asarray(block.global_ids, dtype=np.int64)
-                for block in normalized_blocks
-            )
-        )
-        supplied_cells = entity_ids.get(topological_dimension)
-        if supplied_cells is not None and not np.array_equal(
-            supplied_cells, cell_global_ids
-        ):
-            raise ValueError(
-                "Top-dimensional entity_global_ids contradict cell block global IDs."
-            )
-        if polyhedral_connectivity is not None and topological_dimension != 3:
-            raise ValueError(
-                "polyhedral_connectivity is valid only for three-dimensional meshes."
-            )
-        if topological_dimension == 1:
-            if any(block.cell_kind != "interval" for block in normalized_blocks):
-                raise ValueError("One-dimensional meshes support interval blocks only.")
-            intervals = np.concatenate(
-                tuple(
-                    np.asarray(block.vertices, dtype=np.int32)
-                    for block in normalized_blocks
-                ),
-                axis=0,
-            )
-            connectivity = interval_connectivity(intervals, points.shape[0])
-            topology = interval_cell_complex(
-                intervals,
-                points.shape[0],
-                vertex_global_ids=global_ids,
-                cell_global_ids=cell_global_ids,
-            )
-        elif topological_dimension == 2:
-            if any(
-                block.cell_kind not in ("triangle", "quadrilateral", "polygon")
-                for block in normalized_blocks
-            ):
-                raise ValueError("Two-dimensional meshes support polygonal blocks only.")
-            arities = tuple(block.arity for block in normalized_blocks)
-            if arities != tuple(sorted(arities)):
-                raise ValueError(
-                    "Polygonal CellMesh blocks must be ordered by increasing arity."
-                )
-            triangles = [
-                np.asarray(block.vertices, dtype=np.int32)
-                for block in normalized_blocks
-                if block.cell_kind == "triangle"
-            ]
-            quadrilaterals = [
-                np.asarray(block.vertices, dtype=np.int32)
-                for block in normalized_blocks
-                if block.cell_kind == "quadrilateral"
-            ]
-            polygons = tuple(
-                np.asarray(block.vertices, dtype=np.int32)
-                for block in normalized_blocks
-                if block.cell_kind == "polygon"
-            )
-            triangle_cells = np.concatenate(triangles, axis=0) if triangles else None
-            quadrilateral_cells = (
-                np.concatenate(quadrilaterals, axis=0) if quadrilaterals else None
-            )
-            connectivity = polygonal_connectivity(
-                triangle_cells,
-                quadrilateral_cells,
-                points.shape[0],
-                polygons=polygons,
-            )
-            topology = polygonal_cell_complex(
-                triangle_cells,
-                quadrilateral_cells,
-                points.shape[0],
-                polygons=polygons,
-                vertex_global_ids=global_ids,
-                edge_global_ids=entity_ids.get(1),
-                cell_global_ids=cell_global_ids,
+        if _prepared_topology is None:
+            prepared = _prepare_cell_mesh_topology(
+                points.shape,
+                blocks,
+                vertex_global_ids=vertex_global_ids,
+                entity_global_ids=entity_global_ids,
+                polyhedral_connectivity=polyhedral_connectivity,
             )
         else:
-            if polyhedral_connectivity is not None:
-                connectivity = polyhedral_connectivity
-                if (
-                    connectivity.vertex_count != points.shape[0]
-                    or connectivity.cell_count
-                    != sum(block.cell_count for block in normalized_blocks)
-                    or not np.array_equal(
-                        np.asarray(connectivity.vertex_global_ids), global_ids
-                    )
-                    or (
-                        entity_ids.get(1) is not None
-                        and not np.array_equal(
-                            entity_ids[1],
-                            np.asarray(connectivity.edge_global_ids),
-                        )
-                    )
-                    or (
-                        entity_ids.get(2) is not None
-                        and not np.array_equal(
-                            entity_ids[2],
-                            np.asarray(connectivity.face_global_ids),
-                        )
-                    )
-                    or not np.array_equal(
-                        np.asarray(connectivity.cell_global_ids), cell_global_ids
-                    )
-                ):
-                    raise ValueError(
-                        "PolyhedralConnectivity does not match the CellMesh IDs."
-                    )
-                offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
-                values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
-                cell_offset = 0
-                for block in normalized_blocks:
-                    widths = np.diff(
-                        offsets[cell_offset : cell_offset + block.cell_count + 1]
-                    )
-                    if np.any(widths != block.arity):
-                        raise ValueError(
-                            "PolyhedralConnectivity cell widths do not match blocks."
-                        )
-                    start = int(offsets[cell_offset])
-                    stop = int(offsets[cell_offset + block.cell_count])
-                    expected = np.asarray(block.vertices, dtype=np.int32)
-                    if not np.array_equal(
-                        values[start:stop].reshape(expected.shape),
-                        np.sort(expected, axis=1),
-                    ):
-                        raise ValueError(
-                            "PolyhedralConnectivity cell vertices do not match blocks."
-                        )
-                    cell_offset += block.cell_count
-                topology = polyhedral_cell_complex(connectivity)
-            elif (
-                len(normalized_blocks) == 1
-                and normalized_blocks[0].cell_kind == "tetrahedron"
-            ):
-                block = normalized_blocks[0]
-                tetrahedra = np.asarray(block.vertices, dtype=np.int32)
-                connectivity = tetrahedral_connectivity(tetrahedra, points.shape[0])
-                topology = tetrahedral_cell_complex(
-                    tetrahedra,
-                    points.shape[0],
-                    vertex_global_ids=global_ids,
-                    edge_global_ids=entity_ids.get(1),
-                    face_global_ids=entity_ids.get(2),
-                    cell_global_ids=cell_global_ids,
-                )
-            elif (
-                len(normalized_blocks) == 1
-                and normalized_blocks[0].cell_kind == "hexahedron"
-            ):
-                block = normalized_blocks[0]
-                hexahedra = np.asarray(block.vertices, dtype=np.int32)
-                connectivity = hexahedral_connectivity(hexahedra, points.shape[0])
-                topology = hexahedral_cell_complex(
-                    hexahedra,
-                    points.shape[0],
-                    vertex_global_ids=global_ids,
-                    edge_global_ids=entity_ids.get(1),
-                    face_global_ids=entity_ids.get(2),
-                    cell_global_ids=cell_global_ids,
-                )
-            elif any(block.cell_kind == "polyhedron" for block in normalized_blocks):
-                raise ValueError(
-                    "Polyhedron blocks require matching PolyhedralConnectivity."
-                )
-            else:
-                polyhedral_blocks = tuple(
-                    (block.cell_kind, np.asarray(block.vertices, dtype=np.int32))
-                    for block in normalized_blocks
-                )
-                connectivity = _build_polyhedral_connectivity(
-                    polyhedral_blocks,
-                    points.shape[0],
-                    vertex_global_ids=global_ids,
-                    edge_global_ids=entity_ids.get(1),
-                    face_global_ids=entity_ids.get(2),
-                    cell_global_ids=cell_global_ids,
-                )
-                topology = polyhedral_cell_complex(connectivity)
-
-        canonical_blocks = []
-        for block in normalized_blocks:
-            block_ids = np.asarray(block.global_ids, dtype=np.int64)
-            order = np.argsort(block_ids, kind="stable")
-            global_vertices = global_ids[np.asarray(block.vertices, dtype=np.int32)]
-            canonical_blocks.append(
-                {
-                    "name": block.name,
-                    "cell_kind": block.cell_kind,
-                    "global_ids": array_tree_fingerprint(block_ids[order]),
-                    "global_vertices": array_tree_fingerprint(global_vertices[order]),
-                    "vertex_valid": array_tree_fingerprint(
-                        np.asarray(block.vertex_valid)[order]
-                    ),
-                }
+            prepared = _reused_cell_mesh_topology(
+                _prepared_topology,
+                points.shape,
+                blocks,
+                identities_supplied=(
+                    vertex_global_ids is not None
+                    or entity_global_ids is not None
+                    or polyhedral_connectivity is not None
+                ),
             )
-
-        topology_id = canonical_fingerprint(
-            {
-                "kind": "cell-mesh-topology",
-                "topological_dimension": topological_dimension,
-                "vertex_global_ids": array_tree_fingerprint(global_ids),
-                "blocks": canonical_blocks,
-                "cell_complex": topology.topology_id,
-            }
-        )
         geometry_layout_id = canonical_fingerprint(
             {
                 "kind": "cell-mesh-geometry-layout",
-                "topology": topology_id,
+                "topology": prepared.topology_id,
                 "ambient_dimension": points.shape[1],
                 "coordinate_count": points.shape[0],
                 "coordinate_dtype": str(points.dtype),
@@ -575,22 +697,22 @@ class CellMesh(StrictModule, NonTrainableState):
                 "numeric_version": str(numeric_version),
             }
         )
-        support = DiscreteSupport(topology, points.shape[1], geometry_layout_id)
+        support = DiscreteSupport(prepared.topology, points.shape[1], geometry_layout_id)
         self.coordinates = jnp.asarray(points)
-        self.blocks = normalized_blocks
-        self.vertex_global_ids = jnp.asarray(global_ids)
-        self.topology = topology
-        self.connectivity = connectivity
+        self.blocks = prepared.blocks
+        self.vertex_global_ids = jnp.asarray(prepared.vertex_global_ids)
+        self.topology = prepared.topology
+        self.connectivity = prepared.connectivity
         self.support = support
-        self.topological_dimension = topological_dimension
+        self.topological_dimension = prepared.topological_dimension
         self.ambient_dimension = points.shape[1]
-        self.topology_id = topology_id
+        self.topology_id = prepared.topology_id
         self.geometry_layout_id = geometry_layout_id
         self.geometry_id = geometry_id
         self.mesh_id = canonical_fingerprint(
             {
                 "kind": "cell-mesh",
-                "topology": topology_id,
+                "topology": prepared.topology_id,
                 "geometry": geometry_id,
             }
         )
@@ -960,19 +1082,20 @@ class CellMesh(StrictModule, NonTrainableState):
             raise ValueError(
                 "Fixed-topology coordinate refresh must preserve coordinate shape."
             )
+        # The blocks, identities, connectivity, and topology are coordinate
+        # independent, so the refresh reuses them instead of rebuilding them.
         return CellMesh(
             points,
             self.blocks,
-            entity_global_ids={
-                entities.intrinsic_dimension: entities.entity_ids
-                for entities in self.topology.entity_sets
-            },
-            polyhedral_connectivity=(
-                self.connectivity
-                if any(isinstance(block, PolyhedralBlock) for block in self.blocks)
-                else None
-            ),
             numeric_version=numeric_version,
+            _prepared_topology=_PreparedCellMeshTopology(
+                self.blocks,
+                self.vertex_global_ids,
+                self.connectivity,
+                self.topology,
+                self.topology_id,
+                self.topological_dimension,
+            ),
         )
 
 

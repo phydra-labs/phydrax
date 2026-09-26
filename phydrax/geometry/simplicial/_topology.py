@@ -7,7 +7,9 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import scipy.sparse as sp
 from jaxtyping import Array
+from scipy.sparse.csgraph import connected_components
 
 from ..._strict import StrictModule
 from ...discretization._topology import (
@@ -30,6 +32,65 @@ def _csr(
         (np.asarray([0], dtype=np.int32), np.cumsum(counts, dtype=np.int32))
     )
     return offsets.astype(np.int32), values_sorted.astype(np.int32)
+
+
+def _boundary_loops(
+    starts: np.ndarray, ends: np.ndarray, vertex_count: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Trace boundary half-edges, given in increasing half-edge order, into loops.
+
+    Loops are ordered by their smallest half-edge and list origins starting
+    there, exactly as a traversal from the smallest remaining half-edge would.
+    """
+
+    count = starts.size
+    outgoing = np.bincount(starts, minlength=vertex_count)
+    incoming = np.bincount(ends, minlength=vertex_count)
+    if np.any(outgoing > 1) or np.any(incoming > 1):
+        raise ValueError("Boundary is non-manifold at a vertex.")
+    if np.any(outgoing != incoming):
+        raise ValueError("Boundary half-edges do not form closed loops.")
+    # Every boundary vertex has one outgoing and one incoming half-edge, so the
+    # successor map is a permutation whose cycles are the loops.
+    position = np.empty((vertex_count,), dtype=np.int64)
+    position[starts] = np.arange(count, dtype=np.int64)
+    successor = position[ends]
+    indices = np.arange(count, dtype=np.int64)
+    # Pointer doubling: after k rounds `root` is the minimum over 2**k
+    # successors, so bit_length(count) rounds reach each loop's minimum.
+    root = indices.copy()
+    jump = successor.copy()
+    for _ in range(count.bit_length()):
+        root = np.minimum(root, root[jump])
+        jump = jump[jump]
+    # List ranking toward each root yields the forward distance from the root.
+    is_root = root == indices
+    steps = np.where(is_root, 0, 1)
+    jump = np.where(is_root, indices, successor)
+    for _ in range(count.bit_length()):
+        steps = steps + steps[jump]
+        jump = jump[jump]
+    lengths = np.bincount(root, minlength=count)
+    order = np.lexsort(((lengths[root] - steps) % lengths[root], root))
+    offsets = np.zeros((np.count_nonzero(is_root) + 1,), dtype=np.int32)
+    np.cumsum(lengths[is_root], out=offsets[1:])
+    return starts[order].astype(np.int32), offsets
+
+
+def _face_components(
+    first_faces: np.ndarray, second_faces: np.ndarray, face_count: int
+) -> tuple[np.ndarray, int]:
+    """Label edge-connected faces with components ordered by smallest face."""
+
+    adjacency = sp.csr_matrix(
+        (np.ones((first_faces.size,), dtype=np.int8), (first_faces, second_faces)),
+        shape=(face_count, face_count),
+    )
+    component_count, labels = connected_components(adjacency, directed=False)
+    _, smallest = np.unique(labels, return_index=True)
+    relabel = np.empty((component_count,), dtype=np.int32)
+    relabel[np.argsort(smallest)] = np.arange(component_count, dtype=np.int32)
+    return relabel[labels], component_count
 
 
 class SegmentTopology(StrictModule):
@@ -158,104 +219,54 @@ class TriangleTopology(StrictModule):
         halfedge_next = local[:, [1, 2, 0]].reshape((-1,))
         halfedge_previous = local[:, [2, 0, 1]].reshape((-1,))
 
-        edge_groups: dict[tuple[int, int], list[int]] = {}
-        for halfedge, (start, end) in enumerate(zip(origin, destination, strict=True)):
-            key = (min(int(start), int(end)), max(int(start), int(end)))
-            edge_groups.setdefault(key, []).append(halfedge)
-        if any(len(group) > 2 for group in edge_groups.values()):
+        # Stable sort by undirected key: edges are lexicographic and each pair
+        # keeps its half-edges in increasing order.
+        low = np.minimum(origin, destination).astype(np.int64)
+        high = np.maximum(origin, destination).astype(np.int64)
+        order = np.argsort(low * vertex_count + high, kind="stable")
+        starts = np.ones((halfedge_count,), dtype=np.bool_)
+        starts[1:] = (low[order[1:]] != low[order[:-1]]) | (
+            high[order[1:]] != high[order[:-1]]
+        )
+        first = np.flatnonzero(starts)
+        group_sizes = np.diff(np.append(first, halfedge_count))
+        if np.any(group_sizes > 2):
             raise ValueError(
                 "TriangleTopology is non-manifold: an edge has more than two incident faces."
             )
-
-        halfedge_twin = np.full((halfedge_count,), -1, dtype=np.int32)
+        edges = np.stack((low[order[first]], high[order[first]]), axis=1).astype(np.int32)
         halfedge_edge = np.empty((halfedge_count,), dtype=np.int32)
-        edges = np.empty((len(edge_groups), 2), dtype=np.int32)
-        edge_halfedges = np.full((len(edge_groups), 2), -1, dtype=np.int32)
-        for edge_index, (key, group) in enumerate(sorted(edge_groups.items())):
-            edges[edge_index] = key
-            edge_halfedges[edge_index, : len(group)] = group
-            halfedge_edge[group] = edge_index
-            if len(group) == 2:
-                first, second = group
-                if (
-                    origin[first] == origin[second]
-                    or destination[first] == destination[second]
-                ):
-                    raise ValueError(
-                        "Adjacent faces have inconsistent orientation across an edge."
-                    )
-                halfedge_twin[first] = second
-                halfedge_twin[second] = first
+        halfedge_edge[order] = np.cumsum(starts) - 1
+        paired = group_sizes == 2
+        first_halfedges = order[first[paired]]
+        second_halfedges = order[first[paired] + 1]
+        if np.any(
+            (origin[first_halfedges] == origin[second_halfedges])
+            | (destination[first_halfedges] == destination[second_halfedges])
+        ):
+            raise ValueError(
+                "Adjacent faces have inconsistent orientation across an edge."
+            )
+        edge_halfedges = np.full((first.size, 2), -1, dtype=np.int32)
+        edge_halfedges[:, 0] = order[first]
+        edge_halfedges[paired, 1] = second_halfedges
+        halfedge_twin = np.full((halfedge_count,), -1, dtype=np.int32)
+        halfedge_twin[first_halfedges] = second_halfedges
+        halfedge_twin[second_halfedges] = first_halfedges
 
         boundary_halfedges = np.flatnonzero(halfedge_twin < 0).astype(np.int32)
-        boundary_loops: list[np.ndarray] = []
-        if boundary_halfedges.size:
-            outgoing: dict[int, int] = {}
-            incoming: dict[int, int] = {}
-            for halfedge in boundary_halfedges:
-                start = int(origin[halfedge])
-                end = int(destination[halfedge])
-                if start in outgoing or end in incoming:
-                    raise ValueError("Boundary is non-manifold at a vertex.")
-                outgoing[start] = int(halfedge)
-                incoming[end] = int(halfedge)
-            if set(outgoing) != set(incoming):
-                raise ValueError("Boundary half-edges do not form closed loops.")
-            remaining = set(map(int, boundary_halfedges))
-            while remaining:
-                first_halfedge = min(remaining)
-                first_vertex = int(origin[first_halfedge])
-                vertices: list[int] = []
-                current = first_vertex
-                while True:
-                    halfedge = outgoing[current]
-                    if halfedge not in remaining:
-                        if current != first_vertex:
-                            raise ValueError(
-                                "Boundary traversal encountered a repeated half-edge."
-                            )
-                        break
-                    remaining.remove(halfedge)
-                    vertices.append(current)
-                    current = int(destination[halfedge])
-                    if current == first_vertex:
-                        break
-                boundary_loops.append(np.asarray(vertices, dtype=np.int32))
-        loop_offsets = np.zeros((len(boundary_loops) + 1,), dtype=np.int32)
-        if boundary_loops:
-            loop_offsets[1:] = np.cumsum(
-                [loop.size for loop in boundary_loops], dtype=np.int32
-            )
-            loop_vertices = np.concatenate(boundary_loops)
-        else:
-            loop_vertices = np.zeros((0,), dtype=np.int32)
-
-        vertex_face_owners = faces_host.reshape((-1,))
-        vertex_face_values = np.repeat(np.arange(face_count, dtype=np.int32), 3)
-        vertex_face_offsets, vertex_faces = _csr(
-            vertex_face_owners, vertex_face_values, vertex_count
+        loop_vertices, loop_offsets = _boundary_loops(
+            origin[boundary_halfedges], destination[boundary_halfedges], vertex_count
         )
         vertex_halfedge_offsets, vertex_halfedges = _csr(
             origin, np.arange(halfedge_count, dtype=np.int32), vertex_count
         )
-        face_component_ids = np.full((face_count,), -1, dtype=np.int32)
-        face_component_count = 0
-        for start_face in range(face_count):
-            if face_component_ids[start_face] >= 0:
-                continue
-            pending = [start_face]
-            face_component_ids[start_face] = face_component_count
-            while pending:
-                face = pending.pop()
-                for halfedge in range(3 * face, 3 * face + 3):
-                    twin = int(halfedge_twin[halfedge])
-                    if twin < 0:
-                        continue
-                    neighbor = int(halfedge_face[twin])
-                    if face_component_ids[neighbor] < 0:
-                        face_component_ids[neighbor] = face_component_count
-                        pending.append(neighbor)
-            face_component_count += 1
+        # Vertex-face incidence is the face of each vertex-origin half-edge.
+        vertex_face_offsets = vertex_halfedge_offsets
+        vertex_faces = halfedge_face[vertex_halfedges]
+        face_component_ids, face_component_count = _face_components(
+            halfedge_face[first_halfedges], halfedge_face[second_halfedges], face_count
+        )
 
         self.faces = jnp.asarray(faces_host, dtype=jnp.int32)
         self.edges = jnp.asarray(edges, dtype=jnp.int32)

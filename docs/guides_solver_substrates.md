@@ -566,12 +566,23 @@ provenance reuse their ordinary Phydrax contracts. See
 The AMR substrate separates a uniform interval-primary tensor geometry, canonical
 fixed-capacity block topology, and masked numeric payload. `BlockTopologyCompiler`
 selects buffered, properly nested blocks on the host and returns atomic capacity
-status, evidence, epoch semantics, and canonical slot routes. Field-specific
-`BlockFieldTopologyTransition` values conservatively move componentwise cell
-averages between epochs. `PreparedFDAMRHierarchy` executes source-classified
+status, evidence, epoch semantics, and canonical slot routes; with an
+`AMRBalanceStencil` it closes requests under 2:1 grading instead of rejecting
+them. Field-specific `BlockFieldTopologyTransition` values conservatively move
+componentwise cell averages between epochs. `PreparedFDAMRHierarchy` executes
+source-classified
 cell-centered FillPatch routes and leaves physical boundary values and solver time
 advancement with the caller. `AMREntityTransferPlan` remains the explicit seam for
 future non-cell entity support.
+
+Forest AMR (`ForestTopologyCompiler`) refines quadtree/octree leaves over a brick of
+root cells with local refine/coarsen, 2:1 closure, sorted Morton worksets, and
+capacity buckets that keep compiled kernels valid across adaptation cycles.
+`ForestFieldTransition` moves cell averages conservatively, `ForestRefluxRoutes`
+feeds coarse/fine face mismatches to `FluxRegister`, `forest_vertex_interpolation`
+returns a sparse `FiniteElementTopologyTransfer`, `ForestCochainTransfer` provides
+commuting cochain prolongation, and `ForestPartitionPlan` owns weighted Morton
+partitions, ghost layers, and migration after adaptation.
 
 `StructuredMultigridPlan` rediscretizes conservative diffusion on coarser tensor grids,
 uses conservative cell or nested nodal transfers, selectable damped Jacobi,
@@ -580,6 +591,34 @@ coarse pseudoinverse. V/W/F/full cycle semantics come from the generic
 `phydrax.linalg` hierarchy. Transfer storage and fields follow the bound
 `FDExecutionPrecisionPolicy`; compatibility, gauge, and residual-norm decisions
 remain in its certification precision.
+
+## Capacity buckets and masked simplex layouts
+
+Adaptive simplex epochs (`prepare_adaptive_simplex`, see the meshing guide) keep
+their topology on the device in a `MaskedSimplexMesh`: vertex and cell slots of a
+static capacity, activity masks, positively oriented cell rows, and packed
+sibling half-facets. The capacity bucket comes from `AdaptiveSimplexPolicy`:
+explicit vertex/cell capacities, or the next power of two holding
+`growth_factor` times the prepared slot count (at least 64). Every compiled
+consumer is keyed by the layout signature (cell kind, ambient dimension,
+capacities, coordinate precision) together with its own family, order, workset,
+precision, and sharding — never by an active count — so refinement,
+coarsening, and the solver steps in between reuse one executable per entry
+point for every cycle inside the bucket. Crossing a bucket is an explicit new
+preparation.
+
+Masked solver routes consume the layout directly. `MaskedFiniteElementPlan` and
+`assemble_masked_finite_element` assemble P1 mass and stiffness over all cell
+lanes: inactive cells contribute exactly zero and inactive vertex DOFs are
+pinned by explicit identity rows, so operators stay square over the vertex
+capacity, solves and transpose actions keep the capacity shape, and padding
+values stay zero; `constrain_masked_dofs` pins Dirichlet DOFs the same way.
+The masked layout carries vertex DOFs only (Lagrange degree 1).
+`evaluate_masked_fv_geometry` builds half-facet face routes (each interior face
+once), `masked_fv_flux_divergence` scatters owner-outward fluxes, and
+`evaluate_masked_fv_conservation` returns the stage conservation ledger over
+the capacity routes with its source, boundary, and net-cell sums. Solving on the
+masked layout equals solving on the committed compact mesh.
 
 ## Common iteration lifecycle
 

@@ -33,8 +33,6 @@ def test_distributed_morton_query_matches_single_device_authority() -> None:
         3,
         3,
         1,
-        maximum_leaf_occupancy=2,
-        target_top_nodes=1,
     ).query(
         source,
         target,
@@ -46,8 +44,6 @@ def test_distributed_morton_query_matches_single_device_authority() -> None:
         6,
         3,
         3,
-        maximum_leaf_occupancy=2,
-        target_top_nodes=1,
     ).query(source, target, source_stable_ids=stable_ids)
 
     assert bool(distributed.evidence.successful)
@@ -68,8 +64,6 @@ def test_distributed_morton_query_rejects_duplicate_global_ids() -> None:
         2,
         1,
         1,
-        maximum_leaf_occupancy=2,
-        target_top_nodes=1,
     ).query(
         source,
         target,
@@ -95,16 +89,12 @@ def test_distributed_morton_query_merges_source_shards_when_available() -> None:
         4,
         2,
         2,
-        maximum_leaf_occupancy=2,
-        target_top_nodes=1,
     ).query(source, target, devices=devices)
     authority = MortonNeighborQueryPlan(
         _address(),
         6,
         4,
         2,
-        maximum_leaf_occupancy=2,
-        target_top_nodes=1,
     ).query(source, target)
     assert bool(result.evidence.successful)
     np.testing.assert_array_equal(result.source_indices, authority.source_indices)

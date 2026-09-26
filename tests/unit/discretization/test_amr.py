@@ -155,6 +155,40 @@ def test_proper_nesting_rejection_is_atomic():
     )
 
 
+def test_balance_closure_supports_requests_that_strict_nesting_rejects():
+    hierarchy = phx.discretization.BlockHierarchyPlan(
+        _grid(),
+        (
+            phx.discretization.BlockLevelPlan(0, (4,), 2),
+            phx.discretization.BlockLevelPlan(1, (2,), 8),
+            phx.discretization.BlockLevelPlan(2, (2,), 16),
+        ),
+    )
+    compiler = phx.discretization.BlockTopologyCompiler(
+        hierarchy,
+        proper_nesting=1,
+        balance=phx.discretization.AMRBalanceStencil.FACE,
+    )
+    coarse_tags = jnp.zeros((2, 4), dtype="bool").at[0, 1].set(True)
+    middle = compiler.compile(
+        compiler.initial_topology(), (coarse_tags, jnp.zeros((8, 2), dtype="bool"))
+    ).topology
+    fine_tags = jnp.zeros((8, 2), dtype="bool").at[0, 0].set(True)
+
+    result = compiler.compile(middle, (coarse_tags, fine_tags))
+
+    assert result.status.code == "success"
+    assert result.evidence.proper_nesting_rejections == (0, 0)
+    assert result.evidence.balance_additions == (0, 1)
+    finest = np.zeros((32,), dtype=np.int32)
+    for level, boxes in enumerate(result.topology.logical_boxes):
+        scale = 2 ** (2 - level)
+        for box in boxes:
+            finest[box.lower[0] * scale : box.upper[0] * scale] = level
+    assert finest.max() == 2
+    assert np.all(np.abs(np.diff(finest)) <= 1)
+
+
 def test_capacity_failure_is_atomic_and_preserves_source_epoch():
     hierarchy = _hierarchy(fine_capacity=1)
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)

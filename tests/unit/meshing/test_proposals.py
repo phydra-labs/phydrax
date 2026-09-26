@@ -39,6 +39,13 @@ def _policy(source, **kwargs):
     )
 
 
+def _assert_graded(sizes, points, edges, growth):
+    lengths = np.linalg.norm(points[edges[:, 1]] - points[edges[:, 0]], axis=1)
+    for first, second in ((0, 1), (1, 0)):
+        bound = sizes[edges[:, first]] + (growth - 1.0) * lengths
+        assert np.all(sizes[edges[:, second]] <= bound * (1.0 + 1e-10))
+
+
 def test_marking_preserves_protected_cell_through_conformity_closure_and_transfers_fields():
     source = _source()
     proposal = MeshMarkingProposal(
@@ -49,16 +56,20 @@ def test_marking_preserves_protected_cell_through_conformity_closure_and_transfe
     )
     transaction = prepare_mesh_proposal(source, proposal, policy)
     result = transaction.commit(source)
+    adaptation = transaction.adaptation
 
-    np.testing.assert_array_equal(transaction.projection.marked_cell_ids, (30,))
+    np.testing.assert_array_equal(
+        transaction.projection.marked_cell_ids, (10, 20, 30, 40)
+    )
+    assert adaptation.status is phx.meshing.MeshAdaptationStatus.PARTIAL
+    np.testing.assert_array_equal(adaptation.evidence.rejected_refinement_ids, (10,))
     cells = np.asarray(result.mesh.blocks[0].global_ids)
     row = int(np.flatnonzero(cells == 10)[0])
     np.testing.assert_array_equal(
         result.mesh.blocks[0].vertices[row], source.mesh.blocks[0].vertices[0]
     )
     np.testing.assert_array_equal(result.mesh.coordinates[:5], source.mesh.coordinates)
-    assert transaction.transition is not None
-    interpolated = transaction.transition.vertex_stencil.apply(
+    interpolated = adaptation.transition.vertex_stencil.apply(
         source.mesh.vertex_global_ids, source.mesh.coordinates[:, 0]
     )
     np.testing.assert_allclose(interpolated, result.mesh.coordinates[:, 0])
@@ -127,11 +138,10 @@ def test_size_projection_clamps_and_grades_in_sorted_global_id_order_then_refine
     assert np.all(sizes <= 2.0 + 1e-12)
     order = np.argsort(np.asarray(source.mesh.vertex_global_ids))
     np.testing.assert_allclose(field.sample_points, source.mesh.coordinates[order])
+    np.testing.assert_array_equal(field.sample_entity_ids, scope.entity_ids)
     inverse = np.argsort(order)
-    edges = np.asarray(source.mesh.connectivity.edges)
-    ratios = sizes[inverse[edges[:, 0]]] / sizes[inverse[edges[:, 1]]]
-    assert np.all(ratios <= 1.1 + 1e-12)
-    assert np.all(ratios >= 1 / 1.1 - 1e-12)
+    edges = inverse[np.asarray(source.mesh.connectivity.edges)]
+    _assert_graded(sizes, np.asarray(field.sample_points), edges, 1.1)
     assert transaction.commit(source).mesh.topology_id != source.mesh.topology_id
     np.testing.assert_array_equal(proposal.values, (-5.0, 2.0, 0.2, 50.0, 1.0))
 
@@ -153,12 +163,48 @@ def test_metric_projection_repairs_indefinite_asymmetric_tensors_with_bounded_gr
     assert np.all(eigenvalues <= 100.0 + 1e-10)
     assert np.all(eigenvalues[:, -1] / eigenvalues[:, 0] <= 4.0 + 1e-10)
     sizes = np.linalg.det(values) ** (-0.25)
-    inverse = np.argsort(np.argsort(np.asarray(source.mesh.vertex_global_ids)))
-    edges = inverse[np.asarray(source.mesh.connectivity.edges)]
-    ratios = sizes[edges[:, 0]] / sizes[edges[:, 1]]
-    assert np.all(ratios <= 1.05 + 1e-10)
-    assert np.all(ratios >= 1 / 1.05 - 1e-10)
+    order = np.argsort(np.asarray(source.mesh.vertex_global_ids))
+    edges = np.argsort(order)[np.asarray(source.mesh.connectivity.edges)]
+    _assert_graded(sizes, np.asarray(source.mesh.coordinates)[order], edges, 1.05)
+    evidence = transaction.projection.metric_evidence
+    assert evidence.symmetrized_count == 4 and evidence.projected_tensor_count == 4
+    assert evidence.passed
     assert transaction.commit(source).mesh.topology_id != source.mesh.topology_id
+
+
+def test_metric_proposal_executes_native_anisotropic_adaptation():
+    source = _source()
+    anisotropic = np.broadcast_to(np.diag((1.0 / 0.15**2, 1.0 / 0.6**2)), (5, 2, 2))
+    proposal = MeshMetricProposal(
+        source, mesh_proposal_scope(source, 0), anisotropic, proposer_id="model"
+    )
+    transaction = prepare_mesh_proposal(
+        source,
+        proposal,
+        _policy(source, maximum_anisotropy=20.0, maximum_gradation=2.0),
+    )
+    adaptation = transaction.adaptation
+    result = transaction.commit(source)
+    points = np.asarray(result.mesh.coordinates)
+    edges = np.asarray(result.mesh.connectivity.edges)
+    delta = np.abs(points[edges[:, 1]] - points[edges[:, 0]])
+    lengths = np.asarray(
+        phx.meshing.metric_edge_lengths(
+            adaptation.metric.values[
+                np.argsort(np.argsort(np.asarray(result.mesh.vertex_global_ids)))
+            ],
+            points,
+            edges,
+        )
+    )
+
+    assert adaptation.route is phx.meshing.MeshAdaptationRoute.NATIVE_METRIC_2D
+    assert adaptation.status.converged
+    assert np.all(lengths <= np.sqrt(2.0) + 1e-9)
+    assert np.max(delta[:, 0]) < np.max(delta[:, 1])
+    np.testing.assert_allclose(
+        adaptation.transfer.apply(source.mesh.coordinates), points, atol=1e-12
+    )
 
 
 def test_coordinate_targets_and_optimization_respect_scope_protection_and_trust_region():
@@ -245,7 +291,7 @@ def test_exhausted_capacity_produces_explicit_unchanged_source_without_refinemen
     )
 
     assert transaction.projection.marked_cell_ids.size == 0
-    assert transaction.transition is None
+    assert transaction.adaptation is None
     assert transaction.commit(source) is source
 
 
@@ -329,7 +375,8 @@ def test_learned_marking_cannot_bypass_native_projection_or_protection():
         project_mesh_proposal(source, untrusted, policy).projection_id
         == transaction.projection.projection_id
     )
-    assert 10 not in np.asarray(transaction.projection.marked_cell_ids)
+    # The protected cell's mark is rejected by native bisection, never executed.
+    assert 10 in np.asarray(transaction.adaptation.evidence.rejected_refinement_ids)
     result = transaction.commit(source)
     row = int(np.flatnonzero(np.asarray(result.mesh.blocks[0].global_ids) == 10)[0])
     np.testing.assert_array_equal(

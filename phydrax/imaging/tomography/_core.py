@@ -16,7 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from phydrax import ein
-from phydrax._bvh import build_packed_bvh, ray_select_leaf_items
+from phydrax._bvh import BVHBuildPolicy, prepare_bvh, ray_select_leaf_items
 from phydrax._interpolation import linear_interpolate
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -300,11 +300,10 @@ class TetrahedralXRayTransformPlan(StrictModule, NonTrainableState):
         simplex = AffineSimplexMap(jnp.asarray(cell_vertices))
         if not bool(jnp.all(simplex.evidence.successful)):
             raise ValueError("Tetrahedral X-ray geometry contains degenerate cells.")
-        bvh = build_packed_bvh(
+        bvh = prepare_bvh(
             np.min(cell_vertices, axis=1),
             np.max(cell_vertices, axis=1),
-            np.mean(cell_vertices, axis=1),
-            leaf_size=min(4, cells_.shape[0]),
+            policy=BVHBuildPolicy(leaf_size=min(4, cells_.shape[0])),
             dtype=simplex.vertices.dtype,
         )
         origins = jnp.asarray(support.rays.origins, dtype=simplex.vertices.dtype)

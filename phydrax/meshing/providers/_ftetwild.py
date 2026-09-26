@@ -42,7 +42,12 @@ from .._trace import (
     MeshingStageStatus,
     MeshingTrace,
 )
-from ._mmg import _check_arrays, _check_result_limits, _fresh_ids, _identity_report
+from ._conversion import (
+    _check_arrays,
+    _check_result_limits,
+    _fresh_ids,
+    _identity_report,
+)
 
 
 _FTETWILD_LOCK = threading.Lock()

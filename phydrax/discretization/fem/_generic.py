@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from math import prod
+from typing import final
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -25,7 +26,14 @@ from ...linalg import (
     OperatorProperties,
     SmallLinearSolvePlan,
 )
-from ...sparse import EdgeRelation, RowRelation, SparseLinearMap
+from ...sparse import (
+    EdgeRelation,
+    gather_routes,
+    route_reduce,
+    RowRelation,
+    SparseLinearMap,
+)
+from .._adaptive_simplex import MaskedSimplexMesh
 from .._cell_complex import (
     IntervalConnectivity,
     PolygonalConnectivity,
@@ -2621,6 +2629,361 @@ def _assemble_local_operator(
     )
 
 
+@final
+class MaskedFiniteElementPlan(StrictModule, NonTrainableState):
+    """Static Lagrange finite-element plan for one `MaskedSimplexMesh` bucket.
+
+    Every field is static: cell kind, ambient dimension, vertex and cell
+    capacities, the layout ``signature_id``, family, degree, and precision policy.
+    ``plan_id`` fingerprints the family, degree, layout signature, and precision
+    policy only, so `assemble_masked_finite_element` compiles once per capacity
+    bucket and serves every layout of that signature regardless of its active
+    counts or topology values.
+
+    Masked capacity layouts carry vertex DOFs only: DOF ``i`` is vertex slot
+    ``i``, so the only admissible Lagrange degree is 1. Higher degrees need edge,
+    face, and cell DOF slots the layout does not allocate and raise
+    ``ValueError``.
+    """
+
+    cell_kind: str = eqx.field(static=True)
+    ambient_dimension: int = eqx.field(static=True)
+    vertex_capacity: int = eqx.field(static=True)
+    cell_capacity: int = eqx.field(static=True)
+    signature_id: str = eqx.field(static=True)
+    family: str = eqx.field(static=True)
+    degree: int = eqx.field(static=True)
+    precision_policy: FiniteElementPrecisionPolicy
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mesh: MaskedSimplexMesh,
+        /,
+        *,
+        degree: int = 1,
+        precision_policy: FiniteElementPrecisionPolicy | None = None,
+    ):
+        if not isinstance(mesh, MaskedSimplexMesh):
+            raise TypeError("mesh must be a MaskedSimplexMesh.")
+        if isinstance(degree, bool) or not isinstance(degree, (int, np.integer)):
+            raise TypeError("degree must be an integer.")
+        if degree != 1:
+            raise ValueError(
+                "Masked capacity layouts carry vertex DOFs only; the Lagrange "
+                "degree must be 1."
+            )
+        precision = (
+            FiniteElementPrecisionPolicy()
+            if precision_policy is None
+            else precision_policy
+        )
+        if not isinstance(precision, FiniteElementPrecisionPolicy):
+            raise TypeError(
+                "precision_policy must be FiniteElementPrecisionPolicy or None."
+            )
+        self.cell_kind = mesh.cell_kind
+        self.ambient_dimension = mesh.ambient_dimension
+        self.vertex_capacity = mesh.vertex_capacity
+        self.cell_capacity = mesh.cell_capacity
+        self.signature_id = mesh.signature_id
+        self.family = "lagrange"
+        self.degree = 1
+        self.precision_policy = precision
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "masked-finite-element-plan",
+                "family": "lagrange",
+                "degree": 1,
+                "mesh_signature": mesh.signature_id,
+                "precision_policy": precision.policy_id,
+            }
+        )
+
+
+@final
+class MaskedFiniteElementSystem(StrictModule, NonTrainableState):
+    """Capacity-shaped P1 mass and stiffness operators of one masked layout.
+
+    Both operators act on ``(vertex_capacity,)`` vectors and share one
+    `EdgeRelation`: ``cell_capacity * (d + 1) ** 2`` cell routes valid only on
+    active cells, then ``vertex_capacity`` diagonal routes valid only on inactive
+    vertex slots with coefficient 1. Inactive DOFs are therefore pinned through
+    identity rows: each operator stays square, is the identity on padding, and
+    never couples padding to active DOFs, so solve, transpose, and adjoint
+    actions keep the capacity shape and map zero padding to zero padding.
+    ``mass`` is symmetric positive definite; ``stiffness`` is symmetric positive
+    semidefinite with the constants of each active component as its kernel.
+    ``boundary_dofs`` marks active vertices lying on a boundary facet. Operator
+    IDs derive from ``plan_id`` alone, never from topology values.
+    """
+
+    plan_id: str = eqx.field(static=True)
+    mass: SparseLinearMap
+    stiffness: SparseLinearMap
+    dof_active: Array
+    boundary_dofs: Array
+
+    def __init__(
+        self,
+        plan_id: str,
+        mass: SparseLinearMap,
+        stiffness: SparseLinearMap,
+        dof_active: Array,
+        boundary_dofs: Array,
+        /,
+    ):
+        if not isinstance(plan_id, str) or not plan_id:
+            raise ValueError("plan_id must be a non-empty string.")
+        if not isinstance(mass, SparseLinearMap) or not isinstance(
+            stiffness, SparseLinearMap
+        ):
+            raise TypeError("mass and stiffness must be SparseLinearMap operators.")
+        shape = mass.input_shape
+        if (
+            mass.output_shape != shape
+            or stiffness.input_shape != shape
+            or stiffness.output_shape != shape
+        ):
+            raise ValueError("Masked operators must share one square DOF space.")
+        for name, mask in (("dof_active", dof_active), ("boundary_dofs", boundary_dofs)):
+            if mask.dtype != jnp.bool_ or mask.shape != shape:
+                raise TypeError(f"{name} must be a boolean {shape} array.")
+        self.plan_id = plan_id
+        self.mass = mass
+        self.stiffness = stiffness
+        self.dof_active = dof_active
+        self.boundary_dofs = boundary_dofs
+
+
+def _masked_local_tensors(
+    plan: MaskedFiniteElementPlan, mesh: MaskedSimplexMesh, /
+) -> tuple[Array, Array]:
+    """P1 local mass and stiffness on every cell lane, exactly zero on padding.
+
+    Inactive lanes are mapped onto the reference simplex, appended after the
+    vertex slots, so the metric inverse and the positive-measure check never see
+    padding rows; their finite tensors are then replaced by exact zeros.
+    """
+
+    element = lagrange_element(plan.cell_kind, plan.degree)
+    policy = plan.precision_policy
+    width = mesh.dimension + 1
+    reference_vertices = jnp.pad(
+        jnp.asarray(element.reference_nodes, dtype=mesh.coordinates.dtype),
+        ((0, 0), (0, plan.ambient_dimension - mesh.dimension)),
+    )
+    reference_slots = jnp.arange(
+        plan.vertex_capacity, plan.vertex_capacity + width, dtype=jnp.int32
+    )
+    routes = jnp.where(mesh.cell_active[:, None], mesh.cells, reference_slots[None, :])
+    points_, weights_ = _degree_aware_reference_rule(plan.cell_kind, plan.degree)
+    reference_points = policy.geometry(points_)
+    reference_weights = policy.accumulation(weights_)
+    physical_points, jacobian, _, inverse_metric, _, _, measure_factor, _ = (
+        _evaluate_coordinate_map(
+            element,
+            routes,
+            jnp.concatenate((mesh.coordinates, reference_vertices)),
+            reference_points,
+            precision_policy=policy,
+            paired=False,
+        )
+    )
+    measure_factor = eqx.error_if(
+        measure_factor,
+        jnp.any(~jnp.isfinite(measure_factor) | (measure_factor <= 0.0)),
+        "Masked finite-element geometry requires positive finite metric "
+        "determinants on active cells.",
+    )
+    basis_values, reference_gradients = element.tabulate(reference_points)
+    reference_gradients = policy.evaluation(reference_gradients)
+    physical_weights = policy.accumulation(measure_factor * reference_weights[None, :])
+    geometry = FiniteElementBlockGeometry(
+        block_name=plan.cell_kind,
+        reference_points=reference_points,
+        reference_weights=reference_weights,
+        basis_values=policy.evaluation(basis_values),
+        reference_gradients=reference_gradients,
+        physical_points=physical_points,
+        physical_gradients=ein.contract(
+            "cqdi,cqij,qkj->cqkd", jacobian, inverse_metric, reference_gradients
+        ),
+        physical_weights=physical_weights,
+        measure=policy.output(jnp.sum(physical_weights, axis=1)),
+    )
+    active = mesh.cell_active[:, None, None]
+    zero = jnp.zeros((), dtype=physical_weights.dtype)
+    return (
+        jnp.where(active, _local_mass_tensor(geometry), zero),
+        jnp.where(active, _local_stiffness_tensor(geometry), zero),
+    )
+
+
+def _masked_boundary_dofs(mesh: MaskedSimplexMesh, /) -> Array:
+    """Active vertex slots on a boundary facet.
+
+    Local vertex ``j`` lies on the facet opposite local vertex ``i`` iff
+    ``i != j``; per-cell flags reduce onto vertex slots over the active
+    cell-vertex incidence relation.
+    """
+
+    width = mesh.dimension + 1
+    opposite = jnp.asarray(1 - np.eye(width, dtype=np.int32))
+    on_boundary = mesh.boundary_facets.astype(jnp.int32) @ opposite
+    incidence = EdgeRelation(
+        jnp.arange(mesh.cell_capacity * width, dtype=jnp.int32),
+        mesh.cells.reshape((-1,)),
+        source_size=mesh.cell_capacity * width,
+        target_size=mesh.vertex_capacity,
+        valid=jnp.repeat(mesh.cell_active, width),
+    )
+    counts = route_reduce(incidence, on_boundary.reshape((-1,)))
+    return (counts > 0) & mesh.vertex_active
+
+
+@eqx.filter_jit
+def assemble_masked_finite_element(
+    plan: MaskedFiniteElementPlan, mesh: MaskedSimplexMesh, /
+) -> MaskedFiniteElementSystem:
+    """Assemble capacity-shaped P1 mass and stiffness on one masked layout.
+
+    Module-level compiled entry. Its compile key is the plan's static identity
+    plus the layout signature (cell kind, ambient dimension, capacities,
+    coordinate dtype); coordinates, IDs, masks, cells, and adjacency are traced,
+    so layouts of one bucket with different active counts or topology reuse one
+    executable. See `MaskedFiniteElementSystem` for the pinned-padding layout.
+    """
+
+    if not isinstance(plan, MaskedFiniteElementPlan):
+        raise TypeError("plan must be a MaskedFiniteElementPlan.")
+    if not isinstance(mesh, MaskedSimplexMesh):
+        raise TypeError("mesh must be a MaskedSimplexMesh.")
+    if mesh.signature_id != plan.signature_id:
+        raise ValueError("mesh does not belong to the plan's capacity bucket.")
+    width = mesh.dimension + 1
+    mass_local, stiffness_local = _masked_local_tensors(plan, mesh)
+    columns = jnp.broadcast_to(mesh.cells[:, None, :], (plan.cell_capacity, width, width))
+    slots = jnp.arange(plan.vertex_capacity, dtype=jnp.int32)
+    relation = EdgeRelation(
+        jnp.concatenate((columns.reshape((-1,)), slots)),
+        jnp.concatenate((jnp.swapaxes(columns, 1, 2).reshape((-1,)), slots)),
+        source_size=plan.vertex_capacity,
+        target_size=plan.vertex_capacity,
+        valid=jnp.concatenate(
+            (jnp.repeat(mesh.cell_active, width * width), ~mesh.vertex_active)
+        ),
+    )
+    pins = jnp.ones((plan.vertex_capacity,), dtype=mass_local.dtype)
+    mass = SparseLinearMap(
+        relation,
+        jnp.concatenate((mass_local.reshape((-1,)), pins)),
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+        operator_id=canonical_fingerprint(
+            {"kind": "masked-finite-element-mass", "plan": plan.plan_id}
+        ),
+    )
+    stiffness = SparseLinearMap(
+        relation,
+        jnp.concatenate((stiffness_local.reshape((-1,)), pins)),
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+        operator_id=canonical_fingerprint(
+            {"kind": "masked-finite-element-stiffness", "plan": plan.plan_id}
+        ),
+    )
+    return MaskedFiniteElementSystem(
+        plan.plan_id,
+        mass,
+        stiffness,
+        mesh.vertex_active,
+        _masked_boundary_dofs(mesh),
+    )
+
+
+def constrain_masked_dofs(
+    operator: SparseLinearMap, pinned: ArrayLike, /
+) -> SparseLinearMap:
+    """Pin DOFs of a square edge-relation operator through identity rows.
+
+    Returns ``P_free A P_free + P_pinned``: routes touching a pinned source or
+    target are invalidated and one appended diagonal route per DOF, valid only
+    where ``pinned``, carries 1. The route capacity is static (operator routes
+    plus one per DOF), so a traced ``pinned`` mask never changes the compiled
+    shape. With ``pinned = system.boundary_dofs`` a masked stiffness becomes the
+    homogeneous Dirichlet operator; padding stays pinned whether or not it is
+    included in ``pinned``. Self-adjointness and (semi)definiteness carry over
+    as transformed evidence; the operator ID derives from the input operator ID.
+    """
+
+    if not isinstance(operator, SparseLinearMap) or not isinstance(
+        operator.relation, EdgeRelation
+    ):
+        raise TypeError("operator must be a SparseLinearMap over an EdgeRelation.")
+    relation = operator.relation
+    if operator.batch_shape or relation.source_size != relation.target_size:
+        raise ValueError("constrain_masked_dofs requires an unbatched square operator.")
+    mask = jnp.asarray(pinned)
+    if mask.dtype != jnp.bool_:
+        raise TypeError("pinned must be a boolean array.")
+    if mask.shape != (relation.source_size,):
+        raise ValueError("pinned must hold one flag per DOF.")
+    slots = jnp.arange(relation.source_size, dtype=relation.source_indices.dtype)
+    free = (
+        relation.valid
+        & ~gather_routes(relation, mask)
+        & ~gather_routes(relation.transpose(), mask)
+    )
+    constrained = EdgeRelation(
+        jnp.concatenate((relation.source_indices, slots)),
+        jnp.concatenate((relation.target_indices, slots)),
+        source_size=relation.source_size,
+        target_size=relation.target_size,
+        valid=jnp.concatenate((free, mask)),
+    )
+    source = operator.properties
+    claims = {
+        "self_adjoint": source.self_adjoint,
+        "positive_definite": source.positive_definite,
+        "positive_semidefinite": source.positive_semidefinite,
+    }
+    return SparseLinearMap(
+        constrained,
+        jnp.concatenate(
+            (
+                operator.coefficients,
+                jnp.ones((relation.source_size,), dtype=operator.coefficients.dtype),
+            )
+        ),
+        properties=OperatorProperties(
+            **claims,
+            evidence={
+                name: "transformed"
+                for name, claimed in claims.items()
+                if claimed and source.evidence_for(name) != "unknown"
+            },
+        ),
+        operator_id=canonical_fingerprint(
+            {"kind": "masked-dof-constraint", "operator": operator.operator_id}
+        ),
+    )
+
+
 __all__ = [
     "FiniteElementDiscretization",
     "FiniteElementDofMap",
@@ -2628,4 +2991,8 @@ __all__ = [
     "FiniteElementPlan",
     "FiniteElementRuntimeData",
     "IntegrationDomain",
+    "MaskedFiniteElementPlan",
+    "MaskedFiniteElementSystem",
+    "assemble_masked_finite_element",
+    "constrain_masked_dofs",
 ]

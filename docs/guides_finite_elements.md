@@ -177,11 +177,23 @@ triangle or quadrilateral block.
 
 ## Local adaptation and applications
 
-`dorfler_mark`/`maximum_mark`, `refine_triangles_local`, complete-family
-coarsening, P1 primal/dual transfers, local DWR indicators, and
-`FiniteElementTopologyTransaction` provide a single-device accepted topology
-transaction. Failed material transfer or certification preserves the accepted
-state.
+`dorfler_mark`/`maximum_mark`, residual/jump and local DWR indicators select
+cells; `phydrax.meshing.prepare_mesh_adaptation` with the `NATIVE_BISECTION`
+route refines them conformingly and coarsens complete bisection patches. The
+`MeshAdaptationResult` carries the sparse P1 `FiniteElementTopologyTransfer` and
+lineage that `FiniteElementTopologyTransaction.execute(accepted, mesh,
+adaptation)` consumes as a single-device accepted topology transaction. Failed
+material transfer or certification preserves the accepted state.
+
+`FiniteElementTopologyTransfer` stores the primal coefficient map (target DOFs by
+source DOFs) either as one `SparseLinearMap` with O(targets x stencil width)
+memory or as a linear operator whose action couples every DOF. `apply` is the
+primal transfer, `pullback` is its algebraic transpose for residual and load
+duals, and an optional `hilbert_adjoint` carries the inner-product adjoint;
+trailing payload axes pass through both. Constant, linear, positivity, and
+conservation claims are certified when the transfer is constructed (positivity
+only from sparse coefficients); `vertex_interpolation_transfer` builds the
+fixed-width row-stencil form used by local refinement.
 
 Tensor hp adaptation uses `FiniteElementHPTopology` as an allocated refinement
 forest and `FiniteElementHPEpoch` as the immutable prepared snapshot. Isotropic
@@ -195,6 +207,29 @@ Executable application namespaces live under `phydrax.applications`:
 phase-field Allen-Cahn/Cahn-Hilliard, finite-strain crystal plasticity,
 fixed-capacity barrier contact with conservative continuous step safety,
 phase-field fracture, and fixed-crack XFEM classification/enrichment.
+
+### L2 projection between non-matching meshes
+
+`prepare_l2_projection_transfer(source, target, refinement, field_name=...)`
+projects a scalar Lagrange field (continuous or discontinuous, any degree, on
+affine triangles or tetrahedra) onto a second FE space on a different mesh. The
+`refinement` is a successful `prepare_common_refinement(source.mesh,
+target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True))`: the mixed
+mass `B` is integrated exactly on its overlap simplices and the primal is the
+`FiniteElementL2Projection` `M_T^{-1} B`, with the target mass Cholesky factored
+once (factor status, pivot diagnostics, and a condition estimate are retained).
+The pullback is `B^T M_T^{-1}`. Constants and linears are preserved when the
+refinement certifies every target cell covered; the integral is conserved when
+every source cell is covered. Failed or mismatched refinements and unsupported
+elements raise `ValueError`.
+
+```python
+refinement = prepare_common_refinement(
+    source.mesh, target.mesh, policy=CommonRefinementPolicy(overlap_simplices=True)
+)
+transfer = prepare_l2_projection_transfer(source, target, refinement, field_name="u")
+target_values = transfer.apply(source_values)
+```
 
 
 ## Smoothed finite elements

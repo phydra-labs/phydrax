@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 
+from ._fingerprint import canonical_fingerprint
 from ._precision import (
     complex_precision_dtype,
     precision_dtype_name,
@@ -23,7 +24,26 @@ from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
 
+if TYPE_CHECKING:
+    from .geometry._predicates import PredicateMode
+
+
 _SUPPORTED_GEOMETRY_DTYPES = frozenset(("float32", "float64", "complex64", "complex128"))
+
+
+def _predicate_mode(value: PredicateMode | None, /) -> PredicateMode:
+    # Lazy: the geometry package imports modules that consume this policy.
+    from .geometry._predicates import PredicateMode
+
+    if value is None:
+        return PredicateMode.EXACT
+    if not isinstance(value, PredicateMode):
+        raise TypeError("predicate_mode must be a PredicateMode or None.")
+    match value:
+        case PredicateMode.FILTERED | PredicateMode.EXACT | PredicateMode.FILTERED_DEVICE:
+            return value
+        case _:
+            raise ValueError(f"Unsupported predicate mode {value!r}.")
 
 
 def _real_component(value: Any, /) -> str:
@@ -51,13 +71,19 @@ def _effective_dtype(
 
 
 class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
-    """Coordinate, local compute, reduction, decision, and output precision."""
+    """Coordinate, local compute, reduction, decision, and output precision.
+
+    ``predicate_mode`` selects how geometric sign decisions (orientation,
+    in-circle, side-of-plane) are certified; the default ``EXACT`` resolves
+    every filtered-uncertain sign with the native meshcore predicates.
+    """
 
     coordinate_dtype: str | None = eqx.field(static=True)
     compute_dtype: str | None = eqx.field(static=True)
     accumulation_dtype: str | None = eqx.field(static=True)
     decision_dtype: str | None = eqx.field(static=True)
     output_dtype: str | None = eqx.field(static=True)
+    predicate_mode: PredicateMode = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -68,6 +94,7 @@ class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
         accumulation_dtype: Any | None = None,
         decision_dtype: Any | None = None,
         output_dtype: Any | None = None,
+        predicate_mode: PredicateMode | None = None,
     ):
         coordinate = (
             None if coordinate_dtype is None else precision_dtype_name(coordinate_dtype)
@@ -117,12 +144,20 @@ class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
                 "output": output,
             },
         )
+        mode = _predicate_mode(predicate_mode)
         self.coordinate_dtype = coordinate
         self.compute_dtype = compute
         self.accumulation_dtype = accumulation
         self.decision_dtype = decision
         self.output_dtype = output
-        self.policy_id = request.request_id
+        self.predicate_mode = mode
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "geometry-precision-policy",
+                "request": request.request_id,
+                "predicate_mode": mode.value,
+            }
+        )
 
     @property
     def request(self) -> PrecisionRequest:

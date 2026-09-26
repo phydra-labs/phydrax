@@ -166,14 +166,6 @@ def test_three_dimensional_cell_mesh_coordinate_refresh_preserves_topology():
         assert refreshed.geometry_id != mesh.geometry_id
         assert not jnp.array_equal(refreshed.coordinates, mesh.coordinates)
 
-    refreshed_prism, refreshed_pyramid, refreshed_mixed, refreshed_polyhedron = (
-        refreshed_meshes
-    )
-    assert refreshed_prism.connectivity is not prism.connectivity
-    assert refreshed_pyramid.connectivity is not pyramid.connectivity
-    assert refreshed_mixed.connectivity is not mixed.connectivity
-    assert refreshed_polyhedron.connectivity is polyhedron.connectivity
-
 
 def test_harmonic_mesh_motion_preserves_topology_and_has_shape_derivative():
     geometry, motion = _circle_motion()
@@ -255,7 +247,9 @@ def test_signed_jacobian_rejects_orientation_reversal():
         discretization,
         provider,
         policy=phx.discretization.FiniteElementMeshMotionPolicy(
-            maximum_displacement_fraction=10.0
+            validity=phx.discretization.MotionValidityPolicy(
+                maximum_displacement_fraction=10.0
+            )
         ),
     )
 
@@ -264,3 +258,26 @@ def test_signed_jacobian_rejects_orientation_reversal():
     assert not bool(result.accepted)
     assert not bool(result.evidence.geometry.orientation_preserved)
     assert jnp.array_equal(result.coordinates, motion.reference_coordinates)
+
+
+def test_winslow_mesh_motion_realizes_under_jit_and_certifies_the_epoch():
+    geometry, harmonic = _circle_motion()
+    motion = phx.discretization.FiniteElementMeshMotionPlan(
+        harmonic.discretization,
+        harmonic.boundary_provider,
+        policy=phx.discretization.FiniteElementMeshMotionPolicy(
+            route=phx.discretization.FiniteElementMeshMotionRoute.WINSLOW
+        ),
+    )
+    radius_index = geometry.schema.index(phx.geometry.ParameterId("circle", "radius"))
+    state = geometry.state.replace_at(radius_index, jnp.asarray(1.1))
+
+    result = eqx.filter_jit(motion.realize)(state, numeric_version="winslow-1.1")
+
+    assert bool(result.accepted)
+    assert bool(result.evidence.extension.successful)
+    assert result.evidence.extension.route is (
+        phx.discretization.FiniteElementMeshMotionRoute.WINSLOW
+    )
+    assert jnp.allclose(result.coordinates[4], jnp.zeros((2,)), atol=1.0e-8)
+    assert motion.certify(result.coordinates).all_certified

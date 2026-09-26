@@ -70,7 +70,8 @@ def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path):
     )
     quality = compiled.dynamics.geometry_quality
     assert quality.passed
-    assert jnp.all(quality.minimum_jacobian > quality.determinant_floor)
+    assert quality.certificate.all_certified
+    assert jnp.all(quality.minimum_jacobian > 0.0)
     assert jnp.all(jnp.isfinite(quality.maximum_condition_number))
     state = jnp.broadcast_to(
         system.primitive_to_conserved(jnp.asarray((1.0, 0.1, -0.05, 1.0))),

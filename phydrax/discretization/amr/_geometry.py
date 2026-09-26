@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 import equinox as eqx
@@ -18,11 +19,27 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import determinant_small_linear, SmallLinearSolvePlan
+from .._motion_validity import MotionValidityPlan, MotionValidityPolicy
+from ..fem._geometry_motion import (
+    FiniteElementMeshMotionPolicy,
+    FiniteElementMeshMotionRoute,
+    FiniteElementMotionExtension,
+    TimeMeshMonitor,
+)
 from ._variable import VariablePatchHierarchyTopology
 
 
 CoordinateMap = Callable[[Array, Array, object], Array]
 _INT32_MAX = np.iinfo(np.int32).max
+_TENSOR_CELL_KINDS = {1: "interval", 2: "quadrilateral", 3: "hexahedron"}
+# Lexicographic (x-fastest) tensor corners -> canonical reference vertex order.
+_CANONICAL_CORNERS = {1: (0, 1), 2: (0, 1, 3, 2), 3: (0, 1, 3, 2, 4, 5, 7, 6)}
+# Patch ALE admits every orientation-preserving epoch; GCL evidence owns accuracy.
+_ALE_VALIDITY = MotionValidityPolicy(
+    minimum_absolute_jacobian=0.0,
+    minimum_relative_jacobian=0.0,
+    maximum_displacement_fraction=None,
+)
 
 
 def _validated_revision(value: ArrayLike, /) -> Array:
@@ -120,40 +137,97 @@ def _volume(
     )
 
 
-def _orientation(
-    corners: Array,
-    dimension: int,
-    determinant_plan: SmallLinearSolvePlan,
-    /,
-) -> Array:
-    if dimension <= 2:
-        return _volume(corners, dimension, determinant_plan)
-    p000, p100, p010, p110, p001, p101, p011, p111 = (
-        corners[..., index, :] for index in range(8)
+def _bucket_validity(
+    reference: np.ndarray, cell_active: np.ndarray, dimension: int, /
+) -> MotionValidityPlan:
+    """Shared corner-Jacobian acceptance over one bucket's flattened vertices."""
+
+    indices = np.arange(np.prod(reference.shape[:-1])).reshape(reference.shape[:-1])
+    corners = np.asarray(_corners(jnp.asarray(indices)[..., None], dimension))[..., 0]
+    cells = corners[..., _CANONICAL_CORNERS[dimension]].reshape(-1, 2**dimension)
+    return MotionValidityPlan(
+        reference.reshape(-1, dimension),
+        ((_TENSOR_CELL_KINDS[dimension], cells),),
+        policy=_ALE_VALIDITY,
+        active_cells=(cell_active.reshape(-1),),
     )
 
-    def tetra(a: Array, b: Array, c: Array, d: Array, /) -> Array:
-        return (
-            determinant_small_linear(
-                determinant_plan,
-                jnp.stack((b - a, c - a, d - a), axis=-1),
-            )
-            / 6.0
-        )
 
-    return jnp.min(
-        jnp.stack(
-            (
-                tetra(p000, p100, p010, p001),
-                tetra(p100, p110, p010, p111),
-                tetra(p100, p010, p001, p111),
-                tetra(p100, p001, p101, p111),
-                tetra(p010, p001, p111, p011),
-            ),
-            axis=-1,
+def _base_grid_motion(
+    topology: VariablePatchHierarchyTopology,
+    lower_bounds: np.ndarray,
+    policy: FiniteElementMeshMotionPolicy,
+    /,
+) -> FiniteElementMotionExtension:
+    """Route extension on the level-zero Q1 grid, boundary vertices prescribed."""
+
+    plan = topology.plan
+    if any(plan.periodic_axes):
+        raise ValueError("Routed patch motion requires non-periodic reference axes.")
+    shape = plan.global_cell_shapes[0]
+    dimension = len(shape)
+    spacing = np.asarray(plan.level_spacings[0], dtype=np.float64)
+    vertex_shape = tuple(value + 1 for value in shape)
+    grid = np.stack(
+        np.meshgrid(
+            *(np.arange(value, dtype=np.float64) for value in vertex_shape),
+            indexing="ij",
         ),
         axis=-1,
     )
+    vertices = lower_bounds + grid.reshape(-1, dimension) * spacing
+    indices = np.arange(vertices.shape[0]).reshape((1,) + vertex_shape + (1,))
+    corners = np.asarray(_corners(jnp.asarray(indices), dimension))[..., 0]
+    cells = corners[..., _CANONICAL_CORNERS[dimension]].reshape(-1, 2**dimension)
+    on_boundary = np.any(
+        (grid == 0.0) | (grid == np.asarray(shape, dtype=np.float64)), axis=-1
+    )
+    return FiniteElementMotionExtension(
+        vertices,
+        ((_TENSOR_CELL_KINDS[dimension], cells),),
+        np.flatnonzero(on_boundary.reshape(-1)),
+        policy=policy,
+    )
+
+
+def _interpolate_base(
+    values: Array,
+    points: Array,
+    lower: Array,
+    spacing: Array,
+    shape: tuple[int, ...],
+    /,
+) -> Array:
+    """Multilinear interpolation of level-zero vertex values at reference points."""
+
+    dimension = len(shape)
+    local = (points - lower) / spacing
+    cell = jnp.clip(
+        jnp.floor(local), 0, jnp.asarray(shape, dtype=local.dtype) - 1
+    ).astype(jnp.int32)
+    fraction = local - cell
+    strides = tuple(
+        math.prod(value + 1 for value in shape[axis + 1 :]) for axis in range(dimension)
+    )
+    result = jnp.zeros(points.shape[:-1] + (values.shape[-1],), dtype=values.dtype)
+    for corner in range(2**dimension):
+        bits = tuple((corner >> axis) & 1 for axis in range(dimension))
+        index = sum(
+            (cell[..., axis] + bit) * stride
+            for axis, (bit, stride) in enumerate(zip(bits, strides, strict=True))
+        )
+        weight = jnp.prod(
+            jnp.stack(
+                tuple(
+                    fraction[..., axis] if bit else 1.0 - fraction[..., axis]
+                    for axis, bit in enumerate(bits)
+                ),
+                axis=-1,
+            ),
+            axis=-1,
+        )
+        result = result + weight[..., None] * values[index]
+    return result
 
 
 def _swept_volume_rate(corners: Array, velocities: Array, dimension: int, /) -> Array:
@@ -233,11 +307,18 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
     ``coordinate_map(reference_point, time, args)`` is the sole physical-map owner
     at this seam.  Inactive bucket-envelope vertices are routed through a safe
     in-domain reference point before invoking the map, so padding cannot poison
-    a metric state.
+    a metric state. With a non-``PRESCRIBED`` ``motion_policy`` the map
+    prescribes only the level-zero grid boundary; the interior follows the
+    shared :class:`FiniteElementMotionExtension` route on the level-zero Q1 grid
+    (``monitor(time, points, args)`` drives ``MMPDE``) and every patch vertex
+    interpolates it multilinearly, so vertex velocities remain exact time
+    derivatives and the GCL holds by construction. Cells are accepted through
+    the shared :class:`MotionValidityPlan`.
     """
 
     topology: VariablePatchHierarchyTopology
     coordinate_map: CoordinateMap = eqx.field(static=True)
+    monitor: TimeMeshMonitor | None = eqx.field(static=True)
     coordinate_map_id: str = eqx.field(static=True)
     geometry_family_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
@@ -245,6 +326,11 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
     reference_vertices: tuple[tuple[Array, ...], ...]
     active_cell_masks: tuple[tuple[Array, ...], ...]
     active_vertex_masks: tuple[tuple[Array, ...], ...]
+    validity: tuple[tuple[MotionValidityPlan, ...], ...]
+    interior_motion: FiniteElementMotionExtension | None
+    base_lower: Array
+    base_spacing: Array
+    base_shape: tuple[int, ...] = eqx.field(static=True)
     gcl_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -258,6 +344,8 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         geometry_family_id: str = "mapped-patch",
         geometry_layout_id: str = "reference-bucket-layout",
         gcl_tolerance: float = 1.0e-10,
+        motion_policy: FiniteElementMeshMotionPolicy | None = None,
+        monitor: TimeMeshMonitor | None = None,
     ):
         if not isinstance(topology, VariablePatchHierarchyTopology):
             raise TypeError("Patch geometry requires VariablePatchHierarchyTopology.")
@@ -278,9 +366,26 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Patch geometry identifiers and GCL tolerance must be valid."
             )
+        if motion_policy is not None and not isinstance(
+            motion_policy, FiniteElementMeshMotionPolicy
+        ):
+            raise TypeError(
+                "motion_policy must be FiniteElementMeshMotionPolicy or None."
+            )
+        routed = (
+            motion_policy is not None
+            and motion_policy.route is not FiniteElementMeshMotionRoute.PRESCRIBED
+        )
+        if (monitor is not None) != (
+            routed and motion_policy.route is FiniteElementMeshMotionRoute.MMPDE
+        ):
+            raise ValueError("A monitor is required exactly for the MMPDE route.")
+        if monitor is not None and not callable(monitor):
+            raise TypeError("monitor must be callable.")
         references: list[tuple[Array, ...]] = []
         cell_masks: list[tuple[Array, ...]] = []
         vertex_masks: list[tuple[Array, ...]] = []
+        validity: list[tuple[MotionValidityPlan, ...]] = []
         lower_bounds = np.asarray(
             [axis.bounds[0] for axis in topology.plan.grid.structured_axes],
             dtype=np.float64,
@@ -294,6 +399,7 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
             level_references = []
             level_cell_masks = []
             level_vertex_masks = []
+            level_validity = []
             for bucket_index, bucket in enumerate(level_plan.buckets):
                 envelope = bucket.signature.envelope_shape
                 vertex_shape = tuple(value + 1 for value in envelope)
@@ -342,12 +448,20 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
                 level_references.append(jnp.asarray(safe_reference))
                 level_cell_masks.append(jnp.asarray(cell_valid))
                 level_vertex_masks.append(jnp.asarray(vertex_valid))
+                level_validity.append(
+                    _bucket_validity(safe_reference, cell_valid, dimension)
+                )
             references.append(tuple(level_references))
             cell_masks.append(tuple(level_cell_masks))
             vertex_masks.append(tuple(level_vertex_masks))
+            validity.append(tuple(level_validity))
         determinant = SmallLinearSolvePlan(dimension)
+        interior_motion = (
+            _base_grid_motion(topology, lower_bounds, motion_policy) if routed else None
+        )
         self.topology = topology
         self.coordinate_map = coordinate_map
+        self.monitor = monitor
         self.coordinate_map_id = map_id
         self.geometry_family_id = family
         self.geometry_layout_id = layout
@@ -355,6 +469,13 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         self.reference_vertices = tuple(references)
         self.active_cell_masks = tuple(cell_masks)
         self.active_vertex_masks = tuple(vertex_masks)
+        self.validity = tuple(validity)
+        self.interior_motion = interior_motion
+        self.base_lower = jnp.asarray(lower_bounds)
+        self.base_spacing = jnp.asarray(
+            topology.plan.level_spacings[0], dtype=jnp.float64
+        )
+        self.base_shape = tuple(topology.plan.global_cell_shapes[0])
         self.gcl_tolerance = tolerance
         self.plan_id = canonical_fingerprint(
             {
@@ -368,8 +489,51 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
                     [array_tree_fingerprint(value) for value in level]
                     for level in references
                 ],
+                "motion_route": (
+                    FiniteElementMeshMotionRoute.PRESCRIBED.value
+                    if interior_motion is None
+                    else interior_motion.extension_id
+                ),
             }
         )
+
+    def _mapped_vertices(
+        self, reference: Array, time: Array, args: object, /
+    ) -> tuple[Array, Array]:
+        """Pointwise mapped bucket vertices and their exact time derivative."""
+
+        flat_reference = reference.reshape((-1, reference.shape[-1]))
+
+        def map_points(tau: Array) -> Array:
+            mapped = jax.vmap(
+                lambda point: jnp.asarray(self.coordinate_map(point, tau, args))
+            )(flat_reference)
+            return mapped.reshape(reference.shape)
+
+        vertices = map_points(time)
+        if vertices.shape != reference.shape:
+            raise ValueError("Patch coordinate_map must preserve ambient dimension.")
+        velocity = jax.jvp(map_points, (time,), (jnp.ones_like(time),))[1]
+        return vertices, velocity
+
+    def _routed_base(self, time: Array, args: object, /) -> tuple[Array, Array]:
+        """Level-zero grid positions: mapped boundary plus the interior route."""
+
+        extension = self.interior_motion
+        reference = extension.reference_coordinates
+        boundary_reference = reference[extension.boundary_indices]
+        boundary = jax.vmap(
+            lambda point: jnp.asarray(self.coordinate_map(point, time, args))
+        )(boundary_reference)
+        if boundary.shape != boundary_reference.shape:
+            raise ValueError("Patch coordinate_map must preserve ambient dimension.")
+        monitor = (
+            None
+            if self.monitor is None
+            else lambda points: self.monitor(time, points, args)
+        )
+        routed = extension.extend(boundary - boundary_reference, monitor=monitor)
+        return reference + routed.displacement, routed.successful
 
     def state(
         self,
@@ -390,11 +554,19 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         defects_by_level = []
         orientations_by_level = []
         valid_terms = [jnp.isfinite(time_)]
-        for level, (references, cell_masks, vertex_masks) in enumerate(
+        if self.interior_motion is not None:
+            base, base_velocity, route_successful = jax.jvp(
+                lambda tau: self._routed_base(tau, args),
+                (time_,),
+                (jnp.ones_like(time_),),
+                has_aux=True,
+            )
+            valid_terms.append(route_successful)
+        for level, (references, cell_masks, validities) in enumerate(
             zip(
                 self.reference_vertices,
                 self.active_cell_masks,
-                self.active_vertex_masks,
+                self.validity,
                 strict=True,
             )
         ):
@@ -405,42 +577,24 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
             level_rates = []
             level_orientations = []
             level_defects = []
-            for reference, cell_active, vertex_active in zip(
+            for reference, cell_active, validity in zip(
                 references,
                 cell_masks,
-                vertex_masks,
+                validities,
                 strict=True,
             ):
-                flat_reference = reference.reshape((-1, dimension))
-
-                def map_points(
-                    tau: Array,
-                    *,
-                    flat_reference: Array = flat_reference,
-                    reference: Array = reference,
-                ) -> Array:
-                    mapped = jax.vmap(
-                        lambda point: jnp.asarray(self.coordinate_map(point, tau, args))
-                    )(flat_reference)
-                    return mapped.reshape(reference.shape)
-
-                vertices = map_points(time_)
-                if vertices.shape != reference.shape:
-                    raise ValueError(
-                        "Patch coordinate_map must preserve ambient dimension."
-                    )
-                velocity = jax.jvp(
-                    map_points,
-                    (time_,),
-                    (jnp.ones_like(time_),),
-                )[1]
+                if self.interior_motion is None:
+                    vertices, velocity = self._mapped_vertices(reference, time_, args)
+                else:
+                    grid = (self.base_lower, self.base_spacing, self.base_shape)
+                    vertices = _interpolate_base(base, reference, *grid)
+                    velocity = _interpolate_base(base_velocity, reference, *grid)
                 corners = _corners(vertices, dimension)
                 velocity_corners = _corners(velocity, dimension)
                 volume = _volume(corners, dimension, self.determinant_plan)
-                orientation = _orientation(
-                    corners,
-                    dimension,
-                    self.determinant_plan,
+                flat_vertices = vertices.reshape((-1, dimension))
+                orientation = validity.cell_minimum_determinants(flat_vertices).reshape(
+                    cell_active.shape
                 )
                 rate = jax.jvp(
                     lambda value, dimension=dimension: _volume(
@@ -455,13 +609,9 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
                 defect = jnp.abs(rate - swept)
                 scale = jnp.maximum(jnp.maximum(jnp.abs(rate), jnp.abs(swept)), 1.0)
                 valid = (
-                    jnp.all(
-                        ~cell_active
-                        | (jnp.isfinite(volume) & (volume > 0.0) & (orientation > 0.0))
-                    )
+                    validity.evaluate(flat_vertices).valid
                     & jnp.all(~cell_active | jnp.isfinite(rate))
                     & jnp.all(~cell_active | (defect <= self.gcl_tolerance * scale))
-                    & jnp.all(~vertex_active[..., None] | jnp.isfinite(vertices))
                 )
                 valid_terms.append(valid)
                 level_vertices.append(vertices)

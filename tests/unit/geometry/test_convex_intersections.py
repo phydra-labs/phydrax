@@ -1,17 +1,28 @@
 import numpy as np
 import pytest
 
+from phydrax._geometry_precision import GeometryPrecisionPolicy
+from phydrax._meshcore import meshcore_available
 from phydrax.geometry._convex_intersections import (
     intersect_convex_polygons,
     IntersectionStatus,
 )
+from phydrax.geometry._predicates import PredicateMode
 
 
 SQUARE = np.asarray(
     [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     dtype=np.float64,
 )
+# A counterclockwise sliver whose orientation (exactly 11.5 * 2**-48) cancels
+# below the floating-point filter bound.
+SLIVER = np.asarray([[0.5, 0.5], [12.0, 12.0], [24.0, 24.0 + 2.0**-48]])
+FILTERED = GeometryPrecisionPolicy(predicate_mode=PredicateMode.FILTERED)
+EXACT = GeometryPrecisionPolicy(predicate_mode=PredicateMode.EXACT)
 TRIANGLE = np.asarray([[0.0, 0.0], [2.0, 0.0], [0.0, 2.0]], dtype=np.float64)
+requires_meshcore = pytest.mark.skipif(
+    not meshcore_available(), reason="phydrax-meshcore unavailable"
+)
 
 
 def test_identity_returns_canonical_polygon_area_and_centroid():
@@ -34,17 +45,25 @@ def test_identity_returns_canonical_polygon_area_and_centroid():
     )
 
 
-def test_containment_and_analytic_partial_triangle_overlap():
-    inner = np.asarray([[0.25, 0.25], [0.75, 0.25], [0.25, 0.75]])
+def test_containment_returns_the_inner_polygon():
+    # No square corner lies on the oblique edge, so every decision is certified
+    # by the floating-point filter alone.
+    inner = np.asarray([[0.25, 0.25], [0.75, 0.25], [0.25, 0.5]])
     contained = intersect_convex_polygons(SQUARE, inner)
     assert contained.status is IntersectionStatus.SUCCESS
-    assert contained.area == pytest.approx(0.125)
+    assert contained.area == pytest.approx(0.0625)
 
+
+@pytest.mark.meshcore
+@requires_meshcore
+def test_analytic_partial_triangle_overlap_with_exact_contacts():
     # The intersection is the triangle (0, 0), (1, 0), (0, 1) clipped by the
-    # x+y <= 1/2 half-plane, whose area is 1/8.
+    # x+y <= 1/2 half-plane, whose area is 1/8.  The constructed vertices lie
+    # exactly on the oblique clipping line, a zero only exact predicates certify.
     partial = intersect_convex_polygons(
         np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
         np.asarray([[0.0, 0.0], [0.5, 0.0], [0.0, 0.5]]),
+        precision=EXACT,
     )
     assert partial.status is IntersectionStatus.SUCCESS
     assert partial.area == pytest.approx(0.125)
@@ -84,13 +103,33 @@ def test_shared_edge_and_vertex_are_explicit_zero_measure_contacts():
     np.testing.assert_allclose(vertex.centroid, [1.0, 1.0])
 
 
-def test_near_degenerate_predicate_fails_closed():
-    thin = np.asarray([[0.0, 0.0], [1.0, 1.0e-16], [1.0, 0.0]])
-    result = intersect_convex_polygons(thin, thin)
+def test_unresolved_filtered_predicate_fails_closed():
+    result = intersect_convex_polygons(SLIVER, SLIVER, precision=FILTERED)
 
     assert result.status is IntersectionStatus.UNCERTAIN_PREDICATE
+    assert result.predicate_evidence.mode is PredicateMode.FILTERED
     assert result.predicate_evidence.uncertain
     assert result.predicate_evidence.uncertain_count > 0
+
+
+def test_certified_thin_triangle_is_not_rejected():
+    thin = np.asarray([[0.0, 0.0], [1.0, 1.0e-16], [1.0, 0.0]])
+    result = intersect_convex_polygons(thin, thin, precision=FILTERED)
+
+    assert result.status is IntersectionStatus.SUCCESS
+    assert not result.predicate_evidence.uncertain
+    assert result.area == 0.5e-16
+
+
+@pytest.mark.meshcore
+@requires_meshcore
+def test_exact_predicates_resolve_the_sliver():
+    result = intersect_convex_polygons(SLIVER, SLIVER, precision=EXACT)
+
+    assert result.status is IntersectionStatus.SUCCESS
+    assert result.predicate_evidence.mode is PredicateMode.EXACT
+    assert result.predicate_evidence.uncertain_count == 0
+    assert result.area == 5.75 * 2.0**-48
 
 
 def test_nonconvex_and_nonfinite_inputs_are_rejected():

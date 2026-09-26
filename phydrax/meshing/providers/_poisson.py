@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import operator
 import time
+from enum import StrEnum
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,7 +21,7 @@ from ..._trainable import NonTrainableState
 from ...geometry.surface import SurfaceMetadata, SurfaceModel
 from ...logging import emit
 from .._audit import CellMeshAuditPolicy
-from .._canonical import certify_cell_mesh
+from .._canonical import canonicalize_cell_mesh, certify_cell_mesh
 from .._contracts import (
     MeshingDerivativeMode,
     MeshingExecutionMode,
@@ -31,7 +32,9 @@ from .._contracts import (
     MeshingSourceKind,
     SurfaceMeshingSpec,
 )
+from .._organization import MeshAttribute, MeshAttributeRole
 from .._result import CellMeshingResult, MeshingComplianceReport, MeshingRuntimeInfo
+from .._scope import MeshingEntityKind, MeshingScope
 from .._trace import (
     MeshingStageKind,
     MeshingStageReport,
@@ -114,13 +117,21 @@ class OrientedPointCloud(StrictModule, NonTrainableState):
         self.cloud_id = canonical_fingerprint(
             {
                 "kind": "oriented-point-cloud",
-                "coordinates": np.asarray(self.coordinates).tolist(),
-                "normals": np.asarray(self.normals).tolist(),
+                "coordinates": points,
+                "normals": vectors / lengths[:, None],
                 "coordinate_contract": coordinate_contract.spatial_id,
                 "source_id": source,
                 "source_revision": revision,
             }
         )
+
+
+class PoissonBoundaryCondition(StrEnum):
+    """Boundary condition of the screened Poisson indicator solve on the octree cube."""
+
+    NEUMANN = "neumann"
+    DIRICHLET = "dirichlet"
+    FREE = "free"
 
 
 class PoissonReconstructionSpec(StrictModule, NonTrainableState):
@@ -129,18 +140,45 @@ class PoissonReconstructionSpec(StrictModule, NonTrainableState):
     Depth is an upper bound on adaptive octree depth. Scale is the reconstruction
     cube/sample bounding-cube diameter ratio. No geometric interpolation or
     maximum approximation-error guarantee is implied by either control.
+
+    ``density_trim_quantile`` removes reconstructed vertices whose native octree
+    sample density lies strictly below that quantile of all vertex densities,
+    together with every incident triangle; trimming may open the surface.
+    ``threads`` is the exact native worker count. ``boundary`` declares the
+    indicator-solve boundary condition; the Open3D build fixes Neumann, so other
+    declarations are refused rather than silently substituted.
     """
 
     depth: int = eqx.field(static=True)
     scale: float = eqx.field(static=True)
     linear_fit: bool = eqx.field(static=True)
+    boundary: PoissonBoundaryCondition = eqx.field(static=True)
+    density_trim_quantile: float | None = eqx.field(static=True)
+    threads: int = eqx.field(static=True)
     specification_id: str = eqx.field(static=True)
 
-    def __init__(self, *, depth: int = 8, scale: float = 1.1, linear_fit: bool = False):
+    def __init__(
+        self,
+        *,
+        depth: int = 8,
+        scale: float = 1.1,
+        linear_fit: bool = False,
+        boundary: PoissonBoundaryCondition = PoissonBoundaryCondition.NEUMANN,
+        density_trim_quantile: float | None = None,
+        threads: int = 1,
+    ):
         depth_ = operator.index(depth)
         scale_ = float(scale)
         if isinstance(depth, bool) or not 2 <= depth_ <= 30:
             raise ValueError("Poisson octree depth must be an integer in [2, 30].")
+        if not isinstance(boundary, PoissonBoundaryCondition):
+            raise TypeError("boundary must be PoissonBoundaryCondition.")
+        threads_ = operator.index(threads)
+        if isinstance(threads, bool) or threads_ < 1:
+            raise ValueError("Poisson threads must be a positive integer.")
+        trim = None if density_trim_quantile is None else float(density_trim_quantile)
+        if trim is not None and (not np.isfinite(trim) or not 0.0 <= trim < 1.0):
+            raise ValueError("density_trim_quantile must lie in [0, 1) or be None.")
         if not np.isfinite(scale_) or scale_ <= 1.0 or scale_ > np.finfo(np.float32).max:
             raise ValueError("Poisson scale must be representable in float32 and > 1.")
         # Open3D's native scale argument is float, not double.
@@ -150,14 +188,63 @@ class PoissonReconstructionSpec(StrictModule, NonTrainableState):
         self.depth = depth_
         self.scale = scale_
         self.linear_fit = bool(linear_fit)
+        self.boundary = boundary
+        self.density_trim_quantile = trim
+        self.threads = threads_
         self.specification_id = canonical_fingerprint(
             {
                 "kind": "poisson-reconstruction-spec",
                 "depth": depth_,
                 "scale": scale_,
                 "linear_fit": self.linear_fit,
+                "boundary": boundary.value,
+                "density_trim_quantile": trim,
+                "threads": threads_,
             }
         )
+
+
+def _trim_by_density(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    densities: np.ndarray,
+    quantile: float | None,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Drop low-density vertices with their incident faces; compact survivors.
+
+    Compaction always runs so published densities align with carrier vertices.
+    """
+
+    threshold = (
+        float("-inf") if quantile is None else float(np.quantile(densities, quantile))
+    )
+    kept_faces = faces[np.all(densities[faces] >= threshold, axis=1)]
+    used, remapped = np.unique(kept_faces, return_inverse=True)
+    return (
+        vertices[used],
+        remapped.reshape(kept_faces.shape),
+        densities[used],
+        threshold,
+    )
+
+
+def _density_attribute(mesh, densities: np.ndarray, /) -> MeshAttribute:
+    vertex_ids = np.asarray(mesh.vertex_global_ids, dtype=np.int64)
+    vertices = mesh.entity_set(0)
+    return MeshAttribute(
+        "poisson_sample_density",
+        MeshAttributeRole.USER,
+        MeshingScope(
+            mesh.mesh_id,
+            mesh.numeric_version,
+            MeshingEntityKind.MESH,
+            0,
+            vertices.entity_set_id,
+            vertex_ids,
+        ),
+        densities[np.argsort(vertex_ids, kind="stable")],
+    )
 
 
 class PoissonProvider:
@@ -196,6 +283,17 @@ class PoissonProvider:
             )
         if not isinstance(specification, PoissonReconstructionSpec):
             raise TypeError("specification must be PoissonReconstructionSpec.")
+        match specification.boundary:
+            case PoissonBoundaryCondition.NEUMANN:
+                pass
+            case PoissonBoundaryCondition.DIRICHLET | PoissonBoundaryCondition.FREE:
+                raise MeshingFailure(
+                    MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
+                    "Open3D screened Poisson is compiled with Neumann boundary "
+                    f"conditions; {specification.boundary.value} is unavailable.",
+                )
+            case _:
+                raise ValueError("Unknown Poisson boundary condition.")
         started = time.perf_counter()
         emit(
             "DEBUG",
@@ -217,13 +315,13 @@ class PoissonProvider:
         cloud.points = backend.utility.Vector3dVector((points - lower) / extent)
         cloud.normals = backend.utility.Vector3dVector(np.array(source.normals))
         try:
-            reconstructed, _ = (
+            reconstructed, native_densities = (
                 backend.geometry.TriangleMesh.create_from_point_cloud_poisson(
                     cloud,
                     depth=specification.depth,
                     scale=specification.scale,
                     linear_fit=specification.linear_fit,
-                    n_threads=1,
+                    n_threads=specification.threads,
                 )
             )
         except RuntimeError as exc:
@@ -242,8 +340,21 @@ class PoissonProvider:
                 f"Open3D screened Poisson reconstruction failed: {exc}",
                 stage=MeshingStageKind.SURFACE_MESHING.value,
             ) from exc
-        coordinates = np.asarray(reconstructed.vertices) * extent + lower
-        faces = np.asarray(reconstructed.triangles)
+        reconstructed_faces = np.asarray(reconstructed.triangles, dtype=np.int64)
+        densities = np.asarray(native_densities, dtype=np.float64)
+        vertices = np.asarray(reconstructed.vertices, dtype=np.float64)
+        if densities.shape != vertices.shape[:1] or not np.all(np.isfinite(densities)):
+            raise MeshingFailure(
+                MeshingFailureCategory.CONVERSION_FAILED,
+                "Poisson reconstruction returned no finite per-vertex densities.",
+            )
+        vertices, faces, densities, density_threshold = _trim_by_density(
+            vertices,
+            reconstructed_faces,
+            densities,
+            specification.density_trim_quantile,
+        )
+        coordinates = vertices * extent + lower
         if not len(faces):
             raise MeshingFailure(
                 MeshingFailureCategory.CONVERSION_FAILED,
@@ -259,6 +370,8 @@ class PoissonProvider:
                 "specification": specification.specification_id,
                 "coordinate_contract": source.coordinate_contract.spatial_id,
                 "sample_identity_preserved": False,
+                "boundary_condition": specification.boundary.value,
+                "density": "native-octree-sample-density-per-vertex",
             }
         )
         boundary = SurfaceModel.from_triangles(
@@ -271,20 +384,39 @@ class PoissonProvider:
                 provenance=("open3d-screened-poisson", source.cloud_id),
             ),
         )
+        mesh = canonicalize_cell_mesh(boundary.mesh)
         certified = certify_cell_mesh(
-            boundary.mesh,
+            mesh,
             source.coordinate_contract,
             audit_policy=audit_policy,
+            attributes=(_density_attribute(mesh, densities),),
         )
         compliance = MeshingComplianceReport(
             specification.specification_id,
             requested=(
                 ("maximum_octree_depth", specification.depth),
                 ("bounding_cube_scale", specification.scale),
+                ("threads", specification.threads),
+                *(
+                    ()
+                    if specification.density_trim_quantile is None
+                    else (
+                        (
+                            "density_trim_quantile",
+                            specification.density_trim_quantile,
+                        ),
+                    )
+                ),
             ),
             achieved=(
                 ("vertex_count", certified.audit.vertex_count),
                 ("triangle_count", len(faces)),
+                ("trimmed_triangle_count", len(reconstructed_faces) - len(faces)),
+                *(
+                    ()
+                    if specification.density_trim_quantile is None
+                    else (("density_threshold", density_threshold),)
+                ),
             ),
         )
         trace = MeshingTrace(
@@ -325,12 +457,13 @@ class PoissonProvider:
                 provider.version,
                 MeshingExecutionMode.IN_PROCESS,
                 deterministic=False,
-                enforced_limits=("octree_depth", "single_thread"),
+                enforced_limits=("octree_depth", "threads"),
                 unenforced_limits=("wall_time", "memory"),
             ),
             MeshingDerivativeMode.NONDIFFERENTIABLE,
             provenance,
             boundary=boundary,
+            attributes=certified.attributes,
         )
         emit(
             "INFO",
@@ -346,4 +479,9 @@ class PoissonProvider:
         return result
 
 
-__all__ = ["OrientedPointCloud", "PoissonReconstructionSpec", "PoissonProvider"]
+__all__ = [
+    "OrientedPointCloud",
+    "PoissonBoundaryCondition",
+    "PoissonProvider",
+    "PoissonReconstructionSpec",
+]

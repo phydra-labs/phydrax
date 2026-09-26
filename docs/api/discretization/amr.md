@@ -494,3 +494,123 @@ deliberately excluded from the portable multivalued checkpoint.
 ---
 
 ::: phydrax.solver.write_multivalued_cut_cell_output
+
+## Forest AMR
+
+Quadtree/octree forests refine the cells of one uniform root grid (a brick of
+optionally periodic and optionally mapped roots). Leaves are the canonical sorted
+Morton prefix of fixed-capacity worksets with stable tree-path IDs, 2:1 balance
+over a face, edge, or corner stencil, per-level worksets, and power-of-two capacity
+buckets, so compiled kernels are reused across adaptation cycles inside one
+bucket. `ForestBlockLowering` maps a forest exactly onto a block hierarchy, which
+the mapped-geometry and multivalued cut-complex owners consume unchanged.
+
+::: phydrax.discretization.AMRBalanceStencil
+
+---
+
+::: phydrax.discretization.ForestPlan
+
+---
+
+::: phydrax.discretization.ForestHierarchyTopology
+
+---
+
+::: phydrax.discretization.ForestLeafWorkset
+
+---
+
+::: phydrax.discretization.ForestWorksetSignature
+
+---
+
+::: phydrax.discretization.ForestFaceKind
+
+---
+
+::: phydrax.discretization.ForestTopologyCompiler
+
+---
+
+::: phydrax.discretization.ForestAdaptResult
+
+---
+
+::: phydrax.discretization.ForestAdaptStatus
+
+---
+
+::: phydrax.discretization.ForestAdaptEvidence
+
+---
+
+::: phydrax.discretization.forest_common_refinement
+
+---
+
+::: phydrax.discretization.ForestBlockLowering
+
+---
+
+::: phydrax.discretization.ForestLeafGeometry
+
+---
+
+::: phydrax.discretization.forest_leaf_geometry
+
+---
+
+::: phydrax.discretization.ForestCutComplex
+
+---
+
+::: phydrax.discretization.prepare_forest_cut_complex
+
+### Forest transfer and reflux
+
+::: phydrax.discretization.ForestFieldTransition
+
+---
+
+::: phydrax.discretization.ForestTransferRoutes
+
+---
+
+::: phydrax.discretization.ForestTransferResult
+
+---
+
+::: phydrax.discretization.ForestRefluxRoutes
+
+---
+
+::: phydrax.discretization.ForestVertexLayout
+
+---
+
+::: phydrax.discretization.forest_vertex_interpolation
+
+---
+
+::: phydrax.discretization.ForestCochainComplex
+
+---
+
+::: phydrax.discretization.ForestCochainTransfer
+
+### Forest partitions and migration
+
+::: phydrax.discretization.ForestPartitionPlan
+
+---
+
+::: phydrax.discretization.PreparedForestPartition
+
+---
+
+::: phydrax.discretization.ForestPartitionEvidence
+
+---
+
+::: phydrax.discretization.ForestMigrationPlan

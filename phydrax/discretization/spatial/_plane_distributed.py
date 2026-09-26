@@ -68,9 +68,7 @@ class DistributedMortonNeighborQueryPlan(StrictModule):
         shard_count: int,
         *,
         axis_name: str = "spatial",
-        maximum_leaf_occupancy: int = 32,
-        coarsening_factor: int = 8,
-        target_top_nodes: int = 1024,
+        maximum_candidates: int | None = None,
     ) -> None:
         sources = int(source_capacity)
         targets = int(target_capacity)
@@ -97,10 +95,11 @@ class DistributedMortonNeighborQueryPlan(StrictModule):
             local_sources,
             targets,
             local_neighbors,
-            maximum_candidates=local_sources,
-            maximum_leaf_occupancy=maximum_leaf_occupancy,
-            coarsening_factor=coarsening_factor,
-            target_top_nodes=target_top_nodes,
+            maximum_candidates=(
+                None
+                if maximum_candidates is None
+                else min(int(maximum_candidates), local_sources)
+            ),
         )
         object.__setattr__(self, "address_plan", address_plan)
         object.__setattr__(self, "local_plan", local_plan)
@@ -331,9 +330,7 @@ class DistributedMortonNeighborQueryPlan(StrictModule):
             )
             local_counts = jnp.sum(local_output_valid, axis=1, dtype=jnp.int32)
             finite = provider.minimum(
-                (local.evidence.finite & local.evidence.topology_successful).astype(
-                    jnp.int32
-                )
+                (local.evidence.finite & local.evidence.sources_valid).astype(jnp.int32)
             ).astype("bool")
             successful = complete & finite
             return (
